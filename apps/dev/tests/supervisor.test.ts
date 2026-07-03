@@ -77,6 +77,8 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
     unblockSweepIntervalS: 60,
+    supervisorMaxRestarts: 5,
+    supervisorRestartWindowS: 300,
     ...over,
   };
 }
@@ -1667,6 +1669,22 @@ describe("resolveSupervisorConfig — supervisor stale knob (#407)", () => {
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "0" }).supervisorStaleS).toBe(300);
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "900" }).supervisorStaleS).toBe(900);
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "abc" }).supervisorStaleS).toBe(300);
+  });
+});
+
+describe("resolveSupervisorConfig — dead-supervisor crash-loop knobs (#1097)", () => {
+  it("defaults the max-restarts bound and floors a 0/garbage back to the default", () => {
+    expect(resolveSupervisorConfig({}).supervisorMaxRestarts).toBe(5);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_MAX_RESTARTS: "0" }).supervisorMaxRestarts).toBe(5);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_MAX_RESTARTS: "3" }).supervisorMaxRestarts).toBe(3);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_MAX_RESTARTS: "abc" }).supervisorMaxRestarts).toBe(5);
+  });
+
+  it("defaults the restart window and floors a 0/garbage back to the default", () => {
+    expect(resolveSupervisorConfig({}).supervisorRestartWindowS).toBe(300);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_RESTART_WINDOW_S: "0" }).supervisorRestartWindowS).toBe(300);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_RESTART_WINDOW_S: "600" }).supervisorRestartWindowS).toBe(600);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_RESTART_WINDOW_S: "x" }).supervisorRestartWindowS).toBe(300);
   });
 });
 
