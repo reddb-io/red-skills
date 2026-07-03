@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  allWorkersRoots,
   buildWorkerAttemptPath,
   issueAttemptsGlob,
   livePidsGlob,
   parseWorkerAttemptPath,
+  WORKER_NAMESPACES,
   workerDir,
   workerPidFile,
   workersGlob,
@@ -56,5 +58,25 @@ describe("worker paths — /go namespace", () => {
   it("ignores an unsafe namespace value and falls back to `workers`", () => {
     process.env.RED_AFK_WORKERS_NAMESPACE = "../escape";
     expect(workersSegment()).toBe("workers");
+  });
+
+  it("enumerates every worker-lane namespace for read-only union discovery", () => {
+    expect([...WORKER_NAMESPACES]).toEqual(["workers", "go-workers", "scout-workers"]);
+    expect(allWorkersRoots("/repo/.red/tmp/")).toEqual([
+      "/repo/.red/tmp/workers",
+      "/repo/.red/tmp/go-workers",
+      "/repo/.red/tmp/scout-workers",
+    ]);
+  });
+
+  it("allWorkersRoots is namespace-blind (ignores RED_AFK_WORKERS_NAMESPACE)", () => {
+    process.env.RED_AFK_WORKERS_NAMESPACE = "go-workers";
+    // The read-only aggregator must union ALL lanes regardless of the env
+    // override the reader process happens to carry.
+    expect(allWorkersRoots("/repo/.red/tmp")).toEqual([
+      "/repo/.red/tmp/workers",
+      "/repo/.red/tmp/go-workers",
+      "/repo/.red/tmp/scout-workers",
+    ]);
   });
 });

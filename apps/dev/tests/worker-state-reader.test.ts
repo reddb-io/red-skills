@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { readWorkerState, readWorkerStates } from "../src/core/worker-state-reader.js";
+import { readWorkerState, readWorkerStates, readAllWorkerStates } from "../src/core/worker-state-reader.js";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const NOW = Date.UTC(2026, 5, 22, 12, 0, 0);
@@ -158,5 +158,49 @@ describe("worker-state-reader", () => {
     expect(byId.wA!.active).toBe(true);
     expect(byId.wB!.active).toBe(false);
     expect(byId.wB!.live).toBe(true);
+  });
+
+  it("readAllWorkerStates unions every worker-lane namespace under tmp", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "wsr-union-"));
+    // One live worker per lane: fleet, /go, and --scout.
+    await writeState(join(tmp, "workers", "wFLEET", "10-a1"), {
+      worker_id: "wFLEET",
+      pid: 1,
+      origin: "afk",
+      current: { number: 10, last_event_at: fresh },
+    });
+    await writeState(join(tmp, "go-workers", "wGO", "20-a1"), {
+      worker_id: "wGO",
+      pid: 2,
+      origin: "go",
+      current: { number: 20, last_event_at: fresh },
+    });
+    await writeState(join(tmp, "scout-workers", "wSCOUT", "30-a1"), {
+      worker_id: "wSCOUT",
+      pid: 3,
+      origin: "scout",
+      current: { number: 30, last_event_at: fresh },
+    });
+    const recs = await readAllWorkerStates(tmp, { nowMs: NOW });
+    const byId = Object.fromEntries(recs.map((r) => [r.state.worker_id, r]));
+    // All three lanes are discovered, each carrying its own origin provenance.
+    expect(Object.keys(byId).sort()).toEqual(["wFLEET", "wGO", "wSCOUT"]);
+    expect(byId.wFLEET!.state.origin).toBe("afk");
+    expect(byId.wGO!.state.origin).toBe("go");
+    expect(byId.wSCOUT!.state.origin).toBe("scout");
+  });
+
+  it("readAllWorkerStates with only the fleet lane matches today's single-lane read", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "wsr-union-fleet-"));
+    await writeState(join(tmp, "workers", "wFLEET", "11-a1"), {
+      worker_id: "wFLEET",
+      pid: 1,
+      current: { number: 11, last_event_at: fresh },
+    });
+    // No go-workers/ or scout-workers/ dirs → those lanes contribute nothing.
+    const union = await readAllWorkerStates(tmp, { nowMs: NOW });
+    const single = await readWorkerStates(join(tmp, "workers"), { nowMs: NOW });
+    expect(union.map((r) => r.state.worker_id)).toEqual(["wFLEET"]);
+    expect(union.map((r) => r.state.worker_id)).toEqual(single.map((r) => r.state.worker_id));
   });
 });

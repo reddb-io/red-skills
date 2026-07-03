@@ -444,7 +444,7 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { readWorkerState, readWorkerStates } from "../core/worker-state-reader.js";
+import { readWorkerState, readAllWorkerStates } from "../core/worker-state-reader.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -528,7 +528,11 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The single source of liveness truth for all
   // surfaces is WorkerStateRecord.livenessVerdict (evaluator verdict, ADR 0083 §3).
-  const records = await readWorkerStates(paths.workersRoot);
+  // Namespace-blind union: aggregate live workers across the fleet, `/go`, and
+  // `--scout` lanes so a `/go`/`--scout` worker appears in the monitor/dashboard,
+  // tagged distinctly by state.origin. (Not the single-lane paths.workersRoot,
+  // which would render only the `.red/tmp/workers` fleet lane.)
+  const records = await readAllWorkerStates(paths.tmpDir);
   const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
@@ -699,7 +703,10 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
   const nowMs = Date.now();
-  const records = await readWorkerStates(paths.workersRoot, { nowMs });
+  // Namespace-blind union across the fleet, `/go`, and `--scout` lanes so the
+  // statusline counts a live `/go`/`--scout` worker (rendered per-origin via
+  // state.origin), not only the `.red/tmp/workers` fleet lane.
+  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -826,7 +833,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   if (workers <= 0) return null;
 
   // Build the per-source count array sorted by origin for a deterministic order.
-  // Both statusline and monitor read from state.origin via readWorkerStates —
+  // Both statusline and monitor read from state.origin via readAllWorkerStates —
   // this is the one derived form; nothing else derives source counts independently.
   const sourceCounts =
     sourceMap.size > 0

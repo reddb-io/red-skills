@@ -52,7 +52,7 @@ import {
 import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
-import { isValidWorkerId } from "../core/worker-paths.js";
+import { isValidWorkerId, WORKER_NAMESPACES } from "../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../runtime/kill-tree.js";
@@ -1371,24 +1371,28 @@ async function runnerCircuitOpen(
 }
 
 /** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
- * can run inside the synchronous `buildProcessInput`. Walks `<tmp>/workers/*`
- * with readdirSync and feeds the pure `highestAttempt`: the next attempt is the
- * highest existing attempt for the issue + 1 (1 when none). Junk dirs never
- * bump the counter. A missing tree yields attempt 1. */
+ * can run inside the synchronous `buildProcessInput`. Namespace-blind: walks
+ * every worker-lane namespace (`workers`, `go-workers`, `scout-workers`) with
+ * readdirSync and feeds the pure `highestAttempt`, so the same issue retried
+ * across lanes never reuses an attempt number. The next attempt is the highest
+ * existing attempt for the issue + 1 (1 when none). Junk dirs never bump the
+ * counter; a missing namespace tree contributes nothing. */
 function nextAttemptSync(tmpDir: string, issue: number): number {
-  let workers: string[];
-  try {
-    workers = readdirSync(join(tmpDir, "workers"));
-  } catch {
-    return 1;
-  }
   const entries: AttemptDirEntry[] = [];
-  for (const worker of workers) {
-    if (!isValidWorkerId(worker)) continue;
+  for (const namespace of WORKER_NAMESPACES) {
+    let workers: string[];
     try {
-      entries.push({ worker, basenames: readdirSync(join(tmpDir, "workers", worker)) });
+      workers = readdirSync(join(tmpDir, namespace));
     } catch {
-      // not a directory / unreadable
+      continue; // namespace dir absent → no attempts from this lane
+    }
+    for (const worker of workers) {
+      if (!isValidWorkerId(worker)) continue;
+      try {
+        entries.push({ worker, basenames: readdirSync(join(tmpDir, namespace, worker)) });
+      } catch {
+        // not a directory / unreadable
+      }
     }
   }
   const best = highestAttempt(tmpDir, issue, entries);
