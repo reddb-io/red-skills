@@ -14,6 +14,7 @@ import {
   LABEL_DEPENDENCY,
   LABEL_STALLED,
   LABEL_CRASHED,
+  LABEL_MERGE_CONFLICT,
 } from "../core/triage-labels.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
@@ -723,21 +724,23 @@ export async function issueClosed(ctx: GhContext, n: number): Promise<boolean> {
   return (await blockerState(ctx, n)) === "CLOSED";
 }
 
-/** List open issues labelled `blocked:stalled` OR `blocked:crashed` — the
- * parked-mechanical candidates the boot reconcile sweep processes. The two
- * `gh issue list` calls run concurrently and are de-duplicated by issue number.
- * A failed probe for either label returns [] for that label; the surviving set
- * is still processed. */
+/** List open issues labelled `blocked:stalled`, `blocked:crashed`, OR
+ * `blocked:merge-conflict` — the parked-mechanical candidates the boot reconcile
+ * sweep processes (merge-conflict added in #1095: a land-time trunk conflict is
+ * mechanical, not a human decision). The `gh issue list` calls run concurrently
+ * and are de-duplicated by issue number. A failed probe for any label returns []
+ * for that label; the surviving set is still processed. */
 export async function listParkedMechanicalCandidates(
   ctx: GhContext,
 ): Promise<ReconcileSweepCandidate[]> {
-  const [stalled, crashed] = await Promise.all([
+  const [stalled, crashed, mergeConflict] = await Promise.all([
     listIssuesByLabel(ctx, LABEL_STALLED),
     listIssuesByLabel(ctx, LABEL_CRASHED),
+    listIssuesByLabel(ctx, LABEL_MERGE_CONFLICT),
   ]);
   const seen = new Set<number>();
   const result: ReconcileSweepCandidate[] = [];
-  for (const c of [...stalled, ...crashed]) {
+  for (const c of [...stalled, ...crashed, ...mergeConflict]) {
     if (seen.has(c.number)) continue;
     seen.add(c.number);
     result.push(c);
