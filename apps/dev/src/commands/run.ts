@@ -13,6 +13,11 @@ import { runBoot, type BootDeps, type BootOptions, type BootstrapInput, type Rec
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import { resolveBase } from "../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
+import {
+  classifyConflictedFileKind,
+  partitionConflicts,
+  type ConflictFinding,
+} from "../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
 import { passExitBarrier, passTerminalBarrier } from "../core/exit-barrier.js";
 import {
@@ -50,7 +55,7 @@ import {
   resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../core/issue-classifier.js";
-import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE } from "../core/triage-labels.js";
+import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../core/triage-labels.js";
 import { GO_ORIGIN, GO_WORKERS_SEGMENT } from "../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../core/scout.js";
 import { resolveHooks } from "../core/hook-config.js";
@@ -325,6 +330,51 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
   };
 }
 
+/**
+ * Real mechanical-conflict resolver for the #1095 merge-conflict reland. Bound
+ * to `gitCtx`, returns the port `preMergeRebase` invokes when a rebase onto
+ * fresh trunk CONFLICTS: it lists the conflicted files, classifies each via the
+ * closed mechanical allowlist (`classifyConflictedFileKind`), and auto-resolves
+ * ONLY when EVERY conflict is mechanical (whitespace-only today) — otherwise it
+ * declines so the rebase aborts and the branch re-parks for a human. On the
+ * mechanical path it takes one (whitespace-equivalent) side per file, stages it,
+ * and `git rebase --continue`s (editor suppressed). Any git/read failure → false.
+ */
+function makeMechanicalConflictResolver(gitCtx: GitContext): (repo: string) => Promise<boolean> {
+  const git = gitx.gitExec(gitCtx);
+  return async (repo: string): Promise<boolean> => {
+    const list = await git(["-C", repo, "diff", "--name-only", "--diff-filter=U"]);
+    if (list.code !== 0) return false;
+    const paths = list.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (paths.length === 0) return false;
+
+    const findings: ConflictFinding[] = [];
+    for (const p of paths) {
+      let body: string;
+      try {
+        body = await readFile(join(repo, p), "utf8");
+      } catch {
+        return false;
+      }
+      const kind = classifyConflictedFileKind(body);
+      findings.push({ path: p, kind, description: `${kind} conflict in ${p}` });
+    }
+    // Intent-by-default: a single non-mechanical conflict declines the whole set.
+    if (partitionConflicts(findings).nonMechanical.length > 0) return false;
+
+    for (const p of paths) {
+      // Whitespace-equivalent sides → taking either resolves it; keep the
+      // worker's committed (validated) version, then stage.
+      const checkout = await git(["-C", repo, "checkout", "--theirs", "--", p]);
+      if (checkout.code !== 0) return false;
+      const add = await git(["-C", repo, "add", "--", p]);
+      if (add.code !== 0) return false;
+    }
+    const cont = await git(["-C", repo, "-c", "core.editor=true", "rebase", "--continue"]);
+    return cont.code === 0;
+  };
+}
+
 /** Build the boot reconcile runner (step 7, ADR 0055). The runner closes over
  * the repo context and feedback worktree so each plan invocation has full
  * reconcile deps without re-building them on every call. */
@@ -405,6 +455,11 @@ function makeBootReconcileRunner(
         return ok ? dest : null;
       },
       removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
+      // #1095: only the merge-conflict reland auto-resolves mechanical rebase
+      // conflicts; stalled/crashed relands keep the abort-on-any-conflict path.
+      resolveMechanicalConflict: plan.labels.includes(LABEL_MERGE_CONFLICT)
+        ? makeMechanicalConflictResolver(gitCtx)
+        : undefined,
       envelope: {
         git: gitx.gitExec(gitCtx),
         poster: async (issue, body) => {
@@ -456,6 +511,12 @@ function makeBootReconcileRunner(
         attempt: 0,
         attemptDir: join(paths.tmpDir, "boot-reconcile", String(plan.number)),
         runner,
+        // #1095: a `blocked:merge-conflict` park carries a branch that already
+        // validated green before a land-time trunk conflict. Trust that prior
+        // validation and skip re-running the local suite — doLanding's #1006
+        // pre-merge rebase re-lands it on FRESH trunk and the PR's CI is the
+        // merge gate. A branch that still conflicts re-parks merge-conflict.
+        trustPriorValidation: plan.labels.includes(LABEL_MERGE_CONFLICT),
       };
 
       const result = await reconcile(reconcileDeps, reconcileInput);

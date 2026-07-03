@@ -475,6 +475,10 @@ describe("isParkedMechanical", () => {
     expect(isParkedMechanical(["blocked:crashed"])).toBe(true);
   });
 
+  it("returns true for blocked:merge-conflict (#1095)", () => {
+    expect(isParkedMechanical(["blocked:merge-conflict", "ready-for-human"])).toBe(true);
+  });
+
   it("returns false for non-mechanical labels", () => {
     expect(isParkedMechanical(["blocked:spec", "ready-for-human"])).toBe(false);
     expect(isParkedMechanical(["blocked:validation"])).toBe(false);

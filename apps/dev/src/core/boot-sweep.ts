@@ -26,7 +26,7 @@
 
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
-import { LABEL_STALLED, LABEL_CRASHED, LABEL_DEPENDENCY, LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
+import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
 
 const BLOCKED_BY_HEADING_RE = /^## Blocked by[ \t]*$/;
 /** Any `## ` heading — the awk `/^## /` that closes the Blocked-by section. */
@@ -358,9 +358,12 @@ export function findOwnedBranch(branches: readonly string[], issue: number): str
   return null;
 }
 
-/** The labels that mark a parked-mechanical issue: the attempt-progress guard
- * fired (`blocked:stalled`) or the agent process crashed (`blocked:crashed`). */
-const PARKED_MECHANICAL_LABELS = new Set([LABEL_STALLED, LABEL_CRASHED]);
+/** The labels that mark a parked-mechanical issue the reconcile sweep can pick
+ * up: the attempt-progress guard fired (`blocked:stalled`), the agent process
+ * crashed (`blocked:crashed`), or a land-time trunk conflict parked the branch
+ * (`blocked:merge-conflict`, issue #1095). All three carry a branch that may
+ * simply need re-landing on fresh trunk — never a human decision. */
+const PARKED_MECHANICAL_LABELS = new Set([LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT]);
 
 /**
  * True when the label set carries a parked-mechanical routing label

@@ -252,6 +252,23 @@ describe("reconcile — green → land", () => {
     expect(trace.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
 
+  it("trusts prior green (#1095): lands WITHOUT re-running the feedback gate", async () => {
+    const { deps, input, trace } = harness({
+      // feedbackOk left unset — the gate must NOT run at all on this path.
+      labels: ["ready-for-human", "blocked:merge-conflict", "priority:high"],
+    });
+    const result = await reconcile(deps, { ...input, trustPriorValidation: true });
+
+    expect(result.outcome).toBe("landed");
+    // The scoped feedback gate was SKIPPED — zero pnpm invocations.
+    expect(trace.pnpmCalls).toBe(0);
+    // Still lands + closes + sheds the merge-conflict blocked label.
+    expect(trace.closed).toEqual([9]);
+    const close = trace.labelEdits.at(-1)!;
+    expect(close.remove).toEqual(["ready-for-human", "blocked:merge-conflict"]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+  });
+
   it("lands a PARKED issue, shedding ready-for-human + the mechanical blocked label", async () => {
     const { deps, input, trace } = harness({
       feedbackOk: true,

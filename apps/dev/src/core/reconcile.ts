@@ -151,6 +151,14 @@ export interface ReconcileDeps {
   /** One-shot inner-agent merge-conflict resolver for the DIRECT land (optional). */
   conflictResolver?: ConflictResolver;
   /**
+   * Opt-in mechanical-conflict resolver for the PR path's pre-merge rebase
+   * (issue #1095): auto-resolve whitespace-only / closed-allowlist conflicts
+   * when re-landing a `blocked:merge-conflict` branch on fresh trunk, instead of
+   * parking. Threaded straight into {@link doLanding}'s `resolveMechanicalConflict`.
+   * Absent → any rebase conflict parks `blocked:merge-conflict` as before.
+   */
+  resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
+  /**
    * Landing-mode flag, decoupled from the lock (#842). `true`/undefined → land via
    * an admin-merged PR; `false` → a direct merge. Threaded from process-issue's
    * deps so a reconcile-land honours the same `afk.worktree_launches_pull_request`
@@ -237,6 +245,16 @@ export interface ReconcileInput {
   attempt: number;
   attemptDir: string;
   runner: Runner;
+  /**
+   * Trust the PRIOR green validation and SKIP re-running the scoped feedback
+   * gate (issue #1095). Set by the merge-conflict auto-reconcile route: the
+   * branch already validated green BEFORE the land-time trunk conflict, so the
+   * no-agent reland rebases onto fresh trunk (via doLanding's #1006 pre-merge
+   * rebase) and lands through the PR — whose CI is the merge gate — WITHOUT
+   * re-running the full local suite. Default undefined/false → the standard
+   * reconcile runs the scoped gate as its verdict, unchanged.
+   */
+  trustPriorValidation?: boolean;
 }
 
 // ---------- result ----------
@@ -335,31 +353,50 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   }
 
   // ---- 4. feedback gate (the verdict — SAME authority as the DONE path) ----
-  // AFK runner improvement: pass `base` as the `baselineWorktree` so a pre-existing
-  // failure on the base branch (NOT the worker's fault) is downgraded to
-  // `skipped (pre-existing failure on baseline)` instead of parking the green
-  // branch. Mirrors the DONE path's behaviour exactly.
+  // The merge-conflict reland route (#1095) trusts the prior green validation
+  // and skips the gate; every other reland runs it exactly as the DONE path does.
   const startedEpoch = deps.nowEpoch();
-  const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
-    worktree: branch,
-    scopes: relevantScopes(deps.layout, changedFiles),
-    layout: deps.layout,
-    now: deps.nowEpoch,
-    baselineWorktree: input.base,
-  });
-  await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
+  let feedback: RunFeedbackResult;
+  if (input.trustPriorValidation) {
+    // #1095 merge-conflict reland: the branch validated green before the
+    // land-time trunk conflict, so the scoped gate is NOT re-run here — the
+    // opened PR's CI is the merge gate. Stand in a trusted-green result so the
+    // envelope / close cascade below read a coherent (empty) validation summary.
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: merge-conflict reland — trusting the prior green validation; NOT re-running the local suite (the PR's CI gates the merge).`,
+    );
+    feedback = {
+      ok: true,
+      checks: [],
+      sidecar: ["merge-conflict reland: prior validation trusted; local suite not re-run (#1095)"],
+      baselineDowngraded: [],
+      quarantined: [],
+    };
+  } else {
+    // AFK runner improvement: pass `base` as the `baselineWorktree` so a
+    // pre-existing failure on the base branch (NOT the worker's fault) is
+    // downgraded instead of parking the green branch. Mirrors the DONE path.
+    feedback = await runFeedback(deps.pnpm, {
+      worktree: branch,
+      scopes: relevantScopes(deps.layout, changedFiles),
+      layout: deps.layout,
+      now: deps.nowEpoch,
+      baselineWorktree: input.base,
+    });
+    await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
 
-  // ---- 4b. RED → ready-for-human with the real failing checks ----
-  // AFK runner improvement: an INFRA-rooted failure (worktree / submodule /
-  // pnpm install / OOM) is NOT a parked branch — it is a flaky environment
-  // and the recovery policy should retry it (bounded, default cap 2). Skip
-  // the park-to-human path; let `routeRecovery` re-queue or escalate the
-  // same way the DONE path does, so the green branch isn't stranded.
-  if (!feedback.ok && isInfraFeedbackFailure(feedback)) {
-    return await parkInfraRetry(deps, input, feedback, startedEpoch);
-  }
-  if (!feedback.ok) {
-    return await park(deps, input, feedback, startedEpoch);
+    // ---- 4b. RED → ready-for-human with the real failing checks ----
+    // AFK runner improvement: an INFRA-rooted failure (worktree / submodule /
+    // pnpm install / OOM) is NOT a parked branch — it is a flaky environment
+    // and the recovery policy should retry it (bounded, default cap 2). Skip
+    // the park-to-human path; let `routeRecovery` re-queue or escalate the
+    // same way the DONE path does, so the green branch isn't stranded.
+    if (!feedback.ok && isInfraFeedbackFailure(feedback)) {
+      return await parkInfraRetry(deps, input, feedback, startedEpoch);
+    }
+    if (!feedback.ok) {
+      return await park(deps, input, feedback, startedEpoch);
+    }
   }
 
   // ---- 4a-pre. re-verify the issue is still open immediately before landing ----
@@ -385,6 +422,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       remoteGit: deps.remoteGit,
       fireHook: deps.fireHook ?? (async () => true),
       conflictResolver: deps.conflictResolver,
+      resolveMechanicalConflict: deps.resolveMechanicalConflict,
       waitForReview: deps.waitForReview,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,

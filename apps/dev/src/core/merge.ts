@@ -100,6 +100,17 @@ export interface PreMergeRebaseInput {
    * 2 — so at most three pushes total before the caller parks merge-conflict.
    */
   maxPushRetries?: number;
+  /**
+   * Opt-in mechanical-conflict resolver (issue #1095). On a rebase CONFLICT,
+   * instead of aborting immediately, the resolver is given the rebase worktree
+   * (`repo`) and returns true when it resolved EVERY conflict on the closed
+   * mechanical allowlist + `git rebase --continue`d successfully — the rebase
+   * then proceeds to the force-push. It returns false to decline (a
+   * non-mechanical / unresolvable conflict), and `preMergeRebase` aborts exactly
+   * as before. Absent (the default) → any conflict aborts → `conflict`, so every
+   * existing landing path is byte-identical.
+   */
+  resolveMechanical?: (repo: string) => Promise<boolean>;
 }
 
 /** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
@@ -137,6 +148,12 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     if (fetch.code !== 0) return { ok: false, reason: "fetch-failed" };
     const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
     if (rebase.code !== 0) {
+      // #1095: give the opt-in mechanical resolver a chance to auto-resolve
+      // whitespace-only / allowlisted conflicts + `rebase --continue` before we
+      // abort. It returns false for anything non-mechanical → abort as before.
+      if (input.resolveMechanical && (await input.resolveMechanical(repo))) {
+        return { ok: true };
+      }
       await exec(["git", "-C", repo, "rebase", "--abort"]);
       return { ok: false, reason: "conflict" };
     }
