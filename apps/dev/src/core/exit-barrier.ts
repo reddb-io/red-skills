@@ -29,6 +29,14 @@ export interface ExitReceipt {
   salvaged: boolean;
   /** Number of files the salvage step committed (0 when the worktree was clean). */
   salvagedFiles: number;
+  /**
+   * Whether the branch ref reached origin. The DONE barrier ({@link passExitBarrier})
+   * OMITS this — a DONE receipt only exists after a successful push, so its absence
+   * reads as "pushed". A FAILURE {@link TerminalReceipt} always sets it explicitly
+   * (true/false), because a failing attempt still terminates even when the push is
+   * rejected. Consumers treat `undefined` as pushed.
+   */
+  pushed?: boolean;
 }
 
 /**
@@ -43,8 +51,9 @@ export interface ExitReceipt {
  */
 export interface TerminalReceipt extends ExitReceipt {
   /** True iff the branch ref reached origin (create or update); false on a failed
-   * or skipped push. The {@link ExitReceipt} base always implies a successful
-   * push (it only exists after one); this flag makes the failure case explicit. */
+   * or skipped push. Unlike the optional base field, a terminal receipt ALWAYS
+   * sets this — the whole point of the failure crossing is to report truthfully
+   * whether the work is on origin. */
   pushed: boolean;
 }
 
