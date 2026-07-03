@@ -200,7 +200,10 @@ export async function monitorCommand(
   if (watchdogRequested) {
     try {
       const supervisorCfg = resolveSupervisorConfig();
-      await runWatchdog(buildWatchdogIO(cwd, stdout), supervisorCfg.supervisorStaleS, supervisorCfg.progressStaleS);
+      await runWatchdog(buildWatchdogIO(cwd, stdout), supervisorCfg.supervisorStaleS, supervisorCfg.progressStaleS, {
+        maxRestarts: supervisorCfg.supervisorMaxRestarts,
+        windowS: supervisorCfg.supervisorRestartWindowS,
+      });
     } catch {
       // best-effort: recovery must never break monitoring.
     }
