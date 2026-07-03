@@ -185,10 +185,10 @@ describe("listLegacyWorkDirs", () => {
     expect(await listLegacyWorkDirs(join(tmpdir(), "does-not-exist-afk-xyz"))).toEqual([]);
   });
 
-  it("wipes a dead-orchestrator work-* dir and ignores other entries", async () => {
+  it("wipes a dead-orchestrator work-NNN relic and ignores other entries", async () => {
     const root = scratch();
     try {
-      const dead = join(root, "work-aaaa");
+      const dead = join(root, "work-1234");
       mkdirSync(dead, { recursive: true });
       writeFileSync(join(dead, "afk.pid"), DEAD_PID);
       // a non-work entry and the nested workers root must be ignored
@@ -201,10 +201,10 @@ describe("listLegacyWorkDirs", () => {
     }
   });
 
-  it("spares a live-orchestrator work-* dir", async () => {
+  it("spares a live-orchestrator work-NNN relic", async () => {
     const root = scratch();
     try {
-      const live = join(root, "work-bbbb");
+      const live = join(root, "work-5678");
       mkdirSync(live, { recursive: true });
       writeFileSync(join(live, "afk.pid"), ALIVE_PID);
       expect(await listLegacyWorkDirs(root)).toEqual([]);
@@ -213,12 +213,46 @@ describe("listLegacyWorkDirs", () => {
     }
   });
 
-  it("wipes a work-* dir with no pid file", async () => {
+  // #1052: the pre-cutover relics were `work-<issue-number>` dirs the AFK
+  // orchestrator itself created, marked by an `afk.pid` sentinel. A maintainer
+  // hand-work worktree under `.red/tmp/work-<slug>` is NOT AFK-owned — it never
+  // carries an afk.pid — and must be untouchable by the boot sweep.
+  it("spares a maintainer work-<slug> worktree with no afk.pid (with or without commits)", async () => {
     const root = scratch();
     try {
-      const orphan = join(root, "work-cccc");
-      mkdirSync(orphan, { recursive: true });
-      expect(await listLegacyWorkDirs(root)).toEqual([orphan]);
+      // fresh, zero commits — just the worktree dir
+      const fresh = join(root, "work-afk-first-doctrine");
+      mkdirSync(fresh, { recursive: true });
+      // one with WIP files present (simulating committed/uncommitted content)
+      const withWip = join(root, "work-statusline-fix");
+      mkdirSync(withWip, { recursive: true });
+      writeFileSync(join(withWip, "README.md"), "wip");
+      expect(await listLegacyWorkDirs(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("spares a work-<slug> dir even when it carries an afk.pid file", async () => {
+    // Belt-and-braces: the name must ALSO look like a relic. A slug-named dir is
+    // never an AFK relic regardless of stray sentinel files.
+    const root = scratch();
+    try {
+      const slug = join(root, "work-afk-first-doctrine");
+      mkdirSync(slug, { recursive: true });
+      writeFileSync(join(slug, "afk.pid"), DEAD_PID);
+      expect(await listLegacyWorkDirs(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("spares a work-NNN relic with no afk.pid — absent sentinel means not AFK-owned", async () => {
+    const root = scratch();
+    try {
+      const noSentinel = join(root, "work-4321");
+      mkdirSync(noSentinel, { recursive: true });
+      expect(await listLegacyWorkDirs(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
