@@ -50,7 +50,9 @@ import {
   resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../core/issue-classifier.js";
-import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
+import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE } from "../core/triage-labels.js";
+import { GO_ORIGIN, GO_WORKERS_SEGMENT } from "../core/go.js";
+import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../core/scout.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../core/worker-paths.js";
@@ -163,17 +165,45 @@ export async function probeFleetSupervisor(
 }
 
 /**
+ * Detect a `/go` or `--scout` dispatch (#1087). These runs live in their OWN
+ * worker namespace (`go-workers/` / `scout-workers/`), their own lane
+ * (`lane:go` / `lane:scout`, never `ready-for-agent`), and carry `--origin
+ * go`/`--origin scout` — so they can NEVER collide with a fleet's `workers/`
+ * namespace, claims, or lane. The fleet-supervisor boot guard exists ONLY to
+ * stop a second fleet from stomping the first on the shared `workers/`
+ * namespace; it must not apply to these isolated dispatches, which the SKILL.md
+ * contract requires to boot "whether or not a fleet is up". Detected via any of
+ * the three redundant signals threaded through the boot context.
+ */
+export function isNamespacedDispatch(
+  args: { origin?: string; lane?: string },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (args.origin === GO_ORIGIN || args.origin === SCOUT_ORIGIN) return true;
+  if (args.lane === LABEL_GO_LANE || args.lane === LABEL_SCOUT_LANE) return true;
+  const ns = env.RED_AFK_WORKERS_NAMESPACE;
+  if (ns === GO_WORKERS_SEGMENT || ns === SCOUT_WORKERS_SEGMENT) return true;
+  return false;
+}
+
+/**
  * Apply the boot guard: refuse to start if a fleet supervisor is already live
  * (unless `--force` was passed). Returns `"refused"` when the caller should
  * abort, `"forced"` when the guard was bypassed with a warning, or `"clear"`
  * when no live supervisor was found.
+ *
+ * `exempt` (#1087) skips the `afk-supervisor.pid` check entirely for a
+ * `/go`/`--scout` dispatch — an isolated, namespaced run that cannot collide
+ * with the fleet, so a live supervisor must never block it.
  */
 export async function checkBootGuard(
   pidFile: string,
   force: boolean,
   stdout: NodeJS.WritableStream,
   checkLivePid: (pid: number) => boolean = isLivePid,
+  exempt = false,
 ): Promise<"refused" | "forced" | "clear"> {
+  if (exempt) return "clear";
   const probe = await probeFleetSupervisor(pidFile, checkLivePid);
   if (!probe.live) return "clear";
   if (force) {
@@ -1459,10 +1489,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
   // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
   // spawned by the running supervisor; RED_AFK_SWEEPS_DONE=1 workers are
-  // fleet-owned and the supervisor already holds the pid.
+  // fleet-owned and the supervisor already holds the pid. A `/go`/`--scout`
+  // dispatch (#1087) is exempt too: its isolated namespace/lane/origin can
+  // never collide with the fleet, so it must boot whether or not a fleet is up.
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
     const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
-    const guard = await checkBootGuard(pidFile, flags.force, process.stdout);
+    const exempt = isNamespacedDispatch({ origin: flags.origin, lane: flags.lane });
+    const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
   }
 
