@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { runWatchdog, teardownWedgedSupervisor, type WatchdogIO } from "../src/core/watchdog.js";
+import {
+  decideDeadSupervisorRespawn,
+  runWatchdog,
+  teardownWedgedSupervisor,
+  type DeadSupervisorSignals,
+  type WatchdogIO,
+} from "../src/core/watchdog.js";
 import type { SupervisorLiveness } from "../src/core/supervisor.js";
 
 const NOW = 1700000000;
@@ -14,6 +20,9 @@ interface FakeIo {
   clearControlFiles: ReturnType<typeof vi.fn>;
   reconcile: ReturnType<typeof vi.fn>;
   relaunch: ReturnType<typeof vi.fn>;
+  deadSupervisorSignals: ReturnType<typeof vi.fn>;
+  readRestartLedger: ReturnType<typeof vi.fn>;
+  writeRestartLedger: ReturnType<typeof vi.fn>;
   log: ReturnType<typeof vi.fn>;
 }
 
@@ -28,7 +37,15 @@ function makeLiveness(over: Partial<SupervisorLiveness> = {}): SupervisorLivenes
   };
 }
 
-function makeIo(liveness: SupervisorLiveness): { io: WatchdogIO; fake: FakeIo } {
+function makeSignals(over: Partial<DeadSupervisorSignals> = {}): DeadSupervisorSignals {
+  return { readyForAgent: 0, target: 2, liveWorkers: 0, stopRequested: false, ...over };
+}
+
+function makeIo(
+  liveness: SupervisorLiveness,
+  signals: DeadSupervisorSignals = makeSignals(),
+  ledger: number[] = [],
+): { io: WatchdogIO; fake: FakeIo } {
   const fake: FakeIo = {
     now: vi.fn(() => NOW),
     liveness: vi.fn(async () => liveness),
@@ -37,6 +54,9 @@ function makeIo(liveness: SupervisorLiveness): { io: WatchdogIO; fake: FakeIo } 
     clearControlFiles: vi.fn(async () => {}),
     reconcile: vi.fn(async () => {}),
     relaunch: vi.fn(async () => {}),
+    deadSupervisorSignals: vi.fn(async () => signals),
+    readRestartLedger: vi.fn(async () => ledger),
+    writeRestartLedger: vi.fn(async () => {}),
     log: vi.fn(),
   };
   return { io: fake as unknown as WatchdogIO, fake };
@@ -167,6 +187,169 @@ describe("runWatchdog — quiescent supervisor recovery (#407)", () => {
     expect(result.health).toBe("healthy");
     expect(result.recovered).toBe(false);
     expect(fake.killTree).not.toHaveBeenCalled();
+  });
+});
+
+describe("decideDeadSupervisorRespawn — pure crash-loop-bounded respawn decision (#1097)", () => {
+  const base = { now: NOW, windowS: 300, maxRestarts: 3 };
+
+  it("respawns a dead supervisor with stranded work and workers below target", () => {
+    const d = decideDeadSupervisorRespawn({
+      ...base,
+      readyForAgent: 4,
+      liveWorkers: 1,
+      target: 2,
+      priorRestarts: [],
+    });
+    expect(d.action).toBe("respawn");
+    expect(d.restarts).toEqual([NOW]);
+    expect(d.countInWindow).toBe(1);
+  });
+
+  it("skips when the queue is empty (a supervisor that cleanly drained is not a fault)", () => {
+    const d = decideDeadSupervisorRespawn({
+      ...base,
+      readyForAgent: 0,
+      liveWorkers: 0,
+      target: 2,
+      priorRestarts: [],
+    });
+    expect(d.action).toBe("skip");
+  });
+
+  it("skips when live workers already meet target (not short-handed)", () => {
+    const d = decideDeadSupervisorRespawn({
+      ...base,
+      readyForAgent: 5,
+      liveWorkers: 2,
+      target: 2,
+      priorRestarts: [],
+    });
+    expect(d.action).toBe("skip");
+  });
+
+  it("prunes restart epochs older than the window before counting", () => {
+    // Two ancient restarts (outside window) + one recent → count is 1, well under cap.
+    const d = decideDeadSupervisorRespawn({
+      ...base,
+      readyForAgent: 3,
+      liveWorkers: 0,
+      target: 2,
+      priorRestarts: [NOW - 1000, NOW - 900, NOW - 10],
+    });
+    expect(d.action).toBe("respawn");
+    // Ancient two pruned; kept the recent one + this respawn.
+    expect(d.restarts).toEqual([NOW - 10, NOW]);
+    expect(d.countInWindow).toBe(2);
+  });
+
+  it("suppresses (crash-loop) once the pruned restart count reaches maxRestarts", () => {
+    const d = decideDeadSupervisorRespawn({
+      ...base,
+      readyForAgent: 3,
+      liveWorkers: 0,
+      target: 2,
+      priorRestarts: [NOW - 30, NOW - 20, NOW - 10], // 3 == maxRestarts
+    });
+    expect(d.action).toBe("crash-loop-suppressed");
+    expect(d.countInWindow).toBe(3);
+    // The ledger is not extended on suppression.
+    expect(d.restarts).toEqual([NOW - 30, NOW - 20, NOW - 10]);
+  });
+});
+
+describe("runWatchdog — dead-supervisor safety net (#1097)", () => {
+  const BOUND = { maxRestarts: 3, windowS: 300 };
+  const deadPid = makeLiveness({ pid: 4242, pidAlive: false });
+
+  it("respawns a dead supervisor: records restart, clears files, reconciles, relaunches", async () => {
+    const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.health).toBe("absent");
+    expect(result.respawnedDeadSupervisor).toBe(true);
+    expect(result.crashLoopSuppressed).toBe(false);
+    expect(result.recovered).toBe(false); // that flag is the quiescent (#407) path
+
+    expect(fake.writeRestartLedger).toHaveBeenCalledWith([NOW]);
+    expect(fake.clearControlFiles).toHaveBeenCalledTimes(1);
+    expect(fake.reconcile).toHaveBeenCalledTimes(1);
+    expect(fake.relaunch).toHaveBeenCalledTimes(1);
+    // The dead-supervisor path must NOT kill the surviving detached workers.
+    expect(fake.killWorkers).not.toHaveBeenCalled();
+    expect(fake.killTree).not.toHaveBeenCalled();
+  });
+
+  it("does NOT resurrect a gracefully stopped fleet (pid file gone → pid null)", async () => {
+    const { io, fake } = makeIo(makeLiveness({ pid: null }), makeSignals({ readyForAgent: 9, liveWorkers: 0 }));
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.health).toBe("absent");
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.deadSupervisorSignals).not.toHaveBeenCalled();
+    expect(fake.relaunch).not.toHaveBeenCalled();
+  });
+
+  it("does NOT resurrect when a graceful stop was requested (stop file present)", async () => {
+    const { io, fake } = makeIo(
+      deadPid,
+      makeSignals({ readyForAgent: 5, liveWorkers: 0, target: 2, stopRequested: true }),
+    );
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.relaunch).not.toHaveBeenCalled();
+    expect(fake.writeRestartLedger).not.toHaveBeenCalled();
+  });
+
+  it("skips a dead supervisor whose queue is empty", async () => {
+    const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 0, liveWorkers: 0, target: 2 }));
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.relaunch).not.toHaveBeenCalled();
+  });
+
+  it("suppresses respawn and emits a loud alert once the crash-loop bound is hit", async () => {
+    const { io, fake } = makeIo(
+      deadPid,
+      makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }),
+      [NOW - 30, NOW - 20, NOW - 10], // 3 == maxRestarts
+    );
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.crashLoopSuppressed).toBe(true);
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.relaunch).not.toHaveBeenCalled();
+    expect(fake.writeRestartLedger).not.toHaveBeenCalled();
+    expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("max-restarts cap"));
+  });
+
+  it("still records the respawn + relaunches even when relaunch throws (logged)", async () => {
+    const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
+    fake.relaunch.mockRejectedValueOnce(new Error("spawn failed"));
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.respawnedDeadSupervisor).toBe(true);
+    expect(fake.writeRestartLedger).toHaveBeenCalledWith([NOW]);
+    expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("relaunch failed"));
+  });
+
+  it("is inert when the IO exposes no dead-supervisor signal source (back-compat)", async () => {
+    const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
+    // A pre-#1097 IO surface: drop the new closure entirely.
+    delete (io as { deadSupervisorSignals?: unknown }).deadSupervisorSignals;
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.relaunch).not.toHaveBeenCalled();
   });
 });
 
