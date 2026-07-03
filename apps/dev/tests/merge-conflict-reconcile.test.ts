@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyConflictedFileKind,
+  classifyConflictHunk,
+  parseConflictHunks,
   partitionConflicts,
   reconcileMergeConflict,
   type ConflictFinding,
@@ -89,6 +92,71 @@ describe("partitionConflicts", () => {
     const { mechanical: mech, nonMechanical } = partitionConflicts(kinds.map((k) => mechanical("f", k)));
     expect(mech).toHaveLength(kinds.length);
     expect(nonMechanical).toHaveLength(0);
+  });
+});
+
+describe("parseConflictHunks", () => {
+  it("returns [] when there are no conflict markers", () => {
+    expect(parseConflictHunks("just\nsome\nlines\n")).toEqual([]);
+  });
+
+  it("extracts ours/theirs from a conflict hunk", () => {
+    const body = [
+      "before",
+      "<<<<<<< HEAD",
+      "a",
+      "b",
+      "=======",
+      "a ",
+      "b",
+      ">>>>>>> feature",
+      "after",
+    ].join("\n");
+    expect(parseConflictHunks(body)).toEqual([{ ours: ["a", "b"], theirs: ["a ", "b"] }]);
+  });
+
+  it("drops an unterminated hunk", () => {
+    const body = ["<<<<<<< HEAD", "a", "=======", "b"].join("\n");
+    expect(parseConflictHunks(body)).toEqual([]);
+  });
+});
+
+describe("classifyConflictHunk / classifyConflictedFileKind", () => {
+  it("classifies a whitespace-only hunk as mechanical", () => {
+    expect(classifyConflictHunk({ ours: ["const x = 1;"], theirs: ["const x = 1; "] })).toBe(
+      "trailing-whitespace",
+    );
+  });
+
+  it("classifies a trailing-blank-line-only hunk as mechanical", () => {
+    expect(classifyConflictHunk({ ours: ["a", "", ""], theirs: ["a"] })).toBe("trailing-whitespace");
+  });
+
+  it("classifies a real content divergence as non-mechanical (null)", () => {
+    expect(classifyConflictHunk({ ours: ["const x = 1;"], theirs: ["const x = 2;"] })).toBeNull();
+  });
+
+  it("file kind is mechanical only when EVERY hunk is whitespace-only", () => {
+    const mechanical = ["<<<<<<< HEAD", "a", "=======", "a ", ">>>>>>> f"].join("\n");
+    expect(classifyConflictedFileKind(mechanical)).toBe("trailing-whitespace");
+
+    const mixed = [
+      "<<<<<<< HEAD",
+      "a",
+      "=======",
+      "a ",
+      ">>>>>>> f",
+      "<<<<<<< HEAD",
+      "x = 1",
+      "=======",
+      "x = 2",
+      ">>>>>>> f",
+    ].join("\n");
+    expect(classifyConflictedFileKind(mixed)).toBe("semantic");
+  });
+
+  it("file kind is semantic when there are no conflict markers", () => {
+    expect(classifyConflictedFileKind("no markers here")).toBe("semantic");
   });
 });
 
