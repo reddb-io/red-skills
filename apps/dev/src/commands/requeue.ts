@@ -235,6 +235,9 @@ async function runAdoptLanding(
       labels: [...issueData.labels],
       branch,
       base,
+      // ADR 0083 landing precondition (#1018): the configured Trunk the primary
+      // checkout tracks, for doLanding's local-trunk-divergence guard.
+      trunk: getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") || "main",
       repo,
       repoDir: cwd,
       remote: "origin",
