@@ -14,6 +14,7 @@ import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reco
 import { resolveBase } from "../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
+import { passExitBarrier } from "../core/exit-barrier.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,
@@ -727,6 +728,21 @@ export function buildProcessDeps(
     // branch so the feedback gate + landing see the work instead of an empty
     // merge. No-op when the worktree is clean. Best-effort.
     salvageUncommitted: (branch) => gitx.salvageUncommitted(gitCtx, branch, ctx.remote),
+    // ADR 0083 §4 exit barrier (DONE tracer, #1020): the single owner of the DONE
+    // path's terminal exit — salvage-commit dirty worktree paths, push the branch
+    // to origin (retry once), and return the auditable receipt. Bound over the same
+    // GitContext: salvage reuses `salvageUncommitted`, push uses `pushBranch`, and
+    // the head sha is read from the pushed local ref.
+    exitBarrier: (branch) =>
+      passExitBarrier(
+        {
+          salvage: (b) => gitx.salvageUncommitted(gitCtx, b, ctx.remote),
+          push: (b) => gitx.pushBranch(gitCtx, b, ctx.remote),
+          headSha: async (b) => (await gitx.branchHead(gitCtx, b)) ?? "",
+          nowIso: () => new Date().toISOString(),
+        },
+        branch,
+      ),
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,

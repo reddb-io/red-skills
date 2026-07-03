@@ -411,6 +411,26 @@ export async function salvageUncommitted(ctx: GitContext, branch: string, remote
 }
 
 /**
+ * Push a LOCAL branch ref to `remote` (create or update the remote branch). The
+ * ref lives in the shared `.git`, so this runs from the primary checkout cwd —
+ * no worktree needed. Used by the ADR 0083 §4 exit barrier to guarantee the
+ * attempt branch reached origin before the attempt is allowed to terminate.
+ * Returns `{ok:true}` on a clean push; `{ok:false, error}` (never throws) on a
+ * rejected/failed push so the barrier owns the retry + hard-error policy. Routed
+ * through the same `runGit` seam so tests drive it without an OS git.
+ */
+export async function pushBranch(
+  ctx: GitContext,
+  branch: string,
+  remote = "origin",
+): Promise<{ ok: boolean; error?: string }> {
+  if (!branch) return { ok: false, error: "empty branch" };
+  const r = await runGit(ctx, ["push", remote, `refs/heads/${branch}:refs/heads/${branch}`]);
+  if (r.code === 0) return { ok: true };
+  return { ok: false, error: (r.stderr || r.stdout || `git push exited ${r.code}`).trim() };
+}
+
+/**
  * List origin refs under a namespace ("afk/" | "afk-attempts/") via ls-remote,
  * shaped as BranchRef[]. The optional last-commit epoch is left unset (the
  * snapshot 404 grace falls back to "keep" without it).

@@ -64,6 +64,7 @@ import {
 } from "./merge.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
+import { ExitBarrierError, type ExitReceipt } from "./exit-barrier.js";
 import {
   emitEnvelope,
   type EmitEnvelopeDeps,
@@ -491,6 +492,19 @@ export interface ProcessIssueDeps {
    */
   salvageUncommitted?(branch: string): Promise<number>;
   /**
+   * ADR 0083 §4 exit barrier (DONE tracer, #1020). The single owner of an
+   * attempt's terminal exit on the DONE path: salvage-commit any dirty worktree
+   * paths, push the attempt branch to origin (retry once), and return an auditable
+   * {@link ExitReceipt} (branch / head / pushedAt / salvage flag) recorded in the
+   * done ProcessIssueResult + attempt record. Throws {@link ExitBarrierError} when
+   * the push fails after retry — processIssue routes that to a NON-clean terminal
+   * so the attempt is never reported done without a receipt ("work is saved iff
+   * its branch ref is pushed to origin"). Optional → when absent the DONE path
+   * falls back to the legacy salvage-only step (`salvageUncommitted`). The CLI
+   * (run.ts) binds it over the same GitContext; tests inject a fake barrier.
+   */
+  exitBarrier?(branch: string): Promise<ExitReceipt>;
+  /**
    * Post-merge PRD cascade rebase (issue #1007, `afk.landing.cascade_rebase`).
    * Provides the IO surface for {@link runCascadeRebase}: after a successful DONE
    * landing, AFK rebases every open sibling branch (same prd:N label, not held by
@@ -598,6 +612,12 @@ export interface ProcessIssueResult {
   locked?: boolean;
   /** Merge commit sha on a successful done close. */
   mergeSha?: string;
+  /**
+   * ADR 0083 §4 exit-barrier receipt (#1020) — the auditable proof the attempt
+   * branch reached origin (branch / head / pushedAt / salvage flag). Present on
+   * the DONE path when an `exitBarrier` port is wired; undefined otherwise.
+   */
+  exitReceipt?: ExitReceipt;
   /** The lifecycle points that fired, in order — the parity target for tests. */
   hooksFired: HookName[];
   /** True when the terminal envelope was posted. */
@@ -1059,6 +1079,11 @@ export async function processIssue(
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
   let salvagedRunCommitCount = 0;
+  // ADR 0083 §4 exit-barrier receipt (#1020). Set on the DONE path once the barrier
+  // has salvage-committed + pushed the attempt branch to origin; recorded in the
+  // done ProcessIssueResult + the attempt record so "was this work saved?" is
+  // answerable from the record alone.
+  let exitReceipt: ExitReceipt | undefined;
   // Scout mode: collect the agent's text-chunk events as the report. The
   // orchestrator posts this as a GitHub comment instead of pushing a branch.
   const scoutTextChunks: string[] = [];
@@ -1273,7 +1298,49 @@ export async function processIssue(
     // dirty worktree paths onto the worker branch (one commit per file) so the
     // SAME feedback gate + landing tail validate and merge the complete work. A
     // clean worktree salvages nothing (count 0).
-    if (
+    // ADR 0083 §4 exit barrier (DONE tracer, #1020): on the DONE path, obtain the
+    // attempt's exit through the single barrier — salvage-commit any dirty worktree
+    // paths, push the branch to origin (retry once), and produce an auditable
+    // receipt. "Work is saved iff its branch ref is pushed to origin"; a push
+    // failure after retry throws ExitBarrierError and routes to a NON-clean
+    // terminal (the attempt is never reported done without a receipt). The legacy
+    // salvage-only step below still covers the other salvageable outcomes
+    // (no-sentinel / budget-exceeded), whose barrier wiring is the follow-up slice.
+    if (deps.exitBarrier && run.outcome === "done") {
+      try {
+        exitReceipt = await deps.exitBarrier(workerBranch);
+      } catch (err) {
+        if (err instanceof ExitBarrierError) {
+          // The barrier could not push the attempt branch to origin after its
+          // retry — "work is saved iff its branch ref is pushed" is NOT satisfied,
+          // so the attempt must NOT be reported as cleanly done. Route to the
+          // recoverable merge-conflict terminal (branch preserved, bounded retry
+          // re-pushes next run) with a receipt-absent reason in the envelope.
+          await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "merge-conflict", current.attempt));
+          return await terminalFailure(common, "merge-conflict", "merge-conflict", {
+            notes: `_(exit barrier: could not push the attempt branch \`${workerBranch}\` to origin after retry — work is NOT confirmed saved, so the attempt is not reported as cleanly done)_`,
+            log: String(err),
+          });
+        }
+        throw err;
+      }
+      if (exitReceipt.salvagedFiles > 0) {
+        salvagedUncommittedFiles = exitReceipt.salvagedFiles;
+        salvagedUncommittedOutcome = run.outcome;
+        salvagedRunCommitCount = run.commits.length;
+        const commitFact =
+          run.commits.length === 0
+            ? "committed nothing"
+            : `left dirty worktree paths after ${run.commits.length} commit(s)`;
+        deps.appendIterLog(
+          `🤖 /afk: inner agent emitted done but ${commitFact} — exit barrier salvaged ${exitReceipt.salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` and pushed to origin (receipt head ${exitReceipt.head || "?"}).`,
+        );
+      } else {
+        deps.appendIterLog(
+          `🤖 /afk: exit barrier pushed \`${workerBranch}\` to origin (clean worktree; receipt head ${exitReceipt.head || "?"}).`,
+        );
+      }
+    } else if (
       deps.salvageUncommitted &&
       (run.outcome === "done" || run.outcome === "no-sentinel" || run.outcome === "budget-exceeded")
     ) {
@@ -1833,11 +1900,16 @@ export async function processIssue(
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
   const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope);
   // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
-  // (done) envelope. Best-effort, gated, no-op when memory is absent.
+  // (done) envelope. Best-effort, gated, no-op when memory is absent. The ADR 0083
+  // §4 exit-barrier receipt (#1020), when present, rides the attempt record so the
+  // auditable "work reached origin" proof is preserved with the reasoning attempt.
   await recordAttemptBestEffort(common, "done", {
     durationS,
     mergeSha,
     validationSummary: validationSidecar.join("\n"),
+    notes: exitReceipt
+      ? `exit-barrier receipt: branch \`${exitReceipt.branch}\` pushed to origin at ${exitReceipt.pushedAt} (head ${exitReceipt.head || "?"}, salvaged ${exitReceipt.salvagedFiles} file(s)).`
+      : undefined,
   });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
@@ -1873,6 +1945,7 @@ export async function processIssue(
     mergeSha,
     hooksFired,
     envelopePosted: posted,
+    exitReceipt,
     preserved: true,
     swept: true,
   };
