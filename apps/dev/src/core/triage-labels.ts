@@ -28,6 +28,18 @@ export const LABEL_GO_LANE = "lane:go";
 // comment and the issue auto-closes; nothing lands on main.
 export const LABEL_SCOUT_LANE = "lane:scout";
 
+// Per-issue MANUAL-LANDING mode (issue #1049). A `ready-for-agent` issue carrying
+// THIS label runs the full normal AFK pipeline — claim, worktree, inner agent,
+// salvage, feedback gate, push, open the PR — then STOPS before any merge and
+// parks `ready-for-human` with the PR link, exactly like the `blocked:ci` shape
+// (PR left open, agent never re-runs, a human drives the final merge click). It
+// lets fully agent-codable slices that must not be auto-merged (e.g. changes to
+// AFK's own landing/claim machinery) stay in the autonomous lane instead of being
+// hand-dispatched via `/go`. The issue closes on PR merge via the `Closes #N`
+// back-reference. Created idempotently by `/setup-red-skills`; `/triage` may set
+// it at brief-writing time when the slice touches landing/claim machinery.
+export const LABEL_LANDING_MANUAL = "landing:manual";
+
 // Triage state labels
 export const LABEL_NEEDS_TRIAGE = "needs-triage";
 export const LABEL_NEEDS_INFO = "needs-info";
