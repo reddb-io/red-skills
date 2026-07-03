@@ -12,7 +12,7 @@
 // async fan-out the collectors use (glob → read each).
 
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import type { AfkState } from "../types/state.js";
 import { parseState, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
@@ -89,6 +89,15 @@ export interface WorkerStateReadOpts {
    * trees.
    */
   psSnapshot?: () => string;
+  /**
+   * Raw text content of the per-worker `worker.pid` file, for injection in
+   * tests. When omitted and `state.pid === 0`, the reader reads
+   * `{dirname(dirname(path))}/worker.pid` from disk. Only consulted when
+   * `state.pid === 0` and the primary evaluator returns "stalled" — this is
+   * the host-side liveness signal for isolation workers (docker/podman) where
+   * the host's `afk.state.json.pid` is never populated during the run.
+   */
+  workerPidContent?: string;
 }
 
 /** Sync read of the newest liveness lane record timestamp (epoch-ms), or
@@ -158,11 +167,61 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
     hasLiveDescendants,
   });
 
-  const liveness = verdictToLiveness(livenessVerdict);
+  // Isolation fallback: when state.pid is 0 (docker/podman workers never
+  // populate the host-side pid during the run) and the primary evaluator marks
+  // the attempt stalled (empty lane + no descendants), probe the per-worker
+  // worker.pid file instead. The supervisor writes it on the host regardless of
+  // sandbox mode, so it is the reliable host-side liveness signal for isolation
+  // workers even before afk.state.json syncs back at run end.
+  let finalVerdict = livenessVerdict;
+  if (livenessVerdict.status === "stalled" && state.pid === 0) {
+    // worker.pid lives one directory above the attempt dir:
+    // {workersRoot}/{workerId}/{N}-a{n}/afk.state.json → {workersRoot}/{workerId}/worker.pid
+    const workerPidPath = join(dirname(dirname(path)), "worker.pid");
+    let hostPidText: string | null;
+    if (opts.workerPidContent !== undefined) {
+      hostPidText = opts.workerPidContent;
+    } else {
+      try {
+        hostPidText = readFileSync(workerPidPath, "utf8");
+      } catch {
+        hostPidText = null;
+      }
+    }
+    const hostPid = hostPidText ? parseInt(hostPidText.trim(), 10) : NaN;
+    if (Number.isFinite(hostPid) && hostPid > 0) {
+      const killFn = opts.kill ?? ((pid: number) => { process.kill(pid, 0); return true; });
+      let hostPidAlive = false;
+      try {
+        hostPidAlive = killFn(hostPid, 0);
+      } catch {
+        hostPidAlive = false;
+      }
+      if (hostPidAlive) {
+        // Synthesize a "quiet-but-live" verdict: the orchestrator is running on
+        // the host but afk.state.json has not synced yet (isolation pre-sync).
+        finalVerdict = {
+          status: "alive",
+          laneFresh: false,
+          crossCheckArmed: false,
+          reason: `state.pid=0 but worker.pid=${hostPid} is alive (isolation worker)`,
+        };
+        // Derive the issue number from the attempt-dir basename when the state
+        // carries no current.number (the state file is empty pre-sync).
+        if (state.current.number === "" || state.current.number === undefined || state.current.number === null) {
+          const attemptBasename = basename(dirname(path));
+          const m = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attemptBasename);
+          if (m) state.current.number = Number(m[1]);
+        }
+      }
+    }
+  }
+
+  const liveness = verdictToLiveness(finalVerdict);
   // live: true when the evaluator does NOT say "stalled" (includes "alive" and "unknown"/container).
   // Replaces the old isStateLive-only pid check; the evaluator's cross-check already reads
   // the process tree so a pid-alive but descendant-less worker is correctly marked dead.
-  const live = livenessVerdict.status !== "stalled";
+  const live = finalVerdict.status !== "stalled";
   // active: lane fresh only (laneFresh=true), NOT just any "alive" status. A worker whose lane
   // is idle but has live descendants is "quiet-but-live" — it holds resources but is not actively
   // iterating, so surfaces show it as inactive (no [live] badge in the monitor/statusline).
@@ -174,7 +233,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
     live,
     active,
     liveness,
-    livenessVerdict,
+    livenessVerdict: finalVerdict,
   };
 }
 
@@ -203,6 +262,7 @@ export async function readWorkerStates(root: string, opts: WorkerStatesReadOpts 
       pidStartTime: opts.pidStartTime,
       sandboxTag: opts.sandboxTag,
       psSnapshot: opts.psSnapshot,
+      workerPidContent: opts.workerPidContent,
     });
     if (rec !== null) out.push(rec);
   }
