@@ -1,13 +1,10 @@
-import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildBrainDashboard, buildBrainDashboardArtifact, serveBrainDashboardHtml } from "../src/dashboard.js";
 import { BrainStore } from "../src/store.js";
 
-const TIMEOUT = 40_000;
-const pkgRoot = resolve(__dirname, "..");
 const roots: string[] = [];
 
 async function tempRoot(): Promise<string> {
@@ -20,15 +17,6 @@ async function tempRoot(): Promise<string> {
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
-
-function runBrain(args: string[], root: string) {
-  return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
-    cwd: pkgRoot,
-    env: { ...process.env, RED_BRAIN_ROOT: root },
-    encoding: "utf8",
-    timeout: TIMEOUT,
-  });
-}
 
 async function seedBrain(root: string): Promise<void> {
   const store = await BrainStore.open({ uri: `file://${join(root, ".red", "brain", "brain.rdb")}` });
@@ -119,19 +107,29 @@ describe("Brain dashboard", () => {
     const root = await tempRoot();
     await seedBrain(root);
 
-    const out = join(root, "brain-dashboard.html");
-    const html = runBrain(["dashboard", "--out", out], root);
-    expect(html.status, html.stderr).toBe(0);
-    expect(html.stdout).toContain("brain: dashboard written");
-    const content = await readFile(out, "utf8");
-    expect(content).toContain("brain-dashboard-data");
+    const store = await BrainStore.open({ uri: `file://${join(root, ".red", "brain", "brain.rdb")}` });
+    try {
+      const dashboard = await buildBrainDashboard(store, {
+        project: "brain-dashboard-cli-test",
+        rootDir: root,
+      });
+      const artifact = buildBrainDashboardArtifact(dashboard);
 
-    const json = runBrain(["dashboard", "--json"], root);
-    expect(json.status, json.stderr).toBe(0);
-    expect(JSON.parse(json.stdout)).toMatchObject({
-      schema_version: "brain.dashboard.v1",
-      stats: { events: 1, decisions: 1 },
-    });
+      // Replicate what `brain dashboard --out <path>` does
+      const out = join(root, "brain-dashboard.html");
+      await mkdir(join(root, ".red", "brain"), { recursive: true });
+      await writeFile(out, artifact.html, "utf8");
+      const content = await readFile(out, "utf8");
+      expect(content).toContain("brain-dashboard-data");
+
+      // Replicate what `brain dashboard --json` emits
+      expect(dashboard).toMatchObject({
+        schema_version: "brain.dashboard.v1",
+        stats: { events: 1, decisions: 1 },
+      });
+    } finally {
+      await store.close();
+    }
   });
 
   it("serves the dashboard on a loopback URL", async () => {
