@@ -66,6 +66,16 @@ export function parseGoArgs(
     }
     if (!sawDoubleDash && arg === "+yolo") { yolo = true; continue; }
     if (!sawDoubleDash && arg === "--scout") { scout = true; continue; }
+    // Unknown `--flag` before the `--` separator is an error, never demand text
+    // (#1045): folding e.g. `--resume 1043` into the demand silently minted a
+    // junk issue about a flag the user meant as a command. A literal dashed
+    // demand still works via the `--` separator (`/go -- --literal`).
+    if (!sawDoubleDash && arg.startsWith("--")) {
+      throw new Error(
+        `unknown flag ${JSON.stringify(arg)}: expected --runner/-r, --mode, --scout, or +yolo. ` +
+          `Pass a literal dashed demand after a "--" separator.`,
+      );
+    }
     positional.push(arg);
   }
   return { demand: positional.join(" ").trim(), runner, mode, yolo, scout };
