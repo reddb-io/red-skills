@@ -202,7 +202,9 @@ export type LandingResult =
  *   `<base>`, so there is nothing to integrate locally first; the prior pre-merge
  *   `merge --ff-only origin/<base>` is dropped (it failed the whole landing on a
  *   diverged primary, #572). landPr's own best-effort local fast-forward is the
- *   only primary touch and never gates the land.
+ *   only primary touch, and even that is SKIPPED on a LOCKED landing (ADR 0083
+ *   §2, #1019) — the locked PR path integrates on `origin/<locked-branch>` and
+ *   never writes to the primary at all.
  *
  *   openPr=false → {@link landDirectInWorktree}. The merge / push / rollback run
  *   inside an ISOLATED detached worktree (makeLandingWorktree) at `<base>`, so the
@@ -329,7 +331,9 @@ export async function doLanding(
  * lock. The merge happens remotely on the forge, so no local integrate runs first
  * — that was the only step that could fail the landing on a diverged primary
  * checkout (#572). The landing succeeds independent of the primary's local
- * `<base>` state. `locked` is echoed for the caller's result observability.
+ * `<base>` state. `locked` is echoed for the caller's result observability AND
+ * passed to {@link landPr}: on a LOCKED landing landPr skips its best-effort local
+ * fast-forward so the primary checkout is never written to (ADR 0083 §2, #1019).
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
   // Pre-merge rebase (#1006): rebase the worker branch onto the fetched base tip
@@ -352,6 +356,12 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     title: input.title,
     waitForReview: deps.waitForReview,
     ciAwait: deps.ciAwait,
+    // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
+    // its step-4 local fast-forward, so the integration reaches the maintainer
+    // only via `origin/<locked-branch>` (they promote by pulling). The lock only
+    // resolved `base` (#842); this is the one primary write the locked PR path
+    // still had.
+    locked: input.locked,
   });
   if (r.ok) return { ok: true, locked: input.locked };
   // Route the CI-aware failure modes (#812) distinctly. A failed required check
