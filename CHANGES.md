@@ -2179,4 +2179,11 @@ Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see
 - **status**: skipped — folded into improve-codebase-architecture
 - **upstream**: `6eeb81b`
 - **why**: The deep-module vocabulary is referenced by exactly one skill (`improve-codebase-architecture`), so a standalone shared-vocabulary skill adds indirection without serving a second consumer. All upstream content already exists in the ICA skill directory: the vocabulary (`codebase-design/SKILL.md` ≡ `LANGUAGE.md`), the deepening guide (`DEEPENING.md`), and the design-it-twice pattern (`DESIGN-IT-TWICE.md` ≡ `INTERFACE-DESIGN.md`).
+
+## upstream drift acknowledgement — mattpocock/skills `21f5976..272f99b` (46 commits, 24 files)
+
+- **status**: reviewed, cherry-picked nothing
+- **upstream**: `272f99b`
+- **why**: RedSkills has diverged completely from mattpocock/skills (own dev/memory/brain ecosystem; not a fork). All upstream additions in this range either have a RedSkills equivalent or are Matt-specific: `research` → `deep-research` / `dev:research`; `wayfinder` (renamed from `decision-mapping`) → no RedSkills equivalent needed; `claude-handoff` → `dev:handoff`; `implement` → `dev:simple-code` / `dev:complex-code`. Minor tweaks to grilling/tdd/ask-matt/setup docs are likewise not applicable.
+- **what changed**: bumped `.upstream` sha from `21f59763be7bf734cd4cf138805bb653d9ffebb7` to `272f99b22574f50e4266791c86b9302682970e23`; no skill files added, modified, or removed.
 - **what changed**: no files added, removed, or modified; upstream `codebase-design` skill recorded here as not adopted.
