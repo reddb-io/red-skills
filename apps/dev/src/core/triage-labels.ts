@@ -70,6 +70,14 @@ export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
 export const LABEL_CI = "blocked:ci";
 export const LABEL_POLICY = "blocked:policy";
 export const LABEL_INFRA = "blocked:infra";
+// ADR 0083 landing precondition: the primary checkout's LOCAL trunk ref has
+// DIVERGED from `origin/<trunk>` (it carries commits origin does not). The
+// Landing aborts BEFORE integrating any attempt branch and NEVER repairs the
+// divergence (no reset / stash / auto-commit / force-push) — a human must
+// reconcile the local repository state, so the issue parks with THIS label. It
+// is human-only (non-recoverable): a bounded auto-retry cannot fix a diverged
+// local branch, and re-running the agent would just re-hit the same precondition.
+export const LABEL_TRUNK_DIVERGED = "blocked:trunk-diverged";
 // AFK runner improvement (#908): the per-attempt resource budget guard aborted
 // the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
 // it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;
