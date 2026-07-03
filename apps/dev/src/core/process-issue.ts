@@ -56,6 +56,7 @@ import { runBackpressure, type BackpressureExec } from "./backpressure.js";
 import { runPostAttemptFormat, type PostAttemptFormatExec } from "./post-attempt-format.js";
 import {
   openReviewPr,
+  openManualLandingPr,
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
@@ -615,6 +616,7 @@ import {
   LABEL_HUMAN,
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
+  LABEL_LANDING_MANUAL,
 } from "./triage-labels.js";
 
 /**
@@ -1718,6 +1720,18 @@ export async function processIssue(
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
 
+  // ---- 6a0. per-issue MANUAL-LANDING mode (landing:manual, issue #1049) ----
+  // A `landing:manual` issue ran the full normal pipeline up to here; now it must
+  // STOP before any merge. Open the PR (no merge, no review label) and park the
+  // issue `ready-for-human` with the PR link — exactly the `blocked:ci` shape (PR
+  // left open, agent never re-runs, a human drives the final merge click). This
+  // takes precedence over the review gate and applies regardless of the landing
+  // MODE flag: manual landing inherently needs a PR for the human to merge, so it
+  // opens one even when `afk.worktree_launches_pull_request` is false.
+  if (labels.includes(LABEL_LANDING_MANUAL)) {
+    return await handoffForManualLanding(common, base, validationSidecar);
+  }
+
   // ---- 6a. PR review gate (ADR 0064 §10, #749) ----
   // When a PR is opened (openPr), a NON-mechanical change is handed off for a
   // fresh-agent review instead of fast-merged: open the PR, apply the review label
@@ -2045,6 +2059,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         kind: "trunk-diverged",
         summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
         next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
+      };
+    case "manual-landing":
+      return {
+        status: "blocked",
+        kind: "manual-landing",
+        summary: oneLine(sections.log, "Manual-landing hold: the full pipeline ran and the PR is open, awaiting a human merge."),
+        next: "Merge the open PR to land the work (it auto-closes this issue); no full agent re-run is needed.",
       };
     default:
       return null;
@@ -2404,6 +2425,90 @@ async function handoffForReview(
     base: c.base,
     locked: false,
     hooksFired: c.hooksFired,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Per-issue MANUAL-LANDING handoff (landing:manual, issue #1049). The completed
+ * attempt passed the full pipeline (DONE, committed, feedback + backpressure
+ * green), but the issue is flagged `landing:manual`: run everything EXCEPT the
+ * merge. Push the worker branch, open (or reuse) its PR with `Closes #N` (no
+ * merge, no review label), and park the issue `ready-for-human` with the PR URL —
+ * exactly the `blocked:ci` shape (PR left open, agent never re-runs, a human
+ * drives the final merge click; the issue auto-closes on merge). The terminal
+ * envelope carries the PR URL and names manual landing as the park reason. The PR
+ * + worker branch are intentionally LEFT in place and the attempt dir is
+ * preserved. On a PR-open failure the issue routes through the merge-conflict park
+ * instead, so the work is never silently lost.
+ */
+async function handoffForManualLanding(
+  c: StageCommon,
+  base: string,
+  validationSidecar: string[],
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+
+  // Make the worker branch's origin state certain before opening the PR — the
+  // landing path's first step, reused here without the merge.
+  await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
+
+  const opened = await openManualLandingPr(deps.mergeExec, {
+    repo: input.repo,
+    branch: c.branch,
+    target: base,
+    n: input.issue,
+    title: input.title,
+  });
+  if (!opened.ok) {
+    return await mergeFailed(c, "manual-landing-pr-open-failed");
+  }
+
+  const prRef = opened.prNumber !== undefined ? `PR #${opened.prNumber}` : "the open PR";
+  const prUrl = opened.prNumber !== undefined ? `https://github.com/${input.repo}/pull/${opened.prNumber}` : undefined;
+  const reason =
+    `manual landing (\`landing:manual\`): the full pipeline ran and ${prRef}` +
+    ` is open, but the merge is HELD for a human's final merge click`;
+
+  // Park for the human merge: drop running, add ready-for-human. `manual-landing`
+  // carries no typed `blocked:*` label (it is a handoff, not a failure), so
+  // editLabelsTagged appends nothing extra to the routing labels.
+  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "manual-landing");
+
+  // Terminal envelope: carry the PR URL + the manual-landing park reason (folds
+  // into the generic `blocked` status bucket — the work is intact on the open PR).
+  const envelopeLines = [
+    `Inner agent completed (DONE, committed) and ${prRef} is open (${prUrl ?? "PR URL unavailable"}).`,
+    `Held for MANUAL LANDING (\`landing:manual\`, #1049): a human drives the final merge click; the inner agent was NOT re-run.`,
+    `The issue auto-closes on PR merge via \`Closes #${input.issue}\`.`,
+  ];
+  const posted = await emitFailure(c, envelopeStatusFor("manual-landing"), "manual-landing", {
+    notes: envelopeLines.join("\n"),
+    validation: validationSidecar.length > 0 ? validationSidecar.join("\n") : undefined,
+  });
+
+  await writeCurrentBlockerBestEffort(c.deps, input, blockerForFailure("manual-landing", { log: reason }));
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: ${reason}. ${prUrl ? `${prUrl} — ` : ""}the implementation is complete and committed. ` +
+      `Holding for a human to land the existing PR (merge it to auto-close this issue); the inner agent was NOT re-run (#1049).`,
+  );
+
+  await recordAttemptBestEffort(c, "manual-landing", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    validationSummary: validationSidecar.join("\n"),
+    notes: `manual-landing: ${prRef} held for human merge`,
+  });
+  await deps.claimLock.release(input.issue);
+
+  return {
+    outcome: "manual-landing",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
     preserved: true,
     swept: false,
   };
