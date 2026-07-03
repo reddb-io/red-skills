@@ -19,6 +19,29 @@ function normalizeRoot(root: string): string {
 }
 
 /**
+ * The canonical worker-lane namespaces under `.red/tmp/`. The `/afk` fleet lives
+ * in `workers`, a `/go` dispatch in `go-workers`, a `--scout` run in
+ * `scout-workers`. Each RUN-TIME write path stays scoped to its single
+ * {@link workersSegment} lane (via `RED_AFK_WORKERS_NAMESPACE`), but the
+ * read-only observability surfaces (statusline/monitor/dashboard) must UNION
+ * over all of these — a live `/go` or `--scout` worker is one more live worker.
+ */
+export const WORKER_NAMESPACES = ["workers", "go-workers", "scout-workers"] as const;
+
+/**
+ * Every per-namespace workers root under a `.red/tmp` dir, for read-only union
+ * discovery. Namespace-blind on purpose: it does NOT consult
+ * `RED_AFK_WORKERS_NAMESPACE`, so an aggregating reader with no env override
+ * still sees all lanes. A namespace whose directory is absent on disk simply
+ * contributes nothing (the caller's glob swallows ENOENT), never an error.
+ */
+export function allWorkersRoots(tmpDir: string): string[] {
+  if (!tmpDir) throw new Error("tmpDir is required");
+  const base = normalizeRoot(tmpDir);
+  return WORKER_NAMESPACES.map((ns) => `${base}/${ns}`);
+}
+
+/**
  * The worker-tree segment under the tmp root. Defaults to `workers` (the `/afk`
  * fleet). A `/go` dispatch sets `RED_AFK_WORKERS_NAMESPACE=go-workers` in its
  * own process so its worker dir + worktree land under `.red/tmp/go-workers/`,
