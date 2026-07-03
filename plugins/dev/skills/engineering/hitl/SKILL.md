@@ -90,7 +90,7 @@ Then decide whether the answer makes the Issue delegable:
 
 If delegable, draft the refreshed `## Agent brief` before mutating anything.
 
-If delegable with manual landing, do **not** apply the plain-delegable transition: adding `ready-for-agent` would let a live fleet claim and auto-merge what must not be auto-merged. Until the `landing:manual` AFK mode (#1049) lands, keep `ready-for-human`, record the disposition as `delegable-manual-landing` in the Directive, and dispatch the coding via `/go` (agent codes and opens the PR; a human merges). Do not force these issues into the binary — parking them as plain non-delegable hides agent-executable work.
+If delegable with manual landing, do **not** apply the plain-delegable transition: a bare `ready-for-agent` would let a live fleet claim and **auto-merge** what must not be auto-merged. Instead route it into the autonomous lane in **manual-landing mode** (#1049): apply `ready-for-agent` **and** `landing:manual` together, record the disposition as `delegable-manual-landing` in the Directive. `/afk` then runs the full pipeline, opens the PR, and parks the issue `ready-for-human` with the PR link — a human drives only the final merge click (the agent is never re-run). This keeps agent-codable landing-machinery slices in `/afk` instead of hand-dispatching them via `/go`. Do not force these issues into the binary — parking them as plain non-delegable hides agent-executable work.
 
 If non-delegable, draft the next pending decision before mutating anything.
 
@@ -136,9 +136,9 @@ If delegable:
 
 If delegable-manual-landing:
 
-1. Keep `ready-for-human` — a live fleet must never claim and auto-merge landing-machinery work.
-2. Do not add `ready-for-agent` (until the `landing:manual` mode of #1049 exists; then route `ready-for-agent` + `landing:manual` instead).
-3. Post the Directive with disposition `delegable-manual-landing` and dispatch the coding via `/go`; the human merges the resulting PR and the issue is closed manually against it.
+1. Clear the issue-body `## Current blocker` section to `None` and add a checked entry under `## Resolved blockers`, then update or create the `## Agent brief` — exactly like the plain-delegable path (the *coding* is delegable).
+2. Remove `ready-for-human` and every stale `blocked:*` label, then add **both** `ready-for-agent` **and** `landing:manual` (#1049). `/afk` runs the full pipeline, opens the PR, and re-parks the issue `ready-for-human` with the PR link — auto-merge never happens.
+3. Post the Directive with disposition `delegable-manual-landing`. The human merges the resulting PR; the issue auto-closes via the PR's `Closes #N` back-reference (no manual close needed).
 
 If non-delegable:
 

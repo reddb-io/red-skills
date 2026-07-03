@@ -134,6 +134,7 @@ These exist for filtering and don't drive lifecycle transitions:
 | `priority:low`  | Everything else                                  | `/triage` or maintainer        |
 | `prd:{N}`      | Issue belongs to PRD #N                         | `/to-issues` when splitting a PRD |
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
+| `landing:manual` | Per-issue **manual-landing** mode (#1049): on a `ready-for-agent` issue, `/afk` runs the full pipeline + opens the PR, then **holds for a human's merge click** (parks `ready-for-human`, never auto-merges, never re-runs the agent). The issue auto-closes on PR merge via `Closes #N`. Lets agent-codable slices that must not be auto-merged stay in the autonomous lane instead of being hand-dispatched via `/go`. | `/triage` at brief time, or `/hitl`'s **delegable-manual-landing** disposition |
 
 `runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned. Provision it up front via `/setup-red-skills` to keep colour/description consistent across repos.
 
