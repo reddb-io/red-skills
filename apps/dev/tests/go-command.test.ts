@@ -26,6 +26,17 @@ describe("parseGoArgs", () => {
     expect(parseGoArgs(["--", "--literal", "demand"]).demand).toBe("--literal demand");
   });
 
+  // #1045: an unknown `--flag` must error, never fold into the demand. The
+  // original papercut minted a junk issue when `--resume 1043` was swallowed as
+  // demand text; now it fails loudly, and a literal dashed demand still works via
+  // the `--` separator.
+  it("throws on an unknown --flag instead of folding it into the demand (#1045)", () => {
+    expect(() => parseGoArgs(["--resume", "1043"])).toThrow(/unknown flag/);
+    expect(() => parseGoArgs(["do it", "--frobnicate"])).toThrow(/unknown flag/);
+    // …but a genuinely dashed demand still passes through after the `--` separator.
+    expect(parseGoArgs(["--", "--resume", "1043"]).demand).toBe("--resume 1043");
+  });
+
   it("throws when --runner has no value", () => {
     expect(() => parseGoArgs(["do it", "--runner"])).toThrow(/requires a value/);
   });
