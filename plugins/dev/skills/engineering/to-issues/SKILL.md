@@ -57,6 +57,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
 - Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`).
 - If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human), keeping the strict `## Blocked by` task list in the body as the human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/setup-red-skills` triage-labels *Dependency Edges*.
+  - **`req:N` targets must be executable slices, never a PRD.** Before creating each `req:N` label, check the target with `gh issue view N --json labels`: if #N carries `type:prd`, **refuse the edge** and re-point it at the PRD's concrete executable slice(s) instead (the child issues carrying `prd:N`). A PRD closes only after a manual bookkeeping step long after its substance ships (#907/#928: 46/46 children closed, PRDs still open), so a `req:<PRD>` edge strands the dependent in `blocked:dependency` forever. When the PRD has no slices yet, first create the concrete slice the dependent actually waits on, then point `req:N` at that slice.
 - If a slice is HITL, publish it as `ready-for-human`. Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use `## Current blocker` / `## Human decision needed` for gates, measurements, and decisions where closing a referenced issue is not enough to make the slice delegable.
 - If the parent is a PRD (carries `type:prd` + `needs-slicing`), tag every child with `prd:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent PRD. Never remove `type:prd` — it is a permanent type marker. Never apply `ready-for-agent` to the parent PRD itself.
 
@@ -66,6 +67,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - ❌ Do **not** modify or close any parent issue
 - ❌ Do **not** create horizontal-slice issues ("the schema layer", "the API layer", "the UI layer")
 - ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`
+- ❌ Do **not** create a `req:N` edge whose target #N is a `type:prd` — dependency edges must point at executable slices; re-point at the PRD's `prd:N` children (or a named slice created for the dependent)
 - ❌ Do **not** inline file paths or code snippets in issue bodies — they go stale. The one exception is in `<supporting-info>` (decision-rich prototype output)
 - ✅ **Do** publish in dependency order so "Blocked by" fields point at real issue IDs
 - ✅ **Do** prefer many thin slices over few thick ones
