@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see
 
 ---
 
+## to-issues + triage + doctor (engineering) — forbid `req:<PRD>` dependency edges (issue #1048)
+
+- **status**: modified
+- **upstream**: —
+- **why**: A `req:N` edge pointing at a PRD couples slice throughput to a manual bookkeeping step — a PRD closes long after its substance ships (#907/#928: 46/46 children closed, PRDs still open), so the dependent strands in `blocked:dependency` forever. This was the structural half of the 2026-07-02 queue freeze (14 slices carried `req:907`/`req:928` and could never promote).
+- **what changed**:
+  - `to-issues`: `req:N` publish step + hard rule now require the author to verify the target is not `type:prd` and re-point at the PRD's executable `prd:N` slices (or a named slice created for the dependent).
+  - `triage`: same validation added as a hard rule before any `req:N` label is applied.
+  - `doctor`: new read-only check 13 — `req:<PRD>` dependency-edge audit, one warn line per offending edge, delegated to `/triage`; added Fix-home + Apply rows and description entry.
+  - `.red/agents/triage-labels.md` *Dependency Edges*: documents the rule "`req:` targets must be executable issues, never `type:prd`" with the #907/#928 incident as rationale.
+
+---
+
 ## branch-lock (misc) — primary-checkout branch guard is now unconditional (#1025)
 
 - **status**: modified
