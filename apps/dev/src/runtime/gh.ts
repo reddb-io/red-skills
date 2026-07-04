@@ -479,16 +479,76 @@ export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
  * the only IO seam and the source-trust decision stays pure. */
 export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
 
-/** `gh issue view --json comments` → handoff-projected comment list. Each comment
- * carries the author login + body + createdAt the handoff renders, plus the
- * resolved source-trust LEVEL (issue #1100) so guidance promotion gates on SOURCE
- * rather than directive FORMAT. Bot authors resolve to `automation` and
- * OWNER/MEMBER/COLLABORATOR associations to `trusted` from the projection alone;
- * every other author is resolved through the injected `resolveTrust` (the
- * `resolveActorTrust` primitive) so allowlist / write-access / CODEOWNERS
+interface RawGhComment {
+  body?: string;
+  author?: { login?: string; is_bot?: boolean };
+  authorAssociation?: string;
+  createdAt?: string;
+}
+
+function parseJsonLines(stdout: string): unknown[] {
+  const out: unknown[] = [];
+  for (const line of stdout.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      out.push(JSON.parse(t));
+    } catch {
+      // tolerate malformed jq lines; callers degrade to the valid subset.
+    }
+  }
+  return out;
+}
+
+/** Project GitHub comments to handoff comments with the source-trust taxonomy.
+ * Bot authors resolve to `automation` and OWNER/MEMBER/COLLABORATOR associations
+ * to `trusted` from the projection alone; every other author is resolved through
+ * the injected `resolveTrust` primitive so allowlist / write-access / CODEOWNERS
  * overrides still promote. Results are memoised per login within the call. When
  * `resolveTrust` is omitted the level is decided from association + bot status
  * only (a non-collaborator falls to `dubious`). */
+async function projectComments(
+  raw: readonly RawGhComment[],
+  resolveTrust?: CommentTrustResolver,
+): Promise<HandoffComment[]> {
+  // Memoise the (potentially gh-backed) trust verdict per login within this call.
+  const verdicts = new Map<string, ActorTrustVerdict | undefined>();
+  const resolveVerdict = async (login: string | undefined): Promise<ActorTrustVerdict | undefined> => {
+    if (!login || !resolveTrust) return undefined;
+    if (verdicts.has(login)) return verdicts.get(login);
+    let verdict: ActorTrustVerdict | undefined;
+    try {
+      verdict = await resolveTrust(login);
+    } catch {
+      verdict = undefined;
+    }
+    verdicts.set(login, verdict);
+    return verdict;
+  };
+
+  const out: HandoffComment[] = [];
+  for (const c of raw) {
+    const login = c.author?.login ? String(c.author.login) : undefined;
+    const isBot = c.author?.is_bot === true;
+    const authorAssociation = c.authorAssociation ? String(c.authorAssociation) : undefined;
+    // A bot, or an already-trusted association, needs no gh trust lookup — only an
+    // otherwise-dubious human author is resolved through the trust primitive.
+    const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
+    const trustVerdict = isBot || associationTrusted ? undefined : await resolveVerdict(login);
+    out.push({
+      body: String(c.body ?? ""),
+      author: login,
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
+      sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
+    });
+  }
+  return out;
+}
+
+/** `gh issue view --json comments` → handoff-projected comment list. Each comment
+ * carries the author login + body + createdAt the handoff renders, plus the
+ * resolved source-trust LEVEL (issue #1100) so guidance promotion gates on SOURCE
+ * rather than directive FORMAT. */
 export async function issueComments(
   ctx: GhContext,
   issue: number,
@@ -510,39 +570,36 @@ export async function issueComments(
     return [];
   }
   if (!Array.isArray(parsed.comments)) return [];
+  return projectComments(parsed.comments, resolveTrust);
+}
 
-  // Memoise the (potentially gh-backed) trust verdict per login within this call.
-  const verdicts = new Map<string, ActorTrustVerdict | undefined>();
-  const resolveVerdict = async (login: string | undefined): Promise<ActorTrustVerdict | undefined> => {
-    if (!login || !resolveTrust) return undefined;
-    if (verdicts.has(login)) return verdicts.get(login);
-    let verdict: ActorTrustVerdict | undefined;
-    try {
-      verdict = await resolveTrust(login);
-    } catch {
-      verdict = undefined;
-    }
-    verdicts.set(login, verdict);
-    return verdict;
-  };
+function restCommentJq(): string {
+  return '.[] | {body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}';
+}
 
-  const out: HandoffComment[] = [];
-  for (const c of parsed.comments) {
-    const login = c.author?.login ? String(c.author.login) : undefined;
-    const isBot = c.author?.is_bot === true;
-    const authorAssociation = c.authorAssociation ? String(c.authorAssociation) : undefined;
-    // A bot, or an already-trusted association, needs no gh trust lookup — only an
-    // otherwise-dubious human author is resolved through the trust primitive.
-    const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
-    const trustVerdict = isBot || associationTrusted ? undefined : await resolveVerdict(login);
-    out.push({
-      body: String(c.body ?? ""),
-      author: login,
-      createdAt: c.createdAt ? String(c.createdAt) : undefined,
-      sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
-    });
-  }
-  return out;
+/** PR top-level comments use GitHub's issue-comment API. Project them with the
+ * exact same source-trust rule as issue comments so only trusted-source
+ * directives can become authoritative guidance. */
+export async function prComments(
+  ctx: GhContext,
+  pr: number,
+  resolveTrust?: CommentTrustResolver,
+): Promise<HandoffComment[]> {
+  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `issues/${pr}/comments`), "--jq", restCommentJq()]);
+  if (r.code !== 0) return [];
+  return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
+}
+
+/** PR review comments use a separate pull-review-comment API but share the same
+ * source-trust projection as issue and PR comments. */
+export async function prReviewComments(
+  ctx: GhContext,
+  pr: number,
+  resolveTrust?: CommentTrustResolver,
+): Promise<HandoffComment[]> {
+  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `pulls/${pr}/comments`), "--jq", restCommentJq()]);
+  if (r.code !== 0) return [];
+  return projectComments(parseJsonLines(r.stdout) as RawGhComment[], resolveTrust);
 }
 
 /** Orphan-cleanup per-dir lookup (prune_orphans): the issue's open/closed state
