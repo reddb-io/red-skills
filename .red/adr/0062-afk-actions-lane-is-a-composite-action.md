@@ -40,7 +40,7 @@ workflow as a thin policy layer (triggers + trust gate) on top of it.**
 
 - **`reusable-afk-attempt.yml`** (reusable workflow) keeps the triggers
   (`issues: labeled`/`opened`, `workflow_dispatch`, `workflow_call`) and the
-  ADR 0056 trust gate, then delegates execution via
+  ADR 0085 trust gate, then delegates execution via
   `uses: …/.github/actions/afk-attempt`. It owns policy, not execution.
 
 - **Two adoption surfaces**, one execution primitive:
@@ -85,4 +85,4 @@ accepted.
 - ADR 0038 / 0039 — the launcher + Release-fetch distribution the action reuses.
 - ADR 0033 / 0061 — the single execution seam; the substrate (`@reddb-io/red-castle`)
   inlined into the `dev` bundle the launcher fetches.
-- ADR 0056 — the trust gate that stays in the reusable's policy layer.
+- ADR 0085 — the trust gate that stays in the reusable's policy layer.
