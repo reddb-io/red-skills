@@ -20,8 +20,8 @@
  * `red-fetch.mjs <plugin> <version>` invocation and `afk.mjs <cmd>` keep working).
  *
  * Resolution + checksum logic is the pure {@link ensureBundle} in bundle-fetch.ts;
- * this file only wires it to node built-ins (`fetch`, `node:fs`, `node:crypto`,
- * `node:child_process`). No runtime deps. See ADR 0039 / 0038 / 0034 / 0029.
+ * this file wires it to node built-ins plus the Sigstore verifier for manifest
+ * signatures. See ADR 0039 / 0038 / 0034 / 0029.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -31,6 +31,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verify, type Bundle as SigstoreBundle } from "sigstore";
 import {
   BundleFetchError,
   type BundleIO,
@@ -47,6 +48,7 @@ import {
 } from "./self-update.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
+const GITHUB_ACTIONS_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 
 /** esbuild `--define`s this per output; absent under tsx/test → empty. */
 declare const __ENTRYPOINT_ROLE__: string;
@@ -85,6 +87,19 @@ const realIO: BundleIO = {
   },
   sha256(bytes) {
     return createHash("sha256").update(bytes).digest("hex");
+  },
+  async verifyBundleSignature({ artifact, signature, repo }) {
+    let bundle: SigstoreBundle;
+    try {
+      bundle = JSON.parse(new TextDecoder().decode(signature)) as SigstoreBundle;
+    } catch (err) {
+      throw new Error(`Sigstore bundle is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const escapedRepo = repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await verify(bundle, Buffer.from(artifact), {
+      certificateIssuer: GITHUB_ACTIONS_OIDC_ISSUER,
+      certificateIdentityURI: `^https://github\\.com/${escapedRepo}/\\.github/workflows/red-release\\.yml@refs/heads/main$`,
+    });
   },
 };
 
