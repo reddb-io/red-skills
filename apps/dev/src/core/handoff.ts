@@ -23,6 +23,7 @@
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
+import { isTrustedSource, type SourceTrustLevel } from "./source-trust.js";
 
 /** A comment as projected by the orchestrator from `gh issue view --json comments`. */
 export interface HandoffComment {
@@ -31,6 +32,15 @@ export interface HandoffComment {
   author?: string;
   /** ISO-8601 creation timestamp; the `at="…"` attribute is omitted when absent. */
   createdAt?: string;
+  /**
+   * The resolved source-trust level of the author (issue #1100). The projection
+   * populates it for every comment so guidance promotion can gate on SOURCE, not
+   * on directive FORMAT: only a `trusted` directive becomes authoritative
+   * `<human-guidance>`; a `dubious`/`automation` directive is demoted to the
+   * untrusted `<thread-discussion>` block. Undefined is a legacy pass-through
+   * (see {@link isTrustedSource}) — the projection always sets it now.
+   */
+  sourceTrust?: SourceTrustLevel;
 }
 
 export interface HandoffInput {
@@ -197,11 +207,18 @@ export function buildPreviousAttempts(comments: HandoffComment[]): string {
  * extracted directive, in document order within each directive-carrier comment
  * and chronological order across comments. A comment with two markers emits two
  * siblings with identical author/at. Returns "" when no directive exists.
+ *
+ * Authority is granted by SOURCE, never by FORMAT (issue #1100): a directive
+ * comment is promoted ONLY when its resolved source-trust level is `trusted`. A
+ * `dubious`/`automation` directive is skipped here and demoted to the untrusted
+ * `<thread-discussion>` block by {@link buildThreadDiscussion}. An unclassified
+ * (undefined) level is a legacy pass-through — see {@link isTrustedSource}.
  */
 export function buildHumanGuidance(comments: HandoffComment[]): string {
   const blocks: string[] = [];
   for (const comment of comments) {
     if (classifyComment({ body: comment.body }) !== "directive") continue;
+    if (!isTrustedSource(comment.sourceTrust)) continue;
     const author = comment.author && comment.author.length > 0 ? comment.author : "unknown";
     const created = comment.createdAt;
     for (const directive of extractDirectives(comment.body)) {
@@ -216,13 +233,18 @@ export function buildHumanGuidance(comments: HandoffComment[]): string {
 
 /**
  * `<thread-discussion>` inner body: one `<thread-discussion-entry>` per comment
- * classified `discussion` (narrative, no directive marker, not audit noise),
- * wrapping the verbatim body in chronological order. Returns "" when none.
+ * that is either classified `discussion` (narrative, no directive marker, not
+ * audit noise) OR a directive comment demoted here because its source is not
+ * trusted (issue #1100 — an untrusted directive is retained as untrusted data,
+ * never as authoritative guidance). Wraps the verbatim body in chronological
+ * order. Returns "" when none.
  */
 export function buildThreadDiscussion(comments: HandoffComment[]): string {
   const blocks: string[] = [];
   for (const comment of comments) {
-    if (classifyComment({ body: comment.body }) !== "discussion") continue;
+    const category = classifyComment({ body: comment.body });
+    const untrustedDirective = category === "directive" && !isTrustedSource(comment.sourceTrust);
+    if (category !== "discussion" && !untrustedDirective) continue;
     const author = comment.author && comment.author.length > 0 ? comment.author : "unknown";
     const created = comment.createdAt;
     const openTag = isPresent(created)
