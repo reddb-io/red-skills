@@ -17,7 +17,8 @@ import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";
 import { runReview, type ReviewResult } from "../core/review.js";
 import { makeExtractReview, reviewFindingsSchema } from "../core/review-extract.js";
 import { buildReviewGh } from "../runtime/review-gh.js";
-import type { GhContext } from "../runtime/gh.js";
+import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
+import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 
 const REVIEW_FLAG_SCHEMA = {
   pr: { kind: "value", coerce: (raw: string): number => Number(raw) },
@@ -63,6 +64,7 @@ export async function reviewCommand(
 
   const repo = await resolveRepo(root, values.repo as string | undefined);
   const ghCtx: GhContext = { cwd: root, repo };
+  const policy = parseTrustPolicy(config);
 
   const tier = resolveTier(config, runner, "complex", process.env);
   const sandcastle = await defaultSandcastleDeps();
@@ -80,7 +82,11 @@ export async function reviewCommand(
   let result: ReviewResult;
   try {
     result = await runReview(
-      { gh: buildReviewGh(ghCtx), extractReview, log: (m) => process.stderr.write(`${m}\n`) },
+      {
+        gh: buildReviewGh(ghCtx, (actor) => resolveActorTrust(policy, actor, (login) => actorTrustSignals(ghCtx, login))),
+        extractReview,
+        log: (m) => process.stderr.write(`${m}\n`),
+      },
       { pr, runner },
     );
   } catch (error) {
