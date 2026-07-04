@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseTrustPolicy,
   evaluateTrustGate,
+  evaluateClaimTrust,
+  describeTrustPosture,
   planTrustStrip,
   resolveActorTrust,
   TRUST_ALLOWLIST_KEY,
@@ -21,6 +23,8 @@ import type { ConfigValues } from "../src/core/config.js";
 const ALLOW = ["alice", "bob"];
 const policy: TrustPolicy = { enabled: true, allowlist: ALLOW };
 const permissive: TrustPolicy = { enabled: false, allowlist: [] };
+// A public repo with no allowlist: the #1101 fail-closed default posture.
+const failClosed: TrustPolicy = { enabled: false, allowlist: [], visibility: "public", failClosed: true };
 
 function prov(author?: string, actor?: string): TrustProvenance {
   return { author, readyForAgentActor: actor };
@@ -46,6 +50,44 @@ describe("parseTrustPolicy", () => {
   it("accepts whitespace/newline separators too", () => {
     const p = parseTrustPolicy({ [TRUST_ALLOWLIST_KEY]: "alice\nbob carol" });
     expect(p.allowlist).toEqual(["alice", "bob", "carol"]);
+  });
+});
+
+describe("parseTrustPolicy — repository-visibility-aware default (#1101)", () => {
+  it("no allowlist + PUBLIC repo → fail-closed posture", () => {
+    const p = parseTrustPolicy({} as ConfigValues, "public");
+    expect(p.enabled).toBe(false);
+    expect(p.failClosed).toBe(true);
+    expect(p.visibility).toBe("public");
+    expect(describeTrustPosture(p)).toBe("fail-closed");
+  });
+
+  it("no allowlist + PRIVATE repo → permissive (today's behaviour)", () => {
+    const p = parseTrustPolicy({} as ConfigValues, "private");
+    expect(p.enabled).toBe(false);
+    expect(p.failClosed).toBe(false);
+    expect(describeTrustPosture(p)).toBe("permissive");
+  });
+
+  it("no allowlist + INTERNAL repo → permissive (only public fails closed)", () => {
+    expect(parseTrustPolicy({} as ConfigValues, "internal").failClosed).toBe(false);
+  });
+
+  it("no allowlist + UNDETERMINABLE visibility → permissive (unknown ≠ public)", () => {
+    const p = parseTrustPolicy({} as ConfigValues, undefined);
+    expect(p.failClosed).toBe(false);
+    expect(describeTrustPosture(p)).toBe("permissive");
+  });
+
+  it("a configured allowlist stays STRICT on a public repo (visibility does not weaken it)", () => {
+    const p = parseTrustPolicy({ [TRUST_ALLOWLIST_KEY]: "alice" }, "public");
+    expect(p.enabled).toBe(true);
+    expect(p.failClosed).toBe(false);
+    expect(describeTrustPosture(p)).toBe("strict");
+  });
+
+  it("a configured allowlist stays STRICT on a private repo too", () => {
+    expect(describeTrustPosture(parseTrustPolicy({ [TRUST_ALLOWLIST_KEY]: "alice" }, "private"))).toBe("strict");
   });
 });
 
@@ -172,6 +214,81 @@ describe("resolveActorTrust — layered write-access / CODEOWNERS over the allow
     const issueAuthor = await resolveActorTrust(permissive, "carol", gh.lookup);
     expect(commentAuthor.executable).toBe(true);
     expect(issueAuthor.executable).toBe(true);
+  });
+
+  it("SUPPRESSES the permissive default under a fail-closed policy (#1101)", async () => {
+    // Same undeterminable-signal case as the permissive test above, but a public
+    // repo: the absence of a positive maintainer signal now HOLDS instead of waving through.
+    const gh = fakeGh({});
+    const v = await resolveActorTrust(failClosed, "anyone", gh.lookup);
+    expect(v.executable).toBe(false);
+    expect(v.basis).toBeUndefined();
+  });
+
+  it("still trusts a maintainer with write access under a fail-closed policy", async () => {
+    const gh = fakeGh({ hasWriteAccess: true });
+    const v = await resolveActorTrust(failClosed, "maintainer", gh.lookup);
+    expect(v.executable).toBe(true);
+    expect(v.basis).toBe("write-access");
+  });
+});
+
+describe("evaluateClaimTrust — visibility-aware claim decision (#1101)", () => {
+  // A lookup that trusts a fixed set of maintainer logins (write access), and
+  // returns determinable-but-negative signals for everyone else.
+  function maintainerLookup(...maintainers: string[]): ActorTrustLookup {
+    const set = new Set(maintainers);
+    return async (actor: string) => ({ hasWriteAccess: set.has(actor), inCodeowners: false });
+  }
+  const noLookup: ActorTrustLookup = async () => ({});
+
+  it("STRICT policy defers to the allowlist gate (author + actor allowlisted → executable)", async () => {
+    const v = await evaluateClaimTrust(policy, prov("alice", "bob"), noLookup);
+    expect(v.executable).toBe(true);
+  });
+
+  it("STRICT policy blocks a non-allowlisted author regardless of visibility", async () => {
+    const v = await evaluateClaimTrust(policy, prov("stranger", "alice"), noLookup);
+    expect(v.executable).toBe(false);
+    expect(v.reason).toContain("untrusted author 'stranger'");
+  });
+
+  it("PERMISSIVE (private repo, no allowlist) executes everything — never consults gh", async () => {
+    const calls: string[] = [];
+    const spy: ActorTrustLookup = async (a) => {
+      calls.push(a);
+      return {};
+    };
+    const v = await evaluateClaimTrust(permissive, prov("stranger", "intruder"), spy);
+    expect(v.executable).toBe(true);
+    expect(calls).toEqual([]); // permissive short-circuits before any maintainer lookup
+  });
+
+  it("FAIL-CLOSED (public repo) executes when BOTH author and promoter are maintainers", async () => {
+    const v = await evaluateClaimTrust(failClosed, prov("maint", "maint2"), maintainerLookup("maint", "maint2"));
+    expect(v.executable).toBe(true);
+  });
+
+  it("FAIL-CLOSED holds an untrusted AUTHOR for a maintainer summon", async () => {
+    const v = await evaluateClaimTrust(failClosed, prov("stranger", "maint"), maintainerLookup("maint"));
+    expect(v.executable).toBe(false);
+    expect(v.reason).toContain("untrusted author");
+    expect(v.reason).toContain("held for maintainer summon");
+  });
+
+  it("FAIL-CLOSED holds an untrusted PROMOTER even when the author is a maintainer", async () => {
+    const v = await evaluateClaimTrust(failClosed, prov("maint", "intruder"), maintainerLookup("maint"));
+    expect(v.executable).toBe(false);
+    expect(v.reason).toContain("untrusted ready-for-agent promoter");
+  });
+
+  it("FAIL-CLOSED honours an allowlist override even with no dynamic signal", async () => {
+    // A public repo that ALSO configured an allowlist is strict, not fail-closed —
+    // but the allowlist override still trusts a listed login on the fail-closed path
+    // when (hypothetically) failClosed were set alongside a list.
+    const hybrid: TrustPolicy = { enabled: false, allowlist: ["alice"], visibility: "public", failClosed: true };
+    const v = await evaluateClaimTrust(hybrid, prov("alice", "alice"), noLookup);
+    expect(v.executable).toBe(true);
   });
 });
 
