@@ -83,6 +83,13 @@ interface HarnessOptions {
   /** Trust-gate provenance (#621) returned by gh.issueTrust. When set, the port
    * is registered; absent → no port (gate never fires). */
   trust?: { author?: string; readyForAgentActor?: string };
+  /** Repository visibility (#1101) returned by gh.repoVisibility. When set, the
+   * port is registered and the no-allowlist default becomes visibility-aware. */
+  visibility?: "public" | "private" | "internal";
+  /** Logins that gh.actorTrustSignals reports as write-access maintainers (#1101);
+   * everyone else resolves to determinable-negative signals. When set, the
+   * actorTrustSignals port is registered (enabling the fail-closed path). */
+  maintainers?: string[];
   abortHook?: HookName;
   /** FIX J: when set, a pre_worktree hook command emits this env as the mutated
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
@@ -237,6 +244,15 @@ function harness(opts: HarnessOptions = {}): {
       // Trust-gate provenance port (#621): registered only when the test opts in,
       // so legacy-shaped tests omit it and the gate never fires (permissive).
       issueTrust: opts.trust ? async () => opts.trust! : undefined,
+      // Visibility-aware default ports (#1101): registered only when the test opts
+      // in, so legacy-shaped tests omit them and the default stays permissive.
+      repoVisibility: opts.visibility ? async () => opts.visibility! : undefined,
+      actorTrustSignals: opts.maintainers
+        ? async (actor: string) => ({
+            hasWriteAccess: opts.maintainers!.includes(actor),
+            inCodeowners: false,
+          })
+        : undefined,
     },
     claimGh: opts.claim
       ? {
@@ -1866,6 +1882,66 @@ describe("processIssue — trust gate (#621)", () => {
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.iterLogs.some((l) => /trust gate/.test(l))).toBe(false);
+  });
+});
+
+describe("processIssue — visibility-aware default (#1101)", () => {
+  it("PUBLIC repo + no allowlist + untrusted author → held for summon (claim-lost)", async () => {
+    const { deps, input, trace } = harness({
+      visibility: "public",
+      maintainers: ["maint"],
+      trust: { author: "stranger", readyForAgentActor: "maint" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    // No promotion edit, no agent spawn — held before any work.
+    expect(trace.labelEdits).toEqual([]);
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.released).toEqual([9]);
+    expect(
+      trace.iterLogs.some((l) => /trust gate refused #9 \[fail-closed\].*untrusted author/.test(l)),
+    ).toBe(true);
+  });
+
+  it("PUBLIC repo + no allowlist + maintainer author & promoter → claims normally", async () => {
+    const { deps, input, trace } = harness({
+      visibility: "public",
+      maintainers: ["maint", "maint2"],
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "maint", readyForAgentActor: "maint2" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.labelEdits[0]!.add).toEqual(["running"]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("PRIVATE repo + no allowlist → permissive default preserved (untrusted author still runs)", async () => {
+    const { deps, input, trace } = harness({
+      visibility: "private",
+      maintainers: ["maint"],
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "stranger", readyForAgentActor: "anybody" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((l) => /trust gate/.test(l))).toBe(false);
+  });
+
+  it("PUBLIC repo + configured allowlist → strict allowlist gate, not fail-closed", async () => {
+    const { deps, input, trace } = harness({
+      config: { "afk.trust-gate.allowlist": "alice,bob" },
+      visibility: "public",
+      maintainers: ["maint"], // a maintainer NOT in the allowlist is still refused
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.iterLogs.some((l) => /trust gate refused #9 \[strict\]/.test(l))).toBe(true);
   });
 });
 

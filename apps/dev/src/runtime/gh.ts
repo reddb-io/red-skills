@@ -21,7 +21,7 @@ import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
 import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../core/source-trust.js";
-import type { ActorTrustVerdict } from "../core/trust-gate.js";
+import type { ActorTrustVerdict, RepoVisibility } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
 
@@ -863,6 +863,25 @@ export async function issueTrust(
  * the AUTHOR alone (a `needs-triage` issue has no `ready-for-agent` actor yet). */
 export async function issueAuthor(ctx: GhContext, issue: number): Promise<string | undefined> {
   return issueAuthorLogin(ctx, issue);
+}
+
+/**
+ * `gh repo view --json visibility` → the repository visibility (issue #1101),
+ * lower-cased to the {@link RepoVisibility} union the trust-gate folds into its
+ * fail-closed default. A best-effort read: `undefined` on any failure (gh absent,
+ * unauthenticated, network blip) or an unrecognised value, which the gate treats
+ * as NON-public → the permissive default is preserved when visibility is unknown.
+ */
+export async function repoVisibility(ctx: GhContext): Promise<RepoVisibility | undefined> {
+  const r = await runGh(ctx, ["repo", "view", ...(ctx.repo ? [ctx.repo] : []), "--json", "visibility"]);
+  if (r.code !== 0) return undefined;
+  try {
+    const raw = (JSON.parse(r.stdout) as { visibility?: string }).visibility;
+    const v = String(raw ?? "").trim().toLowerCase();
+    return v === "public" || v === "private" || v === "internal" ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `gh issue view --json author` → the author login, or undefined on failure. */
