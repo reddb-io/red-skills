@@ -60,7 +60,7 @@ const baseInput: RunAgentInput = {
   branch: "afk/wZ2R4/42-fix-oauth",
 };
 
-// A valid AgentOutput block (ADR 0082, #932). baseInput's runner is claude,
+// A valid AgentOutput block (ADR 0090, #932). baseInput's runner is claude,
 // which is schema-enabled, so a `done` outcome is only honoured when stdout
 // carries a valid <agent-output> — embed it in the default fakeResult stdout so
 // the DONE-path tests reflect the structured-output contract.
@@ -116,7 +116,7 @@ describe("interpretCompletion (ADR 0082 — structured wins, sentinel fallback)"
   });
 });
 
-describe("enforceStructuredOutput (ADR 0082, #932)", () => {
+describe("enforceStructuredOutput (ADR 0090, #932)", () => {
   it("keeps a claude DONE that carries a valid AgentOutput", () => {
     const r = enforceStructuredOutput("claude", "done", `log\n${VALID_AGENT_OUTPUT}`);
     expect(r).toEqual({ outcome: "done" });
@@ -844,7 +844,7 @@ describe("runAgent — FIX J env application", () => {
   });
 });
 
-describe("runAgent — structured-output gate (ADR 0082, #932)", () => {
+describe("runAgent — structured-output gate (ADR 0090, #932)", () => {
   it("downgrades a claude DONE that lacks a valid AgentOutput to no-sentinel", async () => {
     const warnings: string[] = [];
     const deps = { ...makeDeps(async () => fakeResult({ stdout: "worked but no schema block" })), warn: (m: string) => warnings.push(m) };
