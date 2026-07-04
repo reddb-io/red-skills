@@ -131,6 +131,11 @@ interface ParsedRunFlags {
   localMerge: boolean;
   /** --yolo: the opt-in autonomy bump (`/go +yolo`, issue #923). */
   yolo: boolean;
+  /** --verify <cmd>: one-shot inline command appended to backpressure for a
+   * single `/go` dispatch when no configured harness exists. */
+  verifyCommand?: string;
+  /** --go-verify-retries <n>: bounded post-DONE machine-gate retry cap for `/go`. */
+  goVerifyRetries?: number;
   /** --run-mode <mode>: execution mode modifier forwarded to `processIssue`.
    * `"scout"` activates the read-only investigation path — no commits, no push,
    * no PR, no merge; the agent report is posted as a comment and the disposable
@@ -271,6 +276,8 @@ const RUN_FLAG_SCHEMA = {
   "pre-pr": { kind: "boolean" },
   "local-merge": { kind: "boolean" },
   yolo: { kind: "boolean" },
+  verify: { kind: "value", coerce: (raw: string): string => raw },
+  "go-verify-retries": { kind: "value", coerce: (raw: string): number => Number(raw) },
   "run-mode": { kind: "value", coerce: (raw: string): string => raw },
   force: { kind: "boolean" },
 } satisfies FlagSchema;
@@ -326,6 +333,11 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     prePr: values["pre-pr"] === true,
     localMerge: values["local-merge"] === true,
     yolo: values.yolo === true,
+    verifyCommand: values.verify as string | undefined,
+    goVerifyRetries:
+      typeof values["go-verify-retries"] === "number" && Number.isFinite(values["go-verify-retries"])
+        ? values["go-verify-retries"] as number
+        : undefined,
     runMode: values["run-mode"] as string | undefined,
     force: values.force === true,
   };
@@ -638,6 +650,8 @@ export function buildProcessDeps(
   attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
   attemptBudget?: AttemptBudget,
+  inlineVerifyCommand?: string,
+  goVerifyRetries?: number,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -722,6 +736,12 @@ export function buildProcessDeps(
   // call. When enabled, processIssue wraps the inner invocation in a bounded
   // outer loop carrying an accumulated `notes.md` between iterations.
   const notesLoop = resolveNotesLoopConfig(config);
+
+  const backpressureCommands = readBackpressure(config);
+  const mergedBackpressureCommands =
+    inlineVerifyCommand && inlineVerifyCommand.trim() !== ""
+      ? [...backpressureCommands, inlineVerifyCommand.trim()]
+      : backpressureCommands;
 
   return {
     gh: {
@@ -867,7 +887,8 @@ export function buildProcessDeps(
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
-    backpressureCommands: readBackpressure(config),
+    backpressureCommands: mergedBackpressureCommands,
+    goVerifyRetries,
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
@@ -1737,7 +1758,22 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle, settings.attemptBudget),
+    processDeps: buildProcessDeps(
+      ctx,
+      settings.model,
+      settings.sandbox,
+      feedback,
+      current,
+      flags.fallbackRunner,
+      runner,
+      undefined,
+      settings.maxIterations,
+      settings.attemptTimeoutSeconds,
+      settings.laneIdle,
+      settings.attemptBudget,
+      flags.verifyCommand,
+      flags.goVerifyRetries,
+    ),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.

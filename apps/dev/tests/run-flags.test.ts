@@ -65,6 +65,8 @@ describe("parseRunFlags", () => {
       prePr: false,
       localMerge: false,
       yolo: false,
+      verifyCommand: undefined,
+      goVerifyRetries: undefined,
       force: false,
     });
   });
@@ -78,6 +80,12 @@ describe("parseRunFlags", () => {
     expect(d.prePr).toBe(false);
     expect(d.localMerge).toBe(false);
     expect(d.yolo).toBe(false);
+  });
+
+  it("parses the /go inline verify command and bounded verify retry cap", () => {
+    const f = parseRunFlags(["--verify", "npm run test -- go", "--go-verify-retries", "3"]);
+    expect(f.verifyCommand).toBe("npm run test -- go");
+    expect(f.goVerifyRetries).toBe(3);
   });
 
   it("parses --boot-only as a boolean, defaulting to false", () => {

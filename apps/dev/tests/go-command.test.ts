@@ -9,6 +9,8 @@ describe("parseGoArgs", () => {
       mode: "direct-PR",
       yolo: false,
       scout: false,
+      dod: undefined,
+      verifyCommand: undefined,
     });
   });
 
@@ -35,6 +37,33 @@ describe("parseGoArgs", () => {
     expect(() => parseGoArgs(["do it", "--frobnicate"])).toThrow(/unknown flag/);
     // …but a genuinely dashed demand still passes through after the `--` separator.
     expect(parseGoArgs(["--", "--resume", "1043"]).demand).toBe("--resume 1043");
+  });
+
+  it("parses --dod without treating it as a demand or skipping confirmation", () => {
+    expect(parseGoArgs(["do it", "--dod", "tests pass and docs updated"])).toMatchObject({
+      demand: "do it",
+      dod: "tests pass and docs updated",
+    });
+    expect(parseGoArgs(["--dod=done means green gate", "do it"])).toMatchObject({
+      demand: "do it",
+      dod: "done means green gate",
+    });
+  });
+
+  it("parses an ephemeral inline --verify command for one dispatch", () => {
+    expect(parseGoArgs(["do it", "--verify", "npm run test -- go"])).toMatchObject({
+      demand: "do it",
+      verifyCommand: "npm run test -- go",
+    });
+    expect(parseGoArgs(["--verify=pnpm test", "do it"])).toMatchObject({
+      demand: "do it",
+      verifyCommand: "pnpm test",
+    });
+  });
+
+  it("throws when --dod or --verify has no value", () => {
+    expect(() => parseGoArgs(["do it", "--dod"])).toThrow(/requires a value/);
+    expect(() => parseGoArgs(["do it", "--verify"])).toThrow(/requires a value/);
   });
 
   it("throws when --runner has no value", () => {

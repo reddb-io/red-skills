@@ -68,6 +68,17 @@ export const GO_MODE_ENGINE_FLAG: Record<GoMode, string | null> = {
 /** The engine flag the opt-in `+yolo` autonomy bump appends. */
 export const GO_YOLO_FLAG = "--yolo";
 
+/** One-shot inline verification command used only when a `/go` confirmation
+ * approved an ephemeral machine gate for a repo with no configured harness. */
+export const GO_VERIFY_FLAG = "--verify";
+
+/** Bounded post-DONE machine-gate retry cap for `/go` dispatches. */
+export const DEFAULT_GO_VERIFY_RETRIES = 2;
+
+/** Tight cap for check-less `/go` dispatches when the maintainer declined an
+ * ephemeral inline check in a repo with no configured harness/backpressure. */
+export const GO_NO_HARNESS_ITER_CAP = 3;
+
 /**
  * Resolve a raw `--mode` value to a canonical {@link GoMode}, case-insensitively
  * (so `Direct-PR` and `NO-MISTAKES` both parse). Throws on any unknown value so
@@ -89,6 +100,17 @@ export interface DisposableIssueSpec {
   labels: string[];
 }
 
+export interface GoDodSpec {
+  /** The maintainer-approved high-detail rewrite of the demand. */
+  task?: string;
+  /** The maintainer-approved semantic Definition of Done. */
+  dod?: string;
+  /** Optional one-shot machine gate appended to backpressure for this dispatch. */
+  verifyCommand?: string;
+  /** True when the repo already has a configured harness/backpressure gate. */
+  hasHarness?: boolean;
+}
+
 function firstLine(s: string): string {
   const nl = s.indexOf("\n");
   return (nl === -1 ? s : s.slice(0, nl)).trim();
@@ -100,14 +122,35 @@ function firstLine(s: string): string {
  * fleet's candidate listing (which lists `ready-for-agent`) can never surface
  * it. Throws on an empty demand so `/go` never mints a contentless issue.
  */
-export function buildDisposableIssue(demand: string): DisposableIssueSpec {
+export function buildDisposableIssue(demand: string, dodSpec: GoDodSpec = {}): DisposableIssueSpec {
   const text = demand.trim();
   if (!text) throw new Error("/go requires a non-empty demand");
   const title = `/go: ${firstLine(text).slice(0, 72) || "dispatch"}`;
+  const task = (dodSpec.task ?? text).trim();
+  const dod = dodSpec.dod?.trim();
+  const verifyCommand = dodSpec.verifyCommand?.trim();
+  const machineGate =
+    verifyCommand && verifyCommand.length > 0
+      ? `Ephemeral inline check for this dispatch: \`${verifyCommand}\`.`
+      : dodSpec.hasHarness === false
+        ? "No configured harness/backpressure was approved for this dispatch; run best-effort under the tightened iteration cap."
+        : "Configured `afk.backpressure` plus the auto-derived feedback gate (`test`/`typecheck`/`lint`/`build`).";
   const body = [
-    "## Demand",
+    dod ? "## Task" : "## Demand",
     "",
-    text,
+    dod ? task : text,
+    ...(dod
+      ? [
+          "",
+          "## Acceptance Criteria",
+          "",
+          dod,
+          "",
+          "## Machine Gate",
+          "",
+          machineGate,
+        ]
+      : []),
     "",
     "---",
     "",
@@ -138,6 +181,9 @@ export function buildGoEngineArgs(opts: {
   runner?: string;
   mode?: GoMode;
   yolo?: boolean;
+  verifyCommand?: string;
+  hasHarness?: boolean;
+  verifyRetries?: number;
 }): string[] {
   if (!Number.isInteger(opts.issue) || opts.issue <= 0) {
     throw new Error(`buildGoEngineArgs: invalid issue ${opts.issue}`);
@@ -156,6 +202,10 @@ export function buildGoEngineArgs(opts: {
   const modeFlag = GO_MODE_ENGINE_FLAG[opts.mode ?? DEFAULT_GO_MODE];
   if (modeFlag) args.push(modeFlag);
   if (opts.yolo) args.push(GO_YOLO_FLAG);
+  const verifyCommand = opts.verifyCommand?.trim();
+  if (verifyCommand) args.push(GO_VERIFY_FLAG, verifyCommand);
+  if (opts.hasHarness === false && !verifyCommand) args.push("-n", String(GO_NO_HARNESS_ITER_CAP));
+  if (opts.verifyRetries !== undefined) args.push("--go-verify-retries", String(opts.verifyRetries));
   if (opts.runner) args.push("--runner", opts.runner);
   return args;
 }
@@ -186,13 +236,20 @@ export interface GoDispatchResult {
 export async function dispatchGo(
   deps: GoDispatchDeps,
   demand: string,
-  opts: { runner?: string; mode?: GoMode; yolo?: boolean } = {},
+  opts: { runner?: string; mode?: GoMode; yolo?: boolean } & GoDodSpec = {},
 ): Promise<GoDispatchResult> {
-  const spec = buildDisposableIssue(demand);
+  const spec = buildDisposableIssue(demand, opts);
   await deps.ensureLabel(LABEL_GO_LANE);
   const issue = await deps.createIssue(spec);
   const engineExit = await deps.runEngine(
-    buildGoEngineArgs({ issue, runner: opts.runner, mode: opts.mode, yolo: opts.yolo }),
+    buildGoEngineArgs({
+      issue,
+      runner: opts.runner,
+      mode: opts.mode,
+      yolo: opts.yolo,
+      verifyCommand: opts.verifyCommand,
+      hasHarness: opts.hasHarness,
+    }),
   );
   return { issue, engineExit };
 }
