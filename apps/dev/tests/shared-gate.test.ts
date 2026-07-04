@@ -5,6 +5,11 @@ import {
   makeHeadlessSink,
   makeInteractiveSink,
   MECHANICAL_KINDS,
+  SENSITIVE_PATH_PATTERNS,
+  LIFECYCLE_SCRIPT_NAMES,
+  isSensitivePath,
+  hasLifecycleScriptInDiff,
+  checkSensitivePaths,
   type EscalationOutcome,
   type GateFinding,
   type SharedGateDeps,
@@ -283,6 +288,173 @@ describe("makeInteractiveSink — interactive escalation", () => {
 
     expect(result.passed).toBe(false);
     expect(result.resolutions[0].escalationOutcome).toBe("skipped");
+  });
+});
+
+// ---------- sensitive-path guard (issue #1102) ----------
+
+describe("SENSITIVE_PATH_PATTERNS — closed auditable set", () => {
+  it("covers every enumerated category (CI, hooks, .red/)", () => {
+    expect(SENSITIVE_PATH_PATTERNS.length).toBeGreaterThan(0);
+    // Each pattern is a RegExp instance (not a string).
+    for (const p of SENSITIVE_PATH_PATTERNS) {
+      expect(p).toBeInstanceOf(RegExp);
+    }
+  });
+
+  it("LIFECYCLE_SCRIPT_NAMES are non-empty strings", () => {
+    for (const name of LIFECYCLE_SCRIPT_NAMES) {
+      expect(typeof name).toBe("string");
+      expect(name.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("isSensitivePath — path pattern matching", () => {
+  it("flags .github/workflows/* as sensitive", () => {
+    expect(isSensitivePath(".github/workflows/ci.yml")).toBe(true);
+    expect(isSensitivePath(".github/workflows/red-release.yml")).toBe(true);
+  });
+
+  it("flags .git/hooks/* as sensitive", () => {
+    expect(isSensitivePath(".git/hooks/pre-commit")).toBe(true);
+    expect(isSensitivePath(".git/hooks/commit-msg")).toBe(true);
+  });
+
+  it("flags .husky/* as sensitive", () => {
+    expect(isSensitivePath(".husky/pre-commit")).toBe(true);
+    expect(isSensitivePath(".husky/pre-push")).toBe(true);
+  });
+
+  it("flags .githooks/* as sensitive", () => {
+    expect(isSensitivePath(".githooks/pre-commit")).toBe(true);
+  });
+
+  it("flags any file under .red/ as sensitive", () => {
+    expect(isSensitivePath(".red/config.yaml")).toBe(true);
+    expect(isSensitivePath(".red/trust/gate.json")).toBe(true);
+    expect(isSensitivePath(".red/adr/0001-init.md")).toBe(true);
+  });
+
+  it("does NOT flag ordinary source files", () => {
+    expect(isSensitivePath("src/index.ts")).toBe(false);
+    expect(isSensitivePath("apps/dev/src/core/landing.ts")).toBe(false);
+    expect(isSensitivePath("README.md")).toBe(false);
+    expect(isSensitivePath("package.json")).toBe(false);
+    expect(isSensitivePath("pnpm-lock.yaml")).toBe(false);
+  });
+
+  it("does NOT flag a path that merely contains a sensitive segment mid-path", () => {
+    // A path like 'src/.github/workflows/test.yml' should still be flagged
+    // because the pattern anchors at start of string for .github/workflows.
+    // But something like 'docs/red-migration.md' is NOT .red/
+    expect(isSensitivePath("docs/red-migration.md")).toBe(false);
+    expect(isSensitivePath("apps/red-ui/index.ts")).toBe(false);
+  });
+
+  it("flags a nested .git/hooks path", () => {
+    // The pattern uses (?:^|\/) so nested paths also match.
+    expect(isSensitivePath("sub/.git/hooks/post-commit")).toBe(true);
+  });
+});
+
+describe("hasLifecycleScriptInDiff — lifecycle script detection", () => {
+  it("detects preinstall added to package.json", () => {
+    const diff = `@@ -5,0 +5,1 @@\n+    "preinstall": "node setup.js",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(true);
+  });
+
+  it("detects postinstall added to package.json", () => {
+    const diff = `@@ -10,0 +10,1 @@\n+    "postinstall": "patch-package",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(true);
+  });
+
+  it("detects prepare added to package.json", () => {
+    const diff = `\n+    "prepare": "husky install",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(true);
+  });
+
+  it("ignores removed lifecycle script lines (- prefix)", () => {
+    const diff = `-    "preinstall": "old script",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(false);
+  });
+
+  it("ignores context lines (space prefix) with lifecycle script names", () => {
+    const diff = `     "preinstall": "old script",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(false);
+  });
+
+  it("does NOT flag ordinary script additions (start/test/build)", () => {
+    const diff = `+    "build": "tsc",\n+    "test": "vitest",\n+    "start": "node dist/index.js",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(false);
+  });
+
+  it("returns false for an empty diff", () => {
+    expect(hasLifecycleScriptInDiff("")).toBe(false);
+  });
+
+  it("detects prepublishOnly added to package.json", () => {
+    const diff = `+    "prepublishOnly": "pnpm run build",`;
+    expect(hasLifecycleScriptInDiff(diff)).toBe(true);
+  });
+});
+
+describe("checkSensitivePaths — integrated guard", () => {
+  it("returns empty array when nothing is sensitive", () => {
+    const hits = checkSensitivePaths(["src/index.ts", "README.md"], "");
+    expect(hits).toHaveLength(0);
+  });
+
+  it("flags a CI workflow file", () => {
+    const hits = checkSensitivePaths([".github/workflows/ci.yml"], "");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].path).toBe(".github/workflows/ci.yml");
+    expect(hits[0].reason).toMatch(/CI workflow/);
+  });
+
+  it("flags a .red/ config file", () => {
+    const hits = checkSensitivePaths([".red/config.yaml"], "");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].reason).toMatch(/trust\/gate/);
+  });
+
+  it("flags multiple sensitive paths independently", () => {
+    const hits = checkSensitivePaths(
+      [".github/workflows/ci.yml", "src/core/ship.ts", ".husky/pre-commit"],
+      "",
+    );
+    expect(hits).toHaveLength(2);
+    const paths = hits.map((h) => h.path);
+    expect(paths).toContain(".github/workflows/ci.yml");
+    expect(paths).toContain(".husky/pre-commit");
+  });
+
+  it("flags a lifecycle script change in package.json diff", () => {
+    const diff = `+    "preinstall": "node setup.js",`;
+    const hits = checkSensitivePaths(["package.json", "src/index.ts"], diff);
+    expect(hits.some((h) => h.reason.includes("lifecycle script"))).toBe(true);
+  });
+
+  it("does NOT flag a package.json with only non-lifecycle script changes", () => {
+    const diff = `+    "build": "tsc",`;
+    const hits = checkSensitivePaths(["package.json"], diff);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("includes the package.json file path in the hit when package.json is in changedFiles", () => {
+    const diff = `+    "postinstall": "patch-package",`;
+    const hits = checkSensitivePaths(["packages/shared/package.json"], diff);
+    const lifecycleHit = hits.find((h) => h.reason.includes("lifecycle script"));
+    expect(lifecycleHit).toBeDefined();
+    expect(lifecycleHit!.path).toContain("package.json");
+  });
+
+  it("clean diff with only regular changes returns no hits", () => {
+    const hits = checkSensitivePaths(
+      ["apps/dev/src/core/landing.ts", "apps/dev/tests/landing.test.ts"],
+      "",
+    );
+    expect(hits).toHaveLength(0);
   });
 });
 

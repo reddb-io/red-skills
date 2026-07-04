@@ -90,6 +90,11 @@ export const LABEL_INFRA = "blocked:infra";
 // is human-only (non-recoverable): a bounded auto-retry cannot fix a diverged
 // local branch, and re-running the agent would just re-hit the same precondition.
 export const LABEL_TRUNK_DIVERGED = "blocked:trunk-diverged";
+// Sensitive-path guard (issue #1102): the landing diff touched a CI workflow
+// file, a package.json lifecycle script, a git hook, or `.red/` trust/gate
+// configuration — an intent-class change that can never auto-land. A human
+// must review the change before it reaches the base branch.
+export const LABEL_SENSITIVE_PATH = "blocked:sensitive-path";
 // AFK runner improvement (#908): the per-attempt resource budget guard aborted
 // the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
 // it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;

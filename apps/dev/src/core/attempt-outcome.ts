@@ -36,6 +36,7 @@ import {
   LABEL_INFRA,
   LABEL_BUDGET,
   LABEL_TRUNK_DIVERGED,
+  LABEL_SENSITIVE_PATH,
 } from "./triage-labels.js";
 
 /**
@@ -94,6 +95,12 @@ export type AttemptOutcome =
   // auto-commit / force-push to repair it, so a bounded retry could only re-hit
   // the same precondition.
   | "trunk-diverged"
+  // Sensitive-path guard (issue #1102): the landing diff touched a CI workflow
+  // file, a package.json lifecycle script, a git hook, or `.red/` trust/gate
+  // configuration. These are intent-class changes that require human review —
+  // auto-landing them would bypass auditability regardless of test/CI status.
+  // Human-only (non-recoverable): a bounded retry does not change the diff.
+  | "sensitive-path"
   | "infra";
 
 /**
@@ -150,6 +157,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_BUDGET;
     case "trunk-diverged":
       return LABEL_TRUNK_DIVERGED;
+    case "sensitive-path":
+      return LABEL_SENSITIVE_PATH;
     case "infra":
       return LABEL_INFRA;
     case "done":
@@ -212,6 +221,9 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     // is intact on the attempt branch; the local trunk a human owns is out of
     // sync, so it emits a `blocked` envelope (never `merge-conflict`).
     case "trunk-diverged":
+    // sensitive-path (#1102) folds into the generic `blocked` bucket — the diff
+    // touched a sensitive path; a human must review it before landing.
+    case "sensitive-path":
     case "infra":
     // review-requested is a handoff, not a failure: the per-issue lifecycle
     // emits no terminal failure envelope for it (it parks the issue + opens the
@@ -279,6 +291,9 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     // auto-retry cannot un-diverge the maintainer's local trunk, and the Landing
     // refuses to repair it — only a human reconciling the local state clears it.
     case "trunk-diverged":
+    // sensitive-path (#1102) is NON-recoverable: a retry runs the same diff and
+    // hits the same guard. Only a human reviewing the sensitive change clears it.
+    case "sensitive-path":
     case "infra":
     case "done":
     case "claim-lost":

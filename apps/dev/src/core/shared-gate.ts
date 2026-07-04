@@ -174,6 +174,110 @@ export async function runSharedGate(
   return { passed, resolutions, mechanicalApplied, intentEscalated };
 }
 
+// ---------- sensitive-path guard (issue #1102) ----------
+
+/**
+ * The CLOSED, AUDITABLE set of sensitive path patterns. A diff touching ANY
+ * path that matches one of these patterns is an intent-class change that can
+ * never auto-land — it pages ready-for-human regardless of test/CI status.
+ *
+ * Issue #1102 enumerates exactly these patterns. To add a new one, amend this
+ * list AND update the issue. The default is SAFE: anything not on this list
+ * proceeds normally.
+ */
+export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
+  /^\.github\/workflows\//,     // CI workflow files
+  /(?:^|\/)\.git\/hooks\//,    // git hooks directory
+  /^\.husky\//,                // Husky hooks
+  /^\.githooks\//,             // alternative git hooks directory
+  /^\.red\//,                  // .red/ trust/gate config and gate's own config
+];
+
+/**
+ * The CLOSED set of npm lifecycle script names. A diff that adds or alters any
+ * of these keys inside a `package.json` file is treated as a sensitive change
+ * because lifecycle scripts execute arbitrary code during `npm install`.
+ */
+export const LIFECYCLE_SCRIPT_NAMES: readonly string[] = [
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepublish",
+  "prepublishOnly",
+  "prepack",
+  "pack",
+  "postpack",
+];
+
+/** A single match produced by the sensitive-path guard. */
+export interface SensitivePathHit {
+  /** The changed file path (or description) that triggered the guard. */
+  path: string;
+  /** Human-readable reason why this path is sensitive. */
+  reason: string;
+}
+
+/**
+ * Return true when `filePath` matches any entry in {@link SENSITIVE_PATH_PATTERNS}.
+ * PURE predicate — no IO.
+ */
+export function isSensitivePath(filePath: string): boolean {
+  return SENSITIVE_PATH_PATTERNS.some((p) => p.test(filePath));
+}
+
+/**
+ * Return true when `diffText` contains any added line (`+` prefix) that sets a
+ * key from {@link LIFECYCLE_SCRIPT_NAMES} inside a `package.json`. Checks only
+ * lines starting with `+` (added/changed) to avoid false-positives on removed
+ * scripts. PURE predicate — no IO.
+ */
+export function hasLifecycleScriptInDiff(diffText: string): boolean {
+  const names = LIFECYCLE_SCRIPT_NAMES.join("|");
+  const re = new RegExp(`^\\+\\s*"(${names})"\\s*:`, "m");
+  return re.test(diffText);
+}
+
+/**
+ * Scan `changedFiles` (repo-relative paths from the branch diff) and
+ * `packageJsonDiff` (unified diff of any `package.json` files in the branch)
+ * for sensitive-path hits. Returns an empty array when the diff is clean.
+ * PURE — no IO.
+ *
+ * Callers provide both inputs from a single `git diff` pass so this function
+ * stays IO-free and fully unit-testable.
+ */
+export function checkSensitivePaths(
+  changedFiles: string[],
+  packageJsonDiff: string,
+): SensitivePathHit[] {
+  const hits: SensitivePathHit[] = [];
+
+  for (const p of changedFiles) {
+    if (isSensitivePath(p)) {
+      hits.push({ path: p, reason: sensitivePathReason(p) });
+    }
+  }
+
+  if (packageJsonDiff && hasLifecycleScriptInDiff(packageJsonDiff)) {
+    const pkgPaths = changedFiles.filter((p) => /(?:^|\/)package\.json$/.test(p));
+    hits.push({
+      path: pkgPaths.length > 0 ? pkgPaths.join(", ") : "package.json",
+      reason: "lifecycle script added or altered in package.json",
+    });
+  }
+
+  return hits;
+}
+
+function sensitivePathReason(filePath: string): string {
+  if (/^\.github\/workflows\//.test(filePath)) return "CI workflow file";
+  if (/(?:^|\/)\.git\/hooks\//.test(filePath) || /^\.husky\//.test(filePath) || /^\.githooks\//.test(filePath))
+    return "git hook";
+  if (/^\.red\//.test(filePath)) return "trust/gate configuration";
+  return "sensitive path";
+}
+
 // ---------- built-in sink factories ----------
 
 /**

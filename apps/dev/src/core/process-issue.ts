@@ -674,6 +674,7 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
+  LABEL_SENSITIVE_PATH,
 } from "./triage-labels.js";
 
 /**
@@ -1866,6 +1867,25 @@ export async function processIssue(
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
+      // Sensitive-path guard (issue #1102): diff the worker branch against the
+      // resolved base before landing. Uses three-dot notation so the diff reflects
+      // only what this branch changed, not the entire base history.
+      getDiffPaths: async () => {
+        const filesRes = await deps.mergeExec([
+          "git", "-C", input.repoDir,
+          "diff", "--name-only",
+          `${input.remote}/${base}...${workerBranch}`,
+        ]);
+        const changedFiles = filesRes.stdout.trim().split("\n").filter(Boolean);
+        const diffRes = await deps.mergeExec([
+          "git", "-C", input.repoDir,
+          "diff",
+          `${input.remote}/${base}...${workerBranch}`,
+          "--",
+          "package.json", "**/package.json",
+        ]);
+        return { changedFiles, packageJsonDiff: diffRes.stdout };
+      },
     },
     {
       openPr,
@@ -1905,6 +1925,11 @@ export async function processIssue(
         landing.originTrunkSha ?? "",
         landing.locked,
       );
+    }
+    // Sensitive-path guard (issue #1102): the diff touched a CI workflow,
+    // lifecycle script, git hook, or .red/ config — pages a human, never retries.
+    if (landing.reason === "sensitive-paths") {
+      return await sensitivePathGuarded(common, landing.sensitivePaths ?? [], landing.locked);
     }
     // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
     // could not land because the `enforce_admins` base's required checks failed /
@@ -2176,6 +2201,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
         next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
       };
+    case "sensitive-path":
+      return {
+        status: "blocked",
+        kind: "sensitive-path",
+        summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
+        next: "Review the sensitive change, then requeue if it is safe to land.",
+      };
     case "manual-landing":
       return {
         status: "blocked",
@@ -2196,6 +2228,7 @@ const ACTIONABLE_BLOCKER_KINDS = new Set([
   "stalled",
   "decision",
   "trunk-diverged",
+  "sensitive-path",
 ]);
 
 function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -2534,6 +2567,48 @@ async function trunkDivergedBlocked(
   await deps.claimLock.release(input.issue);
   return {
     outcome: "trunk-diverged",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Sensitive-path guard park (issue #1102). The landing diff touched a CI
+ * workflow file, a package.json lifecycle script, a git hook, or `.red/`
+ * trust/gate configuration — an intent-class change that can never auto-land.
+ * Parks the issue ready-for-human with `blocked:sensitive-path` so a human
+ * reviews the change before it reaches the base branch. The attempt branch and
+ * dir are preserved (the work is intact; a human can land it after review).
+ * routeRecovery escalates (sensitive-path is non-recoverable): a bounded retry
+ * runs the same diff and hits the same guard.
+ */
+async function sensitivePathGuarded(
+  c: StageCommon,
+  hits: Array<{ path: string; reason: string }>,
+  locked: boolean,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const hitList = hits.map((h) => `\`${h.path}\` (${h.reason})`).join(", ");
+  const detail =
+    `Landing blocked: the diff touches sensitive path(s) that require human review before auto-landing — ` +
+    `${hitList}. The attempt branch is intact. Requeue after reviewing the change.`;
+  await routeRecovery(deps, input.issue, "sensitive-path", input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("sensitive-path", { log: detail }));
+  const posted = await emitFailure(c, envelopeStatusFor("sensitive-path"), "sensitive-path", { log: detail });
+  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
+  await recordAttemptBestEffort(c, "sensitive-path", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: detail,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "sensitive-path",
     issue: input.issue,
     branch: c.branch,
     base: c.base,
