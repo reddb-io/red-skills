@@ -38,6 +38,7 @@ import {
   type WaitForReviewInput,
 } from "./merge.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
+import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
 
 /** Everything the landing needs, all side effects injected — mirroring how
  * process-issue called each of these inline. */
@@ -98,6 +99,14 @@ export interface LandingDeps {
    * Ignored on the direct path, which never opens a PR.
    */
   waitForReview?: WaitForReviewInput;
+  /**
+   * Opt-in sensitive-path guard (issue #1102). Present → the landing scans the
+   * branch diff against the closed set of sensitive path patterns before pushing
+   * or integrating; any hit aborts with `sensitive-paths` and pages a human.
+   * Absent (the default) → the guard is skipped (safe for the direct path and
+   * existing callers that have not yet wired the dep).
+   */
+  getDiffPaths?: () => Promise<{ changedFiles: string[]; packageJsonDiff: string }>;
   /**
    * Opt-in CI-aware merge for the UNLOCKED admin-PR landing (#812). Present →
    * landPr polls the PR's merge state and admin-merges only once it is genuinely
@@ -187,7 +196,11 @@ export type LandingResult =
         // BEFORE integrating the attempt branch and NEVER repaired the divergence
         // (no reset / stash / auto-commit / force-push). The caller parks the
         // issue ready-for-human with a divergence envelope naming the two SHAs.
-        | "trunk-diverged";
+        | "trunk-diverged"
+        // Sensitive-path guard (issue #1102): the branch diff touches a CI
+        // workflow file, a package.json lifecycle script, a git hook, or `.red/`
+        // trust/gate configuration. Never auto-lands; pages a human.
+        | "sensitive-paths";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -195,6 +208,8 @@ export type LandingResult =
       localTrunkSha?: string;
       /** ADR 0083 divergence (`trunk-diverged`): the fresh-fetched `origin/<trunk>` SHA. */
       originTrunkSha?: string;
+      /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
+      sensitivePaths?: SensitivePathHit[];
     };
 
 /**
@@ -287,6 +302,19 @@ export async function doLanding(
   hooks: LandingHookContexts,
 ): Promise<LandingResult> {
   const { locked } = input;
+
+  // 0a. Sensitive-path guard (issue #1102): scan the branch diff for sensitive
+  // path patterns BEFORE any push or git integration. A hit is an intent-class
+  // change (CI workflow, lifecycle script, git hook, .red/ config) that must
+  // never auto-land — abort immediately and page a human. Opt-in: the guard is
+  // skipped when getDiffPaths is absent (backwards-compatible default).
+  if (deps.getDiffPaths) {
+    const { changedFiles, packageJsonDiff } = await deps.getDiffPaths();
+    const hits = checkSensitivePaths(changedFiles, packageJsonDiff);
+    if (hits.length > 0) {
+      return { ok: false, reason: "sensitive-paths", locked, sensitivePaths: hits };
+    }
+  }
 
   // 0. ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
   // `<trunk>` ref must be an ANCESTOR of `origin/<trunk>`. Verified BEFORE any
