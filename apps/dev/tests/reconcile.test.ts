@@ -40,7 +40,7 @@ interface HarnessOptions {
   changedFiles?: string[];
   branchPresent?: boolean;
   locked?: boolean;
-  /** When true, the unlocked `gh pr merge --admin` returns non-zero (land fails). */
+  /** When true, the unlocked `gh pr merge` returns non-zero (land fails). */
   landFail?: boolean;
   /** Close-cascade fixture: open dependents returned by gh.listByLabel(req:N). */
   dependentsByLabel?: Record<string, { number: number; labels: string[] }[]>;
