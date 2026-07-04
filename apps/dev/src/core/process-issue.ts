@@ -107,6 +107,7 @@ import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
+import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "./go.js";
 
 type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 
@@ -314,6 +315,12 @@ export interface ProcessIssueDeps {
    * scope-derived feedback gate; it does not replace it.
    */
   backpressureCommands?: readonly string[];
+  /**
+   * `/go` only: bounded number of post-DONE machine-gate correction attempts.
+   * The initial DONE validation is not counted; a value of 2 allows two
+   * correct-and-re-verify agent invocations before deterministic escalation.
+   */
+  goVerifyRetries?: number;
   /**
    * Shell executor for the post-attempt-format step (#1015): runs each
    * `afk.post_attempt_format` command in the worker-branch checkout AFTER the
@@ -868,6 +875,40 @@ function parseFeedbackClass(contextJson: string): "infra" | "semantic" | null {
   }
 }
 
+function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
+  const raw = deps.recoveryEnv?.RED_GO_VERIFY_RETRIES;
+  const parsed = raw === undefined ? NaN : Number(raw);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  if (deps.goVerifyRetries !== undefined && Number.isInteger(deps.goVerifyRetries) && deps.goVerifyRetries >= 0) {
+    return deps.goVerifyRetries;
+  }
+  return DEFAULT_GO_VERIFY_RETRIES;
+}
+
+function tailLines(text: string, maxLines: number): string {
+  const lines = text.split("\n");
+  return lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
+}
+
+function appendGoVerifyRetryHandoff(
+  handoff: string,
+  opts: { gate: "feedback" | "backpressure"; validation: string; retry: number; cap: number },
+): string {
+  return [
+    handoff.replace(/\n+$/, ""),
+    "",
+    "<go-machine-gate-retry>",
+    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
+    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    "",
+    "<validation-tail>",
+    tailLines(opts.validation, 80),
+    "</validation-tail>",
+    "</go-machine-gate-retry>",
+    "",
+  ].join("\n");
+}
+
 interface UntrustedSandboxDecision {
   sandboxMode: SandboxMode;
   authorTrusted: boolean;
@@ -1228,6 +1269,8 @@ export async function processIssue(
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
+  let currentHandoff = handoff;
+  let goVerifyRetriesUsed = 0;
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
   let salvagedRunCommitCount = 0;
@@ -1257,6 +1300,26 @@ export async function processIssue(
         : "backpressure validation failed after the feedback gate passed";
     return `${prefix}; AFK salvaged ${salvagedUncommittedFiles} uncommitted file(s), but ${gateText}. The worker branch was not merged.`;
   };
+  const goVerifyRetryCap = resolveGoVerifyRetries(deps);
+  const retryGoMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
+    if (input.laneLabel !== LABEL_GO_LANE) return false;
+    if (goVerifyRetriesUsed >= goVerifyRetryCap) return false;
+    goVerifyRetriesUsed += 1;
+    attemptN += 1;
+    currentHandoff = appendGoVerifyRetryHandoff(handoff, {
+      gate,
+      validation,
+      retry: goVerifyRetriesUsed,
+      cap: goVerifyRetryCap,
+    });
+    deps.appendIterLog(
+      `🤖 /go: ${gate} machine gate failed after DONE; correction retry ${goVerifyRetriesUsed}/${goVerifyRetryCap}.`,
+    );
+    return await fireHook(
+      "pre_attempt",
+      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+    );
+  };
 
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
@@ -1270,7 +1333,7 @@ export async function processIssue(
       model: initialTier.model,
       effort: initialTier.effort,
       handoffPath,
-      handoffContent: handoff,
+      handoffContent: currentHandoff,
       // Structured-output rollout (ADR 0090, #932): a schema-enabled runner gets
       // the AgentOutput emit clause; others keep the text-sentinel-only protocol.
       systemPrompt: exitProtocolFor({
@@ -1347,7 +1410,7 @@ export async function processIssue(
     };
     const notesOutcome = await runNotesLoop({
       config: notesLoopCfg,
-      baseHandoff: handoff,
+      baseHandoff: currentHandoff,
       runOnce: ({ handoff: iterationHandoff }) =>
         deps.runAgent({
           ...baseAgentInput,
@@ -1400,7 +1463,7 @@ export async function processIssue(
         model: fallbackTier.model,
         effort: fallbackTier.effort,
         handoffPath,
-        handoffContent: handoff,
+        handoffContent: currentHandoff,
         systemPrompt: exitProtocolFor({
           runMode: input.runMode,
           structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
@@ -1885,9 +1948,13 @@ export async function processIssue(
       const scopeHeader = feedback.validationScope
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
+      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
+      if (!isInfra && await retryGoMachineGate("feedback", validationText)) {
+        continue;
+      }
       return await terminalFailure(common, outcome, "feedback", {
         notes,
-        validation: `${scopeHeader}${feedback.sidecar.join("\n")}`,
+        validation: validationText,
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
 
@@ -1916,10 +1983,14 @@ export async function processIssue(
           salvagedUncommittedFiles > 0
             ? salvagedUncommittedNotes("backpressure")
             : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        const validationText = backpressure.sidecar.join("\n");
+        if (await retryGoMachineGate("backpressure", validationText)) {
+          continue;
+        }
         return await terminalFailure(common, "feedback-failed", "feedback", {
           notes,
-          validation: backpressure.sidecar.join("\n"),
-        }, { validationSummary: backpressure.sidecar.join("\n") });
+          validation: validationText,
+        }, { validationSummary: validationText });
       }
     }
     // Both gates passed — the close path's sidecar/envelope carries their union.
