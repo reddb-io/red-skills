@@ -589,6 +589,12 @@ publish release assets, update plugin metadata, and move the matching major tag
 such as `v1` to the same release commit so reusable workflows pinned to `@v1`
 keep advancing.
 
+The `release` job runs in the GitHub environment named `red-release`. Repository
+settings must keep that environment protected with required reviewers, because
+approval is the gate before the job publishes release assets or moves the major
+tag. Once an approved reviewer approves the environment deployment, the normal
+release job continues without any extra manual step.
+
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE). See [NOTICE](./NOTICE) for upstream MIT
