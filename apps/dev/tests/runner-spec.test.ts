@@ -50,7 +50,7 @@ describe("RUNNER_SPECS — one row per AgentRunner (add a runner = one row)", ()
     expect(spec.resolveAuthEnv).toBeUndefined();
   });
 
-  it("claude is the only schema-enabled runner (claude-first rollout, ADR 0082, #932)", () => {
+  it("claude is the only schema-enabled runner (claude-first rollout, ADR 0090, #932)", () => {
     expect(runnerSupportsStructuredOutput("claude")).toBe(true);
     expect(runnerSupportsStructuredOutput("codex")).toBe(false);
     expect(runnerSupportsStructuredOutput("opencode")).toBe(false);

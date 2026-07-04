@@ -1,6 +1,6 @@
 # AXI + TOON doctrine — a checklist for agent-facing CLI authors
 
-This is the CLI-author-facing companion to [ADR 0082](../../adr/0082-axi-toon-doctrine-for-agent-facing-clis.md), which is the binding decision. This doc is the practical restatement: a checklist you run against a CLI whose primary reader is an agent, plus the concrete TOON line format and a contrast table showing why TOON beats JSON and prose for that reader.
+This is the CLI-author-facing companion to [ADR 0089](../../adr/0089-axi-toon-doctrine-for-agent-facing-clis.md), which is the binding decision. This doc is the practical restatement: a checklist you run against a CLI whose primary reader is an agent, plus the concrete TOON line format and a contrast table showing why TOON beats JSON and prose for that reader.
 
 **AXI = Agent eXperience Interface** — the design-time contract for how a CLI *chooses* to emit output. **TOON = Token-Oriented Object Notation** — the compact serialization that contract mandates for list/tabular data. AXI is the "why is this output big?" spec; RTK is the after-the-fact "shrink what we can't control" proxy. They are complementary, not alternatives — see the ADR's Context section.
 
@@ -56,4 +56,4 @@ Why each alternative is inappropriate for agent-facing output:
 
 ## Where this applies
 
-Adoption order (ADR 0082, Decision 3), noisiest agent-read surface first: `monitor` (first slice #918) → `dashboard` → `daily-review` → `statusline`. New agent-facing CLIs start AXI-shaped by running this checklist at design time; existing surfaces converge one measured slice at a time, reporting the token delta per slice.
+Adoption order (ADR 0089, Decision 3), noisiest agent-read surface first: `monitor` (first slice #918) → `dashboard` → `daily-review` → `statusline`. New agent-facing CLIs start AXI-shaped by running this checklist at design time; existing surfaces converge one measured slice at a time, reporting the token delta per slice.

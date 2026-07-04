@@ -187,7 +187,7 @@ These exist for filtering and don't drive lifecycle transitions:
 
 ## Trust-gated auto-triage (`dev triage`)
 
-On `needs-triage`, the event-router resolves the **issue author's** trust against the same per-repo allowlist the executable-issue gate uses (`plugins.dev.afk.trust-gate.allowlist`, ADR 0056):
+On `needs-triage`, the event-router resolves the **issue author's** trust against the same per-repo allowlist the executable-issue gate uses (`plugins.dev.afk.trust-gate.allowlist`, ADR 0085):
 
 - **Trusted author** (in the allowlist, or any author when no allowlist is configured) → **auto-triage**: `dev triage <issue> --decision <state>` applies the canonical transition (`ready-for-agent` / `needs-info` / `ready-for-human` / `wontfix`).
 - **Untrusted public author**, no summon → the issue is **held**; it never burns an agent runner automatically and waits for a maintainer.

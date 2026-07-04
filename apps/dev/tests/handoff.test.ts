@@ -364,7 +364,7 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("Do NOT re-run an unbounded full repository suite");
   });
 
-  it("exitProtocolFor: schema-enabled runner gets the AgentOutput clause spliced in (ADR 0082, #932)", () => {
+  it("exitProtocolFor: schema-enabled runner gets the AgentOutput clause spliced in (ADR 0090, #932)", () => {
     const p = exitProtocolFor({ structuredOutput: true });
     expect(p).toContain("<agent-output>");
     expect(p).toContain(AGENT_OUTPUT_INSTRUCTION);

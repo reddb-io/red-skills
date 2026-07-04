@@ -33,7 +33,7 @@ third-party action repos.
 ### A. Turnkey — the reusable workflow (triggers + trust gate included)
 
 Drop the reusable into your repo (or call it). It ships the issue/label triggers
-and the ADR 0056 trust gate. Template:
+and the ADR 0085 trust gate. Template:
 [`examples/rs-afk-attempt.yml`](./examples/rs-afk-attempt.yml).
 
 Install the caller as `rs-afk-attempt.yml` (the `rs-*`
@@ -86,7 +86,7 @@ jobs:
    `ready-for-agent` (a pre-delegated issue). Raw label-less issues are NOT run
    — they fall through to `red-issues-needs-triage` and the labeled path.
 
-## Trust gate (ADR 0056)
+## Trust gate (ADR 0085)
 
 The reusable refuses to claim unless the issue **author** AND the
 **label-applier** (the opener, for the `opened` path) are both in the allowlist
@@ -209,5 +209,5 @@ allowlist predicate is pending (#621).
 ## See also
 
 - ADR 0059 (lane + OpenCode runner), ADR 0062 (composite-action packaging),
-  ADR 0038/0039 (launcher + Release distribution), ADR 0056 (trust gate).
+  ADR 0038/0039 (launcher + Release distribution), ADR 0085 (trust gate).
 - [`SKILL.md`](./SKILL.md) — the local `/afk` runtime contract this mirrors.

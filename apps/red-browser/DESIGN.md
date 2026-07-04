@@ -12,14 +12,14 @@ this doc plus the proposed implementation slices at the end, ready for
   names appear in code or docs (PRD #928 arch-lock). `/verify` and the frontend
   workflows consume red-browser as **clients**.
 - **Output format:** every AI-facing surface emits **TOON**, per the repo-wide
-  TOON mandate (ADR 0082, *AXI + TOON is the doctrine for every agent-facing
+  TOON mandate (ADR 0089, *AXI + TOON is the doctrine for every agent-facing
   CLI*). Human-facing stderr status lines (bridge URL, "audit passed") stay plain
   text.
 - **Surface that exists today:** `apps/red-browser` ships a `snapshot` command
   (a11y tree + console + network over CDP) and an `annotate` command (HTML
   artifact bridge + layout-audit gate). Both currently emit `JSON.stringify(…, 2)`.
 
-Because the hard decisions were made upstream (ADR 0082 sets the format doctrine;
+Because the hard decisions were made upstream (ADR 0089 sets the format doctrine;
 PRD #928 sets the no-vendoring arch-lock; the HITL comment sets the adoption
 path), **no new ADR is written here** — the three-condition test (hard to reverse
 + surprising without context + real trade-off) fails: this slice only *applies*
@@ -164,8 +164,8 @@ unblocks the next. Parent: #907 / arch-lock #928.
 ## ADR decision
 
 **No ADR written.** Three-condition test: **hard to reverse?** No — output format
-and command surface are already fixed by ADR 0082 and PRD #928; these slices apply
+and command surface are already fixed by ADR 0089 and PRD #928; these slices apply
 them. **Surprising without context?** No — TOON everywhere and no-vendoring are the
 documented defaults. **Real trade-off?** No live alternative — the adoption path is
-a settled human decision. The relevant records already exist (ADR 0082 for the TOON
+a settled human decision. The relevant records already exist (ADR 0089 for the TOON
 doctrine, PRD #928 for the arch-lock, this doc for the capability scope).

@@ -52,7 +52,7 @@ spine already exists and must be reused, not reinvented:
   (`red-afk-attempt.yml`) that owns *triggers + trust gate* and delegates
   *execution* to the action. Today it triggers on `issues: labeled/opened`,
   `workflow_dispatch`, `workflow_call` — the **issues/implement** surface only.
-- **ADR 0056** — the trust gate (`apps/dev/src/core/trust-gate.ts`): an
+- **ADR 0085** — the trust gate (`apps/dev/src/core/trust-gate.ts`): an
   allowlist (`plugins.dev.afk.trust-gate.allowlist`) plus label provenance;
   permissive when unconfigured.
 - **ADR 0038/0039** — the launcher + Release-fetch bundle distribution.
@@ -120,7 +120,7 @@ gate.** Concretely:
    command is honoured only when the commenter passes a gate whose **dynamic
    base** is GitHub write-access / CODEOWNERS membership (the self-maintaining
    "repository maintainers" source) and whose **override** is the existing
-   ADR-0056 allowlist (to grant a trusted non-collaborator command rights). An
+   ADR-0085 allowlist (to grant a trusted non-collaborator command rights). An
    untrusted public `/dev` comment is rejected by the same refusal path AFK
    already ships.
 
@@ -194,7 +194,7 @@ gate.** Concretely:
   (MiniMax subscription via Amendment 1); the cloud substrate this extends.
 - ADR 0062 — the AFK Actions lane (composite action + thin reusable workflow);
   the trigger/execution shape this reuses for PR + comment surfaces.
-- ADR 0056 — the allowlist trust gate; layered here with CODEOWNERS/write-access.
+- ADR 0085 — the allowlist trust gate; layered here with CODEOWNERS/write-access.
 - ADR 0038 / 0039 — launcher + Release-fetch bundle distribution.
 - ADR 0061 — `@reddb-io/red-castle` vendored substrate inlined into the dev bundle;
   the repo that gains the reusable interaction mechanism (decision 11).

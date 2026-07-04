@@ -15,7 +15,7 @@
 //      issue out of `needs-triage` into its definitive state.
 //
 // The trust source is the SAME per-repo allowlist the executable-issue gate uses
-// (trust-gate.ts, ADR 0056). Here only the AUTHOR is checked — a `needs-triage`
+// (trust-gate.ts, ADR 0085). Here only the AUTHOR is checked — a `needs-triage`
 // issue has no `ready-for-agent` actor yet — so this module exposes its own
 // author-only predicate rather than reusing `evaluateTrustGate` (which also
 // requires a promoting actor). When no allowlist is configured the gate is

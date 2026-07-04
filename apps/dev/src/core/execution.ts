@@ -592,7 +592,7 @@ export function interpretCompletion(
 }
 
 /**
- * Enforce the native structured-output contract (ADR 0082, #932) on a
+ * Enforce the native structured-output contract (ADR 0090, #932) on a
  * schema-enabled runner: a `done` outcome only stands when the agent also
  * emitted a valid red-castle `AgentOutput` block. On a schema-enabled runner
  * (claude first) a missing / malformed / schema-invalid `<agent-output>` DOWNGRADES
@@ -762,7 +762,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     prompt: input.handoffContent,
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     branchStrategy,
-    // Structured-output completion adapter (ADR 0082), claude-first rollout
+    // Structured-output completion adapter (ADR 0090), claude-first rollout
     // (#919/#932). For the claude runner, register the `<agent-output>` closing
     // tag as an ADDITIONAL completion signal so the turn can terminate on the
     // schema-validated structured block ALONE — curing the `no-sentinel` class
@@ -1285,7 +1285,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   if (result.completionSignal === undefined && isRunnerExhausted(result.stdout ?? "")) {
     return { outcome: "exhausted", branch: result.branch, commits: result.commits, stdout: result.stdout };
   }
-  // Structured-output completion adapter (ADR 0082): prefer a valid AgentOutput
+  // Structured-output completion adapter (ADR 0090): prefer a valid AgentOutput
   // block over the text sentinel. A run that emitted the structured block but no
   // sentinel now yields a definite `done`/`blocked` instead of `no-sentinel`.
   const agentOutput = parseAgentOutput(result.stdout ?? "");

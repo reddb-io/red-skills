@@ -100,7 +100,7 @@ The Brain integration point (`apps/brain/src/channel-bridge.ts`,
 `McpStdioChannelBridge`) that reaches external messaging channels through the
 `red-hermes` runtime as an internal black box, spawned as a stdio MCP server via
 `hermes mcp serve`. Brain speaks only the MCP tool protocol to it and never the
-runtime's internals. See ADR 0056.
+runtime's internals. See ADR 0057.
 _Avoid_: red-hermes Python internals, direct messaging SDK, the AFK hermes-fallback runner
 
 **red-hermes black box**:
@@ -119,7 +119,7 @@ The supported version/compatibility contract between brain and `red-hermes`: the
 `permissions_list_open`, `permissions_respond` — pinned against a specific
 red-hermes release. The full ten are the compatibility floor; dropping,
 renaming, or changing the semantics of any is a breaking change requiring a new
-pin. See ADR 0056.
+pin. See ADR 0057.
 _Avoid_: best-effort tool discovery, partial-surface tolerance, unpinned runtime
 
 **Brain act**:

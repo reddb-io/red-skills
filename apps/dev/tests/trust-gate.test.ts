@@ -14,7 +14,7 @@ import {
 } from "../src/core/trust-gate.js";
 import type { ConfigValues } from "../src/core/config.js";
 
-// trust-gate is the PURE "executable issue" predicate (ADR 0056, #621). The
+// trust-gate is the PURE "executable issue" predicate (ADR 0085, #621). The
 // acceptance criterion is an exhaustive matrix over
 //   author (trusted / untrusted)
 //     × label-actor (allowlisted / non-allowlisted / automation)

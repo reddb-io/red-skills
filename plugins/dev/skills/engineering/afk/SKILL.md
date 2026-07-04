@@ -76,7 +76,7 @@ carries its own red-skills checkout, so the launcher resolves in any adopter rep
 — no workspace build, no submodule.
 
 Triggers: `issues: labeled`/`opened` (on `ready-for-agent`), `workflow_dispatch`,
-`workflow_call`. Trust gate (ADR 0056): author + label-actor must both be
+`workflow_call`. Trust gate (ADR 0085): author + label-actor must both be
 allowlisted. Runner: opencode (API-auth); point it at OpenAI/MiniMax/OpenRouter
 by wiring the matching key + a `<provider>/<model>` slug via the `model` input.
 

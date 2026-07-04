@@ -894,7 +894,7 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
 }
 
 /**
- * Trust-gate provenance for one issue (#621, ADR 0056): the author login + the
+ * Trust-gate provenance for one issue (#621, ADR 0085): the author login + the
  * actor who applied `ready-for-agent`, read from the issue TIMELINE (never
  * inferred from the mutable label set). Two best-effort gh reads:
  *   - `gh issue view --json author` → author login;

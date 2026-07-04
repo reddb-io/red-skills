@@ -1,4 +1,4 @@
-// trust-gate — the AFK "executable issue" trust gate (ADR 0056, issue #621).
+// trust-gate — the AFK "executable issue" trust gate (ADR 0085, issue #621).
 //
 // A PURE predicate over three inputs resolved at claim time:
 //   - the issue AUTHOR (the `gh issue view --json author` login),
