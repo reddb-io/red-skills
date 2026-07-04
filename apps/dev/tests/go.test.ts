@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_GO_MODE,
+  DEFAULT_GO_VERIFY_RETRIES,
+  GO_NO_HARNESS_ITER_CAP,
   GO_GATE_CONTEXT,
   GO_MODES,
   GO_ORIGIN,
@@ -26,6 +28,21 @@ describe("buildDisposableIssue", () => {
     expect(spec.title).toBe("/go: add a retry to the uploader");
     expect(spec.body).toContain("add a retry to the uploader\nwith backoff");
     expect(spec.body).toContain("auto-closes");
+  });
+
+  it("records the approved Task, semantic DoD, and machine gate on the disposable issue", () => {
+    const spec = buildDisposableIssue("short demand", {
+      task: "Detailed approved task with implementation boundaries.",
+      dod: "The command stops once the login retry is implemented and covered by tests.",
+      verifyCommand: "npm run test -- login",
+    });
+
+    expect(spec.body).toContain("## Task");
+    expect(spec.body).toContain("Detailed approved task with implementation boundaries.");
+    expect(spec.body).toContain("## Acceptance Criteria");
+    expect(spec.body).toContain("The command stops once the login retry is implemented");
+    expect(spec.body).toContain("## Machine Gate");
+    expect(spec.body).toContain("npm run test -- login");
   });
 
   it("truncates an overlong title to 72 chars", () => {
@@ -100,6 +117,19 @@ describe("buildGoEngineArgs", () => {
     expect(both).toContain("--yolo");
   });
 
+  it("threads an ephemeral inline verification command into the reused engine", () => {
+    const args = buildGoEngineArgs({ issue: 7, verifyCommand: "npm run test -- login" });
+    expect(args).toContain("--verify");
+    expect(args).toContain("npm run test -- login");
+  });
+
+  it("tightens the iteration cap when no harness exists and no inline check was approved", () => {
+    const args = buildGoEngineArgs({ issue: 7, hasHarness: false });
+    expect(args).toContain("-n");
+    expect(args).toContain(String(GO_NO_HARNESS_ITER_CAP));
+    expect(DEFAULT_GO_VERIFY_RETRIES).toBe(2);
+  });
+
   it("keeps --runner last after the mode/yolo flags", () => {
     const args = buildGoEngineArgs({ issue: 7, mode: "local-only", yolo: true, runner: "codex" });
     expect(args.slice(-2)).toEqual(["--runner", "codex"]);
@@ -167,6 +197,27 @@ describe("dispatchGo", () => {
     const args = runEngine.mock.calls[0]![0];
     expect(args).toContain("--local-merge");
     expect(args).toContain("--yolo");
+  });
+
+  it("mints the issue with the approved Task + DoD before running the reused engine", async () => {
+    const createIssue = vi.fn(async (_spec: DisposableIssueSpec) => 77);
+    const runEngine = vi.fn(async (_args: string[]) => 0);
+    await dispatchGo(
+      { ensureLabel: async () => {}, createIssue, runEngine },
+      "ship it",
+      {
+        task: "Approved detailed task",
+        dod: "Done when the approved acceptance statement is satisfied.",
+        verifyCommand: "npm run test -- go",
+      },
+    );
+
+    const spec = createIssue.mock.calls[0]![0];
+    expect(spec.body).toContain("Approved detailed task");
+    expect(spec.body).toContain("Done when the approved acceptance statement is satisfied.");
+    expect(runEngine).toHaveBeenCalledWith(
+      buildGoEngineArgs({ issue: 77, verifyCommand: "npm run test -- go" }),
+    );
   });
 
   it("propagates a non-zero engine exit", async () => {
