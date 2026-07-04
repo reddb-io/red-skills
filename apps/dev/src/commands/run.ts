@@ -47,7 +47,7 @@ import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
-import type { ExecFn } from "../runtime/exec.js";
+import { execTool, type ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
@@ -885,6 +885,11 @@ export function buildProcessDeps(
       attemptBudget,
       () => activityMeter.peek(),
     ),
+    sandboxMode: sandbox,
+    sandboxAvailable: async (mode) => {
+      const run = exec ?? execTool;
+      return (await run("sh", ["-c", `command -v ${mode}`], { cwd: ctx.root })).code === 0;
+    },
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),

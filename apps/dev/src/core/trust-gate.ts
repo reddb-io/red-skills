@@ -30,6 +30,7 @@
 
 import type { ConfigValues } from "./config.js";
 import { getConfig } from "./config.js";
+import type { SourceTrustLevel } from "./source-trust.js";
 
 /** The accessor key the allowlist lives under (folded from
  * `plugins.dev.afk.trust-gate.allowlist`, ADR 0042). Intentionally NOT in
@@ -81,6 +82,12 @@ export function describeTrustPosture(policy: TrustPolicy): TrustPosture {
 export interface TrustProvenance {
   /** Issue author login (`gh issue view --json author`). */
   author?: string;
+  /**
+   * Source-trust level for the issue author (issue #1100 taxonomy). When present,
+   * process-issue can distinguish trusted-author work from untrusted-author work
+   * even when the executable-issue trust gate is permissive.
+   */
+  authorSourceTrust?: SourceTrustLevel;
   /** Login of the actor who applied `ready-for-agent`, read from the timeline. */
   readyForAgentActor?: string;
 }

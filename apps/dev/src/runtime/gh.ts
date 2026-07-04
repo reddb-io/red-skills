@@ -20,7 +20,7 @@ import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
-import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../core/source-trust.js";
+import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from "../core/source-trust.js";
 import type { ActorTrustVerdict, RepoVisibility } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
@@ -941,12 +941,12 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
 export async function issueTrust(
   ctx: GhContext,
   issue: number,
-): Promise<{ author?: string; readyForAgentActor?: string }> {
+): Promise<{ author?: string; authorSourceTrust?: SourceTrustLevel; readyForAgentActor?: string }> {
   const [author, actor] = await Promise.all([
-    issueAuthorLogin(ctx, issue),
+    issueAuthorProfile(ctx, issue),
     readyForAgentActor(ctx, issue),
   ]);
-  return { author, readyForAgentActor: actor };
+  return { author: author.login, authorSourceTrust: author.sourceTrust, readyForAgentActor: actor };
 }
 
 /** `gh issue view --json author` → the author login, or undefined on failure.
@@ -977,13 +977,47 @@ export async function repoVisibility(ctx: GhContext): Promise<RepoVisibility | u
 
 /** `gh issue view --json author` → the author login, or undefined on failure. */
 async function issueAuthorLogin(ctx: GhContext, issue: number): Promise<string | undefined> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author"]);
-  if (r.code !== 0) return undefined;
+  return (await issueAuthorProfile(ctx, issue)).login;
+}
+
+async function issueAuthorProfile(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ login?: string; sourceTrust?: SourceTrustLevel }> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author,authorAssociation"]);
+  if (r.code !== 0) return issueAuthorProfileLegacy(ctx, issue);
   try {
-    const login = (JSON.parse(r.stdout) as { author?: { login?: string } }).author?.login;
-    return login ? String(login) : undefined;
+    const parsed = JSON.parse(r.stdout) as {
+      author?: { login?: string; is_bot?: boolean; type?: string };
+      authorAssociation?: string;
+    };
+    const login = parsed.author?.login ? String(parsed.author.login) : undefined;
+    if (!login) return issueAuthorProfileLegacy(ctx, issue);
+    const authorType = String(parsed.author?.type ?? "").toLowerCase();
+    const isBot = parsed.author?.is_bot === true || authorType === "bot";
+    return {
+      login,
+      sourceTrust: classifySourceTrust({ authorAssociation: parsed.authorAssociation, isBot }),
+    };
   } catch {
-    return undefined;
+    return issueAuthorProfileLegacy(ctx, issue);
+  }
+}
+
+async function issueAuthorProfileLegacy(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ login?: string; sourceTrust?: SourceTrustLevel }> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author"]);
+  if (r.code !== 0) return {};
+  try {
+    const parsed = JSON.parse(r.stdout) as { author?: { login?: string; is_bot?: boolean; type?: string } };
+    const login = parsed.author?.login ? String(parsed.author.login) : undefined;
+    const authorType = String(parsed.author?.type ?? "").toLowerCase();
+    const isBot = parsed.author?.is_bot === true || authorType === "bot";
+    return { login, sourceTrust: login ? classifySourceTrust({ isBot }) : undefined };
+  } catch {
+    return {};
   }
 }
 
