@@ -106,3 +106,42 @@ The gate runs in an isolated feedback worktree (`makeFeedbackWorktree`, ADR 0008
 - **Mechanical allowlist is closed.** Future changes to the list require an ADR amendment, not a config file. This ensures the safety rule (intent changes never auto-land) stays auditable.
 
 - **No source-repo names** in the ADR or committed content. The absorbed components (dispatch tier design, worktree manager concept, gate-as-stage philosophy) retain their origins in the grilling session, not in naming.
+
+## Amendment 1 — `/go` Definition-of-Done gate (guaranteed termination)
+
+### Status
+
+Accepted. Extends Decisions 2–4 with a mandatory stop-condition gate for `/go`. Records the decision reached in a `/start` grilling session.
+
+### Context
+
+The base ADR gave `/go` the AFK engine's completion contract: the inner agent self-declares done by emitting the completion signal. In practice a `/go` dispatch could **never converge** — the agent kept committing "improvements" against a vague demand, and because every commit resets the commit-anchored progress guard (ADR 0044/0045), this **productive loop** survived all existing termination bounds (`idleTimeout`, `maxIterations`, the commit guard). The root cause is structural: `/go` accepted a demand with **no explicit stop condition**, leaving the agent as the sole judge of "done."
+
+The failure is most acute in a repo with **no `afk.backpressure` / feedback gate configured**: there is no machine gate at all, so the DONE contract is purely the agent's judgment — the exact conditions under which the loop was observed.
+
+### Decision
+
+1. **Mandatory pre-dispatch Definition-of-Done gate.** `/go` no longer dispatches on the first turn. The skill first drafts, in the conversational layer — before any worktree exists — a **Task** (the demand rewritten in high detail) and a **Definition of Done**, and asks the maintainer to approve. Only after approval does the worker/worktree spin up. The gate is **always required**: `+yolo` stays an in-run autonomy bump and never skips it; `--dod "<condition>"` pre-fills the confirmation (sugar) but never skips it.
+
+2. **Definition of Done is hybrid.** Two halves:
+   - **Semantic** — a per-demand acceptance statement ("what I actually asked for"), recorded on the disposable `lane:go` issue and injected into the handoff.
+   - **Machine gate** — reuses the repo's **already-configured harness/backpressure** (`afk.backpressure` plus the auto-derived `test`/`typecheck`/`lint`/`build` feedback gate), not a per-demand invented command. This is already wired into the `<merge-gate>` handoff section and the pre-`DONE` contract, so `/go` inherits it with no new execution logic.
+
+3. **Guaranteed termination.** When the machine gate fails after `DONE`, the run enters a **bounded** correct-and-re-verify cycle (a small cap, distinct from `maxIterations`). On exhausting the cap with the gate still red, the run **stops deterministically** and escalates to `ready-for-human` / `blocked:validation`, carrying the partial diff and the failing gate's output tail — never an unbounded retry. The productive loop becomes a bounded, always-terminating run with a clear signal.
+
+4. **No-harness fallback.** When the target repo has no configured harness/backpressure, the confirm gate **detects the absence at approval time** and offers to add an **ephemeral inline check** (a shell command that must exit 0, run as backpressure for that single dispatch only). If the maintainer declines, `/go` proceeds **best-effort under a tightened iteration cap** (well below the default 12) so a check-less demand fails fast to a human instead of looping. The configured harness stays the primary source; the inline check is only the net.
+
+5. **Isolation unchanged.** Everything that executes still runs in the isolated worktree under `.red/tmp/go-workers/` against the worker-branch checkout, never the primary (Decision 4). The confirm gate is the only new step, and it runs purely in conversation before the worktree exists; the machine gate runs where AFK backpressure already runs.
+
+### Consequences
+
+- A `/go` demand can no longer loop indefinitely: it either satisfies the configured (or inline) gate, or it terminates and escalates with a concrete reason.
+- The maintainer sees and approves the stop condition **before** any tokens are spent — "when will it stop?" is answered up front, not discovered mid-run.
+- Repos are nudged to declare `afk.backpressure` once; where they have not, `/go` surfaces the gap at confirm time instead of silently degrading to an agent-judged loop.
+- No new execution path: the machine gate, worktree, and landing all reuse existing AFK authority; only the pre-dispatch confirmation and the bounded re-verify cap are new.
+
+### Related
+
+- ADR 0044/0045 — the commit-anchored progress guard the productive loop defeated.
+- ADR 0008 — the feedback-gate `runFeedback` authority reused as the machine gate.
+- `afk.backpressure` (AFK `docs/CONFIG.md`, PRD #429/#430) — the operator-declared merge gate that becomes the DoD's machine half.
