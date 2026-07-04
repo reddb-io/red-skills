@@ -22,10 +22,11 @@
 # first and only `promote` when it is green. `--force` skips the confirmation
 # prompt but never the gate.
 #
-# The bundle ASSETS (`dev.bundle.min.mjs` + `dev.manifest.json`) for the canary
-# release are built and uploaded by the red-release flow; this script only moves
-# the pointers. After a `cut`/`rollback`, refresh the `canary` GitHub Release
-# assets so the tag and its payload agree (see `gh release upload --clobber`).
+# The bundle ASSETS (`dev.bundle.min.mjs` + `dev.manifest.json` +
+# `dev.manifest.json.sigstore.json`) for the canary release are built and
+# uploaded by the red-release flow; this script only moves the pointers. After a
+# `cut`/`rollback`, refresh the `canary` GitHub Release assets so the tag and its
+# payload agree (see `gh release upload --clobber`).
 
 set -euo pipefail
 
@@ -78,7 +79,7 @@ cmd_cut() {
   confirm "Point canary at ${ref}?"
   move_tag canary "$ref"
   printf 'next: refresh the canary release assets, e.g.\n'
-  printf '  gh release upload canary dist/dev.bundle.min.mjs dist/dev.manifest.json --clobber\n'
+  printf '  gh release upload canary dist/dev.bundle.min.mjs dist/dev.manifest.json dist/dev.manifest.json.sigstore.json --clobber\n'
 }
 
 cmd_promote() {
