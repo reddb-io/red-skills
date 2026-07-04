@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { execTool, type ExecFn, type ExecOptions, type ExecOutput } from "./exec.js";
 import type { GhContext } from "./gh.js";
 import type { InlineComment, PrContext, ReviewGh } from "../core/review.js";
+import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../core/source-trust.js";
+import type { ActorTrustVerdict } from "../core/trust-gate.js";
 
 function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
   const opts: ExecOptions = { cwd: ctx.cwd };
@@ -23,24 +25,52 @@ function repoArgs(ctx: GhContext): string[] {
   return ctx.repo ? ["--repo", ctx.repo] : [];
 }
 
+type PrTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
+
 /** Build the {@link ReviewGh} port over a {@link GhContext}. */
-export function buildReviewGh(ctx: GhContext): ReviewGh {
+export function buildReviewGh(ctx: GhContext, resolveTrust?: PrTrustResolver): ReviewGh {
   return {
     async fetchPr(pr: number): Promise<PrContext> {
-      const view = await runGh(ctx, ["pr", "view", String(pr), ...repoArgs(ctx), "--json", "title,body"]);
+      const view = await runGh(ctx, ["pr", "view", String(pr), ...repoArgs(ctx), "--json", "title,body,author,authorAssociation"]);
       let title = "";
       let body = "";
+      let login: string | undefined;
+      let isBot = false;
+      let authorAssociation: string | undefined;
       if (view.code === 0) {
         try {
-          const parsed = JSON.parse(view.stdout) as { title?: string; body?: string | null };
+          const parsed = JSON.parse(view.stdout) as {
+            title?: string;
+            body?: string | null;
+            author?: { login?: string; is_bot?: boolean };
+            authorAssociation?: string;
+          };
           title = parsed.title ?? "";
           body = parsed.body ?? "";
+          login = parsed.author?.login ? String(parsed.author.login) : undefined;
+          isBot = parsed.author?.is_bot === true;
+          authorAssociation = parsed.authorAssociation ? String(parsed.authorAssociation) : undefined;
         } catch {
           // tolerate malformed JSON — degrade to empty metadata.
         }
       }
+      const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
+      let trustVerdict: ActorTrustVerdict | undefined;
+      if (!isBot && !associationTrusted && login && resolveTrust) {
+        try {
+          trustVerdict = await resolveTrust(login);
+        } catch {
+          trustVerdict = undefined;
+        }
+      }
       const diff = await runGh(ctx, ["pr", "diff", String(pr), ...repoArgs(ctx)]);
-      return { number: pr, title, body, diff: diff.code === 0 ? diff.stdout : "" };
+      return {
+        number: pr,
+        title,
+        body,
+        sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
+        diff: diff.code === 0 ? diff.stdout : "",
+      };
     },
 
     async postReview(pr, payload) {

@@ -21,6 +21,7 @@ import {
   LABEL_VALIDATION,
 } from "./triage-labels.js";
 import type { AgentRunner } from "./execution.js";
+import type { SourceTrustLevel } from "./source-trust.js";
 
 /**
  * The minimal subset of the Standard Schema v1 interface that sandcastle's
@@ -64,6 +65,9 @@ export interface PrContext {
   readonly number: number;
   readonly title: string;
   readonly body: string;
+  /** Source-trust level of the PR author. PR title/body stay untrusted payload
+   * even when this is `trusted`; the value is audit metadata for prompt framing. */
+  readonly sourceTrust?: SourceTrustLevel;
   /** Unified `git diff` of the PR against its base, for diff-line filtering. */
   readonly diff: string;
 }
