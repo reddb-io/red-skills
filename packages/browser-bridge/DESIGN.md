@@ -22,7 +22,7 @@ scope lives in `apps/red-browser/DESIGN.md`).
 - **Ordering:** this review-surface half is built **before** #992's automation
   slices (lavish-half first).
 - **Output format:** every AI-facing surface emits **TOON**, per the repo-wide
-  mandate (ADR 0082, *AXI + TOON is the doctrine for every agent-facing CLI*).
+  mandate (ADR 0089, *AXI + TOON is the doctrine for every agent-facing CLI*).
   Human-facing stderr status lines (bridge URL, "audit passed") stay plain text.
 
 ## Ground-truth correction
@@ -210,7 +210,7 @@ satisfies the ordering constraint and unblocks both halves.
 **No ADR written.** Three-condition test:
 
 - **Hard to reverse?** No — the output format and the client/one-verb shape are
-  already fixed by ADR 0082 (TOON) and the settled human decision; these slices
+  already fixed by ADR 0089 (TOON) and the settled human decision; these slices
   apply them.
 - **Surprising without context?** No — TOON everywhere, one review verb, and
   no-vendoring are the documented defaults (ADR 0082, PRD #928).
@@ -218,5 +218,5 @@ satisfies the ordering constraint and unblocks both halves.
   native browser-bridge, red-ui out) is a settled human decision, not an open
   design choice.
 
-The relevant records already exist: ADR 0082 for the TOON doctrine, PRD #928 for
+The relevant records already exist: ADR 0089 for the TOON doctrine, PRD #928 for
 the arch-lock, this doc for the review-surface scope.
