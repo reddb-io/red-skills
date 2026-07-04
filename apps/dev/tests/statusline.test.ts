@@ -52,9 +52,9 @@ describe("statusline — humanizeAlive", () => {
     expect(humanizeAlive(59 * 1000 + 999)).toBe("59s");
   });
 
-  it("renders Xm when an exact number of minutes", () => {
-    expect(humanizeAlive(5 * 60 * 1000)).toBe("5m");
-    expect(humanizeAlive(60 * 1000)).toBe("1m");
+  it("always shows seconds at minute scale, even when zero", () => {
+    expect(humanizeAlive(5 * 60 * 1000)).toBe("5m0s");
+    expect(humanizeAlive(60 * 1000)).toBe("1m0s");
   });
 
   it("renders XmYs when seconds remain under an hour", () => {
@@ -62,9 +62,9 @@ describe("statusline — humanizeAlive", () => {
     expect(humanizeAlive((1 * 60 + 1) * 1000)).toBe("1m1s");
   });
 
-  it("renders Xh when an exact number of hours", () => {
-    expect(humanizeAlive(1 * 60 * 60 * 1000)).toBe("1h");
-    expect(humanizeAlive(2 * 60 * 60 * 1000)).toBe("2h");
+  it("always shows minutes at hour scale, even when zero", () => {
+    expect(humanizeAlive(1 * 60 * 60 * 1000)).toBe("1h0m");
+    expect(humanizeAlive(2 * 60 * 60 * 1000)).toBe("2h0m");
   });
 
   it("renders XhYm when minutes remain", () => {
@@ -74,6 +74,12 @@ describe("statusline — humanizeAlive", () => {
 
   it("drops the seconds part at hour scale", () => {
     expect(humanizeAlive((1 * 60 * 60 + 22 * 60 + 45) * 1000)).toBe("1h22m");
+  });
+
+  it("always shows hours at day scale, even when zero", () => {
+    expect(humanizeAlive(24 * 60 * 60 * 1000)).toBe("1d0h");
+    expect(humanizeAlive((25 * 60 * 60 + 30 * 60) * 1000)).toBe("1d1h");
+    expect(humanizeAlive((2 * 24 * 60 * 60 + 10 * 60 * 60) * 1000)).toBe("2d10h");
   });
 
   it("renders 0s for zero or negative input", () => {
