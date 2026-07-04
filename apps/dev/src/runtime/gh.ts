@@ -20,6 +20,8 @@ import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
+import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../core/source-trust.js";
+import type { ActorTrustVerdict } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
 
@@ -472,24 +474,75 @@ export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
   }
 }
 
-/** `gh issue view --json comments` → handoff-projected comment list. Each
- * comment carries the author login + body + createdAt the handoff renders. */
-export async function issueComments(ctx: GhContext, issue: number): Promise<HandoffComment[]> {
+/** A `resolveActorTrust`-bound lookup the projection consults for an author whose
+ * association alone does not confer trust (issue #1100). Injected so gh.ts stays
+ * the only IO seam and the source-trust decision stays pure. */
+export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
+
+/** `gh issue view --json comments` → handoff-projected comment list. Each comment
+ * carries the author login + body + createdAt the handoff renders, plus the
+ * resolved source-trust LEVEL (issue #1100) so guidance promotion gates on SOURCE
+ * rather than directive FORMAT. Bot authors resolve to `automation` and
+ * OWNER/MEMBER/COLLABORATOR associations to `trusted` from the projection alone;
+ * every other author is resolved through the injected `resolveTrust` (the
+ * `resolveActorTrust` primitive) so allowlist / write-access / CODEOWNERS
+ * overrides still promote. Results are memoised per login within the call. When
+ * `resolveTrust` is omitted the level is decided from association + bot status
+ * only (a non-collaborator falls to `dubious`). */
+export async function issueComments(
+  ctx: GhContext,
+  issue: number,
+  resolveTrust?: CommentTrustResolver,
+): Promise<HandoffComment[]> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
   if (r.code !== 0) return [];
+  let parsed: {
+    comments?: Array<{
+      body?: string;
+      author?: { login?: string; is_bot?: boolean };
+      authorAssociation?: string;
+      createdAt?: string;
+    }>;
+  };
   try {
-    const parsed = JSON.parse(r.stdout) as {
-      comments?: Array<{ body?: string; author?: { login?: string }; createdAt?: string }>;
-    };
-    if (!Array.isArray(parsed.comments)) return [];
-    return parsed.comments.map((c): HandoffComment => ({
-      body: String(c.body ?? ""),
-      author: c.author?.login ? String(c.author.login) : undefined,
-      createdAt: c.createdAt ? String(c.createdAt) : undefined,
-    }));
+    parsed = JSON.parse(r.stdout);
   } catch {
     return [];
   }
+  if (!Array.isArray(parsed.comments)) return [];
+
+  // Memoise the (potentially gh-backed) trust verdict per login within this call.
+  const verdicts = new Map<string, ActorTrustVerdict | undefined>();
+  const resolveVerdict = async (login: string | undefined): Promise<ActorTrustVerdict | undefined> => {
+    if (!login || !resolveTrust) return undefined;
+    if (verdicts.has(login)) return verdicts.get(login);
+    let verdict: ActorTrustVerdict | undefined;
+    try {
+      verdict = await resolveTrust(login);
+    } catch {
+      verdict = undefined;
+    }
+    verdicts.set(login, verdict);
+    return verdict;
+  };
+
+  const out: HandoffComment[] = [];
+  for (const c of parsed.comments) {
+    const login = c.author?.login ? String(c.author.login) : undefined;
+    const isBot = c.author?.is_bot === true;
+    const authorAssociation = c.authorAssociation ? String(c.authorAssociation) : undefined;
+    // A bot, or an already-trusted association, needs no gh trust lookup — only an
+    // otherwise-dubious human author is resolved through the trust primitive.
+    const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
+    const trustVerdict = isBot || associationTrusted ? undefined : await resolveVerdict(login);
+    out.push({
+      body: String(c.body ?? ""),
+      author: login,
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
+      sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
+    });
+  }
+  return out;
 }
 
 /** Orphan-cleanup per-dir lookup (prune_orphans): the issue's open/closed state
