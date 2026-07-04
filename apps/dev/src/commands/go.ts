@@ -18,11 +18,13 @@ import {
   parseGoMode,
   DEFAULT_GO_MODE,
   GO_WORKERS_SEGMENT,
+  type GoDodSpec,
   type DisposableIssueSpec,
   type GoMode,
 } from "../core/go.js";
+import { loadConfig, readBackpressure } from "../core/config.js";
 import { dispatchScout, SCOUT_WORKERS_SEGMENT, type ScoutIssueSpec } from "../core/scout.js";
-import { resolveRepoContext } from "../runtime/wire.js";
+import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { runCommand } from "./run.js";
 import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -35,12 +37,14 @@ import type { GhContext } from "../runtime/gh.js";
  * demand through. */
 export function parseGoArgs(
   args: readonly string[],
-): { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean } {
+): { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean; dod?: string; verifyCommand?: string } {
   const positional: string[] = [];
   let runner: string | undefined;
   let mode: GoMode = DEFAULT_GO_MODE;
   let yolo = false;
   let scout = false;
+  let dod: string | undefined;
+  let verifyCommand: string | undefined;
   let sawDoubleDash = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -66,6 +70,24 @@ export function parseGoArgs(
     }
     if (!sawDoubleDash && arg === "+yolo") { yolo = true; continue; }
     if (!sawDoubleDash && arg === "--scout") { scout = true; continue; }
+    if (!sawDoubleDash && arg === "--dod") {
+      dod = args[++i];
+      if (dod === undefined) throw new Error("--dod requires a value");
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--dod=")) {
+      dod = arg.slice("--dod=".length);
+      continue;
+    }
+    if (!sawDoubleDash && arg === "--verify") {
+      verifyCommand = args[++i];
+      if (verifyCommand === undefined) throw new Error("--verify requires a value");
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--verify=")) {
+      verifyCommand = arg.slice("--verify=".length);
+      continue;
+    }
     // Unknown `--flag` before the `--` separator is an error, never demand text
     // (#1045): folding e.g. `--resume 1043` into the demand silently minted a
     // junk issue about a flag the user meant as a command. A literal dashed
@@ -73,16 +95,17 @@ export function parseGoArgs(
     if (!sawDoubleDash && arg.startsWith("--")) {
       throw new Error(
         `unknown flag ${JSON.stringify(arg)}: expected --runner/-r, --mode, --scout, or +yolo. ` +
+          `Also accepted for standard /go: --dod and --verify. ` +
           `Pass a literal dashed demand after a "--" separator.`,
       );
     }
     positional.push(arg);
   }
-  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout };
+  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand };
 }
 
 export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
-  let parsed: { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean };
+  let parsed: { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean; dod?: string; verifyCommand?: string };
   try {
     parsed = parseGoArgs(args);
   } catch (error) {
@@ -100,6 +123,7 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
 
   const ctx = await resolveRepoContext(cwd);
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const configuredBackpressure = readBackpressure(loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }));
 
   if (parsed.scout) {
     // Scout mode: read-only investigation, no commits / branch / PR / merge.
@@ -141,7 +165,15 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
       },
       parsed.demand,
-      { runner: parsed.runner, mode: parsed.mode, yolo: parsed.yolo },
+      {
+        runner: parsed.runner,
+        mode: parsed.mode,
+        yolo: parsed.yolo,
+        task: parsed.demand,
+        dod: parsed.dod,
+        verifyCommand: parsed.verifyCommand,
+        hasHarness: configuredBackpressure.length > 0,
+      } satisfies { runner?: string; mode: GoMode; yolo: boolean } & GoDodSpec,
     );
     process.stdout.write(
       `🚀 /go dispatched disposable issue #${result.issue} ` +
