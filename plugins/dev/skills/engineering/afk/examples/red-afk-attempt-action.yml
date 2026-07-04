@@ -6,7 +6,7 @@
 # against this repo's checkout. You own the trigger and any trust gate.
 #
 # Trade-off vs. the turnkey caller (`rs-afk-attempt.yml`): the reusable ships
-# the author/label-actor trust gate (ADR 0056); the raw action does not. For
+# the author/label-actor trust gate (ADR 0085); the raw action does not. For
 # public repos prefer the reusable. For private repos an `if:` on the actor (as
 # below) is usually enough.
 #
