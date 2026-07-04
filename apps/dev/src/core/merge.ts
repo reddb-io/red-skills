@@ -11,9 +11,9 @@
 //   - LOCKED   → merge the attempt directly into the locked branch with
 //                `git merge --no-ff` and push it; a rejected push rolls the
 //                merge commit back to the captured pre_merge_sha.
-//   - UNLOCKED → land via an admin-merged PR into the pinned target (force-push
-//                the attempt branch, open or reuse the PR, `gh pr merge --admin
-//                --merge`), then fast-forward local <target> to the merge commit.
+//   - UNLOCKED → land via a PR into the pinned target (force-push the attempt
+//                branch, open or reuse the PR, `gh pr merge --merge`), then
+//                fast-forward local <target> to the merge commit.
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -341,20 +341,19 @@ export async function waitForReviewCheck(
 
 // ---------- CI-aware merge (#812) ----------
 //
-// An UNLOCKED admin-merge (`gh pr merge --admin --merge`) does NOT bypass
-// required status checks on a base with `enforce_admins=true` (e.g. reddb-io/reddb
-// since #975 / ADR 0059). Admin-merging a just-opened PR whose required checks are
-// still pending is therefore rejected — and historically AFK bucketed that
-// rejection into `merge-conflict`, mislabelling a perfectly MERGEABLE PR and
-// re-running the whole inner agent. CI-aware merge fixes this: poll
-// `mergeStateStatus` + `statusCheckRollup` until the PR settles, then merge only
-// when it is genuinely ready, and DISTINGUISH the failure modes (conflict vs a
-// failed required check vs checks merely pending).
+// A PR merge (`gh pr merge --merge`) does NOT bypass required status checks.
+// Merging a just-opened PR whose required checks are still pending is therefore
+// rejected — and historically AFK bucketed that rejection into `merge-conflict`,
+// mislabelling a perfectly MERGEABLE PR and re-running the whole inner agent.
+// CI-aware merge fixes this: poll `mergeStateStatus` + `statusCheckRollup` until
+// the PR settles, then merge only when it is genuinely ready, and DISTINGUISH the
+// failure modes (conflict vs a failed required check vs checks merely pending).
 
 /**
  * Normalised verdict for the CI-aware merge poll:
- *   - `merge`     — ready to admin-merge (CLEAN, or BLOCKED only by a required
- *                   review which `--admin` waives, or non-required checks flaky).
+ *   - `merge`     — ready to merge (CLEAN, or non-required checks flaky; BLOCKED
+ *                   by a required review is attempted and surfaces as `merge-failed`
+ *                   rather than being bypassed).
  *   - `conflict`  — a real git conflict / DIRTY / BEHIND (non-fast-forward). Maps
  *                   to the existing bounded `merge-conflict` recovery.
  *   - `ci-failed` — a required check FAILED. A distinct outcome so the next
@@ -448,8 +447,10 @@ export function parseMergeStateView(stdout: string): MergeStateView {
  *      BLOCKED — a failed check never clears by waiting).
  *   3. CLEAN → `merge`.
  *   4. any check still running → `pending` (keep waiting).
- *   5. BLOCKED with neither failures nor pending checks → blocked by a required
- *      REVIEW only, which `--admin` waives → `merge`.
+ *   5. BLOCKED with neither failures nor pending checks → likely blocked by a
+ *      required REVIEW; attempts merge, which surfaces as `merge-failed` if the
+ *      repository's branch protection requires a review (correct: honored, not
+ *      bypassed) → `merge`.
  *   6. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
  *   7. UNKNOWN / DRAFT / empty → `pending` (GitHub still computing mergeability).
  */
@@ -556,12 +557,12 @@ export interface LandPrResult {
 const PR_BODY_PREFIX = "Automated AFK landing for #";
 
 /**
- * UNLOCKED landing (ADR 0030): land the attempt via an admin-merged PR into
- * `<target>`. Steps mirror land_pr in afk.sh:
+ * UNLOCKED landing (ADR 0030): land the attempt via a PR into `<target>`. Steps
+ * mirror land_pr in afk.sh:
  *   1. force-push the attempt branch to `<remote>` (when a worktree is given);
  *   2. reuse an open PR for this head/base, else `gh pr create --base <target>
  *      --head <branch>`;
- *   3. `gh pr merge <num> --admin --merge`;
+ *   3. `gh pr merge <num> --merge` (no --admin: branch protection is honored);
  *   4. fast-forward local `<target>` to the merge commit (best-effort) so HEAD
  *      carries the merge for the closing envelope.
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
@@ -595,14 +596,13 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     await waitForReviewCheck(exec, repo, prNumber, waitForReview);
   }
 
-  // 2c. Opt-in CI-aware merge (#812). An admin-merge does NOT bypass required
-  // status checks on an `enforce_admins` base, so admin-merging a just-opened PR
-  // with checks still pending is rejected. Poll until the PR settles, then route
-  // the distinct failure modes instead of collapsing them to merge-conflict:
+  // 2c. Opt-in CI-aware merge (#812). Merging a just-opened PR with checks still
+  // pending is rejected. Poll until the PR settles, then route the distinct failure
+  // modes instead of collapsing them to merge-conflict:
   //   - conflict   → caller's bounded merge-conflict recovery (correct here).
   //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
   //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
-  //   - merge      → fall through to the admin-merge below.
+  //   - merge      → fall through to the merge below.
   if (ciAwait) {
     const ready = await waitForMergeReady(exec, repo, prNumber, ciAwait);
     if (ready === "conflict") return { ok: false, prNumber, reason: "conflict" };
@@ -610,14 +610,14 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
   }
 
-  // 3. Admin-merge: the worker is autonomous, so bypass required-review checks.
-  const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--admin", "--merge"]);
+  // 3. Merge: branch protection is honored rather than bypassed (#1103).
+  const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"]);
   if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
 
   // 4. Fast-forward local <target> to the merge commit (best-effort) — UNLOCKED
   // ONLY. A LOCKED landing must never write to the primary checkout (ADR 0083 §2,
   // untouchable primary, no exceptions — including the branch-lock landing): the
-  // integration already lives on `origin/<target>` after the remote admin-merge,
+  // integration already lives on `origin/<target>` after the remote merge,
   // and the maintainer promotes by pulling, so the primary's local `<target>` is
   // left untouched. The UNLOCKED path keeps its fast-forward (issue #1019 crit. 3).
   if (!locked) {
