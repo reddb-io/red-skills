@@ -484,6 +484,10 @@ interface RawGhComment {
   author?: { login?: string; is_bot?: boolean };
   authorAssociation?: string;
   createdAt?: string;
+  reactionGroups?: Array<{
+    content?: string;
+    users?: { nodes?: Array<{ login?: string }> };
+  }>;
 }
 
 function parseJsonLines(stdout: string): unknown[] {
@@ -500,13 +504,34 @@ function parseJsonLines(stdout: string): unknown[] {
   return out;
 }
 
+function thumbsUpReactors(comment: RawGhComment): string[] {
+  const reactors: string[] = [];
+  for (const group of comment.reactionGroups ?? []) {
+    if (String(group.content ?? "").toUpperCase() !== "THUMBS_UP") continue;
+    for (const node of group.users?.nodes ?? []) {
+      const login = String(node.login ?? "").trim();
+      if (login) reactors.push(login);
+    }
+  }
+  return reactors;
+}
+
+function isMaintainerThumbsUp(verdict: ActorTrustVerdict | undefined): boolean {
+  return (
+    verdict?.executable === true &&
+    (verdict.basis === "write-access" || verdict.basis === "codeowners")
+  );
+}
+
 /** Project GitHub comments to handoff comments with the source-trust taxonomy.
  * Bot authors resolve to `automation` and OWNER/MEMBER/COLLABORATOR associations
  * to `trusted` from the projection alone; every other author is resolved through
  * the injected `resolveTrust` primitive so allowlist / write-access / CODEOWNERS
- * overrides still promote. Results are memoised per login within the call. When
- * `resolveTrust` is omitted the level is decided from association + bot status
- * only (a non-collaborator falls to `dubious`). */
+ * overrides still promote. A maintainer's THUMBS_UP reaction promotes only the
+ * reacted comment; it does not change the author's trust on sibling comments.
+ * Results are memoised per login within the call. When `resolveTrust` is omitted
+ * the level is decided from association + bot status only (a non-collaborator
+ * falls to `dubious`, and reaction promotion is unavailable). */
 async function projectComments(
   raw: readonly RawGhComment[],
   resolveTrust?: CommentTrustResolver,
@@ -535,11 +560,19 @@ async function projectComments(
     // otherwise-dubious human author is resolved through the trust primitive.
     const associationTrusted = TRUSTED_ASSOCIATIONS.has((authorAssociation ?? "").trim().toUpperCase());
     const trustVerdict = isBot || associationTrusted ? undefined : await resolveVerdict(login);
+    const maintainerThumbsUp = (
+      await Promise.all(thumbsUpReactors(c).map((actor) => resolveVerdict(actor)))
+    ).some(isMaintainerThumbsUp);
     out.push({
       body: String(c.body ?? ""),
       author: login,
       createdAt: c.createdAt ? String(c.createdAt) : undefined,
-      sourceTrust: classifySourceTrust({ authorAssociation, isBot, trustVerdict }),
+      sourceTrust: classifySourceTrust({
+        authorAssociation,
+        isBot,
+        trustVerdict,
+        maintainerThumbsUp,
+      }),
     });
   }
   return out;
@@ -562,6 +595,7 @@ export async function issueComments(
       author?: { login?: string; is_bot?: boolean };
       authorAssociation?: string;
       createdAt?: string;
+      reactionGroups?: RawGhComment["reactionGroups"];
     }>;
   };
   try {
