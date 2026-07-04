@@ -858,7 +858,7 @@ describe("processIssue — per-issue manual-landing mode (landing:manual, #1049)
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(trace.closed).toContain(9);
   });
 });
@@ -898,7 +898,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     const joined = calls.map((c) => c.join(" "));
     // landPr reuses the open PR (#42) and admin-merges it.
     expect(joined.some((c) => c.includes("pr list"))).toBe(true);
-    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
   });
@@ -924,7 +924,7 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     // result.locked still echoes the lock state (observational), not the mode.
     expect(result.locked).toBe(true);
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
   });
 
@@ -1008,7 +1008,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
     expect(trace.closed).toContain(9);
   });
@@ -1026,7 +1026,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     const joined = calls.map((c) => c.join(" "));
 
     expect(result.outcome).toBe("done");
-    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
     expect(trace.closed).toContain(9);
   });

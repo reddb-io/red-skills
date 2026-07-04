@@ -212,7 +212,7 @@ describe("landPr (unlocked path)", () => {
     expect(
       c.some((x) => x.includes("pr create --base main --head afk/wBBBB/9-x")),
     ).toBe(true);
-    expect(c.some((x) => x.includes("pr merge 77 --admin --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("pr merge 77 --merge"))).toBe(true);
     // Local ff-merge to carry the merge commit for the closing envelope.
     expect(c).toContain("git -C /repo merge --ff-only origin/main");
     // No direct merge of the attempt branch into target.
@@ -235,7 +235,7 @@ describe("landPr (unlocked path)", () => {
     expect(result.ok).toBe(true);
     const c = joined(calls);
     expect(c.some((x) => x.includes("pr create"))).toBe(false);
-    expect(c.some((x) => x.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
   });
 
   it("returns failure when the admin-merge fails", async () => {
@@ -291,7 +291,7 @@ describe("landPr (unlocked path)", () => {
     expect(result.ok).toBe(true);
     const c = joined(calls);
     // The admin-merge still ran (the integration lands remotely on origin).
-    expect(c.some((x) => x.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
     // No local fast-forward, and no `git -C /repo` write op at all.
     expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
     expect(c.some((x) => x.includes("git -C /repo fetch"))).toBe(false);
@@ -476,7 +476,7 @@ describe("landPr wait_for_review wiring", () => {
     expect(result.ok).toBe(true);
     expect(checksPolled).toBe(true);
     expect(mergedAfterPoll).toBe(true);
-    expect(calls.some((c) => c.join(" ").includes("pr merge 77 --admin --merge"))).toBe(true);
+    expect(calls.some((c) => c.join(" ").includes("pr merge 77 --merge"))).toBe(true);
   });
 
   it("does NOT poll review checks by default (waitForReview absent)", async () => {
@@ -494,7 +494,7 @@ describe("landPr wait_for_review wiring", () => {
     });
     expect(result.ok).toBe(true);
     expect(joined(calls).some((c) => c.includes("pr checks"))).toBe(false);
-    expect(joined(calls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 });
 
@@ -535,7 +535,7 @@ describe("CI-aware merge classification (#812)", () => {
     expect(classifyMergeState(view("BLOCKED", [{ status: "COMPLETED", conclusion: "" }]))).toBe("pending");
   });
 
-  it("BLOCKED by required REVIEW only (all checks green) → merge (admin waives review)", () => {
+  it("BLOCKED by required REVIEW only (all checks green) → merge (attempt is made; fails if review actually required)", () => {
     const v = view("BLOCKED", [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }]);
     expect(classifyMergeState(v)).toBe("merge");
   });
@@ -694,7 +694,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     });
     expect(r.ok).toBe(true);
     expect(joined(calls).some((c) => c.includes("pr view"))).toBe(false);
-    expect(joined(calls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 });
 

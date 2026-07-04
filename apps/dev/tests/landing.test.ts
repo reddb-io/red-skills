@@ -263,7 +263,7 @@ describe("doLanding — happy paths", () => {
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("pr list"))).toBe(true);
-    expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // unlocked never merges the attempt branch locally.
     expect(j.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
   });
@@ -274,7 +274,7 @@ describe("doLanding — happy paths", () => {
     expect(r).toEqual({ ok: true, locked: false });
     const j = joined(h.mergeCalls);
     const checksIdx = j.findIndex((c) => c.includes("pr checks"));
-    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
     expect(checksIdx).toBeGreaterThanOrEqual(0);
     expect(mergeIdx).toBeGreaterThan(checksIdx);
   });
@@ -284,6 +284,15 @@ describe("doLanding — happy paths", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
+  });
+
+  it("default unlocked landing → merge runs without --admin (branch protection is honored, #1103)", async () => {
+    const h = harness({ locked: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const mergeCall = h.mergeCalls.find((c) => c.join(" ").includes("pr merge"));
+    expect(mergeCall).toBeDefined();
+    expect(mergeCall!.join(" ")).not.toContain("--admin");
   });
 
   it("locked → lands via merge --no-ff into the locked branch + push", async () => {
@@ -376,7 +385,7 @@ describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
     const h = harness({ locked: false, trunk: "absent" });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 
   it("ancestor local trunk (default) → precondition proceeds and lands unchanged", async () => {
@@ -386,7 +395,7 @@ describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
     // The precondition fresh-fetched origin/<trunk> then admin-merged.
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c === "git -C /repo fetch origin main --quiet")).toBe(true);
-    expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 });
 
@@ -486,7 +495,7 @@ describe("doLanding — abort / failure short-circuits", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
     // It still admin-merged the PR.
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // The primary checkout was never touched by a destructive op (no reset/abort).
     expect(h.mergeCalls.every((c) => !c.includes("reset"))).toBe(true);
   });
@@ -631,7 +640,7 @@ describe("doLanding — CI-aware merge (#812)", () => {
     expect(r).toEqual({ ok: true, locked: false });
     const j = joined(h.mergeCalls);
     const viewIdx = j.findIndex((c) => c.includes("pr view"));
-    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
     expect(viewIdx).toBeGreaterThanOrEqual(0);
     expect(mergeIdx).toBeGreaterThan(viewIdx);
   });
@@ -677,7 +686,7 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     const pushIdx = j.findIndex(
       (c) => c === `git -C ${RWT} push origin HEAD:refs/heads/afk/wAAAA/9-fix-the-thing --force-with-lease`,
     );
-    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
     expect(fetchIdx).toBeGreaterThanOrEqual(0);
     expect(rebaseIdx).toBeGreaterThan(fetchIdx);
     expect(pushIdx).toBeGreaterThan(rebaseIdx);
@@ -723,7 +732,7 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     expect(r).toEqual({ ok: true, locked: false });
     // No rebase touched the worker branch; the admin-merge still ran.
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 
   it("worktree could not be provisioned → rebase skipped, PR still lands (never risks the primary)", async () => {
@@ -731,7 +740,7 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 
   it("the DIRECT (non-PR) path ignores the rebase provisioner (it integrates origin itself)", async () => {
@@ -747,7 +756,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   // The flag (openPr = afk.worktree_launches_pull_request) chooses PR vs direct;
   // the lock only resolves `base`. Four cells: {no lock, lock=X} × {true, false}.
   // `prMerged` = the admin-PR path ran; `directMerged` = the worktree merge ran.
-  const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --admin --merge"));
+  const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --merge"));
   const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"));
 
   it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
@@ -812,7 +821,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(r).toEqual({ ok: true, locked: true });
     const j = joined(h.mergeCalls);
     const checksIdx = j.findIndex((c) => c.includes("pr checks"));
-    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
     expect(checksIdx).toBeGreaterThanOrEqual(0);
     expect(mergeIdx).toBeGreaterThan(checksIdx);
   });
@@ -844,7 +853,7 @@ describe("doLanding — untouchable primary in the LOCKED landing (ADR 0083 §2,
     expect(r).toEqual({ ok: true, locked: true });
     const j = joined(h.mergeCalls);
     // The PR is admin-merged remotely — the integration lands on origin, not local.
-    expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // The step-4 best-effort local fast-forward of the primary's lock branch is GONE.
     expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
     expect(j.some((c) => c.includes("git -C /repo fetch origin feature-locked"))).toBe(false);
