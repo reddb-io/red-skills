@@ -6,6 +6,7 @@ import {
 } from "./comment-classification.js";
 import type { HandoffComment } from "./handoff.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
+import { isTrustedSource } from "./source-trust.js";
 
 export interface HitlDecisionIssue {
   number: number;
@@ -161,6 +162,7 @@ function directiveSignals(comments: readonly HandoffComment[]): DecisionSignal[]
   const out: DecisionSignal[] = [];
   for (const comment of comments) {
     if (classifyComment({ body: comment.body }) !== "directive") continue;
+    if (!isTrustedSource(comment.sourceTrust)) continue;
     for (const directive of extractDirectives(comment.body)) {
       if (isSelfHitlResolution(directive)) continue;
       const line = firstUsefulLine(directive);
