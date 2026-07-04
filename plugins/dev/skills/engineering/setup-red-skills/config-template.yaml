@@ -130,7 +130,7 @@ plugins:
 #     defaults:
 #       cargo: true               # ship cargo isolation on Rust projects
 #       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
-#   trust-gate:                   # "executable issue" trust gate (#621, ADR 0056)
+#   trust-gate:                   # "executable issue" trust gate (#621, ADR 0085)
 #     allowlist: alice,bob        # comma/space-separated GitHub logins. An issue is
 #                                 # executable only when its AUTHOR is in this list AND
 #                                 # `ready-for-agent` was applied by a listed actor
