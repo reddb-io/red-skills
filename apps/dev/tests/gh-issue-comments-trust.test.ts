@@ -56,6 +56,36 @@ describe("issueComments — source-trust projection (#1100)", () => {
     expect(out[4]).toMatchObject({ author: "trusted-ext", sourceTrust: "trusted" });
   });
 
+  it("promotes only the outside comment with a maintainer thumbs-up reaction", async () => {
+    const comments = JSON.stringify({
+      comments: [
+        {
+          body: "useful outside suggestion",
+          author: { login: "stranger", is_bot: false },
+          authorAssociation: "NONE",
+          reactionGroups: [
+            { content: "THUMBS_UP", users: { nodes: [{ login: "maintainer" }] } },
+          ],
+        },
+        {
+          body: "second outside suggestion",
+          author: { login: "stranger", is_bot: false },
+          authorAssociation: "NONE",
+          reactionGroups: [],
+        },
+      ],
+    });
+    const resolveTrust = async (actor: string): Promise<ActorTrustVerdict> =>
+      actor === "maintainer"
+        ? { executable: true, basis: "write-access" }
+        : { executable: false, reason: "not a maintainer" };
+
+    const out = await issueComments(ghReturning(comments), 7, resolveTrust);
+
+    expect(out[0]).toMatchObject({ author: "stranger", sourceTrust: "trusted" });
+    expect(out[1]).toMatchObject({ author: "stranger", sourceTrust: "dubious" });
+  });
+
   it("without a resolver a non-collaborator falls to dubious", async () => {
     const out = await issueComments(ghReturning(COMMENTS), 7);
     expect(out[3]).toMatchObject({ author: "stranger", sourceTrust: "dubious" });
