@@ -84,7 +84,14 @@ import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sw
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
-import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
+import {
+  parseTrustPolicy,
+  evaluateClaimTrust,
+  describeTrustPosture,
+  type TrustProvenance,
+  type RepoVisibility,
+  type ActorTrustSignals,
+} from "./trust-gate.js";
 import { getConfig } from "./config.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "./notes-loop.js";
@@ -132,6 +139,21 @@ export interface ProcessGh {
    * never fires), preserving today's behaviour.
    */
   issueTrust?(issue: number): Promise<TrustProvenance>;
+  /**
+   * Repository visibility (`gh repo view --json visibility`), folded into the
+   * trust policy so the no-allowlist default is visibility-aware (issue #1101): a
+   * PUBLIC repo fails closed, a private/undeterminable one stays permissive.
+   * Optional → absent callers/tests degrade to the permissive default (no
+   * visibility resolved), preserving today's behaviour.
+   */
+  repoVisibility?(): Promise<RepoVisibility | undefined>;
+  /**
+   * Dynamic-base trust signals for one actor (write-access / CODEOWNERS), the
+   * `ActorTrustLookup` the fail-closed default resolves author + promoter trust
+   * over. Optional → absent callers/tests cannot fail closed (the gate degrades to
+   * permissive even on a public repo), preserving today's behaviour.
+   */
+  actorTrustSignals?(actor: string): Promise<ActorTrustSignals>;
   /**
    * Render (or refresh) the HITL decision card on a `ready-for-human` issue
    * (#935, S11a). Called best-effort after the escalation labels are applied.
@@ -938,25 +960,31 @@ export async function processIssue(
     };
   }
 
-  // ---- trust gate (#621, ADR 0056) ----
+  // ---- trust gate (#621, ADR 0056; visibility-aware default #1101) ----
   // The "executable issue" predicate, evaluated BEFORE the promotion-to-running
-  // edit and before ANY worktree/handoff work: an issue is executable only when
-  // its author is a trusted identity AND `ready-for-agent` was applied by an
-  // allowlisted actor. Provenance is read from the issue TIMELINE + author field
-  // (deps.gh.issueTrust), never inferred from the mutable label set. When no
-  // allowlist is configured the policy is permissive (enabled:false) and this is
-  // a no-op — today's single-maintainer behaviour, preserved exactly. A refusal
-  // releases the claim and abandons the attempt (claim-lost) with a clear log
-  // line; the session loop then skips to the next candidate. The stripping of the
-  // non-allowlisted `ready-for-agent` itself is the sweep's job (planTrustStrip),
-  // not the claim's.
-  const trustPolicy = parseTrustPolicy(deps.hooks.config);
-  if (trustPolicy.enabled && deps.gh.issueTrust) {
+  // edit and before ANY worktree/handoff work. Provenance is read from the issue
+  // TIMELINE + author field (deps.gh.issueTrust), never inferred from the mutable
+  // label set. The active POSTURE (folded from the allowlist config + the repo
+  // visibility) decides:
+  //   - STRICT (allowlist configured) → author AND promoter must be allowlisted;
+  //   - FAIL-CLOSED (#1101: public repo, no allowlist) → author AND promoter must
+  //     resolve as maintainers (write-access / CODEOWNERS); otherwise the issue is
+  //     HELD for a maintainer summon (not auto-claimed);
+  //   - PERMISSIVE (private/undeterminable repo, no allowlist) → no-op, today's
+  //     single-maintainer behaviour preserved exactly.
+  // A refusal releases the claim and abandons the attempt (claim-lost) with a
+  // posture-tagged log line; the session loop then skips to the next candidate.
+  const visibility = deps.gh.repoVisibility ? await deps.gh.repoVisibility() : undefined;
+  const trustPolicy = parseTrustPolicy(deps.hooks.config, visibility);
+  const canFailClosed = !!(trustPolicy.failClosed && deps.gh.actorTrustSignals);
+  if ((trustPolicy.enabled || canFailClosed) && deps.gh.issueTrust) {
     const provenance = await deps.gh.issueTrust(issue);
-    const verdict = evaluateTrustGate(trustPolicy, provenance);
+    const signals = deps.gh.actorTrustSignals;
+    const lookup = signals ? (login: string) => signals(login) : async () => ({});
+    const verdict = await evaluateClaimTrust(trustPolicy, provenance, lookup);
     if (!verdict.executable) {
       deps.appendIterLog(
-        `🤖 /afk trust gate refused #${issue}: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
+        `🤖 /afk trust gate refused #${issue} [${describeTrustPosture(trustPolicy)}]: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
       );
       await deps.claimLock.release(issue);
       return claimLost(issue, hooksFired);
