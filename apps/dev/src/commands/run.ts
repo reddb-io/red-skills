@@ -49,6 +49,7 @@ import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import {
   classifyIssue,
@@ -668,6 +669,8 @@ export function buildProcessDeps(
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
+  // Trust policy for the guidance-channel source-trust projection (issue #1100).
+  const trustPolicy = parseTrustPolicy(config);
   const resolveOptions = makeHookResolveOptions(ctx.root);
   // resolveHooks runs once here to surface a malformed-hook-name error early;
   // process-issue re-resolves per run from the same config + options.
@@ -943,7 +946,13 @@ export function buildProcessDeps(
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),
-      comments: (issue) => ghx.issueComments(ghCtx, issue),
+      // Source-trust classification for the guidance channel (issue #1100): each
+      // comment's author is resolved through the `resolveActorTrust` primitive so
+      // only a trusted-source directive can become authoritative `<human-guidance>`.
+      comments: (issue) =>
+        ghx.issueComments(ghCtx, issue, (actor) =>
+          resolveActorTrust(trustPolicy, actor, (login) => ghx.actorTrustSignals(ghCtx, login)),
+        ),
       issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
       // Restart-informed retry block (#255): read the prior attempt's markers
       // (failure.reason / snapshot-branch.ref) via the attempt-ledger.
