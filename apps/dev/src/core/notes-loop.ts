@@ -4,7 +4,7 @@
 // lands the result. This module adds an OPT-IN outer loop around that single
 // invocation. When enabled, each outer iteration makes one small committed
 // change, the loop reads the run's real completion state from the
-// structured-output adapter (ADR 0082), and — if the agent is not done — seeds
+// structured-output adapter (ADR 0090), and — if the agent is not done — seeds
 // the NEXT iteration with an accumulated `notes.md` describing prior progress.
 // A `done` outcome short-circuits to land; a cap-hit hands the last partial run
 // straight back so the caller salvages + lands it.
@@ -164,7 +164,7 @@ export function renderNotesSection(notes: string): string {
 
 /**
  * Append a structured entry for the just-finished iteration to the running
- * notes. Draws on the run's structured `AgentOutput` (ADR 0082) when present —
+ * notes. Draws on the run's structured `AgentOutput` (ADR 0090) when present —
  * its `summary` / `key_changes_made` / `key_learnings` are exactly the
  * continuity signal the next iteration needs — and always records the outcome +
  * commit count so a cap-hit audit trail is legible even without a structured
