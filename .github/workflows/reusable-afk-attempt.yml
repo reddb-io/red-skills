@@ -17,7 +17,7 @@
 # (the `on:` trigger + the two `issues`-event branches in the job `if:`) once the
 # MINIMAX / OPENAI / OPENROUTER secrets are set.
 #
-# Per ADR 0056, the trust gate is rigorous by default: the issue author AND the
+# Per ADR 0085, the trust gate is rigorous by default: the issue author AND the
 # label-applier (the opener, for the `opened` path) must both be in the
 # allowlist. The gate is evaluated with `actions/github-script@v7`. Failure →
 # no claim, no PR, logged reason + a comment.
