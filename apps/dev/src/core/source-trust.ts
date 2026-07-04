@@ -8,8 +8,9 @@
 //
 // Three levels, mirroring GitHub's own author-association vocabulary plus the
 // bot/app dimension:
-//   - trusted    — author association OWNER / MEMBER / COLLABORATOR, or a
-//                  trust-gate override (allowlist / write-access / CODEOWNERS).
+//   - trusted    — author association OWNER / MEMBER / COLLABORATOR, a
+//                  trust-gate override (allowlist / write-access / CODEOWNERS),
+//                  or a per-comment maintainer 👍 promotion signal.
 //   - dubious    — CONTRIBUTOR / FIRST_TIMER / FIRST_TIME_CONTRIBUTOR / NONE, or a
 //                  fork-PR author without write access; the "unknown source" bucket.
 //   - automation — bots and GitHub Apps (their comments never carry human authority).
@@ -59,6 +60,10 @@ export interface SourceTrustInput {
    * honour the allowlist / write-access / CODEOWNERS overrides for an author whose
    * association alone does not qualify. */
   trustVerdict?: ActorTrustVerdict;
+  /** True when a maintainer applied 👍 to this specific comment. This is a
+   * per-comment promotion signal; it does not change the author's default trust
+   * on any other comment. */
+  maintainerThumbsUp?: boolean;
 }
 
 /**
@@ -67,7 +72,8 @@ export interface SourceTrustInput {
  *   2. author association OWNER/MEMBER/COLLABORATOR → trusted
  *   3. a POSITIVE trust-gate override (allowlist /
  *      write-access / codeowners)                  → trusted
- *   4. everything else                             → dubious
+ *   4. maintainer 👍 on this comment               → trusted
+ *   5. everything else                             → dubious
  *
  * Note `permissive-default` never promotes: the guidance channel requires a
  * positive source signal, not the absence of one.
@@ -82,6 +88,8 @@ export function classifySourceTrust(input: SourceTrustInput): SourceTrustLevel {
   if (verdict?.executable && verdict.basis !== undefined && TRUSTED_BASES.has(verdict.basis)) {
     return "trusted";
   }
+
+  if (input.maintainerThumbsUp) return "trusted";
 
   return "dubious";
 }
