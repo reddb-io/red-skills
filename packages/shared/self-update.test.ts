@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   bundleAssetName,
   manifestAssetName,
+  manifestSignatureAssetName,
   resolveBundle,
 } from "./bundle-fetch.js";
 import {
@@ -70,6 +71,9 @@ function makeIO(opts: {
         if (!bytes) throw new Error("404 Not Found");
         return manifestJson(v, sha256(bytes));
       }
+      if (name === manifestSignatureAssetName(PLUGIN)) {
+        return enc("sigstore-bundle");
+      }
       if (name === bundleAssetName(PLUGIN)) {
         const v = ref.replace(/^v/, "");
         const bytes = releases[v];
@@ -91,6 +95,10 @@ function makeIO(opts: {
       return path in files;
     },
     sha256,
+    async verifyBundleSignature() {
+      // Signature semantics are covered by bundle-fetch.test.ts; self-update
+      // only needs a valid signed-manifest fetch surface.
+    },
     async rename(from, to) {
       renames.push([from, to]);
       const bytes = files[from];
