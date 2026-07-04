@@ -7,9 +7,10 @@ import {
 import { SCOUT_EXIT_PROTOCOL } from "../src/core/handoff.js";
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
-import type { AgentEffort, RunAgentInput, RunAgentResult } from "../src/core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult, SandboxMode } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
+import type { TrustProvenance } from "../src/core/trust-gate.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import type { AttemptProgressInfo } from "../src/core/execution.js";
 
@@ -82,7 +83,11 @@ interface HarnessOptions {
   config?: ConfigValues;
   /** Trust-gate provenance (#621) returned by gh.issueTrust. When set, the port
    * is registered; absent → no port (gate never fires). */
-  trust?: { author?: string; readyForAgentActor?: string };
+  trust?: TrustProvenance;
+  /** Operator-configured sandbox mode threaded into processIssue. */
+  sandboxMode?: SandboxMode;
+  /** Container backends considered present by the fail-closed sandbox policy. */
+  availableSandboxes?: SandboxMode[];
   /** Repository visibility (#1101) returned by gh.repoVisibility. When set, the
    * port is registered and the no-allowlist default becomes visibility-aware. */
   visibility?: "public" | "private" | "internal";
@@ -387,6 +392,8 @@ function harness(opts: HarnessOptions = {}): {
       stderr: "",
     }),
     backpressureCommands: opts.backpressureCommands,
+    sandboxMode: opts.sandboxMode ?? "none",
+    sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
     // The sandcastle execution port: a fake returning a scripted outcome on the
     // worker branch sandcastle "committed" to. When `outcomes` is set, each call
     // pops the next scripted outcome (for fallback-swap sequences).
@@ -1825,6 +1832,61 @@ describe("processIssue — trust gate (#621)", () => {
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.iterLogs.some((l) => /trust gate/.test(l))).toBe(false);
+  });
+});
+
+describe("processIssue — untrusted-author sandbox policy (#1112)", () => {
+  it("forces container isolation for an untrusted author when the configured sandbox is none", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      sandboxMode: "none",
+      availableSandboxes: ["docker"],
+      trust: { author: "stranger", authorSourceTrust: "dubious", readyForAgentActor: "alice" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.runAgentCalls[0]?.sandboxMode).toBe("docker");
+    expect(trace.iterLogs.some((l) => /sandbox policy: untrusted issue author forced docker isolation/.test(l))).toBe(
+      true,
+    );
+  });
+
+  it("refuses untrusted-author execution and pages a human when no container backend is available", async () => {
+    const { deps, input, trace } = harness({
+      sandboxMode: "none",
+      availableSandboxes: [],
+      trust: { author: "stranger", authorSourceTrust: "dubious", readyForAgentActor: "alice" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("blocked");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+ready-for-human"]);
+    expect(trace.comments.some((c) => /requires container isolation.*no docker\/podman sandbox backend/.test(c.body))).toBe(
+      true,
+    );
+    expect(trace.released).toEqual([9]);
+  });
+
+  it("keeps trusted-author sandbox resolution unchanged", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      sandboxMode: "none",
+      availableSandboxes: ["docker"],
+      trust: { author: "alice", authorSourceTrust: "trusted", readyForAgentActor: "alice" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.runAgentCalls[0]?.sandboxMode).toBe("none");
   });
 });
 
