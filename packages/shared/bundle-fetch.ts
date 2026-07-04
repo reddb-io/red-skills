@@ -52,13 +52,21 @@ export interface BundleIO {
   writeFile(path: string, bytes: Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   sha256(bytes: Uint8Array): string;
+  verifyBundleSignature(input: {
+    artifact: Uint8Array;
+    signature: Uint8Array;
+    repo: string;
+    ref: string;
+    assetName: string;
+  }): Promise<void>;
 }
 
 export type BundleFetchFailure =
   | "network"
   | "asset-missing"
   | "checksum-mismatch"
-  | "manifest-invalid";
+  | "manifest-invalid"
+  | "signature-invalid";
 
 /** Typed, diagnosable failure — never a bare throw. */
 export class BundleFetchError extends Error {
@@ -116,6 +124,11 @@ export function manifestAssetName(plugin: string): string {
   return `${plugin}.manifest.json`;
 }
 
+/** Release asset name for a plugin's Sigstore bundle over the checksum manifest. */
+export function manifestSignatureAssetName(plugin: string): string {
+  return `${manifestAssetName(plugin)}.sigstore.json`;
+}
+
 /**
  * Ensure the bundle for `plugin@version` exists in `cacheDir` and matches the
  * published sha256; return its local path.
@@ -129,6 +142,7 @@ export function manifestAssetName(plugin: string): string {
  *   - `network`           — manifest/bundle download failed (offline, etc.)
  *   - `asset-missing`     — release asset returned not-found
  *   - `manifest-invalid`  — manifest JSON malformed / wrong shape
+ *   - `signature-invalid` — manifest signature missing or unverifiable
  *   - `checksum-mismatch` — downloaded bundle sha256 != manifest sha256
  */
 export async function ensureBundle(
@@ -139,13 +153,17 @@ export async function ensureBundle(
   const dest = resolveBundle({ plugin, version, cacheDir, channel });
   const ref = channelReleaseRef(channel, version);
 
-  const manifest = await fetchManifest(io, repo, plugin, ref);
+  const signedManifest = await fetchManifestEnvelope(io, repo, plugin, ref);
+  const manifest = signedManifest.manifest;
 
   // Cache hit: verify against the manifest before trusting it.
   if (await io.exists(dest)) {
     try {
       const have = io.sha256(await io.readFile(dest));
-      if (have === manifest.sha256.toLowerCase()) return dest;
+      if (have === manifest.sha256.toLowerCase()) {
+        await verifyManifestSignature(io, repo, ref, signedManifest);
+        return dest;
+      }
     } catch {
       // Unreadable cache file falls through to a re-download.
     }
@@ -167,6 +185,7 @@ export async function ensureBundle(
       `checksum mismatch for ${bundleName}: ${got} != ${manifest.sha256}`,
     );
   }
+  await verifyManifestSignature(io, repo, ref, signedManifest);
 
   // Only reached on a verified payload — a bad bundle is never cached.
   await io.writeFile(dest, bytes);
@@ -185,12 +204,42 @@ export async function fetchManifest(
   plugin: string,
   ref: string,
 ): Promise<BundleManifest> {
+  const signedManifest = await fetchManifestEnvelope(io, repo, plugin, ref);
+  await verifyManifestSignature(io, repo, ref, signedManifest);
+  return signedManifest.manifest;
+}
+
+interface SignedManifestEnvelope {
+  name: string;
+  signatureName: string;
+  raw: Uint8Array;
+  signature: Uint8Array;
+  manifest: BundleManifest;
+}
+
+async function fetchManifestEnvelope(
+  io: BundleIO,
+  repo: string,
+  plugin: string,
+  ref: string,
+): Promise<SignedManifestEnvelope> {
   const name = manifestAssetName(plugin);
+  const signatureName = manifestSignatureAssetName(plugin);
   let raw: Uint8Array;
+  let signature: Uint8Array;
   try {
     raw = await io.download(assetUrlForRef(repo, ref, name));
   } catch (err) {
     throw classifyDownloadError(err, name);
+  }
+  try {
+    signature = await io.download(assetUrlForRef(repo, ref, signatureName));
+  } catch (err) {
+    throw new BundleFetchError(
+      "signature-invalid",
+      `manifest signature ${signatureName} is missing or unavailable`,
+      err,
+    );
   }
   let parsed: unknown;
   try {
@@ -204,7 +253,37 @@ export async function fetchManifest(
       `manifest ${name} missing required fields {plugin, version, sha256}`,
     );
   }
-  return { ...parsed, sha256: parsed.sha256.toLowerCase() };
+  return {
+    name,
+    signatureName,
+    raw,
+    signature,
+    manifest: { ...parsed, sha256: parsed.sha256.toLowerCase() },
+  };
+}
+
+async function verifyManifestSignature(
+  io: BundleIO,
+  repo: string,
+  ref: string,
+  envelope: SignedManifestEnvelope,
+): Promise<void> {
+  try {
+    await io.verifyBundleSignature({
+      artifact: envelope.raw,
+      signature: envelope.signature,
+      repo,
+      ref,
+      assetName: envelope.name,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new BundleFetchError(
+      "signature-invalid",
+      `manifest signature ${envelope.signatureName} failed verification: ${msg}`,
+      err,
+    );
+  }
 }
 
 function isManifest(value: unknown): value is BundleManifest {
