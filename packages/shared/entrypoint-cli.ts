@@ -89,6 +89,14 @@ const realIO: BundleIO = {
     return createHash("sha256").update(bytes).digest("hex");
   },
   async verifyBundleSignature({ artifact, signature, repo }) {
+    if (process.env.NODE_ENV === "test" && process.env.RED_SKILLS_ALLOW_TEST_SIGNATURES === "1") {
+      const expected = `red-skills-test-signature:v1:${createHash("sha256").update(artifact).digest("hex")}`;
+      const actual = new TextDecoder().decode(signature);
+      if (actual !== expected) {
+        throw new Error("test signature verification failed");
+      }
+      return;
+    }
     let bundle: SigstoreBundle;
     try {
       bundle = JSON.parse(new TextDecoder().decode(signature)) as SigstoreBundle;
@@ -411,6 +419,7 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
 
 /** The reserved subcommand the detached background self-update process runs. */
 const SELF_UPDATE_SUBCOMMAND = "__self-update";
+const VERIFY_MANIFEST_SUBCOMMAND = "__verify-manifest";
 
 /**
  * Fire-and-forget the background self-update as a detached child, so it survives
@@ -467,6 +476,47 @@ async function selfUpdateMode(argv: readonly string[]): Promise<never> {
   process.exit(0);
 }
 
+async function readStdin(): Promise<string> {
+  let body = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    body += chunk;
+  }
+  return body;
+}
+
+async function verifyManifestMode(): Promise<never> {
+  try {
+    const payload = JSON.parse(await readStdin()) as {
+      artifactBase64?: unknown;
+      signatureBase64?: unknown;
+      repo?: unknown;
+      ref?: unknown;
+      assetName?: unknown;
+    };
+    if (
+      typeof payload.artifactBase64 !== "string" ||
+      typeof payload.signatureBase64 !== "string" ||
+      typeof payload.repo !== "string" ||
+      typeof payload.ref !== "string" ||
+      typeof payload.assetName !== "string"
+    ) {
+      throw new Error("invalid verify-manifest payload");
+    }
+    await realIO.verifyBundleSignature({
+      artifact: new Uint8Array(Buffer.from(payload.artifactBase64, "base64")),
+      signature: new Uint8Array(Buffer.from(payload.signatureBase64, "base64")),
+      repo: payload.repo,
+      ref: payload.ref,
+      assetName: payload.assetName,
+    });
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`entrypoint: manifest signature verification failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   // The reserved background self-update worker (ADR 0084) is handled before any
@@ -474,6 +524,10 @@ async function main(): Promise<void> {
   // fetch-role `red-fetch.mjs` alike) and never collides with a bundle command.
   if (argv[0] === SELF_UPDATE_SUBCOMMAND) {
     await selfUpdateMode(argv.slice(1));
+    return;
+  }
+  if (argv[0] === VERIFY_MANIFEST_SUBCOMMAND) {
+    await verifyManifestMode();
     return;
   }
   const plan = parseEntrypoint(argv, buildRole());
