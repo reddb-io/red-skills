@@ -51,7 +51,7 @@ jobs:
       runner: opencode
       model: minimax/MiniMax-M3
       runs_on: blacksmith-2vcpu-ubuntu-2404
-      enforce_trust_gate: "true"
+      enforce_trust_gate: ${{ 'true' }}
       allowlist_authors: "filipeforattini"
       allowlist_label_actors: "filipeforattini"
     secrets:

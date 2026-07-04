@@ -38,7 +38,7 @@ jobs:
       name: red-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -64,6 +64,10 @@ jobs:
       - name: Validate install metadata
         if: steps.fleet.outputs.running == '0'
         run: scripts/validate-install-metadata.sh
+
+      - name: Test workflow security pins
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-workflow-security-pins.sh
 
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
@@ -121,10 +125,10 @@ jobs:
           echo "next=$next" >> "$GITHUB_OUTPUT"
           echo "Releasing $next"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         with:
           node-version: 22
@@ -217,6 +221,7 @@ jobs:
           # version, so an unchanged source leaves them byte-identical (git add no-op).
           fetch_bundle=plugins/dev/hooks/red-fetch.mjs
           afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
+          reusable_workflow=.github/workflows/reusable-afk-attempt.yml
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
             tmp=$(mktemp)
@@ -228,12 +233,13 @@ jobs:
             jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
             mv "$tmp" "$package_json"
           done
+          perl -0pi -e "s#reddb-io/red-skills/\\.github/actions/afk-attempt\\@v[0-9]+\\.[0-9]+\\.[0-9]+#reddb-io/red-skills/.github/actions/afk-attempt@$NEXT#g" "$reusable_workflow"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle" "$reusable_workflow"; then
             echo "plugin/package manifests already at $new and entrypoints unchanged"
           else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
+            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle" "$reusable_workflow"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
