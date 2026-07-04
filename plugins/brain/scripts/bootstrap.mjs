@@ -21,7 +21,7 @@
  * actionable line — never silent. See ADR 0029/0038.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile, chmod, appendFile, unlink } from "node:fs/promises";
@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 const RED_SKILLS_REPO = "reddb-io/red-skills";
 const PLUGIN = "brain";
 const RUNTIME_MANIFEST = "brain-runtime-manifest.json";
+const RUNTIME_MANIFEST_SIGNATURE = `${RUNTIME_MANIFEST}.sigstore.json`;
 const CLI_ASSET = "brain-cli.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -172,14 +173,12 @@ async function backgroundSelfUpdate(installed) {
     const current = await resolveActiveVersion(installed);
     // The floating `v<major>` release manifest advertises the newest in-range
     // version (a release-workflow contract; the launcher only reads it).
-    const manifest = JSON.parse(
-      (
-        await fetchBuffer(assetUrl(RED_SKILLS_REPO, inRangeMajorTag(installed), RUNTIME_MANIFEST))
-      ).toString("utf8"),
-    );
+    const manifest = await fetchVerifiedRuntimeManifest(inRangeMajorTag(installed));
     const target = selectInRangeUpdate(installed, current, manifest.version);
     if (!target) return;
+    const targetManifest = await fetchVerifiedRuntimeManifest(`v${target}`);
     await ensureRuntime(target); // fetch + checksum-verify the target runtime
+    await assertRuntimeCacheMatches(target, targetManifest);
     const ptr = pointerPath();
     const tmp = `${ptr}.${target}.tmp`;
     await mkdir(dirname(ptr), { recursive: true });
@@ -285,24 +284,111 @@ async function fetchBuffer(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Download `url` to `dest` and verify against `expectedSha` (hex) if given. */
-async function ensureFile(url, dest, expectedSha, { mode } = {}) {
+async function fetchRuntimeManifestEnvelope(tag) {
+  const raw = await fetchBuffer(assetUrl(RED_SKILLS_REPO, tag, RUNTIME_MANIFEST));
+  let signature;
+  try {
+    signature = await fetchBuffer(assetUrl(RED_SKILLS_REPO, tag, RUNTIME_MANIFEST_SIGNATURE));
+  } catch (err) {
+    throw new Error(`manifest signature ${RUNTIME_MANIFEST_SIGNATURE} is missing or unavailable: ${err?.message ?? err}`);
+  }
+  return { tag, raw, signature, manifest: JSON.parse(raw.toString("utf8")) };
+}
+
+function signatureVerifierPath() {
+  const candidates = [
+    process.env.RED_SKILLS_SIGNATURE_VERIFIER,
+    join(HERE, "..", "..", "dev", "hooks", "red-fetch.mjs"),
+    join(HERE, "..", "..", "..", "plugins", "dev", "hooks", "red-fetch.mjs"),
+    process.env.CLAUDE_PLUGIN_ROOT
+      ? join(process.env.CLAUDE_PLUGIN_ROOT, "..", "dev", "hooks", "red-fetch.mjs")
+      : "",
+    process.env.CODEX_PLUGIN_ROOT
+      ? join(process.env.CODEX_PLUGIN_ROOT, "..", "dev", "hooks", "red-fetch.mjs")
+      : "",
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function verifyRuntimeManifestSignature(envelope) {
+  const verifier = signatureVerifierPath();
+  if (!verifier) {
+    throw new Error("no red-fetch signature verifier found beside installed plugins");
+  }
+  const payload = JSON.stringify({
+    artifactBase64: Buffer.from(envelope.raw).toString("base64"),
+    signatureBase64: Buffer.from(envelope.signature).toString("base64"),
+    repo: RED_SKILLS_REPO,
+    ref: envelope.tag,
+    assetName: RUNTIME_MANIFEST,
+  });
+  const result = spawnSync(process.execPath, [verifier, "__verify-manifest"], {
+    input: payload,
+    encoding: "utf8",
+    env: process.env,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `manifest signature ${RUNTIME_MANIFEST_SIGNATURE} failed verification${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+async function fetchVerifiedRuntimeManifest(tag) {
+  const envelope = await fetchRuntimeManifestEnvelope(tag);
+  verifyRuntimeManifestSignature(envelope);
+  return envelope.manifest;
+}
+
+async function fetchCheckedAsset(url, expectedSha) {
+  const buf = await fetchBuffer(url);
+  const got = sha256Hex(buf);
+  if (got !== String(expectedSha).toLowerCase()) {
+    throw new Error(`checksum mismatch for ${url}: ${got} != ${expectedSha}`);
+  }
+  return buf;
+}
+
+async function writeRuntimeFile(dest, bytes, { mode } = {}) {
   if (existsSync(dest)) {
-    if (!expectedSha) return;
     const have = sha256Hex(await readFile(dest));
-    if (have === expectedSha.toLowerCase()) return;
+    if (have === sha256Hex(bytes)) {
+      if (mode) await chmod(dest, mode);
+      return;
+    }
     await logLine(`checksum drift at ${dest}, refetching`);
   }
-  const buf = await fetchBuffer(url);
-  if (expectedSha) {
-    const got = sha256Hex(buf);
-    if (got !== expectedSha.toLowerCase()) {
-      throw new Error(`checksum mismatch for ${url}: ${got} != ${expectedSha}`);
+  await mkdir(dirname(dest), { recursive: true });
+  await writeFile(dest, bytes);
+  if (mode) await chmod(dest, mode);
+}
+
+async function assertRuntimeCacheMatches(version, manifest) {
+  const dir = join(runtimeRoot(), version);
+  const checks = [
+    { path: join(dir, "brain-cli.mjs"), sha256: manifest.cli?.sha256, label: "brain cli" },
+  ];
+  if (manifest.mcp) {
+    checks.push({ path: join(dir, "brain-mcp.mjs"), sha256: manifest.mcp.sha256, label: "brain mcp" });
+  }
+  const key = platformKey();
+  const redAsset = key && normalizeRedAsset(manifest.reddb?.assets?.[key]);
+  if (!redAsset) throw new Error(`no red binary for platform ${key ?? "unknown"}`);
+  checks.push({
+    path: join(dir, process.platform === "win32" ? "red.exe" : "red"),
+    sha256: redAsset.sha256,
+    label: "red binary",
+  });
+  for (const check of checks) {
+    if (!check.sha256) throw new Error(`missing checksum for ${check.label}`);
+    const got = sha256Hex(await readFile(check.path));
+    if (got !== String(check.sha256).toLowerCase()) {
+      throw new Error(`cached ${check.label} checksum mismatch: ${got} != ${check.sha256}`);
     }
   }
-  await mkdir(dirname(dest), { recursive: true });
-  await writeFile(dest, buf);
-  if (mode) await chmod(dest, mode);
 }
 
 /**
@@ -334,21 +420,17 @@ async function ensureRuntime(version, { mayFetch } = {}) {
   if (!mayFetch) return null;
 
   const tag = `v${version}`;
-  const manifest = JSON.parse(
-    (
-      await fetchBuffer(assetUrl(RED_SKILLS_REPO, tag, "brain-runtime-manifest.json"))
-    ).toString("utf8"),
-  );
+  const envelope = await fetchRuntimeManifestEnvelope(tag);
+  const manifest = envelope.manifest;
 
-  await ensureFile(
+  const cliBytes = await fetchCheckedAsset(
     assetUrl(RED_SKILLS_REPO, tag, manifest.cli.asset),
-    cliPath,
     manifest.cli.sha256,
   );
+  let mcpBytes = null;
   if (manifest.mcp) {
-    await ensureFile(
+    mcpBytes = await fetchCheckedAsset(
       assetUrl(RED_SKILLS_REPO, tag, manifest.mcp.asset),
-      mcpPath,
       manifest.mcp.sha256,
     );
   }
@@ -357,10 +439,19 @@ async function ensureRuntime(version, { mayFetch } = {}) {
   const key = platformKey();
   const redAsset = key && normalizeRedAsset(manifest.reddb?.assets?.[key]);
   if (!redAsset) throw new Error(`no red binary for platform ${key ?? "unknown"}`);
-  await ensureFile(
+  const redBytes = await fetchCheckedAsset(
     assetUrl(manifest.reddb.repo, manifest.reddb.tag, redAsset.asset),
-    redPath,
     redAsset.sha256,
+  );
+
+  // Same policy as shared bundle-fetch: checksum first, then signed manifest.
+  verifyRuntimeManifestSignature(envelope);
+
+  await writeRuntimeFile(cliPath, cliBytes);
+  if (mcpBytes) await writeRuntimeFile(mcpPath, mcpBytes);
+  await writeRuntimeFile(
+    redPath,
+    redBytes,
     { mode: 0o755 },
   );
 
