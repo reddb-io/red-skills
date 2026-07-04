@@ -42,12 +42,13 @@ jobs:
           gh api "repos/$REPO/compare/$OLD...$NEW" \
             --jq '"## Commits\n" + ([.commits[] | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0])"] | join("\n")) + "\n\n## Files\n" + ([.files[] | "- \(.status): `\(.filename)`"] | join("\n"))' \
             > diff.md
+          delimiter="$(uuidgen)"
           {
             echo "old=$OLD"
             echo "new=$NEW"
-            echo 'body<<EOF'
+            printf 'body<<%s\n' "$delimiter"
             cat diff.md
-            echo EOF
+            printf '%s\n' "$delimiter"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open or update issue
@@ -55,25 +56,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ steps.pin.outputs.repo }}
+          OLD: ${{ steps.pin.outputs.sha }}
           NEW: ${{ steps.head.outputs.sha }}
+          DIFF_BODY: ${{ steps.diff.outputs.body }}
         run: |
           title="upstream: $REPO advanced to ${NEW:0:7}"
           existing=$(gh issue list --search "upstream: $REPO in:title" --state open --json number --jq '.[0].number')
-          body=$(cat <<EOF
-          Upstream \`$REPO\` moved past pinned SHA.
+          body_file="$(mktemp)"
+          trap 'rm -f "$body_file"' EXIT
 
-          - pinned: \`${{ steps.pin.outputs.sha }}\`
-          - upstream HEAD: \`$NEW\`
-          - compare: https://github.com/$REPO/compare/${{ steps.pin.outputs.sha }}...$NEW
+          {
+            printf 'Upstream `%s` moved past pinned SHA.\n\n' "$REPO"
+            printf -- '- pinned: `%s`\n' "$OLD"
+            printf -- '- upstream HEAD: `%s`\n' "$NEW"
+            printf -- '- compare: https://github.com/%s/compare/%s...%s\n\n' "$REPO" "$OLD" "$NEW"
+            printf '%s\n\n' "$DIFF_BODY"
+            cat <<'BODY_FOOTER'
+---
+Review changes, cherry-pick relevant skills, then bump `sha=` in `.upstream`.
+BODY_FOOTER
+          } > "$body_file"
 
-          ${{ steps.diff.outputs.body }}
-
-          ---
-          Review changes, cherry-pick relevant skills, then bump \`sha=\` in \`.upstream\`.
-          EOF
-          )
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" --title "$title" --body "$body"
+            gh issue edit "$existing" --title "$title" --body-file "$body_file"
           else
-            gh issue create --title "$title" --body "$body" --label upstream-drift
+            gh issue create --title "$title" --body-file "$body_file" --label upstream-drift
           fi
