@@ -41,11 +41,12 @@ const MCP_BODY = "#!/usr/bin/env node\nprocess.exit(0);\n";
 const RED_BODY = "#!/bin/sh\nexit 0\n";
 
 const sha = (body: string) => createHash("sha256").update(body).digest("hex");
+const signatureFor = (body: string) => `red-skills-test-signature:v1:${sha(body)}`;
 
-function manifestJson(): string {
+function manifestJson(version = VERSION): string {
   return JSON.stringify({
     schema: "red.memory.runtime.v1",
-    version: VERSION,
+    version,
     cli: { asset: "memory-cli.mjs", sha256: sha(CLI_BODY) },
     mcp: { asset: "memory-mcp.mjs", sha256: sha(MCP_BODY) },
     reddb: {
@@ -75,14 +76,19 @@ async function listen(
 }
 
 /** A working release server that serves the fake runtime assets by basename. */
-async function startRelease(): Promise<Release> {
+async function startRelease(opts: { signature?: "valid" | "missing" | "bad"; version?: string } = {}): Promise<Release> {
   let n = 0;
+  const manifest = manifestJson(opts.version);
   const files: Record<string, string> = {
-    "memory-runtime-manifest.json": manifestJson(),
+    "memory-runtime-manifest.json": manifest,
     "memory-cli.mjs": CLI_BODY,
     "memory-mcp.mjs": MCP_BODY,
     [`red-${RED_KEY}`]: RED_BODY,
   };
+  if (opts.signature !== "missing") {
+    files["memory-runtime-manifest.json.sigstore.json"] =
+      opts.signature === "bad" ? "not-a-valid-test-signature" : signatureFor(manifest);
+  }
   const { url, close } = await listen((req, res) => {
     n += 1;
     const name = (req.url ?? "").split("?")[0].split("/").pop() ?? "";
@@ -151,6 +157,8 @@ const cliPath = (cacheDir: string) =>
   join(cacheDir, "reddb-memory", VERSION, "memory-cli.mjs");
 const markerPath = (cacheDir: string) =>
   join(cacheDir, "reddb-memory", "runtime-degraded.json");
+const pointerPath = (cacheDir: string) =>
+  join(cacheDir, "reddb-memory", "memory-stable.current");
 
 interface RunResult {
   code: number | null;
@@ -169,7 +177,9 @@ function run(
         ...process.env,
         RED_MEMORY_CACHE_DIR: opts.cacheDir,
         RED_MEMORY_RELEASE_BASE: opts.base,
+        RED_SKILLS_ALLOW_TEST_SIGNATURES: "1",
         CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+        NODE_ENV: "test",
       },
     });
     let stdout = "";
@@ -218,6 +228,66 @@ describe("memory launcher distribution (ADR 0084, #1030)", () => {
       expect(r.stdout).toContain("MEMORY-RUNTIME-RAN");
       expect(release.hits()).toBeGreaterThan(0);
       expect(existsSync(cliPath(cacheDir))).toBe(true);
+    } finally {
+      await release.close();
+    }
+  });
+
+  test("missing signature: rejects the runtime manifest and does not cache", async () => {
+    const cacheDir = await makeCacheDir();
+    const cwd = await enabledCwd();
+    const release = await startRelease({ signature: "missing" });
+    try {
+      const r = await run(["hook", "SessionStart", "--runner", "claude"], {
+        cwd,
+        cacheDir,
+        base: release.url,
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe("{}");
+      expect(existsSync(cliPath(cacheDir))).toBe(false);
+      const marker = JSON.parse(await readFile(markerPath(cacheDir), "utf8"));
+      expect(marker.reason).toMatch(/signature/i);
+    } finally {
+      await release.close();
+    }
+  });
+
+  test("bad signature: rejects the runtime manifest and does not cache", async () => {
+    const cacheDir = await makeCacheDir();
+    const cwd = await enabledCwd();
+    const release = await startRelease({ signature: "bad" });
+    try {
+      const r = await run(["hook", "SessionStart", "--runner", "claude"], {
+        cwd,
+        cacheDir,
+        base: release.url,
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe("{}");
+      expect(existsSync(cliPath(cacheDir))).toBe(false);
+      const marker = JSON.parse(await readFile(markerPath(cacheDir), "utf8"));
+      expect(marker.reason).toMatch(/signature/i);
+    } finally {
+      await release.close();
+    }
+  });
+
+  test("self-update: bad signature refuses to swap the pointer", async () => {
+    const cacheDir = await makeCacheDir();
+    await warmCache(cacheDir);
+    const cwd = await enabledCwd();
+    const [major, minor, patch] = VERSION.split(".").map(Number);
+    const updated = `${major}.${minor}.${patch + 1}`;
+    const release = await startRelease({ signature: "bad", version: updated });
+    try {
+      const r = await run(["__self-update"], {
+        cwd,
+        cacheDir,
+        base: release.url,
+      });
+      expect(r.code).toBe(0);
+      expect(existsSync(pointerPath(cacheDir))).toBe(false);
     } finally {
       await release.close();
     }
