@@ -108,12 +108,11 @@ export interface LandingDeps {
    */
   getDiffPaths?: () => Promise<{ changedFiles: string[]; packageJsonDiff: string }>;
   /**
-   * Opt-in CI-aware merge for the UNLOCKED admin-PR landing (#812). Present →
-   * landPr polls the PR's merge state and admin-merges only once it is genuinely
-   * ready (CLEAN, or blocked only by a review `--admin` waives), routing the
-   * distinct failure modes (`ci-failed` / `ci-pending`) instead of collapsing
-   * them to merge-conflict. Absent (the default) → admin-merge immediately.
-   * Ignored on the locked path, which never opens a PR.
+   * Opt-in CI-aware merge for the UNLOCKED PR landing (#812). Present →
+   * landPr polls the PR's merge state and merges only once it is genuinely
+   * ready (CLEAN), routing the distinct failure modes (`ci-failed` / `ci-pending`)
+   * instead of collapsing them to merge-conflict. Absent (the default) → merge
+   * immediately. Ignored on the locked path, which never opens a PR.
    */
   ciAwait?: CiAwaitInput;
 }
@@ -121,10 +120,10 @@ export interface LandingDeps {
 /** Static per-landing inputs the caller already resolved. */
 export interface LandingInput {
   /**
-   * Landing MODE, decoupled from the lock (#842): `true` → admin-merged PR
-   * (`landPr`) into `base`; `false` → direct merge (`landMerge`) into `base`.
-   * Resolved from `afk.worktree_launches_pull_request` (default `true`). The lock
-   * no longer toggles this — it only resolves `base` (see {@link locked}).
+   * Landing MODE, decoupled from the lock (#842): `true` → PR merge (`landPr`)
+   * into `base`; `false` → direct merge (`landMerge`) into `base`. Resolved from
+   * `afk.worktree_launches_pull_request` (default `true`). The lock no longer
+   * toggles this — it only resolves `base` (see {@link locked}).
    */
   openPr: boolean;
   /**
