@@ -83,6 +83,13 @@ interface Opts {
    * Unset → the local trunk reads as an ancestor of origin → proceeds.
    */
   trunk?: "diverged" | "absent";
+  /**
+   * Sensitive-path guard (issue #1102): inject getDiffPaths.
+   *   - undefined → guard not wired (safe default, no-op, existing tests unaffected)
+   *   - "hit"  → getDiffPaths returns a diff that touches .github/workflows/ci.yml
+   *   - "clean"→ getDiffPaths returns a diff with no sensitive paths
+   */
+  sensitivePaths?: "hit" | "clean";
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -193,6 +200,16 @@ function harness(opts: Opts = {}): Harness {
       ? async (dir) => {
           removedRebaseWorktrees.push(dir);
         }
+      : undefined,
+    // #1102: only wired when the test opts in (opt-in — absent → guard skipped).
+    getDiffPaths: opts.sensitivePaths
+      ? async () => ({
+          changedFiles:
+            opts.sensitivePaths === "hit"
+              ? [".github/workflows/ci.yml", "src/index.ts"]
+              : ["src/index.ts", "apps/dev/src/core/landing.ts"],
+          packageJsonDiff: "",
+        })
       : undefined,
   };
 
@@ -370,6 +387,55 @@ describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c === "git -C /repo fetch origin main --quiet")).toBe(true);
     expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+  });
+});
+
+describe("doLanding — sensitive-path guard (issue #1102)", () => {
+  it("diff touching .github/workflows → aborts with sensitive-paths BEFORE any push/hook/land", async () => {
+    const h = harness({ locked: false, sensitivePaths: "hit" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("sensitive-paths");
+      expect(r.locked).toBe(false);
+      expect(r.sensitivePaths).toBeDefined();
+      expect(r.sensitivePaths!.length).toBeGreaterThan(0);
+      expect(r.sensitivePaths![0].path).toBe(".github/workflows/ci.yml");
+    }
+    // The abort is early: no push, no hooks, no landing.
+    expect(h.pushedAttempt).toHaveLength(0);
+    expect(h.firedHooks).toHaveLength(0);
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+  });
+
+  it("sensitive-paths abort also fires on the DIRECT (locked) path before integrating", async () => {
+    const h = harness({ locked: true, sensitivePaths: "hit" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("sensitive-paths");
+      expect(r.locked).toBe(true);
+    }
+    expect(h.pushedAttempt).toHaveLength(0);
+    expect(h.firedHooks).toHaveLength(0);
+    expect(h.removedWorktrees).toHaveLength(0);
+  });
+
+  it("clean diff with no sensitive paths proceeds to a normal landing", async () => {
+    const h = harness({ locked: false, sensitivePaths: "clean" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.pushedAttempt).toHaveLength(1);
+    expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
+
+  it("absent getDiffPaths dep → guard is skipped, landing proceeds normally", async () => {
+    // sensitivePaths: undefined → getDiffPaths not wired → guard is a no-op.
+    const h = harness({ locked: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
   });
 });
 
