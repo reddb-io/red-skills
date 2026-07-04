@@ -131,6 +131,8 @@ interface HarnessOptions {
   attempt?: number;
   /** Env view the recovery policy reads RED_AFK_RETRY_* caps from. Defaults to {}. */
   recoveryEnv?: Record<string, string>;
+  /** /go post-DONE machine-gate retry cap injected by run.ts. */
+  goVerifyRetries?: number;
   /** When set, register the ADR 0017 `recordAttempt` port. "throw" makes it
    * reject (proving a memory failure never fails the close); "ok" records the
    * payload; undefined omits the port entirely (older-caller safety). */
@@ -392,6 +394,7 @@ function harness(opts: HarnessOptions = {}): {
       stderr: "",
     }),
     backpressureCommands: opts.backpressureCommands,
+    goVerifyRetries: opts.goVerifyRetries,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
     // The sandcastle execution port: a fake returning a scripted outcome on the
@@ -1448,6 +1451,61 @@ describe("processIssue — feedback fail", () => {
       "on_feedback_classify",
     ]);
     expect(trace.pushedAttempt).toEqual([]);
+  });
+
+  it("/go retries a red post-DONE machine gate up to RED_GO_VERIFY_RETRIES, then parks with blocked:validation", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<go-machine-gate-retry>");
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("bounded correction retry 1/1");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("/go lands when a bounded machine-gate correction makes feedback green", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "2" },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
+  });
+
+  it("/go also bounds backpressure re-verification and carries the failing output into the retry handoff", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: false,
+      goVerifyRetries: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<go-machine-gate-retry>");
+    expect(retryHandoff).toContain("backpressure machine gate failed");
+    expect(retryHandoff).toContain("npm run e2e exploded");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
   });
 
   it("retries a simple-classified feedback failure once on the complex tier, then lands when green", async () => {
