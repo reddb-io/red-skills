@@ -419,7 +419,7 @@ export const SCOUT_EXIT_PROTOCOL = [
 ].join("\n");
 
 /**
- * The structured-output clause (ADR 0082, #932) appended to {@link EXIT_PROTOCOL}
+ * The structured-output clause (ADR 0090, #932) appended to {@link EXIT_PROTOCOL}
  * ONLY for schema-enabled runners (claude first). It COEXISTS with the text
  * sentinel: the agent emits the `<agent-output>` JSON block immediately before
  * its final `<promise>…</promise>` line, and on a schema-enabled runner a DONE
