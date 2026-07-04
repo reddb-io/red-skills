@@ -132,7 +132,7 @@ export interface ProcessGh {
    * `req:*` closed-states. A 404 / transient failure resolves to false. */
   issueClosed(n: number): Promise<boolean>;
   /**
-   * Trust-gate provenance (#621, ADR 0056): the issue author + the actor who
+   * Trust-gate provenance (#621, ADR 0085): the issue author + the actor who
    * applied `ready-for-agent`, read from the issue TIMELINE — never inferred from
    * the mutable label set. Consulted at claim time ONLY when an allowlist is
    * configured. Optional → absent callers/tests degrade to permissive (the gate
@@ -961,7 +961,7 @@ export async function processIssue(
     };
   }
 
-  // ---- trust gate (#621, ADR 0056; visibility-aware default #1101) ----
+  // ---- trust gate (#621, ADR 0085; visibility-aware default #1101) ----
   // The "executable issue" predicate, evaluated BEFORE the promotion-to-running
   // edit and before ANY worktree/handoff work. Provenance is read from the issue
   // TIMELINE + author field (deps.gh.issueTrust), never inferred from the mutable
@@ -1163,7 +1163,7 @@ export async function processIssue(
       effort: initialTier.effort,
       handoffPath,
       handoffContent: handoff,
-      // Structured-output rollout (ADR 0082, #932): a schema-enabled runner gets
+      // Structured-output rollout (ADR 0090, #932): a schema-enabled runner gets
       // the AgentOutput emit clause; others keep the text-sentinel-only protocol.
       systemPrompt: exitProtocolFor({
         runMode: input.runMode,
