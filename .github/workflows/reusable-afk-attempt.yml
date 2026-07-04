@@ -19,7 +19,7 @@
 #
 # Per ADR 0056, the trust gate is rigorous by default: the issue author AND the
 # label-applier (the opener, for the `opened` path) must both be in the
-# allowlist. The gate is evaluated with `actions/github-script@v7`. Failure →
+# allowlist. The gate is evaluated with `actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b`. Failure →
 # no claim, no PR, logged reason + a comment.
 #
 # Execution is delegated to the repo-portable composite action
@@ -119,6 +119,21 @@ on:
         required: false
         type: string
         default: "ubuntu-latest"
+      allowlist_authors:
+        description: "CSV of GitHub logins allowed as issue author. Empty fails closed while enforce_trust_gate=true."
+        required: false
+        type: string
+        default: ""
+      allowlist_label_actors:
+        description: "CSV of GitHub logins allowed as label-applier/sender. Empty fails closed while enforce_trust_gate=true."
+        required: false
+        type: string
+        default: ""
+      enforce_trust_gate:
+        description: "Refuse to claim if author/actor not in allowlist. Default true."
+        required: false
+        type: string
+        default: "true"
 
   # NOTE: the `issues: [labeled, opened]` auto-trigger was intentionally removed —
   # the lane is dispatch/call-only until auth secrets are configured (see the job
@@ -147,7 +162,7 @@ jobs:
     steps:
       - name: Resolve the issue number
         id: resolve
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const eventName = context.eventName;
@@ -202,28 +217,18 @@ jobs:
       - name: Evaluate the trust gate
         id: trust
         if: steps.resolve.outputs.number != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         env:
-          ENFORCE_TRUST_GATE: ${{ github.event_name == 'workflow_call' && inputs.enforce_trust_gate || 'true' }}
-          ALLOWLIST_AUTHORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_authors || '' }}
-          ALLOWLIST_LABEL_ACTORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_label_actors || '' }}
+          ENFORCE_TRUST_GATE: ${{ (github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch') && inputs.enforce_trust_gate || 'true' }}
+          ALLOWLIST_AUTHORS: ${{ (github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch') && inputs.allowlist_authors || '' }}
+          ALLOWLIST_LABEL_ACTORS: ${{ (github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch') && inputs.allowlist_label_actors || '' }}
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
         with:
           script: |
             const enforce = (process.env.ENFORCE_TRUST_GATE || 'true').toLowerCase() !== 'false';
             const authors = (process.env.ALLOWLIST_AUTHORS || '').split(',').map(s => s.trim()).filter(Boolean);
             const labelActors = (process.env.ALLOWLIST_LABEL_ACTORS || '').split(',').map(s => s.trim()).filter(Boolean);
-
-            // For the issues trigger, fall back to a hard-coded allowlist of
-            // reddb-io maintainers (this workflow lives in reddb-io/red-skills).
-            // TODO: when #621 lands, source the allowlist from `.red/config.yaml`
-            // (`plugins.dev.afk.trust_gate.allowlist`) and remove this fallback.
-            if (authors.length === 0) {
-              authors.push('filipeforattini');
-            }
-            if (labelActors.length === 0) {
-              labelActors.push('filipeforattini');
-            }
+            const allowlistsConfigured = authors.length > 0 && labelActors.length > 0;
 
             const eventName = context.eventName;
             const sender = context.payload.sender?.login;
@@ -248,8 +253,8 @@ jobs:
             // manual dispatch the human who triggered the run is the actor.
             const labelActor = eventName === 'issues' ? sender : (sender || author);
 
-            const authorOk = authors.includes(author);
-            const actorOk  = labelActors.includes(labelActor);
+            const authorOk = allowlistsConfigured && authors.includes(author);
+            const actorOk  = allowlistsConfigured && labelActors.includes(labelActor);
             const ok = authorOk && actorOk;
 
             core.info(`trust-gate: enforce=${enforce} author=${author} actor=${labelActor} author_ok=${authorOk} actor_ok=${actorOk}`);
@@ -261,7 +266,9 @@ jobs:
               core.setOutput('gate', 'pass');
             } else {
               core.setOutput('gate', 'fail');
-              const reason = `trust gate failed: author=${author} in ${JSON.stringify(authors)} = ${authorOk}; label-actor=${labelActor} in ${JSON.stringify(labelActors)} = ${actorOk}`;
+              const reason = allowlistsConfigured
+                ? `trust gate failed: author=${author} in ${JSON.stringify(authors)} = ${authorOk}; label-actor=${labelActor} in ${JSON.stringify(labelActors)} = ${actorOk}`
+                : 'trust gate failed closed: allowlist_authors and allowlist_label_actors must both be non-empty';
               core.notice(reason, { properties: { tag: 'trust-gate' } });
               try {
                 await github.rest.issues.createComment({
@@ -278,7 +285,7 @@ jobs:
       # Everything below runs only when the gate admits the claim.
       - name: Checkout the target repository
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           # Pull submodules so a repo that vendors one as a workspace dependency
           # (e.g. red-skills' public `packages/red-castle`, ADR 0061) resolves in
@@ -296,7 +303,7 @@ jobs:
       # direct invocation with a server-side claim that can't race a local fleet.
       - name: Run the AFK attempt
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        uses: reddb-io/red-skills/.github/actions/afk-attempt@main
+        uses: reddb-io/red-skills/.github/actions/afk-attempt@v1.277.0
         with:
           issue: ${{ steps.resolve.outputs.number }}
           runner: ${{ env.RED_AFK_RUNNER }}
