@@ -54,7 +54,7 @@ export interface RunnerSpec {
    */
   resolveAuthEnv?: (env: NodeJS.ProcessEnv) => Record<string, string> | undefined;
   /**
-   * Native structured-output support (ADR 0082, #932). When `true`, this runner
+   * Native structured-output support (ADR 0090, #932). When `true`, this runner
    * emits + validates the red-castle `AgentOutput` schema as its terminal signal:
    * the exit protocol instructs it to emit an `<agent-output>` JSON block, and a
    * `done` outcome is REJECTED (→ `no-sentinel`) unless a valid `AgentOutput` is
@@ -71,7 +71,7 @@ export const RUNNER_SPECS: Record<AgentRunner, RunnerSpec> = {
     efforts: CLAUDE_EFFORTS,
     channel: "effort",
     factory: "claudeCode",
-    // claude-first structured-output rollout (ADR 0082, #932): claude emits +
+    // claude-first structured-output rollout (ADR 0090, #932): claude emits +
     // validates the AgentOutput schema natively; the sentinel stays as a coexist
     // fallback for the other runners below until each flips this on.
     structuredOutput: true,
@@ -119,7 +119,7 @@ export function toAgentRunner(r: Runner): AgentRunner {
 
 /**
  * True when a runner natively emits + validates the red-castle `AgentOutput`
- * schema as its terminal signal (ADR 0082, #932). The single seam both the exit
+ * schema as its terminal signal (ADR 0090, #932). The single seam both the exit
  * protocol (emit) and {@link enforceStructuredOutput} (validate) read, so
  * flipping a runner onto the schema is a one-line {@link RUNNER_SPECS} change.
  */
