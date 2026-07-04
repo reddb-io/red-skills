@@ -42,7 +42,14 @@ One distribution model for all three plugins:
    Launchers self-update the bundle **within the compatible version range, in
    the background** — never synchronously in a render or hook path; all
    surfaces (statusline, hooks) execute from the cached bundle.
-4. **Control plane**: `/setup-red-skills` (one-time) and `/doctor` (recurring)
+4. **Authenticity**: bundle manifests are signed by the `red-release` workflow
+   with **sigstore/cosign** keyless GitHub Actions OIDC. The signature bundle is
+   published beside the manifest as a Release asset and the shared launcher
+   verifies it after checksum verification and before writing to cache. Rekor is
+   recorded by release signing, but fetch rejects missing or invalid signatures
+   from the local signature bundle rather than depending on an online Rekor
+   lookup.
+5. **Control plane**: `/setup-red-skills` (one-time) and `/doctor` (recurring)
    are the surfaces that explain what is enabled and healthy. `/doctor` audits,
    per plugin: enabled-in-config vs runtime-present, bundle version vs latest
    Release, and cache freshness — closing the "hook enabled but runtime
@@ -55,6 +62,9 @@ One distribution model for all three plugins:
 - The "download the bundle by hand to run a fresh release" dance disappears
   for in-range updates; explicit pins remain possible for out-of-range jumps.
 - Release CI must publish bundles for all three plugins, not just dev.
+- A compromised Release cannot make a launcher cache a malicious bundle by
+  replacing both bundle and checksum manifest unless it can also produce a valid
+  cosign signature for the `red-release.yml` GitHub Actions identity.
 - Bundle fetch requires network on first enabled boot; offline first-boot
   degrades to inert-with-doctor-finding, not a crash.
 - A second mechanism (committed `dist/`, build-on-install) is explicitly
