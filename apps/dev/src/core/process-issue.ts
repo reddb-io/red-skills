@@ -36,6 +36,7 @@ import {
   type AttemptProgressInfo,
   type RunAgentInput,
   type RunAgentResult,
+  type SandboxMode,
 } from "./execution.js";
 import {
   relevantScopes,
@@ -87,6 +88,7 @@ import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } fro
 import {
   parseTrustPolicy,
   evaluateClaimTrust,
+  resolveActorTrust,
   describeTrustPosture,
   type TrustProvenance,
   type RepoVisibility,
@@ -105,6 +107,8 @@ import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
+
+type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 
 // ---------- injected IO ----------
 
@@ -332,6 +336,19 @@ export interface ProcessIssueDeps {
    * a fake returning a scripted RunAgentResult.
    */
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
+  /**
+   * The operator-configured AFK sandbox mode. Trusted-author work keeps this
+   * unchanged. Untrusted-author work may override it to a container backend.
+   * Optional for legacy tests/callers; absence preserves the historical `none`
+   * default unless untrusted-author policy has enough provenance to engage.
+   */
+  sandboxMode?: SandboxMode;
+  /**
+   * Best-effort backend availability probe for fail-closed untrusted-author
+   * policy. When untrusted work needs a container and no configured container is
+   * available, processIssue refuses before spawning the inner agent.
+   */
+  sandboxAvailable?(mode: ContainerSandboxMode): Promise<boolean>;
   /** Model id passed through to runAgent (provider-specific, e.g. "claude-opus-4-8"). */
   model: string;
   /** Reasoning effort passed through to runAgent; undefined preserves legacy callers. */
@@ -851,6 +868,76 @@ function parseFeedbackClass(contextJson: string): "infra" | "semantic" | null {
   }
 }
 
+interface UntrustedSandboxDecision {
+  sandboxMode: SandboxMode;
+  authorTrusted: boolean;
+  refused: boolean;
+  reason?: string;
+}
+
+async function resolveUntrustedAuthorSandbox(
+  deps: ProcessIssueDeps,
+  trustPolicy: ReturnType<typeof parseTrustPolicy>,
+  provenance: TrustProvenance | undefined,
+): Promise<UntrustedSandboxDecision> {
+  const configured = deps.sandboxMode ?? "none";
+  if (!provenance?.authorSourceTrust) {
+    return { sandboxMode: configured, authorTrusted: true, refused: false };
+  }
+
+  let authorTrusted = provenance.authorSourceTrust === "trusted";
+  if (!authorTrusted && deps.gh.actorTrustSignals) {
+    const verdict = await resolveActorTrust(trustPolicy, provenance.author, (actor) => deps.gh.actorTrustSignals!(actor));
+    authorTrusted = verdict.executable && verdict.basis !== "permissive-default";
+  }
+  if (authorTrusted) return { sandboxMode: configured, authorTrusted: true, refused: false };
+
+  const candidates: ContainerSandboxMode[] =
+    configured === "docker" ? ["docker", "podman"] : configured === "podman" ? ["podman", "docker"] : ["docker", "podman"];
+  for (const mode of candidates) {
+    if (!deps.sandboxAvailable || (await deps.sandboxAvailable(mode))) {
+      return { sandboxMode: mode, authorTrusted: false, refused: false };
+    }
+  }
+
+  return {
+    sandboxMode: configured,
+    authorTrusted: false,
+    refused: true,
+    reason:
+      `untrusted issue author ${provenance.author ? `'${provenance.author}'` : "(unknown)"} requires container isolation, ` +
+      "but no docker/podman sandbox backend is available",
+  };
+}
+
+async function refuseNoSandboxForUntrustedAuthor(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  hooksFired: HookName[],
+  reason: string,
+): Promise<ProcessIssueResult> {
+  await deps.gh.editLabels(input.issue, [LABEL_READY], [LABEL_HUMAN]);
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk preflight stopped: ${reason}. Autonomous execution refused; maintainer intervention required.`,
+  );
+  if (deps.gh.renderDecisionCard) {
+    try {
+      await deps.gh.renderDecisionCard(input.issue);
+    } catch {
+      // best-effort: card render failure is non-fatal.
+    }
+  }
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "blocked",
+    issue: input.issue,
+    hooksFired,
+    preserved: false,
+    swept: false,
+  };
+}
+
 /**
  * Run the AFK per-issue lifecycle IN ORDER, composing each pure module and
  * applying its plan through injected IO. The SEQUENCE + the label transitions +
@@ -977,9 +1064,12 @@ export async function processIssue(
   // posture-tagged log line; the session loop then skips to the next candidate.
   const visibility = deps.gh.repoVisibility ? await deps.gh.repoVisibility() : undefined;
   const trustPolicy = parseTrustPolicy(deps.hooks.config, visibility);
+  let provenance: TrustProvenance | undefined;
+  if (deps.gh.issueTrust) {
+    provenance = await deps.gh.issueTrust(issue);
+  }
   const canFailClosed = !!(trustPolicy.failClosed && deps.gh.actorTrustSignals);
-  if ((trustPolicy.enabled || canFailClosed) && deps.gh.issueTrust) {
-    const provenance = await deps.gh.issueTrust(issue);
+  if ((trustPolicy.enabled || canFailClosed) && provenance) {
     const signals = deps.gh.actorTrustSignals;
     const lookup = signals ? (login: string) => signals(login) : async () => ({});
     const verdict = await evaluateClaimTrust(trustPolicy, provenance, lookup);
@@ -990,6 +1080,24 @@ export async function processIssue(
       await deps.claimLock.release(issue);
       return claimLost(issue, hooksFired);
     }
+  }
+
+  // ---- untrusted-author sandbox policy (#1112) ----
+  // Source-trust is separate from the executable-issue trust gate: an issue may be
+  // delegable because a maintainer summoned it, while its original author remains
+  // untrusted. In that case the inner agent must never run under host-native
+  // `none`; pick an available container backend or page a human before any
+  // worktree/handoff/agent execution exists.
+  const sandboxDecision = await resolveUntrustedAuthorSandbox(deps, trustPolicy, provenance);
+  if (sandboxDecision.refused) {
+    const reason = sandboxDecision.reason ?? "untrusted issue author requires container isolation";
+    deps.appendIterLog(`🤖 /afk sandbox policy refused #${issue}: ${reason}.`);
+    return refuseNoSandboxForUntrustedAuthor(deps, input, hooksFired, reason);
+  }
+  if (!sandboxDecision.authorTrusted && sandboxDecision.sandboxMode !== (deps.sandboxMode ?? "none")) {
+    deps.appendIterLog(
+      `🤖 /afk sandbox policy: untrusted issue author forced ${sandboxDecision.sandboxMode} isolation for #${issue}.`,
+    );
   }
 
   // Project the `running` label, shedding any stale `blocked:*` reason in the same
@@ -1219,6 +1327,7 @@ export async function processIssue(
       // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
       // slot) — runAgent applies it to the spawned agent's environment.
       env: agentEnv,
+      sandboxMode: sandboxDecision.sandboxMode,
     };
 
     // Intra-attempt notes-loop (Track C, #924). Default OFF → `runNotesLoop`
@@ -1307,6 +1416,7 @@ export async function processIssue(
         goalProbe: () => deps.gh.issueClosed(issue),
         // FIX J: carry the pre_worktree env onto the fallback runner too.
         env: agentEnv,
+        sandboxMode: sandboxDecision.sandboxMode,
       });
       if (isRunnerRecoverableOutcome(run.outcome)) {
         // Both runner invocations failed in a recoverable runner class → close the
