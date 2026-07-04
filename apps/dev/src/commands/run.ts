@@ -741,8 +741,15 @@ export function buildProcessDeps(
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
       // Trust-gate provenance (#621): author + ready-for-agent label actor, read
       // from the issue timeline. Consulted at claim time only when an allowlist
-      // is configured (plugins.dev.afk.trust-gate.allowlist).
+      // is configured (plugins.dev.afk.trust-gate.allowlist) or the repo fails
+      // closed (public + no allowlist, #1101).
       issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
+      // Repository visibility (#1101): folds into the trust policy so a PUBLIC
+      // repo with no allowlist fails closed while a private one stays permissive.
+      repoVisibility: () => ghx.repoVisibility(ghCtx),
+      // Dynamic-base trust signals (write-access / CODEOWNERS) for the fail-closed
+      // default's author + promoter maintainer check (#1101, reusing #747).
+      actorTrustSignals: (actor) => ghx.actorTrustSignals(ghCtx, actor),
       // HITL decision card (#935, S11a): post/update the card on escalation.
       // Best-effort: errors are caught in routeRecovery so they never block
       // the recovery path. Runs in the worktree root so gh resolves the repo.
