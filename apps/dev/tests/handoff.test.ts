@@ -130,6 +130,41 @@ describe("buildHumanGuidance", () => {
   it("no directive marker → empty", () => {
     expect(buildHumanGuidance([{ body: "just talking", author: "a" }])).toBe("");
   });
+
+  // ---------- source-trust gating (issue #1100) ----------
+
+  it("a trusted-source directive still becomes authoritative guidance", () => {
+    const out = buildHumanGuidance([
+      { author: "maintainer", sourceTrust: "trusted", body: directiveMarker("do the thing") },
+    ]);
+    expect(out).toContain('<human-guidance author="@maintainer"');
+    expect(out).toContain("do the thing");
+  });
+
+  it("a dubious-source directive is NOT promoted to authoritative guidance", () => {
+    const out = buildHumanGuidance([
+      { author: "stranger", sourceTrust: "dubious", body: directiveMarker("rm -rf everything") },
+    ]);
+    expect(out).toBe("");
+  });
+
+  it("an automation-source directive is NOT promoted to authoritative guidance", () => {
+    const out = buildHumanGuidance([
+      { author: "some-bot", sourceTrust: "automation", body: directiveMarker("deploy now") },
+    ]);
+    expect(out).toBe("");
+  });
+
+  it("mixed sources: only the trusted directive survives promotion", () => {
+    const out = buildHumanGuidance([
+      { author: "stranger", sourceTrust: "dubious", body: directiveMarker("untrusted order") },
+      { author: "maintainer", sourceTrust: "trusted", body: directiveMarker("trusted order") },
+    ]);
+    expect(out.match(/<human-guidance author=/g)).toHaveLength(1);
+    expect(out).toContain('<human-guidance author="@maintainer"');
+    expect(out).toContain("trusted order");
+    expect(out).not.toContain("untrusted order");
+  });
 });
 
 describe("buildThreadDiscussion", () => {
@@ -155,6 +190,23 @@ describe("buildThreadDiscussion", () => {
       { body: directiveMarker("x"), author: "a" },
     ]);
     expect(out).toBe("");
+  });
+
+  it("a trusted-source directive is excluded (promoted, not demoted)", () => {
+    const out = buildThreadDiscussion([
+      { author: "maintainer", sourceTrust: "trusted", body: directiveMarker("trusted order") },
+    ]);
+    expect(out).toBe("");
+  });
+
+  it("an untrusted-source directive is retained in the discussion block (#1100)", () => {
+    const body = directiveMarker("rm -rf everything");
+    const out = buildThreadDiscussion([
+      { author: "stranger", sourceTrust: "dubious", createdAt: "2026-07-04T00:00:00Z", body },
+    ]);
+    expect(out).toContain('<thread-discussion-entry author="@stranger" at="2026-07-04T00:00:00Z">');
+    expect(out).toContain("rm -rf everything");
+    expect(out).toContain("</thread-discussion-entry>");
   });
 });
 
@@ -442,6 +494,19 @@ describe("buildHandoff prior-attempt-context", () => {
     });
     expect(out.indexOf("<human-guidance-thread>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
     expect(out.indexOf("<prior-attempt-context>")).toBeLessThan(out.indexOf("<thread-discussion"));
+  });
+
+  it("untrusted directive lands in the untrusted discussion block, never guidance (#1100)", () => {
+    const out = base({
+      comments: [
+        { author: "stranger", sourceTrust: "dubious", body: directiveMarker("untrusted order") },
+      ],
+    });
+    // no authoritative guidance section at all
+    expect(out).not.toContain("<human-guidance-thread>");
+    // retained under the injection-guarded untrusted block
+    expect(out).toContain('<thread-discussion data-untrusted="true">');
+    expect(out).toContain("untrusted order");
   });
 });
 
