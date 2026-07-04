@@ -156,18 +156,20 @@ export function humanizeTokens(tokens: number): string {
 
 /**
  * Humanizes an elapsed duration in milliseconds to a compact human-friendly
- * string: `30s`, `5m`, `5m40s`, `1h`, `1h22m`. Seconds are included only
- * under one hour (they become noise at hour scale). Zero/negative → `0s`.
+ * string that always carries the two most-significant units once past the
+ * seconds floor: `10s`, `1m10s`, `1h10m`, `1d10h`. The lower unit is shown even
+ * when zero (`1h` → `1h0m`) so the magnitude never collapses to a lone number.
+ * Only sub-minute values render a single unit. Zero/negative → `0s`.
  */
 export function humanizeAlive(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  const rs = s % 60;
-  if (m < 60) return rs > 0 ? `${m}m${rs}s` : `${m}m`;
+  if (m < 60) return `${m}m${s % 60}s`;
   const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return rm > 0 ? `${h}h${rm}m` : `${h}h`;
+  if (h < 24) return `${h}h${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d${h % 24}h`;
 }
 
 /**
