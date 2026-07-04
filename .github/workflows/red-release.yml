@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: red-release
@@ -137,6 +138,10 @@ jobs:
           # the matching reddb binary asset is unavailable.
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
+
+      - name: Install cosign
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        uses: sigstore/cosign-installer@v3
 
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
       # from apps/dev (which lives outside the plugin tree) so the shipped
@@ -489,6 +494,23 @@ jobs:
           console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
           EOF
 
+      - name: Sign bundle manifests
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        run: |
+          set -euo pipefail
+          manifests=(
+            dist/dev.manifest.json
+            dist/code-nav.manifest.json
+            dist/benchmark-memory.manifest.json
+            dist/benchmark-code-understanding.manifest.json
+          )
+          for manifest in "${manifests[@]}"; do
+            cosign sign-blob \
+              --yes \
+              --bundle "${manifest}.sigstore.json" \
+              "$manifest"
+          done
+
       - name: Build release manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
@@ -499,13 +521,17 @@ jobs:
           node scripts/release-manifest.mjs \
             dist/dev.bundle.min.mjs \
             dist/dev.manifest.json \
+            dist/dev.manifest.json.sigstore.json \
             dist/code-nav.bundle.min.mjs \
             dist/code-nav.manifest.json \
+            dist/code-nav.manifest.json.sigstore.json \
             dist/benchmark-memory.bundle.min.mjs \
             dist/benchmark-memory.manifest.json \
+            dist/benchmark-memory.manifest.json.sigstore.json \
             dist/opencode-host.bundle.min.mjs \
             dist/benchmark-code-understanding.bundle.min.mjs \
             dist/benchmark-code-understanding.manifest.json \
+            dist/benchmark-code-understanding.manifest.json.sigstore.json \
             dist/memory.bundle.min.mjs \
             dist/memory-mcp.bundle.min.mjs \
             dist/memory-runtime-manifest.json \
@@ -529,13 +555,17 @@ jobs:
           assets=(
             dist/dev.bundle.min.mjs
             dist/dev.manifest.json
+            dist/dev.manifest.json.sigstore.json
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
+            dist/code-nav.manifest.json.sigstore.json
             dist/benchmark-memory.bundle.min.mjs
             dist/benchmark-memory.manifest.json
+            dist/benchmark-memory.manifest.json.sigstore.json
             dist/opencode-host.bundle.min.mjs
             dist/benchmark-code-understanding.bundle.min.mjs
             dist/benchmark-code-understanding.manifest.json
+            dist/benchmark-code-understanding.manifest.json.sigstore.json
             dist/memory.bundle.min.mjs
             dist/memory-mcp.bundle.min.mjs
             dist/memory-runtime-manifest.json

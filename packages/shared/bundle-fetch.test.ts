@@ -8,6 +8,7 @@ import {
   type BundleIO,
   ensureBundle,
   manifestAssetName,
+  manifestSignatureAssetName,
   resolveBundle,
 } from "./bundle-fetch.js";
 
@@ -29,6 +30,8 @@ function manifestJson(sha: string): Uint8Array {
 function makeIO(opts: {
   bundleBytes?: Uint8Array;
   manifestSha?: string;
+  signatureBytes?: Uint8Array;
+  signatureValid?: boolean;
   files?: Record<string, Uint8Array>;
   /** asset names that should 404. */
   missing?: string[];
@@ -38,6 +41,7 @@ function makeIO(opts: {
   const files: Record<string, Uint8Array> = { ...(opts.files ?? {}) };
   const downloads: string[] = [];
   const writes: string[] = [];
+  const signatureChecks: string[] = [];
 
   const io: BundleIO = {
     async download(url) {
@@ -50,6 +54,9 @@ function makeIO(opts: {
           opts.manifestSha ??
           (opts.bundleBytes ? sha256(opts.bundleBytes) : "0".repeat(64));
         return manifestJson(sha);
+      }
+      if (name === manifestSignatureAssetName(PLUGIN)) {
+        return opts.signatureBytes ?? new TextEncoder().encode("sigstore-bundle");
       }
       if (name === bundleAssetName(PLUGIN)) {
         if (!opts.bundleBytes) throw new Error("404 Not Found");
@@ -70,8 +77,12 @@ function makeIO(opts: {
       return path in files;
     },
     sha256,
+    async verifyBundleSignature({ artifact, signature }) {
+      signatureChecks.push(`${sha256(artifact)}:${new TextDecoder().decode(signature)}`);
+      if (opts.signatureValid === false) throw new Error("signature verification failed");
+    },
   };
-  return { io, files, downloads, writes };
+  return { io, files, downloads, writes, signatureChecks };
 }
 
 describe("path + url builders", () => {
@@ -105,7 +116,7 @@ describe("ensureBundle", () => {
   it("cache hit: existing bundle whose sha matches the manifest => no download", async () => {
     const bundle = new TextEncoder().encode("export const x = 1;");
     const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
-    const { io, downloads, writes } = makeIO({
+    const { io, downloads, writes, signatureChecks } = makeIO({
       bundleBytes: bundle,
       files: { [dest]: bundle },
     });
@@ -118,14 +129,18 @@ describe("ensureBundle", () => {
     });
 
     expect(path).toBe(dest);
-    // Only the manifest is fetched to verify; the bundle is never downloaded.
-    expect(downloads).toEqual([assetUrl(REPO, VERSION, manifestAssetName(PLUGIN))]);
+    // The manifest and its signature are fetched to verify; the bundle is never downloaded.
+    expect(downloads).toEqual([
+      assetUrl(REPO, VERSION, manifestAssetName(PLUGIN)),
+      assetUrl(REPO, VERSION, manifestSignatureAssetName(PLUGIN)),
+    ]);
+    expect(signatureChecks).toHaveLength(1);
     expect(writes).toEqual([]);
   });
 
   it("cache miss: downloads, verifies checksum, writes to cache", async () => {
     const bundle = new TextEncoder().encode("export const y = 2;");
-    const { io, files, downloads, writes } = makeIO({ bundleBytes: bundle });
+    const { io, files, downloads, writes, signatureChecks } = makeIO({ bundleBytes: bundle });
 
     const path = await ensureBundle(io, {
       plugin: PLUGIN,
@@ -139,6 +154,8 @@ describe("ensureBundle", () => {
     expect(files[dest]).toEqual(bundle);
     expect(writes).toEqual([dest]);
     expect(downloads).toContain(assetUrl(REPO, VERSION, bundleAssetName(PLUGIN)));
+    expect(downloads).toContain(assetUrl(REPO, VERSION, manifestSignatureAssetName(PLUGIN)));
+    expect(signatureChecks).toHaveLength(1);
   });
 
   it("canary: fetches from the floating canary tag and writes the canary cache file", async () => {
@@ -172,7 +189,7 @@ describe("ensureBundle", () => {
 
   it("checksum mismatch: throws and does NOT write to cache", async () => {
     const bundle = new TextEncoder().encode("tampered");
-    const { io, files, writes } = makeIO({
+    const { io, files, writes, signatureChecks } = makeIO({
       bundleBytes: bundle,
       manifestSha: "a".repeat(64), // manifest claims a different hash
     });
@@ -181,6 +198,36 @@ describe("ensureBundle", () => {
     await expect(
       ensureBundle(io, { plugin: PLUGIN, version: VERSION, repo: REPO, cacheDir: CACHE }),
     ).rejects.toMatchObject({ name: "BundleFetchError", kind: "checksum-mismatch" });
+
+    expect(files[dest]).toBeUndefined();
+    expect(writes).toEqual([]);
+    expect(signatureChecks).toEqual([]);
+  });
+
+  it("missing signature: rejects and does NOT write to cache", async () => {
+    const bundle = new TextEncoder().encode("export const unsigned = true;");
+    const { io, files, writes } = makeIO({
+      bundleBytes: bundle,
+      missing: [manifestSignatureAssetName(PLUGIN)],
+    });
+
+    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    await expect(
+      ensureBundle(io, { plugin: PLUGIN, version: VERSION, repo: REPO, cacheDir: CACHE }),
+    ).rejects.toMatchObject({ name: "BundleFetchError", kind: "signature-invalid" });
+
+    expect(files[dest]).toBeUndefined();
+    expect(writes).toEqual([]);
+  });
+
+  it("tampered signature: rejects and does NOT write to cache", async () => {
+    const bundle = new TextEncoder().encode("export const signed = true;");
+    const { io, files, writes } = makeIO({ bundleBytes: bundle, signatureValid: false });
+
+    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    await expect(
+      ensureBundle(io, { plugin: PLUGIN, version: VERSION, repo: REPO, cacheDir: CACHE }),
+    ).rejects.toMatchObject({ name: "BundleFetchError", kind: "signature-invalid" });
 
     expect(files[dest]).toBeUndefined();
     expect(writes).toEqual([]);
