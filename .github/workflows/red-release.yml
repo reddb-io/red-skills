@@ -509,6 +509,8 @@ jobs:
             dist/code-nav.manifest.json
             dist/benchmark-memory.manifest.json
             dist/benchmark-code-understanding.manifest.json
+            dist/memory-runtime-manifest.json
+            dist/brain-runtime-manifest.json
           )
           for manifest in "${manifests[@]}"; do
             cosign sign-blob \
@@ -541,9 +543,11 @@ jobs:
             dist/memory.bundle.min.mjs \
             dist/memory-mcp.bundle.min.mjs \
             dist/memory-runtime-manifest.json \
+            dist/memory-runtime-manifest.json.sigstore.json \
             dist/brain.bundle.min.mjs \
             dist/brain-mcp.bundle.min.mjs \
-            dist/brain-runtime-manifest.json
+            dist/brain-runtime-manifest.json \
+            dist/brain-runtime-manifest.json.sigstore.json
 
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -575,9 +579,11 @@ jobs:
             dist/memory.bundle.min.mjs
             dist/memory-mcp.bundle.min.mjs
             dist/memory-runtime-manifest.json
+            dist/memory-runtime-manifest.json.sigstore.json
             dist/brain.bundle.min.mjs
             dist/brain-mcp.bundle.min.mjs
             dist/brain-runtime-manifest.json
+            dist/brain-runtime-manifest.json.sigstore.json
             dist/release-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then
