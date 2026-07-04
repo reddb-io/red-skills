@@ -11,9 +11,16 @@
 //   1. the author is a trusted identity (in the allowlist), AND
 //   2. `ready-for-agent` was applied by an allowlisted actor (in the allowlist).
 //
-// When no allowlist is configured the gate is PERMISSIVE — it returns executable
-// for everything, preserving today's single-maintainer behaviour EXACTLY.
-// Configuring the allowlist switches the repo to strict mode. A `ready-for-agent`
+// When no allowlist is configured the DEFAULT posture is repository-visibility
+// aware (issue #1101, parent #1099):
+//   - PRIVATE / single-collaborator repo → PERMISSIVE: executable for everything,
+//     preserving today's single-maintainer ergonomics EXACTLY.
+//   - PUBLIC repo → FAIL-CLOSED: a `ready-for-agent` from an untrusted author OR
+//     an untrusted promoter is HELD for a maintainer summon rather than auto-claimed.
+//     "Untrusted" reuses the dynamic maintainer signal (`resolveActorTrust`:
+//     write-access / CODEOWNERS / allowlist), not a new trust matrix.
+// Configuring the allowlist switches the repo to STRICT mode on either visibility:
+// BOTH the author and the promoter must be allowlisted. A `ready-for-agent`
 // applied by a non-allowlisted actor (an automation bot, an untrusted reporter)
 // is ignored by selection/claim and may be stripped by a sweep with an audit
 // comment (`planTrustStrip`).
@@ -31,14 +38,42 @@ import { getConfig } from "./config.js";
  * as `dev.lock.branch`. */
 export const TRUST_ALLOWLIST_KEY = "afk.trust-gate.allowlist";
 
+/** GitHub repository visibility, as reported by `gh repo view --json visibility`
+ * (lower-cased). `undefined` when the read failed or was not attempted — treated
+ * as NON-public, so an undeterminable visibility keeps the permissive default. */
+export type RepoVisibility = "public" | "private" | "internal";
+
+/** The active default posture when NO allowlist is configured, surfaced so an
+ * operator can tell at a glance which way the gate leans:
+ *   - `strict`      — an allowlist IS configured (visibility-independent);
+ *   - `fail-closed` — no allowlist + a PUBLIC repo → untrusted work is held;
+ *   - `permissive`  — no allowlist + a private/undeterminable repo → today's default. */
+export type TrustPosture = "strict" | "fail-closed" | "permissive";
+
 /** The parsed per-repo trust policy. `enabled` is DERIVED: the gate is active
- * only when the allowlist is non-empty (absent config → permissive). */
+ * only when the allowlist is non-empty (absent config → visibility-aware default).
+ * `failClosed` is DERIVED: no allowlist AND a public repo (issue #1101). */
 export interface TrustPolicy {
   /** True when an allowlist is configured (strict mode). */
   enabled: boolean;
   /** The set of trusted GitHub logins — both the author AND the label actor are
    * checked against this single list. */
   allowlist: readonly string[];
+  /** Repository visibility folded into the policy (drives `failClosed`). Optional
+   * so legacy callers/tests that predate the visibility dimension omit it → they
+   * default to the permissive posture, preserving today's behaviour EXACTLY. */
+  visibility?: RepoVisibility;
+  /** DERIVED: no allowlist + a PUBLIC repo → the untrusted-default is fail-closed.
+   * Optional/absent → false (permissive), so pre-#1101 `TrustPolicy` literals keep
+   * their exact meaning. */
+  failClosed?: boolean;
+}
+
+/** The active {@link TrustPosture} for a policy — the operator-facing "which way
+ * does the gate lean" descriptor (acceptance: the posture is discernible). */
+export function describeTrustPosture(policy: TrustPolicy): TrustPosture {
+  if (policy.enabled) return "strict";
+  return policy.failClosed ? "fail-closed" : "permissive";
 }
 
 /** Provenance resolved from gh at claim time. Either field may be undefined when
@@ -70,12 +105,18 @@ function parseLogins(raw: string): string[] {
 }
 
 /**
- * Read the trust policy from the loaded config map. An empty / absent allowlist
- * yields `enabled:false` → permissive (today's behaviour).
+ * Read the trust policy from the loaded config map, folding in the repository
+ * `visibility` so the no-allowlist default becomes visibility-aware (issue #1101):
+ *   - allowlist present            → `enabled:true` (strict, either visibility);
+ *   - no allowlist + PUBLIC repo   → `failClosed:true` (untrusted work is held);
+ *   - no allowlist + private/other → permissive (today's behaviour, preserved).
+ * `visibility` is optional — an absent/undeterminable value keeps the permissive
+ * default, so legacy callers that pass no visibility behave exactly as before.
  */
-export function parseTrustPolicy(values: ConfigValues): TrustPolicy {
+export function parseTrustPolicy(values: ConfigValues, visibility?: RepoVisibility): TrustPolicy {
   const allowlist = parseLogins(getConfig(values, TRUST_ALLOWLIST_KEY));
-  return { enabled: allowlist.length > 0, allowlist };
+  const enabled = allowlist.length > 0;
+  return { enabled, allowlist, visibility, failClosed: !enabled && visibility === "public" };
 }
 
 /**
@@ -176,9 +217,11 @@ export async function resolveActorTrust(
   if (signals.inCodeowners) return { executable: true, basis: "codeowners" };
 
   // 3. permissive default — neither a determinable base signal nor an allowlist.
+  // SUPPRESSED under a fail-closed policy (public repo, no allowlist, issue #1101):
+  // there the absence of a positive maintainer signal must HOLD, not wave through.
   const baseAvailable =
     signals.hasWriteAccess !== undefined || signals.inCodeowners !== undefined;
-  if (!baseAvailable && !policy.enabled) {
+  if (!baseAvailable && !policy.enabled && !policy.failClosed) {
     return { executable: true, basis: "permissive-default" };
   }
 
@@ -189,6 +232,41 @@ export async function resolveActorTrust(
       `${login ? `actor '${login}'` : "actor (unknown)"} is not a repository maintainer — ` +
       `no write access, not in CODEOWNERS, and not in the trust-gate allowlist`,
   };
+}
+
+/**
+ * The claim-time trust decision over BOTH provenance signals, dispatched by the
+ * active {@link TrustPosture}:
+ *   - `strict`      → the allowlist gate (`evaluateTrustGate`): author AND promoter
+ *                     must be allowlisted.
+ *   - `permissive`  → today's no-op: executable for everything.
+ *   - `fail-closed` → (public repo, no allowlist, issue #1101) BOTH the author and
+ *                     the `ready-for-agent` promoter must resolve as maintainers
+ *                     via `resolveActorTrust` (write-access / CODEOWNERS / allowlist).
+ *                     The author is checked first; either untrusted → HOLD.
+ * `lookup` is only consulted on the fail-closed path; the strict/permissive paths
+ * never touch gh, so a caller with no `ActorTrustLookup` can pass a stub.
+ */
+export async function evaluateClaimTrust(
+  policy: TrustPolicy,
+  provenance: TrustProvenance,
+  lookup: ActorTrustLookup,
+): Promise<TrustVerdict> {
+  if (policy.enabled) return evaluateTrustGate(policy, provenance);
+  if (!policy.failClosed) return { executable: true };
+
+  const author = await resolveActorTrust(policy, provenance.author, lookup);
+  if (!author.executable) {
+    return { executable: false, reason: `untrusted author — ${author.reason} (held for maintainer summon)` };
+  }
+  const actor = await resolveActorTrust(policy, provenance.readyForAgentActor, lookup);
+  if (!actor.executable) {
+    return {
+      executable: false,
+      reason: `untrusted ready-for-agent promoter — ${actor.reason} (held for maintainer summon)`,
+    };
+  }
+  return { executable: true };
 }
 
 /** A `ready-for-agent` candidate the strip sweep examines: its number + the
