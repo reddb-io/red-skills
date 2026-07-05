@@ -11,10 +11,6 @@ Then run a shaping session that produces a separate article document. Do not edi
 
 If the user did not say where to save the article, ask once and remember the path. The user will be editing the article file during the session; always re-read it before writing so their edits are preserved.
 
-</what-to-do>
-
-<supporting-info>
-
 ## The loop
 
 1. **Read the pile.** Read the input file in full. Form a sense of what's in it.
@@ -22,6 +18,10 @@ If the user did not say where to save the article, ask once and remember the pat
 3. **Grow paragraph by paragraph.** After the opening lands, ask "given this opening, what does the reader need to hear next?" Pull material from the pile to answer. Argue about whether the next beat is a paragraph, a list, a table, a callout, a quote, a code block. Each format choice should be deliberate and defensible.
 4. **Append to the article file as you go.** Don't batch. Write each agreed paragraph or block immediately so the user can see the article taking shape.
 5. **Loop step 3 until the article is done.** The user decides when it's done.
+
+</what-to-do>
+
+<supporting-info>
 
 ## Conversational feel
 
@@ -57,7 +57,7 @@ Append to the article file as each block is agreed. Re-read the file from disk b
 
 ## Out of scope
 
-- Mining for new fragments that aren't in the pile (the pile is the input — if it's incomplete, name the gap and either get the user to fill it or cut the section).
+- Mining for new fragments that aren't in the pile — the pile is the input (when it's incomplete, apply the name-the-gap-or-cut rule from "Pulling from the pile").
 - Editing the raw material file.
 - Publishing, formatting for a specific platform, or adding frontmatter the user didn't ask for.
 
