@@ -7,7 +7,7 @@ description: "Verify that a code change does what it's supposed to by driving a 
 
 <what-to-do>
 
-**Ground-truth discipline: you cannot assert success without a fresh snapshot.** Every visible-state claim must be backed by a `red-browser snapshot` result taken *after* the change is live. A hallucinated "the button appeared" that no snapshot confirms is a failed verification.
+**This is the procedure for driving a live app and reading `red-browser` snapshots. The discipline it enforces — claim → fresh ground-truth → confirm, plus the stale-ref rule — lives in `/ground-truth`; read it for the rules, follow the steps below for the how.**
 
 ## Steps
 
@@ -34,7 +34,7 @@ description: "Verify that a code change does what it's supposed to by driving a 
    - "No console errors" → confirm `console` has no entries with `level: "error"`.
    - "The API call succeeded" → find the relevant URL in `network` with the expected `status`.
 
-5. **Stale-ref rule.** If you reference a node's `ref` across two snapshots, verify it is still live by checking whether it appears in the latest snapshot. A `ref` absent from the newest snapshot is stale — take a new snapshot and locate the node again before asserting anything about it.
+5. **Apply the stale-ref rule.** A `ref` reused across a page reload, navigation, or any state change may be stale — re-snapshot and re-resolve before asserting. The rule and its rationale live in `/ground-truth`; apply it here.
 
 6. **Iterate.** If the snapshot does not match expectations, diagnose → fix → re-snapshot. Do not close the issue or declare success until a snapshot confirms the expected state.
 
@@ -131,6 +131,6 @@ Chromium works as a drop-in replacement; so does `microsoft-edge`.
 
 ## Anti-hallucination contract
 
-The snapshot is the single source of truth for what the browser is actually rendering. Everything you say about the visible state of the app must be traceable to a node in the most recent `a11y` tree. If you cannot find the node, the element is either not rendered, not accessible, or behind an interaction you have not yet performed.
+The anti-hallucination doctrine — a claim is unverified until a fresh post-action snapshot confirms it — is owned by `/ground-truth`. In this procedure it means: everything you say about the visible state must be traceable to a node in the most recent `a11y` tree. If you cannot find the node, the element is either not rendered, not accessible, or behind an interaction you have not yet performed.
 
 </supporting-info>
