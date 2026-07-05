@@ -31,7 +31,7 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 4. **Run the full test suite once at the end.** Only after all issues in scope are implemented and individually GREEN: `pnpm test` (or the project's equivalent). All must pass before the next step.
 
-5. **Review with `/review`.** When the full suite is green, invoke `/review` to review the work. Address every finding before committing.
+5. **Review with `/code-review`.** When the full suite is green, invoke `/code-review` to review the work. Address every finding before committing.
 
 6. **Finish with `/requeue`.** Commit the work in the worktree (never on the primary branch), push, and run `/requeue` to adopt the branch into the reconcile lane — it validates through the shared gate and lands. Close the linked issues when done. (For a brand-new one-off demand that doesn't need this interactive loop, dispatch `/go "<demand>"` instead — it handles worktree, gate, and PR end-to-end.)
 
@@ -39,7 +39,7 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 - ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/requeue`.
 - ❌ Do **not** skip `/tdd`; writing code before a failing test is undefined behaviour for this skill.
-- ❌ Do **not** run `/review` while any test is red.
+- ❌ Do **not** run `/code-review` while any test is red.
 - ✅ **Do** let `/to-issues` decompose large PRDs before starting — smaller seams mean smaller merge risk.
 - ✅ **Do** run typechecking after every cycle, not just at the end.
 
