@@ -42,7 +42,7 @@ Run the checks against the target repo (cwd by default; `--repo <path|owner/name
 
     During this read-only pass: never write `.red/config.yaml`.
 7. **Statusline drift** — the installed `.claude/settings.json` `statusLine` command resolves the **cached bundle** (`~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`), not the OLD launcher form (`…/plugins/cache/red-skills/dev/*/…/afk.mjs`) which blanks on every plugin update.
-8. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` (the local data MCP) + `red-ui` (the visualizer consumer)**. Per **ADR 0041 Amendment 1 (reversed, 2026-06-20)**, `red-memory` is a **local** server that execs the in-repo `bootstrap.mjs` (built from `apps/memory`, RedDB-backed via `@reddb-io/sdk`) — that local shape is the **intended** wiring, **not** drift. What *is* a finding: a server still named **`memory`** that was never renamed to `red-memory` (the rename is the one surviving piece of ADR 0041), or a `.mcp.json`/routing-guide that tries to **fetch `red-memory` from a GitHub release** (a leftover of the cancelled migration — there is no `red-memory` release and that repo is archived). Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
+8. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` (the local data MCP, a local server that execs the in-repo `bootstrap.mjs`, built from `apps/memory`, RedDB-backed via `@reddb-io/sdk`) + `red-ui` (the visualizer consumer)** — this local shape is the **intended** wiring, **not** drift (ADR 0041 Amendment 1 reversed the release-fetched migration). What *is* a finding: a server still named **`memory`** that was never renamed to `red-memory`, or a `.mcp.json`/routing-guide that tries to **fetch `red-memory` from a GitHub release** (there is no such release). Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
 9. **Version coherence** — every plugin manifest pair is on the same version: for each `plugins/*/`, `.claude-plugin/plugin.json` `version` **==** `.codex-plugin/plugin.json` `version`. A mismatch is what `validate-install-metadata.sh` rejects and what fails `red-release` (e.g. a stale manifest landed manually). Fix-home = `→ release` (the single-writer version script, ADR 0040).
 10. **Workflow naming convention** — list `.github/workflows/*.yml` and classify each by **role**, decidable from its content: has `workflow_call:` → must be `reusable-*`; `uses:` a `reusable-*` → must be `rs-*` (a caller / instantiation); otherwise → must be `red-*` (a standalone workflow). Applies both in red-skills itself and in an adopter repo. Two findings, both tagged `→ /setup-red-skills`:
     - **Naming drift** — a file whose filename prefix doesn't match its role: a reusable caller named `red-*` (should be `rs-*`), a standalone named `rs-*`/`reusable-*` (should be `red-*`), a `workflow_call` workflow not named `reusable-*`, or a legacy `red-skills-*` (the retired caller prefix → now `rs-*`). Report the rename to the role-correct prefix. (A `reusable-*` referenced via `uses:` from another repo is exempt — it is *called*, never copied.)
@@ -61,11 +61,11 @@ Run the checks against the target repo (cwd by default; `--repo <path|owner/name
 
 ### Pass 2 — Fix (only with `--fix`; gated apply)
 
-For **every** non-green finding from Pass 1, apply its canonical fix from the *Apply* table in `<supporting-info>`. There is no finding the doctor reports but cannot heal: each row maps to a concrete action or a delegation to the single-writer tool that owns it.
+For **every** non-green finding from Pass 1, apply its canonical fix. Running with `--fix` → read [`APPLY.md`](APPLY.md) for the per-finding action and gate. There is no finding the doctor reports but cannot heal: each row maps to a concrete action or a delegation to the single-writer tool that owns it.
 
 The loop:
 
-1. **Group the findings** into **safe** (idempotent, low-blast-radius) and **hard-to-reverse** (per the *Apply* table's gate column).
+1. **Group the findings** into **safe** (idempotent, low-blast-radius) and **hard-to-reverse** (per the gate column in [`APPLY.md`](APPLY.md)).
 2. **Apply the safe batch** — run each safe fix, print a one-line receipt per action (`✅ created label needs-triage`, `✅ injected ## Development workflow into AGENTS.md`, …). Re-running is a no-op.
 3. **Confirm each hard-to-reverse fix individually** — show the exact mutation (the `gh label rename old new` that re-tags N issues, the config-key migration, the `blocked:*` removal on issue #N, the `.mcp.json` edit) and apply only on an explicit yes. A no leaves that finding open and recorded.
 4. **Delegate** what a single-writer tool owns — a version mismatch runs the version/release tool (never a manual manifest edit); context-stack gaps run the `memory`/context skills. `--fix` triggers the tool, then re-checks.
@@ -97,27 +97,6 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 | `→ /triage` | `req:<PRD>` dependency edges (check 14) — re-point each offending edge at the target PRD's executable slices; `/triage` owns the authoring validation. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides. |
 | `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |
-
-### Apply (what `--fix` runs per finding, and its gate)
-
-| Finding | `--fix` action | Gate |
-|---|---|---|
-| Missing canonical label | `gh label create <name> --color <c> --description "<d>"` | **safe** (batch) |
-| AGENTS≡CLAUDE Agent-skills / Development-workflow parity | run the development-workflow injector (`inject-development-workflow --root <repo>`) — upserts both blocks in place | **safe** (batch; idempotent) |
-| `dev.lock.primary-branch` unset | same injector (it sets the nested flag) | **safe** (batch) |
-| Statusline drift | rewrite the `.claude/settings.json` `statusLine` to the cached-bundle form (jq merge, preserve other keys) | **safe** (batch) |
-| `.red/.gitignore` self-ignore missing/incomplete | write `.red/.gitignore` (header + `tmp/` + `state/`) if absent, else append only the missing pattern(s) — never reorder or clobber existing lines; don't `git add` it; print a one-line receipt | **safe** (batch; idempotent) |
-| Label synonym / legacy / naming | `gh label rename <old> <new>` (or create canonical + migrate, then retire the old) | **confirm each** — re-tags every issue carrying the old label |
-| Legacy/top-level dev-plugin config (flat `lock-primary-branch`, top-level `dev.lock.*`, top-level `afk:`) | migrate the key(s) into the canonical `plugins.dev.*` namespace + delete the top-level orphan in `.red/config.yaml` (safe: the #697 fold reads both, the namespaced form wins) | **confirm each** |
-| `blocked:*` on a `ready-for-agent`/`running` issue | `gh issue edit <N> --remove-label blocked:<reason>` (rotate the stale reason) | **confirm each** |
-| MCP wiring | add/correct the expected servers in the repo's `.mcp.json` | **confirm each** |
-| Version coherence mismatch | **run** the single-writer version/release tool (ADR 0040); never patch a manifest | **delegate** |
-| Workflow naming-convention drift | `git mv` the file to the prefix its role requires (`reusable-*` / `rs-*` / `red-*`); filename only, body unchanged; then update any `uses:` + doc references to the old name | **confirm each** — renames a CI file |
-| AFK-lane auth gap (`rs-afk-attempt.yml`, no auth secret) | **do not set the secret** — print the per-provider `gh secret set … --repo` guidance + the public-repo org-secret note; delegate to `/setup-red-skills` | **delegate** |
-| AFK hook/backpressure static-validation `❌`/`⚠️` (check 12) | **`--fix` cannot auto-fix operator intent** — it cannot know whether the right repair is to rename the script, restore the file, or drop the command. Flag the finding and point at `/setup-red-skills` (re-seed a library hook) or a manual edit; never rewrite `.red/config.yaml` or `.red/hooks/` here, and never execute the command to "check" it. | **delegate** |
-| Per-plugin runtime distribution `❌`/`⚠️` (check 13) | **re-trigger the launcher fetch** for the plugin (`red-fetch.mjs <plugin> <version>` / rebuild locally) — the cache is launcher-owned, never hand-edited. `cache-corrupt` also removes the bad cached file first so the re-fetch re-downloads. A re-fetch hits the network and rewrites the cache, so it is never a safe batch. | **confirm each** — a network fetch that rewrites the cache |
-| `req:<PRD>` dependency edge (check 14) | **do not silently re-label** — a re-point needs the author to pick the right executable slice(s). Surface each offending edge and delegate to `/triage` (re-point) or `/to-issues` (author the missing slice); never edit the `req:*` label here. | **delegate** |
-| Context-stack gap (check 1) | run the relevant `memory`/context skill | **delegate** |
 
 ### Scope & boundaries
 
