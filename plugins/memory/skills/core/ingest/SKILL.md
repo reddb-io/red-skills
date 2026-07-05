@@ -28,9 +28,7 @@ This is the `EXTRACTED` (deterministic) ingest path only. Conversation/git
 
 ## 1. Require graph mode
 
-Read the `plugins.memory` block of `.red/config.yaml` (or the legacy `.red/memory/config.json`). If neither is present, memory was never initialized —
-run `/memory:init`. If `mode` is not `graph`, ingest has nothing to write to;
-tell the user to re-run `memory init --mode graph`.
+See [Memory preconditions](../../references/PRECONDITIONS.md). If memory is not initialized, run `/memory:init`. If `mode` is not `graph`, ingest has nothing to write to; tell the user to re-run `memory init --mode graph`.
 
 ## 2. Ingest
 
