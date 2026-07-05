@@ -33,8 +33,8 @@ describe("end-to-end against the real source tree", () => {
       expect(names).toContain(expected);
     }
     // in-progress skills are skipped (writing-beats, writing-fragments,
-    // writing-shape, review are all in-progress only)
-    for (const skipped of ["writing-beats", "writing-fragments", "writing-shape", "review"]) {
+    // writing-shape are all in-progress only)
+    for (const skipped of ["writing-beats", "writing-fragments", "writing-shape"]) {
       expect(names).not.toContain(skipped);
     }
     // No errors on the curated set

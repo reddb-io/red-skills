@@ -81,3 +81,6 @@ jobs:
 
       - name: Test apps/dev (includes packages/shared)
         run: pnpm -C apps/dev test
+
+      - name: Test apps/opencode-host
+        run: pnpm -C apps/opencode-host test
