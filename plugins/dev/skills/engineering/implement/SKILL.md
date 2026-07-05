@@ -47,18 +47,6 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 <supporting-info>
 
-## When to use `/implement` vs `/afk`
-
-**Use `/implement`** when:
-- You want to implement the PRD yourself and stay in control of each step.
-- The work is complex or exploratory enough that you want to adjust direction mid-flight.
-- The issues are not yet triaged / have no AGENT-BRIEF that `/afk` can consume.
-
-**Use `/afk`** when:
-- Issues are `ready-for-agent` (triaged, AGENT-BRIEF written).
-- You want the fleet to work unattended across many issues at once.
-- You want autonomous claim → worktree → gate → merge → close with no human steps.
-
 ## Worktree convention
 
 All implementation work lives in a dedicated worktree under `.red/tmp/`, never on the primary branch or in a sibling directory. Create one with the dev loop:
