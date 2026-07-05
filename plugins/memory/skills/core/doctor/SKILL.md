@@ -1,6 +1,7 @@
 ---
 name: doctor
 description: Inspect and maintain the memory graph — list stale nodes (long-unaccessed and never recalled) and, only after explicit confirmation, prune them. Use when the user says "memory doctor", "clean up memory", "what's stale in memory", "prune old memory", or wants a health check of the graph. Graph mode only.
+disable-model-invocation: true
 ---
 
 # memory doctor
@@ -54,16 +55,6 @@ In a non-interactive shell, `--prune` refuses unless `--yes` is also passed. Pas
 </what-to-do>
 
 <supporting-info>
-
-## Staleness rule
-
-A node is stale when **both** hold:
-
-- it was last accessed more than `--stale-days` (default 90) days ago, and
-- it has never been recalled (`access_count == 0`).
-
-Access is tracked in a KV overlay that `/memory:recall` bumps on every hit, so
-"never recalled" really means cold. Pinned nodes are exempt regardless of age.
 
 ## MCP
 
