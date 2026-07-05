@@ -1,43 +1,49 @@
 ---
 name: daily-review
-description: Generates a RedSkills daily operational review focused on delivered work, local AFK workers, cycle times, and HITL/blocker challenges. Use when the user invokes `/daily-review`, asks for yesterday/today delivery numbers, daily issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
-argument-hint: "[--json] [--human]"
+description: Generates a RedSkills operational review for a requested period. Default period is yesterday midnight to now (one day); pass `--period week` for a six-day window. Covers delivered work, local AFK workers, cycle times, and HITL/blocker challenges. Use when the user invokes `/daily-review`, `/weekly-review`, asks for daily or weekly delivery numbers, issues/PRs/commits/diffstat, worker attempts, token spend, or why tasks needed HITL.
+argument-hint: "[--period day|week] [--json] [--human]"
+disable-model-invocation: true
 ---
 
 # /daily-review
 
-**Wrapper over the dev runtime — never hand-calculate.**
+<what-to-do>
 
-Render the RedSkills daily review.
+**Wrapper over the dev runtime — see [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run shim and output-format rules.**
 
-## Run
+Run the subcommand that matches the requested period:
 
-Run the host-level RedSkills dev runtime shim:
+| Period flag | Subcommand |
+| --- | --- |
+| `--period day` (default) | `red-skills-dev daily-review [--json]` |
+| `--period week` | `red-skills-dev weekly-review [--json]` |
 
-```bash
-red-skills-dev daily-review [--json]
-```
+Dev-checkout equivalent:
 
-When developing inside the red-skills source checkout, this repo-local path is
-also valid:
+| Period flag | Command |
+| --- | --- |
+| `--period day` (default) | `node plugins/dev/skills/engineering/afk/bin/afk.mjs daily-review [--json]` |
+| `--period week` | `node plugins/dev/skills/engineering/afk/bin/afk.mjs weekly-review [--json]` |
 
-```bash
-node plugins/dev/skills/engineering/afk/bin/afk.mjs daily-review [--json]
-```
+</what-to-do>
 
-## Output format
+<supporting-info>
 
-**TOON by default** (PRD #928 / ADR 0081) — the agent-facing wire format is
-token-cheap by design: the `workers`, `challenges`, and cycle-time tables render
-as one column header plus bare CSV rows, the big-number aggregates are
-pre-computed, and empty tables render the definitive `key[0]:` empty state.
-`--json` forces raw JSON; `--human` prints the prose review.
+## Intervals
 
-## Interval
+**day (default):** local midnight at the start of yesterday through the exact
+generation time. Example: if now is `2026-06-06 14:25`, the interval is
+`2026-06-05 00:00` through `2026-06-06 14:25`.
 
-The interval is always from local midnight at the start of yesterday through
-the exact generation time. Example: if now is `2026-06-06 14:25`, the interval
-is `2026-06-05 00:00` through `2026-06-06 14:25`.
+**week:** local midnight six calendar days before today through the exact
+generation time. Example: if now is `2026-06-06 14:25`, the interval is
+`2026-05-31 00:00` through `2026-06-06 14:25`.
+
+## Output format detail
+
+The TOON wire format renders the `workers`, `challenges`, and cycle-time tables
+as one column header plus bare CSV rows; big-number aggregates are pre-computed;
+empty tables use the definitive `key[0]:` empty state.
 
 ## Report Sections
 
@@ -49,10 +55,12 @@ is `2026-06-05 00:00` through `2026-06-06 14:25`.
 - Challenges: HITL/blocker/no-sentinel/merge-conflict evidence from issue
   labels, issue bodies/comments, and local AFK history reasons.
 - Issue and PR cycle times: closed-in-interval rows include items opened before
-  the interval, so old work closed yesterday remains visible.
+  the interval, so old work closed in the review window remains visible.
 
 ## Notes
 
 Token spend is best-effort. Current AFK artifacts do not guarantee usage fields;
 the report says `n/a` and emits a warning when no retained local log has token
 data.
+
+</supporting-info>
