@@ -9,7 +9,7 @@ description: Use when choosing or explaining the RedSkills dev model tier for va
 
 This is the dev plugin's cross-host policy for why a task uses a given model tier and which tier should run it. It is the human-readable policy from ADR 0049.
 
-The machine source for model ids and effort values is `apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex,opencode}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback. Do not copy this table into executor prompts; point executors here so the classification criterion stays in one place.
+The machine source for model ids and effort values is `apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex,opencode}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback.
 
 **Runtime override (flag / env, ADR 0049).** Like `--runner`/`RED_AFK_RUNNER` and `RED_AFK_SANDBOX`, the model and effort are overridable at run time without editing a file — for ad-hoc runs and the CI lane. Precedence: **`--model` flag > `RED_AFK_MODEL` env > `.red/config.yaml` > defaults** (and the same for `--effort` / `RED_AFK_EFFORT`). A non-empty override **flattens every tier** onto the one slug ("use this model regardless of tier"); `""` is treated as unset. The `--model`/`--effort` flags pre-set the env so the override flows through both `--once` and the fleet. Example — drive OpenCode against a MiniMax subscription with no config edit: `MINIMAX_API_KEY=… afk run --runner opencode --model minimax/MiniMax-M3 --issues 42` (the slug's leading segment routes the endpoint; `opencode-env.ts` picks the key). The CI composite action exposes this as the `model`/`effort` inputs.
 
@@ -63,7 +63,7 @@ primitive analogous to Claude's tiered `Task`/`Agent` wrappers, so an
 interactive session cannot pin a per-call model/effort. The model tier still
 applies to Codex through **AFK tier-routing**: the codex runner adapter (#455)
 resolves the per-issue tier into the sandcastle spawn's `--model`/`--effort`.
-Spike finding for #457; see ADR 0049.
+See ADR 0049.
 
 ## Executors
 
