@@ -65,6 +65,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: PRD #1132 — `afk/SKILL.md` was the largest skill in the repo (673 lines). Two single-branch sections (Monitor + Task Mirror + Codex monitor agent; Fleet Mode) and several repeated mantras inflated the always-loaded contract without adding reachable behaviour.
 - **what changed**: Extracted the Monitor / Task-Mirror / Self-Cancel / Codex-monitor-agent material into a sibling [`monitor.md`](plugins/dev/skills/engineering/afk/monitor.md) and the Fleet-Mode section into [`fleet.md`](plugins/dev/skills/engineering/afk/fleet.md), leaving one-line pointers at the `afk monitor` / `afk fleet` branch points (the proven `actions-lane.md` pattern). Collapsed the "mirror is binding / re-check every tick" rule (previously stated three times) into one authoritative statement in `monitor.md`. Collapsed the "run the bundle, don't read the source" mantra from four occurrences to one (the intro). Deleted the duplicate CLI-flag enumeration (the *When To Use* section stays authoritative). Replaced two committed Portuguese phrases ("issue perdida", the promise-result quote) and the `"como estamos?"` aside with English. Deleted the "legacy shell orchestrator removed" sediment note. SKILL.md 673 → 429 lines; no orchestration behaviour, command, or flag semantics changed — content moved, not deleted.
 
+## tdd (engineering) — repoint review routing to `/code-review`, drop orphaned refactoring.md (issue #1137)
+
+- **status**: modified
+- **upstream**: `21f5976`
+- **why**: PRD #1132 — a name-collision bug: the closing line routed cleanup to `/review`, but `/review` is now the HTML-artifact annotation skill; the diff/cleanup reviewer is `/code-review`. The reference predated the `review` skill's repurposing. The bundled `refactoring.md` was left orphaned — nothing in SKILL.md linked it, and its refactor-candidates checklist is covered by `/code-review`'s cleanup mandate.
+- **what changed**:
+  - Closing line: "run `/review` on the branch to clean up" → "run `/code-review` on the branch to clean up".
+  - Deleted `refactoring.md` (orphaned; content covered by `/code-review`).
+
 ## git-guardrails-claude-code (misc) — reconcile with ADR 0083, prune, user-only flip (issue #1138)
 
 - **status**: modified
