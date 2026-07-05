@@ -43,17 +43,19 @@ description: Brief description of capability. Use when [specific triggers].
 
 # Skill Name
 
-## Quick start
+<what-to-do>
 
-[Minimal working example]
+[The primary directive — imperative, non-negotiable steps the agent
+executes literally. DOs / DON'Ts here are hard constraints.]
 
-## Workflows
+</what-to-do>
 
-[Step-by-step processes with checklists for complex tasks]
+<supporting-info>
 
-## Advanced features
+[Reference material consulted on demand — formats, file layouts, trigger
+conditions, examples. Link one level deep: see [REFERENCE.md](REFERENCE.md).]
 
-[Link to separate files: See [REFERENCE.md](REFERENCE.md)]
+</supporting-info>
 ```
 
 ## Description requirements
@@ -86,6 +88,30 @@ Extract text and tables from PDF files, fill forms, merge documents. Use when wo
 Helps with documents.
 ```
 
+## Trigger decision (user-invoked vs model-invoked)
+
+Decide **before writing the description**: should the model reach for this skill
+on its own, or only the operator by typing `/skill-name`? Set
+`disable-model-invocation: true` in the frontmatter to make a skill **user-only**
+— the model can no longer trigger it; it runs solely on the explicit command.
+
+The trade-off is where the load lands. A **model-invocable** skill's description
+is loaded into every session's context — a standing **context load on the agent**,
+paid on every turn whether or not the skill fires. A **user-only** skill imposes
+**cognitive load on the operator** instead — they must remember the command
+exists — but costs the agent zero standing context.
+
+**Default rule: deliberate operational commands ship user-only.** Setup wizards,
+reports, and dispatch/maintenance verbs are things the operator decides to run —
+`disable-model-invocation: true`. Skills the model should proactively reach for
+stay model-invocable, and then **the description must earn its context cost** —
+every session pays for it, so it has to distinguish itself from every other line.
+
+User-only also removes a **class of problem**: model invocation is unpredictable.
+Even a well-scoped description may not fire when it fits — the model can skip a
+context pointer it should have followed. A `/command` the operator types can't be
+missed that way, so deliberate commands become reliable by construction.
+
 ## When to add scripts
 
 Add a utility script when the operation is deterministic (validation,
@@ -99,10 +125,31 @@ Split into a separate file when SKILL.md exceeds ~100 lines, when content spans
 distinct domains (finance vs sales schemas), or when advanced features are
 rarely needed — keep references one level deep so the agent never chases a chain.
 
+**Branch-gated external references** — reference material consumed by only one
+branch (mode / flag / subcommand) of the skill moves to a sibling file behind a
+one-line context pointer: `if X, read Y`. The unused branch then costs the agent
+nothing until it fires. In-repo exemplars: `afk`'s Actions-lane reference
+(`actions-lane.md`, read only on the GitHub-Actions branch), `tdd`'s bundled
+reference files (`mocking.md`, `refactoring.md`, …, each pulled in only when that
+sub-topic comes up), and `prototype`'s two branch files (`LOGIC.md` vs `UI.md`,
+one per route the skill takes).
+
+## Leg-work splitting (hide the goal to protect the gather phase)
+
+When an early gather/interview phase keeps getting **rushed because the final
+artifact goal is visible in the same skill**, split the phase into its own skill
+so the future step is hidden. With the payoff out of sight, the agent can't skip
+ahead to it — the gather phase runs to completion on its own terms.
+
+In-repo exemplars: `/start` (grill and sharpen the plan) hands off to `/to-prd`
+(publish the PRD) instead of doing both, so the grilling isn't cut short by the
+pull toward shipping; and `writing-fragments` is separate from `writing-shape` /
+`writing-beats` so the raw-material gather isn't rushed toward the finished piece.
+
 ## SKILL.md writing style
 
 Section structure (`<what-to-do>` / `<supporting-info>`) decides *where* a
-sentence goes; this section decides *how the sentence reads*. Apply these eight
+sentence goes; this section decides *how the sentence reads*. Apply these nine
 sentence-level techniques — borrowed from `anthropics/launch-your-agent` — when
 writing any RedSkills SKILL.md. Each carries a one-line before → after.
 
@@ -144,6 +191,12 @@ writing any RedSkills SKILL.md. Each carries a one-line before → after.
    - Before: `## Review` followed by `(Only do this after the draft is complete.)`
    - After: `## Review (after the draft compiles and runs)`
 
+9. **Leading words (prior-triggering domain terms)** — compress the core behavior
+   into one consistent term, repeat that exact term throughout the skill, and
+   confirm it took by watching for it in the agent's reasoning traces.
+   - Before: `Build a thin end-to-end path through every layer first, then flesh out.`
+   - After: `Ship a **tracer bullet** first — and say "tracer bullet" every time you mean it.`
+
 ## Review checklist (run after the draft compiles)
 
 - [ ] Description ends with the literal `"Use when …"` trigger.
@@ -153,3 +206,8 @@ writing any RedSkills SKILL.md. Each carries a one-line before → after.
 - [ ] Concrete before → after or input → output examples included.
 - [ ] References stay one level deep.
 - [ ] Steps read imperative and bold-led — the skill follows its own style.
+- [ ] **Deletion test** — for each paragraph, ask "would the agent behave
+  differently if this were deleted?" Delete the no-ops.
+- [ ] **Trigger decision recorded** — the skill is explicitly user-only
+  (`disable-model-invocation: true`) or model-invocable with a description that
+  earns its context cost.
