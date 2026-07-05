@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## write-a-skill (productivity) — absorb the four-dimension skill-quality checklist (issue #1133)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 (Matt Pocock skill-quality checklist). The meta-skill taught the eight sentence-level techniques and the `<what-to-do>`/`<supporting-info>` split, but not the four skill-quality dimensions (trigger / structure / steering / pruning). It also shipped an embedded template that contradicted the house convention it enforces.
+- **what changed**: All additive. Added a **Trigger decision** section (user-invoked vs model-invoked, `disable-model-invocation: true`, the context-load vs cognitive-load trade-off, the deliberate-command ⇒ user-only default rule, and the unpredictability cost of model invocation). Extended **When to split files** with the branch-gated external-reference rule (`if X, read Y`) naming `afk`'s `actions-lane.md`, `tdd`'s bundled reference files, and `prototype`'s `LOGIC.md`/`UI.md`. Added a **Leg-work splitting** section citing `/start` → `/to-prd` and `writing-fragments` vs `writing-shape`/`writing-beats`. Added a ninth writing-style technique, **leading words**, with a before → after pair. Added two review-checklist items (deletion test; trigger decision recorded). Replaced the embedded SKILL.md template's `## Quick start / ## Workflows / ## Advanced features` layout with a `<what-to-do>` / `<supporting-info>` template so the meta-skill dogfoods the convention. Docs-only — no runtime/bundle/hook change.
+
 ## triage (engineering) — injection-guard note for untrusted issue content (issue #1110)
 
 - **status**: modified
