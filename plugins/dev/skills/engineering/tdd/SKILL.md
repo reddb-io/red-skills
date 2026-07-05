@@ -66,7 +66,7 @@ Before declaring a cycle done, confirm every box:
 
 If any box is unchecked, the cycle isn't done — fix it before moving on.
 
-Once all tests are GREEN, refactoring is a separate concern — run `/review` on the branch to clean up.
+Once all tests are GREEN, refactoring is a separate concern — run `/code-review` on the branch to clean up.
 
 </what-to-do>
 
