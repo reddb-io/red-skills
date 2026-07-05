@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## audit-skills (engineering)
+
+- **status**: added
+- **upstream**: —
+- **why**: original to reddb.io — a read-only skill-quality auditor that scores every shipped SKILL.md against the house style (issue #1167).
+- **what changed**: new user-invoked `dev audit-skills` subcommand + `disable-model-invocation: true` skill. Mechanical sub-score ports the report-only lint (description budget + 1024-char hard cap, literal "Use when", `<what-to-do>` on long bodies, bold first line, `name:` presence, English-only, orphaned bundled files); semantic sub-score is an LLM judge on the dev review engine (sandcastle structured output, injection-guarded) scoring the nine write-a-skill techniques + trigger clarity + deletion-test bloat + section placement. Ranks worst-first with a best-effort memory-telemetry overlay; scorecard-only, zero side effects. Also aligned CLAUDE.md's "eight techniques" to nine (added "leading words").
+
 ## craft/productivity/misc skills — pruning sweep B: no-op deletion, house tags, single-home rules (issue #1148)
 
 - **status**: modified

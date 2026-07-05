@@ -12,6 +12,7 @@
     "./skills/engineering/context",
     "./skills/engineering/daily-review",
     "./skills/engineering/dashboard",
+    "./skills/engineering/audit-skills",
     "./skills/engineering/diagnose",
     "./skills/engineering/ground-truth",
     "./skills/engineering/doctor",
