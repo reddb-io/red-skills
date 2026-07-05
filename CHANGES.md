@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## wiki (knowledge) — extract single-branch C4 section behind pointers, adopt house tags (issue #1144)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — at 263 lines `wiki` was the repo's second-largest skill, with its ~115-line C4 Diagram section (44% of the file) reachable from only two narrow paths, and it lacked the `<what-to-do>`/`<supporting-info>` house split the size makes acute.
+- **what changed**: Moved the entire C4 Diagram body into a bundled sibling `C4-reference.md` (following the existing `REFERENCES.md` pattern). Left exactly two one-line context pointers — the Ingest C4-awareness step and the Lint C4-staleness check — that own the *when* and link the reference for the *how*. Deduped inside the extracted content: the vocabulary-discipline rule now appears once, and the "When to create"/"When to update" trigger subsections were dropped (their conditions already live at the two pointer sites). Wrapped the verb procedures (Preconditions, Routing, Ingest, Query, Lint) in `<what-to-do>` and the Anti-patterns + References in `<supporting-info>`. SKILL.md dropped from 263 to ~154 lines; verb behavior, wiki schema contract, and `wiki-init` templates unchanged.
+
 ## daily-review (engineering) — merge weekly-review into one period-parameterized skill, shared wrapper, house tags, disable-model-invocation (issue #1142)
 
 - **status**: modified
