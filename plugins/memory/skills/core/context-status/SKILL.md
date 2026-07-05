@@ -28,7 +28,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" status context --json
 Read these sections together:
 
 - `committedContext` — whether `CLAUDE.md`/`AGENTS.md`, `.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, and `.red/adr/*.md` are present.
-- `memory` — whether Memory is uninitialized, markdown-only, or graph mode; whether graph store, graph freshness, hooks, and Skill telemetry are available.
+- `memory` — init-chain state (see [Memory preconditions](../../references/PRECONDITIONS.md#init-chain-state-taxonomy)), plus graph store, freshness, hooks, and Skill telemetry availability.
 - `wiki` — whether `.red/agents/wiki.md` and `.red/wiki/` are both present.
 - `score` — count of ready checks; this is a grounding signal, not a quality guarantee.
 - `recommendations` — setup actions that would improve context readiness.
