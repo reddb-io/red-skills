@@ -221,7 +221,6 @@ jobs:
           # version, so an unchanged source leaves them byte-identical (git add no-op).
           fetch_bundle=plugins/dev/hooks/red-fetch.mjs
           afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
-          reusable_workflow=.github/workflows/reusable-afk-attempt.yml
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
             tmp=$(mktemp)
@@ -233,24 +232,32 @@ jobs:
             jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
             mv "$tmp" "$package_json"
           done
-          perl -0pi -e "s#reddb-io/red-skills/\\.github/actions/afk-attempt\\@v[0-9]+\\.[0-9]+\\.[0-9]+#reddb-io/red-skills/.github/actions/afk-attempt@$NEXT#g" "$reusable_workflow"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle" "$reusable_workflow"; then
+          # The bump commit stages ZERO files under .github/workflows/: the
+          # GITHUB_TOKEN cannot push commits that touch workflow files, so the
+          # first-party afk-attempt pin lives on the moving major @v1 tag (force-
+          # moved to HEAD each cut below) instead of being rewritten here.
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
             echo "plugin/package manifests already at $new and entrypoints unchanged"
           else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle" "$reusable_workflow"
+            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
             # workflow), so the bump push races it and loses on a plain push.
             # Retry with a rebase so a concurrent push never wedges the release.
+            pushed=0
             for attempt in 1 2 3; do
-              if git push origin HEAD:main; then break; fi
+              if git push origin HEAD:main; then pushed=1; break; fi
               echo "push rejected (attempt $attempt) — rebasing onto origin/main"
               git fetch origin main
               git rebase origin/main
             done
+            if [ "$pushed" != 1 ]; then
+              echo "::error::bump push to main failed after 3 attempts"
+              exit 1
+            fi
           fi
 
       # ADR 0029: the Memory runtime ships as release assets, not committed

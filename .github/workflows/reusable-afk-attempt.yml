@@ -303,7 +303,7 @@ jobs:
       # direct invocation with a server-side claim that can't race a local fleet.
       - name: Run the AFK attempt
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        uses: reddb-io/red-skills/.github/actions/afk-attempt@v1.277.0
+        uses: reddb-io/red-skills/.github/actions/afk-attempt@v1
         with:
           issue: ${{ steps.resolve.outputs.number }}
           runner: ${{ env.RED_AFK_RUNNER }}
