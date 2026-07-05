@@ -14,6 +14,8 @@ Both axes run as **parallel sub-agents** so they don't pollute each other's cont
 
 The issue tracker should have been provided to you — run `/setup-red-skills` if `.red/agents/issue-tracker.md` is missing.
 
+<what-to-do>
+
 ## Process
 
 ### 1. Pin the fixed point
@@ -52,7 +54,8 @@ Send a single message with two `Agent` tool calls. Use the `general-purpose` sub
 
 - The full diff command and commit list.
 - The list of standards-source files you found in step 3.
-- The brief: "Read the standards docs. Then read the diff. Report — per file/hunk where relevant — every place the diff violates a documented standard. Cite the standard (file + the rule). Distinguish hard violations from judgement calls. Skip anything tooling enforces. Also apply the following always-on smell baseline from Fowler's *Refactoring*, even when no standards doc exists: mysterious name, duplicated code, feature envy, data clumps, primitive obsession, repeated switches, shotgun surgery, divergent change, speculative generality, message chains, middle man, refused bequest. For each smell found, name it and suggest a one-line fix. Repo standards override the baseline. Under 400 words total."
+- The twelve-smell Fowler baseline table from `<supporting-info>`, pasted in verbatim so the sub-agent has the list without reading this skill's file.
+- The brief: "Read the standards docs. Then read the diff. Report — per file/hunk where relevant — every place the diff violates a documented standard. Cite the standard (file + the rule). Distinguish hard violations from judgement calls. Skip anything tooling enforces. Also apply the always-on Fowler smell baseline table above, even when no standards doc exists. For each smell found, name it and suggest a one-line fix. Repo standards override the baseline. Under 400 words total."
 
 **Spec sub-agent prompt** — include:
 
@@ -68,6 +71,10 @@ Present the two reports under `## Standards` and `## Spec` headings, verbatim or
 
 End with a one-line summary: total findings per axis, and the worst single issue (if any) flagged.
 
+</what-to-do>
+
+<supporting-info>
+
 ## Why two axes
 
 A change can pass one axis and fail the other:
@@ -76,8 +83,6 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
-
-<supporting-info>
 
 ## Fowler smell baseline
 
