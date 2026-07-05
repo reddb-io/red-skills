@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## queue/tracker skills (engineering) — pruning sweep A: collapse repeated rules to single authoritative statements (issue #1147)
+
+- **status**: modified
+- **upstream**: to-issues `e74f006`; to-prd `aaf2453`; setup-red-skills, report-bug, requeue, urgent, retake, hitl `—`
+- **why**: PRD #1132 — the queue/tracker skills the audit rated healthy still repeated the same rule three-to-five times each; the fix keeps exactly one authoritative statement per rule (preferring the supporting-info home) so steps reference detail instead of restating it.
+- **what changed**:
+  - **setup-red-skills**: kept the sole-`.red/`-creator rule as the description mention + one body statement (dropped two body restatements); collapsed the three-prefix workflow-naming convention to one sentence + the `WORKFLOWS.md` pointer (removed two full restatements); replaced the per-substep no-clobber repetition with a single **No-clobber rule** hard statement at the top of the Write step plus brief per-step reminders and the two flagged surgical exceptions; deleted the retired-`/ship` sediment line.
+  - **to-issues**: made the Hard-rules bullet the single authoritative statement of the `req:N`-must-not-target-a-PRD rule (with the #907/#928 incident citation); Step 5 now references it.
+  - **to-prd**: fixed the doubled "no interview" sentence in the header; wrapped the process steps in `<what-to-do>` and the PRD template in `<supporting-info>` (house tag split, matching siblings).
+  - **report-bug**: trimmed the title-rule, label-rule, and route-to-`/triage` step mentions to one-line references pointing at their dedicated supporting-info sections.
+  - **requeue**: adopted the house tag split; printed the two run commands once (removed the duplicate Run block); collapsed the `/ship`-retired notice to one mention (the `/dev:ship` See-also entry); kept the `/requeue`-vs-`/hitl` boundary table as the single home.
+  - **urgent**: kept the `gh label create priority:urgent` command once (the supporting-info Labels section, now carrying the full command); shrank the title/label restatements in the Filing steps to references.
+  - **retake**: collapsed the doubled `--apply` safety caveat to one enumeration.
+  - **hitl**: added the missing `<supporting-info>` half; moved the `/requeue` comparison (now pointing at requeue's boundary table) and the Directive-block template into it; collapsed the delegable-manual-landing routing to one explanation (Step 4) + one pointer (Step 6).
+
 ## doctor (engineering) — move `--fix` Apply table behind a branch-gated pointer, trim MCP-wiring archaeology (issue #1145)
 
 - **status**: modified
