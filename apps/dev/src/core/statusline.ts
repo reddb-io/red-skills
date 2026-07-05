@@ -1,9 +1,14 @@
 // Port of the RENDER path of statusline.sh — the /afk statusline aggregator for
 // Claude Code. statusline.sh reads the Claude Code stdin JSON payload (cwd,
-// model, effort, context window) and combines it with live /afk worker state
-// from <root>/.red/tmp/workers/*/* to emit ONE compact line like:
+// model, effort, context window, rate limits) and combines it with live /afk
+// worker state from <root>/.red/tmp/workers/*/* to emit ONE compact line like:
 //
-//   red-skills · Opus·high · 47k 24% · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17
+//   red-skills · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17
+//
+// This module is the SINGLE-LINE plain form — the NO_COLOR / Codex-footer render.
+// The themed Claude Code render is MULTI-LINE (issue #1165): a repo-global header
+// line plus one line per live AFK worker. That layout lives in the sibling style
+// module (core/statusline-style.ts); this file stays one aggregate line.
 //
 // The AFK KPIs use three-letter `key=value` mnemonics
 // (wrk/rdy/hmn/blk/loc/wai/tok/usd) instead of emojis; the optional ANSI
@@ -44,6 +49,15 @@ export interface ClaudeInput {
   contextTokens?: number;
   /** `.context_window.used_percentage`; rounded to an int and suffixed with `%`. */
   contextPercent?: number;
+  /** `.rate_limits.five_hour.used_percentage` — the rolling 5-hour usage window
+   * Claude Code exposes for Pro/Max accounts AFTER the first API response of the
+   * session (absent for non-Pro/Max and on the very first render). Rendered as a
+   * `5h=<pct>%` token, only when present, so its absence is graceful. */
+  usage5h?: number;
+  /** `.rate_limits.seven_day.used_percentage` — the rolling weekly usage window,
+   * same Pro/Max-only availability as {@link usage5h}. Rendered as `7d=<pct>%`,
+   * only when present. */
+  usage7d?: number;
 }
 
 /** The block-4 aggregated worker counts, already summed across live workers. */
@@ -284,6 +298,49 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
 }
 
 /**
+ * Usage block: the Pro/Max rate-limit windows `5h=<pct>% 7d=<pct>%`, each token
+ * emitted only when its payload field is present (Claude Code exposes these only
+ * for Pro/Max, only after the first API response). Null when neither is present,
+ * so non-Pro/Max sessions render nothing here. Percents rounded like `%.0f`.
+ */
+export function renderUsageBlock(claude: ClaudeInput | undefined): string | null {
+  if (!claude) return null;
+  const parts: string[] = [];
+  if (claude.usage5h !== undefined) parts.push(`5h=${Math.round(claude.usage5h)}%`);
+  if (claude.usage7d !== undefined) parts.push(`7d=${Math.round(claude.usage7d)}%`);
+  return parts.length ? parts.join(" ") : null;
+}
+
+/**
+ * Repo-global block: `prs=<n> iss=<n> loc=+A -R`, each token emitted only when
+ * its count is > 0 (no zero-noise). The open-PR/open-issue counts are the
+ * repo-global GitHub-derived figures ({@link RepoInput.openPrs}/openIssues); the
+ * `loc=` diff is the LOCAL branch delta vs origin/main
+ * ({@link RepoInput.localAdded}/localRemoved). When the count cache was served
+ * TTL-stale and its refresh failed, the first rendered count carries a compact
+ * age suffix (`prs=3 (12m)`) so a day-old count is never silently shown as
+ * current — the same discipline as the AFK block's `rdy=`. Null when the whole
+ * block is empty. Wired into {@link renderStatusline} so the single-line (plain /
+ * Codex-footer) form carries the repo header stats too, not only the themed one.
+ */
+export function renderRepoBlock(repo: RepoInput | undefined): string | null {
+  if (!repo) return null;
+  const parts: string[] = [];
+  const ageSuffix = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
+  if (repo.openPrs && repo.openPrs > 0) parts.push(`prs=${repo.openPrs}${ageSuffix}`);
+  if (repo.openIssues && repo.openIssues > 0) {
+    // Age marker falls to iss= only when prs= didn't already carry it.
+    const issAge = ageSuffix && (!repo.openPrs || repo.openPrs === 0) ? ageSuffix : "";
+    parts.push(`iss=${repo.openIssues}${issAge}`);
+  }
+  const diff: string[] = [];
+  if (repo.localAdded && repo.localAdded > 0) diff.push(`+${repo.localAdded}`);
+  if (repo.localRemoved && repo.localRemoved > 0) diff.push(`-${repo.localRemoved}`);
+  if (diff.length) parts.push(`loc=${diff.join(" ")}`);
+  return parts.length ? parts.join(" ") : null;
+}
+
+/**
  * Block 4: the space-joined AFK token run in plain text. Null when there are no
  * live workers, matching the bash `(( total_workers > 0 ))` gate around the
  * block. The ANSI-painted variant lives in the style module and shares the
@@ -303,9 +360,14 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
  *
  * TOON note (PRD #928 / ADR 0081, issue #941): TOON becomes the default
  * agent-facing wire format for the multi-row read surfaces (monitor, dashboard,
- * daily-review). The statusline is deliberately exempt from the *tabular* form —
- * Claude Code's `statusLine` contract is a SINGLE line, so a multi-line TOON
- * table cannot be rendered here. The cheap AXI principles still apply, and
+ * daily-review). The statusline is deliberately exempt from the *tabular* form.
+ * Claude Code's `statusLine` DOES render multiple lines (issue #1165 — the themed
+ * variant now emits a repo-global header line plus one line per live AFK worker),
+ * but a TOON *table* — a schema-header row followed by bare CSV data rows — still
+ * does not fit: this single-line plain form (the NO_COLOR / Codex-footer render)
+ * is one aggregate line by contract, and even the themed multi-line form is a
+ * header + per-worker prose, not a column-aligned table. The cheap AXI principles
+ * still apply, and
  * already hold (story #27, "even where TOON does not help"):
  *   - minimal schema: each KPI token ({@link afkTokens}) is emitted only when its
  *     count is > 0 — no zero-noise;
@@ -321,6 +383,10 @@ export function renderStatusline(input: StatuslineInput): string {
   if (model !== null) sections.push(model);
   const context = renderContextBlock(input.claude);
   if (context !== null) sections.push(context);
+  const usage = renderUsageBlock(input.claude);
+  if (usage !== null) sections.push(usage);
+  const repo = renderRepoBlock(input.repo);
+  if (repo !== null) sections.push(repo);
   const afk = renderAfkBlock(input.afk);
   if (afk !== null) sections.push(afk);
   return sections.join(" · ");
