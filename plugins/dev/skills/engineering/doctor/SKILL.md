@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Adoption/process doctor — report how fully a repo has adopted the RedSkills engineering stack (triage label vocabulary, AGENTS≡CLAUDE parity, Development-workflow adoption, statusline form, MCP wiring, blocked-label hygiene, `req:<PRD>` dependency-edge audit, version coherence, `.red/config.yaml` `plugins.dev.*` namespacing, `.red/.gitignore` self-ignore, installed `rs-*` workflow adoption, per-plugin runtime distribution health — enabled-vs-runtime, version drift, cache integrity). Read-only by default; `--fix` applies the canonical fix for every finding, gated per hard-to-reverse change. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "is our process round / is this repo set up right", "red doctor", "check adoption", "doctor --fix", before a large `/afk` drain, or to audit `reddb`/`red-ui`/`red-skills`-style repos against the canonical conventions.
+description: Adoption/process doctor — reports how fully a repo has adopted the RedSkills engineering stack. Read-only by default; `--fix` applies the canonical fix for every finding, gated per hard-to-reverse change. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "red doctor", "check adoption", before a large `/afk` drain, or to verify a repo against canonical conventions.
 argument-hint: "[--repo <path|owner/name>] [--fix]"
 ---
 
