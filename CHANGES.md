@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## craft/productivity/misc skills — pruning sweep B: no-op deletion, house tags, single-home rules (issue #1148)
+
+- **status**: modified
+- **upstream**: code-review `21f5976`; migrate-to-shoehorn `e74f006`; context, improve-codebase-architecture, implement, model-tier-policy, ff, writing-shape, writing-beats `—`
+- **why**: PRD #1132 — pruning sweep over the explicit craft/productivity/misc targets the audit flagged: delete no-op provenance, collapse rules the skills state twice to one authoritative home, add the house `<what-to-do>`/`<supporting-info>` split where missing, and resolve orphaned/duplicated bundled content.
+- **what changed**:
+  - **context**: deleted the "Source inspirations folded into RedSkills" section (a no-op — its removal changes no agent behavior); removed the token-efficient-terminal (RTK) phase (step 7) plus its report-posture bullet and hard rule (orthogonal to context-building, duplicates repo-level RTK guidance); renumbered the remaining phases.
+  - **code-review**: wrapped the process in `<what-to-do>` and moved the "Why two axes" rationale into `<supporting-info>`; the twelve Fowler smells now live only in the supporting-info table — the Standards sub-agent prompt references the table (pasted in verbatim by the caller) instead of re-enumerating the smells.
+  - **improve-codebase-architecture**: added the house tag split (Glossary → `<supporting-info>`, Process → `<what-to-do>`); linked the previously loose `DEEPENING.md` directly from the grilling loop (its content is live — reachable via `INTERFACE-DESIGN.md`) so no bundled file is orphaned.
+  - **implement**: the `/implement`-vs-`/afk` distinction is now stated once (the `<what-to-do>` table); deleted the duplicate "When to use `/implement` vs `/afk`" bulleted list from `<supporting-info>`.
+  - **migrate-to-shoehorn**: merged the two overlapping `fromPartial` example blocks into one; dropped the `fromExact()` row from the summary table (it had no explanation or example anywhere).
+  - **writing-shape**: moved the executable 5-step loop from `<supporting-info>` into `<what-to-do>` (matching the sibling `writing-beats`); deduped the name-the-gap-or-cut rule — the out-of-scope bullet now references the "Pulling from the pile" home instead of restating it.
+  - **writing-beats**: trimmed the "Writing one beat" subsection that restated journey step 2, keeping only its unique pile-quarry guidance under a "Pulling from the pile" heading.
+  - **model-tier-policy**: collapsed the "never copy this table into executor prompts; point executors here" rule to the single bold-lead statement (removed the near-verbatim restatement); dropped the "Spike finding for #457" residue note in the Codex-interactive section (kept the ADR 0049 pointer).
+  - **ff**: the worked example now references the Step 1 framing menu instead of reprinting it (menu printed once); deleted the "Why two steps" rationale section (deletion test: behavior unchanged).
+
 ## queue/tracker skills (engineering) — pruning sweep A: collapse repeated rules to single authoritative statements (issue #1147)
 
 - **status**: modified
