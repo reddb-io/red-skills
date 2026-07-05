@@ -14,7 +14,7 @@ Read-only operational healthcheck for the Memory plugin.
 ## 1. Run the healthcheck
 
 ```bash
-memory health --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" health --json
 ```
 
 Use `--root <dir>` when checking a repository other than the current working directory.
@@ -43,10 +43,10 @@ Read these JSON fields before deciding the next action:
 
 ## DOs / DON'Ts
 
-- ✅ Run this before `memory improve skills --write-proposal` in automated workflows.
+- ✅ Run this before `bootstrap.mjs improve skills --write-proposal` in automated workflows.
 - ✅ Treat `attention` as actionable, not as failure.
 - ✅ Use `recommendedNextActions` rather than inventing recovery steps.
-- ✅ When `pendingProposalFiles > 0`, inspect them with `memory improve proposals list/show --json`; proposal fingerprints let repeated generation refresh existing work instead of creating duplicates.
+- ✅ When `pendingProposalFiles > 0`, inspect them with `bootstrap.mjs improve proposals list/show --json`; proposal fingerprints let repeated generation refresh existing work instead of creating duplicates.
 - ❌ Do not mutate graph, proposal, or Skill files from this healthcheck.
 - ❌ Do not parse human text when `--json` is available.
 
