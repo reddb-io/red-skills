@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## afk (engineering) — slim SKILL.md: extract monitor + fleet, collapse mantras, English-only (issue #1140)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — `afk/SKILL.md` was the largest skill in the repo (673 lines). Two single-branch sections (Monitor + Task Mirror + Codex monitor agent; Fleet Mode) and several repeated mantras inflated the always-loaded contract without adding reachable behaviour.
+- **what changed**: Extracted the Monitor / Task-Mirror / Self-Cancel / Codex-monitor-agent material into a sibling [`monitor.md`](plugins/dev/skills/engineering/afk/monitor.md) and the Fleet-Mode section into [`fleet.md`](plugins/dev/skills/engineering/afk/fleet.md), leaving one-line pointers at the `afk monitor` / `afk fleet` branch points (the proven `actions-lane.md` pattern). Collapsed the "mirror is binding / re-check every tick" rule (previously stated three times) into one authoritative statement in `monitor.md`. Collapsed the "run the bundle, don't read the source" mantra from four occurrences to one (the intro). Deleted the duplicate CLI-flag enumeration (the *When To Use* section stays authoritative). Replaced two committed Portuguese phrases ("issue perdida", the promise-result quote) and the `"como estamos?"` aside with English. Deleted the "legacy shell orchestrator removed" sediment note. SKILL.md 673 → 429 lines; no orchestration behaviour, command, or flag semantics changed — content moved, not deleted.
+
 ## git-guardrails-claude-code (misc) — reconcile with ADR 0083, prune, user-only flip (issue #1138)
 
 - **status**: modified
