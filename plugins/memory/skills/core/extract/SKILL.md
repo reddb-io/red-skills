@@ -13,16 +13,11 @@ Turns a transcript into `INFERRED` memory graph facts. This is the LLM-backed wr
 
 ## 1. Require graph mode and provider
 
-`extract` needs a `plugins.memory` block in `.red/config.yaml` with:
-
-- `mode: "graph"`
-- a configured `provider` block
-
-If either is missing, stop and explain the missing prerequisite. Do not silently fall back to markdown notes; extraction is graph-only.
+`extract` needs graph mode and a `provider` block — see [Memory preconditions](../../references/PRECONDITIONS.md). If either is missing, stop and explain; do not silently fall back to markdown notes.
 
 ## 2. Select the transcript deliberately
 
-Use a transcript/log that contains durable operational learning: decisions, root causes, gotchas, why-notes, or failed attempts that explain constraints. Do not extract secrets, raw credentials, private personal data, Odysseus-style Personal facts, biographical details, issue-only progress, PR numbers, commit SHAs, or stale task-completion logs. Long-lived human preferences and identity context belong in Brain, not Memory.
+Use a transcript/log that contains durable operational learning: decisions, root causes, gotchas, why-notes, or failed attempts that explain constraints. Do not extract secrets, raw credentials, private personal data, Odysseus-style Personal facts, biographical details, issue-only progress, PR numbers, commit SHAs, or stale task-completion logs. Long-lived human preferences and identity context belong in Brain — see [Brain-vs-Memory boundary](../../../../brain/skills/references/BRAIN_VS_MEMORY.md).
 
 ## 3. Run extraction
 
