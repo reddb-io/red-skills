@@ -1,6 +1,6 @@
 ---
 name: ground-truth
-description: Adversarial self-verification discipline — never report a state-changing action as successful until you have re-derived the claim from a fresh ground-truth snapshot. The browser vehicle drives a11y-tree snapshots with numbered refs, stale-ref validation, and token-efficient TOON output (chrome-devtools-axi). Use as the verification ground-truth inside /verify, /code-review, the frontend skills, or any adversarial pass — anti-hallucination for verification.
+description: Adversarial self-verification discipline — never report a state-changing action as successful until you re-derive the claim from a fresh red-browser ground-truth snapshot. Runs inside /verify, /code-review, and the frontend skills. Use when about to assert a form submit, write, navigation, fix, or review verdict succeeded.
 ---
 
 # Ground Truth
@@ -31,7 +31,7 @@ A reference (`ref=12`, a row id, a line number, a DOM handle) captured from an *
 - **Inside `/code-review` and any adversarial pass** — a finding ("this branch is unreachable", "the guard rejects X") is a claim; confirm it against a fresh read of the actual code/behavior before reporting it, and default to refuted when you cannot.
 - **Inside the frontend skills** (`/impeccable`, `/audit`, `/polish`, `/animate`) — after a UI edit, re-snapshot the a11y tree and confirm the intended element/state actually changed, rather than trusting that the edit "should" have worked.
 
-For browser-driven verification, the concrete vehicle is **chrome-devtools-axi**: combined navigate+capture+suggest ops, a11y-tree snapshots with numbered refs, built-in stale-ref validation, a persistent bridge, and TOON output (~57% fewer tokens than raw chrome-devtools-mcp). See `<supporting-info>`.
+For browser-driven verification, the concrete vehicle is **red-browser**: `red-browser snapshot` captures an a11y-tree snapshot with numbered refs plus the console and network activity, over a CDP endpoint — the fresh ground-truth read this loop demands. See `<supporting-info>`.
 
 ### Hard rules — apply across every claim
 
@@ -47,19 +47,18 @@ For browser-driven verification, the concrete vehicle is **chrome-devtools-axi**
 
 <supporting-info>
 
-## The browser vehicle — chrome-devtools-axi
+## The browser vehicle — red-browser
 
-`chrome-devtools-axi` is a token-efficient wrapper over `chrome-devtools-mcp` purpose-built for the loop above. It exists so a browser ground-truth read is cheap enough to take *every* time you make a claim, instead of being skipped for cost.
+`red-browser` is the browser ground-truth vehicle for the loop above (aligned with the browser-bridge direction of PRD #907/#928). It exists so a browser ground-truth read is cheap enough to take *every* time you make a claim, instead of being skipped for cost.
 
-What it gives the loop:
+What `red-browser snapshot` gives the loop:
 
-- **a11y-tree snapshots with numbered refs.** Each interactive node is listed once with a stable `ref` and its accessible role + name — the snapshot *is* the ground-truth observable, in a fraction of a screenshot's tokens.
-- **Stale-ref validation, built in.** Refs carry the snapshot they came from; using a ref after a state change forces a re-snapshot instead of silently acting on a moved target. This is step 3's guard, enforced by the tool.
-- **Combined navigate + capture + suggest ops.** One call navigates, captures the fresh a11y tree, and suggests the next refs — collapsing "act, then re-read ground truth" into a single round-trip so the fresh read is never skipped.
-- **Persistent bridge.** A long-lived browser session keeps cookies/auth/route state across calls, so a post-action snapshot reflects the *same* session the action ran in — not a cold reload that loses the state you are trying to verify.
-- **TOON output.** Snapshots serialize as TOON (Token-Oriented Object Notation), ~57% fewer tokens than raw chrome-devtools-mcp JSON — the cost reduction that makes "snapshot before every claim" affordable.
+- **a11y-tree snapshots with numbered refs.** Each node is tagged with a stable `ref` integer and its accessible role + name — the snapshot *is* the ground-truth observable, in a fraction of a screenshot's tokens.
+- **A monotonic `snapshotId`.** Each snapshot carries an increasing id, so a higher id is unambiguously the newer read — the freshness signal step 2 depends on.
+- **Console and network capture.** Alongside the a11y tree, each snapshot reports the `console` entries and `network` responses seen since the driver connected — the observables for "no console errors" or "the API call returned 200".
+- **Stale-ref discipline.** A `ref` absent from the newest snapshot is stale; re-snapshot and re-resolve by stable identity (role + name) before asserting. This is step 3's guard.
 
-Typical loop with the vehicle: take a baseline a11y snapshot → perform the state-changing action (click `ref=N`, submit, navigate) → **take a fresh snapshot** → confirm the claimed observable (node appeared/disappeared/changed) against that fresh snapshot, re-resolving any ref by role+name. Report success only with the fresh snapshot as the citation.
+Typical loop with the vehicle: take a baseline a11y snapshot → perform the state-changing action (click `ref=N`, submit, navigate) → **take a fresh snapshot** → confirm the claimed observable (node appeared/disappeared/changed) against that fresh snapshot, re-resolving any ref by role+name. Report success only with the fresh snapshot as the citation. `/verify` documents the concrete `red-browser snapshot` command and its output schema.
 
 ## Generalizing the loop beyond the browser
 
@@ -67,7 +66,7 @@ The browser is one ground truth; the discipline is identical for any state chang
 
 | State change | Fresh ground-truth read (after the action) | Stale-ref analog |
 | --- | --- | --- |
-| UI action | new a11y-tree snapshot (TOON) | DOM ref from a prior snapshot |
+| UI action | new red-browser a11y-tree snapshot | DOM ref from a prior snapshot |
 | DB write | a fresh `SELECT` of the affected rows | a row id read before the write |
 | File edit | re-read the file from disk | a line number from before the edit |
 | API mutation | a follow-up `GET` of the resource | an entity returned by the mutation call |
@@ -78,7 +77,7 @@ In every row the failure mode is the same: trusting the *action's own response* 
 
 ## Integration pointers
 
-- `/verify` is a built-in verification skill; this skill supplies its **evidence standard** — the verdict must cite a fresh post-action ground-truth read of the named observable, and browser checks should prefer the chrome-devtools-axi a11y-tree/TOON path for cost.
+- `/verify` is a built-in verification skill; this skill supplies its **evidence standard** — the verdict must cite a fresh post-action ground-truth read of the named observable, and browser checks should prefer the red-browser a11y-tree snapshot path for cost.
 - `/code-review` and adversarial verification passes inherit the **default-to-refuted** posture: a finding stands only when re-confirmed against a fresh read; an unverifiable finding is reported as unverified, not confirmed.
 - The frontend skills (`/impeccable` and its sub-skills) should re-snapshot the a11y tree after a UI edit and confirm the targeted element/state actually changed before reporting the edit done.
 
