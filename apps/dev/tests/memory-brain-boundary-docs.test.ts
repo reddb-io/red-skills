@@ -32,9 +32,9 @@ describe("Memory/Brain boundary docs", () => {
     expect(contextSkill).toContain("| Durable operational work fact | `/memory:store` |");
     expect(contextSkill).toContain("| Personal fact or human-facing context | `brain capture` / `/brain:capture` |");
     expect(memoryStore).toContain("Don't store Personal facts");
-    expect(memoryStore).toContain("route them to Brain with `brain capture`");
+    expect(memoryStore).toContain("route to `brain capture` instead");
     expect(memoryExtract).toContain("Do not extract");
     expect(memoryExtract).toContain("Odysseus-style Personal facts");
-    expect(brainCapture).toContain("Use Brain, not Memory, for Personal facts");
+    expect(brainCapture).toContain("Route personal facts, identity context, and human knowledge to Brain");
   });
 });

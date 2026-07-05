@@ -8,6 +8,13 @@ async function readDoctorSkill(): Promise<string> {
   return readFile(join(ROOT, "plugins/dev/skills/engineering/doctor/SKILL.md"), "utf8");
 }
 
+// The `--fix` Apply table lives in a bundled sibling `APPLY.md`, behind a
+// one-line pointer in SKILL.md (issue #1145). Assertions on Apply-row content
+// read APPLY.md; assertions on the read-only diagnose pass read SKILL.md.
+async function readDoctorApply(): Promise<string> {
+  return readFile(join(ROOT, "plugins/dev/skills/engineering/doctor/APPLY.md"), "utf8");
+}
+
 describe("doctor docs contract", () => {
   it("checks Development-workflow adoption read-only with setup-red-skills as the fix-home", async () => {
     const skill = await readDoctorSkill();
@@ -38,8 +45,9 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("Namespacing conformance");
     expect(skill).toContain("dev-plugin settings belong under `plugins.dev.*`");
     expect(skill).toContain("hygiene, not breakage");
-    // The `--fix` Apply table has the migration row.
-    expect(skill).toContain("Legacy/top-level dev-plugin config");
+    // The `--fix` Apply table has the migration row (now in APPLY.md, #1145).
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Legacy/top-level dev-plugin config");
   });
 
   it("audits per-plugin runtime distribution read-only, launcher fetch as the fix-home", async () => {
@@ -65,8 +73,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("apps/dev/src/core/runtime-doctor.ts");
     // Fix-home is the launcher fetch, and the --fix re-fetch is gated.
     expect(skill).toContain("`→ launcher fetch`");
-    expect(skill).toContain("Per-plugin runtime distribution `❌`/`⚠️` (check 13)");
-    expect(skill).toContain("confirm each");
+    // The gated `--fix` Apply row moved to APPLY.md (#1145).
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Per-plugin runtime distribution `❌`/`⚠️` (check 13)");
+    expect(apply).toContain("confirm each");
   });
 
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
@@ -80,8 +90,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("cannot be statically resolved");
     // Unknown hook names are pre-caught read-only.
     expect(skill).toContain("Unknown hook names");
-    // --fix cannot auto-fix operator intent — it flags and points at the fix-home.
-    expect(skill).toContain("`--fix` cannot auto-fix operator intent");
+    // --fix cannot auto-fix operator intent — the Apply row (now in APPLY.md,
+    // #1145) flags and points at the fix-home.
+    const apply = await readDoctorApply();
+    expect(apply).toContain("`--fix` cannot auto-fix operator intent");
     expect(skill).toContain("`/setup-red-skills`");
   });
 });
