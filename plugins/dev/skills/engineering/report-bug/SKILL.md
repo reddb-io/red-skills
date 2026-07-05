@@ -28,7 +28,7 @@ The argument is optional.
 
 **Filing:**
 
-1. Build the issue title — short imperative or noun phrase derived from "What's happening" (e.g. `monitor crashes on empty history.jsonl`, not `Bug: when I run monitor it crashes...`). Lowercase, ≤72 chars.
+1. Build the issue title per **Title rules** in `<supporting-info>` (lowercase, ≤72 chars, imperative/noun phrase derived from "What's happening").
 2. Render the body using the exact template in `<supporting-info>`. Leave no `[…]` placeholders.
 3. `gh issue create --title "<title>" --body "<body>" --label type:bug --label needs-triage`. Pass body via heredoc/tempfile, not inline, to preserve newlines.
 4. Read the URL from the gh output and present it to the user with one of: open URL, run `/triage`, or stop.
@@ -36,13 +36,13 @@ The argument is optional.
 **Hard rules:**
 
 - ❌ Do **not** invent reproduction steps, error text, or file paths. If the user can't supply them, write `no clean repro yet` and `unknown` rather than fabricating.
-- ❌ Do **not** apply any label other than `type:bug` and `needs-triage`. `/triage` owns priority, slice tagging, agent-readiness — don't pre-empt it.
+- ❌ Do **not** apply any label beyond `type:bug` + `needs-triage` — see **Labels** in `<supporting-info>`; `/triage` owns priority, slice tagging, and agent-readiness.
 - ❌ Do **not** close the issue, comment after creation, or run any AFK action. This skill ends with the URL.
 - ❌ Do **not** open more than one issue per invocation. If the user describes two unrelated bugs, suggest running `/report-bug` again for the second.
 - ✅ **Do** number every question `Q##:` (zero-padded, session-scoped, same convention as `/start`).
 - ✅ **Do** use `gh` (not the GitHub web UI) — the user invoked a CLI skill, they want the issue handle in the terminal.
 - ✅ **Do** sanitise the body before filing: strip ANSI escapes, mask anything that looks like a secret (API keys, tokens) — when in doubt, ask the user to confirm.
-- ✅ **Do** route the user to `/triage` after creating the issue if they want priority and an `## Agent brief` section written into the issue body. The reporter's job ends at "captured".
+- ✅ **Do** route the user to `/triage` after creating the issue — see **After creation** in `<supporting-info>` for the exact receipt. The reporter's job ends at "captured".
 
 **Question format template:**
 

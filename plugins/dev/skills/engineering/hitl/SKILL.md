@@ -8,9 +8,7 @@ argument-hint: "[--issue N | --skip N,N]"
 
 **Drain the human-in-the-loop decision queue — one ready-for-human issue at a time.**
 
-The **HITL queue** is open, non-PRD Issues labelled `ready-for-human`. PRDs (`type:prd`) are planning artifacts and are never selected by this workflow.
-
-**`/hitl` versus `/requeue`.** Use `/hitl` when the pending human decision still has to be **extracted and answered** — it interviews you, decides delegability, then (when delegable) clears the active `## Current blocker` and requeues. When the decision is **already made** and you only need to put a parked `blocked:validation`/`blocked:spec` issue back in the queue safely, reach for [`/requeue`](../requeue/SKILL.md) instead: it records your guidance and applies the same clear-blocker + drop-stale-labels + `ready-for-agent` transition without the interview. Both end in the same safe state; never flip labels by hand, because AFK preflight re-reads the active blocker and re-parks the issue.
+The **HITL queue** is open, non-PRD Issues labelled `ready-for-human`. PRDs (`type:prd`) are planning artifacts and are never selected by this workflow. For when to reach for `/requeue` instead, see **`/hitl` vs `/requeue`** in `<supporting-info>`.
 
 <what-to-do>
 
@@ -107,25 +105,7 @@ Wait for explicit approval before writing.
 
 **Step 6 — Apply.** Post the Directive comment and update labels and body atomically.
 
-Always post a Directive block comment:
-
-```markdown
-<details data-kind="directive">
-<summary>HITL resolution</summary>
-
-Pending decision:
-...
-
-Human answer:
-...
-
-Disposition:
-delegable | delegable-manual-landing | non-delegable
-
-Next pending decision:
-...   <!-- only when non-delegable -->
-</details>
-```
+Always post a Directive block comment — use the **Directive block template** in `<supporting-info>`.
 
 If delegable:
 
@@ -134,10 +114,10 @@ If delegable:
 3. Remove `ready-for-human` and every stale `blocked:*` label — the blocker is resolved, so the reason that parked the issue must not survive into `ready-for-agent`.
 4. Add `ready-for-agent`.
 
-If delegable-manual-landing:
+If delegable-manual-landing (see Step 4 for what this mode is and why AFK must not auto-merge it):
 
-1. Clear the issue-body `## Current blocker` section to `None` and add a checked entry under `## Resolved blockers`, then update or create the `## Agent brief` — exactly like the plain-delegable path (the *coding* is delegable).
-2. Remove `ready-for-human` and every stale `blocked:*` label, then add **both** `ready-for-agent` **and** `landing:manual` (#1049). `/afk` runs the full pipeline, opens the PR, and re-parks the issue `ready-for-human` with the PR link — auto-merge never happens.
+1. Do the plain-delegable body work — clear `## Current blocker` to `None`, add a checked `## Resolved blockers` entry, update or create `## Agent brief` (the *coding* is delegable).
+2. Remove `ready-for-human` and every stale `blocked:*` label, then add **both** `ready-for-agent` **and** `landing:manual` (#1049).
 3. Post the Directive with disposition `delegable-manual-landing`. The human merges the resulting PR; the issue auto-closes via the PR's `Closes #N` back-reference (no manual close needed).
 
 If non-delegable:
@@ -157,3 +137,31 @@ If non-delegable:
 - Do not move an Issue to `ready-for-agent` unless the refreshed `## Agent brief` is sufficient for autonomous execution.
 
 </what-to-do>
+
+<supporting-info>
+
+## `/hitl` vs `/requeue`
+
+Use `/hitl` when the pending human decision still has to be **extracted and answered** — it interviews you, decides delegability, then (when delegable) clears the active `## Current blocker` and requeues. When the decision is **already made** and you only need to put a parked `blocked:validation`/`blocked:spec` issue back in the queue, reach for [`/requeue`](../requeue/SKILL.md) instead — its **`/requeue` vs `/hitl` — the decision boundary** table is the authoritative split. Both end in the same safe state; never flip labels by hand, because AFK preflight re-reads the active blocker and re-parks the issue.
+
+## Directive block template
+
+```markdown
+<details data-kind="directive">
+<summary>HITL resolution</summary>
+
+Pending decision:
+...
+
+Human answer:
+...
+
+Disposition:
+delegable | delegable-manual-landing | non-delegable
+
+Next pending decision:
+...   <!-- only when non-delegable -->
+</details>
+```
+
+</supporting-info>

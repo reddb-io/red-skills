@@ -28,11 +28,11 @@ After both answers are in, summarise the issue as it will be filed (title + body
 
 **Filing:**
 
-1. **Title** — short imperative, ≤72 chars, lowercase. No `URGENT:` / `🚨` prefix — the label carries the signal.
+1. **Title** — per **Title rules** in `<supporting-info>` (lowercase, ≤72 chars, no `URGENT:` / `🚨` prefix).
 2. **Body** — use the template in `<supporting-info>`. Inline the "What's urgent" and "Why now" answers verbatim.
-3. **Labels** — `priority:urgent` + `ready-for-agent`. **Do not** add `needs-triage`, `type:bug`, `priority:high`, or anything else.
+3. **Labels** — exactly `priority:urgent` + `ready-for-agent`, nothing else (see **Labels** in `<supporting-info>`).
 4. **Create**: `gh issue create --title "<title>" --body "<body>" --label priority:urgent --label ready-for-agent`. Pass the body via heredoc/tempfile to preserve newlines.
-5. **Preconditions** — if the label `priority:urgent` doesn't exist in the repo, create it first: `gh label create priority:urgent --color B91C1C --description "Jumps the AFK queue; bypasses triage."`. Catch the conflict (label may already exist) and continue.
+5. **Preconditions** — if `priority:urgent` doesn't exist in the repo, create it first with the `gh label create` from **Labels** in `<supporting-info>`, then catch the conflict (label may already exist) and continue.
 
 **After creation:**
 
@@ -99,7 +99,7 @@ Same conventions as `/report-bug`:
 
 Apply exactly two:
 
-- `priority:urgent` — the AFK queue marker. Create it via `gh label create` if missing (colour `B91C1C`, description `"Jumps the AFK queue; bypasses triage."`).
+- `priority:urgent` — the AFK queue marker. Create it if missing with `gh label create priority:urgent --color B91C1C --description "Jumps the AFK queue; bypasses triage."` (catch the conflict if it already exists).
 - `ready-for-agent` — the existing state that AFK consumes.
 
 Do not add anything else. In particular:
