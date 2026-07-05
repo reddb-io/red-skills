@@ -24,8 +24,13 @@ done < <(
 )
 
 while IFS=$'\t' read -r file line ref; do
-  if [[ ! "$ref" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$ ]]; then
-    fail "$file:$line pins afk-attempt with '$ref'; use an exact version tag or full commit SHA"
+  # afk-attempt is FIRST-PARTY (same repo), so a bare major tag (@v1) is safe:
+  # the release signs+tests HEAD before force-moving v1 to it each cut, so @v1
+  # always resolves to a green, just-released commit. Accept v1, v1.2.3, or a
+  # full 40-char SHA. The general third-party `uses:` check below is UNCHANGED
+  # and still requires a full commit SHA.
+  if [[ ! "$ref" =~ ^(v[0-9]+(\.[0-9]+\.[0-9]+)?|[0-9a-f]{40})$ ]]; then
+    fail "$file:$line pins afk-attempt with '$ref'; use a version/major tag or a full commit SHA"
   fi
 done < <(
   grep -RInE 'uses:[[:space:]]*reddb-io/red-skills/\.github/actions/afk-attempt@' \
