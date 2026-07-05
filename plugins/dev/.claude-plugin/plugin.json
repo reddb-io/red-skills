@@ -24,7 +24,6 @@
     "./skills/engineering/retake",
     "./skills/engineering/requeue",
     "./skills/engineering/urgent",
-    "./skills/engineering/weekly-review",
     "./skills/engineering/improve-codebase-architecture",
     "./skills/engineering/setup-red-skills",
     "./skills/engineering/setup-statusline",
