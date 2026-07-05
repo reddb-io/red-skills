@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## ship (engineering) — shrunk to a user-only redirect stub (issue #1136)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 trigger-wave — `ship` is retired (ADR 0081); a deprecation alias must cost nothing and teach nothing beyond where to go instead.
+- **what changed**: Cut from ~74 to 20 lines. Added `disable-model-invocation: true` so the dead alias is neither model-reachable nor pays description context. Deleted the seven-stage pipeline and mechanical-vs-intentional fix-split sections (they document the shared gate's internals and cite source symbols — that content lives with `/requeue` and ADRs 0055/0071). Kept the `/requeue` (and `/go`) redirect and the backwards-compat alias note.
+
 ## setup-pre-commit (misc) — user-only flip: disable-model-invocation (issue #1134)
 
 - **status**: modified
