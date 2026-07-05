@@ -21,16 +21,13 @@ Use `--root <dir>` when checking a repository other than the current working dir
 
 ## 2. Interpret the state
 
-- `missing` — Memory is not initialized. Recommend graph mode with Skill telemetry when self-improvement is desired.
-- `degraded` — Memory exists but graph mode, Skill telemetry, or graph freshness is not ready.
-- `attention` — Memory is operational and has pending/high-priority improvement work.
-- `ready` — Memory is operational and no immediate action is needed.
+Match the `state` field against the [init-chain state taxonomy](../../references/PRECONDITIONS.md#init-chain-state-taxonomy). `health` additionally reports `degraded` (a sub-component not ready), `attention` (pending improvement work), and `ready` (no action needed).
 
 ## 3. Use the operational counters
 
 Read these JSON fields before deciding the next action:
 
-- `initialized` — whether memory is configured (a `plugins.memory` block in `.red/config.yaml`, or the legacy `.red/memory/config.json`).
+- `initialized` — whether memory is configured (see [Memory preconditions](../../references/PRECONDITIONS.md)).
 - `graphMode` — whether graph mode is configured and the graph store exists.
 - `skillTelemetry` — `enabled` or `unavailable`.
 - `graphFreshness` — freshness of the graph store versus project files.
