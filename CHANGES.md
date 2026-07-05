@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## setup-pre-commit (misc) — user-only flip: disable-model-invocation (issue #1134)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #1132 trigger-wave — `setup-pre-commit` is an operational command always fired explicitly by the user; flipping removes its description from session context.
+- **what changed**: Added `disable-model-invocation: true` to frontmatter.
+
+## handoff (productivity) — user-only flip: disable-model-invocation (issue #1134)
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: PRD #1132 trigger-wave — `handoff` is an operational command always fired explicitly by the user; flipping removes its description from session context.
+- **what changed**: Added `disable-model-invocation: true` to frontmatter.
+
 ## write-a-skill (productivity) — absorb the four-dimension skill-quality checklist (issue #1133)
 
 - **status**: modified
