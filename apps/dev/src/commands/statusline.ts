@@ -21,7 +21,7 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
-import { collectStatuslineAfk, collectStatuslineRepo } from "../runtime/wire.js";
+import { collectStatuslineAfk, collectStatuslineRepo, collectStatuslineWorkers } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
 
 /** Read the entire stdin stream as a UTF-8 string (empty when there is none). */
@@ -54,6 +54,13 @@ interface ClaudePayload {
   model?: { display_name?: string };
   effort?: { level?: string };
   context_window?: { total_input_tokens?: number; used_percentage?: number };
+  /** Pro/Max rolling usage windows — present only after the first API response of
+   * the session, absent entirely for non-Pro/Max accounts. Each window carries a
+   * `used_percentage` (and a `resets_at` the renderer does not surface yet). */
+  rate_limits?: {
+    five_hour?: { used_percentage?: number; resets_at?: string };
+    seven_day?: { used_percentage?: number; resets_at?: string };
+  };
 }
 
 function parsePayload(text: string): ClaudePayload {
@@ -124,12 +131,25 @@ function resolveClaude(payload: ClaudePayload): ClaudeInput | undefined {
   const effort = payload.effort?.level;
   const tokens = payload.context_window?.total_input_tokens;
   const pct = payload.context_window?.used_percentage;
-  if (model === undefined && tokens === undefined) return undefined;
+  // Rate-limit windows (Pro/Max only, after the first API response): pass through
+  // only when present so the renderer stays graceful for non-Pro/Max sessions.
+  const usage5h = payload.rate_limits?.five_hour?.used_percentage;
+  const usage7d = payload.rate_limits?.seven_day?.used_percentage;
+  if (
+    model === undefined &&
+    tokens === undefined &&
+    usage5h === undefined &&
+    usage7d === undefined
+  ) {
+    return undefined;
+  }
   return {
     model: model || undefined,
     effort: effort || undefined,
     contextTokens: tokens,
     contextPercent: pct,
+    usage5h,
+    usage7d,
   };
 }
 
@@ -159,20 +179,28 @@ export async function statuslineCommand(
   // header stats (line 1) render ALWAYS; the AFK block (line 2) only with live
   // workers, so both collectors run every render (each cheap + cached).
   const repoCtx = { root, repo: "", remote: "origin" };
-  const repo = await collectStatuslineRepo(repoCtx);
-  const afk = (await collectStatuslineAfk(repoCtx)) ?? undefined;
+  // The aggregate AFK block feeds the plain single-line form (NO_COLOR / Codex);
+  // the per-worker records feed the themed multi-line form (Claude Code). Both
+  // read the same worker states — cheap file reads — so the two forms stay in
+  // sync while each renders its own layout.
+  const [repo, afk, workers] = await Promise.all([
+    collectStatuslineRepo(repoCtx),
+    collectStatuslineAfk(repoCtx).then((a) => a ?? undefined),
+    collectStatuslineWorkers(repoCtx),
+  ]);
 
-  // Theme on by default (the two-line powerline wine layout with chipped KPI
-  // numbers); honour NO_COLOR for plain consumers, matching the de-facto colour
-  // opt-out. Claude Code exports $COLUMNS (v2.1.153+) so the AFK line fits its
-  // issue list to the terminal width; absent/unparseable → fixed-cap fallback.
+  // Theme on by default (the multi-line wine layout: a repo-global header line
+  // then one line per live worker); honour NO_COLOR for plain consumers (the
+  // single-line aggregate — the Codex-footer form), matching the de-facto colour
+  // opt-out. Claude Code exports $COLUMNS (v2.1.153+) as the width budget.
   const color = !process.env.NO_COLOR;
   const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
-  const line = renderStatuslineThemed(
-    { project, claude, repo, afk },
-    color,
-    Number.isFinite(columns) && columns > 0 ? columns : undefined,
-  );
+  const nowS = Math.floor(Date.now() / 1000);
+  const line = renderStatuslineThemed({ project, claude, repo, afk }, color, {
+    columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
+    workers,
+    now: nowS,
+  });
   stdout.write(`${line}\n`);
   return 0;
 }
