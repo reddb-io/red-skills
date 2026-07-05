@@ -38,5 +38,5 @@ issues, edits labels, runs `/requeue`, or changes the primary checkout branch.
 6. With `--apply`, run the safe local `git` operations for the selected action
    and print the next `cd`, `/requeue`, or `/go` command.
 
-`/retake` is intentionally non-destructive. It does not delete branches, close
-issues, merge PRs, or switch the primary checkout's branch.
+`/retake` is intentionally non-destructive: even `--apply` runs only the safe
+local `git` setup enumerated in the caveat above.
