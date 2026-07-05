@@ -8,6 +8,8 @@ argument-hint: "#ISSUE --guidance \"text\" [--adopt-branch BRANCH] [--repo OWNER
 
 **Put a parked issue back in the queue or adopt a hand-done branch through the gate — ONE coherent transition. A label flip alone is a silent no-op loop.**
 
+<what-to-do>
+
 ## Two modes
 
 ### 1. Requeue a parked issue (existing behavior)
@@ -31,18 +33,7 @@ After the requeue transition (clearing any blocker state), requeue adopts the sp
 3. On red: parks to `ready-for-human` with `blocked:validation` + the real failing checks.
 4. On skipped (branch has no commits vs base): exits 0 with a note.
 
-This replaces `/ship` for manual work — the adopted branch and an AFK branch go through the same gate authority. `/ship` users should migrate to this form.
-
-## Why a label flip alone fails
-
-A validation or spec failure parks an issue with `ready-for-human`, a `blocked:*` label, and an active `## Current blocker` in the body. AFK preflight reads the active non-mechanical blocker and **re-parks the issue before any work starts** — so flipping labels back to `ready-for-agent` by hand produces a silent no-op retry loop. The blocker must be cleared in the SAME transition that flips the labels (see #850 for the incident evidence).
-
-## Run
-
-```bash
-red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
-red-skills-dev requeue 123 --adopt-branch my-branch --guidance "Manual impl done."
-```
+The adopted branch and an AFK branch go through the same gate authority.
 
 `--guidance` is required in both modes — it records the Human decision as an auditable `directive` comment. Use `--dry-run` to print the planned transition without mutating, and `--json` for structured output.
 
@@ -62,6 +53,14 @@ red-skills-dev requeue 123 --adopt-branch my-branch --guidance "Manual impl done
 6. If `--adopt-branch` is given (whether or not the issue was parked):
    - adopt the branch through the no-agent landing lane (ADR 0055 reconcile);
    - exit 0 on `landed`, exit 1 on `parked` (gate failed), exit 0 on `skipped`.
+
+</what-to-do>
+
+<supporting-info>
+
+## Why a label flip alone fails
+
+A validation or spec failure parks an issue with `ready-for-human`, a `blocked:*` label, and an active `## Current blocker` in the body. AFK preflight reads the active non-mechanical blocker and **re-parks the issue before any work starts** — so flipping labels back to `ready-for-agent` by hand produces a silent no-op retry loop. The blocker must be cleared in the SAME transition that flips the labels (see #850 for the incident evidence).
 
 ## `/requeue` vs `/hitl` — the decision boundary
 
@@ -83,4 +82,6 @@ Both commands end in the same safe state. `/requeue` is the focused shortcut; `/
 - `/dev:ship` — DEPRECATED; was the interactive finalizer; replaced by this command
 - `/dev:hitl` — interactive decision extraction before requeueing
 - ADR 0055 — the no-agent landing lane (reconcile / doLanding)
-- ADR 0081 — command topology: `/ship` retired; requeue is the manual adoption path
+- ADR 0081 — command topology; requeue is the manual adoption path
+
+</supporting-info>
