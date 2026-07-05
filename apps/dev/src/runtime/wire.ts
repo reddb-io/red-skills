@@ -855,6 +855,81 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   };
 }
 
+/**
+ * Per-worker records for the themed Claude Code statusline's multi-line layout
+ * (issue #1165): one {@link CompactWorker} per LIVE worker, each rendered on its
+ * own line by the SAME `renderWorkerCompactLine` formatter `/afk monitor --once`
+ * uses (single source of truth — the two never drift). Mirrors the liveness
+ * filter of {@link collectStatuslineAfk} (only "stalled" workers are dropped) and
+ * its diff-fallback (a live `git diff --shortstat` when the state file's counts
+ * are both 0). Sorted by worker start for a deterministic line order. Returns []
+ * when no live workers, so the styled render emits the header line alone.
+ *
+ * The aggregate counts (queue/human + their gh cache) stay in
+ * collectStatuslineAfk — this collector is per-worker only; the command runs both
+ * (each a cheap handful of file reads) and feeds the aggregate to the plain form
+ * and the per-worker records to the themed form.
+ */
+export async function collectStatuslineWorkers(ctx: RepoContext): Promise<CompactWorker[]> {
+  const paths = afkPaths(ctx.root);
+  const nowMs = Date.now();
+  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
+  const workers: CompactWorker[] = [];
+  for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
+    // Same rule as the aggregate collector: count everything the evaluator does
+    // not consider stalled (a long build/gate wait stays "alive"; "unknown"
+    // container workers count conservatively). Only "stalled" is excluded.
+    if (livenessVerdict.status === "stalled") continue;
+    let added = state.current.loc_added;
+    let removed = state.current.loc_removed;
+    if (added === 0 && removed === 0 && state.current.worktree) {
+      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
+      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
+      added = stat.added;
+      removed = stat.removed;
+    }
+    workers.push({
+      state: {
+        worker_id: state.worker_id,
+        pid: state.pid,
+        runner: state.runner,
+        started_at: state.started_at,
+        origin: state.origin || undefined,
+        total: state.total,
+        done: state.done,
+        blocked: state.blocked,
+        failed: state.failed,
+        current: {
+          number: state.current.number,
+          title: state.current.title,
+          stage: state.current.stage,
+          started_at: state.current.started_at,
+          input_tokens: state.current.input_tokens,
+          output_tokens: state.current.output_tokens,
+          cost_usd: state.current.cost_usd,
+          tools_called_count: state.current.tools_called_count,
+          text_chunk_count: state.current.text_chunk_count,
+          reasoning_events: state.current.reasoning_events,
+          waiting_count: state.current.waiting_count,
+        },
+      },
+      liveness,
+      livenessVerdict,
+      live: active,
+      pidLive,
+      diffAdded: added,
+      diffRemoved: removed,
+    });
+  }
+  // Deterministic order: oldest worker first (by top-level start, then per-attempt).
+  workers.sort((a, b) => {
+    const ka = a.state.started_at || a.state.current.started_at || "";
+    const kb = b.state.started_at || b.state.current.started_at || "";
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  return workers;
+}
+
 interface RepoStatsCache {
   openPrs: number;
   openIssues: number;
