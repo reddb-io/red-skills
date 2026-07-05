@@ -27,7 +27,9 @@ npm i @total-typescript/shoehorn
 
 ## Migration patterns
 
-### Large objects with few needed properties
+### `as Type` (and large objects with few needed properties) → `fromPartial()`
+
+Whether you wrote `as Request` or hand-faked every property of a large type, only the properties the test cares about matter. `fromPartial()` keeps those and lets TypeScript accept the rest.
 
 Before:
 
@@ -40,13 +42,8 @@ type Request = {
 };
 
 it("gets user by id", () => {
-  // Only care about body.id but must fake entire Request
-  getUser({
-    body: { id: "123" },
-    headers: {},
-    cookies: {},
-    // ...fake all 20 properties
-  });
+  // Faking the entire Request, or papering over it with `as`
+  getUser({ body: { id: "123" } } as Request);
 });
 ```
 
@@ -56,28 +53,8 @@ After:
 import { fromPartial } from "@total-typescript/shoehorn";
 
 it("gets user by id", () => {
-  getUser(
-    fromPartial({
-      body: { id: "123" },
-    }),
-  );
+  getUser(fromPartial({ body: { id: "123" } }));
 });
-```
-
-### `as Type` → `fromPartial()`
-
-Before:
-
-```ts
-getUser({ body: { id: "123" } } as Request);
-```
-
-After:
-
-```ts
-import { fromPartial } from "@total-typescript/shoehorn";
-
-getUser(fromPartial({ body: { id: "123" } }));
 ```
 
 ### `as unknown as Type` → `fromAny()`
@@ -102,7 +79,6 @@ getUser(fromAny({ body: { id: 123 } }));
 | --------------- | -------------------------------------------------- |
 | `fromPartial()` | Pass partial data that still type-checks           |
 | `fromAny()`     | Pass intentionally wrong data (keeps autocomplete) |
-| `fromExact()`   | Force full object (swap with fromPartial later)    |
 
 ## Workflow
 
