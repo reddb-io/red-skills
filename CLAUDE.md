@@ -133,7 +133,7 @@ Never reorder priorities so that documentation/side-effect work in `<supporting-
 
 ### SKILL.md writing style (sentence-level)
 
-The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: eight techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in the `write-a-skill` skill's "SKILL.md writing style" section.
+The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: nine techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers; leading words) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in the `write-a-skill` skill's "SKILL.md writing style" section.
 
 ## Agent skills
 
