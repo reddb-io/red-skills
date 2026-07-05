@@ -3,9 +3,11 @@ name: to-prd
 description: Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
 ---
 
-**Synthesize the current conversation into a PRD and publish it — no interview, no implementation.** Do NOT interview the user — just synthesize what you already know.
+**Synthesize the current conversation into a PRD and publish it — no interview, no implementation.** Just synthesize what you already know from the conversation.
 
 The issue tracker and triage label vocabulary should have been provided to you — run `/setup-red-skills` if not.
+
+<what-to-do>
 
 ## Process
 
@@ -22,6 +24,10 @@ Check with the user that these seams match their expectations.
    **Labels on publish:** apply `type:prd` and `needs-slicing`. **Do not apply `ready-for-agent` to a PRD — a PRD is not an implementable unit; `/to-issues` must slice it first.** `/afk` hard-filters anything tagged `type:prd` so an accidental `ready-for-agent` will be ignored, but the right pre-condition is to not set it in the first place.
 
    The next step after publish is `/to-issues` (manual or scheduled) which consumes `needs-slicing` PRDs, generates child issues with `prd:{N}` + `ready-for-agent`, and removes `needs-slicing` from the parent.
+
+</what-to-do>
+
+<supporting-info>
 
 <prd-template>
 
@@ -88,3 +94,5 @@ A description of the things that are out of scope for this PRD.
 Any further notes about the feature.
 
 </prd-template>
+
+</supporting-info>
