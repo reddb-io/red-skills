@@ -21,8 +21,7 @@ Dumps the whole graph (graph mode only) into a directory as three files:
 
 ## 1. Require graph mode
 
-`export` needs a `plugins.memory` block in `.red/config.yaml` with `mode: "graph"`. If memory is not
-initialized or is markdown-only, say so and stop.
+`export` needs graph mode — see [Memory preconditions](../../references/PRECONDITIONS.md). If memory is not initialized or is markdown-only, say so and stop.
 
 ## 2. Export
 
