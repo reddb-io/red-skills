@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## daily-review (engineering) — merge weekly-review into one period-parameterized skill, shared wrapper, house tags, disable-model-invocation (issue #1142)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — `daily-review` and `weekly-review` were ~90% identical; the pair was a maintenance liability and `weekly-review` was missing the TOON output-format section. Consolidating into one period-parameterized skill removes the duplicate and closes the parity gap.
+- **what changed**: Merged `weekly-review` into `daily-review` with `--period day` (default) and `--period week` flag. Extracted the common Run shim and TOON output paragraph into `_report-runtime/WRAPPER.md`, consumed by both `daily-review` and `dashboard`. Applied `<what-to-do>`/`<supporting-info>` house-tag split to `daily-review` and `dashboard`. Added `disable-model-invocation: true` to both skills. Removed `weekly-review/` directory and its manifest entry. Updated bucket README, root README skill map, and claude-plugin manifest.
+
+## weekly-review (engineering) — removed, merged into daily-review (issue #1142)
+
+- **status**: removed
+- **upstream**: —
+- **why**: Subsumed by the period-parameterized `daily-review` skill; `--period week` covers the six-day window. See `daily-review` entry above.
+- **what changed**: Directory and manifest entry deleted.
+
+---
+
 ## afk (engineering) — slim SKILL.md: extract monitor + fleet, collapse mantras, English-only (issue #1140)
 
 - **status**: modified
