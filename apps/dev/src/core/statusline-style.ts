@@ -1,40 +1,44 @@
 // core/statusline-style.ts — the ANSI styling slice for the /afk statusline.
 //
-// core/statusline.ts is deliberately PURE plain-text. This sibling adds the
-// theme: a TWO-LINE layout where only the leading IDENTITY ZONE (project +
-// model·effort) carries a wine-red BACKGROUND. Everything after it — the rest of
-// line 1 and ALL of line 2 — is background-transparent, so no red block ever
-// appears past the model. In the transparent zone each KPI is a `key=value`
-// pair: the KEY is a very-light, high-contrast red (≈ white), the VALUE is the
-// terminal's default foreground; every other glyph (runner, the `#` sigil, the
-// `·stage` suffix) uses a softer, lighter red. Abbreviations are always THREE
-// letters (wrk/rdy/hmn/blk/loc/wai/tok/usd; ctx/prs/iss); a diff is one
-// `loc=+A -R` pair, so the signed `+A -R` is the default-fg VALUE.
+// core/statusline.ts is deliberately PURE plain-text and SINGLE-LINE (the
+// NO_COLOR / Codex-footer render). This sibling adds the theme AND the MULTI-LINE
+// Claude Code layout (issue #1165): a repo-global HEADER line, always rendered,
+// then ONE line per live AFK worker.
 //
-//   line 1 (header, always): [wine » project (branch) v· model·effort] ctx=… prs=… iss=… loc=+A -R
-//   line 2 (AFK, workers>0):  runner wrk=… res=… loc=+A -R rdy=… hmn=… blk=… wai=… tok=… usd=… #issues
+//   line 1 (header, ALWAYS): [wine » project (branch) v· model·effort] ctx=… 5h=… 7d=… prs=… iss=… loc=+A -R
+//   line 2..N (one per live worker): the monitor's compact per-worker line
 //
-// The identity zone keeps the two wine shades (WINE2 project, WINE model) so a
-// faint block separator survives between them; the shift to transparent IS the
-// separator from the model onward. Width-aware: Claude Code exports $COLUMNS, so
-// line 2 fits its issue list to the budget and collapses the rest into `+N`.
-// Each line ends with a reset so the background never bleeds.
+// Only the leading IDENTITY ZONE of line 1 (project + model·effort) carries a
+// wine-red BACKGROUND; the rest of line 1 is background-transparent, each KPI a
+// `key=value` pair (light-red KEY, default-fg VALUE). The header's new tokens:
+// `5h=`/`7d=` are the Pro/Max rate-limit windows (rendered only when the payload
+// exposes them); `prs=`/`iss=` are repo-global GitHub counts; `loc=+A -R` is the
+// LOCAL branch diff vs origin/main.
+//
+// The per-worker lines REUSE the monitor's `renderWorkerCompactLine` verbatim
+// (core/monitor.ts) — the single source of truth shared with `/afk monitor
+// --once`, so the two surfaces never drift. Each line is tinted soft-red as a
+// whole (a colour wrapper, never a structural rewrite) and ends with a reset so
+// the background never bleeds. Zero live workers → only line 1 is emitted.
+//
+// CODEX keeps the single aggregate line: its `tui.status_line` footer is
+// single-line only (per-runner split, ADR 0003), so the NO_COLOR path returns the
+// plain single-line renderStatusline; the multi-line layout is Claude-Code-only.
 //
 // Everything here is PURE (inputs → string). The IO half
-// (commands/statusline.ts) decides colour (NO_COLOR → the plain renderer) and
-// passes the COLUMNS budget.
+// (commands/statusline.ts) decides colour (NO_COLOR → the plain renderer),
+// collects the live worker records, and passes `now`.
 
 import {
   formatCacheAge,
-  humanizeAlive,
   humanizeTokens,
   renderStatusline,
-  type AfkInput,
   type ClaudeInput,
   type ProjectInput,
   type RepoInput,
   type StatuslineInput,
 } from "./statusline.js";
+import { renderWorkerCompactLine, type CompactWorker } from "./monitor.js";
 
 /** Truecolor SGR helpers. */
 const WINE = "\x1b[48;2;114;47;55m"; // identity-zone bg (model block)
@@ -51,16 +55,6 @@ const NOBOLD = "\x1b[22m";
 const RESET = "\x1b[0m";
 
 const BRANCH_MAX = 28;
-/** Issue cap when no COLUMNS budget is available. */
-const ISSUE_CAP_NO_WIDTH = 3;
-/** Reserve columns for Claude Code's right-side notifications when budgeting. */
-const WIDTH_MARGIN = 6;
-/** Per-issue `·stage` suffixes only render at or below this worker count. */
-const STAGE_MAX_WORKERS = 2;
-
-/** Visible width of an ANSI string (escapes stripped). */
-// eslint-disable-next-line no-control-regex
-const vlen = (s: string): number => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 
 /** A transparent-zone `key=value`: light-red KEY, default-fg VALUE, back to SOFT. */
 const kv = (key: string, value: string): string => `${KEY}${key}=${VAL}${value}${SOFT}`;
@@ -106,6 +100,16 @@ function ctxKv(claude: ClaudeInput | undefined): string | null {
   return kv("ctx", value);
 }
 
+/** `5h=<pct>% 7d=<pct>%` Pro/Max rate-limit windows, each only when the payload
+ * exposed it (absent for non-Pro/Max and on the first render). */
+function usageKvs(claude: ClaudeInput | undefined): string[] {
+  if (!claude) return [];
+  const parts: string[] = [];
+  if (claude.usage5h !== undefined) parts.push(kv("5h", `${Math.round(claude.usage5h)}%`));
+  if (claude.usage7d !== undefined) parts.push(kv("7d", `${Math.round(claude.usage7d)}%`));
+  return parts;
+}
+
 /** `prs=<n> iss=<n>` repo-global counts, each only when > 0. When the cache
  * was served TTL-stale and refresh failed, the first rendered count carries a
  * soft age suffix so day-old counts are never silently shown as current. */
@@ -143,111 +147,52 @@ export function renderHeaderLine(
   if (model !== null) s += `${WINE}${WHITE} ${model} `;
   // Drop the background: from here on the line is transparent.
   s += `${NOBG}${SOFT}`;
-  const tail = [ctxKv(claude), ...repoCountsKv(repo), ...localDiffKv(repo)].filter(
+  const tail = [ctxKv(claude), ...usageKvs(claude), ...repoCountsKv(repo), ...localDiffKv(repo)].filter(
     (x): x is string => x !== null,
   );
   if (tail.length) s += ` ${tail.join("  ")}`;
   return `${s}${RESET}`;
 }
 
-// ---------- line 2: AFK (fully transparent) ----------
+// ---------- line 2..N: one line per live worker ----------
 
-/** Compact model family name: `claude-opus-4-8` → `opus`, `claude-sonnet-5` → `sonnet`. */
-function compactModelName(model: string): string {
-  const m = model.match(/^claude-([a-z]+)-/);
-  return m ? m[1] : model;
-}
-
-/** Runner label with optional compact model+effort: `claude-opus max`, `codex`. */
-function formatRunnerLabel(
-  runner: string | undefined,
-  model: string | undefined,
-  effort: string | undefined,
-): string {
-  if (!runner) return "";
-  if (!model) return runner;
-  const compact = compactModelName(model);
-  return effort ? `${runner}-${compact} ${effort}` : `${runner} ${compact}`;
-}
-
-/** Line 2 — the AFK KPIs, transparent background, or null when no live workers. */
-export function renderAfkLine(afk: AfkInput | undefined, columns: number | undefined): string | null {
-  if (!afk || afk.workers <= 0) return null;
-
-  const groups: string[] = [];
-  const runnerLabel = formatRunnerLabel(afk.runner, afk.model, afk.effort);
-  if (runnerLabel) groups.push(`${SOFT}${runnerLabel}${VAL}`);
-
-  let workers = kv("wrk", String(afk.workers));
-  if (afk.resolved !== undefined && afk.resolved > 0) workers += ` ${kv("res", String(afk.resolved))}`;
-  groups.push(workers);
-
-  const diff = signedDiff(afk.added, afk.removed);
-  if (diff) groups.push(kv("loc", afk.locIsPeak ? `~${diff}` : diff));
-
-  const pipe: string[] = [];
-  // Age marker: parallel to the plain-render path in afkTokens(); same placement
-  // rule — rdy= gets the mark first, falls to hmn= when queue is 0.
-  const ageStr = afk.cacheAgeS !== undefined ? ` (${formatCacheAge(afk.cacheAgeS)})` : "";
-  if (afk.queue > 0) pipe.push(kv("rdy", String(afk.queue)) + ageStr);
-  if (afk.human > 0) {
-    const hmAge = ageStr && afk.queue === 0 ? ageStr : "";
-    pipe.push(kv("hmn", String(afk.human)) + hmAge);
-  }
-  if (afk.blocked > 0) pipe.push(kv("blk", String(afk.blocked)));
-  if (afk.waiting !== undefined && afk.waiting > 0) pipe.push(kv("wai", String(afk.waiting)));
-  if (afk.tokens !== undefined && afk.tokens > 0) pipe.push(kv("tok", humanizeTokens(afk.tokens)));
-  if (afk.costUsd !== undefined && afk.costUsd > 0) pipe.push(kv("usd", afk.costUsd.toFixed(2)));
-  if (pipe.length) groups.push(pipe.join(" "));
-
-  const fixed = `${NOBG}${SOFT} ${groups.join("  ")}`;
-  if (afk.issues.length === 0) return `${fixed} ${RESET}`;
-
-  const showStage = afk.workers <= STAGE_MAX_WORKERS;
-  const issueTok = (issue: number | string, i: number): string => {
-    const stage = showStage ? afk.stages?.[i] : undefined;
-    const alive = afk.aliveMs?.[i];
-    let suffix = stage ? `${SOFT}·${stage}` : "";
-    if (alive !== undefined && alive > 0) suffix += `${SOFT}·${humanizeAlive(alive)}`;
-    return `${SOFT}#${VAL}${issue}${suffix}`;
-  };
-
-  const budget = columns && columns > 0 ? columns - WIDTH_MARGIN : null;
-  const wrap = (inner: string, overflow: number): string => {
-    const over = overflow > 0 ? ` ${SOFT}+${overflow}` : "";
-    return `${fixed}  ${inner}${over} ${RESET}`;
-  };
-
-  const toks: string[] = [];
-  let shown = 0;
-  for (let i = 0; i < afk.issues.length; i++) {
-    if (budget === null && shown >= ISSUE_CAP_NO_WIDTH) break;
-    const next = [...toks, issueTok(afk.issues[i], i)].join(" ");
-    if (budget !== null && vlen(wrap(next, afk.issues.length - shown - 1)) > budget) break;
-    toks.push(issueTok(afk.issues[i], i));
-    shown += 1;
-  }
-  return wrap(toks.join(" "), afk.issues.length - shown);
+/** One worker line — the monitor's compact per-worker formatter
+ * ({@link renderWorkerCompactLine}), tinted soft-red as a whole and
+ * reset-terminated. The tint is a pure colour wrapper: it never rewrites the
+ * line's structure, so this and `/afk monitor --once` share ONE source of truth
+ * (the formatter) and can never drift. `now` is an epoch in seconds. */
+export function renderWorkerLine(worker: CompactWorker, now: number): string {
+  return `${NOBG}${SOFT}${renderWorkerCompactLine(worker, now)}${RESET}`;
 }
 
 // ---------- assembly ----------
 
-/** The full themed statusline: header line, plus the AFK line when workers are
- * live, joined by a newline (Claude Code renders each as a row). */
-export function styleStatusline(input: StatuslineInput, columns?: number): string {
+/** Options for the themed multi-line render: the terminal width budget (reserved
+ * for future per-line trimming), the live worker records, and `now` (epoch
+ * seconds) for their elapsed clocks. */
+export interface StyleOptions {
+  columns?: number;
+  workers?: ReadonlyArray<CompactWorker>;
+  now?: number;
+}
+
+/** The full themed statusline: the header line, plus one line per live worker
+ * (Claude Code renders each `\n`-separated segment as its own row). Zero workers
+ * → only the header line. */
+export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
   const lines = [renderHeaderLine(input.project, input.claude, input.repo)];
-  const afk = renderAfkLine(input.afk, columns);
-  if (afk !== null) lines.push(afk);
+  const now = opts.now ?? 0;
+  for (const worker of opts.workers ?? []) lines.push(renderWorkerLine(worker, now));
   return lines.join("\n");
 }
 
 /** Render the statusline, themed or plain. `color` is the switch: true → the
- * themed {@link styleStatusline}; false → the plain {@link renderStatusline}
- * (single line, no escapes) for NO_COLOR / non-terminal consumers. */
+ * themed multi-line {@link styleStatusline} (Claude Code); false → the plain,
+ * single-line {@link renderStatusline} (NO_COLOR / the Codex footer). */
 export function renderStatuslineThemed(
   input: StatuslineInput,
   color: boolean,
-  columns?: number,
+  opts: StyleOptions = {},
 ): string {
-  return color ? styleStatusline(input, columns) : renderStatusline(input);
+  return color ? styleStatusline(input, opts) : renderStatusline(input);
 }

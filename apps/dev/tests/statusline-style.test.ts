@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   renderStatusline,
-  type AfkInput,
+  type ClaudeInput,
   type RepoInput,
   type StatuslineInput,
 } from "../src/core/statusline.js";
+import type { CompactWorker } from "../src/core/monitor.js";
 import {
-  renderAfkLine,
   renderHeaderLine,
   renderStatuslineThemed,
+  renderWorkerLine,
   styleStatusline,
 } from "../src/core/statusline-style.js";
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
-const vlen = (s: string): number => stripAnsi(s).length;
 
 const WINE = "\x1b[48;2;114;47;55m";
 const WINE2 = "\x1b[48;2;88;36;42m";
@@ -22,18 +22,53 @@ const NOBG = "\x1b[49m";
 const SOFT = "\x1b[38;2;224;138;148m";
 const RESET = "\x1b[0m";
 
-const afk: AfkInput = { workers: 1, queue: 11, human: 3, blocked: 2, added: 12, removed: 3, issues: [17] };
+const NOW = 1_000_000; // fixed epoch seconds so worker elapsed clocks are deterministic
+
+/** A live worker fixture: on #17, 5 minutes elapsed, +12 -3 diff. */
+function worker(over: Partial<CompactWorker> = {}): CompactWorker {
+  return {
+    state: {
+      worker_id: "w1",
+      pid: 4242,
+      runner: "claude",
+      started_at: new Date((NOW - 300) * 1000).toISOString(),
+      total: 10,
+      done: 7,
+      blocked: 0,
+      failed: 0,
+      current: {
+        number: 17,
+        title: "redesign statusline",
+        stage: "impl",
+        started_at: new Date((NOW - 300) * 1000).toISOString(),
+      },
+    },
+    live: true,
+    pidLive: true,
+    diffAdded: 12,
+    diffRemoved: 3,
+    ...over,
+  };
+}
+
+const claude: ClaudeInput = {
+  model: "Opus",
+  effort: "high",
+  contextTokens: 47000,
+  contextPercent: 24,
+  usage5h: 23,
+  usage7d: 41,
+};
 const repo: RepoInput = { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 };
 const input: StatuslineInput = {
   project: { basename: "red-skills", branch: "main", version: "1.2.3" },
-  claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24 },
+  claude,
   repo,
-  afk,
 };
 
 describe("statusline style — header line", () => {
-  it("powerlines » project, model·effort, ctx, pr/is, +local/-local — reset-terminated", () => {
-    const h = renderHeaderLine(input.project, input.claude, repo);
+  it("powerlines » project, model·effort, ctx, 5h/7d usage, prs/iss, +local/-local — reset-terminated", () => {
+    const h = renderHeaderLine(input.project, claude, repo);
     expect(h).not.toContain("\n");
     expect(h.endsWith(RESET)).toBe(true);
     expect(h).toContain(WINE2); // project block bg
@@ -41,183 +76,126 @@ describe("statusline style — header line", () => {
     expect(h).toContain(NOBG); // background drops to transparent after the model
     const t = stripAnsi(h);
     expect(t).toContain("» red-skills (main)");
-    expect(t).toContain("v1.2.3"); // fixed fixture version — proves the renderer echoes whatever version it is handed (not the live build version)
+    expect(t).toContain("v1.2.3");
     expect(t).toContain("Opus·high");
     expect(t).toContain("ctx=47k 24%");
+    expect(t).toContain("5h=23%");
+    expect(t).toContain("7d=41%");
     expect(t).toContain("prs=3");
     expect(t).toContain("iss=24");
     expect(t).toContain("loc=+142 -36");
   });
 
+  it("renders only the usage window that is present (graceful absence)", () => {
+    const t = stripAnsi(renderHeaderLine(input.project, { ...claude, usage7d: undefined }, repo));
+    expect(t).toContain("5h=23%");
+    expect(t).not.toContain("7d=");
+  });
+
+  it("drops the usage tokens entirely for a non-Pro/Max session", () => {
+    const t = stripAnsi(
+      renderHeaderLine(input.project, { ...claude, usage5h: undefined, usage7d: undefined }, repo),
+    );
+    expect(t).not.toContain("5h=");
+    expect(t).not.toContain("7d=");
+    expect(t).toContain("ctx=47k 24%"); // rest of the header intact
+  });
+
   it("prs= carries a compact age suffix when repo cacheAgeS is set (stale cache)", () => {
-    const t = stripAnsi(renderHeaderLine(input.project, input.claude, { ...repo, cacheAgeS: 720 }));
+    const t = stripAnsi(renderHeaderLine(input.project, claude, { ...repo, cacheAgeS: 720 }));
     expect(t).toContain("prs=3 (12m)");
-    expect(t).toContain("iss=24"); // iss= present but no duplicate age mark
-    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1); // exactly one annotation
+    expect(t).toContain("iss=24");
+    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1);
   });
 
   it("age suffix moves to iss= when openPrs is 0 and repo cache is stale", () => {
     const t = stripAnsi(
-      renderHeaderLine(input.project, input.claude, {
-        ...repo, openPrs: 0, cacheAgeS: 720,
-      }),
+      renderHeaderLine(input.project, claude, { ...repo, openPrs: 0, cacheAgeS: 720 }),
     );
     expect(t).not.toContain("prs=");
     expect(t).toContain("iss=24 (12m)");
   });
 
   it("drops the repo blocks when counts are zero / a clean branch", () => {
-    const h = renderHeaderLine(input.project, input.claude, {
-      openPrs: 0,
-      openIssues: 0,
-      localAdded: 0,
-      localRemoved: 0,
-    });
-    const t = stripAnsi(h);
+    const t = stripAnsi(
+      renderHeaderLine(input.project, claude, {
+        openPrs: 0,
+        openIssues: 0,
+        localAdded: 0,
+        localRemoved: 0,
+      }),
+    );
     expect(t).not.toContain("prs=");
     expect(t).not.toContain("iss=");
     expect(t).not.toContain("loc=");
   });
 
-  it("drops model/ctx/repo outside Claude Code with no repo stats", () => {
+  it("drops model/ctx/usage/repo outside Claude Code with no repo stats", () => {
     const h = renderHeaderLine({ basename: "c3" }, undefined, undefined);
     expect(stripAnsi(h)).toBe(" » c3 ");
     expect(h).not.toContain(WINE);
   });
 });
 
-describe("statusline style — AFK line", () => {
-  it("chips KPI numbers across the runner/workers/transit/pipeline blocks", () => {
-    const line = renderAfkLine({ ...afk, runner: "claude", resolved: 7 }, undefined);
-    expect(line).not.toBeNull();
-    expect(line!.endsWith(RESET)).toBe(true);
-    expect(line).toContain(NOBG); // line 2 is fully transparent — no red block
-    expect(line).toContain(SOFT); // softer red for the runner / sigils
-    expect(line).not.toContain(WINE); // never a wine background on line 2
-    const t = stripAnsi(line!);
-    expect(t).toContain("claude"); // runner
-    expect(t).toContain("wrk=1 res=7"); // workers + resolved
-    expect(t).toContain("loc=+12 -3"); // in-transit diff
-    expect(t).toContain("rdy=11 hmn=3 blk=2"); // pipeline
-    expect(t).toContain("#17");
+describe("statusline style — per-worker line", () => {
+  it("reuses the monitor's compact formatter, tinted and reset-terminated", () => {
+    const line = renderWorkerLine(worker(), NOW);
+    expect(line.endsWith(RESET)).toBe(true);
+    expect(line).toContain(NOBG); // fully transparent — no red block
+    expect(line).toContain(SOFT); // soft-red tint
+    expect(line).not.toContain(WINE); // never a wine background on a worker line
+    const t = stripAnsi(line);
+    expect(t).toContain("w1 [live] claude"); // wID + liveness badge + runner
+    expect(t).toContain("issues 7/10"); // progress counter
+    expect(t).toContain("#17 redesign statusline"); // issue + title
+    expect(t).toContain("stage:impl"); // stage
+    expect(t).toContain("00:05:00"); // elapsed
+    expect(t).toContain("+12 -3"); // diff volume
   });
 
-  it("omits runner and res when absent / zero", () => {
-    const t = stripAnsi(renderAfkLine(afk, undefined)!);
-    expect(t).not.toContain("res");
-    expect(t.startsWith(" wrk=1")).toBe(true); // first group is workers, no runner
-  });
-
-  it("renders compact model-effort alongside the runner label", () => {
-    const line = renderAfkLine(
-      { ...afk, runner: "claude", model: "claude-opus-4-8", effort: "max" },
-      undefined,
-    );
-    const t = stripAnsi(line!);
-    expect(t).toContain("claude-opus max");
-    expect(t).not.toContain("claude-opus-4-8"); // always compact
-  });
-
-  it("renders runner + compact model without effort when effort is absent", () => {
-    const t = stripAnsi(renderAfkLine({ ...afk, runner: "codex", model: "gpt-4o" }, undefined)!);
-    expect(t).toContain("codex gpt-4o"); // non-claude model: falls back to the full name
-  });
-
-  it("renders alive time suffix on issue tokens", () => {
-    const line = renderAfkLine(
-      { ...afk, issues: [17], stages: ["impl"], aliveMs: [5 * 60 * 1000] },
-      undefined,
-    );
-    expect(stripAnsi(line!)).toContain("#17·impl·5m");
-  });
-
-  it("renders loc= with a ~ prefix when locIsPeak is true", () => {
-    const t = stripAnsi(renderAfkLine({ ...afk, locIsPeak: true }, undefined)!);
-    expect(t).toContain("loc=~+12 -3");
-    expect(t).not.toContain("loc=+12 -3"); // ~ prefix replaces the plain form
-  });
-
-  it("is null when there are no live workers", () => {
-    expect(renderAfkLine(undefined, undefined)).toBeNull();
-    expect(renderAfkLine({ ...afk, workers: 0 }, undefined)).toBeNull();
-  });
-
-  it("fresh cache (no cacheAgeS) renders rdy= with no age annotation", () => {
-    const t = stripAnsi(renderAfkLine(afk, undefined)!);
-    expect(t).toContain("rdy=11");
-    expect(t).not.toContain("(");
-  });
-
-  it("rdy= carries a compact age suffix when cacheAgeS is set (stale cache)", () => {
-    // 720 s = 12 m stale → (12m) appears after the rdy= value
-    const t = stripAnsi(renderAfkLine({ ...afk, cacheAgeS: 720 }, undefined)!);
-    expect(t).toContain("rdy=11 (12m)");
-    expect(t).toContain("hmn=3"); // hmn= is present but carries no second age mark
-    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1); // exactly one age annotation
-  });
-
-  it("age suffix moves to hmn= when queue is 0 but human is live", () => {
-    const t = stripAnsi(renderAfkLine({ ...afk, queue: 0, cacheAgeS: 720 }, undefined)!);
-    expect(t).not.toContain("rdy=");
-    expect(t).toContain("hmn=3 (12m)");
-  });
-
-  it("shows the ·stage suffix only at or below two workers", () => {
-    const few = renderAfkLine({ ...afk, workers: 2, issues: [17, 20], stages: ["impl", "tests"] }, undefined);
-    expect(stripAnsi(few!)).toContain("#17·impl");
-    expect(stripAnsi(few!)).toContain("#20·tests");
-
-    const many = renderAfkLine({ ...afk, workers: 5, issues: [17, 20], stages: ["impl", "tests"] }, undefined);
-    expect(stripAnsi(many!)).not.toContain("·impl");
-    expect(stripAnsi(many!)).toContain("#17");
-  });
-
-  it("caps the issue list at 3 with a +N overflow when no COLUMNS budget", () => {
-    const line = renderAfkLine({ ...afk, workers: 5, issues: [17, 20, 21, 22, 23] }, undefined);
-    const txt = stripAnsi(line!);
-    expect(txt).toContain("#17");
-    expect(txt).toContain("#21");
-    expect(txt).not.toContain("#22");
-    expect(txt).toContain("+2");
-  });
-
-  it("fits the issue list to the COLUMNS budget, collapsing the rest into +N", () => {
-    const wide = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 200);
-    expect(stripAnsi(wide!)).toContain("#6"); // all six issues fit in 200 cols (none collapsed)
-    // The verbose key=value KPI run is wider than the old 2-letter chips, so the
-    // fixed groups alone are ~40 cols for a busy fleet; the budget can only trim
-    // ISSUES. 56 is the realistic narrow floor where collapsing is exercised.
-    // (We assert collapse via a dropped #N, not a bare "+", since the loc=+A -R
-    // diff value also contains a "+".)
-    const narrow = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 56);
-    expect(vlen(narrow!)).toBeLessThanOrEqual(56);
-    expect(stripAnsi(narrow!)).not.toContain("#6"); // tail issues collapsed into +N
-    expect(stripAnsi(narrow!)).toMatch(/ \+\d/); // the +N overflow marker is present
+  it("shows per-worker token spend when the runner streamed usage", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, input_tokens: 1200, output_tokens: 400 },
+      },
+    });
+    expect(stripAnsi(renderWorkerLine(w, NOW))).toContain("tok:1200/400");
   });
 });
 
 describe("statusline style — full themed assembly", () => {
-  it("emits two rows (header + AFK) when workers are live, each reset-terminated", () => {
-    const out = styleStatusline(input);
+  it("emits the header row plus one row per live worker, each reset-terminated", () => {
+    const out = styleStatusline(input, { workers: [worker(), worker({ state: { ...worker().state, worker_id: "w2", current: { ...worker().state.current, number: 20 } } })], now: NOW });
     const rows = out.split("\n");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3); // header + two workers
     expect(rows[0].endsWith(RESET)).toBe(true);
     expect(rows[1].endsWith(RESET)).toBe(true);
+    expect(rows[2].endsWith(RESET)).toBe(true);
     expect(stripAnsi(rows[0])).toContain("» red-skills");
     expect(stripAnsi(rows[0])).toContain("prs=3");
-    expect(stripAnsi(rows[1])).toContain("wrk=1");
+    expect(stripAnsi(rows[1])).toContain("w1 [live]");
+    expect(stripAnsi(rows[2])).toContain("#20");
   });
 
   it("emits only the header row when there are no live workers", () => {
-    const out = styleStatusline({ project: input.project, claude: input.claude, repo });
+    const out = styleStatusline(input, { workers: [], now: NOW });
     expect(out).not.toContain("\n");
     expect(stripAnsi(out)).toContain("Opus·high");
     expect(stripAnsi(out)).toContain("prs=3");
   });
 
-  it("renderStatuslineThemed switches between powerline and plain on the color flag", () => {
-    expect(renderStatuslineThemed(input, true)).toBe(styleStatusline(input));
-    expect(renderStatuslineThemed(input, false)).toBe(renderStatusline(input));
-    expect(renderStatuslineThemed(input, false)).not.toContain("\x1b");
+  it("defaults to the header row alone when no workers/now are supplied", () => {
+    const out = styleStatusline(input);
+    expect(out).not.toContain("\n");
+    expect(stripAnsi(out)).toContain("» red-skills");
+  });
+
+  it("renderStatuslineThemed switches between multi-line themed and plain on the color flag", () => {
+    const opts = { workers: [worker()], now: NOW };
+    expect(renderStatuslineThemed(input, true, opts)).toBe(styleStatusline(input, opts));
+    expect(renderStatuslineThemed(input, false, opts)).toBe(renderStatusline(input));
+    expect(renderStatuslineThemed(input, false, opts)).not.toContain("\x1b");
+    expect(renderStatuslineThemed(input, false, opts)).not.toContain("\n"); // plain form is single-line
   });
 });

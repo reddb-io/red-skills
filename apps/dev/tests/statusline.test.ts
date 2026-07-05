@@ -7,7 +7,9 @@ import {
   renderContextBlock,
   renderModelBlock,
   renderProjectBlock,
+  renderRepoBlock,
   renderStatusline,
+  renderUsageBlock,
   type AfkInput,
   type StatuslineInput,
 } from "../src/core/statusline.js";
@@ -170,6 +172,61 @@ describe("statusline — context block", () => {
     expect(renderContextBlock({ contextTokens: 0 })).toBeNull();
     expect(renderContextBlock({})).toBeNull();
     expect(renderContextBlock(undefined)).toBeNull();
+  });
+});
+
+describe("statusline — usage block", () => {
+  it("renders both rate-limit windows as rounded percents", () => {
+    expect(renderUsageBlock({ usage5h: 23, usage7d: 41 })).toBe("5h=23% 7d=41%");
+  });
+
+  it("rounds each window like printf %.0f", () => {
+    expect(renderUsageBlock({ usage5h: 22.6, usage7d: 40.2 })).toBe("5h=23% 7d=40%");
+  });
+
+  it("renders only the window that is present (graceful absence)", () => {
+    expect(renderUsageBlock({ usage5h: 23 })).toBe("5h=23%");
+    expect(renderUsageBlock({ usage7d: 41 })).toBe("7d=41%");
+  });
+
+  it("renders a zero percent (0 is present, not absent)", () => {
+    expect(renderUsageBlock({ usage5h: 0, usage7d: 0 })).toBe("5h=0% 7d=0%");
+  });
+
+  it("drops the block entirely for a non-Pro/Max session (neither window)", () => {
+    expect(renderUsageBlock({})).toBeNull();
+    expect(renderUsageBlock(undefined)).toBeNull();
+    expect(renderUsageBlock({ model: "Opus", contextTokens: 47000 })).toBeNull();
+  });
+});
+
+describe("statusline — repo block", () => {
+  it("renders prs/iss counts and the local diff", () => {
+    expect(
+      renderRepoBlock({ openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 }),
+    ).toBe("prs=3 iss=24 loc=+142 -36");
+  });
+
+  it("drops each zero-valued count and a clean branch", () => {
+    expect(
+      renderRepoBlock({ openPrs: 0, openIssues: 0, localAdded: 0, localRemoved: 0 }),
+    ).toBeNull();
+    expect(renderRepoBlock(undefined)).toBeNull();
+  });
+
+  it("renders only the present sides of the local diff", () => {
+    expect(renderRepoBlock({ localAdded: 5 })).toBe("loc=+5");
+    expect(renderRepoBlock({ localRemoved: 2 })).toBe("loc=-2");
+  });
+
+  it("carries a compact age suffix on prs= when the cache is stale", () => {
+    expect(
+      renderRepoBlock({ openPrs: 3, openIssues: 24, cacheAgeS: 720 }),
+    ).toBe("prs=3 (12m) iss=24");
+  });
+
+  it("moves the age suffix to iss= when openPrs is 0", () => {
+    expect(renderRepoBlock({ openPrs: 0, openIssues: 24, cacheAgeS: 720 })).toBe("iss=24 (12m)");
   });
 });
 
@@ -337,6 +394,39 @@ describe("statusline — full assembly", () => {
     expect(renderStatusline(input)).toBe(
       "red-skills (main) · Opus·high · 47k 24% · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
     );
+  });
+
+  it("wires usage and repo blocks into the single aggregate line (Codex/plain form)", () => {
+    const input: StatuslineInput = {
+      project: { basename: "red-skills", branch: "main" },
+      claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 23, usage7d: 41 },
+      repo: { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 },
+      afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
+    };
+    expect(renderStatusline(input)).toBe(
+      "red-skills (main) · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
+    );
+  });
+
+  it("keeps the pre-#1165 line byte-for-byte when repo and usage are absent", () => {
+    const input: StatuslineInput = {
+      project: { basename: "red-skills", branch: "main" },
+      claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24 },
+      afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
+    };
+    expect(renderStatusline(input)).toBe(
+      "red-skills (main) · Opus·high · 47k 24% · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
+    );
+  });
+
+  it("renders the header stats even with no live workers (repo line always shows)", () => {
+    const out = renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 5 },
+      repo: { openPrs: 2, openIssues: 9 },
+    });
+    expect(out).toBe("red-skills (main) · Opus·high · 47k 24% · 5h=5% · prs=2 iss=9");
+    expect(out).not.toContain("wrk");
   });
 
   it("drops the model and context blocks outside Claude Code", () => {

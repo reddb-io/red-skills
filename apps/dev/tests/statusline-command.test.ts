@@ -68,6 +68,18 @@ const PAYLOAD = JSON.stringify({
   context_window: { total_input_tokens: 47000, used_percentage: 24 },
 });
 
+/** Payload with the Pro/Max rate-limit windows Claude Code exposes after the
+ * first API response — only present for Pro/Max sessions. */
+const PAYLOAD_WITH_RATE_LIMITS = JSON.stringify({
+  model: { display_name: "Opus" },
+  effort: { level: "high" },
+  context_window: { total_input_tokens: 47000, used_percentage: 24 },
+  rate_limits: {
+    five_hour: { used_percentage: 23, resets_at: "2026-07-05T17:00:00Z" },
+    seven_day: { used_percentage: 41, resets_at: "2026-07-12T12:00:00Z" },
+  },
+});
+
 describe("statusline command — pure helpers", () => {
   it("resolveRoot prefers an existing first-arg directory", async () => {
     const dir = await mkdtemp(join(tmpdir(), "sl-root-"));
@@ -130,18 +142,21 @@ describe("statusline command — rendered line", () => {
     else process.env.NO_COLOR = oldNoColor;
   });
 
-  it("emits the full block run from a payload + live workers + cached counts", async () => {
-    // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7;
-    // cached rq11 rh3; repo cache pr3 is24.
+  it("emits the multi-line themed layout: header row + one row per live worker", async () => {
+    // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7,
+    // total 10; cached rq11 rh3; repo cache pr3 is24.
     await writeWorkerState(root, "wA", "17-a1", {
+      worker_id: "wA",
       runner: "claude",
       done: 7,
+      total: 10,
       blocked: 2,
       // A real worker stamps started_at; the statusline collector counts any
       // pid-live worker (#836) — freshness is not required, so a worker quiet on
-      // the agent lane during a long test/build still renders on line 2.
+      // the agent lane during a long test/build still renders on its own row.
       current: {
         number: 17,
+        stage: "impl",
         diff_added: 12,
         diff_removed: 3,
         started_at: new Date().toISOString(),
@@ -165,33 +180,82 @@ describe("statusline command — rendered line", () => {
       else process.env.NO_COLOR = oldNoColor;
     }
 
-    // Header and AFK KPI content may render on one or two rows depending on the
-    // host width, but the command contract is the field set.
     const text = stripAnsi(out.text());
-    expect(text).toContain("Opus·high");
-    expect(text).toContain("47k 24%");
-    expect(text).toContain("prs=3");
-    expect(text).toContain("iss=24");
-    expect(text).toContain("claude"); // runner
-    expect(text).toContain("wrk=1 res=7"); // workers + resolved
-    expect(text).toContain("loc=+12 -3"); // in-transit diff
-    expect(text).toContain("rdy=11 hmn=3 blk=2"); // pipeline
-    expect(text).toContain("#17");
+    const rows = text.trimEnd().split("\n");
+    expect(rows).toHaveLength(2); // header row + one worker row
+
+    // LINE 1 — repo-global header: model/ctx + repo counts.
+    expect(rows[0]).toContain("Opus·high");
+    expect(rows[0]).toContain("47k 24%");
+    expect(rows[0]).toContain("prs=3");
+    expect(rows[0]).toContain("iss=24");
+
+    // LINE 2 — the live worker, from the monitor's shared per-worker formatter.
+    expect(rows[1]).toContain("wA"); // worker id
+    expect(rows[1]).toContain("claude"); // runner
+    expect(rows[1]).toContain("issues 7/10"); // progress counter
+    expect(rows[1]).toContain("#17"); // issue
+    expect(rows[1]).toContain("stage:impl"); // stage
+    expect(rows[1]).toContain("+12 -3"); // per-worker diff
+
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
 
-  it("drops the AFK block when there are no live workers", async () => {
+  it("renders the 5h/7d rate-limit windows on the header when the payload exposes them", async () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 0, 0);
     const out = sink();
-    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    const oldNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD_WITH_RATE_LIMITS));
+      expect(code).toBe(0);
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+    const text = stripAnsi(out.text());
+    expect(text).toContain("5h=23%");
+    expect(text).toContain("7d=41%");
+  });
+
+  it("omits the 5h/7d windows for a non-Pro/Max payload (no rate_limits)", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+    const text = stripAnsi(out.text());
+    expect(text).not.toContain("5h=");
+    expect(text).not.toContain("7d=");
+  });
+
+  it("emits only the header row when there are no live workers", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    let code: number;
+    try {
+      code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
     expect(code).toBe(0);
 
-    const line = stripAnsi(out.text().trim());
-    expect(line).toContain("Opus·high");
-    expect(line).toContain("47k 24%");
-    expect(line).not.toContain("wrk=");
+    const rows = stripAnsi(out.text()).trimEnd().split("\n");
+    expect(rows).toHaveLength(1); // 0 workers → header row alone
+    expect(rows[0]).toContain("Opus·high");
+    expect(rows[0]).toContain("47k 24%");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
@@ -235,8 +299,10 @@ describe("statusline command — rendered line", () => {
 
     const out1 = sink();
     await statuslineCommand([root], root, out1.stream, fakeStdin(PAYLOAD));
-    expect(stripAnsi(out1.text())).toContain("loc=+12 -3");
-    expect(stripAnsi(out1.text())).not.toContain("loc=+99");
+    // The per-worker diff volume renders on the worker's own row (`+A -R`), read
+    // live from the state file — no cache involved.
+    expect(stripAnsi(out1.text())).toContain("+12 -3");
+    expect(stripAnsi(out1.text())).not.toContain("+99");
 
     // Mutate in-place: new diff +99 -5 — no process restart; next render reads fresh
     await writeWorkerState(root, "wA", "17-a1", {
@@ -254,8 +320,8 @@ describe("statusline command — rendered line", () => {
     const out2 = sink();
     await statuslineCommand([root], root, out2.stream, fakeStdin(PAYLOAD));
     // Live read: must reflect the mutation without any cache involvement
-    expect(stripAnsi(out2.text())).toContain("loc=+99 -5");
-    expect(stripAnsi(out2.text())).not.toContain("loc=+12");
+    expect(stripAnsi(out2.text())).toContain("+99 -5");
+    expect(stripAnsi(out2.text())).not.toContain("+12 -3");
   });
 
   it("idle fleet (workers=0) does not gate remote refresh behind workers>0 check", async () => {
