@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review a generated HTML artifact (plan, dashboard, or prototype) in the browser — opens the file via the annotation bridge, runs the layout-audit gate, long-polls for surgical human feedback (element + character range), and feeds the annotation back so the agent can iterate. Use when you have an HTML artifact ready for human review, want to replace the "screenshot + describe" loop with precise element-level annotations, or need to verify a rendered plan end-to-end.
+description: Human-driven annotation review for HTML artifacts — opens the file via the annotation bridge, long-polls for surgical human feedback (element + character range), and feeds the annotation back so the agent can iterate. Use when you have an HTML artifact ready for human review or want to replace the "screenshot + describe" loop with precise element-level annotations.
 argument-hint: "<html-file>"
 ---
 

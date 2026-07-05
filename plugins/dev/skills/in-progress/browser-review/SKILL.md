@@ -1,6 +1,6 @@
 ---
 name: browser-review
-description: Open a generated HTML artifact (plan, dashboard, report, or built UI) for live human review — a human points at an exact element and character range and sends feedback, the agent polls that feedback back, and a layout-audit gate blocks "done" on a broken render. The human+agent+browser triangle, no cloud. Use when you have produced an HTML artifact and want surgical human annotation instead of "screenshot + describe in prose", or want a ground-truth render check before declaring UI work done.
+description: Open a generated HTML artifact for live human review — the human annotates an exact element and character range, the agent polls that feedback and iterates. A layout-audit gate blocks "done" on a broken render. Use when you want surgical element-level annotation instead of "screenshot + describe in prose", or need a ground-truth render check before declaring UI work done.
 ---
 
 <what-to-do>

@@ -1,6 +1,6 @@
 ---
 name: review-adrs
-description: Review the `.red/adr/` set for contradictions, missing supersession links, staleness (paths/commands that moved), numbering collisions, and structurally controversial decisions, reconcile each finding with the maintainer through a one-question-at-a-time interview (like `/start`) — reaching agreement before any write — then consolidate every agreement into a single actionable PRD on the issue tracker via `/to-prd`. Use when asked to "review the ADRs", "are any ADRs conflicting / out of date / superseded", after adding or reversing an ADR, or to make a large ADR set navigable and turn its decision debt into scheduled work.
+description: Review the `.red/adr/` set for consistency issues, reconcile each finding with the maintainer through a one-question-at-a-time interview — reaching agreement before any write — then consolidate every agreement into a single actionable PRD on the issue tracker via `/to-prd`. Use when asked to "review the ADRs", after adding or reversing an ADR, or to turn ADR decision debt into scheduled work.
 ---
 
 # Review ADRs (decision-record interview → actionable PRD)

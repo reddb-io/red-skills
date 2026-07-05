@@ -1,7 +1,8 @@
 ---
 name: go
-description: Semi-structured front door between `/goal` and `/afk` — `/go "<demand>"` mints a disposable tracking issue in an isolated lane (out of `ready-for-agent`, so a running fleet can never claim it), spins a dedicated namespaced worker under `.red/tmp/go-workers/`, reuses the whole AFK engine end-to-end with `origin=go` and the interactive gate, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing (no branch/PR/merge). Works with or without a fleet running.
+description: Middle tier of the dispatch spectrum — `/goal` → `/go` → `/afk`. Use for genuinely untracked, ad-hoc, one-off demands only; anything that is or should be a tracked issue belongs to `/afk`. Mints a disposable issue, spins a dedicated worker, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing.
 argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--verify \"<cmd>\"] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
+disable-model-invocation: true
 ---
 
 # /go

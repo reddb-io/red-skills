@@ -1,6 +1,6 @@
 ---
 name: wiki
-description: Operate the LLM Wiki — ingest a source (URL or file), query the wiki and optionally file the answer back as a page, or lint for contradictions/orphans/stale claims. Requires `/wiki-init` to have run. Routes by natural language ("ingest <url>", "query <question>", "lint") or by the verb at the start of the user's request.
+description: Operate the LLM Wiki — ingest a source (URL or file), query the wiki and optionally file the answer back as a page, or lint for contradictions/orphans/stale claims. Requires `/wiki-init` to have run. Use when ingesting a doc, asking a question against the knowledge base, or checking the wiki for contradictions and orphans.
 ---
 
 # wiki
