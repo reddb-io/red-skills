@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## tdd (engineering) — repoint review routing to `/code-review`, drop orphaned refactoring.md (issue #1137)
+
+- **status**: modified
+- **upstream**: `21f5976`
+- **why**: PRD #1132 — a name-collision bug: the closing line routed cleanup to `/review`, but `/review` is now the HTML-artifact annotation skill; the diff/cleanup reviewer is `/code-review`. The reference predated the `review` skill's repurposing. The bundled `refactoring.md` was left orphaned — nothing in SKILL.md linked it, and its refactor-candidates checklist is covered by `/code-review`'s cleanup mandate.
+- **what changed**:
+  - Closing line: "run `/review` on the branch to clean up" → "run `/code-review` on the branch to clean up".
+  - Deleted `refactoring.md` (orphaned; content covered by `/code-review`).
+
 ## git-guardrails-claude-code (misc) — reconcile with ADR 0083, prune, user-only flip (issue #1138)
 
 - **status**: modified
