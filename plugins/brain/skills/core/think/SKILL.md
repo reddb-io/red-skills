@@ -80,11 +80,6 @@ When `confidence` is `none` or `low`, or `missing_evidence` is non-empty:
 
 ### Brain-vs-Memory boundary
 
-| Dimension | Brain | Memory |
-|---|---|---|
-| What is stored | Human and project knowledge artifacts | Operational work facts and evidence |
-| Synthesis skill | `brain think` (cited, grounded answer) | `memory recall` (governed ranked hits, no synthesis) |
-| Store | `.red/brain/brain.rdb` | `.red/memory/graph.rdb` (or notes) |
-| Examples | Person bio, decision, open question, idea | Gotcha, why-note, validated approach |
+See [Brain-vs-Memory boundary](../../references/BRAIN_VS_MEMORY.md).
 
 </supporting-info>

@@ -36,12 +36,7 @@ When unsure, use `note`. Do not invent kinds outside the Brain vertex vocabulary
 
 ## 2. Check the Brain-vs-Memory boundary
 
-**Use Brain, not Memory, for Personal facts.** Before capturing, confirm the content belongs in Brain:
-
-- **Belongs in Brain**: biographical details, identity context, personal preferences, contact information, durable human decisions, knowledge about people and organizations, long-lived ideas, plans, and questions — anything the user wants to recall across sessions as human-facing knowledge.
-- **Belongs in Memory** (route to `/memory:store`): short operational facts from the current work session — a gotcha encountered, a why-note for a code decision, a validated approach, a scoped reminder for the agent.
-
-When the content is clearly about a person, relationship, or long-lived human preference, route to Brain even if a work session surfaced it. When the content is a code-level decision or engineering evidence, route to Memory.
+Confirm the content belongs in Brain before capturing — see [Brain-vs-Memory boundary](../../references/BRAIN_VS_MEMORY.md). If it is a short operational work fact (gotcha, why-note, code decision), route to `/memory:store` instead.
 
 ## 3. Capture
 
@@ -91,14 +86,7 @@ Report the artifact id and kind that was stored so the user can reference it lat
 
 ### Brain-vs-Memory boundary
 
-| Dimension | Brain | Memory |
-|---|---|---|
-| What is stored | Human and project knowledge artifacts | Operational work facts and evidence |
-| Who it serves | The human (recall, synthesis, decisions) | The agent (context packs, governed recall) |
-| Store | `.red/brain/brain.rdb` | `.red/memory/graph.rdb` (or notes) |
-| Skill to write | `brain capture` | `memory store` |
-| Skill to read | `brain search` / `brain think` | `memory recall` |
-| Examples | Person bio, open question, idea, past decision | Gotcha, why-note, validated approach |
+See [Brain-vs-Memory boundary](../../references/BRAIN_VS_MEMORY.md).
 
 ### Connection kinds
 

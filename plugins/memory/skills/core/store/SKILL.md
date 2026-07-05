@@ -19,8 +19,7 @@ way the fact is recallable later with `/memory:recall`.
 
 ## 1. Require init
 
-If memory is not configured (no `plugins.memory` block in `.red/config.yaml`, nor a legacy `.red/memory/config.json`), memory was never initialized — run
-`/memory:init` (or tell the user to) before storing.
+If memory is not configured — see [Memory preconditions](../../references/PRECONDITIONS.md) — run `/memory:init` before storing.
 
 ## 2. Store the fact
 
@@ -41,7 +40,7 @@ Report the note path or graph node id so the user knows what was captured.
 
 - ✅ Store a single, self-contained fact per call (a decision, a gotcha, a why-note).
 - ✅ Capture the *why*, not just the *what*, when the user is explaining a decision.
-- ❌ Don't store Personal facts, biographical details, identity context, or long-lived human preferences in Memory; route them to Brain with `brain capture`.
+- ❌ Don't store Personal facts (biographical details, identity context, long-lived human preferences) in Memory — see [Brain-vs-Memory boundary](../../../../brain/skills/references/BRAIN_VS_MEMORY.md) and route to `brain capture` instead.
 - ❌ Don't store secrets — notes are plain text on disk and may be committed.
 - ❌ Don't hand-write files into `notesDir` — go through the CLI so ids and frontmatter stay consistent.
 

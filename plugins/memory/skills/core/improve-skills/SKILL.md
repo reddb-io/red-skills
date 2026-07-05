@@ -53,9 +53,7 @@ The command writes proposals under:
 
 ## 2. Interpret states
 
-- `uninitialized` — Memory is not initialized; run `/memory:init` first if Skill self-improvement is desired.
-- `no-op` — Memory is initialized without graph mode; Skill telemetry cannot persist rollups here.
-- `unavailable` — graph mode exists but Skill telemetry is not enabled.
+See [init-chain state taxonomy](../../references/PRECONDITIONS.md#init-chain-state-taxonomy) — for `uninitialized`, run `/memory:init`; for `no-op`, re-run with `--mode graph`; for `unavailable`, add `--skill-telemetry`.
 - `no-candidates` — telemetry does not currently support a proposal.
 - `proposal-ready` — dry-run found proposal candidates but wrote no files. JSON summaries include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, `patchDrafted`, `score`, `priority`, and `scoreReasons` for machine-readable routing.
 - `proposal-written` — proposal files were written or refreshed for review, including recent failure evidence, a deterministic `Fingerprint`, and a draft structured patch block when the skill file has a safe unique insertion anchor.

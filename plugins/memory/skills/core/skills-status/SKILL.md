@@ -21,10 +21,8 @@ Use `--all` to include bundled plugin/hub skills, and `--json` when another scri
 
 ## 2. Interpret the state
 
-- `uninitialized` — Memory is not initialized. Recommend `memory init --mode graph --skill-telemetry` if the user wants self-improvement telemetry.
-- `no-op` — Memory exists but is not graph mode. Skill telemetry needs graph mode.
-- `unavailable` — graph mode exists, but the explicit `skillTelemetry` opt-in is off.
-- `enabled` — read partitioned rollups and recent events. Rollups are stored per skill/event marker so telemetry can scale beyond the engine KV value cap.
+See the [init-chain state taxonomy](../../references/PRECONDITIONS.md#init-chain-state-taxonomy). For the `uninitialized` case, recommend `memory init --mode graph --skill-telemetry`; for `no-op`, graph mode is required; for `unavailable`, the explicit `skillTelemetry` opt-in is off.
+- `enabled` — read partitioned rollups and recent events; rollups are stored per skill/event marker so telemetry scales beyond the engine KV value cap.
 
 Do not treat non-enabled states as errors; this command is a diagnostic and exits cleanly.
 

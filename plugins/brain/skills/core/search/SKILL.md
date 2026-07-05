@@ -86,12 +86,7 @@ Current ranking signals:
 
 ### Brain-vs-Memory boundary
 
-| Dimension | Brain | Memory |
-|---|---|---|
-| What is stored | Human and project knowledge artifacts | Operational work facts and evidence |
-| Read skill | `brain search` / `brain think` | `memory recall` |
-| Store | `.red/brain/brain.rdb` | `.red/memory/graph.rdb` (or notes) |
-| Examples | Person bio, decision, open question, idea | Gotcha, why-note, validated approach |
+See [Brain-vs-Memory boundary](../../references/BRAIN_VS_MEMORY.md).
 
 ### When to use `brain think` instead
 

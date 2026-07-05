@@ -23,8 +23,7 @@ plugin README.
 
 ## 1. Require init
 
-If memory is not configured (no `plugins.memory` block in `.red/config.yaml`, nor a legacy `.red/memory/config.json`), memory was never initialized — there is
-nothing to recall. Suggest `/memory:init`.
+If memory is not configured — see [Memory preconditions](../../references/PRECONDITIONS.md) — there is nothing to recall; suggest `/memory:init`.
 
 ## 2. Recall
 
