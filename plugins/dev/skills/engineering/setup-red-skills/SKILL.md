@@ -29,7 +29,7 @@ Scaffold includes:
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
 - **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
-- **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route one-off concrete work through `/go` (the retired `/ship` is never suggested — ADR 0081)
+- **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route one-off concrete work through `/go` (ADR 0081)
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -55,7 +55,7 @@ Assume the user does not know what these terms mean. Each section starts with a 
 
 **Section A0 — Plugin activation — ask first (the per-directory gate)**
 
-> Explainer: RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on every agent (Claude Code, Codex, opencode), but they must only act in repos that explicitly opt in. Each plugin's hook launcher checks, before doing anything, whether the current directory's `.red/config.yaml` sets `plugins.<name>.enabled: true` (ADR 0067, strict opt-in). No `.red/config.yaml` → every RedSkills plugin stays fully inert here (no bundle fetch, no hooks, no side effects). A `plugins.<name>` block alone is **not** enough — the flag must be the explicit `true`. This skill is the **only** thing authorized to create `.red/` and write these flags.
+> Explainer: RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on every agent (Claude Code, Codex, opencode), but they must only act in repos that explicitly opt in. Each plugin's hook launcher checks, before doing anything, whether the current directory's `.red/config.yaml` sets `plugins.<name>.enabled: true` (ADR 0067, strict opt-in). No `.red/config.yaml` → every RedSkills plugin stays fully inert here (no bundle fetch, no hooks, no side effects). A `plugins.<name>` block alone is **not** enough — the flag must be the explicit `true`.
 
 Ask the user which plugins to enable in this repo (multi-select; `dev` is the usual baseline):
 
@@ -63,7 +63,7 @@ Ask the user which plugins to enable in this repo (multi-select; `dev` is the us
 - **memory** — governed operational memory (recall/store/graph). After enabling, run `/memory:init` to choose the storage mode. Default no.
 - **brain** — the agentic command-center context. Default no.
 
-Record the choice; it drives the `plugins:` block written in step 4. Disabling a previously-enabled plugin is also valid here — set its flag to absent/`false`. Creating `.red/` (if missing) is authorized by this section; do not create it anywhere else, and never create it just to host one of the other sections — if the user enables no plugins, write nothing.
+Record the choice; it drives the `plugins:` block written in step 4. Disabling a previously-enabled plugin is also valid here — set its flag to absent/`false`. Creating `.red/` (if missing) is authorized by this section; never create it just to host one of the other sections — if the user enables no plugins, write nothing.
 
 **Section A — Issue tracker.**
 
@@ -121,9 +121,7 @@ Confirm with the user:
   - **Triggers** — ask whether they want the manual `workflow_dispatch` caller, the `issues: labeled` auto-trigger, or both. Fires on `ready-for-agent` (labeled, or an issue opened already carrying it) / manual dispatch.
   - Full reference: [`../afk/actions-lane.md`](../afk/actions-lane.md).
 
-For the complete three-prefix workflow catalogue (`reusable-*` / `rs-*` / `red-*` — which are adopter-installable vs. red-skills' own CI), see [WORKFLOWS.md](./WORKFLOWS.md).
-
-Future RedSkills workflows land in this same step: reusable workflows are `reusable-*`, red-skills' own CI is `red-*`, and any copy installed into an adopter is renamed `rs-*`.
+Future RedSkills workflows land in this same step, following the same three-prefix convention ([WORKFLOWS.md](./WORKFLOWS.md)).
 
 **Section E — Token efficiency (strongly recommended).**
 
@@ -303,6 +301,8 @@ Let them edit before writing.
 
 ### 4. Write
 
+**No-clobber rule (governs every write below).** Never overwrite, rewrite, or reorder content in a file this skill did not just create: if a target already exists, skip it, log a one-line notice, and move on — no second ask, and never `git add` on the user's behalf. Two surgical merges are the *only* exceptions, flagged at the steps that own them: updating `plugins.<name>.enabled` flags in an existing `.red/config.yaml`, and appending a missing `tmp/`/`state/` line to an existing `.red/.gitignore`. (Copied workflow YAML is the one "ask, don't silently skip" case — diff and ask first.)
+
 **Pick the file to edit:**
 
 - If `CLAUDE.md` exists, edit it.
@@ -337,7 +337,7 @@ Then write the three docs files using the seed templates in this skill folder as
 - [triage-labels.md](./triage-labels.md) — label mapping
 - [domain.md](./domain.md) — domain doc consumer rules + layout
 
-If the user accepted Section D, copy each standalone `red-*.yml` template the user picked from this skill folder's `workflows/` into `.github/workflows/` of the consumer repo **verbatim — keep the `red-*` filename, do not rename** (e.g. `workflows/red-issues-needs-triage.yml` → `.github/workflows/red-issues-needs-triage.yml`). These are standalone copy-installables, not reusable callers, so they keep their `red-*` prefix; only reusable **callers** get the `rs-*` prefix (see the AFK lane below). Don't overwrite an existing file — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
+If the user accepted Section D, copy each standalone `red-*.yml` template the user picked from this skill folder's `workflows/` into `.github/workflows/` of the consumer repo **verbatim — keep the `red-*` filename, do not rename** (e.g. `workflows/red-issues-needs-triage.yml` → `.github/workflows/red-issues-needs-triage.yml`): standalone copy-installables keep their `red-*` prefix, only reusable **callers** get renamed to `rs-*` (AFK lane below). Don't overwrite an existing file — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
 
 **If the user opted into the autonomous AFK execution lane** (Section D, default no), additionally:
 
@@ -350,7 +350,7 @@ If the user accepted Section D, copy each standalone `red-*.yml` template the us
 
 Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags:
 
-1. If `.red/config.yaml` already exists at the repo root, leave its existing content as-is **but surgically add/update the `plugins.<name>.enabled` flags** to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off). Touch nothing else — log a one-line notice (`.red/config.yaml present — merged plugin activation flags, left the rest as-is`). This targeted merge is the only edit permitted to an existing file.
+1. If `.red/config.yaml` already exists at the repo root, apply the **plugin-flags exception** to the no-clobber rule: surgically add/update the `plugins.<name>.enabled` flags to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off), touch nothing else, and log `.red/config.yaml present — merged plugin activation flags, left the rest as-is`.
 2. Otherwise, ensure `.red/` exists (this section is the authorized creator) and copy [config-template.yaml](./config-template.yaml) to `.red/config.yaml`, then set the top `plugins:` block's `enabled` flags to match Section A0 (the template ships with `plugins.dev.enabled: true` as the baseline and `memory`/`brain` commented — uncomment/flip per the choice). The rest of the template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads, so it stays a no-op until the user uncomments a line — including the commented `command_guard` and `afk.backpressure` blocks.
 3. **Self-ignore `.red/`'s ephemeral state.** Whenever `.red/` exists (fresh scaffold or pre-existing), make the directory protect itself so `.red/tmp` and `.red/state` never get committed regardless of the repo-root `.gitignore`. Write `.red/.gitignore` if it is **missing** with exactly:
 
@@ -360,7 +360,7 @@ Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags
    state/
    ```
 
-   If `.red/.gitignore` already **exists**, leave it untouched **except** to append whichever of the two patterns (`tmp/`, `state/`) is missing — same non-clobber discipline as the config merge above; never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`) committable — only `tmp/` and `state/` are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
+   If `.red/.gitignore` already **exists**, apply the **gitignore-append exception**: append whichever of the two patterns (`tmp/`, `state/`) is missing, and never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`) committable — only `tmp/` and `state/` are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
 4. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 5. **Command guard write (only when Section G1 was explicitly accepted).** Update `.red/config.yaml` with the confirmed `command_guard` policy. If the file is fresh, replace the commented placeholder with the confirmed block. If the file already existed, merge only the accepted `command_guard.global`, `command_guard.main`, and/or `command_guard.worktree` entries, appending without duplicates and preserving unrelated content. If a legacy `command_guard.deny` block exists, leave it intact unless the user explicitly approved migrating it to `global`.
 6. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
@@ -380,7 +380,7 @@ If the user accepted Section F, wire the statusline:
 If the user confirmed any hook scripts from Section I:
 
 1. For each confirmed suggestion, ensure `.red/hooks/<point>/` exists (create the directory; `.red/` is already authorized by Section A0 — subdirectories under it are permitted).
-2. Write `.red/hooks/<point>/<name>` with the script content. **If the file already exists, skip it silently** — log a one-line notice (`.red/hooks/<point>/<name> already exists — not overwriting`) and move on. Never overwrite.
+2. Write `.red/hooks/<point>/<name>` with the script content. Per the no-clobber rule, if the file already exists, skip it silently — log `.red/hooks/<point>/<name> already exists — not overwriting` and move on.
 3. Update `.red/config.yaml`: add the script path under the `afk.hooks.<point>:` list. Use the relative-to-root form `bash .red/hooks/<point>/<name>` as the command string. If the key already has entries, append without duplicating; if missing, add it. The `afk:` → `hooks:` → `<point>:` nesting matches the config-template structure.
 4. Do **not** `git add` any of the written files or the updated config.
 
