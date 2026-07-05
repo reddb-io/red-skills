@@ -80,21 +80,9 @@ remaining text.
 
 User invokes `/ff implement error handling for this API`.
 
-**Step 1 output (stop — wait for the user's pick):**
-
-```
-How do you want to rewrite your content?
-
-I think you want (e), because it's an implementation task that could be scoped as a ticket.
-
-(a) For a junior dev
-(b) For a 10-year-old
-(c) For a senior dev
-(d) As an improved prompt
-(e) As an implementable issue
-(f) As a decision request
-(g) Short and direct
-```
+**Step 1 output (stop — wait for the user's pick):** print the Step 1 framing
+menu (see `<what-to-do>`), recommending `(e)` — "because it's an implementation
+task that could be scoped as a ticket."
 
 User replies: `e`
 
@@ -124,13 +112,5 @@ User replies: `yes` → carry out the implementation task described above.
 - **(e) As an implementable issue**: title, context, scope, acceptance criteria, and validation.
 - **(f) As a decision request**: decision needed, options, tradeoffs, recommendation, and what answer unblocks.
 - **(g) Short and direct**: the shortest clear version.
-
-## Why two steps
-
-The user picks the framing by label *before* any rewrite is generated. This is
-cheaper and cleaner than producing all seven previews up front, at the cost of
-not comparing finished rewrites side by side or mixing two framings. The Step 2
-Yes/no makes dispatch an explicit, per-invocation choice; `-d` is the shortcut
-for users who already know they want to execute.
 
 </supporting-info>

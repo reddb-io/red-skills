@@ -32,9 +32,7 @@ A beat is sized by what it needs:
 
 If a "beat" needs five paragraphs and three subheadings, it's not a beat — it's two beats glued together. Split it.
 
-## Writing one beat
-
-Once a beat is picked, write _that beat only_ to the article file. Do not write the next beat.
+## Pulling from the pile
 
 Pull material from the raw pile to populate the beat. You can paraphrase, split, recombine, or quote. The pile is a quarry.
 
