@@ -8,7 +8,12 @@ disable-model-invocation: true
 
 **Wire the RedSkills statusline surface for the host the agent is running under — stop immediately if a gate condition is met.** RedSkills is client/CLI/coder/runner agnostic: the dev bundle owns one `statusline` producer, and each host gets the richest integration it actually supports. Claude Code can render the shared producer directly as a command-backed statusLine. Codex currently exposes only native footer widgets, so the skill configures those widgets and relies on the dev plugin's SessionStart hook to keep the footer present across Codex config rewrites.
 
-Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and the live AFK issue block: workers, ready queue count, ready-for-human count, diffstat, current issue numbers, and runner labels. The line is quiet when no AFK worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
+Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and live AFK state. **The two hosts get two shapes (per-runner split, ADR 0003):**
+
+- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%` — **then one line per live AFK worker**. Each worker line is the SAME compact row `/afk monitor --once` prints (single source of truth — worker id, stage, issue, elapsed, `+A -R`, tokens), so the two surfaces never drift. Zero live workers → only the header line.
+- **Codex — single line.** The `tui.status_line` footer is single-line only, so the plain producer stays ONE aggregate line (project · model · context · usage · repo counts · the AFK block). The multi-line layout is Claude-Code-only.
+
+The AFK rows are quiet when no worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
 
 **Host capabilities differ; the product architecture should not.** Treat the RedSkills statusline as:
 
@@ -50,7 +55,7 @@ printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PW
   | <the step-4 statusLine command>
 ```
 
-It should print a line like `red-skills (main) · Opus`.
+It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`); when AFK workers are live it prints one additional row per worker below it. Under `NO_COLOR` the same command collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
 
 ## Codex
 
