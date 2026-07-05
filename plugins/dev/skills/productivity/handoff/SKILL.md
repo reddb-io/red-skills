@@ -2,6 +2,7 @@
 name: handoff
 description: Compact the current conversation into a handoff document for another agent to pick up.
 argument-hint: "What will the next session be used for?"
+disable-model-invocation: true
 ---
 
 **Hand over context, not content — reference existing artifacts; do not reproduce them.** The next agent needs enough to continue, not a transcript.
