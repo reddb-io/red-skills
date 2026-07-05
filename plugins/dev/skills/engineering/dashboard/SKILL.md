@@ -2,35 +2,27 @@
 name: dashboard
 description: Shows a RedSkills operational dashboard with issue, PRD, AFK worker, flow, and DORA-proxy metrics from GitHub plus local AFK state. Use when the user invokes `/dashboard`, asks for RedSkills process metrics, workers running, open PRDs/issues, cycle time, or DORA metrics.
 argument-hint: "[--period N|Nd] [--json] [--human]"
+disable-model-invocation: true
 ---
 
 # /dashboard
 
-**Wrapper over the dev runtime — never hand-calculate.**
+<what-to-do>
 
-Render the RedSkills process dashboard.
+**Wrapper over the dev runtime — see [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run shim and output-format rules.**
 
-## Run
+Run: `red-skills-dev dashboard [--period 30d] [--json]`
 
-Run the host-level RedSkills dev runtime shim:
+Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]`
 
-```bash
-red-skills-dev dashboard [--period 30d] [--json]
-```
+</what-to-do>
 
-When developing inside the red-skills source checkout, this repo-local path is
-also valid:
+<supporting-info>
 
-```bash
-node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]
-```
+## Output format detail
 
-## Output format
-
-**TOON by default** (PRD #928 / ADR 0081) — the agent-facing wire format is
-token-cheap by design: pre-computed aggregate groups, minimal schemas, and a
-definitive `warnings[0]:` empty state. `--json` forces raw JSON (tooling escape
-hatch); `--human` prints the prose dashboard for a terminal read.
+The TOON wire format uses pre-computed aggregate groups, minimal schemas, and a
+definitive `warnings[0]:` empty state.
 
 ## Metrics
 
@@ -48,3 +40,5 @@ hatch); `--human` prints the prose dashboard for a terminal read.
 The DORA values are explicit proxies, not compliance claims. Change failure and
 MTTR depend on issue labels such as `type:bug`, `bug`, `regression`, `incident`,
 `type:incident`, or `blocked:validation`.
+
+</supporting-info>
