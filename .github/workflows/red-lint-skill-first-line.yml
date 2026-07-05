@@ -1,9 +1,13 @@
 name: red-lint-skill-first-line
 
-# Report-only lint: every shipped SKILL.md should open with a bold imperative
-# lead-in (**…** as the first content character). Findings are printed but the
-# job never fails — it exists to surface drift toward the convention, not to
-# block unrelated PRs.
+# Report-only lint suite for shipped SKILL.md files. Every step prints findings
+# but the job NEVER fails — it exists to surface drift toward the house
+# conventions, not to block unrelated PRs. Steps:
+#   1. first-line bold imperative lead-in (**…** as the first content char)
+#   2. skill-body hygiene: description budget + "Use when" on model-invocable
+#      skills, <what-to-do> on bodies over ~100 lines, and orphaned bundled
+#      markdown files (cross-skill references allowed via a plugin-wide search).
+#      The test step exercises both fixture trees before the repo sweep runs.
 
 on:
   pull_request:
@@ -22,3 +26,9 @@ jobs:
 
       - name: Check bold imperative lead-in in SKILL.md files
         run: bash scripts/lint-skill-first-line.sh
+
+      - name: Test skill-body lint against fixtures
+        run: bash scripts/test-lint-skill-body.sh
+
+      - name: Report skill-body hygiene (description budget, house tags, orphans)
+        run: bash scripts/lint-skill-body.sh

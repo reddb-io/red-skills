@@ -1,0 +1,121 @@
+---
+name: bad
+description: A verbose model-invocable description that rambles well past the character budget without ever telling the reader the trigger phrase, padding itself with clause after clause after clause so that it comfortably exceeds five hundred characters and therefore trips both the missing-trigger arm and the over-budget arm of the description-discipline check at the same time, which is exactly what this violating fixture is here to demonstrate for the bundled shell test that guards the report-only skill-body lint against regressions over time and again.
+---
+
+# bad
+
+This body deliberately exceeds one hundred lines and never declares the
+house directive tag, so it trips the house-tag check. It also bundles an
+unreferenced companion file it deliberately never names.
+
+Filler line 1 to push the body past the threshold.
+Filler line 2 to push the body past the threshold.
+Filler line 3 to push the body past the threshold.
+Filler line 4 to push the body past the threshold.
+Filler line 5 to push the body past the threshold.
+Filler line 6 to push the body past the threshold.
+Filler line 7 to push the body past the threshold.
+Filler line 8 to push the body past the threshold.
+Filler line 9 to push the body past the threshold.
+Filler line 10 to push the body past the threshold.
+Filler line 11 to push the body past the threshold.
+Filler line 12 to push the body past the threshold.
+Filler line 13 to push the body past the threshold.
+Filler line 14 to push the body past the threshold.
+Filler line 15 to push the body past the threshold.
+Filler line 16 to push the body past the threshold.
+Filler line 17 to push the body past the threshold.
+Filler line 18 to push the body past the threshold.
+Filler line 19 to push the body past the threshold.
+Filler line 20 to push the body past the threshold.
+Filler line 21 to push the body past the threshold.
+Filler line 22 to push the body past the threshold.
+Filler line 23 to push the body past the threshold.
+Filler line 24 to push the body past the threshold.
+Filler line 25 to push the body past the threshold.
+Filler line 26 to push the body past the threshold.
+Filler line 27 to push the body past the threshold.
+Filler line 28 to push the body past the threshold.
+Filler line 29 to push the body past the threshold.
+Filler line 30 to push the body past the threshold.
+Filler line 31 to push the body past the threshold.
+Filler line 32 to push the body past the threshold.
+Filler line 33 to push the body past the threshold.
+Filler line 34 to push the body past the threshold.
+Filler line 35 to push the body past the threshold.
+Filler line 36 to push the body past the threshold.
+Filler line 37 to push the body past the threshold.
+Filler line 38 to push the body past the threshold.
+Filler line 39 to push the body past the threshold.
+Filler line 40 to push the body past the threshold.
+Filler line 41 to push the body past the threshold.
+Filler line 42 to push the body past the threshold.
+Filler line 43 to push the body past the threshold.
+Filler line 44 to push the body past the threshold.
+Filler line 45 to push the body past the threshold.
+Filler line 46 to push the body past the threshold.
+Filler line 47 to push the body past the threshold.
+Filler line 48 to push the body past the threshold.
+Filler line 49 to push the body past the threshold.
+Filler line 50 to push the body past the threshold.
+Filler line 51 to push the body past the threshold.
+Filler line 52 to push the body past the threshold.
+Filler line 53 to push the body past the threshold.
+Filler line 54 to push the body past the threshold.
+Filler line 55 to push the body past the threshold.
+Filler line 56 to push the body past the threshold.
+Filler line 57 to push the body past the threshold.
+Filler line 58 to push the body past the threshold.
+Filler line 59 to push the body past the threshold.
+Filler line 60 to push the body past the threshold.
+Filler line 61 to push the body past the threshold.
+Filler line 62 to push the body past the threshold.
+Filler line 63 to push the body past the threshold.
+Filler line 64 to push the body past the threshold.
+Filler line 65 to push the body past the threshold.
+Filler line 66 to push the body past the threshold.
+Filler line 67 to push the body past the threshold.
+Filler line 68 to push the body past the threshold.
+Filler line 69 to push the body past the threshold.
+Filler line 70 to push the body past the threshold.
+Filler line 71 to push the body past the threshold.
+Filler line 72 to push the body past the threshold.
+Filler line 73 to push the body past the threshold.
+Filler line 74 to push the body past the threshold.
+Filler line 75 to push the body past the threshold.
+Filler line 76 to push the body past the threshold.
+Filler line 77 to push the body past the threshold.
+Filler line 78 to push the body past the threshold.
+Filler line 79 to push the body past the threshold.
+Filler line 80 to push the body past the threshold.
+Filler line 81 to push the body past the threshold.
+Filler line 82 to push the body past the threshold.
+Filler line 83 to push the body past the threshold.
+Filler line 84 to push the body past the threshold.
+Filler line 85 to push the body past the threshold.
+Filler line 86 to push the body past the threshold.
+Filler line 87 to push the body past the threshold.
+Filler line 88 to push the body past the threshold.
+Filler line 89 to push the body past the threshold.
+Filler line 90 to push the body past the threshold.
+Filler line 91 to push the body past the threshold.
+Filler line 92 to push the body past the threshold.
+Filler line 93 to push the body past the threshold.
+Filler line 94 to push the body past the threshold.
+Filler line 95 to push the body past the threshold.
+Filler line 96 to push the body past the threshold.
+Filler line 97 to push the body past the threshold.
+Filler line 98 to push the body past the threshold.
+Filler line 99 to push the body past the threshold.
+Filler line 100 to push the body past the threshold.
+Filler line 101 to push the body past the threshold.
+Filler line 102 to push the body past the threshold.
+Filler line 103 to push the body past the threshold.
+Filler line 104 to push the body past the threshold.
+Filler line 105 to push the body past the threshold.
+Filler line 106 to push the body past the threshold.
+Filler line 107 to push the body past the threshold.
+Filler line 108 to push the body past the threshold.
+Filler line 109 to push the body past the threshold.
+Filler line 110 to push the body past the threshold.
