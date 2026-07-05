@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## git-guardrails-claude-code (misc) — reconcile with ADR 0083, prune, user-only flip (issue #1138)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — this skill contradicted `branch-lock` on `dev.lock.primary-branch`: it presented the key as the guard's enabler and claimed "missing file/key means off", while ADR 0083 §2 makes the primary-branch guard fire unconditionally under `plugins.dev.enabled: true`. It also duplicated `branch-lock`'s docs and interleaved steps with reference.
+- **what changed**: Rewrote the primary-branch-guard section to the unconditional ADR 0083 semantics; removed the "missing key means off" claim; the legacy `dev.lock.primary-branch` key is now described as read-only history in one line. Shrank the branch-lock-awareness block to a one-line pointer at `branch-lock`. Collapsed the near-identical project/global JSON hook blocks to one block with the path delta described in a sentence. Added the house `<what-to-do>`/`<supporting-info>` split. Added `disable-model-invocation: true` (setup wizard, deliberately fired; the guard runs via hooks, not skill invocation). Prose-only — no hook/script behavior touched.
+
+## branch-lock (misc) — prune to `<what-to-do>` first, dedup block-vs-allow, user-only flip (issue #1138)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — heaviest skill in the misc bucket (206 lines) with a ~46-line reference preamble before `<what-to-do>` and block-vs-allow behaviour stated three times.
+- **what changed**: Moved the reference preamble (guard rationale, ADR 0083 background, work-loss family, enforcement notes) into `<supporting-info>` so no reference material precedes `<what-to-do>`. Collapsed block-vs-allow to a single authoritative section (removed the preamble enumeration and the later restatement). Compressed the deprecated-key YAML example to one line. Deleted the "Scope of this slice" / PRD-status block. Added `disable-model-invocation: true` (lock-management command, deliberately fired; the guard runs via hooks). Prose-only — no hook/script behavior touched.
+
 ## ship (engineering) — shrunk to a user-only redirect stub (issue #1136)
 
 - **status**: modified
