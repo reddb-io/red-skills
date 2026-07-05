@@ -1,6 +1,7 @@
 ---
 name: setup-statusline
 description: Install or inspect the RedSkills statusline for the active host. RedSkills has one shared `statusline` producer in the dev bundle; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
+disable-model-invocation: true
 ---
 
 # Statusline
@@ -37,40 +38,16 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 }
 ```
 
-**Why this shape, not `$CLAUDE_PLUGIN_ROOT`.** Claude Code does **not** export
-`CLAUDE_PLUGIN_ROOT` (nor `CLAUDE_PROJECT_DIR`) to a `statusLine` command — those
-are only set for plugin hooks and MCP/LSP subprocesses. A statusLine that
-references `$CLAUDE_PLUGIN_ROOT` expands it to an empty string and fails with
-`Cannot find module` — the statusline then silently renders blank.
-
-**Why the cached bundle, not `afk.mjs` directly.** Since ADR 0038, the installed
-`afk.mjs` is a tiny **launcher that fetches** the real runtime bundle from the
-GitHub release on first use (caching it at
-`~/.cache/red-skills/bundles/dev-<version>.bundle.min.mjs`). Pointing the
-statusLine straight at the launcher means **every plugin update** lands a new
-version whose bundle is not cached yet, so the launcher tries a **synchronous
-network download inside the statusline render** — which blows the render's tight
-timeout (blank statusline), or fails outright if that version's release asset is
-not published yet. The command above instead runs the **highest-version
-already-fetched bundle** (`ls -1 …/.cache/red-skills/bundles/dev-*.bundle.min.mjs | sort -V | tail -1`
-— `sort -V` picks the highest semver, NOT `ls -t` which picks newest-by-mtime and
-can resolve an OLD version when an older dir was touched/re-extracted more recently) —
-no network in the hot path, so an update never blanks the line; it keeps showing
-the last good bundle until a normal `afk` run (or a SessionStart pre-fetch)
-caches the new one. It falls back to the launcher only when the cache is empty
-(first-ever install), to bootstrap. The project root is **not** passed as an
-argument: the AFK `statusline` subcommand reads it from `workspace.project_dir`
-in the JSON Claude Code pipes on stdin, which the `sh -c` wrapper forwards
-intact.
+**Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** read [`HOST-NOTES.md`](HOST-NOTES.md) → *Claude Code*. The command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
 
 Use `jq` to merge when `.claude/settings.json` already exists; create `.claude/`
 and a fresh file when it is missing. Keep unrelated settings intact.
 
-5. Verify: confirm `.claude/settings.json` is valid JSON and has `.statusLine.command`. Unlike the old `$CLAUDE_PLUGIN_ROOT` form, you **can** prove this one renders by piping a minimal session JSON to it:
+5. Verify: confirm `.claude/settings.json` is valid JSON and has `.statusLine.command`. Unlike the old `$CLAUDE_PLUGIN_ROOT` form, you **can** prove this one renders by piping a minimal session JSON into the **same `sh -c '…'` command from step 4** (no need to re-type it):
 
 ```bash
 printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PWD" \
-  | sh -c 'b=$(ls -1 "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z "$b" ] && b=$(ls -1 "$HOME"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n "$b" ] && exec node "$b" statusline'
+  | <the step-4 statusLine command>
 ```
 
 It should print a line like `red-skills (main) · Opus`.
@@ -111,15 +88,7 @@ per-repo like the Claude path):
 status_line = ["project", "git-branch", "model-with-reasoning", "context-remaining", "task-progress"]
 ```
 
-**Surviving Codex config resets.** That global `tui.status_line` gets dropped
-whenever Codex rewrites `~/.codex/config.toml` (e.g. re-syncing plugin
-`[hooks.state]` on update), blanking the footer "every update". The dev plugin's
-Codex `SessionStart` hook re-asserts it: `hooks/ensure-codex-statusline.mjs`
-inserts `status_line` **only when absent** (never clobbers an operator's own
-value) via an **atomic** write (temp + rename — a race with Codex's writer can
-lose the update but never corrupt the file). So a reset self-heals on the next
-session start. The hook is additive and idempotent; disable it by removing the
-second `SessionStart` entry in `hooks/codex.hooks.json`.
+**Surviving Codex config resets.** A global `tui.status_line` gets dropped when Codex rewrites `~/.codex/config.toml`, but the dev plugin's Codex `SessionStart` hook re-asserts it so a reset self-heals on the next session start — why and how (the additive, atomic, absent-only re-write) is in [`HOST-NOTES.md`](HOST-NOTES.md) → *Codex*.
 
 This is intentionally host-global and plugin-gated. Codex stores footer
 preferences in `~/.codex/config.toml`, while RedSkills gates global hook side
@@ -138,12 +107,7 @@ AFK bundle so the line matches Claude Code's.
 
 ## OpenCode
 
-OpenCode is not a Codex/Claude-style host UI in RedSkills. It is the AFK
-API-auth runner lane selected explicitly with `--runner opencode` or
-`RED_AFK_RUNNER=opencode`; AFK observes it through the same GitHub envelopes,
-worker logs, `/afk monitor`, `/afk dashboard`, and Actions output as any other
-runner. There is no OpenCode footer/statusline adapter to install here because
-there is no interactive RedSkills-hosted OpenCode plugin surface.
+Nothing to install: OpenCode is an AFK API-auth runner lane (`--runner opencode`), not an interactive host UI, so it has no footer/statusline adapter — observe it through `/afk monitor`, `/afk dashboard`, and Actions output like any other runner.
 
 ## Notes
 

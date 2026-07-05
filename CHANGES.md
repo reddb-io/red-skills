@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## doctor (engineering) — move `--fix` Apply table behind a branch-gated pointer, trim MCP-wiring archaeology (issue #1145)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — the ~18-row Apply table plus most of the Fix pass are used **only** when `--fix` is passed, yet the default read-only diagnose pass (the common path) paid for them inline; the MCP-wiring check also carried cancelled-migration history the current rule does not need.
+- **what changed**: Moved the whole Apply table (finding → `--fix` action + gate) into a bundled sibling `APPLY.md`, behind a one-line "running with `--fix` → read `APPLY.md`" pointer at the Fix pass (Pass 2). The findings→owner mapping now lives in exactly one home — the inline *Fix-home* table — while `APPLY.md` layers action+gate on top of it. Trimmed the MCP-wiring check's (check 8) reversed-amendment / archived-repo history to a single parenthetical sentence, keeping the current finding rule intact. The read-only diagnose pass now contains no `--fix` Apply detail.
+
+## setup-statusline (engineering) — move per-host rationale behind pointers, de-dup the bundle-resolution command (issue #1145)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #1132 — three host branches each carried deep rationale inline that only that branch needs, the long `sh -c` bundle-resolution command was duplicated verbatim across the install and verify steps, and the skill lacked the setup-wizard `disable-model-invocation: true` flag.
+- **what changed**: Moved the Claude-only "why this shape, not the plugin-root variable" + "why the cached bundle, not the runtime script" blocks and the Codex-only "surviving config resets" block into a bundled `HOST-NOTES.md`, behind per-branch one-line pointers. Factored the `sh -c` command so it appears exactly once (the verify step now references the install step's command instead of re-inlining it). Shrank the OpenCode nothing-to-install section to one line and added `disable-model-invocation: true` to the frontmatter. The installed statusLine command is byte-identical (verified) — prose moved, command untouched, still cached-bundle-first per ADR 0084.
+
 ## wiki (knowledge) — extract single-branch C4 section behind pointers, adopt house tags (issue #1144)
 
 - **status**: modified
