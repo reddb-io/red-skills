@@ -30,6 +30,9 @@ jobs:
       - name: Test workflow security pins
         run: scripts/test-workflow-security-pins.sh
 
+      - name: Test canary channel promotion contract
+        run: scripts/test-afk-promote-channel.sh
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
