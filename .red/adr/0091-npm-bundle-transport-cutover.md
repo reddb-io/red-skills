@@ -64,13 +64,18 @@ registry shasum/provenance integrity, and **no postinstall download**.
    prerelease build; it is a dist-tag pointer moved after publish. Cosign install
    + manifest signing are removed. Bundle assets are still uploaded to the
    GitHub Release as an **inert backup** the client never reads.
-5. **Version.** Versioning stays on the **1.x line** — the release auto-bump
-   owns the version, and the npm package publishes at whatever version the
-   release computes (maintainer decision on #1200: the transport cutover is
-   architectural, not semver). No major bump is needed for safety: the old
-   channel never verified a single release (there is no working installed base
-   to fence off), and launchers are replaced wholesale by marketplace plugin
-   updates, not by self-update across the transport break.
+5. **Version.** The maintainer decision on #1200 was to keep the npm transport
+   cutover on the **1.x line** because the change was architectural, not semver:
+   the old channel never verified a single release, and launchers are replaced
+   wholesale by marketplace plugin updates rather than by self-update across the
+   transport break. Reality diverged on 2026-07-06: `red-release` shipped
+   **v2.0.0** because an agent-authored breaking-change marker escalated the
+   conventional-commit bump to major. The maintainer accepted the 2.x line after
+   publication, so 2.x is the line going forward. The durable policy is the
+   release guard from issue #1203: a future major bump requires the maintainer to
+   set `RED_RELEASE_ALLOW_MAJOR=true`, the workflow consumes that variable after
+   a major decision, and breaking markers without that opt-in degrade to `minor`
+   with a warning naming the commits that requested major.
 
 ### Memory / Brain runtimes are deliberately NOT redesigned
 
