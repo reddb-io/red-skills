@@ -42,6 +42,8 @@ import {
 import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
+import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
@@ -1329,6 +1331,7 @@ export function buildProcessDeps(
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+    recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
     // PRD cascade rebase (issue #1007): after a successful DONE landing, rebase
     // every open sibling branch (same prd:N, not held by a live worker) onto the
     // new base HEAD. Best-effort — failures log a warning, never fail the close.
@@ -1500,6 +1503,59 @@ function makeRecordAttempt(
       process.stderr.write(`[afk] memory attempt-record skipped (best-effort): ${String(err)}\n`);
     }
   };
+}
+
+function makeRecordOutcomeEvent(
+  gitRoot: string,
+  current: CurrentAttempt,
+  exec?: ExecFn,
+): (event: OutcomeEvent) => Promise<void> {
+  return async (event: OutcomeEvent): Promise<void> => {
+    try {
+      const configPath = join(gitRoot, ".red", "config.yaml");
+      const configText = readFileSync(configPath, "utf8");
+      if (!pluginEnabledInConfig(configText, "brain")) return;
+      const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
+      const brainCli = resolveBrainCli(gitRoot, env);
+      if (!brainCli) return;
+      const dir = current.attemptDir || gitRoot;
+      await fsx.ensureDir(dir);
+      const json = JSON.stringify(event);
+      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}-a${event.context?.attemptNumber ?? "unknown"}.json`), json, "utf8");
+      const run = exec ?? (await import("../runtime/exec.js")).execTool;
+      const [cmd, ...head] = brainCli;
+      await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env,
+        input: json,
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] brain outcome-event skipped (best-effort): ${String(err)}\n`);
+    }
+  };
+}
+
+function resolveBrainCli(gitRoot: string, env: NodeJS.ProcessEnv): string[] | undefined {
+  const override = env.RED_BRAIN_CLI;
+  if (override) return existsSync(override) ? ["node", override] : undefined;
+  const pathHit = findOnPath("brain", env.PATH);
+  if (pathHit) return ["brain"];
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT ?? env.CODEX_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const sibling = join(pluginRoot, "..", "brain", "dist", "cli.js");
+    if (existsSync(sibling)) return ["node", sibling];
+  }
+  const inRepo = join(gitRoot, "plugins", "brain", "dist", "cli.js");
+  if (existsSync(inRepo)) return ["node", inRepo];
+  return undefined;
+}
+
+function findOnPath(bin: string, pathValue: string | undefined): string | undefined {
+  for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
+    const candidate = join(dir, bin);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /** Per-issue mutable context the session-scoped process deps close over — the
