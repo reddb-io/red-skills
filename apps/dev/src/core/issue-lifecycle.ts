@@ -66,7 +66,13 @@ export const BLOCKED_LABELS = [
 ] as const;
 
 export const ISSUE_LIFECYCLE_TRANSITIONS: readonly IssueLifecycleTransition[] = [
-  { edge: "claim", from: "ready-for-agent", to: "claimed/active" },
+  // `claim` normalizes any pre-active state into claimed/active: it sheds the
+  // conflicting labels (blocked:*/ready-for-human) in the SAME edit as it adds
+  // `running`. It is legal from ready-for-agent (normal), ready-for-human (a
+  // lane:go issue claimed past preflight, #1045), and an illegal mixed-blocked
+  // set that the claim edit cleans up (#402). The `to` still has to be
+  // claimed/active — a claim that lands anywhere else finds no row and throws.
+  { edge: "claim", from: "*", to: "claimed/active" },
   { edge: "retry", from: "claimed/active", to: "ready-for-agent" },
   { edge: "dependency-unblocked", from: "blocked:dependency", to: "ready-for-agent" },
   { edge: "dependency-blocked", from: "ready-for-agent", to: "blocked:dependency" },
@@ -74,8 +80,11 @@ export const ISSUE_LIFECYCLE_TRANSITIONS: readonly IssueLifecycleTransition[] = 
   { edge: "validation-blocked", from: "claimed/active", to: "blocked:validation" },
   { edge: "human-blocked", from: "*", to: "ready-for-human" },
   { edge: "human-blocked", from: "*", to: "blocked:validation" },
-  { edge: "human-delegable", from: "ready-for-human", to: "ready-for-agent" },
-  { edge: "human-delegable", from: "blocked:validation", to: "ready-for-agent" },
+  // `human-delegable` (a HITL "delegable" disposition) clears a human park back
+  // to ready-for-agent. It is legal from ready-for-human and blocked:validation,
+  // and also from an illegal mixed-blocked set that the delegable resolution
+  // sheds on the way out (the "sheds stale blocked:* labels" case) — hence `*`.
+  { edge: "human-delegable", from: "*", to: "ready-for-agent" },
   { edge: "manual-landing", from: "claimed/active", to: "landing:manual" },
   { edge: "close", from: "claimed/active", to: "closed" },
   { edge: "close", from: "landing:manual", to: "closed" },
@@ -122,7 +131,10 @@ export function classifyIssueLifecycleState(labels: readonly string[]): IssueLif
   if (blocked.length > 1) return "illegal";
   if ((hasReady || hasRunning) && hasBlocked) return "illegal";
   if (hasReady && hasRunning) return "illegal";
-  if (hasManualLanding && !hasHuman && !hasReady) return "illegal";
+  // `landing:manual` is a MODE flag that must ride a real state: queued
+  // (ready-for-agent), active (running, #1049 works the issue before parking it),
+  // or human-parked. Alone it is illegal.
+  if (hasManualLanding && !hasHuman && !hasReady && !hasRunning) return "illegal";
 
   if (hasManualLanding && hasHuman) return "landing:manual";
   if (hasRunning) return "claimed/active";
@@ -143,8 +155,13 @@ export function explainIllegalIssueLifecycleLabels(labels: readonly string[]): s
   if (labels.includes(LABEL_READY) && labels.includes(LABEL_RUNNING)) {
     return `issue cannot carry both ${LABEL_READY} and ${LABEL_RUNNING}`;
   }
-  if (labels.includes(LABEL_LANDING_MANUAL) && !labels.includes(LABEL_HUMAN) && !labels.includes(LABEL_READY)) {
-    return `${LABEL_LANDING_MANUAL} must ride a queued or human-parked issue`;
+  if (
+    labels.includes(LABEL_LANDING_MANUAL) &&
+    !labels.includes(LABEL_HUMAN) &&
+    !labels.includes(LABEL_READY) &&
+    !labels.includes(LABEL_RUNNING)
+  ) {
+    return `${LABEL_LANDING_MANUAL} must ride a queued, active, or human-parked issue`;
   }
   return null;
 }

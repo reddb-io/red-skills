@@ -99,11 +99,14 @@ describe("issue lifecycle transition table", () => {
   it("rejects illegal transitions with an actionable edge name", () => {
     let thrown: unknown;
     try {
+      // `claim` normalizes any pre-active state INTO claimed/active, so it is the
+      // destination that constrains it: a claim that lands somewhere other than
+      // claimed/active (here ready-for-human) has no legal row.
       validateIssueLifecycleTransition({
         edge: "claim",
-        fromLabels: ["ready-for-human"],
-        removeLabels: ["ready-for-human"],
-        addLabels: ["running"],
+        fromLabels: ["ready-for-agent"],
+        removeLabels: ["ready-for-agent"],
+        addLabels: ["ready-for-human"],
       });
     } catch (error) {
       thrown = error;
