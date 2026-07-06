@@ -20,7 +20,7 @@
 // branch, model + effort, context tokens + percent, and the aggregated worker
 // counts), and this module assembles the exact plain-text line byte-for-byte
 // with statusline.sh's section assembly and optional-drop behaviour. The stdin
-// parse, the worker-state read, the git/gh reads, the 60 s GitHub-count cache,
+// parse, the worker-state read, the git/gh reads, the 240 s GitHub-count cache,
 // and the OSC-8/ANSI colouring all belong to the orchestration slice and are
 // out of scope — the test asserts the plain/structural content exactly as
 // statusline.test.sh does after stripping escapes.
