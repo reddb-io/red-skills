@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AiProviderConfig } from "./extract-conversation.js";
+import type { RecallRankingConfig } from "./recall-ranking.js";
 import { mergeMemoryBlock, parsePluginsMemory } from "./shared-config.js";
 
 /** Storage backends the `memory init` wizard can configure. */
@@ -67,6 +68,12 @@ export interface MemoryConfig {
     /** Per-session byte budget for L2 events. Default {@link DEFAULT_L2_BYTE_BUDGET} (16 MiB). */
     byteBudget?: number;
   };
+  /**
+   * Deterministic governed-recall ranking pipeline overrides. Defaults are
+   * documented in `DEFAULT_RECALL_RANKING_CONFIG`; this block stays sparse so
+   * config only records operator changes.
+   */
+  recallRanking?: Partial<RecallRankingConfig>;
   /**
    * AI provider for LLM conversation extraction (the `INFERRED` path). Absent
    * until the user configures one; when absent, only the deterministic

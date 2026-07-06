@@ -11,8 +11,14 @@ import {
 } from "./code-curation.js";
 import { normalizeEngineeringCode } from "./extraction-schema.js";
 import type { MemoryStore } from "./graph-store.js";
-import { hybridRecall, type Ranking } from "./hybrid-recall.js";
+import type { Ranking } from "./hybrid-recall.js";
 import { appendEngineOpEvent } from "./memory-events.js";
+import {
+  buildRecallQueryVariants,
+  rankRecallCandidates,
+  resolveRecallRankingConfig,
+  type RecallRankingConfig,
+} from "./recall-ranking.js";
 
 /** One Envelope user-hook execution surfaced on an attempt hit (issue #216). */
 export interface GraphRecallHookEntry {
@@ -62,7 +68,12 @@ export async function graphRecall(
   store: RecallStore,
   query: string,
   limit = 10,
-  opts: { includeSuperseded?: boolean; scope?: RecallScope; now?: number } = {},
+  opts: {
+    includeSuperseded?: boolean;
+    scope?: RecallScope;
+    now?: number;
+    ranking?: Partial<RecallRankingConfig>;
+  } = {},
 ): Promise<GraphRecallHit[]> {
   return (await graphRecallResult(store, query, limit, opts)).hits;
 }
@@ -75,15 +86,22 @@ export async function graphRecallResult(
   store: RecallStore,
   query: string,
   limit = 10,
-  opts: { includeSuperseded?: boolean; scope?: RecallScope; now?: number } = {},
+  opts: {
+    includeSuperseded?: boolean;
+    scope?: RecallScope;
+    now?: number;
+    ranking?: Partial<RecallRankingConfig>;
+  } = {},
 ): Promise<GraphRecallResult> {
+  const now = opts.now ?? Date.now();
+  const rankingConfig = resolveRecallRankingConfig(opts.ranking);
   const codeCanonicalize = await loadCodeCanonicalizer(store);
   const { nodes, diagnostics } = await recall(store, query, {
     k: limit,
     depth: 1,
     includeSuperseded: opts.includeSuperseded,
     scope: opts.scope,
-    now: opts.now,
+    now,
     codeCanonicalize,
   });
 
@@ -104,17 +122,31 @@ export async function graphRecallResult(
   const candidates = new Map<number, RecalledNode>();
   for (const node of nodes) candidates.set(node.rid, node);
 
-  const rankings: Ranking[] = [
-    { source: "keyword", rids: await keywordRanking(store, query, limit, candidates) },
-    { source: "vector", rids: await vectorRanking(store, query, limit, candidates) },
-    { source: "graph", rids: graphRanking(nodes) },
-  ];
+  const rankings: Ranking[] = [];
+  const variants = buildRecallQueryVariants(query, rankingConfig.queryVariantLimit);
+  for (const variant of variants) {
+    rankings.push({
+      source: `keyword:${variant}`,
+      rids: await keywordRanking(store, variant, limit, candidates),
+    });
+    rankings.push({
+      source: `vector:${variant}`,
+      rids: await vectorRanking(store, variant, limit, candidates),
+    });
+  }
+  rankings.push({ source: "graph", rids: graphRanking(nodes) });
 
-  const fused = hybridRecall(rankings);
+  const ranked = rankRecallCandidates({
+    query,
+    candidates: nodes,
+    rankings,
+    limit,
+    now,
+    config: rankingConfig,
+  });
   const hits: GraphRecallHit[] = [];
-  for (const entry of fused) {
-    const node = candidates.get(entry.rid);
-    if (!node) continue;
+  for (const entry of ranked) {
+    const node = entry.node;
     const hooks = extractHookEntries(node.properties.hooks);
     hits.push({
       id: String(node.rid),
