@@ -18,6 +18,7 @@ import {
   rankRecallCandidates,
   resolveRecallRankingConfig,
   type RecallRankingConfig,
+  type RecallSignalProvenance,
 } from "./recall-ranking.js";
 
 /** One Envelope user-hook execution surfaced on an attempt hit (issue #216). */
@@ -45,10 +46,17 @@ export interface GraphRecallHit {
    * (today: `attempt` nodes recorded after the AFK terminal envelope).
    */
   hooks?: GraphRecallHookEntry[];
+  /**
+   * Ranking signals that surfaced this hit. Each row names the query
+   * variant/arm that included the result, its 1-indexed rank in that arm, and
+   * the RRF contribution from that rank.
+   */
+  signal_provenance?: RecallSignalProvenance[];
 }
 
 export interface GraphRecallResult {
   hits: GraphRecallHit[];
+  context_md: string;
   diagnostics: RecallDiagnostics;
 }
 
@@ -120,7 +128,7 @@ export async function graphRecallResult(
   }
 
   if (nodes.length === 0) {
-    return { hits: [], diagnostics };
+    return { hits: [], context_md: renderGraphRecallContext(query, [], diagnostics), diagnostics };
   }
 
   const candidates = new Map<number, RecalledNode>();
@@ -161,11 +169,14 @@ export async function graphRecallResult(
       excerpt: node.excerpt,
       ...lineageFields(node.properties),
       ...(hooks ? { hooks } : {}),
+      ...(entry.signalProvenance.length > 0
+        ? { signal_provenance: entry.signalProvenance }
+        : {}),
     });
     if (hits.length >= limit) break;
   }
 
-  return { hits, diagnostics };
+  return { hits, context_md: renderGraphRecallContext(query, hits, diagnostics), diagnostics };
 }
 
 function lineageFields(properties: RecalledNode["properties"]): Partial<GraphRecallHit> {
@@ -274,4 +285,60 @@ function graphRanking(nodes: RecalledNode[]): number[] {
     return a.rid - b.rid;
   });
   return ordered.map((n) => n.rid);
+}
+
+function renderGraphRecallContext(
+  query: string,
+  hits: GraphRecallHit[],
+  diagnostics: RecallDiagnostics,
+): string {
+  const vectorLine = renderVectorDiagnostic(diagnostics.vector);
+  if (hits.length === 0) {
+    return `# Memory recall: ${query}\n\n_${vectorLine}_\n\n_(no relevant memory)_\n`;
+  }
+  const lines = [`# Memory recall: ${query}`, "", `_${vectorLine}_`, ""];
+  for (const hit of hits.slice(0, 12)) {
+    lines.push(`- **${hit.label}** _(${hit.node_type})_`);
+    if (hit.excerpt) lines.push(`  ${hit.excerpt.slice(0, 200)}`);
+    const signalLines = renderSignalProvenance(hit.signal_provenance);
+    if (signalLines.length > 0) lines.push(...signalLines.map((line) => `  ${line}`));
+    if (hit.hooks && hit.hooks.length > 0) {
+      const parts = hit.hooks.map((hook) => `${hook.lifecycle}=${hook.exit_code}`);
+      lines.push(`  _hooks: ${parts.join(", ")}_`);
+    }
+    if (hit.superseded_by != null) {
+      const parts = [`superseded_by=memory_nodes:${hit.superseded_by}`];
+      if (hit.valid_from != null) parts.push(`valid_from=${hit.valid_from}`);
+      if (hit.valid_until != null) parts.push(`valid_until=${hit.valid_until}`);
+      lines.push(`  _lineage: ${parts.join(" ")}_`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function renderSignalProvenance(
+  signals: readonly RecallSignalProvenance[] | undefined,
+): string[] {
+  if (!signals || signals.length === 0) return [];
+  return [
+    `signal_provenance[${signals.length}]{source,rank,contribution}:`,
+    ...signals.map(
+      (signal) =>
+        `  ${signal.source},${signal.rank},${formatSignalContribution(signal.contribution)}`,
+    ),
+  ];
+}
+
+function formatSignalContribution(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(6) : "0.000000";
+}
+
+function renderVectorDiagnostic(d: RecallDiagnostics["vector"]): string {
+  if (d.status === "contributed") {
+    return `vector retrieval contributed ${d.contributed} candidate(s)`;
+  }
+  if (d.status === "available") {
+    return `vector retrieval available; contributed ${d.contributed} candidate(s)`;
+  }
+  return `vector retrieval unavailable${d.reason ? `: ${d.reason}` : ""}`;
 }

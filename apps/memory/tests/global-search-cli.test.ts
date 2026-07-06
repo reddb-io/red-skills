@@ -150,10 +150,11 @@ describe("memory global-search CLI", () => {
       const root = await initRoot();
       await seedTwoCommunities(root);
       const store = await openStore(root);
+      const now = Date.UTC(2026, 6, 6);
 
-      const before = await graphRecall(store, "auth token", 10);
+      const before = await graphRecall(store, "auth token", 10, { now });
       await buildMemoryGlobalSearch(store, "auth cache", { cache: "off" });
-      const after = await graphRecall(store, "auth token", 10);
+      const after = await graphRecall(store, "auth token", 10, { now });
 
       expect(after.map((hit) => hit.label)).toEqual(before.map((hit) => hit.label));
       expect(after.map((hit) => hit.score)).toEqual(before.map((hit) => hit.score));
