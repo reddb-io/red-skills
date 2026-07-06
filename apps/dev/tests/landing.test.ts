@@ -23,6 +23,7 @@ const WT = "/wt";
 // (#1006). Distinct from WT so a test can assert the fetch/rebase/force-push
 // never `git -C`'d the primary checkout (`/repo`).
 const RWT = "/rwt";
+const DEFAULT_BRANCH_TIP = "feedfacecafebeef";
 
 interface Harness {
   deps: LandingDeps;
@@ -66,6 +67,8 @@ interface Opts {
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
   commitCount?: number;
+  /** Resolved origin/<branch> tip used by stale-local-ref regressions. */
+  branchTip?: string;
   /** Enable the PR-path pre-merge rebase provisioner (#1006). */
   rebaseWorktree?: boolean;
   /** The rebase provisioner returns null (could not provision → rebase skipped). */
@@ -111,6 +114,9 @@ function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      if (j.includes("merge-base --is-ancestor origin/")) {
+        return { code: opts.branchTip ? 0 : 1, stdout: "", stderr: "" };
+      }
       // ADR 0083 landing precondition (#1018), against the primary checkout.
       // `merge-base --is-ancestor local origin/<trunk>` — exit 1 = diverged.
       if (j.includes("merge-base --is-ancestor")) {
@@ -142,6 +148,9 @@ function harness(opts: Opts = {}): Harness {
       }
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: `${opts.commitCount ?? 3}\n`, stderr: "" };
+      }
+      if (j.includes("rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing")) {
+        return { code: 0, stdout: `${opts.branchTip ?? DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
       if (opts.integrateCode !== undefined && j.includes("merge --ff-only")) {
         return { code: opts.integrateCode, stdout: "", stderr: "" };
@@ -309,7 +318,7 @@ describe("doLanding — happy paths", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -327,7 +336,7 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
     expect(j.some((c) => c.includes("merge --ff-only origin/main"))).toBe(false);
     // Attempt branch was merged (into current HEAD = lock-branch after the precheck fix).
-    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     // Push targeted the lock branch (worktree HEAD → refs/heads/<base>), not main.
     expect(j.some((c) => c.includes("push origin HEAD:refs/heads/feature-locked"))).toBe(true);
     // The ADR 0083 precondition READS refs/heads/main (the trunk, read-only); the
@@ -644,7 +653,7 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing`))).toBe(true);
+    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
     assertPrimaryUntouched(h);
     expect(h.removedWorktrees).toEqual([WT]);
@@ -787,7 +796,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   // the lock only resolves `base`. Four cells: {no lock, lock=X} × {true, false}.
   // `prMerged` = the admin-PR path ran; `directMerged` = the worktree merge ran.
   const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --merge"));
-  const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"));
+  const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify"));
 
   it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
     const h = harness({ locked: false, openPr: true });
@@ -812,6 +821,31 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     // Merge ran in the isolated worktree, pushing main from its HEAD.
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
+  });
+
+  it("no lock + false + stale local main → fast-forwards the freshly fetched origin/main to the validated branch tip", async () => {
+    const branchTip = "1234567890abcdef";
+    const h = harness({ locked: false, openPr: false, branchTip });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+
+    const j = joined(h.mergeCalls);
+    const fetchBaseIdx = j.findIndex((c) => c === "git -C /repo fetch origin main --quiet");
+    const integrateIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only origin/main`);
+    const resolveTipIdx = j.findIndex(
+      (c) => c === `git -C ${WT} rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing`,
+    );
+    const ancestorIdx = j.findIndex((c) => c === `git -C ${WT} merge-base --is-ancestor origin/main ${branchTip}`);
+    const fastForwardIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only ${branchTip}`);
+    const pushIdx = j.findIndex((c) => c === `git -C ${WT} push origin HEAD:refs/heads/main`);
+
+    expect(fetchBaseIdx).toBeGreaterThanOrEqual(0);
+    expect(integrateIdx).toBeGreaterThan(fetchBaseIdx);
+    expect(resolveTipIdx).toBeGreaterThan(integrateIdx);
+    expect(ancestorIdx).toBeGreaterThan(resolveTipIdx);
+    expect(fastForwardIdx).toBeGreaterThan(ancestorIdx);
+    expect(pushIdx).toBeGreaterThan(fastForwardIdx);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
   });
 
   it("lock=X + true (default) → admin-merged PR with base = the lock branch, not main (new)", async () => {
