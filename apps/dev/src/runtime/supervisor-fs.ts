@@ -81,6 +81,36 @@ export function iterDirsForWorker(root: string, wid: string): string[] {
   return out;
 }
 
+/** Sum `current.cost_usd` from the current AFK worker state files. This is the
+ * supervisor's per-drain spend signal and deliberately reads the existing
+ * WorkerVitals field rather than maintaining a parallel ledger. */
+export function sumWorkerCostUsd(tmpDir: string): number {
+  const workersRoot = join(tmpDir, "workers");
+  let workerDirs: string[];
+  try {
+    workerDirs = readdirSync(workersRoot);
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const wid of workerDirs) {
+    const wdir = join(workersRoot, wid);
+    let attempts: string[];
+    try {
+      attempts = readdirSync(wdir);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      const rec = readWorkerState(join(wdir, attempt, "afk.state.json"));
+      if (rec === null) continue;
+      const cost = rec.state.current.cost_usd;
+      if (Number.isFinite(cost) && cost > 0) total += cost;
+    }
+  }
+  return total;
+}
+
 /** `.current.number` from a dir's afk.state.json, or null. Mirrors
  * iter_dir_issue_number. Reads through the single owner
  * (core/worker-state-reader) so the schema + legacy-key shim apply — no private
