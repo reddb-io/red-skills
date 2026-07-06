@@ -93,6 +93,12 @@ describe("buildSlotEnv (per-slot RED_AFK_SLOT injection)", () => {
     expect(slotted.RED_AFK_SKIP_PERF).toBe("1");
     expect(slotted.RED_AFK_RUNNER).toBe("codex");
   });
+
+  it("marks only budget-critical spawns for a one-tier task downgrade", () => {
+    const base = buildWorkerEnv({ PATH: "/usr/bin" }, "claude");
+    expect(buildSlotEnv(base, 0).RED_AFK_TASK_TIER_DOWNGRADE).toBeUndefined();
+    expect(buildSlotEnv(base, 1, { taskTierDowngrade: true }).RED_AFK_TASK_TIER_DOWNGRADE).toBe("1");
+  });
 });
 
 describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
