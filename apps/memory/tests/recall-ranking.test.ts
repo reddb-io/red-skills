@@ -114,6 +114,11 @@ describe("recall ranking pipeline", () => {
     });
 
     expect(fused.map((hit) => hit.node.rid)).toEqual([1, 3, 2, 5, 4]);
+    expect(fused[0]!.signalProvenance).toEqual([
+      { source: "query:cache", rank: 1, contribution: 1 / 61 },
+      { source: "query:pipeline", rank: 1, contribution: 1 / 61 },
+      { source: "query:full", rank: 2, contribution: 1 / 62 },
+    ]);
     expect(fused[0]!.rrfScore).toBeGreaterThan(singleQueryOnly[0]!.rrfScore);
     expect(fused.find((hit) => hit.node.rid === 4)!.recencyMultiplier).toBeLessThan(0.07);
 
@@ -205,10 +210,25 @@ describe("recall ranking pipeline", () => {
       { query: "cache pipeline", limit: 3 },
     );
 
-    expect((result as { hits: Array<{ rid: number }> }).hits.map((hit) => hit.rid)).toEqual([
+    const recall = result as {
+      hits: Array<{
+        rid: number;
+        signal_provenance: Array<{ source: string; rank: number; contribution: number }>;
+      }>;
+      context_md: string;
+    };
+    expect(recall.hits.map((hit) => hit.rid)).toEqual([
       1,
       2,
       3,
     ]);
+    expect(recall.hits[0]!.signal_provenance).toEqual([
+      { source: "keyword:cache", rank: 1, contribution: 1 / 61 },
+      { source: "keyword:pipeline", rank: 1, contribution: 1 / 61 },
+      { source: "graph", rank: 1, contribution: 1 / 61 },
+      { source: "keyword:cache pipeline", rank: 2, contribution: 1 / 62 },
+    ]);
+    expect(recall.context_md).toContain("signal_provenance[4]{source,rank,contribution}:");
+    expect(recall.context_md).toContain("keyword:cache,1,0.016393");
   });
 });
