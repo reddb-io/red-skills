@@ -96,8 +96,8 @@ export class BundleFetchError extends Error {
  *
  * `stable` (or no channel) keys by version (`<plugin>-<version>.bundle.min.mjs`).
  * `canary` keys by the channel literal (`<plugin>-canary.bundle.min.mjs`) since
- * the dist-tag has no stable version; re-resolution in {@link ensureBundle}
- * refreshes it when the canary tag moves.
+ * the dist-tag floats; {@link ensureBundle} refreshes that cache entry on every
+ * canary resolution so the file follows npm's current dist-tag pointer.
  */
 export function bundleFileName(
   plugin: string,
@@ -149,8 +149,10 @@ export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
  *
  * Cache miss: materialise `@reddb-io/red-skills@<pin>` via npm (npm verifies the
  * tarball shasum itself), copy the packaged `dist/<plugin>.bundle.min.mjs` into
- * the cache, return it. Integrity comes from npm; there is no client-side
- * signature step.
+ * the cache, return it. The canary channel deliberately skips the cache hit and
+ * refreshes from `@reddb-io/red-skills@canary` every time because its npm
+ * dist-tag is the moving pointer. Integrity comes from npm; there is no
+ * client-side signature step.
  *
  * Failure modes raise a typed {@link BundleFetchError} and never write a partial
  * bundle to the cache:
@@ -166,8 +168,8 @@ export async function ensureBundle(
   const { plugin, version, cacheDir, channel = "stable" } = input;
   const dest = resolveBundle({ plugin, version, cacheDir, channel });
 
-  // Cache-first: a present cached bundle is served without touching npm.
-  if (await io.exists(dest)) return dest;
+  // Stable is cache-first; canary is a floating npm dist-tag and must refresh.
+  if (channel !== "canary" && (await io.exists(dest))) return dest;
 
   const spec = npmPackageSpec(version, channel);
   const stagingDir = joinPath(
