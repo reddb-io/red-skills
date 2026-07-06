@@ -49,6 +49,8 @@ interface Trace {
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
+  /** Compact state patches written to afk.state.json. */
+  statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
   cascadeRebaseAttempts: string[];
 }
@@ -209,6 +211,7 @@ function harness(opts: HarnessOptions = {}): {
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
+    statePatches: [],
     cascadeRebaseAttempts: [],
   };
 
@@ -515,6 +518,9 @@ function harness(opts: HarnessOptions = {}): {
     nowIso: () => "2026-05-30T00:00:00Z",
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
+    },
+    markState: (patch) => {
+      trace.statePatches.push(patch);
     },
     recoveryEnv: opts.recoveryEnv ?? {},
     // ADR 0017 recording port: omitted by default (older-caller safety). "ok"
@@ -1119,6 +1125,12 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(nsEdit.add).toContain("blocked:crashed");
     expect(trace.ensuredLabels).toContain("blocked:crashed");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
+    expect(trace.statePatches).toContainEqual({
+      "current.phase": "terminal",
+      "current.outcome": "no-sentinel",
+      "current.last_exit_code": 1,
+      "current.failure_kind": "crash",
+    });
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
     // #568: the no-sentinel terminal also releases the per-issue claim.
@@ -2731,6 +2743,12 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(trace.ensuredLabels).toContain("blocked:stalled");
     // The failure envelope rides the generic `blocked` status bucket.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.statePatches).toContainEqual({
+      "current.phase": "terminal",
+      "current.outcome": "stalled",
+      "current.last_exit_code": 124,
+      "current.failure_kind": "timeout",
+    });
     // on_attempt_timeout fires when the guard trips; on_reconcile reports the
     // ADR 0055 skip; then on_attempt_error escalates. post_attempt does NOT fire.
     expect(result.hooksFired).toEqual([
