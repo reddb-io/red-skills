@@ -6,7 +6,7 @@
 // then ONE line per live AFK worker.
 //
 //   line 1 (header, ALWAYS): [wine » project (branch) v· model·effort] ctx=… 5h=… 7d=… prs=… iss=… loc=+A -R
-//   line 2..N (one per live worker): the monitor's compact per-worker line
+//   line 2..N (one per live worker): the terse per-worker statusline line
 //
 // Only the leading IDENTITY ZONE of line 1 (project + model·effort) carries a
 // wine-red BACKGROUND; the rest of line 1 is background-transparent, each KPI a
@@ -15,11 +15,11 @@
 // exposes them); `prs=`/`iss=` are repo-global GitHub counts; `loc=+A -R` is the
 // LOCAL branch diff vs origin/main.
 //
-// The per-worker lines REUSE the monitor's `renderWorkerCompactLine` verbatim
-// (core/monitor.ts) — the single source of truth shared with `/afk monitor
-// --once`, so the two surfaces never drift. Each line is tinted soft-red as a
-// whole (a colour wrapper, never a structural rewrite) and ends with a reset so
-// the background never bleeds. Zero live workers → only line 1 is emitted.
+// The per-worker lines share the monitor's `workerFields` data extraction
+// (core/monitor.ts) and keep the same vitals vocabulary (`tls`/`rsn`/`txt`),
+// while rendering the compact Claude Code-specific layout. Each line is tinted
+// soft-red and ends with a reset so the background never bleeds. Zero live
+// workers → only line 1 is emitted.
 //
 // CODEX keeps the single aggregate line: its `tui.status_line` footer is
 // single-line only (per-runner split, ADR 0003), so the NO_COLOR path returns the
@@ -241,8 +241,8 @@ function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): 
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
  * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
  * VALUE — so no token is a distinct blob. EVERY key on this line is EXACTLY 3
- * letters (house rule, issue #1176), so the vitals renamed tools/reason/text →
- * tls/rsn/txt HERE ONLY (the monitor dashboard line keeps tools:/reason:/text:).
+ * letters (house rule, issue #1176). The vitals use the shared monitor/statusline
+ * vocabulary `tls`/`rsn`/`txt` for tools, reasoning, and text activity.
  * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
  * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
  * queue counter (meaningless for a single-issue /go run) — and the standalone
@@ -274,7 +274,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   parts.push(kv("loc", formatDiff(f.added, f.removed)));
   parts.push(kv("tks", humanizeCount(f.tokens)));
   // The vitals as INDIVIDUAL 3-letter k=v pairs (single-spaced group), same
-  // convention. Renamed from tools/reason/text on the STATUSLINE line only.
+  // convention and vocabulary as the monitor dashboard.
   parts.push(`${kv("tls", String(f.tools))} ${kv("rsn", String(f.reasoning))} ${kv("txt", String(f.text))}`);
   return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
 }
