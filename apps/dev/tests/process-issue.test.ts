@@ -22,6 +22,8 @@ import type { AttemptProgressInfo } from "../src/core/execution.js";
 // injected `runAgent` port (ADR 0033): a fake returning a scripted
 // RunAgentResult, replacing the old fake runner-spawn + worktree-create deps.
 
+const DEFAULT_BRANCH_TIP = "feedfacecafebeef";
+
 interface Trace {
   labelEdits: Array<{ issue: number; remove: string[]; add: string[] }>;
   comments: Array<{ issue: number; body: string }>;
@@ -322,6 +324,18 @@ function harness(opts: HarnessOptions = {}): {
     },
     mergeExec: async (argv) => {
       const j = argv.join(" ");
+      if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+        return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
+      }
+      if (j === "git -C /wt rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+        return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
+      }
+      if (j.includes("merge-base --is-ancestor origin/")) {
+        return { code: 1, stdout: "", stderr: "" };
+      }
       // landPr reuses an open PR via `gh pr list`; reply with a number so it
       // resolves without a create round-trip.
       if (argv.includes("pr") && argv.includes("list")) {
@@ -905,9 +919,9 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
 
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(true);
-    // landMerge issues `git -C /repo merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing …`.
+    // landMerge issues `git -C <landing-worktree> merge --no-ff --no-verify <validated-tip> …`.
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     // No PR list/create/merge on the locked path.
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
@@ -977,8 +991,8 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(false);
     const joined = calls.map((c) => c.join(" "));
-    // Direct merge of the attempt branch; no PR list/merge anywhere.
-    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    // Direct merge of the validated attempt tip; no PR list/merge anywhere.
+    expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
 });
