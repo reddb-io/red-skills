@@ -1,4 +1,5 @@
 import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker, type MonitorRemote } from "../core/monitor.js";
+import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCacheTtl } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
@@ -171,6 +172,11 @@ export async function monitorCommand(
   stdout: NodeJS.WritableStream = process.stdout,
   stdin: NodeJS.ReadableStream = process.stdin,
 ): Promise<number> {
+  if (args.includes("--legend")) {
+    stdout.write(`${renderStatuslineLegend()}\n`);
+    return 0;
+  }
+
   if (args.includes("--mirror-plan")) {
     const runnerIdx = args.indexOf("--runner");
     const runnerFlag = runnerIdx !== -1 ? args[runnerIdx + 1] : undefined;
