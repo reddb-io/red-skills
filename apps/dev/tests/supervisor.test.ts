@@ -22,6 +22,7 @@ import {
   validateSupervisorStaleThreshold,
   validateSupervisorProgressThreshold,
   classifySupervisor,
+  evaluateDrainBudget,
   guardedTick,
   type IterDirInfo,
   type ReconcileCandidate,
@@ -116,6 +117,7 @@ interface FakeIo {
   crashedClaimState: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
+  fleetCostUsd: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
 }
 
@@ -157,6 +159,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: false, envelopePosted: false })),
     emitFleetHeartbeat: vi.fn(async () => {}),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
+    fleetCostUsd: vi.fn(() => 0),
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
   };
@@ -176,6 +179,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       teardownIterDir: io.teardownIterDir,
       parkedSlotWork: io.parkedSlotWork,
       removeDir: io.removeDir,
+      fleetCostUsd: io.fleetCostUsd,
     },
     gh: {
       comment: io.comment,
@@ -470,6 +474,32 @@ describe("resolveSupervisorConfig", () => {
   it("falls back to default for a garbage RED_AFK_SUPERVISOR_PROGRESS_STALE_S", () => {
     const c = resolveSupervisorConfig({ RED_AFK_SUPERVISOR_PROGRESS_STALE_S: "bad" });
     expect(c.progressStaleS).toBe(900);
+  });
+
+  it("resolves the drain USD budget from env or config and rejects typo values", () => {
+    expect(resolveSupervisorConfig({}).drainBudgetUsd).toBeUndefined();
+    expect(resolveSupervisorConfig({ RED_AFK_DRAIN_MAX_COST_USD: "12.50" }).drainBudgetUsd).toBe(12.5);
+    expect(resolveSupervisorConfig({}, (key) => (key === "afk.drain.max_cost_usd" ? "9.25" : ""))).toMatchObject({
+      drainBudgetUsd: 9.25,
+    });
+    expect(resolveSupervisorConfig({ RED_AFK_DRAIN_MAX_COST_USD: "0" }).drainBudgetUsd).toBeUndefined();
+    expect(resolveSupervisorConfig({}, () => "not-a-number").drainBudgetUsd).toBeUndefined();
+  });
+});
+
+describe("evaluateDrainBudget", () => {
+  it("is undefined when no budget is configured", () => {
+    expect(evaluateDrainBudget(10, undefined)).toBeUndefined();
+  });
+
+  it("classifies exact OK/WARNING/CRITICAL/HARD_STOP tier boundaries", () => {
+    expect(evaluateDrainBudget(7.49, 10)?.tier).toBe("OK");
+    expect(evaluateDrainBudget(7.5, 10)?.tier).toBe("WARNING");
+    expect(evaluateDrainBudget(8.99, 10)?.tier).toBe("WARNING");
+    expect(evaluateDrainBudget(9, 10)?.tier).toBe("CRITICAL");
+    expect(evaluateDrainBudget(9.99, 10)?.tier).toBe("CRITICAL");
+    expect(evaluateDrainBudget(10, 10)?.tier).toBe("HARD_STOP");
+    expect(evaluateDrainBudget(12, 10)?.tier).toBe("HARD_STOP");
   });
 });
 
@@ -1995,6 +2025,68 @@ describe("superviseTick — periodic dependency Unblock Sweep (#844)", () => {
 
     expect(result.unblocked).toEqual([]);
     expect(state.lastUnblockSweepEpoch).toBe(0); // never stamped
+  });
+});
+
+describe("superviseTick — drain USD budget ladder (#1188)", () => {
+  it("keeps unchanged spawn behavior with no configured budget", async () => {
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 123;
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 1),
+      fleetCostUsd: vi.fn(() => 999),
+    });
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.respawned).toEqual([0]);
+    expect(io.spawnSlot).toHaveBeenCalledWith(0);
+    expect(io.fleetCostUsd).not.toHaveBeenCalled();
+  });
+
+  it("marks CRITICAL and downgrades only newly spawned workers", async () => {
+    const state = initSupervisorState(2);
+    state.slots[0]!.pid = 111;
+    state.slots[1]!.pid = 222;
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => pid === 222),
+      readyQueueDepth: vi.fn(async () => 2),
+      fleetCostUsd: vi.fn(() => 9),
+    });
+
+    const result = await superviseTick(state, deps, config({ target: 2, drainBudgetUsd: 10 }), () => false);
+
+    expect(result.drainBudget?.tier).toBe("CRITICAL");
+    expect(result.respawned).toEqual([0]);
+    expect(io.spawnSlot).toHaveBeenCalledOnce();
+    expect(io.spawnSlot).toHaveBeenCalledWith(0, { taskTierDowngrade: true });
+    expect(state.slots[1]!.pid).toBe(222);
+  });
+
+  it("HARD_STOP records queue state, stops new spawns, and lets in-flight workers finish", async () => {
+    const logs: string[] = [];
+    const state = initSupervisorState(2);
+    state.slots[0]!.pid = 111;
+    state.slots[1]!.pid = 222;
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => pid === 222),
+      readyQueueDepth: vi.fn(async () => 3),
+      fleetCostUsd: vi.fn(() => 10),
+    });
+    deps.log = (line) => logs.push(line);
+
+    const result = await superviseTick(state, deps, config({ target: 2, drainBudgetUsd: 10 }), () => false);
+
+    expect(result.drainBudget?.tier).toBe("HARD_STOP");
+    expect(result.respawned).toEqual([]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(io.killTree).not.toHaveBeenCalled();
+    expect(state.slots[0]!.pid).toBeNull();
+    expect(state.slots[1]!.pid).toBe(222);
+    expect(logs.join("\n")).toContain("schema_version: red.afk.drain_budget.v1");
+    expect(logs.join("\n")).toContain("tier: HARD_STOP");
+    expect(logs.join("\n")).toContain("ready_for_agent: 3");
   });
 });
 

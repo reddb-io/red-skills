@@ -9,6 +9,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  downgradeAfkModelTier,
   resolveTier,
   resolveCiTimeoutSeconds,
   DEFAULT_MERGE_CI_TIMEOUT_S,
@@ -419,6 +420,22 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     expect(resolveTier(values, "opencode", "simple")).toEqual({
       model: "openrouter/anthropic/claude-sonnet-4",
       effort: "high",
+    });
+  });
+
+  it("downgrades one model-policy tier when RED_AFK_TASK_TIER_DOWNGRADE is set", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(downgradeAfkModelTier("think")).toBe("complex");
+    expect(downgradeAfkModelTier("complex")).toBe("simple");
+    expect(downgradeAfkModelTier("simple")).toBe("validate");
+    expect(downgradeAfkModelTier("validate")).toBe("validate");
+    expect(resolveTier(values, "claude", "think", { RED_AFK_TASK_TIER_DOWNGRADE: "1" })).toEqual({
+      model: "claude-opus-4-8",
+      effort: "medium",
+    });
+    expect(resolveTier(values, "claude", "simple", { RED_AFK_TASK_TIER_DOWNGRADE: "1" })).toEqual({
+      model: "claude-haiku-4-5",
+      effort: "low",
     });
   });
 

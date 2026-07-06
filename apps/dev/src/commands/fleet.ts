@@ -42,12 +42,20 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; passthrough: string[] } {
+function parsePositiveNumber(raw: string | undefined, flag: string): number {
+  if (raw === undefined) throw new Error(`${flag} requires a value`);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${flag} requires a positive number`);
+  return n;
+}
+
+function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; passthrough: string[] } {
   const passthrough: string[] = [];
   let stop = false;
   let target: number | undefined;
   let request: string | undefined;
   let runnerFlag: string | undefined;
+  let drainBudgetUsd: number | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -73,13 +81,25 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; target: numbe
       runnerFlag = arg.slice("--runner=".length);
       continue;
     }
+    if (arg === "--budget-usd" || arg === "--drain-budget-usd") {
+      drainBudgetUsd = parsePositiveNumber(args[++i], arg);
+      continue;
+    }
+    if (arg.startsWith("--budget-usd=")) {
+      drainBudgetUsd = parsePositiveNumber(arg.slice("--budget-usd=".length), "--budget-usd");
+      continue;
+    }
+    if (arg.startsWith("--drain-budget-usd=")) {
+      drainBudgetUsd = parsePositiveNumber(arg.slice("--drain-budget-usd=".length), "--drain-budget-usd");
+      continue;
+    }
     if (/^[0-9]+$/.test(arg) && target === undefined) {
       target = Number(arg);
       continue;
     }
     passthrough.push(arg);
   }
-  return { stop, target: target ?? 2, request, runnerFlag, passthrough };
+  return { stop, target: target ?? 2, request, runnerFlag, drainBudgetUsd, passthrough };
 }
 
 export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStopResult> {
@@ -169,6 +189,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     runner: detection.runner,
     passthrough: parsed.passthrough,
     request: parsed.request,
+    drainBudgetUsd: parsed.drainBudgetUsd,
   });
   if (!supervisorPid) {
     let tail = "";

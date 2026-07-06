@@ -210,6 +210,15 @@ export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
 export const AFK_MODEL_TIERS = ["validate", "simple", "complex", "think"] as const;
 export type AfkModelTier = (typeof AFK_MODEL_TIERS)[number];
 
+const AFK_MODEL_TIER_ORDER: readonly AfkModelTier[] = AFK_MODEL_TIERS;
+
+/** One-step downgrade in the model-tier-policy vocabulary. The cheapest tier is
+ * already the floor, so it stays `validate`. */
+export function downgradeAfkModelTier(tier: AfkModelTier): AfkModelTier {
+  const idx = AFK_MODEL_TIER_ORDER.indexOf(tier);
+  return idx <= 0 ? "validate" : AFK_MODEL_TIER_ORDER[idx - 1]!;
+}
+
 export interface ResolvedTier {
   model: string;
   effort: AgentEffort;
@@ -474,7 +483,10 @@ export function resolveTier(
   // ship a full table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral
   // hermes) falls back to the claude table via the shared `toAgentRunner` seam.
   const tierRunner = toAgentRunner(runner as Runner);
-  const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const requestedTier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const tier = env.RED_AFK_TASK_TIER_DOWNGRADE === "1"
+    ? downgradeAfkModelTier(requestedTier)
+    : requestedTier;
   const modelKey = defaultTierKey(tierRunner, tier, "model")!;
   const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
   const defaultModel = CONFIG_DEFAULTS[modelKey];
