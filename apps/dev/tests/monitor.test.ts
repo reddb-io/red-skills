@@ -119,9 +119,12 @@ describe("monitor — compact line", () => {
       }),
       1780140600,
     );
-    expect(line).toContain("tools:39");
-    expect(line).toContain("reason:4");
-    expect(line).toContain("text:112");
+    expect(line).toContain("tls:39");
+    expect(line).toContain("rsn:4");
+    expect(line).toContain("txt:112");
+    expect(line).not.toContain("tools:");
+    expect(line).not.toContain("reason:");
+    expect(line).not.toContain("text:");
     expect(line).toContain("wait:2");
     expect(line).toContain("log:540(+12)");
   });
@@ -310,7 +313,7 @@ describe("monitor — compact dashboard", () => {
       expect(out).toContain("diff_removed: 3");
       // The worker table names columns once, then one bare CSV row per worker.
       expect(out).toContain(
-        "workers[1]{id,state,runner,issue,stage,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tools,reason,text,wait,log}:",
+        "workers[1]{id,state,runner,issue,stage,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tls,rsn,txt,wait,log}:",
       );
       expect(out).toContain('wAAAA,live,claude,42,impl,1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
     });
@@ -664,6 +667,22 @@ const emptyStdin = {
 } as unknown as NodeJS.ReadableStream;
 
 describe("monitorCommand — Codex fallback path (issue #887)", () => {
+  it("--legend emits the token decode table and does not render the dashboard", async () => {
+    const { chunks, stream } = makeMockStdout();
+    const code = await monitorCommand(["--legend"], "/tmp", stream, emptyStdin);
+    expect(code).toBe(0);
+    const output = chunks.join("");
+    expect(output).toContain("token  name");
+    expect(output).toContain("tls");
+    expect(output).toContain("tools_called_count");
+    expect(output).toContain("rsn");
+    expect(output).toContain("reasoning_events");
+    expect(output).toContain("txt");
+    expect(output).toContain("text_chunk_count");
+    expect(output).not.toContain("sparkline:");
+    expect(output).not.toContain("workers[");
+  });
+
   it("--mirror-plan --runner codex writes the fallback notice to stdout", async () => {
     const { chunks, stream } = makeMockStdout();
     const code = await monitorCommand(
