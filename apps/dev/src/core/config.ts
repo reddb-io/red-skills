@@ -126,9 +126,9 @@ export const CONFIG_DEFAULTS = {
   "afk.review_gate.enabled": "false",
   "afk.review_gate.threshold": "complex",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
-  // version-pinned release (today's behaviour); `canary` tracks the floating
-  // pre-release tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); promotion
-  // canary→stable is a tag move gated on the proof-by-drain telemetry.
+  // version-pinned release (today's behaviour); `canary` tracks npm's canary
+  // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
+  // gated on the proof-by-drain telemetry.
   "afk.release.channel": "stable",
   // Warm worktree-pool model (treehouse, ADR Track 1B / issue #909). When false
   // (default) AFK uses today's cold per-attempt worktree (`git worktree add` +
