@@ -13,6 +13,7 @@ import {
   handleDeadSlot,
   initSupervisorState,
   pollStallDetector,
+  resolveReapContest,
   recordDeath,
   resolveSupervisorConfig,
   runSupervisor,
@@ -80,6 +81,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     unblockSweepIntervalS: 60,
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
+    reapContestWindowS: 30,
     ...over,
   };
 }
@@ -118,6 +120,8 @@ interface FakeIo {
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
   fleetCostUsd: ReturnType<typeof vi.fn>;
+  attemptBranchHead: ReturnType<typeof vi.fn>;
+  logLines: string[];
   now: ReturnType<typeof vi.fn>;
 }
 
@@ -160,6 +164,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     emitFleetHeartbeat: vi.fn(async () => {}),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
     fleetCostUsd: vi.fn(() => 0),
+    attemptBranchHead: vi.fn(async () => undefined as string | undefined),
+    logLines: [],
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
   };
@@ -191,8 +197,12 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       crashedClaimState: io.crashedClaimState,
     },
     now: io.now,
+    log: (line) => {
+      io.logLines.push(line);
+    },
     emitFleetHeartbeat: io.emitFleetHeartbeat,
     unblockSweep: io.unblockSweep,
+    attemptBranchHead: io.attemptBranchHead,
   };
   return { deps, io };
 }
@@ -845,6 +855,7 @@ describe("pollStallDetector reaper gating", () => {
           path: "/w/wTEST/190-a1",
           issue: 190,
           workerId: "wTEST",
+          branch: "afk/wTEST/190-some-work",
           logTail: "[afk] inner: stalled tool call — never returns",
           notes: "mid-iteration progress note",
           durationS: 200,
@@ -852,6 +863,7 @@ describe("pollStallDetector reaper gating", () => {
           attempt: 1,
         }),
       ),
+      attemptBranchHead: vi.fn(async () => "aaa111"),
     });
     const state = stalledState();
 
@@ -864,11 +876,13 @@ describe("pollStallDetector reaper gating", () => {
     expect(issue).toBe(190);
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("stalled tool call");
-    // #402: a re-queue UNDER the cap routes back to ready-for-agent CLEAN — no
-    // blocked:stalled rides along, so the adoption-doctor hygiene check stays at
-    // zero offenders. The typed label is NOT created on retry.
+    // #1197: the retry first opens a bounded contest window. The issue is not
+    // ready-for-agent yet, so a second worker cannot double-run it while the
+    // original branch may still report late commits.
     expect(io.ensureLabel).not.toHaveBeenCalled();
-    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running"]);
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["contested"], []);
+    expect(state.slots[0]!.contest?.issue).toBe(190);
+    expect(io.logLines.some((line) => line.includes("opened"))).toBe(true);
     expect(io.teardownIterDir).toHaveBeenCalledOnce();
     // Slot freed + idempotency guard set.
     const slot = state.slots[0]!;
@@ -882,6 +896,50 @@ describe("pollStallDetector reaper gating", () => {
     await pollStallDetector(state, deps, config());
     expect(io.killTree).not.toHaveBeenCalled();
     expect(io.comment).not.toHaveBeenCalled();
+  });
+
+  it("resolves a contest as reclaimed when the original branch advances inside the window", async () => {
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.contest = {
+      issue: 190,
+      branch: "afk/wTEST/190-some-work",
+      headAtReap: "aaa111",
+      openedEpoch: NOW - 5,
+      deadlineEpoch: NOW + 25,
+    };
+    const { deps, io } = makeDeps({
+      attemptBranchHead: vi.fn(async () => "bbb222"),
+    });
+
+    const result = await resolveReapContest(0, slot, deps, config());
+
+    expect(result).toBe("reclaimed");
+    expect(slot.contest).toBeNull();
+    expect(io.editLabels).toHaveBeenCalledWith(190, [], ["contested"]);
+    expect(io.logLines.some((line) => line.includes("reclaimed"))).toBe(true);
+  });
+
+  it("resolves a contest as expired and applies the normal clean requeue after the window", async () => {
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.contest = {
+      issue: 190,
+      branch: "afk/wTEST/190-some-work",
+      headAtReap: "aaa111",
+      openedEpoch: NOW - 40,
+      deadlineEpoch: NOW - 10,
+    };
+    const { deps, io } = makeDeps({
+      attemptBranchHead: vi.fn(async () => "aaa111"),
+    });
+
+    const result = await resolveReapContest(0, slot, deps, config());
+
+    expect(result).toBe("expired");
+    expect(slot.contest).toBeNull();
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running", "contested"]);
+    expect(io.logLines.some((line) => line.includes("expired"))).toBe(true);
   });
 
   it("does NOT tear down the worktree when the worker survives the kill (#580)", async () => {

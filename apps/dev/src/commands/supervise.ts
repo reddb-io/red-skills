@@ -532,6 +532,7 @@ function buildSupervisorDeps(
         return [];
       }
     },
+    attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
     // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
     // a dispatch failure is returned to the caller; the caller catches and logs.

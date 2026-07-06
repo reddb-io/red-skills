@@ -1,5 +1,6 @@
 import {
   LABEL_CI,
+  LABEL_CONTESTED,
   LABEL_CRASHED,
   LABEL_DEPENDENCY,
   LABEL_HUMAN,
@@ -22,6 +23,7 @@ import {
 export type IssueLifecycleState =
   | "ready-for-agent"
   | "claimed/active"
+  | "contested"
   | "blocked:dependency"
   | "blocked:validation"
   | "ready-for-human"
@@ -30,6 +32,9 @@ export type IssueLifecycleState =
 
 export type IssueLifecycleEdge =
   | "claim"
+  | "contest"
+  | "contest-expired"
+  | "contest-reclaimed"
   | "retry"
   | "dependency-unblocked"
   | "dependency-blocked"
@@ -73,6 +78,9 @@ export const ISSUE_LIFECYCLE_TRANSITIONS: readonly IssueLifecycleTransition[] = 
   // set that the claim edit cleans up (#402). The `to` still has to be
   // claimed/active — a claim that lands anywhere else finds no row and throws.
   { edge: "claim", from: "*", to: "claimed/active" },
+  { edge: "contest", from: "claimed/active", to: "contested" },
+  { edge: "contest-reclaimed", from: "contested", to: "claimed/active" },
+  { edge: "contest-expired", from: "contested", to: "ready-for-agent" },
   { edge: "retry", from: "claimed/active", to: "ready-for-agent" },
   { edge: "dependency-unblocked", from: "blocked:dependency", to: "ready-for-agent" },
   { edge: "dependency-blocked", from: "ready-for-agent", to: "blocked:dependency" },
@@ -125,10 +133,12 @@ export function classifyIssueLifecycleState(labels: readonly string[]): IssueLif
   const hasRunning = labels.includes(LABEL_RUNNING);
   const hasHuman = labels.includes(LABEL_HUMAN);
   const hasManualLanding = labels.includes(LABEL_LANDING_MANUAL);
+  const hasContested = labels.includes(LABEL_CONTESTED);
   const blocked = blockedLabelsIn(labels);
   const hasBlocked = blocked.length > 0;
 
   if (blocked.length > 1) return "illegal";
+  if (hasContested && (!hasRunning || hasReady || hasHuman || hasBlocked || hasManualLanding)) return "illegal";
   if ((hasReady || hasRunning) && hasBlocked) return "illegal";
   if (hasReady && hasRunning) return "illegal";
   // `landing:manual` is a MODE flag that must ride a real state: queued
@@ -136,6 +146,7 @@ export function classifyIssueLifecycleState(labels: readonly string[]): IssueLif
   // or human-parked. Alone it is illegal.
   if (hasManualLanding && !hasHuman && !hasReady && !hasRunning) return "illegal";
 
+  if (hasContested) return "contested";
   if (hasManualLanding && hasHuman) return "landing:manual";
   if (hasRunning) return "claimed/active";
   if (hasReady) return "ready-for-agent";
@@ -149,6 +160,17 @@ export function classifyIssueLifecycleState(labels: readonly string[]): IssueLif
 export function explainIllegalIssueLifecycleLabels(labels: readonly string[]): string | null {
   const blocked = blockedLabelsIn(labels);
   if (blocked.length > 1) return `mixed blocked:* labels [${blocked.join(", ")}]`;
+  if (labels.includes(LABEL_CONTESTED)) {
+    if (!labels.includes(LABEL_RUNNING)) return `${LABEL_CONTESTED} must ride ${LABEL_RUNNING}`;
+    if (
+      labels.includes(LABEL_READY) ||
+      labels.includes(LABEL_HUMAN) ||
+      labels.includes(LABEL_LANDING_MANUAL) ||
+      blocked.length > 0
+    ) {
+      return `${LABEL_CONTESTED} cannot ride queued, human, manual-landing, or blocked state`;
+    }
+  }
   if ((labels.includes(LABEL_READY) || labels.includes(LABEL_RUNNING)) && blocked.length > 0) {
     return `queued/active issue cannot also carry blocked:* label ${blocked[0]}`;
   }
