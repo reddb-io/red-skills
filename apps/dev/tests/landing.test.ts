@@ -90,6 +90,12 @@ interface Opts {
    *   - "clean"→ getDiffPaths returns a diff with no sensitive paths
    */
   sensitivePaths?: "hit" | "clean";
+  /**
+   * Sensitive-path guard bypass (#1171). When true, `input.sensitivePathApproved`
+   * is set so the step-0a guard is skipped even on a "hit" diff. Models the
+   * `/requeue --adopt-branch` human land of a reviewed protected diff.
+   */
+  sensitivePathApproved?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -230,6 +236,9 @@ function harness(opts: Opts = {}): Harness {
     trunk: "main",
     issue: 9,
     title: "Fix the thing",
+    // #1171: only set when the test opts in; default undefined keeps the guard
+    // armed for every existing landing assertion.
+    sensitivePathApproved: opts.sensitivePathApproved,
   };
 
   const hooks: LandingHookContexts = {
@@ -445,6 +454,27 @@ describe("doLanding — sensitive-path guard (issue #1102)", () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
+  });
+
+  it("sensitivePathApproved=true → guard bypassed, a hit diff lands normally (#1171 adopt path)", async () => {
+    // The `/requeue --adopt-branch` human land: getDiffPaths still HITS a
+    // protected path, but the maintainer-approved flag skips the guard so the
+    // reviewed branch lands.
+    const h = harness({ locked: false, sensitivePaths: "hit", sensitivePathApproved: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.pushedAttempt).toHaveLength(1);
+    expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
+
+  it("sensitivePathApproved defaults undefined/false → a hit diff STILL parks (guard not weakened for the agent path)", async () => {
+    // The autonomous path never sets the flag, so the identical hit diff aborts.
+    const h = harness({ locked: false, sensitivePaths: "hit" });
+    expect(h.input.sensitivePathApproved).toBeUndefined();
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("sensitive-paths");
+    expect(h.pushedAttempt).toHaveLength(0);
   });
 });
 
