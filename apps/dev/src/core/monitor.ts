@@ -41,6 +41,14 @@ export interface CompactCurrent {
   slug?: string;
   /** Per-iteration start (current.started_at), an ISO/RFC string or "". */
   started_at: string;
+  /** Model identifier this worker's attempt ran with (e.g. `claude-opus-4-8`).
+   * Absent on pre-schema state files. Surfaced (shortened) on the themed
+   * per-worker `run=` label (issue #1175). */
+  model?: string;
+  /** Reasoning-effort level this worker's attempt ran with (e.g. `high`, `max`).
+   * Absent when the state/config did not carry it — the `run=` label then omits
+   * just the effort word (issue #1175). */
+  effort?: string;
   /** Cost group (ADR 0065) — cumulative per-worker token spend / USD. Optional so
    * the dashboard's compact-current constructor and fixtures stay terse; absent
    * reads as 0. */
@@ -233,6 +241,60 @@ export function compactWorkerTag(worker: CompactWorker): "live" | "quiet" | "sta
           : worker.pidLive
             ? "quiet"
             : "stale";
+}
+
+/**
+ * The per-worker FIELD DATA shared by the two rendering surfaces (issue #1175):
+ * the monitor's fuller compact line and the statusline's terse colored line.
+ * Pure extraction — no formatting, no ANSI, no layout. Each surface computes its
+ * own presentation from these fields, so they read the SAME underlying data
+ * without one renderer's verbosity bleeding into the other.
+ */
+export interface WorkerFields {
+  workerId: string;
+  runner: string;
+  /** Model identifier the attempt ran with, or undefined (pre-schema state). */
+  model?: string;
+  /** Reasoning-effort level, or undefined when unavailable. */
+  effort?: string;
+  done: number;
+  total: number;
+  /** Issue number in progress, or null when the worker is idle (no issue). */
+  issue: number | string | null;
+  /** Bare lifecycle stage word (`impl`, `tests`), or "" when idle/absent. */
+  stage: string;
+  /** Zero-padded HH:MM:SS the worker has been running. */
+  elapsed: string;
+  added: number;
+  removed: number;
+  /** Total token spend (input + output) across the attempt. */
+  tokens: number;
+  tools: number;
+  reasoning: number;
+  text: number;
+}
+
+/** Extract the shared {@link WorkerFields} from a compact worker record. */
+export function workerFields(worker: CompactWorker, now: number): WorkerFields {
+  const { state } = worker;
+  const noIssue = isNoIssue(state.current.number);
+  return {
+    workerId: state.worker_id || "?",
+    runner: state.runner || "-",
+    model: state.current.model || undefined,
+    effort: state.current.effort || undefined,
+    done: state.done,
+    total: state.total,
+    issue: noIssue ? null : state.current.number,
+    stage: noIssue ? "" : state.current.stage,
+    elapsed: formatElapsed(elapsedSeconds(state, now)),
+    added: worker.diffAdded ?? 0,
+    removed: worker.diffRemoved ?? 0,
+    tokens: (state.current.input_tokens ?? 0) + (state.current.output_tokens ?? 0),
+    tools: state.current.tools_called_count ?? 0,
+    reasoning: state.current.reasoning_events ?? 0,
+    text: state.current.text_chunk_count ?? 0,
+  };
 }
 
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
