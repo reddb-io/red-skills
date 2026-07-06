@@ -158,16 +158,22 @@ export function renderHeaderLine(
 
 // ---------- line 2..N: one line per live worker ----------
 
-/** The TERSE per-worker line for the Claude Code statusline (issue #1175):
+/** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
- *   <wID>  run=<runner> <model> <effort>  iss=<d>/<t>  #<issue> <stage>  <elapsed>  loc=+A -R  tks=<h>  tools=<t> reason=<r> text=<x>
+ *   <wID>  run=<runner> <model> <effort>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
- * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tools=`/`reason=`/`text=`) reuses
- * the same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
- * VALUE — so no token is a distinct blob. The truncated issue TITLE, the
- * live/quiet badge, `wait`, and `log` are DROPPED here; the fuller monitor line
- * (`renderWorkerCompactLine`) keeps them. The two share only the field data
+ * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
+ * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
+ * VALUE — so no token is a distinct blob. EVERY key on this line is EXACTLY 3
+ * letters (house rule, issue #1176), so the vitals renamed tools/reason/text →
+ * tls/rsn/txt HERE ONLY (the monitor dashboard line keeps tools:/reason:/text:).
+ * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
+ * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
+ * queue counter (meaningless for a single-issue /go run) — and the standalone
+ * `#<n>` token is dropped, the `<stage>` stays bare. The truncated issue TITLE,
+ * the live/quiet badge, `wait`, and `log` are DROPPED here; the fuller monitor
+ * line (`renderWorkerCompactLine`) keeps them. The two share only the field data
  * ({@link workerFields}), never a renderer, so the terse form cannot bleed into
  * the monitor. `now` is an epoch in seconds. */
 export function renderWorkerLine(worker: CompactWorker, now: number): string {
@@ -179,14 +185,18 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // wID — bold red, reusing BOLD + the SOFT red tone (no new ANSI).
   parts.push(`${BOLD}${f.workerId}${NOBOLD}`);
   parts.push(kv("run", runVal));
-  parts.push(kv("iss", `${f.done}/${f.total}`));
-  // #<issue> <stage> — bare, high-signal, only when an issue is in progress.
-  if (f.issue !== null) parts.push(f.stage ? `#${f.issue} ${f.stage}` : `#${f.issue}`);
+  // iss=<issue-number> from current.number (both /afk and /go lanes); the
+  // <stage> follows bare and the legacy standalone #<n> token is dropped.
+  if (f.issue !== null) {
+    parts.push(kv("iss", String(f.issue)));
+    if (f.stage) parts.push(f.stage);
+  }
   parts.push(f.elapsed);
   parts.push(kv("loc", formatDiff(f.added, f.removed)));
   parts.push(kv("tks", humanizeCount(f.tokens)));
-  // The vitals as INDIVIDUAL k=v pairs (single-spaced group), same convention.
-  parts.push(`${kv("tools", String(f.tools))} ${kv("reason", String(f.reasoning))} ${kv("text", String(f.text))}`);
+  // The vitals as INDIVIDUAL 3-letter k=v pairs (single-spaced group), same
+  // convention. Renamed from tools/reason/text on the STATUSLINE line only.
+  parts.push(`${kv("tls", String(f.tools))} ${kv("rsn", String(f.reasoning))} ${kv("txt", String(f.text))}`);
   return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
 }
 
