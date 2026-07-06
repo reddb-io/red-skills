@@ -699,7 +699,9 @@ import {
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
   LABEL_SENSITIVE_PATH,
+  LABEL_SPEC,
 } from "./triage-labels.js";
+import { validateIssueLifecycleTransition, type IssueLifecycleEdge } from "./issue-lifecycle.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -734,6 +736,18 @@ async function editLabelsTagged(
   if (typed === null) return deps.gh.editLabels(issue, remove, add);
   await deps.gh.ensureLabel(typed);
   return deps.gh.editLabels(issue, remove, [...add, typed]);
+}
+
+async function editIssueLifecycleLabels(
+  deps: ProcessIssueDeps,
+  issue: number,
+  fromLabels: readonly string[],
+  remove: string[],
+  add: string[],
+  edge: IssueLifecycleEdge,
+): Promise<boolean> {
+  validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
+  return deps.gh.editLabels(issue, remove, add);
 }
 
 /**
@@ -787,7 +801,7 @@ async function routeRecovery(
     // Build the escalate label set from the typed label (computed independent of
     // the composer's own decision) so a hook-FORCED escalate still pages cleanly.
     const addLabels = disp.typedLabel !== null ? [LABEL_HUMAN, disp.typedLabel] : [LABEL_HUMAN];
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], addLabels);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], addLabels, "human-blocked");
     // The budget-exhausted page comment only rides the composer's OWN escalate
     // (it tells a retry-budget story); a hook-forced escalate stays silent.
     if (decision === disp.decision && disp.escalationComment !== null) {
@@ -815,7 +829,7 @@ async function routeRecovery(
     }
   } else {
     // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
   }
   return decision;
 }
@@ -957,7 +971,7 @@ async function refuseNoSandboxForUntrustedAuthor(
   hooksFired: HookName[],
   reason: string,
 ): Promise<ProcessIssueResult> {
-  await deps.gh.editLabels(input.issue, [LABEL_READY], [LABEL_HUMAN]);
+  await editIssueLifecycleLabels(deps, input.issue, [LABEL_READY], [LABEL_READY], [LABEL_HUMAN], "preflight-blocked");
   await deps.gh.comment(
     input.issue,
     `🤖 /afk preflight stopped: ${reason}. Autonomous execution refused; maintainer intervention required.`,
@@ -1074,7 +1088,8 @@ export async function processIssue(
 
   const activeBlocker = parseCurrentBlocker(input.body);
   if (activeBlocker && !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind)) {
-    await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
+    await deps.gh.ensureLabel(LABEL_SPEC);
+    await editIssueLifecycleLabels(deps, issue, labels, [LABEL_READY], [LABEL_HUMAN, LABEL_SPEC], "preflight-blocked");
     await deps.gh.comment(
       issue,
       `🤖 /afk preflight stopped: active Current blocker (${activeBlocker.kind}) still requires human input: ${activeBlocker.next}`,
@@ -1148,7 +1163,8 @@ export async function processIssue(
   // already won via the GitHub-native arbiter, so a failed label edit must not
   // abandon the attempt. Legacy callers (no `claimGh`) keep the old semantics
   // where the edit-to-running was the lock and its failure lost the claim.
-  const promoted = await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]);
+  const claimRemoveLabels = [LABEL_READY, ...blockedLabelsIn(labels)];
+  const promoted = await editIssueLifecycleLabels(deps, issue, labels, claimRemoveLabels, [LABEL_RUNNING], "claim");
   if (!promoted && !deps.claimGh) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
@@ -1160,7 +1176,7 @@ export async function processIssue(
   if (branch === null) {
     // A malformed ref refuses the iteration; restore the claim like the bash
     // "refusing malformed live branch ref" guard (return before running).
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
