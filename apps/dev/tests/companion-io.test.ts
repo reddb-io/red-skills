@@ -29,6 +29,7 @@ function record(issue: number, attempt: number, current: Record<string, unknown>
     livenessVerdict: { status: live ? "alive" : "stalled", laneFresh: live, crossCheckArmed: false, reason: "" },
     pidIdentityLive: live,
     hostPidLive: false,
+    renderableLive: live,
   };
 }
 
