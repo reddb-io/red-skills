@@ -65,8 +65,16 @@ describe("monitor — compact line", () => {
     // started 2026-05-30T11:00:00Z = 1780138800; now +1800s (30 min)
     const line = renderWorkerCompactLine(baseWorker(), 1780140600);
     expect(line).toBe(
-      "wAAAA [live] claude  issues 1/4  #42 do the thing  stage:impl  00:30:00  +10 -3",
+      "wAAAA [live] claude org=afk  issues 1/4  #42 do the thing  stage:impl  00:30:00  +10 -3",
     );
+  });
+
+  it("renders org=<afk|go> on the compact line (issue #1219), defaulting to afk when unstamped", () => {
+    // Unstamped → org=afk.
+    expect(renderWorkerCompactLine(baseWorker(), 1780140600)).toContain(" org=afk  ");
+    // A /go worker carries origin: "go".
+    const go = baseWorker({ state: { ...baseWorker().state, origin: "go" } });
+    expect(renderWorkerCompactLine(go, 1780140600)).toContain(" org=go  ");
   });
 
   it("appends per-worker token spend (and $cost when reported) when usage streamed", () => {

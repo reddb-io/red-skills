@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import type { AfkState } from "../types/state.js";
-import { parseState, isStateLive, type PidStartTimeProbe } from "./state.js";
+import { parseState, isStateLive, parseIdentity, readIdentitySync, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
 import { allWorkersRoots } from "./worker-paths.js";
 import {
@@ -74,6 +74,29 @@ export interface WorkerStateRecord {
    * local attempts (pid 0, no live host pid).
    */
   hostPidLive: boolean;
+  /**
+   * The SINGLE render-gate every observability surface shares (issue #1219):
+   * `livenessVerdict.status !== "stalled" && (pidIdentityLive || hostPidLive)`.
+   * Computed ONCE here so the statusline aggregate, the statusline per-worker
+   * lines, and the monitor dashboard all agree on who becomes a rendered row —
+   * no surface inlines its own copy of the gate. Also exported as the pure
+   * {@link isRenderableLive} helper for callers that hold a partial record.
+   */
+  renderableLive: boolean;
+}
+
+/**
+ * The ONE render-gate predicate (issue #1219): a record becomes a rendered
+ * worker row only when the evaluator does NOT call it stalled AND its own pid
+ * (or, for isolation workers, the host-side `worker.pid`) is genuinely alive.
+ * Every read surface routes through this so a finished/retained pid-0 attempt or
+ * a stalled worker never renders a phantom live line, and all three surfaces
+ * agree on liveness.
+ */
+export function isRenderableLive(
+  rec: Pick<WorkerStateRecord, "livenessVerdict" | "pidIdentityLive" | "hostPidLive">,
+): boolean {
+  return rec.livenessVerdict.status !== "stalled" && (rec.pidIdentityLive || rec.hostPidLive);
 }
 
 /** Display threshold: lane records this old → not "active". Matches the old
@@ -117,6 +140,15 @@ export interface WorkerStateReadOpts {
    * the host's `afk.state.json.pid` is never populated during the run.
    */
   workerPidContent?: string;
+  /**
+   * Raw text content of the per-attempt `identity.json` sidecar, for injection in
+   * tests. When omitted and the isolation fallback fires (state.pid 0 + a live
+   * host worker.pid), the reader reads `{dirname(path)}/identity.json` from disk.
+   * The durable write-once identity (issue #1219) that lets a live isolation
+   * worker render its real worker_id/runner/origin/started_at instead of the
+   * `?  run=-  00:00:00` ghost.
+   */
+  identityContent?: string;
 }
 
 /** Sync read of the newest liveness lane record timestamp (epoch-ms), or
@@ -227,8 +259,32 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
           crossCheckArmed: false,
           reason: `state.pid=0 but worker.pid=${hostPid} is alive (isolation worker)`,
         };
-        // Derive the issue number from the attempt-dir basename when the state
-        // carries no current.number (the state file is empty pre-sync).
+        // Durable identity fallback (issue #1219): a live isolation worker whose
+        // host-side afk.state.json is still zeroed (pid 0, empty worker_id/runner)
+        // must NOT render as the `?  run=-  00:00:00` ghost. Read the write-once
+        // identity.json sidecar and populate the zeroed identity fields from it —
+        // never overwriting a value the state file already carries.
+        const identity =
+          opts.identityContent !== undefined
+            ? parseIdentity(opts.identityContent)
+            : readIdentitySync(dirname(path));
+        if (identity) {
+          if (!state.worker_id && identity.worker_id) state.worker_id = identity.worker_id;
+          if (!state.runner && identity.runner) state.runner = identity.runner;
+          if (!state.origin && identity.origin) state.origin = identity.origin;
+          if (!state.started_at && identity.started_at) state.started_at = identity.started_at;
+          if (!state.current.started_at && identity.started_at) state.current.started_at = identity.started_at;
+          if (
+            (state.current.number === "" || state.current.number === undefined || state.current.number === null) &&
+            identity.number !== "" &&
+            identity.number !== undefined &&
+            identity.number !== null
+          ) {
+            state.current.number = identity.number;
+          }
+        }
+        // Derive the issue number from the attempt-dir basename when neither the
+        // state nor the identity sidecar carries a current.number (empty pre-sync).
         if (state.current.number === "" || state.current.number === undefined || state.current.number === null) {
           const attemptBasename = basename(dirname(path));
           const m = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attemptBasename);
@@ -255,6 +311,11 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   // statusline worker-line filter needs (issue #1177).
   const pidIdentityLive = isStateLive(state, opts.kill, opts.pidStartTime);
 
+  // The ONE shared render-gate (issue #1219), computed once so all three
+  // surfaces route through the same predicate.
+  const renderableLive =
+    finalVerdict.status !== "stalled" && (pidIdentityLive || hostPidLive);
+
   return {
     path,
     state,
@@ -264,6 +325,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
     livenessVerdict: finalVerdict,
     pidIdentityLive,
     hostPidLive,
+    renderableLive,
   };
 }
 
@@ -293,6 +355,7 @@ export async function readWorkerStates(root: string, opts: WorkerStatesReadOpts 
       sandboxTag: opts.sandboxTag,
       psSnapshot: opts.psSnapshot,
       workerPidContent: opts.workerPidContent,
+      identityContent: opts.identityContent,
     });
     if (rec !== null) out.push(rec);
   }

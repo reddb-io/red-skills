@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { readWorkerState, readWorkerStates, readAllWorkerStates } from "../src/core/worker-state-reader.js";
+import { readWorkerState, readWorkerStates, readAllWorkerStates, isRenderableLive } from "../src/core/worker-state-reader.js";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const NOW = Date.UTC(2026, 5, 22, 12, 0, 0);
@@ -228,6 +228,61 @@ describe("worker-state-reader", () => {
     expect(rec!.livenessVerdict.reason).toContain("worker.pid=9876 is alive");
   });
 
+  // issue #1219 PART 2: a live isolation worker whose host-side state is zeroed
+  // renders its real identity from the durable identity.json sidecar.
+  it("isolation: hostPidLive + zeroed state → real worker_id/runner/origin/started_at from identity.json", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-iso-identity-"));
+    const attemptDir = join(base, "wISO", "1181-a1");
+    // Fully zeroed host state (pre-sync isolation worker): pid 0, empty identity.
+    const path = await writeState(attemptDir, { pid: 0, current: {} });
+    const identity = JSON.stringify({
+      worker_id: "wREAL",
+      runner: "claude",
+      origin: "go",
+      number: 1181,
+      started_at: "2026-07-06T10:00:00Z",
+    });
+    const rec = readWorkerState(path, {
+      nowMs: NOW,
+      workerPidContent: "9876",
+      kill: () => true,
+      identityContent: identity,
+    });
+    expect(rec).not.toBeNull();
+    // Real identity, NOT the zeroed schema default (no `?  run=-  00:00:00` ghost).
+    expect(rec!.state.worker_id).toBe("wREAL");
+    expect(rec!.state.runner).toBe("claude");
+    expect(rec!.state.origin).toBe("go");
+    expect(rec!.state.started_at).toBe("2026-07-06T10:00:00Z");
+    expect(rec!.state.current.number).toBe(1181);
+    // A live isolation worker is renderable.
+    expect(rec!.renderableLive).toBe(true);
+    expect(rec!.hostPidLive).toBe(true);
+  });
+
+  // The identity sidecar never overwrites a value the state file already carries.
+  it("isolation: identity.json does not clobber a populated state field", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-iso-nonclobber-"));
+    const attemptDir = join(base, "wISO", "1181-a1");
+    const path = await writeState(attemptDir, { pid: 0, worker_id: "wKEEP", current: {} });
+    const identity = JSON.stringify({
+      worker_id: "wIDENTITY",
+      runner: "codex",
+      origin: "afk",
+      number: 1181,
+      started_at: "2026-07-06T10:00:00Z",
+    });
+    const rec = readWorkerState(path, {
+      nowMs: NOW,
+      workerPidContent: "9876",
+      kill: () => true,
+      identityContent: identity,
+    });
+    expect(rec!.state.worker_id).toBe("wKEEP");
+    // Empty fields still fall back to the identity.
+    expect(rec!.state.runner).toBe("codex");
+  });
+
   it("isolation: dead worker.pid + pid:0 state → dead", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-iso-dead-"));
     const attemptDir = join(base, "wISO", "1085-a1");
@@ -260,5 +315,51 @@ describe("worker-state-reader", () => {
     expect(rec!.state.current.number).toBe(999);
     // The isolation fallback must NOT have fired (worker.pid check is skipped when state.pid > 0).
     expect(rec!.livenessVerdict.reason).not.toContain("worker.pid");
+  });
+
+  // issue #1219 PART 1: the ONE shared render-gate predicate.
+  describe("isRenderableLive predicate", () => {
+    const verdict = (status: "alive" | "stalled" | "unknown") =>
+      ({ status, laneFresh: false, crossCheckArmed: false, reason: "" }) as const;
+
+    it("drops a stalled worker even when pid identity is live", () => {
+      expect(
+        isRenderableLive({ livenessVerdict: verdict("stalled"), pidIdentityLive: true, hostPidLive: false }),
+      ).toBe(false);
+    });
+
+    it("drops a not-stalled record with neither pid signal (finished pid-0 sibling)", () => {
+      expect(
+        isRenderableLive({ livenessVerdict: verdict("alive"), pidIdentityLive: false, hostPidLive: false }),
+      ).toBe(false);
+    });
+
+    it("keeps a live worker (not stalled + pid identity live)", () => {
+      expect(
+        isRenderableLive({ livenessVerdict: verdict("alive"), pidIdentityLive: true, hostPidLive: false }),
+      ).toBe(true);
+    });
+
+    it("keeps a live isolation worker (not stalled + host pid live)", () => {
+      expect(
+        isRenderableLive({ livenessVerdict: verdict("alive"), pidIdentityLive: false, hostPidLive: true }),
+      ).toBe(true);
+    });
+
+    it("readWorkerState computes renderableLive consistently for stalled/live", async () => {
+      const base = await mkdtemp(join(tmpdir(), "wsr-renderable-"));
+      // Live: populated pid + fresh lane.
+      const livePath = await writeState(join(base, "wA", "5-a1"), {
+        worker_id: "wA", pid: 4242, current: { number: 5, last_event_at: fresh },
+      });
+      const live = readWorkerState(livePath, { nowMs: NOW, laneRecencyMs: LANE_FRESH_MS, kill: () => true });
+      expect(live!.renderableLive).toBe(true);
+      // Stalled: pid 0, stale lane, no host pid → dead.
+      const deadPath = await writeState(join(base, "wB", "6-a1"), {
+        worker_id: "wB", pid: 0, current: { number: 6 },
+      });
+      const dead = readWorkerState(deadPath, { nowMs: NOW, laneRecencyMs: LANE_STALE_MS, kill: () => false });
+      expect(dead!.renderableLive).toBe(false);
+    });
   });
 });

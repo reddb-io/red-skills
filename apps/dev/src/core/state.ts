@@ -1,10 +1,76 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
 
 export function defaultState(): AfkState {
   return AfkStateSchema.parse({});
+}
+
+/** The write-once identity sidecar filename in an attempt dir (issue #1219). */
+export const IDENTITY_FILENAME = "identity.json";
+
+/**
+ * The immutable spawn-time identity of one attempt (issue #1219). Written once by
+ * {@link writeIdentitySync} beside `afk.state.json` and NEVER clobbered by the
+ * vitals `updateState` read-modify-writes. It is the durable source the isolation
+ * fallback in {@link readWorkerState} reads to render a live worker's real
+ * `worker_id`/`runner`/`origin`/`started_at`/issue number when the host-side
+ * `afk.state.json` is still zeroed (pid 0, empty identity) pre-sync — so a live
+ * worker can never render as the `?  run=-  00:00:00` ghost.
+ */
+export interface WorkerIdentity {
+  worker_id: string;
+  runner: string;
+  origin: string;
+  number: number | string;
+  started_at: string;
+}
+
+/**
+ * Write the attempt's {@link WorkerIdentity} sidecar ONCE. Synchronous (same seam
+ * as {@link initStateSync}) and write-once: an existing `identity.json` is left
+ * untouched so a re-entered attempt keeps its original identity. Best-effort at
+ * the call site — a failed write must never block the worker's actual work.
+ */
+export function writeIdentitySync(attemptDir: string, identity: WorkerIdentity): void {
+  const path = join(attemptDir, IDENTITY_FILENAME);
+  if (existsSync(path)) return;
+  mkdirSync(attemptDir, { recursive: true });
+  const tmp = `${path}.tmp.${process.pid}.sync`;
+  writeFileSync(tmp, `${JSON.stringify(identity)}\n`, "utf8");
+  renameSync(tmp, path);
+}
+
+/** Parse a {@link WorkerIdentity} from raw JSON text, or `null` when absent /
+ * malformed. Only string/number fields are honoured; anything else is dropped to
+ * the empty default so a partial file never throws. */
+export function parseIdentity(raw: string | null | undefined): WorkerIdentity | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Partial<WorkerIdentity>;
+    if (typeof p !== "object" || p === null) return null;
+    return {
+      worker_id: typeof p.worker_id === "string" ? p.worker_id : "",
+      runner: typeof p.runner === "string" ? p.runner : "",
+      origin: typeof p.origin === "string" ? p.origin : "",
+      number:
+        typeof p.number === "number" || typeof p.number === "string" ? p.number : "",
+      started_at: typeof p.started_at === "string" ? p.started_at : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Synchronous read of the {@link WorkerIdentity} sidecar from an attempt dir, or
+ * `null` when the file is missing/unreadable/malformed. */
+export function readIdentitySync(attemptDir: string): WorkerIdentity | null {
+  try {
+    return parseIdentity(readFileSync(join(attemptDir, IDENTITY_FILENAME), "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 /**
