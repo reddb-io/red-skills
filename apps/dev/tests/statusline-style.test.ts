@@ -165,9 +165,9 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     // The DROPPED verbosity must be gone.
     expect(t).not.toContain("iss=7/10"); // the old done/total counter is gone
     expect(t).not.toContain("#17"); // the standalone #<n> token is dropped
-    expect(t).not.toContain("tools="); // renamed → tls= on the statusline line
-    expect(t).not.toContain("reason="); // renamed → rsn=
-    expect(t).not.toContain("text="); // renamed → txt=
+    expect(t).not.toContain("tools="); // unified as tls=
+    expect(t).not.toContain("reason="); // unified as rsn=
+    expect(t).not.toContain("text="); // unified as txt=
     expect(t).not.toContain("[live]");
     expect(t).not.toContain("[quiet]");
     expect(t).not.toContain("redesign statusline"); // no title
