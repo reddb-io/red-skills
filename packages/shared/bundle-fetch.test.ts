@@ -40,6 +40,8 @@ const bundleBytesFor = (v: string) => enc(`export const V = "${v}";`);
 function makeIO(opts: {
   files?: Record<string, Uint8Array>;
   packageBundles?: Record<string, Record<string, Uint8Array>>;
+  /** npm dist-tag fixture: tag name -> published package version. */
+  distTags?: Record<string, string>;
   /** specs whose materialize should throw a network error. */
   offlineSpecs?: string[];
   /** registry metadata JSON keyed by URL. */
@@ -57,7 +59,7 @@ function makeIO(opts: {
       if ((opts.offlineSpecs ?? []).includes(spec)) {
         throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org");
       }
-      const bundles = packages[spec];
+      const bundles = packages[spec] ?? packages[resolveDistTagSpec(spec, opts.distTags ?? {})];
       if (!bundles) throw new Error(`npm ERR! 404 '${spec}' is not in this registry`);
       const root = `${stagingDir}/node_modules/${NPM_PACKAGE}`;
       for (const [plugin, bytes] of Object.entries(bundles)) {
@@ -86,6 +88,14 @@ function makeIO(opts: {
     },
   };
   return { io, files, materializes, writes, fetches };
+}
+
+function resolveDistTagSpec(spec: string, tags: Record<string, string>): string {
+  const prefix = `${NPM_PACKAGE}@`;
+  if (!spec.startsWith(prefix)) return spec;
+  const ref = spec.slice(prefix.length);
+  const version = tags[ref];
+  return version ? `${NPM_PACKAGE}@${version}` : spec;
 }
 
 describe("npm spec + registry URL builders", () => {
@@ -139,10 +149,15 @@ describe("ensureBundle (npm transport)", () => {
     expect(files[dest]).toEqual(bytes);
   });
 
-  it("canary resolves the dist-tag and writes the canary cache file", async () => {
+  it("canary resolves the dist-tag to a published stable version and writes the canary cache file", async () => {
     const spec = npmPackageSpec(VERSION, "canary");
-    const bytes = bundleBytesFor("canary");
-    const { io, files } = makeIO({ packageBundles: { [spec]: { [PLUGIN]: bytes } } });
+    const published = "1.146.0";
+    const publishedSpec = npmPackageSpec(published);
+    const bytes = bundleBytesFor(published);
+    const { io, files, materializes } = makeIO({
+      distTags: { canary: published },
+      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes } },
+    });
     const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE, channel: "canary" });
     const path = await ensureBundle(io, {
       plugin: PLUGIN,
@@ -151,6 +166,29 @@ describe("ensureBundle (npm transport)", () => {
       channel: "canary",
     });
     expect(path).toBe(`${CACHE}/dev-canary.bundle.min.mjs`);
+    expect(materializes).toEqual([spec]);
+    expect(files[dest]).toEqual(bytes);
+  });
+
+  it("canary refreshes a stale channel cache from the current dist-tag", async () => {
+    const spec = npmPackageSpec(VERSION, "canary");
+    const published = "1.146.0";
+    const publishedSpec = npmPackageSpec(published);
+    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE, channel: "canary" });
+    const bytes = bundleBytesFor(published);
+    const { io, files, materializes } = makeIO({
+      files: { [dest]: bundleBytesFor("old-canary") },
+      distTags: { canary: published },
+      packageBundles: { [publishedSpec]: { [PLUGIN]: bytes } },
+    });
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      channel: "canary",
+    });
+    expect(path).toBe(dest);
+    expect(materializes).toEqual([spec]);
     expect(files[dest]).toEqual(bytes);
   });
 
@@ -184,11 +222,12 @@ describe("ensureBundle (npm transport)", () => {
 
 describe("registry version discovery", () => {
   const metadata = JSON.stringify({
-    "dist-tags": { latest: "1.145.2", canary: "1.146.0-rc.1" },
+    "dist-tags": { latest: "1.145.2", canary: "1.146.0" },
     versions: {
       "1.140.0": {},
       "1.145.2": {},
       "1.144.0": {},
+      "1.146.0": {},
       "2.0.0": {},
       "0.9.0": {},
     },
@@ -196,19 +235,19 @@ describe("registry version discovery", () => {
 
   it("parses the published-version list", () => {
     expect(parseRegistryVersions(metadata).sort()).toEqual(
-      ["0.9.0", "1.140.0", "1.144.0", "1.145.2", "2.0.0"].sort(),
+      ["0.9.0", "1.140.0", "1.144.0", "1.145.2", "1.146.0", "2.0.0"].sort(),
     );
     expect(parseRegistryVersions("not json")).toEqual([]);
   });
 
   it("reads a dist-tag version", () => {
     expect(registryDistTagVersion(metadata, "latest")).toBe("1.145.2");
-    expect(registryDistTagVersion(metadata, "canary")).toBe("1.146.0-rc.1");
+    expect(registryDistTagVersion(metadata, "canary")).toBe("1.146.0");
     expect(registryDistTagVersion(metadata, "missing")).toBeUndefined();
   });
 
   it("picks the newest SAME-major version, never crossing a major", () => {
-    expect(newestSameMajor(parseRegistryVersions(metadata), "1.140.0")).toBe("1.145.2");
+    expect(newestSameMajor(parseRegistryVersions(metadata), "1.140.0")).toBe("1.146.0");
     // 2.x is out of range for a 1.x install — never selected.
     expect(newestSameMajor(["2.0.0", "2.1.0"], "1.140.0")).toBeNull();
     expect(newestSameMajor([], "1.140.0")).toBeNull();
@@ -218,7 +257,7 @@ describe("registry version discovery", () => {
     const url = registryPackageUrl();
     const { io, fetches } = makeIO({ registry: { [url]: metadata } });
     const newest = await fetchNewestSameMajor(io, "1.140.0");
-    expect(newest).toBe("1.145.2");
+    expect(newest).toBe("1.146.0");
     expect(fetches).toEqual([url]);
     expect(fetches.every((u) => !u.includes("releases/download"))).toBe(true);
   });
