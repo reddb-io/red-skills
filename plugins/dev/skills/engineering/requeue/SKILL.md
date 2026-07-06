@@ -44,7 +44,7 @@ The adopted branch and an AFK branch go through the same gate authority.
 3. Refuse without mutation (exit 1, direct to `/hitl`) when:
    - the issue carries **mixed `blocked:*` labels** (e.g., both `blocked:validation` and `blocked:spec`);
    - the `blocked:*` label kind does not match the active `## Current blocker` kind in the body (**label/body mismatch**);
-   - the blocked kind is not `validation` or `spec` (e.g., `blocked:decision`, `blocked:stalled`).
+   - the blocked kind is not `validation` or `spec` (e.g., `blocked:decision`, `blocked:stalled`). **Exception (#1171):** `blocked:sensitive-path` is refused on a **bare** requeue but is clearable with `--adopt-branch` (see below).
 4. If the issue is not parked AND `--adopt-branch` is NOT given: no-op exit 0.
 5. If the issue is parked and requeueable: apply the requeue transition atomically:
    - clear/archive the active `## Current blocker` into `## Resolved blockers`;
@@ -53,6 +53,18 @@ The adopted branch and an AFK branch go through the same gate authority.
 6. If `--adopt-branch` is given (whether or not the issue was parked):
    - adopt the branch through the no-agent landing lane (ADR 0055 reconcile);
    - exit 0 on `landed`, exit 1 on `parked` (gate failed), exit 0 on `skipped`.
+
+### Clearing a `blocked:sensitive-path` park (#1171)
+
+A `blocked:sensitive-path` park (its diff touches a protected path — CI workflow, lifecycle script, git hook, `.red/` config) is a **landing** gate that re-fires on every fresh attempt, so a bare requeue → `/hitl` → new attempt is an **infinite loop**: the new agent reproduces the same protected diff and re-parks.
+
+`--adopt-branch` breaks the loop. When a maintainer runs `/requeue <issue> --adopt-branch <branch> --guidance "<review note>"` on a `blocked:sensitive-path` park:
+
+- requeue clears the blocker, drops `ready-for-human` + `blocked:sensitive-path`, and adopts the reviewed branch through the no-agent lane **with the sensitive-path landing guard bypassed for that land only**;
+- an **audit comment** records who approved the diff and when — the bypass is never silent;
+- the guard is **never** weakened for the autonomous path: every normal AFK/go attempt still parks `blocked:sensitive-path`. The bypass is reachable **only** from this explicit `--adopt-branch` human command.
+
+A **bare** requeue of a `blocked:sensitive-path` issue still refuses → `/hitl` (the human must review the diff and land it via `--adopt-branch`).
 
 </what-to-do>
 
@@ -69,11 +81,12 @@ A validation or spec failure parks an issue with `ready-for-human`, a `blocked:*
 - The label kind and the active `## Current blocker` kind in the body agree.
 - You already have the retry guidance and do not need an interview to extract it.
 - OR: you have a hand-done branch to adopt (`--adopt-branch`).
+- OR: the issue is `blocked:sensitive-path` and you have **reviewed the protected diff** — clear it with `--adopt-branch <branch>` (a bare requeue still refuses).
 
 **Use `/hitl`** when:
 - The pending human decision still has to be **extracted and answered**.
 - The issue carries **mixed `blocked:*` labels** or a **label/body mismatch**.
-- The blocked kind is anything other than `validation` or `spec`.
+- The blocked kind is anything other than `validation` or `spec` — **except** `blocked:sensitive-path`, which `/requeue --adopt-branch` clears once you have reviewed the diff.
 
 Both commands end in the same safe state. `/requeue` is the focused shortcut; `/hitl` is the general path for everything else.
 
