@@ -432,16 +432,33 @@ export async function pushBranch(
 
 /**
  * List origin refs under a namespace ("afk/" | "afk-attempts/") via ls-remote,
- * shaped as BranchRef[]. The optional last-commit epoch is left unset (the
- * snapshot 404 grace falls back to "keep" without it).
+ * shaped as BranchRef[]. Best-effort fills the last-commit epoch when the commit
+ * object is present locally; callers that need it must degrade safely when it is
+ * absent.
  */
 export async function listRemoteBranches(ctx: GitContext, namespace: string): Promise<BranchRef[]> {
   const r = await runGit(ctx, ["ls-remote", "--heads", "origin", `refs/heads/${namespace}*`]);
   if (r.code !== 0) return [];
   const refs: BranchRef[] = [];
   for (const line of r.stdout.split("\n")) {
-    const m = /\trefs\/heads\/(.+)$/.exec(line);
-    if (m && m[1]) refs.push({ branch: m[1] });
+    const m = /^([0-9a-fA-F]+)\trefs\/heads\/(.+)$/.exec(line);
+    if (!m || !m[1] || !m[2]) continue;
+    const ref: BranchRef = { branch: m[2] };
+    const commitS = await remoteCommitEpoch(ctx, m[1], m[2]);
+    if (commitS !== undefined) ref.commitS = commitS;
+    refs.push(ref);
   }
   return refs;
+}
+
+async function remoteCommitEpoch(ctx: GitContext, sha: string, branch: string): Promise<number | undefined> {
+  const read = async (): Promise<number | undefined> => {
+    const ts = await runGit(ctx, ["show", "-s", "--format=%ct", sha]);
+    const commitS = Number((ts.stdout ?? "").trim());
+    return ts.code === 0 && Number.isFinite(commitS) ? commitS : undefined;
+  };
+  const local = await read();
+  if (local !== undefined) return local;
+  await runGit(ctx, ["fetch", "--quiet", "--no-tags", "origin", `refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  return read();
 }

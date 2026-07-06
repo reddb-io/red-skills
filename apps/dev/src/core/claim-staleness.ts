@@ -49,6 +49,27 @@ export const DEFAULT_CLAIM_STALENESS: ClaimStalenessConfig = {
   tolerance: DEFAULT_CLAIM_STALE_TOLERANCE,
 };
 
+/** Default minimum age before the cross-host sweep may release a claim, even if
+ * an operator configured an aggressive stale window. */
+export const DEFAULT_CLAIM_REAPER_GRACE_S = DEFAULT_CLAIM_REFRESH_S;
+
+/** Default sliding window in which a commit on the attempt branch proves recent
+ * progress and protects the claim from the cross-host stale-claim sweep. */
+export const DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S = 2700;
+
+export interface ClaimReaperConfig extends ClaimStalenessConfig {
+  /** A claim at or below this age is fresh regardless of stale-window settings. */
+  claimGraceS: number;
+  /** Seconds since the attempt branch's last commit that still counts as active progress. */
+  recentCommitProtectionS: number;
+}
+
+export const DEFAULT_CLAIM_REAPER: ClaimReaperConfig = {
+  ...DEFAULT_CLAIM_STALENESS,
+  claimGraceS: DEFAULT_CLAIM_REAPER_GRACE_S,
+  recentCommitProtectionS: DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+};
+
 export type ClaimFreshness = "fresh" | "stale";
 
 /**
@@ -86,11 +107,12 @@ function recordEpochS(record: ClaimRecord): number | null {
 export function classifyClaim(
   record: ClaimRecord,
   nowS: number,
-  config: ClaimStalenessConfig = DEFAULT_CLAIM_STALENESS,
+  config: ClaimStalenessConfig | ClaimReaperConfig = DEFAULT_CLAIM_REAPER,
 ): ClaimFreshness {
   const ts = recordEpochS(record);
   if (ts === null) return "fresh";
   const ageS = nowS - ts;
+  if ("claimGraceS" in config && ageS <= config.claimGraceS) return "fresh";
   if (ageS <= staleWindowS(config)) return "fresh";
   return "stale";
 }
@@ -103,7 +125,7 @@ export function classifyClaim(
  */
 export function makeStaleClaimPredicate(
   nowS: number,
-  config: ClaimStalenessConfig = DEFAULT_CLAIM_STALENESS,
+  config: ClaimStalenessConfig | ClaimReaperConfig = DEFAULT_CLAIM_REAPER,
 ): (record: ClaimRecord) => boolean {
   return (record) => classifyClaim(record, nowS, config) === "stale";
 }
@@ -192,6 +214,9 @@ export function classifyIssueClaims(
 export interface ClaimedIssue {
   issue: number;
   records: readonly ClaimRecord[];
+  /** Most recent commit epoch across this issue's live attempt branches. When
+   * recent enough, it proves active progress even if the claim marker is old. */
+  attemptBranchCommitS?: number;
 }
 
 /** A planned release: the issue to return to the executable pool + the stale
@@ -224,17 +249,26 @@ export function renderStaleClaimSweepAudit(staleOwners: readonly string[]): stri
 export function planStaleClaimSweep(
   claimed: readonly ClaimedIssue[],
   nowS: number,
-  config: ClaimStalenessConfig = DEFAULT_CLAIM_STALENESS,
+  config: ClaimReaperConfig = DEFAULT_CLAIM_REAPER,
 ): StaleClaimRelease[] {
   const isStale = makeStaleClaimPredicate(nowS, config);
   const releases: StaleClaimRelease[] = [];
   for (const c of claimed) {
     const state = classifyIssueClaims(c.records, isStale);
     if (state.liveOwner === null && state.staleOwners.length > 0) {
+      if (isRecentAttemptCommit(c.attemptBranchCommitS, nowS, config.recentCommitProtectionS)) continue;
       releases.push({ issue: c.issue, staleOwners: state.staleOwners });
     }
   }
   return releases;
+}
+
+function isRecentAttemptCommit(commitS: number | undefined, nowS: number, windowS: number): boolean {
+  if (!Number.isFinite(commitS)) return false;
+  const ageS = nowS - (commitS as number);
+  // Future-dated commits can be clock skew, but they are still evidence that the
+  // branch is moving; protect rather than rob.
+  return ageS <= windowS;
 }
 
 const POSITIVE_INT_RE = /^[0-9]+$/;
@@ -267,5 +301,29 @@ export function resolveClaimStalenessConfig(
   return {
     refreshCadenceS: resolvePositiveInt(env.RED_AFK_CLAIM_REFRESH_S, DEFAULT_CLAIM_REFRESH_S),
     tolerance: resolveNonNegativeInt(env.RED_AFK_CLAIM_STALE_TOLERANCE, DEFAULT_CLAIM_STALE_TOLERANCE),
+  };
+}
+
+export function resolveClaimReaperConfig(
+  env: Record<string, string | undefined> = process.env,
+  getCfg: (key: string) => string = () => "",
+): ClaimReaperConfig {
+  return {
+    refreshCadenceS:
+      resolvePositiveInt(env.RED_AFK_CLAIM_REFRESH_S, 0) ||
+      resolvePositiveInt(getCfg("afk.claim_reaper.refresh_s"), DEFAULT_CLAIM_REFRESH_S),
+    tolerance: resolveNonNegativeInt(
+      env.RED_AFK_CLAIM_STALE_TOLERANCE,
+      resolveNonNegativeInt(getCfg("afk.claim_reaper.stale_tolerance"), DEFAULT_CLAIM_STALE_TOLERANCE),
+    ),
+    claimGraceS:
+      resolvePositiveInt(env.RED_AFK_CLAIM_REAPER_GRACE_S, 0) ||
+      resolvePositiveInt(getCfg("afk.claim_reaper.grace_s"), DEFAULT_CLAIM_REAPER_GRACE_S),
+    recentCommitProtectionS:
+      resolvePositiveInt(env.RED_AFK_CLAIM_REAPER_RECENT_COMMIT_S, 0) ||
+      resolvePositiveInt(
+        getCfg("afk.claim_reaper.recent_commit_s"),
+        DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+      ),
   };
 }

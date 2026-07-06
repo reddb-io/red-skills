@@ -44,7 +44,7 @@ import {
 import {
   planStaleClaimSweep,
   renderStaleClaimSweepAudit,
-  resolveClaimStalenessConfig,
+  resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
@@ -214,6 +214,8 @@ export interface BootDeps {
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
   env?: Record<string, string | undefined>;
+  /** Flat dev config values from `.red/config.yaml` (namespaced keys folded to accessors). */
+  config?: Record<string, string | undefined>;
   /** When provided, the reconcile sweep (step 7) validates and lands each
    * owned parked-mechanical branch without re-running the agent. */
   reconcileRunner?: ReconcileBootRunner;
@@ -474,7 +476,7 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
     // Best-effort: a failed listing skips the sweep this boot, never aborting it.
     return { released: [] };
   }
-  const config = resolveClaimStalenessConfig(deps.env ?? process.env);
+  const config = resolveClaimReaperConfig(deps.env ?? process.env, (key) => deps.config?.[key] ?? "");
   const plans = planStaleClaimSweep(claimed, deps.nowS, config);
   const released: number[] = [];
   for (const p of plans) {

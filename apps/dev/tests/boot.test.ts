@@ -137,6 +137,7 @@ function makeDeps(over: Partial<{
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
+  config: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
 }> = {}) {
   const calls: string[] = [];
@@ -217,6 +218,7 @@ function makeDeps(over: Partial<{
     },
     nowS: NOW,
     env: over.env ?? {},
+    config: over.config ?? {},
     ...(over.reconcileRunner ? { reconcileRunner: over.reconcileRunner } : {}),
   };
 
@@ -672,6 +674,48 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     const { deps } = makeDeps({
       claimedIssues,
       env: { RED_AFK_CLAIM_REFRESH_S: "60", RED_AFK_CLAIM_STALE_TOLERANCE: "0" },
+    });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [7] });
+  });
+
+  it("honours plugins.dev.afk claim-reaper grace config before releasing", async () => {
+    const claimedIssues = async () => [{ issue: 7, records: [claim(10, "h:w", 120)] }];
+    const { deps, ghCalls } = makeDeps({
+      env: { RED_AFK_CLAIM_REFRESH_S: "60", RED_AFK_CLAIM_STALE_TOLERANCE: "0" },
+      config: { "afk.claim_reaper.grace_s": "300" },
+      claimedIssues,
+    });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [] });
+    expect(ghCalls.editLabels).toEqual([]);
+  });
+
+  it("protects a stale claim when the attempt branch has a recent commit", async () => {
+    const claimedIssues = async () => [
+      {
+        issue: 7,
+        records: [claim(10, "h:w", 9999)],
+        attemptBranchCommitS: NOW - 30,
+      },
+    ];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [] });
+    expect(ghCalls.editLabels).toEqual([]);
+  });
+
+  it("still releases a stale claim when branch commits are older than the protection window", async () => {
+    const claimedIssues = async () => [
+      {
+        issue: 7,
+        records: [claim(10, "h:w", 9999)],
+        attemptBranchCommitS: NOW - 31,
+      },
+    ];
+    const { deps } = makeDeps({
+      env: { RED_AFK_CLAIM_REAPER_RECENT_COMMIT_S: "30" },
+      claimedIssues,
     });
     const r = await runBoot(deps, options());
     expect(r.staleClaimSweep).toEqual({ released: [7] });

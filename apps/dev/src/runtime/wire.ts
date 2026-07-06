@@ -29,7 +29,7 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
 } from "@reddb-io/red-castle";
-import type { BranchRef } from "../core/branch-cleanup.js";
+import { liveIssueFromBranch, type BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
@@ -1270,9 +1270,17 @@ async function resolveBranchIssueCache(
 export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const cfg = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
+  const liveBranchCommitByIssue = new Map<number, number>();
+  for (const ref of options.branches.remoteLiveRefs) {
+    const issue = liveIssueFromBranch(ref.branch);
+    if (issue === null || !Number.isFinite(ref.commitS)) continue;
+    const previous = liveBranchCommitByIssue.get(issue);
+    if (previous === undefined || ref.commitS! > previous) liveBranchCommitByIssue.set(issue, ref.commitS!);
+  }
   return {
     fs: {
       ensureDir: fsx.ensureDir,
@@ -1335,7 +1343,11 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
           if (!row.labels.includes(LABEL_RUNNING)) continue;
           try {
             const comments = await ghx.listClaimComments(ghCtx, issue);
-            claimed.push({ issue, records: parseClaimRecords(comments) });
+            claimed.push({
+              issue,
+              records: parseClaimRecords(comments),
+              attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
+            });
           } catch {
             // best-effort: skip an issue whose claim comments cannot be read.
           }
@@ -1344,6 +1356,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
     },
     nowS,
+    config: cfg,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   worktreePathUnder,
   salvageUncommitted,
   unquotePorcelainPath,
+  listRemoteBranches,
 } from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
@@ -63,6 +64,47 @@ describe("fetchBranch (FIX E recovery)", () => {
     const ctx: GitContext = { cwd: "/repo", exec };
     await fetchBranch(ctx, "");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("listRemoteBranches", () => {
+  it("fills commitS from a locally-present remote branch commit", async () => {
+    const { exec, calls } = recordingExec((_cmd, args) => {
+      if (args[0] === "ls-remote") return ok("abc123\trefs/heads/afk/w1/7-task\n");
+      if (args[0] === "show") return ok("1700000123\n");
+      return fail();
+    });
+
+    await expect(listRemoteBranches({ cwd: "/repo", exec }, "afk/")).resolves.toEqual([
+      { branch: "afk/w1/7-task", commitS: 1700000123 },
+    ]);
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      ["ls-remote", "--heads", "origin", "refs/heads/afk/*"],
+      ["show", "-s", "--format=%ct", "abc123"],
+    ]);
+  });
+
+  it("fetches the specific remote branch when the commit object is not local yet", async () => {
+    let showCount = 0;
+    const { exec, calls } = recordingExec((_cmd, args) => {
+      if (args[0] === "ls-remote") return ok("def456\trefs/heads/afk/w2/8-task\n");
+      if (args[0] === "show") {
+        showCount += 1;
+        return showCount === 1 ? fail() : ok("1700000456\n");
+      }
+      if (args[0] === "fetch") return ok("");
+      return fail();
+    });
+
+    await expect(listRemoteBranches({ cwd: "/repo", exec }, "afk/")).resolves.toEqual([
+      { branch: "afk/w2/8-task", commitS: 1700000456 },
+    ]);
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      ["ls-remote", "--heads", "origin", "refs/heads/afk/*"],
+      ["show", "-s", "--format=%ct", "def456"],
+      ["fetch", "--quiet", "--no-tags", "origin", "refs/heads/afk/w2/8-task:refs/remotes/origin/afk/w2/8-task"],
+      ["show", "-s", "--format=%ct", "def456"],
+    ]);
   });
 });
 
