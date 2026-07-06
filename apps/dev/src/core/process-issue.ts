@@ -82,7 +82,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
-import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
+import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import {
@@ -1271,6 +1271,7 @@ export async function processIssue(
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
   // promptFile against process.cwd(), not against this cwd.
   let activeTaskClass: AfkModelTier = taskClass;
+  const issueType = deriveIssueType(labels);
   let escalatedSimpleFeedback = false;
   let workerBranch = branch;
   let current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
@@ -1282,6 +1283,8 @@ export async function processIssue(
     slug,
     hooksFired,
     startedEpoch,
+    issueType,
+    modelTier: activeTaskClass,
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
@@ -1520,6 +1523,8 @@ export async function processIssue(
       slug,
       hooksFired,
       startedEpoch,
+      issueType,
+      modelTier: activeTaskClass,
     } satisfies StageCommon;
 
     // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
@@ -2263,6 +2268,8 @@ async function recordAttemptBestEffort(
       issue: input.issue,
       attempt: input.attempt,
       outcome,
+      issueType: c.issueType,
+      modelTier: c.modelTier,
       title: input.title,
       body: input.body,
       workerId: input.workerId,
@@ -2291,6 +2298,8 @@ interface StageCommon {
   slug: string;
   hooksFired: HookName[];
   startedEpoch: number;
+  issueType: string;
+  modelTier: AfkModelTier;
 }
 
 /** Emit a failure-family envelope (blocked / no-sentinel / merge-conflict /
