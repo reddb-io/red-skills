@@ -58,6 +58,10 @@ interface Trace {
   statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
   cascadeRebaseAttempts: string[];
+  /** Arguments passed into feedback scope changed-file resolution. */
+  changedFileCalls: Array<{ branch: string; base: string }>;
+  /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
+  pnpmArgs: string[][];
 }
 
 interface HarnessOptions {
@@ -107,6 +111,8 @@ interface HarnessOptions {
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
   preWorktreeEnv?: Record<string, string>;
   changedFiles?: string[];
+  changedFilesByBase?: Record<string, string[]>;
+  packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
    * (present). Set false to model "sandcastle commits never reached the host". */
   branchPresent?: boolean;
@@ -221,6 +227,8 @@ function harness(opts: HarnessOptions = {}): {
     iterLogs: [],
     statePatches: [],
     cascadeRebaseAttempts: [],
+    changedFileCalls: [],
+    pnpmArgs: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -381,6 +389,7 @@ function harness(opts: HarnessOptions = {}): {
       return { code: 0, stdout: "", stderr: "" };
     },
     pnpm: async (args) => {
+      trace.pnpmArgs.push([...args]);
       // AFK runner improvement: feedback now optionally probes the base branch
       // (the `baselineWorktree` passed to `runFeedback`) when the worker run
       // fails. The baseline probe re-runs ONLY the failing checks; every other
@@ -406,7 +415,7 @@ function harness(opts: HarnessOptions = {}): {
       return { code: ok ? 0 : 1, stdout: "", stderr: "" };
     },
     layout: {
-      hasPackage: (scope) => scope === ".",
+      hasPackage: (scope) => (opts.packageScopes ? opts.packageScopes.includes(scope) : scope === "."),
       hasScript: () => true,
     },
     // Backpressure gate (#430): a fake shell exec that fails when opted out. The
@@ -510,8 +519,9 @@ function harness(opts: HarnessOptions = {}): {
       async priorAttemptContext() {
         return undefined;
       },
-      async changedFiles() {
-        return opts.changedFiles ?? ["packages/x/src/a.ts"];
+      async changedFiles(branch, base) {
+        trace.changedFileCalls.push({ branch, base });
+        return opts.changedFilesByBase?.[base] ?? opts.changedFiles ?? ["packages/x/src/a.ts"];
       },
       async diffstat() {
         return "+1 -0 files=1";
@@ -2358,6 +2368,34 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     // runAgent receives the remote-tracking ref so sandcastle forks from the
     // freshly-fetched ref, not the potentially-stale local branch.
     expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+  });
+
+  it("resolves feedback scopes from the fetched origin base, not a stale local base", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      packageScopes: ["packages/stale", "packages/fresh"],
+      changedFilesByBase: {
+        main: ["packages/stale/src/old.ts"],
+        "origin/main": ["packages/fresh/src/new.ts"],
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.changedFileCalls).toContainEqual({
+      branch: "afk/wAAAA/9-fix-the-thing",
+      base: "origin/main",
+    });
+    const pnpmDirs = trace.pnpmArgs
+      .map((args) => {
+        const idx = args.indexOf("-C");
+        return idx >= 0 ? args[idx + 1] : undefined;
+      })
+      .filter(Boolean);
+    expect(pnpmDirs).toContain("afk/wAAAA/9-fix-the-thing/packages/fresh");
+    expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
   });
 
   it("resolves an unlocked, pinless issue to the configured Trunk and forks off origin/<trunk> (ADR 0083)", async () => {

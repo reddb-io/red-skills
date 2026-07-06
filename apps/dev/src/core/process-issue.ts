@@ -255,6 +255,13 @@ export interface ProcessLookups {
   branchMerged?(branch: string, base: string): Promise<boolean>;
 }
 
+function remoteTrackingBaseRef(remote: string, base: string): string {
+  if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
+    return base;
+  }
+  return `${remote}/${base}`;
+}
+
 /** The hook dispatch surface: the parsed config + the default resolver + the
  * injected command executor. resolveHooks runs once; dispatchHooks per point. */
 export interface ProcessHooks {
@@ -1304,7 +1311,7 @@ export async function processIssue(
   // remote-tracking ref to runAgent so sandcastle's baseBranch start point
   // uses the freshly-fetched ref, not the potentially-stale local branch.
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
-  const baseRef = `${input.remote}/${base}`;
+  const baseRef = remoteTrackingBaseRef(input.remote, base);
   // Pin to a sandcastle-backed runner. claude/codex/opencode (ADR 0059) +
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
@@ -1681,7 +1688,7 @@ export async function processIssue(
         // Scout runs read-only — the inner agent never commits, so there is
         // nothing to salvage. Always treat no-sentinel as a hard failure.
         input.runMode !== "scout" &&
-        (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
+        (await deps.lookups.changedFiles(workerBranch, baseRef)).length > 0 &&
         (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
       if (!branchHasWork) {
         await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
@@ -1907,7 +1914,7 @@ export async function processIssue(
     // happy path costs nothing.
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
-    const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
+    const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
     // Compute the validation scope: when a workspace graph is injected, expand
     // to the full dependency cone (touched packages + transitive dependents);
     // otherwise fall back to the current directly-touched-packages behaviour.

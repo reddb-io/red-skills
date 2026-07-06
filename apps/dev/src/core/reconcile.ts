@@ -129,6 +129,13 @@ export interface ReconcileLookups {
   isLocked(): Promise<boolean>;
 }
 
+function remoteTrackingBaseRef(remote: string, base: string): string {
+  if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
+    return base;
+  }
+  return `${remote}/${base}`;
+}
+
 /**
  * All injected IO for one reconcile. Deliberately a structural SUBSET of
  * `ProcessIssueDeps` (same nested member shapes) so process-issue can pass its
@@ -297,6 +304,7 @@ export type ReconcileResult =
  */
 export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Promise<ReconcileResult> {
   const { issue, branch, base, labels, body } = input;
+  const baseRef = remoteTrackingBaseRef(input.remote, base);
 
   // ---- 1. guard: mechanical class only ----
   const disqualifier = mechanicalDisqualifier(labels, body);
@@ -368,7 +376,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   // changedFiles() is a three-dot diff that returns [] for an EMPTY branch.
   // The fetch gate above guarantees the branch is local, so [] here means
   // genuinely no commits — not a missing ref.
-  const changedFiles = await deps.lookups.changedFiles(branch, base);
+  const changedFiles = await deps.lookups.changedFiles(branch, baseRef);
   if (changedFiles.length === 0) {
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: skipped (no-commits) — \`${branch}\` carries no work vs \`${base}\`.`,
