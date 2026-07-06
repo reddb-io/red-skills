@@ -160,7 +160,7 @@ export function renderHeaderLine(
 
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
- *   <wID>  run=<runner> <model> <effort>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
+ *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
@@ -185,6 +185,10 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // wID — bold red, reusing BOLD + the SOFT red tone (no new ANSI).
   parts.push(`${BOLD}${f.workerId}${NOBOLD}`);
   parts.push(kv("run", runVal));
+  // org=<afk|go> — spawn-time provenance (issue #1219). 3-letter key (house
+  // rule), same kv colour convention. An unstamped worker is an afk-fleet
+  // worker, so default the display to afk.
+  parts.push(kv("org", f.origin || "afk"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
   // <stage> follows bare and the legacy standalone #<n> token is dropped.
   if (f.issue !== null) {
