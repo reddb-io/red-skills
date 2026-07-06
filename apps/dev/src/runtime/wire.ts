@@ -538,31 +538,15 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const workers: CompactWorker[] = [];
   for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
-    // the branch's merge-base with origin/main. Prefer the state file's persisted
-    // counts; fall back to a live `git diff --shortstat` of the worktree when both
-    // are 0 (same logic as collectStatuslineAfk). Always populated — the dashboard
-    // renders the +A -R volume unconditionally (idle / zero included) and sums it
-    // into the fleet header, so it is never suppressed.
-    let added = state.current.loc_added;
-    let removed = state.current.loc_removed;
-    if (added === 0 && removed === 0) {
-      const attemptDir = dirname(path);
-      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
-      // Resolve the real worktree path: the state file carries it after the first
-      // heartbeat tick. Before that (or for sandcastle where the initial seed is the
-      // legacy {attemptDir}/worktree path that never exists), fall back to
-      // worktreePathUnder which probes `git worktree list --porcelain` and resolves
-      // the sandcastle layout ({attemptDir}/.sandcastle/worktrees/{slug}) even before
-      // the heartbeat has had a chance to persist the resolved path.
-      const worktreePath =
-        state.current.worktree ||
-        (await gitx.worktreePathUnder({ cwd: attemptDir }, attemptDir).catch(() => undefined));
-      if (worktreePath) {
-        const stat = await gitx.diffstatShortstat({ cwd: worktreePath }, baseRef);
-        added = stat.added;
-        removed = stat.removed;
-      }
-    }
+    // the branch's merge-base with origin/main. #1210 Part B: read it from the
+    // state file's writer-stamped counts only — the monitor render performs NO
+    // git subprocess. The per-attempt heartbeat owns the diffstat for every
+    // runner (via the commit-anchored memo), so the old live `git diff
+    // --shortstat` fallback is gone. Always populated — the dashboard renders the
+    // +A -R volume unconditionally (idle / zero included) and sums it into the
+    // fleet header, so it is never suppressed.
+    const added = state.current.loc_added;
+    const removed = state.current.loc_removed;
 
     const logPath = state.log || join(dirname(path), "afk.log");
     const counts = logCounts.get(logPath);
@@ -776,13 +760,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
     let a = vitals.loc_added;
     let r = vitals.loc_removed;
-    if (a === 0 && r === 0 && state.current.worktree) {
-      // Fallback: compute the diffstat from the worktree like statusline.sh.
-      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
-      a = stat.added;
-      r = stat.removed;
-    }
+    // #1210 Part B: the render NEVER shells out to git. LOC ownership moved to
+    // the writers (the per-attempt heartbeat stamps loc_added/loc_removed for
+    // ALL runners via the commit-anchored memo), so the old `git diff
+    // --shortstat` render fallback is gone. When the writer's live value is 0/0
+    // the sticky per-attempt peak below keeps `loc=` visible without git.
     // Sticky fallback: if the live diff is still 0 but a prior non-zero value
     // was seen this attempt, use the peak so `loc=` stays visible with a `~`
     // prefix instead of disappearing (which looks alarming even when intact).
@@ -899,14 +881,10 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
     // lane during the post-mortem window, so require its OWN pid to be alive (or
     // the isolation host pid) — a pid-0 sibling of a live successor is dropped.
     if (!pidIdentityLive && !hostPidLive) continue;
-    let added = state.current.loc_added;
-    let removed = state.current.loc_removed;
-    if (added === 0 && removed === 0 && state.current.worktree) {
-      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
-      added = stat.added;
-      removed = stat.removed;
-    }
+    // #1210 Part B: no per-render git subprocess — read the writer-stamped LOC
+    // straight from the state file (the heartbeat owns it for every runner).
+    const added = state.current.loc_added;
+    const removed = state.current.loc_removed;
     workers.push({
       state: {
         worker_id: state.worker_id,
