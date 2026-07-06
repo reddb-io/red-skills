@@ -66,14 +66,15 @@ export type ValidationStatus = "passed" | "failed" | "skipped";
 
 /**
  * One `red.afk.validation.v1` sidecar record. Optional fields are omitted (not
- * null) when absent, exactly like the bash `jq` builder: `command` and
- * `durationMs` are present only for checks that ran, `summary` only when set.
+ * null) when absent, exactly like the bash `jq` builder: `command`, `exitCode`,
+ * and `durationMs` are present only for checks that ran, `summary` only when set.
  */
 export interface ValidationRecord {
   schema: typeof VALIDATION_SCHEMA;
   name: string;
   status: ValidationStatus;
   command?: string;
+  exitCode?: number;
   durationMs?: number;
   summary?: string;
 }
@@ -148,6 +149,7 @@ export function buildValidationRecord(input: {
   name: string;
   status: ValidationStatus;
   command?: string;
+  exitCode?: number;
   durationMs?: number;
   summary?: string;
 }): ValidationRecord {
@@ -157,6 +159,7 @@ export function buildValidationRecord(input: {
     status: input.status,
   };
   if (input.command !== undefined && input.command !== "") record.command = input.command;
+  if (input.exitCode !== undefined && Number.isFinite(input.exitCode)) record.exitCode = Math.trunc(input.exitCode);
   if (input.durationMs !== undefined) record.durationMs = input.durationMs;
   if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
   return record;
@@ -195,6 +198,9 @@ export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
   if (feedback.ok) return false;
   for (const check of feedback.checks) {
     if (check.status !== "failed") continue;
+    const exitCode = check.record.exitCode;
+    if (exitCode === 0) continue;
+    if (exitCode === 137) return true;
     const summary = check.record.summary ?? "";
     if (
       summary.includes("feedback worktree setup failed") ||
@@ -478,7 +484,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
       const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
-      const record = buildValidationRecord({ name, status, command, durationMs, summary });
+      const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
       push({ name, script, label, scope, status, record });
     }
   }
@@ -503,7 +509,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
     const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
-    const record = buildValidationRecord({ name, status, command, durationMs, summary });
+    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     push({ name, script: "typecheck", label, scope, status, record });
   }
 
