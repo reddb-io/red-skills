@@ -9,7 +9,7 @@
 // actually runs), so `monitor`, `reap`, and an empty `run` never pull the
 // provider subpaths.
 
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -444,7 +444,8 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { readWorkerState, readAllWorkerStates } from "../core/worker-state-reader.js";
+import { readWorkerState, readAllWorkerStates, type WorkerStateRecord } from "../core/worker-state-reader.js";
+import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -521,10 +522,139 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
   }
 }
 
+/** Injected seams for {@link reclaimDeadWorkers} (real defaults wire gh/git/fs). */
+export interface DeadWorkerSweepDeps {
+  /** Raw `worker.pid` text for a worker dir. Default reads `{workerDir}/worker.pid`. */
+  readWorkerPid?: (workerDir: string) => string | null;
+  /** `kill -0` liveness probe. Default `process.kill(pid, 0)`. */
+  killAlive?: (pid: number) => boolean;
+  /** Whether an issue is in a post-mortem preservation state (blocked:* /
+   * ready-for-human). Default `gh issue view --json labels`. Returns `true`
+   * (conservative — keep the JSONL) whenever it cannot resolve. */
+  isPreserved?: (issue: number) => Promise<boolean>;
+  /** `git worktree remove --force`. Default runtime git against `root`. */
+  removeWorktree?: (worktreePath: string) => Promise<void>;
+  /** `rm -rf`. Default `fsx.removeDir`. */
+  removeDir?: (dir: string) => Promise<void>;
+  /** Path existence probe. Default `existsSync`. */
+  exists?: (path: string) => boolean;
+}
+
+/**
+ * Read-time liveness-gated teardown (issue #1219): as workers finish/crash, take
+ * them out of context — remove the heavy local `worktree/` and reclaim the
+ * attempt dir immediately, without waiting for the boot TTLs (reclaim.ts). Runs
+ * across the SAME namespace union the reader uses (workers/go-workers/
+ * scout-workers) since it consumes {@link readAllWorkerStates} records.
+ *
+ * Safety rules (see {@link planLivenessReclaim}):
+ *   - NEVER touch a live worker's dir — keyed on the OWNING worker's `worker.pid`
+ *     (shared across a worker's attempts), so a worker live on a later attempt
+ *     keeps ALL its dirs.
+ *   - A dead worker's disposable `worktree/` is ALWAYS removed.
+ *   - The whole attempt dir is reclaimed UNLESS the issue is preserved
+ *     (blocked:* / ready-for-human), where the JSONL/handoff stay for post-mortem.
+ *
+ * Best-effort throughout: every fs/git/gh failure is swallowed so the sweep never
+ * breaks the read it rides on. Returns the reclaimed attempt-dir paths.
+ */
+export async function reclaimDeadWorkers(
+  root: string,
+  records: ReadonlyArray<WorkerStateRecord>,
+  repo = "",
+  deps: DeadWorkerSweepDeps = {},
+): Promise<string[]> {
+  const exists = deps.exists ?? ((p: string) => existsSync(p));
+  const readWorkerPid =
+    deps.readWorkerPid ??
+    ((workerDir: string): string | null => {
+      try {
+        return readFileSync(join(workerDir, "worker.pid"), "utf8");
+      } catch {
+        return null;
+      }
+    });
+  const killAlive =
+    deps.killAlive ??
+    ((pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const isPreserved =
+    deps.isPreserved ??
+    (async (issue: number): Promise<boolean> => {
+      try {
+        const labels = await ghx.viewLabels({ cwd: root, repo }, issue);
+        // Empty labels (gh failed) → conservative: keep the JSONL.
+        if (labels.length === 0) return true;
+        return labels.some((l) => l === LABEL_HUMAN || l.startsWith("blocked:"));
+      } catch {
+        return true;
+      }
+    });
+  const removeWorktree =
+    deps.removeWorktree ??
+    (async (worktreePath: string): Promise<void> => {
+      await gitx.worktreeRemove({ cwd: root }, worktreePath);
+    });
+  const removeDir = deps.removeDir ?? ((dir: string) => fsx.removeDir(dir));
+
+  // Per-worker `worker.pid` liveness, memoized so a worker's several attempt dirs
+  // resolve it once.
+  const workerAliveCache = new Map<string, boolean>();
+  const workerPidAlive = (workerDir: string): boolean => {
+    const cached = workerAliveCache.get(workerDir);
+    if (cached !== undefined) return cached;
+    const raw = readWorkerPid(workerDir);
+    const pid = raw ? parseInt(raw.trim(), 10) : NaN;
+    // Absent/unparseable worker.pid → treat as ALIVE (never reclaim a dir we
+    // cannot prove belongs to a dead worker).
+    const alive = Number.isFinite(pid) && pid > 0 ? killAlive(pid) : true;
+    workerAliveCache.set(workerDir, alive);
+    return alive;
+  };
+
+  // Build the pure planner inputs, resolving preservation only for dead workers.
+  const inputs: LivenessReclaimInput[] = [];
+  for (const rec of records) {
+    const attemptDir = dirname(rec.path);
+    const workerDir = dirname(attemptDir);
+    // A renderable-live record (or a worker still live on any attempt) is never
+    // a reclaim candidate.
+    const alive = rec.renderableLive || workerPidAlive(workerDir);
+    const num = rec.state.current.number;
+    const issue = typeof num === "number" ? num : Number.parseInt(String(num), 10);
+    const preserved =
+      Number.isFinite(issue) && issue > 0 ? await isPreserved(issue) : true;
+    inputs.push({
+      attemptDir,
+      worktreePath: join(attemptDir, "worktree"),
+      workerPidAlive: alive,
+      preserved,
+    });
+  }
+
+  const reclaimed: string[] = [];
+  for (const action of planLivenessReclaim(inputs)) {
+    if (action.removeWorktree && exists(action.worktreePath)) {
+      await removeWorktree(action.worktreePath).catch(() => undefined);
+    }
+    if (action.reclaimDir) {
+      await removeDir(action.attemptDir).catch(() => undefined);
+      reclaimed.push(action.attemptDir);
+    }
+  }
+  return reclaimed;
+}
+
 /** Read every worker state file + the history ledger into the pure renderer's
  * inputs, plus one `git diff --shortstat` per live worktree for the diff column
  * (small fleet → a handful of cheap git calls, like the statusline does). */
-export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
+export async function collectMonitorInputs(root = process.cwd(), repo = ""): Promise<MonitorInputs> {
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The single source of liveness truth for all
@@ -534,10 +664,20 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   // tagged distinctly by state.origin. (Not the single-lane paths.workersRoot,
   // which would render only the `.red/tmp/workers` fleet lane.)
   const records = await readAllWorkerStates(paths.tmpDir);
+  // Read-time liveness-gated teardown (issue #1219): reclaim dead-worker
+  // worktrees/dirs immediately, not on the boot TTL. Best-effort — a failure
+  // here never blocks the render. Live-worker dirs and blocked/ready-for-human
+  // post-mortem artifacts are preserved (planLivenessReclaim).
+  await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
   const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of records) {
+  for (const { path, state, active, live: pidLive, liveness, livenessVerdict, renderableLive } of records) {
+    // The ONE shared render-gate (issue #1219): the monitor used to render EVERY
+    // globbed dir (no gate) — the graveyard of stale rows. Route it through the
+    // same `renderableLive` predicate the statusline uses so the dashboard drops
+    // dead/stalled/finished-pid-0 workers and both surfaces agree on liveness.
+    if (!renderableLive) continue;
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. #1210 Part B: read it from the
     // state file's writer-stamped counts only — the monitor render performs NO
@@ -743,22 +883,16 @@ export async function collectStatuslineAfk(
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
-    // Statusline counts workers the evaluator does not consider stalled. A busy
-    // worker with live agent descendants shows as "alive" even when the liveness
-    // lane is silent (wedged-substrate guard in the evaluator), so a long
-    // build/gate wait no longer makes the AFK block vanish. "unknown" (container
-    // workers) is treated conservatively as live. Only "stalled" (stale lane AND
-    // no live descendants) is excluded.
-    if (livenessVerdict.status === "stalled") continue;
-    // But the statusline shows ONLY genuinely-live workers (issue #1177). A
-    // finished/retained attempt is stamped `pid: 0` and kept for post-mortem;
-    // its per-attempt lane can still read fresh during that window, so the
-    // "not stalled" gate alone would render it as a phantom live line beside the
-    // same worker's live successor attempt. Require the state's OWN pid to be
-    // alive (or, for isolation workers, the host-side worker.pid) so a pid-0
-    // sibling is always dropped.
-    if (!pidIdentityLive && !hostPidLive) continue;
+  for (const { state, renderableLive } of records) {
+    // The ONE shared render-gate (issue #1219): computed once in
+    // readAllWorkerStates as `livenessVerdict.status !== "stalled" &&
+    // (pidIdentityLive || hostPidLive)`. Drops stalled workers AND finished/
+    // retained pid-0 attempts (kept for post-mortem, whose per-attempt lane can
+    // still read fresh), while keeping busy workers with live descendants and
+    // live isolation workers (host-side worker.pid). The statusline aggregate,
+    // the per-worker lines, and the monitor dashboard all route through this
+    // same field so every surface agrees on who is live.
+    if (!renderableLive) continue;
 
     workers += 1;
     blocked += state.blocked;
@@ -896,16 +1030,12 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
   const nowMs = Date.now();
   const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive, liveness, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
-    // Same rule as the aggregate collector: count everything the evaluator does
-    // not consider stalled (a long build/gate wait stays "alive"; "unknown"
-    // container workers count conservatively). Only "stalled" is excluded.
-    if (livenessVerdict.status === "stalled") continue;
-    // Statusline shows ONLY genuinely-live workers (issue #1177): a
-    // finished/retained attempt keeps its dir with `pid: 0` and a possibly-fresh
-    // lane during the post-mortem window, so require its OWN pid to be alive (or
-    // the isolation host pid) — a pid-0 sibling of a live successor is dropped.
-    if (!pidIdentityLive && !hostPidLive) continue;
+  for (const { state, active, live: pidLive, liveness, livenessVerdict, renderableLive } of records) {
+    // The ONE shared render-gate (issue #1219), identical to the aggregate
+    // collector and the monitor: drops stalled workers and finished/retained
+    // pid-0 attempts, keeps busy workers with live descendants and live
+    // isolation workers. See readAllWorkerStates / isRenderableLive.
+    if (!renderableLive) continue;
     // #1210 Part B: no per-render git subprocess — read the writer-stamped LOC
     // straight from the state file (the heartbeat owns it for every runner).
     const added = state.current.loc_added;
