@@ -39,6 +39,7 @@ import {
 } from "./slot-circuit.js";
 import type { FleetHookContext, FleetHookDispatchResult } from "./fleet-hook-dispatcher.js";
 import type { FleetHookName } from "./fleet-hook-config.js";
+import { encodeToon } from "./toon.js";
 
 // ---------- tunables ----------
 
@@ -158,6 +159,12 @@ export interface SupervisorConfig {
    * falls back to the default.
    */
   supervisorRestartWindowS: number;
+  /**
+   * Per-drain USD budget. Undefined means today's behaviour: no budget ladder,
+   * no spawn downgrade, and no hard stop. Spend is read from the WorkerVitals
+   * lane (`current.cost_usd`) through SupervisorFs.fleetCostUsd.
+   */
+  drainBudgetUsd?: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -180,6 +187,38 @@ export const SUPERVISOR_DEFAULTS = {
   supervisorRestartWindowS: 300,
 } as const satisfies SupervisorConfig;
 
+export type DrainBudgetTier = "OK" | "WARNING" | "CRITICAL" | "HARD_STOP";
+
+export interface DrainBudgetStatus {
+  tier: DrainBudgetTier;
+  spentUsd: number;
+  limitUsd: number;
+  percent: number;
+}
+
+function parsePositiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export type SupervisorConfigReader = (key: string) => string;
+
+export function evaluateDrainBudget(
+  spentUsd: number,
+  limitUsd: number | undefined,
+): DrainBudgetStatus | undefined {
+  if (limitUsd === undefined || limitUsd <= 0) return undefined;
+  const spent = Math.max(0, spentUsd);
+  const percent = spent / limitUsd;
+  const tier: DrainBudgetTier =
+    percent >= 1 ? "HARD_STOP" :
+    percent >= 0.9 ? "CRITICAL" :
+    percent >= 0.75 ? "WARNING" :
+    "OK";
+  return { tier, spentUsd: spent, limitUsd, percent };
+}
+
 /**
  * Resolve a SupervisorConfig from an env bag, mirroring the `${VAR:-default}`
  * ladder at the top of supervisor.sh. Non-numeric overrides fall back to the
@@ -188,6 +227,7 @@ export const SUPERVISOR_DEFAULTS = {
  */
 export function resolveSupervisorConfig(
   env: Record<string, string | undefined> = process.env,
+  getCfg: SupervisorConfigReader = () => "",
 ): SupervisorConfig {
   const num = (key: string, fallback: number): number => {
     const raw = env[key];
@@ -240,6 +280,9 @@ export function resolveSupervisorConfig(
     supervisorRestartWindowS:
       num("RED_AFK_SUPERVISOR_RESTART_WINDOW_S", SUPERVISOR_DEFAULTS.supervisorRestartWindowS) ||
       SUPERVISOR_DEFAULTS.supervisorRestartWindowS,
+    drainBudgetUsd:
+      parsePositiveNumber(env.RED_AFK_DRAIN_MAX_COST_USD) ??
+      parsePositiveNumber(getCfg("afk.drain.max_cost_usd")),
   };
 }
 
@@ -447,7 +490,7 @@ export interface ReconcileCandidate {
 export interface SupervisorProc {
   /** Spawn a worker for a slot; returns its pid and spawn epoch. Mirrors
    * spawn_slot's `nohup … &` + bookkeeping. */
-  spawnSlot(slot: number): Promise<{ pid: number; spawnEpoch: number }>;
+  spawnSlot(slot: number, policy?: SpawnPolicy): Promise<{ pid: number; spawnEpoch: number }>;
   /** True when the pid is alive (kill -0). Mirrors `kill -0 "$pid"`. */
   isAlive(pid: number): boolean;
   /** kill_tree the pid and its descendants: SIGTERM, grace, then SIGKILL, and
@@ -505,6 +548,16 @@ export interface SupervisorFs {
   parkedSlotWork(slot: number, lastPid: number | null): SweepWork;
   /** Remove a swept iter dir (rm -rf). Mirrors the per-pair `rm -rf "$dir"`. */
   removeDir(path: string): Promise<void>;
+  /**
+   * Cumulative fleet spend for this drain, derived from existing WorkerVitals
+   * state (`current.cost_usd`) rather than a parallel accounting channel.
+   */
+  fleetCostUsd?(): number;
+}
+
+export interface SpawnPolicy {
+  /** Set at CRITICAL so the spawned worker downgrades one model-policy tier. */
+  taskTierDowngrade?: boolean;
 }
 
 /** gh side effects. Best-effort: a failure is logged in bash but never blocks
@@ -587,6 +640,8 @@ export interface FleetHeartbeat {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Optional per-drain budget status; absent when no budget is configured. */
+  drainBudget?: DrainBudgetStatus;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
   slotDetails: HeartbeatSlotDetail[];
 }
@@ -774,6 +829,10 @@ export interface SupervisorState {
    * the event lane delivered. Updated by runSupervisor after each iteration.
    */
   wakeStats: WakeStats;
+  /** Once HARD_STOP is reached, no new workers are spawned for this supervisor. */
+  drainBudgetHardStopped: boolean;
+  /** Last budget tier logged, to avoid repeating unchanged OK/WARNING/CRITICAL. */
+  lastDrainBudgetTier?: DrainBudgetTier;
 }
 
 /** Build the initial runtime for `target` slots. */
@@ -783,6 +842,7 @@ export function initSupervisorState(target: number): SupervisorState {
     lastProgressEpoch: 0,
     lastUnblockSweepEpoch: 0,
     wakeStats: freshWakeStats(),
+    drainBudgetHardStopped: false,
   };
 }
 
@@ -963,6 +1023,7 @@ export interface TickResult {
    * tick or when readyQueueDepth is unavailable). Used by emitFleetHeartbeat
    * so the queue is fetched exactly once per tick. */
   queueDepth: number;
+  drainBudget?: DrainBudgetStatus;
   /**
    * True when the tick was abandoned — guardedTick timed out or threw. An
    * abandoned tick does NOT advance lastProgressEpoch in the heartbeat; only
@@ -1033,6 +1094,7 @@ async function emitFleetHeartbeat(
     readyForAgent,
     ...fleetSlotCounts(state),
     spawnsThisTick: result.respawned.length,
+    ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
     slotDetails: buildSlotDetails(state, config),
   };
   try {
@@ -1295,6 +1357,65 @@ export async function pollStallDetector(
   return reaped;
 }
 
+function readDrainBudget(state: SupervisorState, deps: SupervisorDeps, config: SupervisorConfig): DrainBudgetStatus | undefined {
+  if (config.drainBudgetUsd === undefined) return undefined;
+  let spent = 0;
+  try {
+    spent = deps.fs.fleetCostUsd?.() ?? 0;
+  } catch {
+    spent = 0;
+  }
+  const budget = evaluateDrainBudget(spent, config.drainBudgetUsd);
+  if (budget?.tier === "HARD_STOP") state.drainBudgetHardStopped = true;
+  return budget;
+}
+
+function logDrainBudgetTransition(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  budget: DrainBudgetStatus | undefined,
+  queueDepth: number,
+): void {
+  if (!budget || state.lastDrainBudgetTier === budget.tier) return;
+  state.lastDrainBudgetTier = budget.tier;
+  deps.log?.(
+    encodeToon({
+      schema_version: "red.afk.drain_budget.v1",
+      tier: budget.tier,
+      spent_usd: Number(budget.spentUsd.toFixed(4)),
+      limit_usd: Number(budget.limitUsd.toFixed(4)),
+      percent: Number((budget.percent * 100).toFixed(2)),
+      ready_for_agent: queueDepth,
+      action:
+        budget.tier === "HARD_STOP"
+          ? "hard_stop_no_new_spawns_inflight_finish"
+          : budget.tier === "CRITICAL"
+            ? "new_spawns_downgrade_one_model_tier"
+            : "observe",
+    }),
+  );
+}
+
+function spawnPolicyForBudget(
+  state: SupervisorState,
+  budget: DrainBudgetStatus | undefined,
+): SpawnPolicy | "hard-stop" | undefined {
+  if (state.drainBudgetHardStopped || budget?.tier === "HARD_STOP") return "hard-stop";
+  if (budget?.tier === "CRITICAL") return { taskTierDowngrade: true };
+  return undefined;
+}
+
+async function spawnSlotForBudget(
+  slot: number,
+  deps: SupervisorDeps,
+  state: SupervisorState,
+  budget: DrainBudgetStatus | undefined,
+): Promise<{ pid: number; spawnEpoch: number } | null> {
+  const policy = spawnPolicyForBudget(state, budget);
+  if (policy === "hard-stop") return null;
+  return policy ? deps.proc.spawnSlot(slot, policy) : deps.proc.spawnSlot(slot);
+}
+
 /**
  * handle_dead_slot (supervisor.sh ~994): a slot whose worker exited. Record the
  * death against the circuit breaker; on a trip park the slot and run the trip
@@ -1317,7 +1438,12 @@ export async function handleDeadSlot(
   deps: SupervisorDeps,
   config: SupervisorConfig,
   queueDepth = 0,
+  spawnPolicy?: SpawnPolicy | "hard-stop",
 ): Promise<{ parked: boolean }> {
+  const spawn = async (): Promise<{ pid: number; spawnEpoch: number } | null> => {
+    if (spawnPolicy === "hard-stop") return null;
+    return spawnPolicy ? deps.proc.spawnSlot(slot, spawnPolicy) : deps.proc.spawnSlot(slot);
+  };
   // Half-open probe death: resolve the circuit transition before the normal path.
   if (state.parked && state.halfOpen) {
     const now = deps.now();
@@ -1346,7 +1472,8 @@ export async function handleDeadSlot(
     // Respawn immediately so the closed slot has a live worker.
     state.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(slot);
+      const spawned = await spawn();
+      if (spawned === null) return { parked: true };
       state.pid = spawned.pid;
       state.spawnEpoch = spawned.spawnEpoch;
     } finally {
@@ -1384,7 +1511,11 @@ export async function handleDeadSlot(
     // Clean drain but queue has work → respawn immediately without feeding the breaker.
     state.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(slot);
+      const spawned = await spawn();
+      if (spawned === null) {
+        state.pid = null;
+        return { parked: true };
+      }
       state.pid = spawned.pid;
       state.spawnEpoch = spawned.spawnEpoch;
     } finally {
@@ -1429,7 +1560,11 @@ export async function handleDeadSlot(
 
   state.spawning = true;
   try {
-    const spawned = await deps.proc.spawnSlot(slot);
+    const spawned = await spawn();
+    if (spawned === null) {
+      state.pid = null;
+      return { parked: true };
+    }
     state.pid = spawned.pid;
     state.spawnEpoch = spawned.spawnEpoch;
   } finally {
@@ -1555,15 +1690,21 @@ export async function superviseTick(
     queueDepth = 0;
   }
   result.queueDepth = queueDepth;
+  const drainBudget = readDrainBudget(state, deps, config);
+  result.drainBudget = drainBudget;
+  logDrainBudgetTransition(state, deps, drainBudget, queueDepth);
+  const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
 
   // Un-park idle-parked slots when the queue has work to do.
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
     if (!slot.idleParked || queueDepth === 0) continue;
+    if (spawnPolicy === "hard-stop") continue;
     slot.idleParked = false;
     slot.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(i);
+      const spawned = await spawnSlotForBudget(i, deps, state, drainBudget);
+      if (spawned === null) continue;
       slot.pid = spawned.pid;
       slot.spawnEpoch = spawned.spawnEpoch;
       slot.stalled = false;
@@ -1597,6 +1738,7 @@ export async function superviseTick(
     for (let i = 0; i < state.slots.length; i += 1) {
       const slot = state.slots[i]!;
       if (!slot.parked || slot.halfOpen || slot.spawning) continue;
+      if (spawnPolicy === "hard-stop") continue;
       if (!isHalfOpenDue(slot.tripEpoch, slot.backoffStep, now, config)) continue;
       deps.log?.(
         `circuit half-open: slot ${i} cooldown expired, spawning probe ` +
@@ -1605,7 +1747,8 @@ export async function superviseTick(
       slot.halfOpen = true;
       slot.spawning = true;
       try {
-        const spawned = await deps.proc.spawnSlot(i);
+        const spawned = await spawnSlotForBudget(i, deps, state, drainBudget);
+        if (spawned === null) continue;
         slot.pid = spawned.pid;
         slot.spawnEpoch = spawned.spawnEpoch;
         slot.stalled = false;
@@ -1659,7 +1802,20 @@ export async function superviseTick(
       // the stranded claim must be snapshotted here, while it still resolves.
       const deadInfo = deps.fs.resolveIterDir(i);
       result.deaths.push(i);
-      const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth);
+      if (spawnPolicy === "hard-stop") {
+        slot.pid = null;
+        slot.stalled = false;
+        slot.stallSinceEpoch = 0;
+        slot.reaped = false;
+        try {
+          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps);
+          if (reconciled !== null) result.crashReconciled.push(reconciled);
+        } catch {
+          // best-effort, same as the respawn path.
+        }
+        continue;
+      }
+      const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth, spawnPolicy);
       if (parked) {
         // A circuit-trip park already swept this slot's claimed issues
         // (sweepParkedSlot); an idle-park drained cleanly with no live claim.
@@ -1689,8 +1845,10 @@ export async function superviseTick(
 
   // Reconcile dispatch: use any free slot (e.g. just stall-reaped) for a parked
   // candidate. Best-effort; a failure or absent candidate is silently skipped.
-  const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
-  if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
+  if (spawnPolicy !== "hard-stop") {
+    const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
+    if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
+  }
 
   // Periodic dependency Unblock Sweep (#844). The boot-time sweep and the
   // event-driven close-cascade are both best-effort; when a cascade misses an
@@ -1795,9 +1953,12 @@ export async function runSupervisor(
   }
 
   // Spawn the initial fleet to target.
+  const initialBudget = readDrainBudget(state, deps, config);
+  logDrainBudgetTransition(state, deps, initialBudget, 0);
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
-    const spawned = await deps.proc.spawnSlot(i);
+    const spawned = await spawnSlotForBudget(i, deps, state, initialBudget);
+    if (spawned === null) continue;
     slot.pid = spawned.pid;
     slot.spawnEpoch = spawned.spawnEpoch;
     // Notify on_slot_spawn for each initial slot. Best-effort.
