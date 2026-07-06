@@ -1,15 +1,14 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  bundleAssetName,
-  manifestAssetName,
-  manifestSignatureAssetName,
+  NPM_PACKAGE,
+  packagedBundleRelPath,
+  registryPackageUrl,
   resolveBundle,
 } from "./bundle-fetch.js";
 import {
   backgroundSelfUpdate,
   compareSemver,
-  inRangeReleaseRef,
   isInRange,
   parseSemver,
   pointerPath,
@@ -26,61 +25,55 @@ const INSTALLED = "1.140.0";
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const enc = (s: string) => new TextEncoder().encode(s);
 const bundleBytesFor = (version: string) => enc(`export const V = "${version}";`);
-const manifestJson = (version: string, sha: string) =>
-  enc(JSON.stringify({ plugin: PLUGIN, version, sha256: sha }));
+
+const npmSpec = (version: string) => `${NPM_PACKAGE}@${version}`;
+
+/** Registry metadata advertising a set of published versions. */
+function registryMetadata(versions: string[]): string {
+  const map: Record<string, unknown> = {};
+  for (const v of versions) map[v] = {};
+  return JSON.stringify({ "dist-tags": { latest: versions[versions.length - 1] }, versions: map });
+}
 
 /**
- * In-memory self-update IO backed by a fake GitHub release surface.
+ * In-memory self-update IO backed by a fake npm registry + package store.
  *
- * `releaseVersions` are the pinned `v<x>` releases that exist; `latestInRange`
- * is what the floating major-line manifest (`v<major>`) advertises. Every
- * download/write/rename is recorded so tests can assert ordering and that the
- * cache stays untouched on a no-op.
+ * `registryVersions` are the versions the registry advertises; `packageBundles`
+ * maps a version -> the bundle bytes its `@reddb-io/red-skills@<version>` tarball
+ * carries. Every fetch (registry query), materialize (npm install), write, and
+ * rename is recorded so tests can assert ordering and that the cache stays
+ * untouched on a no-op. There is NO download() and NO signature verify — the
+ * transport is npm-only (ADR 0091).
  */
 function makeIO(opts: {
   files?: Record<string, Uint8Array>;
-  /** version -> its published bundle bytes (pinned `v<version>` release). */
-  releaseVersions?: Record<string, Uint8Array>;
-  /** version the floating `v<major>` manifest points at; undefined = 404. */
-  latestInRange?: string;
-  /** major tags whose manifest download should throw a network error. */
-  offlineMajors?: string[];
+  registryVersions?: string[];
+  packageBundles?: Record<string, Uint8Array>;
+  /** when true, the registry query throws a network error. */
+  offlineRegistry?: boolean;
 }) {
   const files: Record<string, Uint8Array> = { ...(opts.files ?? {}) };
-  const releases = opts.releaseVersions ?? {};
-  const downloads: string[] = [];
+  const bundles = opts.packageBundles ?? {};
+  const fetches: string[] = [];
+  const materializes: string[] = [];
   const writes: string[] = [];
   const renames: Array<[string, string]> = [];
 
   const io: SelfUpdateIO = {
-    async download(url) {
-      downloads.push(url);
-      const name = url.split("/").pop()!;
-      const ref = url.split("/releases/download/")[1]?.split("/")[0] ?? "";
-      if (name === manifestAssetName(PLUGIN)) {
-        // Floating major-line tag advertises the newest in-range version.
-        if (/^v\d+$/.test(ref)) {
-          if (opts.offlineMajors?.includes(ref)) throw new Error("ECONNREFUSED");
-          const latest = opts.latestInRange;
-          if (!latest) throw new Error("404 Not Found");
-          return manifestJson(latest, sha256(releases[latest] ?? enc("missing")));
-        }
-        // Pinned v<version> manifest.
-        const v = ref.replace(/^v/, "");
-        const bytes = releases[v];
-        if (!bytes) throw new Error("404 Not Found");
-        return manifestJson(v, sha256(bytes));
-      }
-      if (name === manifestSignatureAssetName(PLUGIN)) {
-        return enc("sigstore-bundle");
-      }
-      if (name === bundleAssetName(PLUGIN)) {
-        const v = ref.replace(/^v/, "");
-        const bytes = releases[v];
-        if (!bytes) throw new Error("404 Not Found");
-        return bytes;
-      }
-      throw new Error(`unexpected download ${url}`);
+    async materialize(spec, stagingDir) {
+      materializes.push(spec);
+      const version = spec.split("@").pop()!;
+      const bytes = bundles[version];
+      if (!bytes) throw new Error(`npm ERR! 404 '${spec}' is not in this registry`);
+      const root = `${stagingDir}/node_modules/${NPM_PACKAGE}`;
+      files[`${root}/${packagedBundleRelPath(PLUGIN)}`] = bytes;
+      return root;
+    },
+    async fetchText(url) {
+      fetches.push(url);
+      if (opts.offlineRegistry) throw new Error("ECONNREFUSED registry.npmjs.org");
+      if (url === registryPackageUrl()) return registryMetadata(opts.registryVersions ?? []);
+      throw new Error(`GET ${url} -> 404`);
     },
     async readFile(path) {
       const f = files[path];
@@ -95,10 +88,6 @@ function makeIO(opts: {
       return path in files;
     },
     sha256,
-    async verifyBundleSignature() {
-      // Signature semantics are covered by bundle-fetch.test.ts; self-update
-      // only needs a valid signed-manifest fetch surface.
-    },
     async rename(from, to) {
       renames.push([from, to]);
       const bytes = files[from];
@@ -107,7 +96,7 @@ function makeIO(opts: {
       delete files[from];
     },
   };
-  return { io, files, downloads, writes, renames };
+  return { io, files, fetches, materializes, writes, renames };
 }
 
 describe("semver policy", () => {
@@ -126,11 +115,6 @@ describe("semver policy", () => {
   it("isInRange means same major line", () => {
     expect(isInRange("1.140.0", "1.145.9")).toBe(true);
     expect(isInRange("1.140.0", "2.0.0")).toBe(false);
-  });
-
-  it("inRangeReleaseRef is the floating major tag", () => {
-    expect(inRangeReleaseRef("1.140.0")).toBe("v1");
-    expect(inRangeReleaseRef("2.3.4")).toBe("v2");
   });
 });
 
@@ -206,7 +190,6 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
   });
 
   it("NEVER fetches — proves the render path does no network IO", async () => {
-    // An IO whose download() blows up: if resolution ever fetched, this throws.
     const updated = "1.145.0";
     const { io } = makeIO({
       files: {
@@ -214,8 +197,12 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
         [resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE })]: bundleBytesFor(updated),
       },
     });
-    io.download = async () => {
+    // If resolution ever reached the network, these would throw.
+    io.fetchText = async () => {
       throw new Error("NO FETCH ALLOWED IN A RENDER/HOOK PATH");
+    };
+    io.materialize = async () => {
+      throw new Error("NO NPM INSTALL ALLOWED IN A RENDER/HOOK PATH");
     };
     await expect(
       resolveActiveVersion(io, { plugin: PLUGIN, installedVersion: INSTALLED, cacheDir: CACHE, channel: "stable" }),
@@ -223,12 +210,12 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
   });
 });
 
-describe("backgroundSelfUpdate", () => {
-  it("in-range newer bundle: fetches, verifies, atomically swaps the pointer", async () => {
+describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
+  it("in-range newer version: queries the registry, materialises, atomically swaps the pointer", async () => {
     const updated = "1.145.0";
-    const { io, files, writes, renames } = makeIO({
-      releaseVersions: { [updated]: bundleBytesFor(updated) },
-      latestInRange: updated,
+    const { io, files, fetches, materializes, writes, renames } = makeIO({
+      registryVersions: ["1.140.0", "1.144.0", updated, "2.0.0"],
+      packageBundles: { [updated]: bundleBytesFor(updated) },
     });
 
     const res = await backgroundSelfUpdate(io, {
@@ -240,18 +227,21 @@ describe("backgroundSelfUpdate", () => {
     });
 
     expect(res).toEqual({ status: "updated", version: updated });
+    // Discovery went to the registry URL, never a releases/download URL.
+    expect(fetches).toEqual([registryPackageUrl()]);
+    expect(fetches.every((u) => !u.includes("releases/download"))).toBe(true);
+    // The pinned target package was materialised.
+    expect(materializes).toEqual([npmSpec(updated)]);
     // Bundle cached under the target version.
     const bundlePath = resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE });
     expect(files[bundlePath]).toEqual(bundleBytesFor(updated));
-    // Pointer now names the update, and it was placed atomically (temp -> rename).
+    // Pointer now names the update, placed atomically (temp -> rename).
     const ptr = pointerPath(CACHE, PLUGIN);
     expect(JSON.parse(new TextDecoder().decode(files[ptr]))).toEqual({ version: updated });
     expect(renames).toEqual([[`${ptr}.${updated}.tmp`, ptr]]);
-    // The temp file was written before the rename; the live pointer is only the rename target.
     expect(writes).toContain(`${ptr}.${updated}.tmp`);
 
-    // The current session is unaffected: resolution before the swap still saw INSTALLED.
-    // (Proven by the second boot below picking up the swap.)
+    // The next boot picks up the swap.
     const nextBoot = await resolveActiveVersion(io, {
       plugin: PLUGIN,
       installedVersion: INSTALLED,
@@ -261,11 +251,10 @@ describe("backgroundSelfUpdate", () => {
     expect(nextBoot).toBe(updated);
   });
 
-  it("out-of-range release: cache and pointer untouched", async () => {
-    const major2 = "2.0.0";
-    const { io, files, writes, renames } = makeIO({
-      releaseVersions: { [major2]: bundleBytesFor(major2) },
-      latestInRange: major2, // the major line advertised is a DIFFERENT major
+  it("newest published is a different major: cache and pointer untouched", async () => {
+    const { io, files, materializes, writes, renames } = makeIO({
+      registryVersions: ["2.0.0", "2.1.0"], // no in-range 1.x newer than installed
+      packageBundles: { "2.1.0": bundleBytesFor("2.1.0") },
     });
 
     const res = await backgroundSelfUpdate(io, {
@@ -277,15 +266,16 @@ describe("backgroundSelfUpdate", () => {
     });
 
     expect(res).toEqual({ status: "up-to-date", version: INSTALLED });
+    expect(materializes).toEqual([]);
     expect(writes).toEqual([]);
     expect(renames).toEqual([]);
     expect(files[pointerPath(CACHE, PLUGIN)]).toBeUndefined();
   });
 
-  it("already up to date: no download of a bundle, no swap", async () => {
-    const { io, writes, renames } = makeIO({
-      releaseVersions: { [INSTALLED]: bundleBytesFor(INSTALLED) },
-      latestInRange: INSTALLED,
+  it("already up to date: no materialize, no swap", async () => {
+    const { io, materializes, writes, renames } = makeIO({
+      registryVersions: [INSTALLED],
+      packageBundles: { [INSTALLED]: bundleBytesFor(INSTALLED) },
     });
     const res = await backgroundSelfUpdate(io, {
       plugin: PLUGIN,
@@ -295,17 +285,15 @@ describe("backgroundSelfUpdate", () => {
       channel: "stable",
     });
     expect(res).toEqual({ status: "up-to-date", version: INSTALLED });
+    expect(materializes).toEqual([]);
     expect(writes).toEqual([]);
     expect(renames).toEqual([]);
   });
 
-  it("network failure: silent typed error, cache keeps serving, retried later", async () => {
+  it("registry offline: typed error, cache keeps serving, retried later", async () => {
     const { io, files, writes, renames } = makeIO({
-      offlineMajors: ["v1"],
-      // A previously-cached in-range bundle + pointer must keep serving.
-      files: {
-        [pointerPath(CACHE, PLUGIN)]: enc(JSON.stringify({ version: INSTALLED })),
-      },
+      offlineRegistry: true,
+      files: { [pointerPath(CACHE, PLUGIN)]: enc(JSON.stringify({ version: INSTALLED })) },
     });
 
     const res = await backgroundSelfUpdate(io, {
@@ -318,25 +306,17 @@ describe("backgroundSelfUpdate", () => {
 
     expect(res.status).toBe("error");
     expect(res.error).toMatch(/ECONNREFUSED|network|failed/i);
-    // Nothing swapped: the existing pointer is intact for the next boot to retry.
     expect(writes).toEqual([]);
     expect(renames).toEqual([]);
     expect(files[pointerPath(CACHE, PLUGIN)]).toEqual(enc(JSON.stringify({ version: INSTALLED })));
   });
 
-  it("checksum mismatch on the target bundle: no swap (bad bundle never adopted)", async () => {
+  it("target package unresolvable: no swap (bad target never adopted)", async () => {
     const updated = "1.145.0";
     const { io, writes, renames } = makeIO({
-      releaseVersions: { [updated]: bundleBytesFor(updated) },
-      latestInRange: updated,
+      registryVersions: ["1.140.0", updated],
+      packageBundles: {}, // registry advertises it but npm cannot resolve it
     });
-    // Corrupt the pinned bundle bytes AFTER the manifest hash is computed so the
-    // downloaded payload no longer matches its manifest.
-    const realDownload = io.download.bind(io);
-    io.download = async (url) => {
-      const bytes = await realDownload(url);
-      return url.endsWith(bundleAssetName(PLUGIN)) ? enc("tampered") : bytes;
-    };
     const res = await backgroundSelfUpdate(io, {
       plugin: PLUGIN,
       installedVersion: INSTALLED,
@@ -350,7 +330,10 @@ describe("backgroundSelfUpdate", () => {
   });
 
   it("canary channel: skipped entirely (self-refreshes via checksum)", async () => {
-    const { io, writes } = makeIO({ latestInRange: "1.145.0", releaseVersions: { "1.145.0": bundleBytesFor("1.145.0") } });
+    const { io, writes } = makeIO({
+      registryVersions: ["1.145.0"],
+      packageBundles: { "1.145.0": bundleBytesFor("1.145.0") },
+    });
     const res = await backgroundSelfUpdate(io, {
       plugin: PLUGIN,
       installedVersion: INSTALLED,

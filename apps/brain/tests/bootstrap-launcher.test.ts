@@ -45,7 +45,13 @@ const MCP_BODY = "#!/usr/bin/env node\nprocess.exit(0);\n";
 const RED_BODY = "#!/bin/sh\nexit 0\n";
 
 const sha = (body: string) => createHash("sha256").update(body).digest("hex");
-const signatureFor = (body: string) => `red-skills-test-signature:v1:${sha(body)}`;
+
+/** npm registry metadata advertising a set of published versions (ADR 0091). */
+function registryMetadata(versions: string[]): string {
+  const map: Record<string, unknown> = {};
+  for (const v of versions) map[v] = {};
+  return JSON.stringify({ "dist-tags": { latest: versions[versions.length - 1] }, versions: map });
+}
 
 function manifestJson(version = VERSION): string {
   return JSON.stringify({
@@ -79,8 +85,12 @@ async function listen(
   };
 }
 
-/** A working release server that serves the fake runtime assets by basename. */
-async function startRelease(opts: { signature?: "valid" | "missing" | "bad"; version?: string } = {}): Promise<Release> {
+/**
+ * A working release server that serves the fake runtime assets by basename, plus
+ * the npm registry metadata for self-update version discovery (ADR 0091). No
+ * sigstore signature is served — client signature verification was removed.
+ */
+async function startRelease(opts: { version?: string; versions?: string[] } = {}): Promise<Release> {
   let n = 0;
   const manifest = manifestJson(opts.version);
   const files: Record<string, string> = {
@@ -88,11 +98,8 @@ async function startRelease(opts: { signature?: "valid" | "missing" | "bad"; ver
     "brain.bundle.min.mjs": CLI_BODY,
     "brain-mcp.bundle.min.mjs": MCP_BODY,
     [`red-${RED_KEY}`]: RED_BODY,
+    "@reddb-io%2Fred-skills": registryMetadata(opts.versions ?? [VERSION]),
   };
-  if (opts.signature !== "missing") {
-    files["brain-runtime-manifest.json.sigstore.json"] =
-      opts.signature === "bad" ? "not-a-valid-test-signature" : signatureFor(manifest);
-  }
   const { url, close } = await listen((req, res) => {
     n += 1;
     const name = (req.url ?? "").split("?")[0].split("/").pop() ?? "";
@@ -189,7 +196,7 @@ function run(
         RED_BRAIN_CACHE_DIR: opts.cacheDir,
         RED_BRAIN_RELEASE_BASE: opts.base,
         RED_BRAIN_REPO_ROOT: opts.repoRoot,
-        RED_SKILLS_ALLOW_TEST_SIGNATURES: "1",
+        RED_NPM_REGISTRY_BASE: opts.base,
         CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
         NODE_ENV: "test",
       },
@@ -249,65 +256,34 @@ describe("brain launcher distribution (ADR 0084, #1032)", () => {
     }
   });
 
-  test("missing signature: rejects the runtime manifest and does not cache", async () => {
-    const cacheDir = await makeCacheDir();
-    const cwd = await enabledCwd();
-    const repoRoot = await emptyRepoRoot();
-    const release = await startRelease({ signature: "missing" });
-    try {
-      const r = await run(["hook", "SessionStart", "--runner", "claude"], {
-        cwd,
-        cacheDir,
-        base: release.url,
-        repoRoot,
-      });
-      expect(r.code).toBe(0);
-      expect(r.stdout).toBe("{}");
-      expect(existsSync(cliPath(cacheDir))).toBe(false);
-      const marker = JSON.parse(await readFile(markerPath(cacheDir), "utf8"));
-      expect(marker.reason).toMatch(/signature/i);
-    } finally {
-      await release.close();
-    }
-  });
-
-  test("bad signature: rejects the runtime manifest and does not cache", async () => {
-    const cacheDir = await makeCacheDir();
-    const cwd = await enabledCwd();
-    const repoRoot = await emptyRepoRoot();
-    const release = await startRelease({ signature: "bad" });
-    try {
-      const r = await run(["hook", "SessionStart", "--runner", "claude"], {
-        cwd,
-        cacheDir,
-        base: release.url,
-        repoRoot,
-      });
-      expect(r.code).toBe(0);
-      expect(r.stdout).toBe("{}");
-      expect(existsSync(cliPath(cacheDir))).toBe(false);
-      const marker = JSON.parse(await readFile(markerPath(cacheDir), "utf8"));
-      expect(marker.reason).toMatch(/signature/i);
-    } finally {
-      await release.close();
-    }
-  });
-
-  test("self-update: bad signature refuses to swap the pointer", async () => {
+  test("self-update: a newer same-major registry version swaps the pointer for next boot", async () => {
     const cacheDir = await makeCacheDir();
     await warmCache(cacheDir);
     const cwd = await enabledCwd();
     const repoRoot = await emptyRepoRoot();
     const [major, minor, patch] = VERSION.split(".").map(Number);
     const updated = `${major}.${minor}.${patch + 1}`;
-    const release = await startRelease({ signature: "bad", version: updated });
+    const release = await startRelease({ version: updated, versions: [VERSION, updated] });
     try {
-      const r = await run(["__self-update"], {
-        cwd,
-        cacheDir,
-        base: release.url,
-        repoRoot,
-      });
+      const r = await run(["__self-update"], { cwd, cacheDir, base: release.url, repoRoot });
+      expect(r.code).toBe(0);
+      const pointer = JSON.parse(await readFile(pointerPath(cacheDir), "utf8"));
+      expect(pointer.version).toBe(updated);
+    } finally {
+      await release.close();
+    }
+  });
+
+  test("self-update: only an out-of-range (new major) registry version leaves the pointer unset", async () => {
+    const cacheDir = await makeCacheDir();
+    await warmCache(cacheDir);
+    const cwd = await enabledCwd();
+    const repoRoot = await emptyRepoRoot();
+    const [major] = VERSION.split(".").map(Number);
+    const nextMajor = `${major + 1}.0.0`;
+    const release = await startRelease({ versions: [VERSION, nextMajor] });
+    try {
+      const r = await run(["__self-update"], { cwd, cacheDir, base: release.url, repoRoot });
       expect(r.code).toBe(0);
       expect(existsSync(pointerPath(cacheDir))).toBe(false);
     } finally {

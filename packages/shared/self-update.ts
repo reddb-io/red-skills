@@ -1,14 +1,18 @@
 /**
- * self-update.ts — background, in-range bundle self-update (ADR 0084).
+ * self-update.ts — background, in-range bundle self-update (ADR 0084, amended by
+ * ADR 0091 for the npm transport cutover).
  *
  * ADR 0038/0058 pin every installation to the bundle for its *installed* plugin
  * version (read from `.claude-plugin/plugin.json`). That is safe but forces an
  * operational dance: to run a just-released fix you hand-download the new bundle
  * into the cache. This module ends that dance. On an enabled session start the
- * launcher spawns a **background** check — is there a newer Release bundle within
- * the compatible version range (same channel, same major)? If yes, it downloads,
- * checksum-verifies, and atomically swaps a *pointer* so the **next** session
- * serves it. The current session is never touched.
+ * launcher spawns a **background** check — is there a newer version within the
+ * compatible range (same channel, same major)? Discovery now queries the **npm
+ * registry** for the package's published versions (ADR 0091) instead of the
+ * phantom `releases/download/v1/` release ref that never existed. If a newer
+ * in-range version is found, it materialises the pinned npm bundle and atomically
+ * swaps a *pointer* so the **next** session serves it. The current session is
+ * never touched.
  *
  * Two hard invariants, both encoded structurally here:
  *
@@ -30,7 +34,7 @@
 import {
   type BundleIO,
   ensureBundle,
-  fetchManifest,
+  fetchNewestSameMajor,
   resolveBundle,
 } from "./bundle-fetch.js";
 import type { ReleaseChannel } from "./channel.js";
@@ -95,16 +99,6 @@ export function selectInRangeUpdate(opts: {
   if (!isInRange(installed, candidate)) return null;
   if (compareSemver(candidate, current) <= 0) return null;
   return candidate;
-}
-
-/**
- * The floating GitHub release tag whose manifest names the newest in-range
- * (same-major) bundle for a version, e.g. `1.145.0` → `v1`. Publishing that tag
- * is a release-workflow concern; the launcher only *reads* its manifest.
- */
-export function inRangeReleaseRef(version: string): string {
-  const p = parseSemver(version);
-  return p ? `v${p.major}` : `v${version}`;
 }
 
 // ── Pointer file (what the launcher serves next boot) ────────────────────────
@@ -212,11 +206,11 @@ export interface SelfUpdateInput {
  * simply retried on a later boot. Do NOT call this from a render/hook path; the
  * launcher runs it as a detached process.
  *
- * Sequence: resolve the currently-served version → read the floating major-line
- * manifest → decide the in-range target → (if any) fetch+verify its pinned
- * bundle → atomically swap the pointer (write temp, rename over the live file).
- * The pointer flips **last** and **atomically**, so a half-written bundle is
- * never pointed at and the swap is all-or-nothing.
+ * Sequence: resolve the currently-served version → query the npm registry for
+ * the newest same-major version → decide the in-range target → (if any)
+ * materialise its pinned npm bundle → atomically swap the pointer (write temp,
+ * rename over the live file). The pointer flips **last** and **atomically**, so a
+ * half-written bundle is never pointed at and the swap is all-or-nothing.
  */
 export async function backgroundSelfUpdate(
   io: SelfUpdateIO,
@@ -233,17 +227,21 @@ export async function backgroundSelfUpdate(
       cacheDir,
       channel,
     });
-    const manifest = await fetchManifest(io, repo, plugin, inRangeReleaseRef(installedVersion));
-    const target = selectInRangeUpdate({
-      installed: installedVersion,
-      current,
-      candidate: manifest.version,
-      channel,
-    });
+    // Registry discovery (ADR 0091): newest published same-major version. No
+    // GitHub release ref is ever constructed.
+    const candidate = await fetchNewestSameMajor(io, installedVersion);
+    const target = candidate
+      ? selectInRangeUpdate({
+          installed: installedVersion,
+          current,
+          candidate,
+          channel,
+        })
+      : null;
     if (!target) return { status: "up-to-date", version: current };
 
-    // Fetch + checksum-verify the pinned target bundle before touching anything
-    // the launcher will serve. ensureBundle never caches an unverified payload.
+    // Materialise the pinned target bundle from npm before touching anything the
+    // launcher will serve. ensureBundle never caches a partial payload.
     await ensureBundle(io, { plugin, version: target, repo, cacheDir, channel });
 
     // Atomic pointer swap: write temp, then rename over the live pointer.

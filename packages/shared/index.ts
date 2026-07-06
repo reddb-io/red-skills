@@ -32,7 +32,6 @@ export {
 export {
   backgroundSelfUpdate,
   compareSemver,
-  inRangeReleaseRef,
   isInRange,
   parseSemver,
   pointerFileName,
@@ -46,3 +45,24 @@ export {
   type SelfUpdateStatus,
   type Semver,
 } from "./self-update.js";
+export {
+  BundleFetchError,
+  CANARY_DIST_TAG,
+  NPM_PACKAGE,
+  NPM_REGISTRY_BASE,
+  bundleFileName,
+  ensureBundle,
+  fetchNewestSameMajor,
+  newestSameMajor,
+  npmPackageSpec,
+  packagedBundleName,
+  packagedBundleRelPath,
+  parseRegistryVersions,
+  registryDistTagVersion,
+  registryPackageUrl,
+  resolveBundle,
+  type BundleIO,
+  type BundleFetchFailure,
+  type EnsureBundleInput,
+  type ResolveBundleInput,
+} from "./bundle-fetch.js";

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   compareSemver,
-  inRangeMajorTag,
+  newestSameMajorFromRegistry,
   parseSemver,
   pointerFileName,
   readPointerVersion,
+  registryPackageUrl,
   sameMajor,
   selectInRangeUpdate,
   // @ts-expect-error — dependency-free .mjs bootstrap ships without type declarations
@@ -34,9 +35,17 @@ describe("in-range self-update policy (ADR 0084, mirror of packages/shared/self-
     expect(selectInRangeUpdate("1.140.0", "1.145.0", "1.145.0")).toBeNull();
   });
 
-  it("inRangeMajorTag is the floating major tag", () => {
-    expect(inRangeMajorTag("1.140.0")).toBe("v1");
-    expect(inRangeMajorTag("2.3.4")).toBe("v2");
+  it("registryPackageUrl escapes the scoped name, never building a releases/download URL (ADR 0091)", () => {
+    const url = registryPackageUrl();
+    expect(url).toMatch(/\/@reddb-io%2Fred-skills$/);
+    expect(url).not.toContain("releases/download");
+  });
+
+  it("newestSameMajorFromRegistry picks the newest same-major version, never crossing a major", () => {
+    const meta = JSON.stringify({ versions: { "1.140.0": {}, "1.145.2": {}, "2.0.0": {} } });
+    expect(newestSameMajorFromRegistry(meta, "1.140.0")).toBe("1.145.2");
+    expect(newestSameMajorFromRegistry(JSON.stringify({ versions: { "2.0.0": {} } }), "1.140.0")).toBeNull();
+    expect(newestSameMajorFromRegistry("not json", "1.140.0")).toBeNull();
   });
 
   it("pointerFileName / readPointerVersion round-trip", () => {

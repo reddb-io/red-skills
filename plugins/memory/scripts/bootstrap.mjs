@@ -19,7 +19,7 @@
  * (the no-op the hooks expect) and logs an actionable line — never silent.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile, chmod, appendFile, unlink } from "node:fs/promises";
@@ -30,8 +30,17 @@ import { fileURLToPath } from "node:url";
 const RED_SKILLS_REPO = "reddb-io/red-skills";
 const PLUGIN = "memory";
 const RUNTIME_MANIFEST = "memory-runtime-manifest.json";
-const RUNTIME_MANIFEST_SIGNATURE = `${RUNTIME_MANIFEST}.sigstore.json`;
 const CLI_ASSET = "memory-cli.mjs";
+
+// ADR 0091: the npm registry is the source of truth for version *discovery*
+// (which same-major version is newest). The memory runtime itself keeps shipping
+// as pinned GitHub-release assets because it carries a per-platform native `red`
+// binary that cannot live in a platform-independent npm tarball — that runtime
+// distribution is deliberately NOT redesigned here. What ADR 0091 removes is the
+// broken hand-rolled sigstore manifest verification and the phantom
+// `releases/download/v1/` self-update channel that 404'd on every boot.
+const NPM_PACKAGE = "@reddb-io/red-skills";
+const NPM_REGISTRY_BASE = process.env.RED_NPM_REGISTRY_BASE || "https://registry.npmjs.org";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested in tests/bootstrap.test.ts)
@@ -164,63 +173,9 @@ async function fetchBuffer(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function fetchRuntimeManifestEnvelope(tag) {
+async function fetchRuntimeManifest(tag) {
   const raw = await fetchBuffer(assetUrl(RED_SKILLS_REPO, tag, RUNTIME_MANIFEST));
-  let signature;
-  try {
-    signature = await fetchBuffer(assetUrl(RED_SKILLS_REPO, tag, RUNTIME_MANIFEST_SIGNATURE));
-  } catch (err) {
-    throw new Error(`manifest signature ${RUNTIME_MANIFEST_SIGNATURE} is missing or unavailable: ${err?.message ?? err}`);
-  }
-  return { tag, raw, signature, manifest: JSON.parse(raw.toString("utf8")) };
-}
-
-function signatureVerifierPath() {
-  const candidates = [
-    process.env.RED_SKILLS_SIGNATURE_VERIFIER,
-    join(HERE, "..", "..", "dev", "hooks", "red-fetch.mjs"),
-    join(HERE, "..", "..", "..", "plugins", "dev", "hooks", "red-fetch.mjs"),
-    process.env.CLAUDE_PLUGIN_ROOT
-      ? join(process.env.CLAUDE_PLUGIN_ROOT, "..", "dev", "hooks", "red-fetch.mjs")
-      : "",
-    process.env.CODEX_PLUGIN_ROOT
-      ? join(process.env.CODEX_PLUGIN_ROOT, "..", "dev", "hooks", "red-fetch.mjs")
-      : "",
-  ].filter(Boolean);
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-function verifyRuntimeManifestSignature(envelope) {
-  const verifier = signatureVerifierPath();
-  if (!verifier) {
-    throw new Error("no red-fetch signature verifier found beside installed plugins");
-  }
-  const payload = JSON.stringify({
-    artifactBase64: Buffer.from(envelope.raw).toString("base64"),
-    signatureBase64: Buffer.from(envelope.signature).toString("base64"),
-    repo: RED_SKILLS_REPO,
-    ref: envelope.tag,
-    assetName: RUNTIME_MANIFEST,
-  });
-  const result = spawnSync(process.execPath, [verifier, "__verify-manifest"], {
-    input: payload,
-    encoding: "utf8",
-    env: process.env,
-    maxBuffer: 1024 * 1024,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || "").trim();
-    throw new Error(
-      `manifest signature ${RUNTIME_MANIFEST_SIGNATURE} failed verification${detail ? `: ${detail}` : ""}`,
-    );
-  }
-}
-
-async function fetchVerifiedRuntimeManifest(tag) {
-  const envelope = await fetchRuntimeManifestEnvelope(tag);
-  verifyRuntimeManifestSignature(envelope);
-  return envelope.manifest;
+  return JSON.parse(raw.toString("utf8"));
 }
 
 async function fetchCheckedAsset(url, expectedSha) {
@@ -296,10 +251,11 @@ async function ensureRuntime(version, { mayFetch } = {}) {
   // call. `null` tells the caller to honour the hook no-op contract.
   if (!mayFetch) return null;
 
-  // 1. manifest — names + checksums for this exact plugin version.
+  // 1. manifest — names + checksums for this exact plugin version. Integrity
+  // comes from the per-asset sha256 in the manifest (and reddb's own `.sha256`
+  // for the native binary); ADR 0091 removed the broken sigstore layer.
   const tag = `v${version}`;
-  const envelope = await fetchRuntimeManifestEnvelope(tag);
-  const manifest = envelope.manifest;
+  const manifest = await fetchRuntimeManifest(tag);
 
   // 2. Download + checksum-verify every runtime asset before adopting anything.
   const cliBytes = await fetchCheckedAsset(
@@ -325,9 +281,7 @@ async function ensureRuntime(version, { mayFetch } = {}) {
     redAsset.sha256,
   );
 
-  // 3. Same policy as shared bundle-fetch: checksum first, then signed manifest.
-  verifyRuntimeManifestSignature(envelope);
-
+  // 3. Every asset has passed its manifest checksum — adopt the runtime.
   await writeRuntimeFile(cliPath, cliBytes);
   if (mcpBytes) await writeRuntimeFile(mcpPath, mcpBytes);
   await writeRuntimeFile(
@@ -371,14 +325,32 @@ export function sameMajor(a, b) {
 }
 /** Newest in-range candidate strictly newer than `current`, else null. */
 export function selectInRangeUpdate(installed, current, candidate) {
-  if (!sameMajor(installed, candidate)) return null;
+  if (!candidate || !sameMajor(installed, candidate)) return null;
   if (compareSemver(candidate, current) <= 0) return null;
   return candidate;
 }
-/** The floating GitHub tag whose manifest names the newest in-range version. */
-export function inRangeMajorTag(version) {
-  const p = parseSemver(version);
-  return p ? `v${p.major}` : `v${version}`;
+/** npm registry metadata URL for the package (scoped name is `%2F`-escaped). */
+export function registryPackageUrl(pkg = NPM_PACKAGE) {
+  return `${NPM_REGISTRY_BASE}/${pkg.replace("/", "%2F")}`;
+}
+/** Newest published SAME-major version from registry metadata JSON, else null. */
+export function newestSameMajorFromRegistry(metadataText, installed) {
+  let parsed;
+  try {
+    parsed = JSON.parse(metadataText);
+  } catch {
+    return null;
+  }
+  const versions = parsed && typeof parsed.versions === "object" ? Object.keys(parsed.versions) : [];
+  const pi = parseSemver(installed);
+  if (!pi) return null;
+  let best = null;
+  for (const v of versions) {
+    const pv = parseSemver(v);
+    if (!pv || pv.major !== pi.major) continue;
+    if (best === null || compareSemver(v, best) > 0) best = v;
+  }
+  return best;
 }
 export function pointerFileName(plugin) {
   return `${plugin}-stable.current`;
@@ -428,13 +400,15 @@ async function backgroundSelfUpdate(installed) {
   if (!parseSemver(installed)) return;
   try {
     const current = await resolveActiveVersion(installed);
-    // The floating `v<major>` release manifest advertises the newest in-range
-    // version (a release-workflow contract; the launcher only reads it).
-    const manifest = await fetchVerifiedRuntimeManifest(inRangeMajorTag(installed));
-    const target = selectInRangeUpdate(installed, current, manifest.version);
+    // ADR 0091: discover the newest same-major version from the npm registry
+    // (the phantom `releases/download/v1/` channel is gone). The runtime itself
+    // still comes from that version's pinned GitHub release.
+    const metadataText = (await fetchBuffer(registryPackageUrl())).toString("utf8");
+    const candidate = newestSameMajorFromRegistry(metadataText, installed);
+    const target = selectInRangeUpdate(installed, current, candidate);
     if (!target) return;
-    const targetManifest = await fetchVerifiedRuntimeManifest(`v${target}`);
-    await ensureRuntime(target); // fetch + checksum-verify the target runtime
+    const targetManifest = await fetchRuntimeManifest(`v${target}`);
+    await ensureRuntime(target, { mayFetch: true }); // fetch + checksum-verify the target runtime
     await assertRuntimeCacheMatches(target, targetManifest);
     const ptr = pointerPath();
     const tmp = `${ptr}.${target}.tmp`;
