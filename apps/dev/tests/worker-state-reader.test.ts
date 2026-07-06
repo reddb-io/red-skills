@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -296,6 +296,34 @@ describe("worker-state-reader", () => {
     expect(rec).not.toBeNull();
     expect(rec!.live).toBe(false);
     expect(rec!.liveness).toBe("dead");
+  });
+
+  it("isolation: hostPidLive does not readmit a retained sibling attempt", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-iso-sibling-"));
+    const workerDir = join(base, "wISO");
+    const retainedDir = join(workerDir, "1775-a1");
+    const currentDir = join(workerDir, "1811-a1");
+    const retainedPath = await writeState(retainedDir, {
+      worker_id: "wISO",
+      pid: 0,
+      current: { number: 1775 },
+    });
+    const currentPath = await writeState(currentDir, {
+      worker_id: "wISO",
+      pid: 0,
+      current: { number: 1811 },
+    });
+    await writeFile(join(workerDir, "worker.pid"), "9876", "utf8");
+    await utimes(retainedDir, new Date("2026-07-06T10:00:00Z"), new Date("2026-07-06T10:00:00Z"));
+    await utimes(currentDir, new Date("2026-07-06T10:10:00Z"), new Date("2026-07-06T10:10:00Z"));
+
+    const retained = readWorkerState(retainedPath, { nowMs: NOW, kill: () => true });
+    const current = readWorkerState(currentPath, { nowMs: NOW, kill: () => true });
+
+    expect(retained!.hostPidLive).toBe(false);
+    expect(retained!.renderableLive).toBe(false);
+    expect(current!.hostPidLive).toBe(true);
+    expect(current!.renderableLive).toBe(true);
   });
 
   it("regression: normal no-sandbox worker with populated pid + fresh lane renders as active", async () => {

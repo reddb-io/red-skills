@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import {
   afkPaths,
   resolveRunSettings,
   collectMonitorInputs,
+  collectStatuslineWorkers,
   readFleetState,
   resolveAttemptGuardArming,
   resolveAttemptBudget,
@@ -20,6 +22,26 @@ import { runBoot } from "../src/core/boot.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-wire-"));
+}
+
+function writeRenderableAttempt(root: string, worker: string, issue: number, startedAt: string): string {
+  const attemptDir = join(root, ".red", "tmp", "workers", worker, `${issue}-a1`);
+  mkdirSync(attemptDir, { recursive: true });
+  writeFileSync(
+    join(attemptDir, "afk.state.json"),
+    JSON.stringify({
+      worker_id: worker,
+      pid: process.pid,
+      runner: "codex",
+      started_at: startedAt,
+      current: { number: issue, title: `issue ${issue}`, started_at: startedAt },
+    }),
+  );
+  writeFileSync(
+    join(attemptDir, LIVENESS_LANE_FILENAME),
+    `${JSON.stringify({ at: Date.now() - 5_000, kind: "iteration-start" })}\n`,
+  );
+  return attemptDir;
 }
 
 describe("resolveAttemptGuardArming (issue #405)", () => {
@@ -346,6 +368,38 @@ describe("collectMonitorInputs", () => {
       const again = await collectMonitorInputs(root);
       expect(again.workers[0]!.logLines).toBe(3);
       expect(again.workers[0]!.logNewLines).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("collapses retained attempt dirs to one current worker row", async () => {
+    const root = scratch();
+    try {
+      writeRenderableAttempt(root, "wDED", 1775, "2026-07-06T10:00:00Z");
+      writeRenderableAttempt(root, "wDED", 1789, "2026-07-06T10:05:00Z");
+      writeRenderableAttempt(root, "wDED", 1802, "2026-07-06T10:10:00Z");
+      writeRenderableAttempt(root, "wDED", 1811, "2026-07-06T10:15:00Z");
+
+      const { workers } = await collectMonitorInputs(root);
+      expect(workers.map((w) => w.state.current.number)).toEqual([1811]);
+      expect(workers).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("statusline worker rows collapse retained attempt dirs to the current attempt", async () => {
+    const root = scratch();
+    try {
+      writeRenderableAttempt(root, "wDED", 1775, "2026-07-06T10:00:00Z");
+      writeRenderableAttempt(root, "wDED", 1789, "2026-07-06T10:05:00Z");
+      writeRenderableAttempt(root, "wDED", 1802, "2026-07-06T10:10:00Z");
+      writeRenderableAttempt(root, "wDED", 1811, "2026-07-06T10:15:00Z");
+
+      const workers = await collectStatuslineWorkers({ root, repo: "reddb-io/red-skills", remote: "origin" });
+      expect(workers.map((w) => w.state.current.number)).toEqual([1811]);
+      expect(workers).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

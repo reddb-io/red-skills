@@ -11,7 +11,7 @@
 // inside sync closures and must not pay an await. `readWorkerStates(root)` is the
 // async fan-out the collectors use (glob → read each).
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import type { AfkState } from "../types/state.js";
 import { parseState, isStateLive, parseIdentity, readIdentitySync, type PidStartTimeProbe } from "./state.js";
@@ -97,6 +97,88 @@ export function isRenderableLive(
   rec: Pick<WorkerStateRecord, "livenessVerdict" | "pidIdentityLive" | "hostPidLive">,
 ): boolean {
   return rec.livenessVerdict.status !== "stalled" && (rec.pidIdentityLive || rec.hostPidLive);
+}
+
+function attemptName(path: string): string {
+  return basename(dirname(path));
+}
+
+function attemptNumberFromPath(path: string): number {
+  const m = /^[1-9][0-9]*-a([1-9][0-9]*)$/.exec(attemptName(path));
+  return m ? Number(m[1]) : 0;
+}
+
+function attemptMtimeMs(path: string): number {
+  try {
+    return statSync(dirname(path)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function attemptStartedMs(rec: Pick<WorkerStateRecord, "path" | "state">): number {
+  const raw = rec.state.current.started_at || rec.state.started_at;
+  if (raw) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return attemptMtimeMs(rec.path);
+}
+
+function workerKey(rec: Pick<WorkerStateRecord, "path" | "state">): string {
+  return rec.state.worker_id || basename(dirname(dirname(rec.path)));
+}
+
+function compareWorkerAttempts(a: Pick<WorkerStateRecord, "path" | "state">, b: Pick<WorkerStateRecord, "path" | "state">): number {
+  const started = attemptStartedMs(a) - attemptStartedMs(b);
+  if (started !== 0) return started;
+  const attempt = attemptNumberFromPath(a.path) - attemptNumberFromPath(b.path);
+  if (attempt !== 0) return attempt;
+  return a.path.localeCompare(b.path);
+}
+
+/** Collapse a batch of read records to the single current renderable attempt per
+ * Worker. The current attempt is the newest started/mtime record for the worker,
+ * with the numeric `aN` suffix as a stable tie-breaker. */
+export function currentRenderableWorkerRecords(records: readonly WorkerStateRecord[]): WorkerStateRecord[] {
+  const byWorker = new Map<string, WorkerStateRecord>();
+  for (const rec of records) {
+    if (!rec.renderableLive) continue;
+    const key = workerKey(rec);
+    const prev = byWorker.get(key);
+    if (prev === undefined || compareWorkerAttempts(rec, prev) > 0) {
+      byWorker.set(key, rec);
+    }
+  }
+  return [...byWorker.values()];
+}
+
+function isNewestAttemptDirForWorker(path: string): boolean {
+  const attemptDir = dirname(path);
+  const workerDir = dirname(attemptDir);
+  let entries: string[];
+  try {
+    entries = readdirSync(workerDir);
+  } catch {
+    return true;
+  }
+  let newest: string | null = null;
+  let newestMtime = -1;
+  for (const entry of entries) {
+    const dir = join(workerDir, entry);
+    try {
+      const st = statSync(dir);
+      if (!st.isDirectory()) continue;
+      const mtime = st.mtimeMs;
+      if (mtime > newestMtime || (mtime === newestMtime && dir > (newest ?? ""))) {
+        newestMtime = mtime;
+        newest = dir;
+      }
+    } catch {
+      // Ignore raced-away entries.
+    }
+  }
+  return newest === null || newest === attemptDir;
 }
 
 /** Display threshold: lane records this old → not "active". Matches the old
@@ -226,7 +308,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   // workers even before afk.state.json syncs back at run end.
   let finalVerdict = livenessVerdict;
   let hostPidLive = false;
-  if (livenessVerdict.status === "stalled" && state.pid === 0) {
+  if (livenessVerdict.status === "stalled" && state.pid === 0 && isNewestAttemptDirForWorker(path)) {
     // worker.pid lives one directory above the attempt dir:
     // {workersRoot}/{workerId}/{N}-a{n}/afk.state.json → {workersRoot}/{workerId}/worker.pid
     const workerPidPath = join(dirname(dirname(path)), "worker.pid");
