@@ -27,6 +27,8 @@ interface Trace {
   recordedOutcomes: string[];
   listByLabelCalls: string[];
   firedHooks: string[];
+  iterLogs: string[];
+  mergeCalls: string[][];
   pnpmCalls: number;
   /** Branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
   terminalBarrierCalls: string[];
@@ -72,6 +74,8 @@ function harness(opts: HarnessOptions = {}): {
     recordedOutcomes: [],
     listByLabelCalls: [],
     firedHooks: [],
+    iterLogs: [],
+    mergeCalls: [],
     pnpmCalls: 0,
     terminalBarrierCalls: [],
   };
@@ -131,7 +135,14 @@ function harness(opts: HarnessOptions = {}): {
       },
     },
     mergeExec: async (argv) => {
+      trace.mergeCalls.push(argv);
       const j = argv.join(" ");
+      if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+        return { code: 0, stdout: "feedfacecafebeef\n", stderr: "" };
+      }
       // landPr reuses an open PR via `gh pr list`; reply with a number.
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
@@ -180,7 +191,9 @@ function harness(opts: HarnessOptions = {}): {
       return true;
     },
     nowEpoch: () => 1000,
-    appendIterLog: () => {},
+    appendIterLog: (line) => {
+      trace.iterLogs.push(line);
+    },
     recordAttempt: opts.recordAttempt
       ? async (payload) => {
           trace.recordedOutcomes.push(payload.status);
@@ -250,6 +263,8 @@ describe("reconcile — green → land", () => {
     expect(close.add).toEqual([]);
     // The landing fired the merge hooks via the injected fireHook.
     expect(trace.firedHooks).toEqual(["pre_merge", "post_merge"]);
+    expect(trace.iterLogs.some((line) => line.includes("validating fetched `origin/afk/wAAAA/9-fix-the-thing` tip `feedfacecafe`"))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("tip `feedfacecafe` validated green and landed"))).toBe(true);
   });
 
   it("trusts prior green (#1095): lands WITHOUT re-running the feedback gate", async () => {
