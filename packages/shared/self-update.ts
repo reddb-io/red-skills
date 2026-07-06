@@ -82,8 +82,8 @@ export function isInRange(installed: string, candidate: string): boolean {
 
 /**
  * Decide the version to self-update to, or `null`. A candidate qualifies only
- * when the channel is `stable` (canary already self-refreshes via checksum on
- * its floating cache key — ADR 0058), it is in the same major range as the
+ * when the channel is `stable` (canary refreshes directly from npm's floating
+ * dist-tag cache key — ADR 0058/0091), it is in the same major range as the
  * *installed* version, and it is strictly newer than `current` (the version
  * currently being served). Everything else — a downgrade, an equal version, a
  * new major, a canary — resolves to `null`, leaving the cache untouched.
@@ -152,7 +152,7 @@ export async function resolveActiveVersion(
   input: ResolveActiveVersionInput,
 ): Promise<string> {
   const { plugin, installedVersion, cacheDir, channel } = input;
-  // Canary keys by the floating tag, not a version; only stable has a pointer.
+  // Canary keys by the floating dist-tag, not a version; only stable has a pointer.
   if (channel !== "stable" || !installedVersion) return installedVersion;
 
   const ptr = pointerPath(cacheDir, plugin);
