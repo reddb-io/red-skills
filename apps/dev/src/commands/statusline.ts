@@ -4,7 +4,8 @@
 // This is the IO half: it reads the Claude Code statusline JSON payload from
 // stdin (cwd, model, effort, context window), resolves the project root, honours
 // the per-project `.red/config.yaml` opt-out, reads the git branch, aggregates
-// the live /afk worker state (with a 240 s / 4 min GitHub-count cache), and feeds it all
+// the live /afk worker state (with a 180 s / 3 min GitHub-count cache, configurable
+// via RED_AFK_STATUSLINE_CACHE_TTL_S / afk.statusline_cache_ttl), and feeds it all
 // into the PURE renderer in core/statusline.ts. The render assembly itself —
 // block order, optional-drop, ` · ` joins, token humanizing — lives entirely in
 // core/statusline.ts and is exercised by tests/statusline.test.ts.
@@ -21,7 +22,12 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
-import { collectStatuslineAfk, collectStatuslineRepo, collectStatuslineWorkers } from "../runtime/wire.js";
+import {
+  collectStatuslineAfk,
+  collectStatuslineRepo,
+  collectStatuslineWorkers,
+  resolveStatuslineCacheTtl,
+} from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
 
 /** Read the entire stdin stream as a UTF-8 string (empty when there is none). */
@@ -179,13 +185,18 @@ export async function statuslineCommand(
   // header stats (line 1) render ALWAYS; the AFK block (line 2) only with live
   // workers, so both collectors run every render (each cheap + cached).
   const repoCtx = { root, repo: "", remote: "origin" };
+  // Resolve the cache TTL ONCE here (env > afk.statusline_cache_ttl config > 180,
+  // #1217) and thread it into both collectors — the hot render path never loads
+  // config a second time per collector.
+  const cfg = loadConfig(join(root, ".red", "config.yaml"), { warn: () => undefined });
+  const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(cfg, key));
   // The aggregate AFK block feeds the plain single-line form (NO_COLOR / Codex);
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
   const [repo, afk, workers] = await Promise.all([
-    collectStatuslineRepo(repoCtx),
-    collectStatuslineAfk(repoCtx).then((a) => a ?? undefined),
+    collectStatuslineRepo(repoCtx, cacheTtlS),
+    collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
     collectStatuslineWorkers(repoCtx),
   ]);
 
