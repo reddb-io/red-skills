@@ -57,6 +57,35 @@ const NOBOLD = "\x1b[22m";
 const RESET = "\x1b[0m";
 
 const BRANCH_MAX = 28;
+const WORKER_GUTTER = "  ";
+
+type WorkerColumn = "workerId" | "run" | "org" | "iss" | "stage" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
+const WORKER_COLUMNS: readonly WorkerColumn[] = [
+  "workerId",
+  "run",
+  "org",
+  "iss",
+  "stage",
+  "elapsed",
+  "loc",
+  "tks",
+  "tls",
+  "rsn",
+  "txt",
+];
+type WorkerCells = Record<WorkerColumn, string>;
+type WorkerWidths = Record<WorkerColumn, number>;
+
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+function visibleWidth(s: string): number {
+  return stripAnsi(s).length;
+}
+
+function padVisible(s: string, width: number): string {
+  return s + " ".repeat(Math.max(0, width - visibleWidth(s)));
+}
 
 /** A transparent-zone `key=value`: light-red KEY, default-fg VALUE, back to SOFT. */
 const kv = (key: string, value: string): string => `${KEY}${key}=${VAL}${value}${SOFT}`;
@@ -158,6 +187,52 @@ export function renderHeaderLine(
 
 // ---------- line 2..N: one line per live worker ----------
 
+function workerCells(worker: CompactWorker, now: number): WorkerCells {
+  const f = workerFields(worker, now);
+  const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
+    .filter((x): x is string => Boolean(x))
+    .join(" ");
+  return {
+    workerId: f.workerId,
+    run: `run=${runVal}`,
+    org: `org=${f.origin || "afk"}`,
+    iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
+    stage: f.issue === null ? "" : f.stage,
+    elapsed: f.elapsed,
+    loc: `loc=${formatDiff(f.added, f.removed)}`,
+    tks: `tks=${humanizeCount(f.tokens)}`,
+    tls: `tls=${String(f.tools)}`,
+    rsn: `rsn=${String(f.reasoning)}`,
+    txt: `txt=${String(f.text)}`,
+  };
+}
+
+function workerWidths(rows: readonly WorkerCells[]): WorkerWidths {
+  const widths = Object.fromEntries(WORKER_COLUMNS.map((column) => [column, 0])) as WorkerWidths;
+  for (const row of rows) {
+    for (const column of WORKER_COLUMNS) widths[column] = Math.max(widths[column], visibleWidth(row[column]));
+  }
+  return widths;
+}
+
+function colorWorkerCell(column: WorkerColumn, raw: string): string {
+  if (column === "workerId") return `${BOLD}${raw}${NOBOLD}`;
+  const eq = raw.indexOf("=");
+  if (eq > 0) return `${KEY}${raw.slice(0, eq + 1)}${VAL}${raw.slice(eq + 1)}${SOFT}`;
+  return raw;
+}
+
+function formatWorkerCells(row: WorkerCells, widths: WorkerWidths): string {
+  const parts = WORKER_COLUMNS.map((column) => colorWorkerCell(column, padVisible(row[column], widths[column])));
+  return `${NOBG}${SOFT}${parts.join(WORKER_GUTTER)}${RESET}`;
+}
+
+function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): string[] {
+  const rows = workers.map((worker) => workerCells(worker, now));
+  const widths = workerWidths(rows);
+  return rows.map((row) => formatWorkerCells(row, widths));
+}
+
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
  *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
@@ -221,7 +296,7 @@ export interface StyleOptions {
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
   const lines = [renderHeaderLine(input.project, input.claude, input.repo)];
   const now = opts.now ?? 0;
-  for (const worker of opts.workers ?? []) lines.push(renderWorkerLine(worker, now));
+  lines.push(...renderWorkerLines(opts.workers ?? [], now));
   return lines.join("\n");
 }
 
