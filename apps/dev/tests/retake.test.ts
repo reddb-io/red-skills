@@ -72,6 +72,27 @@ describe("recommendRetake", () => {
     })).toMatchObject({ kind: "fix-pr", command: "cd /repo/.red/tmp/work-ship-123" });
   });
 
+  it("prefers a worker state file anchor over branch/worktree fallback", () => {
+    expect(recommendRetake({
+      issue,
+      pullRequests: [],
+      branches: [{ name: "origin/codex/123-retake", remote: true }],
+      worktrees: [],
+      workerState: {
+        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.json",
+        attemptDir: "/repo/.red/tmp/workers/wAAAA/123-a2",
+        issue: 123,
+        attempt: 2,
+        phase: "terminal",
+        outcome: "stalled",
+        lastExitCode: 124,
+      },
+    })).toMatchObject({
+      kind: "continue-state",
+      command: "cd /repo/.red/tmp/workers/wAAAA/123-a2",
+    });
+  });
+
   it("recommends continuing a dirty matching worktree", () => {
     expect(recommendRetake({
       issue,
@@ -138,6 +159,27 @@ describe("recommendRetake", () => {
         { cmd: "git", args: ["worktree", "add", ".red/tmp/work-ship-123", "codex/123-retake"] },
       ],
       nextCommand: "cd .red/tmp/work-ship-123 && /ship --issue 123",
+    });
+  });
+
+  it("plans no git operations when worker state already anchors the attempt", () => {
+    expect(planRetakeApply({
+      issue,
+      pullRequests: [],
+      branches: [{ name: "origin/codex/123-retake", remote: true }],
+      worktrees: [],
+      workerState: {
+        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.json",
+        attemptDir: "/repo/.red/tmp/workers/wAAAA/123-a2",
+        issue: 123,
+        attempt: 2,
+        phase: "terminal",
+        outcome: "stalled",
+        lastExitCode: 124,
+      },
+    })).toMatchObject({
+      operations: [],
+      nextCommand: "cd /repo/.red/tmp/workers/wAAAA/123-a2",
     });
   });
 
