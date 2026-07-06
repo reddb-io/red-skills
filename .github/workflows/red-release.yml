@@ -70,15 +70,13 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-workflow-security-pins.sh
 
-<<<<<<< HEAD
       - name: Test canary channel promotion contract
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-afk-promote-channel.sh
-=======
+
       - name: Test red-release npm publish contract
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-npm-publish-contract.sh
->>>>>>> origin/main
 
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
@@ -489,14 +487,6 @@ jobs:
             echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills@${version}"
             exit 1
           fi
-<<<<<<< HEAD
-=======
-          # canary channel → npm `canary` dist-tag; stable → `latest` (default).
-          tag_args=()
-          case "$version" in
-            *-*) tag_args=(--tag canary) ;;
-          esac
->>>>>>> origin/main
           cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
           # Stable releases publish to npm's default `latest` tag. The opt-in
