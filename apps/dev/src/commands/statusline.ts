@@ -20,6 +20,7 @@ import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
+import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import {
@@ -170,6 +171,11 @@ export async function statuslineCommand(
   stdout: NodeJS.WritableStream = process.stdout,
   stdin: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin,
 ): Promise<number> {
+  if (args.includes("--legend")) {
+    stdout.write(`${renderStatuslineLegend()}\n`);
+    return 0;
+  }
+
   const rootArg = args[0];
   const text = await readStdin(stdin);
   const payload = parsePayload(text);
