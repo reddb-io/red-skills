@@ -66,8 +66,16 @@ const specBlocker = {
   next: "Human must clarify before work proceeds.",
 };
 
+const sensitivePathBlocker = {
+  status: "blocked" as const,
+  kind: "sensitive-path",
+  summary: "Diff touches .github/workflows/ci.yml.",
+  next: "Human must review the protected diff before it can land.",
+};
+
 const parkedBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(validationBlocker)}\n`;
 const specBodyMismatch = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(specBlocker)}\n`;
+const sensitivePathBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(sensitivePathBlocker)}\n`;
 
 describe("requeue command — happy path", () => {
   it("applies the full transition so a label flip alone is never the requeue", async () => {
@@ -318,6 +326,77 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
 
     expect(code).toBe(1);
     expect(adoptCalled).toBe(false);
+  });
+
+  it("bare requeue of a blocked:sensitive-path park still refuses → /hitl (exit 1, no adopt)", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: sensitivePathBody,
+      labels: ["ready-for-human", "blocked:sensitive-path"],
+    });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--guidance", "Reviewed the CI diff."], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(err.text()).toContain("refused");
+    expect(err.text()).toMatch(/adopt-branch/);
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
+  it("--adopt-branch clears a blocked:sensitive-path park, flags the guard bypass, and lands", async () => {
+    const { gh, calls, state } = fakeGh({
+      state: "OPEN",
+      body: sensitivePathBody,
+      labels: ["ready-for-human", "blocked:sensitive-path"],
+    });
+    const { stream, text } = capture();
+    let adoptApproved: boolean | undefined;
+    const runner: RequeueAdoptRunner = async (_issue, _branch, issueData) => {
+      adoptApproved = issueData.sensitivePathApproved;
+      return "landed";
+    };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Maintainer reviewed the workflow diff; land it.", "--adopt-branch", "afk/w/9-fix"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    // Transition applied: blocker cleared, sensitive-path label dropped.
+    expect(calls.editBody).toBe(1);
+    expect(calls.editLabels).toBe(1);
+    expect(state.labels).not.toContain("blocked:sensitive-path");
+    expect(state.labels).toContain("ready-for-agent");
+    // Guard bypass flag threaded to the adopt runner.
+    expect(adoptApproved).toBe(true);
+    // Audit comment posted in addition to the directive comment (never silent).
+    expect(calls.comment).toBeGreaterThanOrEqual(2);
+    expect(text()).toContain("validated and landed");
+  });
+
+  it("a NON-sensitive adopt does not set the guard-bypass flag (defaults false)", async () => {
+    const { gh } = fakeGh({
+      state: "OPEN",
+      body: parkedBody,
+      labels: ["ready-for-human", "blocked:validation"],
+    });
+    const { stream } = capture();
+    let adoptApproved: boolean | undefined = true;
+    const runner: RequeueAdoptRunner = async (_issue, _branch, issueData) => {
+      adoptApproved = issueData.sensitivePathApproved;
+      return "landed";
+    };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(adoptApproved).toBe(false);
   });
 
   it("dry-run with --adopt-branch does not call adopt runner", async () => {

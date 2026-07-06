@@ -255,6 +255,15 @@ export interface ReconcileInput {
    * reconcile runs the scoped gate as its verdict, unchanged.
    */
   trustPriorValidation?: boolean;
+  /**
+   * Sensitive-path guard bypass (#1171). Threaded straight into {@link doLanding}
+   * as `sensitivePathApproved`. Set true EXCLUSIVELY by the `/requeue
+   * --adopt-branch` operator path, after a maintainer reviewed the protected diff,
+   * so a `blocked:sensitive-path` park can land through this no-agent lane without
+   * the landing guard re-parking it. Defaults false/undefined: the autonomous
+   * process-issue caller never sets it, so its landing guard keeps firing.
+   */
+  sensitivePathApproved?: boolean;
 }
 
 // ---------- result ----------
@@ -440,6 +449,10 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       trunk: input.trunk,
       issue,
       title: input.title,
+      // #1171: the operator adopt-branch path passes this true after reviewing a
+      // protected diff, so doLanding's sensitive-path guard is skipped ONLY here.
+      // Undefined for every autonomous caller → the guard fires as before.
+      sensitivePathApproved: input.sensitivePathApproved,
     },
     {
       preMerge: () => landingHookContext(input, branch, { mergeBase: input.base }),
