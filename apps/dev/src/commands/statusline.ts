@@ -4,7 +4,7 @@
 // This is the IO half: it reads the Claude Code statusline JSON payload from
 // stdin (cwd, model, effort, context window), resolves the project root, honours
 // the per-project `.red/config.yaml` opt-out, reads the git branch, aggregates
-// the live /afk worker state (with a 60 s GitHub-count cache), and feeds it all
+// the live /afk worker state (with a 240 s / 4 min GitHub-count cache), and feeds it all
 // into the PURE renderer in core/statusline.ts. The render assembly itself —
 // block order, optional-drop, ` · ` joins, token humanizing — lives entirely in
 // core/statusline.ts and is exercised by tests/statusline.test.ts.
