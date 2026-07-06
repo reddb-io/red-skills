@@ -1848,7 +1848,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         return result;
       }
       const sp = join(pi.attemptDir, "afk.state.json");
-      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
+      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
       return result;
     },
     processDeps: buildProcessDeps(
