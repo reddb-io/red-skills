@@ -21,6 +21,7 @@ import {
   type MemoryNodeProps,
   type MemoryScope,
   type NodeType,
+  type ProvenanceTier,
   type Tier,
 } from "./schema.js";
 
@@ -152,6 +153,11 @@ export const TRUST_WEIGHT: Record<Confidence, number> = {
   AMBIGUOUS: 0.65,
 };
 
+export const PROVENANCE_TIER_WEIGHT: Record<ProvenanceTier, number> = {
+  oracle: 1.15,
+  proxy: 1.0,
+};
+
 /** Recency half-life: a node's recency factor halves every 30 days of age. */
 export const RECENCY_HALF_LIFE_MS = 30 * 86_400_000;
 
@@ -170,6 +176,8 @@ export interface RankInputs {
   maxDegree: number;
   /** Provenance/confidence trust multiplier in (0, 1]. */
   trust?: number;
+  /** Authority tier multiplier. Missing legacy rows are scored as proxy. */
+  provenanceTier?: ProvenanceTier;
 }
 
 /**
@@ -182,7 +190,16 @@ export interface RankInputs {
 export function rankScore(i: RankInputs): number {
   const recency = 0.5 ** (Math.max(0, i.ageMs) / RECENCY_HALF_LIFE_MS);
   const centrality = (i.degree + 1) / (i.maxDegree + 1);
-  return i.relevance * i.importance * recency * centrality * TIER_WEIGHT[i.tier] * (i.trust ?? 1);
+  const provenanceTier = i.provenanceTier ?? "proxy";
+  return (
+    i.relevance *
+    i.importance *
+    recency *
+    centrality *
+    TIER_WEIGHT[i.tier] *
+    PROVENANCE_TIER_WEIGHT[provenanceTier] *
+    (i.trust ?? 1)
+  );
 }
 
 export interface AskResult {
@@ -707,6 +724,7 @@ export async function recall(
       degree: degree.get(rid) ?? 0,
       maxDegree,
       trust: trustWeight(node),
+      provenanceTier: node.properties.provenance_tier ?? "proxy",
     });
     const recalled = toRecalled(node, score, depthOf.get(rid));
     attachConfidence(recalled, node, confidenceCtx);
