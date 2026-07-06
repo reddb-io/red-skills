@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  PROVENANCE_TIER_WEIGHT,
   RECENCY_HALF_LIFE_MS,
   type RecallStore,
   TIER_WEIGHT,
@@ -7,7 +8,7 @@ import {
   recall,
 } from "../src/engine.js";
 import type { GraphRow, SearchRow, StoredNode } from "../src/graph-store.js";
-import type { MemoryScope, Tier } from "../src/schema.js";
+import type { MemoryScope, ProvenanceTier, Tier } from "../src/schema.js";
 
 /**
  * In-memory `RecallStore` for ranking unit tests — no RedDB, no `red` binary.
@@ -84,6 +85,16 @@ function node(
   };
 }
 
+function provenanceNode(
+  rid: number,
+  provenanceTier: ProvenanceTier | undefined,
+): StoredNode {
+  return node(rid, "durable", {
+    content: "alpha provenance parity",
+    ...(provenanceTier ? { provenance_tier: provenanceTier } : {}),
+  });
+}
+
 describe("rankScore (#72)", () => {
   const base = { relevance: 1, importance: 1, ageMs: 0, degree: 0, maxDegree: 0 } as const;
 
@@ -107,6 +118,13 @@ describe("rankScore (#72)", () => {
     const leaf = rankScore({ ...base, tier: "durable", degree: 0, maxDegree: 4 });
     expect(hub).toBeGreaterThan(leaf);
   });
+
+  test("provenance tier orders oracle above proxy", () => {
+    const oracle = rankScore({ ...base, tier: "durable", provenanceTier: "oracle" });
+    const proxy = rankScore({ ...base, tier: "durable", provenanceTier: "proxy" });
+    expect(oracle).toBeGreaterThan(proxy);
+    expect(proxy).toBe(PROVENANCE_TIER_WEIGHT.proxy);
+  });
 });
 
 describe("recall ranking with a mock store (#72)", () => {
@@ -119,6 +137,29 @@ describe("recall ranking with a mock store (#72)", () => {
     ]);
     const { nodes } = await recall(store, "alpha", { depth: 0, now: NOW });
     expect(nodes.map((n) => n.rid)).toEqual([2, 3, 1]);
+  });
+
+  test("ranks oracle facts above otherwise-equivalent proxy facts", async () => {
+    const store = new MockStore([
+      provenanceNode(1, "proxy"),
+      provenanceNode(2, "oracle"),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", { depth: 0, now: NOW });
+
+    expect(nodes.map((n) => n.rid)).toEqual([2, 1]);
+  });
+
+  test("treats legacy facts without provenance_tier as proxy", async () => {
+    const store = new MockStore([
+      provenanceNode(1, undefined),
+      provenanceNode(2, "oracle"),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", { depth: 0, now: NOW });
+
+    expect(nodes.map((n) => n.rid)).toEqual([2, 1]);
+    expect(nodes.find((n) => n.rid === 1)?.properties.provenance_tier).toBeUndefined();
   });
 
   test("returns the head of a SUPERSEDED_BY chain by default", async () => {
