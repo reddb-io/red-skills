@@ -30,6 +30,8 @@ interface Trace {
   iterLogs: string[];
   mergeCalls: string[][];
   pnpmCalls: number;
+  pnpmArgs: string[][];
+  changedFileCalls: Array<{ branch: string; base: string }>;
   /** Branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
   terminalBarrierCalls: string[];
 }
@@ -40,6 +42,8 @@ interface HarnessOptions {
   /** Aggregate feedback gate verdict. Defaults to passing (green). */
   feedbackOk?: boolean;
   changedFiles?: string[];
+  changedFilesByBase?: Record<string, string[]>;
+  packageScopes?: string[];
   branchPresent?: boolean;
   locked?: boolean;
   /** When true, the unlocked `gh pr merge` returns non-zero (land fails). */
@@ -77,6 +81,8 @@ function harness(opts: HarnessOptions = {}): {
     iterLogs: [],
     mergeCalls: [],
     pnpmCalls: 0,
+    pnpmArgs: [],
+    changedFileCalls: [],
     terminalBarrierCalls: [],
   };
 
@@ -124,8 +130,9 @@ function harness(opts: HarnessOptions = {}): {
             },
     },
     lookups: {
-      async changedFiles() {
-        return opts.changedFiles ?? ["packages/x/src/a.ts"];
+      async changedFiles(branch, base) {
+        trace.changedFileCalls.push({ branch, base });
+        return opts.changedFilesByBase?.[base] ?? opts.changedFiles ?? ["packages/x/src/a.ts"];
       },
       async branchPresent() {
         return opts.branchPresent ?? true;
@@ -160,6 +167,7 @@ function harness(opts: HarnessOptions = {}): {
     },
     pnpm: async (args) => {
       trace.pnpmCalls += 1;
+      trace.pnpmArgs.push([...args]);
       // AFK runner improvement: reconcile now passes the base as
       // `baselineWorktree` to `runFeedback`. The baseline probe always
       // returns success in this harness (it isn't modelling pre-existing
@@ -173,7 +181,7 @@ function harness(opts: HarnessOptions = {}): {
       return { code: opts.feedbackOk === false ? 1 : 0, stdout: "", stderr: "boom\n" };
     },
     layout: {
-      hasPackage: (scope) => scope === ".",
+      hasPackage: (scope) => (opts.packageScopes ? opts.packageScopes.includes(scope) : scope === "."),
       hasScript: () => true,
     },
     envelope: {
@@ -265,6 +273,31 @@ describe("reconcile — green → land", () => {
     expect(trace.firedHooks).toEqual(["pre_merge", "post_merge"]);
     expect(trace.iterLogs.some((line) => line.includes("validating fetched `origin/afk/wAAAA/9-fix-the-thing` tip `feedfacecafe`"))).toBe(true);
     expect(trace.iterLogs.some((line) => line.includes("tip `feedfacecafe` validated green and landed"))).toBe(true);
+  });
+
+  it("resolves feedback scopes from origin/<base>, not a stale local base", async () => {
+    const { deps, input, trace } = harness({
+      feedbackOk: true,
+      packageScopes: ["packages/stale", "packages/fresh"],
+      changedFilesByBase: {
+        main: ["packages/stale/src/old.ts"],
+        "origin/main": ["packages/fresh/src/new.ts"],
+      },
+    });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("landed");
+    expect(trace.changedFileCalls).toEqual([
+      { branch: "afk/wAAAA/9-fix-the-thing", base: "origin/main" },
+    ]);
+    const pnpmDirs = trace.pnpmArgs
+      .map((args) => {
+        const idx = args.indexOf("-C");
+        return idx >= 0 ? args[idx + 1] : undefined;
+      })
+      .filter(Boolean);
+    expect(pnpmDirs).toContain("afk/wAAAA/9-fix-the-thing/packages/fresh");
+    expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
   });
 
   it("trusts prior green (#1095): lands WITHOUT re-running the feedback gate", async () => {
