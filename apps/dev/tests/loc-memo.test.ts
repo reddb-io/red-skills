@@ -52,17 +52,17 @@ describe("resolveAttemptLoc — commit-anchored LOC memo (#1210)", () => {
     // The memo never inspects the runner — the same path that serves claude serves
     // codex, so the historical codex 0/0 gap that forced the render fallback is
     // closed at the writer.
-    let stored: LocMemo | null = null;
+    const stored: LocMemo[] = [];
     const result = await resolveAttemptLoc({
       headSha: "codexsha1",
       compute: async () => ({ added: 123, removed: 7 }),
-      readMemo: () => stored,
+      readMemo: () => stored[0] ?? null,
       writeMemo: (m) => {
-        stored = m;
+        stored[0] = m;
       },
     });
     expect(result).toEqual({ added: 123, removed: 7 });
-    expect(stored?.added).toBe(123);
+    expect(stored[0]?.added).toBe(123);
   });
 
   it("an empty HEAD sha never memoizes: it always recomputes", async () => {
