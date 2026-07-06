@@ -99,6 +99,29 @@ lines to the session output, per-issue hooks write them to the attempt's
 supervisor log. A quiet Worker can therefore still show policy/hook activity
 without pretending the inner agent lane advanced.
 
+### Hook Hardening Contract
+
+Shipped RedSkills hook implementations and hook launchers must satisfy this
+checklist even though operator-authored AFK hooks may still use the lifecycle
+exit-code policy table above:
+
+- Exit 0 unconditionally. Blocking host hooks return a structured denial
+  payload on stdout; crashes and missing dependencies fail open with `{}`.
+- Drain stdin with a deadline. Shell hooks use
+  `timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat ... || true`; Node hooks
+  use an async bounded drain rather than `readFileSync(0)`.
+- Arm a bounded, unref'd process deadline for Node hook processes that do work
+  after startup. A hook must not keep a host session alive because a timer or
+  child process is still referenced.
+- Parse tool input as structured stdin JSON. Do not interpolate raw tool input
+  into a shell command string; if a hook must deny a command, emit JSON that asks
+  the host to deny it.
+
+Run `scripts/audit-hook-hardening-contract.sh` before shipping changes to
+`plugins/*/hooks/`, AFK library hooks, or hook launcher wrappers. The audit is
+intentionally greppable: it catches pattern-matchable regressions and includes a
+violating fixture that must fail.
+
 The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 
 | Hook            | When it fires                              | Env vars              | Mutable slice   | Exit-code policy        |
