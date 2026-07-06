@@ -187,6 +187,17 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(keys).toEqual(expect.arrayContaining(["run", "iss", "loc", "tks", "tls", "rsn", "txt"]));
   });
 
+  it("renders org=<afk|go> (issue #1219): the stamped origin, defaulting to afk when unstamped", () => {
+    // Unstamped worker → org=afk (an unstamped worker is an afk-fleet worker).
+    expect(stripAnsi(renderWorkerLine(worker(), NOW))).toContain("org=afk");
+    // A /go worker carries origin: "go".
+    const go = worker({ state: { ...worker().state, origin: "go" } });
+    expect(stripAnsi(renderWorkerLine(go, NOW))).toContain("org=go");
+    // An explicit afk origin still renders org=afk.
+    const afk = worker({ state: { ...worker().state, origin: "afk" } });
+    expect(stripAnsi(renderWorkerLine(afk, NOW))).toContain("org=afk");
+  });
+
   it("populates iss=<number> for a /go-shaped worker state (no queue — total 0/done 0)", () => {
     // A /go run has no queue, so done/total are 0/0 (the old counter was meaningless);
     // current.number still carries the single issue number, set on claim like /afk.
