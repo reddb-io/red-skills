@@ -279,6 +279,64 @@ describe("statusline style — full themed assembly", () => {
     expect(stripAnsi(out)).toContain("prs=3");
   });
 
+  it("aligns multi-worker rows by visible cell width while preserving ANSI color", () => {
+    const out = styleStatusline(input, {
+      now: NOW,
+      workers: [
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "wLONG",
+            runner: "codex",
+            current: {
+              ...worker().state.current,
+              number: 1243,
+              model: "gpt-5.5",
+              effort: "high",
+              stage: "validation",
+              input_tokens: 32000,
+              output_tokens: 2000,
+              tools_called_count: 38,
+            },
+          },
+          diffAdded: 248,
+          diffRemoved: 29,
+        }),
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "w2",
+            runner: "codex",
+            current: {
+              ...worker().state.current,
+              number: 9,
+              model: undefined,
+              effort: undefined,
+              stage: "impl",
+              tools_called_count: 8,
+            },
+          },
+          diffAdded: 83,
+          diffRemoved: 1,
+        }),
+      ],
+    });
+    const [header, firstRaw, secondRaw] = out.split("\n");
+    const rows = [stripAnsi(firstRaw), stripAnsi(secondRaw)];
+    for (const token of ["run=", "org=", "iss=", "00:05:00", "loc=", "tks=", "tls=", "rsn=", "txt="]) {
+      const starts = rows.map((row) => row.indexOf(token));
+      expect(starts[0]).toBeGreaterThanOrEqual(0);
+      expect(starts[1]).toBeGreaterThanOrEqual(0);
+      expect(starts[1]).toBe(starts[0]);
+    }
+    expect(rows[1].indexOf("impl")).toBe(rows[0].indexOf("validation"));
+    expect(header).toBe(renderHeaderLine(input.project, claude, repo));
+    expect(firstRaw).toContain(KEY);
+    expect(secondRaw).toContain(KEY);
+    expect(firstRaw).toContain(BOLD);
+    expect(secondRaw).toContain(BOLD);
+  });
+
   it("defaults to the header row alone when no workers/now are supplied", () => {
     const out = styleStatusline(input);
     expect(out).not.toContain("\n");
