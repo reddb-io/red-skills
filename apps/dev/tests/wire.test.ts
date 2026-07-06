@@ -324,9 +324,12 @@ describe("collectMonitorInputs", () => {
     try {
       const attemptDir = join(root, ".red", "tmp", "workers", "wAB12", "5-a1");
       mkdirSync(attemptDir, { recursive: true });
+      // pid process.pid → the worker is live, so it survives the monitor's
+      // renderableLive gate (#1219: the dashboard now drops dead/stale rows;
+      // dead-worker filtering is covered by worker-state-reader's isRenderableLive suite).
       writeFileSync(
         join(attemptDir, "afk.state.json"),
-        JSON.stringify({ worker_id: "wAB12", pid: 999999, runner: "claude", total: 3, done: 1 }),
+        JSON.stringify({ worker_id: "wAB12", pid: process.pid, runner: "claude", total: 3, done: 1 }),
       );
       writeFileSync(join(attemptDir, "afk.log"), "a\nb\n");
       const { workers } = await collectMonitorInputs(root);
@@ -335,7 +338,8 @@ describe("collectMonitorInputs", () => {
       expect(workers[0]!.state.done).toBe(1);
       expect(workers[0]!.logLines).toBe(2);
       expect(workers[0]!.logNewLines).toBe(2);
-      // pid 999999 is almost certainly dead → not live
+      // `.live` (= active) needs the full lane-fresh "alive" verdict, stricter than
+      // the renderableLive render-gate — a bare process.pid worker renders but is not active.
       expect(workers[0]!.live).toBe(false);
 
       writeFileSync(join(attemptDir, "afk.log"), "a\nb\nc\n");
@@ -849,11 +853,12 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
     try {
       // Sandcastle layout: state file at the standard path; worktree field not yet
       // set (simulates the pre-heartbeat window where current.worktree = "").
+      // Live pid → survives the #1219 renderableLive gate so discovery is what's tested.
       const attemptDir = join(root, ".red", "tmp", "workers", "wSC", "42-a1");
       mkdirSync(attemptDir, { recursive: true });
       writeFileSync(
         join(attemptDir, "afk.state.json"),
-        JSON.stringify({ worker_id: "wSC", pid: 999999, runner: "claude", total: 5, done: 2 }),
+        JSON.stringify({ worker_id: "wSC", pid: process.pid, runner: "claude", total: 5, done: 2 }),
       );
       const { workers } = await collectMonitorInputs(root);
       // The worker must appear in the output — sandcastle layout does not hide the
@@ -876,8 +881,9 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
       writeFileSync(
         join(attemptDir, "afk.state.json"),
         JSON.stringify({
+          // Live pid → survives the #1219 renderableLive gate; legacy-layout discovery is what's tested.
           worker_id: "wLG",
-          pid: 999999,
+          pid: process.pid,
           runner: "codex",
           total: 3,
           done: 0,
