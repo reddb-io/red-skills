@@ -20,6 +20,7 @@ import {
 import { dirname, join } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
+import { updateState } from "../core/state.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -201,24 +202,7 @@ export async function writeFailureMarkers(attemptDir: string, markers: FailureMa
 /** Persist the `envelope.posted` signal into the iteration state file. Best
  * effort: a malformed/absent state file degrades to writing a minimal object. */
 export async function writeEnvelopePosted(attemptDir: string, posted: boolean): Promise<void> {
-  const statePath = join(attemptDir, "afk.state.json");
-  let obj: Record<string, unknown> = {};
-  const text = await readText(statePath);
-  if (text !== null) {
-    try {
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed as Record<string, unknown>;
-    } catch {
-      obj = {};
-    }
-  }
-  const env = (obj.envelope && typeof obj.envelope === "object" ? obj.envelope : {}) as Record<string, unknown>;
-  env.posted = posted;
-  obj.envelope = env;
-  await mkdir(attemptDir, { recursive: true });
-  const tmp = `${statePath}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(obj)}\n`, "utf8");
-  await rename(tmp, statePath);
+  await updateState(join(attemptDir, "afk.state.json"), { "envelope.posted": posted });
 }
 
 /** Read the `envelope.posted` flag from an attempt state file (false when
