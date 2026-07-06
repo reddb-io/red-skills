@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CLAIM_REFRESH_S,
+  DEFAULT_CLAIM_REAPER_GRACE_S,
+  DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
   DEFAULT_CLAIM_STALE_TOLERANCE,
   DEFAULT_CLAIM_STALENESS,
   classifyClaim,
   classifyIssueClaims,
   makeStaleClaimPredicate,
   planStaleClaimSweep,
+  resolveClaimReaperConfig,
   resolveClaimStalenessConfig,
   staleWindowS,
+  type ClaimReaperConfig,
   type ClaimStalenessConfig,
 } from "../src/core/claim-staleness.js";
 import type { ClaimRecord } from "../src/core/claim.js";
@@ -46,7 +50,12 @@ describe("staleWindowS", () => {
 });
 
 describe("classifyClaim (pure, injected clock)", () => {
-  const cfg: ClaimStalenessConfig = { refreshCadenceS: 300, tolerance: 3 };
+  const cfg: ClaimReaperConfig = {
+    refreshCadenceS: 300,
+    tolerance: 3,
+    claimGraceS: 300,
+    recentCommitProtectionS: 2700,
+  };
 
   it("a just-refreshed claim is fresh", () => {
     expect(classifyClaim(recAt(T0), T0, cfg)).toBe("fresh");
@@ -117,6 +126,40 @@ describe("resolveClaimStalenessConfig", () => {
   });
 });
 
+describe("resolveClaimReaperConfig", () => {
+  it("defaults to the staleness policy plus explicit reaper guard thresholds", () => {
+    expect(resolveClaimReaperConfig({})).toEqual({
+      ...DEFAULT_CLAIM_STALENESS,
+      claimGraceS: DEFAULT_CLAIM_REAPER_GRACE_S,
+      recentCommitProtectionS: DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+    });
+  });
+
+  it("reads env overrides before plugins.dev.afk.* config values", () => {
+    const cfg = (key: string) =>
+      ({
+        "afk.claim_reaper.grace_s": "600",
+        "afk.claim_reaper.recent_commit_s": "1800",
+      })[key] ?? "";
+    expect(resolveClaimReaperConfig({ RED_AFK_CLAIM_REAPER_GRACE_S: "120" }, cfg)).toMatchObject({
+      claimGraceS: 120,
+      recentCommitProtectionS: 1800,
+    });
+  });
+
+  it("falls back on non-positive / non-numeric guard overrides", () => {
+    const cfg = (key: string) =>
+      ({
+        "afk.claim_reaper.grace_s": "0",
+        "afk.claim_reaper.recent_commit_s": "abc",
+      })[key] ?? "";
+    expect(resolveClaimReaperConfig({}, cfg)).toMatchObject({
+      claimGraceS: DEFAULT_CLAIM_REAPER_GRACE_S,
+      recentCommitProtectionS: DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+    });
+  });
+});
+
 describe("classifyIssueClaims", () => {
   const isStale = makeStaleClaimPredicate(T0, { refreshCadenceS: 300, tolerance: 3 });
 
@@ -158,7 +201,12 @@ describe("classifyIssueClaims", () => {
 });
 
 describe("planStaleClaimSweep", () => {
-  const cfg: ClaimStalenessConfig = { refreshCadenceS: 300, tolerance: 3 };
+  const cfg: ClaimReaperConfig = {
+    refreshCadenceS: 300,
+    tolerance: 3,
+    claimGraceS: 300,
+    recentCommitProtectionS: 2700,
+  };
 
   it("releases an issue held only by a stale claim", () => {
     const releases = planStaleClaimSweep(
@@ -202,5 +250,44 @@ describe("planStaleClaimSweep", () => {
       { issue: 1, staleOwners: ["dead:1"] },
       { issue: 3, staleOwners: ["dead:3"] },
     ]);
+  });
+
+  it("never releases a claim inside the explicit grace period, even with an aggressive stale window", () => {
+    const releases = planStaleClaimSweep(
+      [{ issue: 7, records: [claimAt(10, "fresh:host", 200)] }],
+      T0,
+      { refreshCadenceS: 60, tolerance: 0, claimGraceS: 300, recentCommitProtectionS: 2700 },
+    );
+    expect(releases).toEqual([]);
+  });
+
+  it("never releases a stale claim whose attempt branch has a recent commit", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 7,
+          records: [claimAt(10, "live-work:host", 9999)],
+          attemptBranchCommitS: T0 - 120,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([]);
+  });
+
+  it("still releases a stale claim when no commit landed inside the protection window", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 7,
+          records: [claimAt(10, "dead:host", 9999)],
+          attemptBranchCommitS: T0 - cfg.recentCommitProtectionS - 1,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([{ issue: 7, staleOwners: ["dead:host"] }]);
   });
 });
