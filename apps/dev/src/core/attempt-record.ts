@@ -14,6 +14,8 @@
 
 import type { ProcessOutcome } from "./process-issue.js";
 
+export type AttemptOutcomeRecord = "success" | "failure" | "escalated";
+
 /**
  * The AFK-side fields needed to build the Memory `ReasoningAttemptPayload`
  * (apps/memory/src/reasoning/attempt-writer.ts). Only the fields AFK
@@ -33,6 +35,12 @@ export interface AttemptRecordPayload {
   attemptNumber: number;
   /** Terminal AFK outcome (done / blocked / no-sentinel / merge-conflict / …). */
   status: ProcessOutcome | string;
+  /** Canonical issue type bucket from `type:*`, or `unknown` when absent. */
+  issueType: string;
+  /** AFK model tier used for this attempt, or `unknown` when not available. */
+  modelTier: string;
+  /** Coarse attempt result for routing policy queries. */
+  outcome: AttemptOutcomeRecord;
   /** Issue title at the time of recording. */
   issueTitle?: string;
   /** Issue URL at the time of recording. */
@@ -70,6 +78,12 @@ export interface AttemptContext {
   issue: number;
   attempt: number;
   outcome: ProcessOutcome | string;
+  /** Labels current when the attempt was recorded; `type:*` drives issueType. */
+  labels?: readonly string[];
+  /** Explicit issue-type override, when the caller already derived it. */
+  issueType?: string;
+  /** AFK model tier used for this attempt. */
+  modelTier?: string;
   title?: string;
   url?: string;
   body?: string;
@@ -92,6 +106,38 @@ function nonEmpty(s: string | undefined): string | undefined {
   return t.length > 0 ? s : undefined;
 }
 
+export function deriveIssueType(labels: readonly string[] | undefined): string {
+  for (const label of labels ?? []) {
+    const match = /^type:([a-z0-9][a-z0-9-]*)$/i.exec(label.trim());
+    if (match) return match[1]!.toLowerCase();
+  }
+  return "unknown";
+}
+
+export function deriveAttemptOutcomeRecord(outcome: ProcessOutcome | string): AttemptOutcomeRecord {
+  switch (outcome) {
+    case "done":
+      return "success";
+    case "review-requested":
+    case "manual-landing":
+      return "escalated";
+    default:
+      return "failure";
+  }
+}
+
+export function filterAttemptOutcomeRecords(
+  records: readonly AttemptRecordPayload[],
+  query: { issueType?: string; modelTier?: string; outcome?: AttemptOutcomeRecord },
+): AttemptRecordPayload[] {
+  return records.filter((record) => {
+    if (query.issueType !== undefined && record.issueType !== query.issueType) return false;
+    if (query.modelTier !== undefined && record.modelTier !== query.modelTier) return false;
+    if (query.outcome !== undefined && record.outcome !== query.outcome) return false;
+    return true;
+  });
+}
+
 /**
  * PURE mapping: AFK terminal context → {@link AttemptRecordPayload}. Maps the
  * outcome to the Memory status vocabulary (known outcomes pass through verbatim;
@@ -106,6 +152,9 @@ export function buildAttemptRecordPayload(ctx: AttemptContext): AttemptRecordPay
     issueNumber: ctx.issue,
     attemptNumber: ctx.attempt,
     status,
+    issueType: nonEmpty(ctx.issueType) ?? deriveIssueType(ctx.labels),
+    modelTier: nonEmpty(ctx.modelTier) ?? "unknown",
+    outcome: deriveAttemptOutcomeRecord(ctx.outcome),
   };
   const title = nonEmpty(ctx.title);
   if (title !== undefined) payload.issueTitle = title;

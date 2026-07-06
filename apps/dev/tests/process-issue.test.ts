@@ -2626,7 +2626,13 @@ describe("processIssue — validation.jsonl sidecar (SKILL.md §Validation Sidec
 
 describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)", () => {
   it("records the attempt AFTER the DONE envelope with the mapped payload", async () => {
-    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, recordAttempt: "ok" });
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "type:bug"],
+      classifyIssue: async () => "simple",
+      recordAttempt: "ok",
+    });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
@@ -2636,6 +2642,9 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(p.issueNumber).toBe(9);
     expect(p.attemptNumber).toBe(1);
     expect(p.status).toBe("done");
+    expect(p.issueType).toBe("bug");
+    expect(p.modelTier).toBe("simple");
+    expect(p.outcome).toBe("success");
     expect(p.issueTitle).toBe("Fix the thing");
     expect(p.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(p.mergeCommit).toBe("abc1234");
@@ -2650,6 +2659,7 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(result.outcome).toBe("blocked");
     expect(trace.recordedAttempts).toHaveLength(1);
     expect(trace.recordedAttempts[0]!.status).toBe("blocked");
+    expect(trace.recordedAttempts[0]!.outcome).toBe("failure");
   });
 
   it("records the attempt on the merge-conflict path", async () => {

@@ -208,6 +208,7 @@ describe("runFeedback", () => {
       name: "test:plugins/memory",
       status: "passed",
       command: "pnpm -C /repo/plugins/memory test",
+      exitCode: 0,
       durationMs: 1234,
       summary: "command exited 0",
     };
@@ -364,6 +365,32 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       "test:apps/dev",
       "command output exceeded the capture ceiling (maxBuffer length exceeded); stdout maxBuffer length exceeded",
     );
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
+  it("trusts a clean structured exit over misleading infra-looking text", () => {
+    const record = buildValidationRecord({
+      name: "test:apps/dev",
+      status: "failed",
+      command: "pnpm -C apps/dev test",
+      exitCode: 0,
+      summary: "stderr mentioned feedback worktree install failed, but the runner reported a clean exit",
+    });
+    const result: RunFeedbackResult = {
+      ok: false,
+      checks: [
+        { name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record },
+      ],
+      sidecar: [JSON.stringify(record)],
+      baselineDowngraded: [],
+      quarantined: [],
+    };
+
+    expect(isInfraFeedbackFailure(result)).toBe(false);
+  });
+
+  it("preserves keyword fallback when no structured exit evidence exists", () => {
+    const result = failedCheck("test:apps/dev", "feedback worktree install failed for afk/wX/123-slug (exit 1)");
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAttemptRecordPayload,
+  deriveAttemptOutcomeRecord,
+  deriveIssueType,
+  filterAttemptOutcomeRecords,
   memoryConfiguredInYaml,
   toMemoryPayload,
   resolveMemoryCli,
@@ -52,6 +55,39 @@ describe("buildAttemptRecordPayload — identity + status mapping", () => {
   it("forwards an unknown outcome as its string status", () => {
     expect(buildAttemptRecordPayload({ ...base, outcome: "exhausted" }).status).toBe("exhausted");
   });
+
+  it("emits queryable issue type, model tier, and coarse outcome", () => {
+    const p = buildAttemptRecordPayload({
+      ...base,
+      labels: ["ready-for-agent", "type:bug"],
+      modelTier: "simple",
+    });
+    expect(p.issueType).toBe("bug");
+    expect(p.modelTier).toBe("simple");
+    expect(p.outcome).toBe("success");
+  });
+
+  it("derives issue type from canonical type labels with an unknown bucket", () => {
+    expect(deriveIssueType(["ready-for-agent", "type:prd"])).toBe("prd");
+    expect(deriveIssueType(["ready-for-agent"])).toBe("unknown");
+  });
+
+  it("maps terminal AFK statuses to success/failure/escalated", () => {
+    expect(deriveAttemptOutcomeRecord("done")).toBe("success");
+    expect(deriveAttemptOutcomeRecord("feedback-failed")).toBe("failure");
+    expect(deriveAttemptOutcomeRecord("review-requested")).toBe("escalated");
+  });
+
+  it("filters outcome records by issue type and model tier", () => {
+    const records = [
+      buildAttemptRecordPayload({ ...base, attempt: 1, labels: ["type:bug"], modelTier: "simple" }),
+      buildAttemptRecordPayload({ ...base, attempt: 2, labels: ["type:prd"], modelTier: "think" }),
+      buildAttemptRecordPayload({ ...base, attempt: 3, labels: ["type:bug"], modelTier: "complex" }),
+    ];
+
+    expect(filterAttemptOutcomeRecords(records, { issueType: "bug", modelTier: "simple" })).toEqual([records[0]]);
+    expect(filterAttemptOutcomeRecords(records, { issueType: "bug" }).map((r) => r.attemptNumber)).toEqual([1, 3]);
+  });
 });
 
 describe("buildAttemptRecordPayload — optional-field omission", () => {
@@ -62,6 +98,9 @@ describe("buildAttemptRecordPayload — optional-field omission", () => {
       issueNumber: 42,
       attemptNumber: 2,
       status: "done",
+      issueType: "unknown",
+      modelTier: "unknown",
+      outcome: "success",
     });
     expect("issueTitle" in p).toBe(false);
     expect("branch" in p).toBe(false);

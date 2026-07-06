@@ -744,6 +744,7 @@ async function recordAttemptBestEffort(
         issue: input.issue,
         attempt: input.attempt,
         outcome,
+        labels: input.labels,
         title: input.title,
         body: input.body,
         workerId: input.workerId,
