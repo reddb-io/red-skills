@@ -29,9 +29,11 @@ import { type RecoveryEnv } from "./recovery.js";
 import {
   LABEL_READY,
   LABEL_RUNNING,
+  LABEL_CONTESTED,
   LABEL_HUMAN,
   LABEL_RUNNER_ERROR,
 } from "./triage-labels.js";
+import { validateIssueLifecycleTransition } from "./issue-lifecycle.js";
 import {
   computeHalfOpenBackoff,
   isHalfOpenDue,
@@ -165,6 +167,10 @@ export interface SupervisorConfig {
    * lane (`current.cost_usd`) through SupervisorFs.fleetCostUsd.
    */
   drainBudgetUsd?: number;
+  /** RED_AFK_REAP_CONTEST_WINDOW_S — seconds a stall-reaped retry waits for the
+   * original attempt branch to advance before rotating the issue back to
+   * ready-for-agent. */
+  reapContestWindowS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -185,6 +191,7 @@ export const SUPERVISOR_DEFAULTS = {
   unblockSweepIntervalS: 60,
   supervisorMaxRestarts: 5,
   supervisorRestartWindowS: 300,
+  reapContestWindowS: 30,
 } as const satisfies SupervisorConfig;
 
 export type DrainBudgetTier = "OK" | "WARNING" | "CRITICAL" | "HARD_STOP";
@@ -283,6 +290,7 @@ export function resolveSupervisorConfig(
     drainBudgetUsd:
       parsePositiveNumber(env.RED_AFK_DRAIN_MAX_COST_USD) ??
       parsePositiveNumber(getCfg("afk.drain.max_cost_usd")),
+    reapContestWindowS: num("RED_AFK_REAP_CONTEST_WINDOW_S", SUPERVISOR_DEFAULTS.reapContestWindowS),
   };
 }
 
@@ -653,6 +661,8 @@ export interface IterDirInfo {
   /** .current.number, or null when the worker died before claiming. */
   issue: number | null;
   workerId: string;
+  /** Live attempt branch (`afk/{worker}/{issue}-{slug}`), when recoverable. */
+  branch?: string;
   /** Tail of afk.log for the no-sentinel envelope's log section. */
   logTail: string;
   /** Extracted agent notes for the envelope's notes section, if any. */
@@ -749,9 +759,20 @@ export interface SupervisorDeps {
    * kill for that pass. Absent → no-op (backward-compatible). (#833)
    */
   dispatchFleetHook?(name: FleetHookName, context: FleetHookContext): Promise<FleetHookDispatchResult>;
+  /** Resolve the current local HEAD of an attempt branch. Best-effort: undefined
+   * means the contest window cannot observe advancement yet. */
+  attemptBranchHead?(branch: string): Promise<string | undefined>;
 }
 
 // ---------- per-slot runtime state ----------
+
+export interface ReapContestState {
+  issue: number;
+  branch: string;
+  headAtReap: string | undefined;
+  openedEpoch: number;
+  deadlineEpoch: number;
+}
 
 /** The supervisor's per-slot bookkeeping, mirroring the SLOT_* arrays. A fresh
  * slot is `freshSlot()`. The tick mutates these in place (the bash arrays are
@@ -785,6 +806,10 @@ export interface SlotState {
    * has been spawned. The probe's death resolves to either closed (success)
    * or re-parked-open (fast-death failure). */
   halfOpen: boolean;
+  /** Pending post-reap retry contest. While present, the issue carries
+   * `running` + `contested`; a late commit on `branch` reclaims the issue,
+   * otherwise the normal clean retry label flip runs when `deadlineEpoch` passes. */
+  contest: ReapContestState | null;
 }
 
 export function freshSlot(): SlotState {
@@ -802,6 +827,7 @@ export function freshSlot(): SlotState {
     idleParked: false,
     backoffStep: 0,
     halfOpen: false,
+    contest: null,
   };
 }
 
@@ -1192,6 +1218,7 @@ export async function reapStalledSlot(
   slot: number,
   state: SlotState,
   deps: SupervisorDeps,
+  config: Pick<SupervisorConfig, "reapContestWindowS"> = SUPERVISOR_DEFAULTS,
 ): Promise<void> {
   if (state.reaped) return;
   state.reaped = true;
@@ -1230,8 +1257,11 @@ export async function reapStalledSlot(
     // so the descriptor's (remove, add) sets are applied swapped.
     const disp = dispose("stalled", info.attempt, deps.recoveryEnv ?? {});
     if (disp.decision === "retry") {
-      // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
-      await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+      const opened = await openReapContest(slot, state, info, deps, config.reapContestWindowS);
+      if (!opened) {
+        // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
+        await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+      }
     } else {
       if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
       // Escalation also sheds any stale ready-for-agent — the reaped slot was
@@ -1251,6 +1281,121 @@ export async function reapStalledSlot(
   if (info && confirmedDead) await deps.fs.teardownIterDir(info);
 }
 
+async function branchHeadForContest(deps: SupervisorDeps, branch: string): Promise<string | undefined> {
+  try {
+    return await deps.attemptBranchHead?.(branch);
+  } catch {
+    return undefined;
+  }
+}
+
+function logReapContest(
+  deps: SupervisorDeps,
+  event: "opened" | "reclaimed" | "expired",
+  details: Record<string, string | number | undefined>,
+): void {
+  deps.log?.(
+    encodeToon({
+      schema_version: "red.afk.reap_contest.v1",
+      event,
+      ...details,
+    }),
+  );
+}
+
+async function openReapContest(
+  slot: number,
+  state: SlotState,
+  info: IterDirInfo,
+  deps: SupervisorDeps,
+  windowS: number,
+): Promise<boolean> {
+  if (info.issue === null || !info.branch || windowS <= 0) return false;
+  const openedEpoch = deps.now();
+  const deadlineEpoch = openedEpoch + windowS;
+  const headAtReap = await branchHeadForContest(deps, info.branch);
+
+  validateIssueLifecycleTransition({
+    edge: "contest",
+    fromLabels: [LABEL_RUNNING],
+    removeLabels: [],
+    addLabels: [LABEL_CONTESTED],
+  });
+  await deps.gh.editLabels(info.issue, [LABEL_CONTESTED], []);
+  state.contest = {
+    issue: info.issue,
+    branch: info.branch,
+    headAtReap,
+    openedEpoch,
+    deadlineEpoch,
+  };
+  logReapContest(deps, "opened", {
+    slot,
+    issue: info.issue,
+    branch: info.branch,
+    head_at_reap: headAtReap,
+    deadline_epoch: deadlineEpoch,
+  });
+  return true;
+}
+
+export type ReapContestResolution = "pending" | "reclaimed" | "expired" | null;
+
+export async function resolveReapContest(
+  slot: number,
+  state: SlotState,
+  deps: SupervisorDeps,
+  _config: Pick<SupervisorConfig, "reapContestWindowS"> = SUPERVISOR_DEFAULTS,
+): Promise<ReapContestResolution> {
+  const contest = state.contest;
+  if (contest === null) return null;
+
+  const now = deps.now();
+  const currentHead = await branchHeadForContest(deps, contest.branch);
+  if (
+    now <= contest.deadlineEpoch &&
+    contest.headAtReap !== undefined &&
+    currentHead !== undefined &&
+    currentHead !== contest.headAtReap
+  ) {
+    validateIssueLifecycleTransition({
+      edge: "contest-reclaimed",
+      fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+      removeLabels: [LABEL_CONTESTED],
+      addLabels: [],
+    });
+    await deps.gh.editLabels(contest.issue, [], [LABEL_CONTESTED]);
+    state.contest = null;
+    logReapContest(deps, "reclaimed", {
+      slot,
+      issue: contest.issue,
+      branch: contest.branch,
+      head_at_reap: contest.headAtReap,
+      head_at_resolution: currentHead,
+    });
+    return "reclaimed";
+  }
+
+  if (now < contest.deadlineEpoch) return "pending";
+
+  validateIssueLifecycleTransition({
+    edge: "contest-expired",
+    fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+    removeLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+    addLabels: [LABEL_READY],
+  });
+  await deps.gh.editLabels(contest.issue, [LABEL_READY], [LABEL_RUNNING, LABEL_CONTESTED]);
+  state.contest = null;
+  logReapContest(deps, "expired", {
+    slot,
+    issue: contest.issue,
+    branch: contest.branch,
+    head_at_reap: contest.headAtReap,
+    head_at_resolution: currentHead,
+  });
+  return "expired";
+}
+
 /**
  * pollStallDetector (supervisor.sh ~611): sample every non-parked slot. Flag /
  * clear the stall bit from the agent-lane mtime vs the stall threshold, then —
@@ -1263,7 +1408,7 @@ export async function reapStalledSlot(
 export async function pollStallDetector(
   state: SupervisorState,
   deps: SupervisorDeps,
-  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner">,
+  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS">,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
@@ -1343,7 +1488,7 @@ export async function pollStallDetector(
             }
           }
           if (!vetoed) {
-            await reapStalledSlot(i, slot, deps);
+            await reapStalledSlot(i, slot, deps, config);
             reaped.push(i);
           }
         }
@@ -1694,6 +1839,10 @@ export async function superviseTick(
   result.drainBudget = drainBudget;
   logDrainBudgetTransition(state, deps, drainBudget, queueDepth);
   const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
+
+  for (let i = 0; i < state.slots.length; i += 1) {
+    await resolveReapContest(i, state.slots[i]!, deps, config);
+  }
 
   // Un-park idle-parked slots when the queue has work to do.
   for (let i = 0; i < state.slots.length; i += 1) {
