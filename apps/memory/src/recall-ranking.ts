@@ -38,6 +38,13 @@ export interface RankedRecallCandidate {
   rrfScore: number;
   recencyMultiplier: number;
   mmrScore: number;
+  signalProvenance: RecallSignalProvenance[];
+}
+
+export interface RecallSignalProvenance {
+  source: string;
+  rank: number;
+  contribution: number;
 }
 
 export function resolveRecallRankingConfig(
@@ -97,7 +104,14 @@ export function rankRecallCandidates(input: RecallRankingInput): RankedRecallCan
     if (!node) continue;
     const recencyMultiplier = recencyDecay(node, now, config.recencyHalfLifeDays);
     const score = hit.score * recencyMultiplier;
-    scored.push({ node, score, rrfScore: hit.score, recencyMultiplier, mmrScore: score });
+    scored.push({
+      node,
+      score,
+      rrfScore: hit.score,
+      recencyMultiplier,
+      mmrScore: score,
+      signalProvenance: signalProvenanceFromContributors(hit.contributors, config.rrfK),
+    });
   }
   scored.sort((a, b) => b.score - a.score || a.node.rid - b.node.rid);
 
@@ -222,4 +236,19 @@ function unique(values: readonly string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function signalProvenanceFromContributors(
+  contributors: Record<string, number>,
+  rrfK: number,
+): RecallSignalProvenance[] {
+  return Object.entries(contributors)
+    .map(([source, rank], index) => ({
+      source,
+      rank,
+      contribution: 1 / (rrfK + rank),
+      index,
+    }))
+    .sort((a, b) => b.contribution - a.contribution || a.index - b.index)
+    .map(({ source, rank, contribution }) => ({ source, rank, contribution }));
 }
