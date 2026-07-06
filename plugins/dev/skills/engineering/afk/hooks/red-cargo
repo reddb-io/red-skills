@@ -25,7 +25,7 @@
 set -uo pipefail
 
 project_root="${PROJECT_ROOT:-$(pwd)}"
-ctx="$(cat || true)"
+ctx="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
 [[ -z "$ctx" ]] && ctx='{}'
 
 if [[ ! -f "$project_root/Cargo.toml" ]]; then
