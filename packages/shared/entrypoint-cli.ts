@@ -367,7 +367,7 @@ async function runMode(plan: RunPlan): Promise<never> {
 
 // ── Fetch mode (IO) ──────────────────────────────────────────────────────────
 
-const FETCH_USAGE = `entrypoint (fetch) — resolve a plugin's built bundle from its GitHub Release into a local cache.
+const FETCH_USAGE = `entrypoint (fetch) — resolve a plugin's built bundle from the ${NPM_PACKAGE} npm package into a local cache.
 
 Usage:
   node <entrypoint> fetch <plugin> <version> [--repo owner/name] [--cache-dir DIR]
