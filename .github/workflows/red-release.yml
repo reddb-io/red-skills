@@ -520,7 +520,8 @@ jobs:
         run: |
           set -euo pipefail
           version="${NEXT#v}"
-          # Pin the package version to the release version (2.0.0+).
+          # Pin the package version to the release's computed next version
+          # (versioning stays on the 1.x line — the release auto-bump owns it).
           node -e "const fs=require('fs');const p='packaging/npm/package.json';const j=JSON.parse(fs.readFileSync(p));j.version=process.env.NEXT.replace(/^v/,'');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
           # Stage the platform-independent JS bundles into the package's dist/.
           node packaging/npm/scripts/prepare.mjs

@@ -1,7 +1,7 @@
 {
   "name": "@reddb-io/red-skills",
-  "version": "2.0.0",
-  "description": "RedSkills plugin runtime bundles (dev, memory, brain) distributed over npm — the v2 client transport (ADR 0091). Carries the platform-independent JS bundles inside the tarball plus thin bin shims; no postinstall download.",
+  "version": "0.0.0",
+  "description": "RedSkills plugin runtime bundles (dev, memory, brain) distributed over npm \u2014 the v2 client transport (ADR 0091). Carries the platform-independent JS bundles inside the tarball plus thin bin shims; no postinstall download.",
   "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {

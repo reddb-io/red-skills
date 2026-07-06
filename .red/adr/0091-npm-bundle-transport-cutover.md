@@ -61,9 +61,13 @@ registry shasum/provenance integrity, and **no postinstall download**.
    prereleases). Cosign install + manifest signing are removed. Bundle assets are
    still uploaded to the GitHub Release as an **inert backup** the client never
    reads.
-5. **Version.** The package and the `dev`/`memory`/`brain` plugins bump to
-   **2.0.0** to signal the transport break (a 1.x install will never self-update
-   across the major boundary — ADR 0084's `isInRange` guard).
+5. **Version.** Versioning stays on the **1.x line** — the release auto-bump
+   owns the version, and the npm package publishes at whatever version the
+   release computes (maintainer decision on #1200: the transport cutover is
+   architectural, not semver). No major bump is needed for safety: the old
+   channel never verified a single release (there is no working installed base
+   to fence off), and launchers are replaced wholesale by marketplace plugin
+   updates, not by self-update across the transport break.
 
 ### Memory / Brain runtimes are deliberately NOT redesigned
 
