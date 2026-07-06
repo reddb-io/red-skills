@@ -173,10 +173,45 @@ export async function diffstatShortstat(ctx: GitContext, base: string): Promise<
   const mb = await runGit(ctx, ["merge-base", base, "HEAD"]);
   if (mb.code === 0 && mb.stdout.trim() !== "") ref = mb.stdout.trim();
   const r = await runGit(ctx, ["diff", "--shortstat", ref]);
-  if (r.code !== 0) return { added: 0, removed: 0 };
-  const ins = /(\d+) insertion/.exec(r.stdout);
-  const del = /(\d+) deletion/.exec(r.stdout);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
+}
+
+/** Extract the `N insertion` / `N deletion` integers from a `--shortstat` line,
+ * defaulting each to 0 when absent. Shared by the committed/uncommitted probes. */
+function parseShortstat(stdout: string): { added: number; removed: number } {
+  const ins = /(\d+) insertion/.exec(stdout);
+  const del = /(\d+) deletion/.exec(stdout);
   return { added: ins ? Number(ins[1]) : 0, removed: del ? Number(del[1]) : 0 };
+}
+
+/**
+ * Parsed diffstat of the attempt's **committed** work at `ctx.cwd` — the commits
+ * on the branch since it left `<base>`, EXCLUDING the working tree. Resolves
+ * `merge-base(<base>, HEAD)` and diffs that against HEAD (`git diff --shortstat
+ * <merge-base>..HEAD`), falling back to a plain `<base>..HEAD` when no merge-base
+ * resolves. This is the sha-memoizable half of the #1224 LOC counter: while HEAD
+ * is unchanged the committed volume is stable, so it is computed at most once per
+ * commit and the render path stays git-free.
+ */
+export async function diffstatCommitted(ctx: GitContext, base: string): Promise<{ added: number; removed: number }> {
+  let ref = base;
+  const mb = await runGit(ctx, ["merge-base", base, "HEAD"]);
+  if (mb.code === 0 && mb.stdout.trim() !== "") ref = mb.stdout.trim();
+  const r = await runGit(ctx, ["diff", "--shortstat", `${ref}..HEAD`]);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
+}
+
+/**
+ * Parsed diffstat of the attempt's **uncommitted** working-tree edits at
+ * `ctx.cwd` — everything not yet committed (`git diff --shortstat HEAD`). This is
+ * the NON-memoizable half of the #1224 LOC counter: a codex worker never commits,
+ * so its HEAD sha is frozen and only this working-tree delta reflects its work.
+ * The writer recomputes it on every heartbeat tick and adds it to the memoized
+ * committed volume, so total attempt LOC surfaces even with zero commits.
+ */
+export async function diffstatUncommitted(ctx: GitContext): Promise<{ added: number; removed: number }> {
+  const r = await runGit(ctx, ["diff", "--shortstat", "HEAD"]);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
 }
 
 /** `git log -n <count>` one-line block for a ref (the inner-prompt recent
