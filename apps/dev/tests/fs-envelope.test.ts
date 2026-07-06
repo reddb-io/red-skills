@@ -1,19 +1,45 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readEnvelopePosted, writeEnvelopePosted } from "../src/runtime/fs.js";
 
 describe("envelope posted state persistence", () => {
-  it("preserves the original state when the atomic temp write fails", async () => {
+  it("preserves accumulated worker state while updating the envelope flag", async () => {
     const attemptDir = await mkdtemp(join(tmpdir(), "afk-envelope-"));
     const statePath = join(attemptDir, "afk.state.json");
-    const original = `${JSON.stringify({ pid: 123, envelope: { posted: false }, current: { stage: "impl" } })}\n`;
+    const original = `${JSON.stringify({
+      worker_id: "wENV",
+      pid: 123,
+      runner: "codex",
+      envelope: { posted: false },
+      current: {
+        number: 1238,
+        runner: "codex",
+        model: "gpt-5",
+        effort: "high",
+        stage: "impl",
+        loc_added: 12,
+        loc_removed: 4,
+      },
+    })}\n`;
     await writeFile(statePath, original, "utf8");
-    await mkdir(`${statePath}.tmp`);
 
-    await expect(writeEnvelopePosted(attemptDir, true)).rejects.toThrow();
-    expect(await readFile(statePath, "utf8")).toBe(original);
-    expect(await readEnvelopePosted(attemptDir)).toBe(false);
+    await writeEnvelopePosted(attemptDir, true);
+
+    const after = JSON.parse(await readFile(statePath, "utf8"));
+    expect(after.worker_id).toBe("wENV");
+    expect(after.pid).toBe(123);
+    expect(after.runner).toBe("codex");
+    expect(after.current).toMatchObject({
+      number: 1238,
+      runner: "codex",
+      model: "gpt-5",
+      effort: "high",
+      stage: "impl",
+      loc_added: 12,
+      loc_removed: 4,
+    });
+    expect(await readEnvelopePosted(attemptDir)).toBe(true);
   });
 });
