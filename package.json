@@ -9,6 +9,7 @@
     "bundle": "turbo run bundle --filter=!@reddb-io/red-castle",
     "typecheck": "turbo run typecheck --filter=!@reddb-io/red-castle",
     "test": "turbo run test --filter=!@reddb-io/red-castle",
+    "audit:hooks": "bash scripts/audit-hook-hardening-contract.sh",
     "release:manifest": "node scripts/release-manifest.mjs"
   },
   "devDependencies": {
