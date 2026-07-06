@@ -79,6 +79,9 @@ const samplePayload: ReasoningAttemptPayload = {
   issueNumber: 96,
   attemptNumber: 1,
   status: "done",
+  issueType: "bug",
+  modelTier: "simple",
+  outcome: "success",
   issueTitle: "Record a single Reasoning attempt into Memory Graph",
   issueUrl: "https://github.com/reddb-io/red-skills/issues/96",
   workerId: "claude",
@@ -175,6 +178,9 @@ describe("recordReasoningAttempt", () => {
       const props = (node?.properties ?? {}) as Record<string, unknown>;
 
       expect(props.status).toBe("done");
+      expect(props.issue_type).toBe(samplePayload.issueType);
+      expect(props.model_tier).toBe(samplePayload.modelTier);
+      expect(props.outcome).toBe(samplePayload.outcome);
       expect(props.branch).toBe(samplePayload.branch);
       expect(props.duration_ms).toBe(samplePayload.durationMs);
       expect(props.diffstat).toBe(samplePayload.diffstat);
