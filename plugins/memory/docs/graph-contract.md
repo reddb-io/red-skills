@@ -47,6 +47,7 @@ The contract carries a `version` (currently `2.0.0`, exported as `GRAPH_CONTRACT
 | `confidence`      | string \| null   | Stored confidence (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`, or future string); `null` when unavailable. |
 | `source_location` | string \| null   | Canonical source path/range/URN from `source_location` or `source`; `null` when unavailable. |
 | `provenance`      | object \| null   | Stored provenance object; `null` when unavailable.                                     |
+| `provenance_tier` | `"oracle"` \| `"proxy"` \| null | Stored authority tier; missing legacy values are treated as `proxy` by Memory recall. |
 | `freshness`       | object           | `created_at`, `updated_at`, optional `accessed_at` and `expires_at`, all epoch ms or `null`. |
 | `salience`        | number \| null   | Node salience for ranking/filtering; `null` when unavailable.                          |
 | `orphan`          | boolean          | `true` when **no edge targets this node** (no inbound edges), computed at export time. |
@@ -66,6 +67,7 @@ The contract carries a `version` (currently `2.0.0`, exported as `GRAPH_CONTRACT
 | `confidence`      | string \| null                            | Stored confidence (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`, or future string); `null` when unavailable. |
 | `source_location` | string \| null                            | Canonical source path/range/URN from `source_location` or `source`; `null` when unavailable. |
 | `provenance`      | object \| null                            | Stored provenance object; `null` when unavailable.                       |
+| `provenance_tier` | `"oracle"` \| `"proxy"` \| null           | Stored authority tier; missing legacy values are treated as `proxy` by Memory recall. |
 | `freshness`       | object                                    | `created_at`, `updated_at`, optional `expires_at`, all epoch ms or `null`. |
 | `direction`       | `"directed"`                              | Edges are directed; `source → target` is the semantic direction.         |
 | `metadata`        | object                                    | Remaining edge properties, preserved losslessly.                         |

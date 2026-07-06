@@ -321,6 +321,7 @@ describe("factsToGraph", () => {
     expect(nodes).toHaveLength(2);
     for (const n of nodes) {
       expect(n.properties.confidence).toBe("INFERRED");
+      expect(n.properties.provenance_tier).toBe("proxy");
       expect(n.properties.source).toBe("conversation");
       expect(n.properties.hash).toBeTruthy();
     }

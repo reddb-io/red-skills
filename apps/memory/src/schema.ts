@@ -34,6 +34,17 @@ export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 export type Tier = "ephemeral" | "durable" | "reasoning";
 
 /**
+ * Provenance authority tier for recall ranking (issue #1193).
+ *
+ * - `oracle` — execution-observed evidence such as command/test output or
+ *   deterministic extractor facts marked EXTRACTED.
+ * - `proxy` — AI-inferred, co-occurrence, manually migrated, or otherwise
+ *   indirect evidence. Legacy graph rows without this field are treated as
+ *   proxy by read paths.
+ */
+export type ProvenanceTier = "oracle" | "proxy";
+
+/**
  * Memory layer (PRD #174, issue #175). The *physical* storage layer a Memory
  * node currently lives in. Orthogonal to {@link Tier}: tier names the retention
  * class, layer names the physical location and may change on promotion or
@@ -152,6 +163,11 @@ export interface MemoryNodeProps {
   confidence?: Confidence;
   source?: string;
   provenance?: MemoryProvenance;
+  /**
+   * Authority tier for ranking. New writes always stamp this; legacy rows that
+   * predate #1193 omit it and are read as `proxy`.
+   */
+  provenance_tier?: ProvenanceTier;
   language?: string;
   project?: string;
   /** Scope classification for safe recall filtering; defaults to `project`. */
@@ -219,6 +235,11 @@ export interface MemoryEdgeProps {
   topological_weight?: number;
   reason?: string;
   provenance?: MemoryProvenance;
+  /**
+   * Authority tier for ranking/governance. New writes always stamp this;
+   * pre-existing edges without it are treated as `proxy`.
+   */
+  provenance_tier?: ProvenanceTier;
   extraction_backend?: string;
   source_location?: string;
   created_at?: number;

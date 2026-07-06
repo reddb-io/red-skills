@@ -17,6 +17,7 @@ import {
   type MemoryEdge,
   type MemoryNode,
   type MemoryProvenance,
+  type ProvenanceTier,
   type MemoryScope,
   type NodeType,
   defaultTier,
@@ -152,6 +153,7 @@ type PathAlgorithm = "bfs" | "dijkstra";
 const STRATEGIES: readonly TraverseStrategy[] = ["bfs", "dfs"];
 const DIRECTIONS: readonly GraphDirection[] = ["outgoing", "incoming", "both"];
 const ALGORITHMS: readonly PathAlgorithm[] = ["bfs", "dijkstra"];
+const CAUSAL_EDGE_LABELS = new Set<EdgeLabel>(["CAUSES", "PREVENTS", "BLOCKS", "ENABLES"]);
 
 /** Reject anything not in the allowlist — these tokens are interpolated raw
  *  into the graph DSL (they cannot be bound as `$1` params), so they must never
@@ -297,6 +299,7 @@ export class MemoryStore {
       ...(scopeId ? { scope_id: scopeId } : {}),
       importance: props.importance ?? DEFAULT_IMPORTANCE,
       tier,
+      provenance_tier: props.provenance_tier ?? defaultProvenanceTier(props),
       ...(layer != null ? { layer } : {}),
       created_at: createdAt,
       updated_at: now,
@@ -494,12 +497,15 @@ export class MemoryStore {
 
   /** Upsert an edge, deduped by (from, to, label) via KV. */
   async upsertEdge(edge: MemoryEdge): Promise<number> {
+    enforceEdgeProvenance(edge);
     const existing = await this.findEdge(edge.from_rid, edge.to_rid, edge.label);
     if (existing != null) return existing;
     const key = edgeKey(edge.from_rid, edge.to_rid, edge.label);
 
     const properties = {
       ...(edge.properties ?? {}),
+      provenance_tier:
+        edge.properties?.provenance_tier ?? defaultProvenanceTier(edge.properties ?? {}),
       created_at: edge.properties?.created_at ?? Date.now(),
     };
     // Same multi-model rule as nodes: the engine requires the `EDGE` keyword.
@@ -1550,6 +1556,36 @@ function conflictEdgeProps(conflict: DetectedConflict): {
     candidate_session: conflict.sessions.candidate,
     existing_session: conflict.sessions.existing,
   };
+}
+
+function defaultProvenanceTier(input: {
+  confidence?: unknown;
+  provenance?: { confidence?: unknown } | null;
+}): ProvenanceTier {
+  const confidence = input.confidence ?? input.provenance?.confidence;
+  return confidence === "EXTRACTED" ? "oracle" : "proxy";
+}
+
+function enforceEdgeProvenance(edge: MemoryEdge): void {
+  if (!CAUSAL_EDGE_LABELS.has(edge.label)) return;
+  if (!isCoOccurrenceEdge(edge.properties)) return;
+  throw new Error(`co-occurrence edge cannot use causal label ${edge.label}`);
+}
+
+function isCoOccurrenceEdge(props: MemoryEdge["properties"]): boolean {
+  if (!props) return false;
+  const candidates = [
+    props.relation_kind,
+    props.source_kind,
+    props.extraction_kind,
+    props.inference_kind,
+  ];
+  return candidates.some((value) => normalizeProvenanceMarker(value) === "co-occurrence");
+}
+
+function normalizeProvenanceMarker(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.toLowerCase().replace(/_/g, "-");
 }
 
 /**
