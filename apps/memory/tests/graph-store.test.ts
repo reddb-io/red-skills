@@ -664,6 +664,60 @@ describe("MemoryStore over a file:// RedDB", () => {
     TIMEOUT,
   );
 
+  test(
+    "conflicting fact write archives the old belief and audit recall shows lineage",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const old = await store.upsertNode({
+        label: "release-window",
+        node_type: "decision",
+        properties: {
+          title: "release window",
+          content: "release window is friday afternoon",
+          created_at: 1_000,
+        },
+      });
+
+      const current = await store.upsertNode({
+        label: "release-window",
+        node_type: "decision",
+        properties: {
+          title: "release window",
+          content: "release window is tuesday morning",
+          created_at: 2_000,
+        },
+      });
+
+      expect(await store.supersededBy(old)).toBe(current);
+      const archived = await store.getNode(old);
+      expect(archived?.properties).toMatchObject({
+        superseded_by: current,
+        valid_until: expect.any(Number),
+        archived_at: expect.any(Number),
+      });
+
+      const defaultHits = await graphRecall(store, "release window friday tuesday", 10);
+      expect(defaultHits.map((hit) => hit.rid)).toContain(current);
+      expect(defaultHits.map((hit) => hit.rid)).not.toContain(old);
+
+      const auditHits = await graphRecall(
+        store,
+        "what did we believe before release window changed to tuesday",
+        10,
+        {
+          includeSuperseded: true,
+        },
+      );
+      const auditOld = auditHits.find((hit) => hit.rid === old);
+      expect(auditOld).toMatchObject({
+        superseded_by: current,
+        valid_until: expect.any(Number),
+      });
+      expect(auditOld?.excerpt).toContain("release window is friday afternoon");
+    },
+    TIMEOUT,
+  );
+
   test.each(SOFT_MERGE_LABELS)(
     "soft merge %s: recall hides the duplicate until the edge is removed",
     async (label) => {

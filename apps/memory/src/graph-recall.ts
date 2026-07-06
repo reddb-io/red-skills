@@ -35,6 +35,10 @@ export interface GraphRecallHit {
   node_type: string;
   score: number;
   excerpt: string;
+  superseded_by?: number;
+  valid_from?: number;
+  valid_until?: number;
+  archived_at?: number;
   /**
    * User-hook executions from the Envelope `hooks` section (issue #216).
    * Only set when the underlying node carries a non-empty `hooks` property
@@ -155,12 +159,31 @@ export async function graphRecallResult(
       node_type: node.node_type,
       score: entry.score,
       excerpt: node.excerpt,
+      ...lineageFields(node.properties),
       ...(hooks ? { hooks } : {}),
     });
     if (hits.length >= limit) break;
   }
 
   return { hits, diagnostics };
+}
+
+function lineageFields(properties: RecalledNode["properties"]): Partial<GraphRecallHit> {
+  const supersededBy = numericProp(properties.superseded_by);
+  if (supersededBy == null) return {};
+  const validFrom = numericProp(properties.valid_from);
+  const validUntil = numericProp(properties.valid_until);
+  const archivedAt = numericProp(properties.archived_at);
+  return {
+    superseded_by: supersededBy,
+    ...(validFrom != null ? { valid_from: validFrom } : {}),
+    ...(validUntil != null ? { valid_until: validUntil } : {}),
+    ...(archivedAt != null ? { archived_at: archivedAt } : {}),
+  };
+}
+
+function numericProp(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function loadCodeCanonicalizer(store: RecallStore): Promise<(code: string) => string> {
