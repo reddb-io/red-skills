@@ -31,14 +31,16 @@
 
 import {
   formatCacheAge,
+  humanizeCount,
   humanizeTokens,
   renderStatusline,
+  shortModel,
   type ClaudeInput,
   type ProjectInput,
   type RepoInput,
   type StatuslineInput,
 } from "./statusline.js";
-import { renderWorkerCompactLine, type CompactWorker } from "./monitor.js";
+import { formatDiff, workerFields, type CompactWorker } from "./monitor.js";
 
 /** Truecolor SGR helpers. */
 const WINE = "\x1b[48;2;114;47;55m"; // identity-zone bg (model block)
@@ -156,13 +158,36 @@ export function renderHeaderLine(
 
 // ---------- line 2..N: one line per live worker ----------
 
-/** One worker line — the monitor's compact per-worker formatter
- * ({@link renderWorkerCompactLine}), tinted soft-red as a whole and
- * reset-terminated. The tint is a pure colour wrapper: it never rewrites the
- * line's structure, so this and `/afk monitor --once` share ONE source of truth
- * (the formatter) and can never drift. `now` is an epoch in seconds. */
+/** The TERSE per-worker line for the Claude Code statusline (issue #1175):
+ *
+ *   <wID>  run=<runner> <model> <effort>  iss=<d>/<t>  #<issue> <stage>  <elapsed>  loc=+A -R  tks=<h>  tools=<t> reason=<r> text=<x>
+ *
+ * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
+ * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tools=`/`reason=`/`text=`) reuses
+ * the same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
+ * VALUE — so no token is a distinct blob. The truncated issue TITLE, the
+ * live/quiet badge, `wait`, and `log` are DROPPED here; the fuller monitor line
+ * (`renderWorkerCompactLine`) keeps them. The two share only the field data
+ * ({@link workerFields}), never a renderer, so the terse form cannot bleed into
+ * the monitor. `now` is an epoch in seconds. */
 export function renderWorkerLine(worker: CompactWorker, now: number): string {
-  return `${NOBG}${SOFT}${renderWorkerCompactLine(worker, now)}${RESET}`;
+  const f = workerFields(worker, now);
+  const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
+    .filter((x): x is string => Boolean(x))
+    .join(" ");
+  const parts: string[] = [];
+  // wID — bold red, reusing BOLD + the SOFT red tone (no new ANSI).
+  parts.push(`${BOLD}${f.workerId}${NOBOLD}`);
+  parts.push(kv("run", runVal));
+  parts.push(kv("iss", `${f.done}/${f.total}`));
+  // #<issue> <stage> — bare, high-signal, only when an issue is in progress.
+  if (f.issue !== null) parts.push(f.stage ? `#${f.issue} ${f.stage}` : `#${f.issue}`);
+  parts.push(f.elapsed);
+  parts.push(kv("loc", formatDiff(f.added, f.removed)));
+  parts.push(kv("tks", humanizeCount(f.tokens)));
+  // The vitals as INDIVIDUAL k=v pairs (single-spaced group), same convention.
+  parts.push(`${kv("tools", String(f.tools))} ${kv("reason", String(f.reasoning))} ${kv("text", String(f.text))}`);
+  return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
 }
 
 // ---------- assembly ----------

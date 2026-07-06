@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   formatCacheAge,
   humanizeAlive,
+  humanizeCount,
   humanizeTokens,
+  shortModel,
   renderAfkBlock,
   renderContextBlock,
   renderModelBlock,
@@ -102,6 +104,45 @@ describe("statusline — humanizeTokens", () => {
 
   it("renders the raw integer below one thousand", () => {
     expect(humanizeTokens(512)).toBe("512");
+  });
+});
+
+describe("statusline — humanizeCount (issue #1175)", () => {
+  it("renders the raw integer below one thousand", () => {
+    expect(humanizeCount(0)).toBe("0");
+    expect(humanizeCount(100)).toBe("100");
+    expect(humanizeCount(999)).toBe("999");
+  });
+
+  it("renders the k tier with at most one decimal, stripping a trailing .0", () => {
+    expect(humanizeCount(1000)).toBe("1k");
+    expect(humanizeCount(1200)).toBe("1.2k");
+    expect(humanizeCount(45000)).toBe("45k");
+    expect(humanizeCount(100000)).toBe("100k");
+  });
+
+  it("renders the M tier, stripping a trailing .0", () => {
+    expect(humanizeCount(1000000)).toBe("1M");
+    expect(humanizeCount(1100000)).toBe("1.1M");
+    expect(humanizeCount(100000000)).toBe("100M");
+  });
+
+  it("renders the B tier", () => {
+    expect(humanizeCount(1000000000)).toBe("1B");
+    expect(humanizeCount(2300000000)).toBe("2.3B");
+  });
+});
+
+describe("statusline — shortModel (issue #1175)", () => {
+  it("shortens a full model id to its family token", () => {
+    expect(shortModel("claude-opus-4-8")).toBe("opus");
+    expect(shortModel("Opus")).toBe("opus");
+    expect(shortModel("claude-sonnet-5")).toBe("sonnet");
+    expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku");
+  });
+
+  it("falls back to the input unchanged when no family matches", () => {
+    expect(shortModel("gpt-5")).toBe("gpt-5");
   });
 });
 

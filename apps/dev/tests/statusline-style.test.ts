@@ -20,6 +20,8 @@ const WINE = "\x1b[48;2;114;47;55m";
 const WINE2 = "\x1b[48;2;88;36;42m";
 const NOBG = "\x1b[49m";
 const SOFT = "\x1b[38;2;224;138;148m";
+const KEY = "\x1b[38;2;255;214;214m";
+const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
 const NOW = 1_000_000; // fixed epoch seconds so worker elapsed clocks are deterministic
@@ -40,6 +42,8 @@ function worker(over: Partial<CompactWorker> = {}): CompactWorker {
         number: 17,
         title: "redesign statusline",
         stage: "impl",
+        model: "claude-opus-4-8",
+        effort: "high",
         started_at: new Date((NOW - 300) * 1000).toISOString(),
       },
     },
@@ -137,30 +141,74 @@ describe("statusline style — header line", () => {
   });
 });
 
-describe("statusline style — per-worker line", () => {
-  it("reuses the monitor's compact formatter, tinted and reset-terminated", () => {
+describe("statusline style — terse per-worker line (issue #1175)", () => {
+  it("renders the terse colored k=v line: bold-red wID, k=v tokens, #issue+stage, elapsed, loc, tks, individual vitals", () => {
     const line = renderWorkerLine(worker(), NOW);
     expect(line.endsWith(RESET)).toBe(true);
     expect(line).toContain(NOBG); // fully transparent — no red block
     expect(line).toContain(SOFT); // soft-red tint
+    expect(line).toContain(KEY); // k=v keys reuse line 1's light-red KEY colour
+    expect(line).toContain(BOLD); // wID is bold
     expect(line).not.toContain(WINE); // never a wine background on a worker line
+    // wID renders bold, immediately (bold red).
+    expect(line.startsWith(`${NOBG}${SOFT}${BOLD}w1`)).toBe(true);
     const t = stripAnsi(line);
-    expect(t).toContain("w1 [live] claude"); // wID + liveness badge + runner
-    expect(t).toContain("issues 7/10"); // progress counter
-    expect(t).toContain("#17 redesign statusline"); // issue + title
-    expect(t).toContain("stage:impl"); // stage
-    expect(t).toContain("00:05:00"); // elapsed
-    expect(t).toContain("+12 -3"); // diff volume
+    // The terse spec, token by token.
+    expect(t).toContain("w1"); // bare wID (no [live]/[quiet] badge)
+    expect(t).toContain("run=claude opus high"); // runner + shortened model + effort
+    expect(t).toContain("iss=7/10"); // done/total
+    expect(t).toContain("#17 impl"); // issue NUMBER + bare stage (no stage: prefix)
+    expect(t).toContain("00:05:00"); // elapsed REQUIRED
+    expect(t).toContain("loc=+12 -3"); // diff as loc= k=v
+    expect(t).toContain("tks=0"); // humanized tokens (none yet)
+    expect(t).toContain("tools=0 reason=0 text=0"); // vitals as individual k=v pairs
+    // The DROPPED verbosity must be gone.
+    expect(t).not.toContain("[live]");
+    expect(t).not.toContain("[quiet]");
+    expect(t).not.toContain("redesign statusline"); // no title
+    expect(t).not.toContain("stage:"); // no stage: prefix
+    expect(t).not.toContain("wait"); // no wait token
+    expect(t).not.toMatch(/\blog:/); // no log token
+    expect(t).not.toContain("stats="); // vitals are not a nested blob
   });
 
-  it("shows per-worker token spend when the runner streamed usage", () => {
+  it("omits just the effort word when the worker has no effort (run=<runner> <model>)", () => {
     const w = worker({
       state: {
         ...worker().state,
-        current: { ...worker().state.current, input_tokens: 1200, output_tokens: 400 },
+        current: { ...worker().state.current, effort: undefined },
       },
     });
-    expect(stripAnsi(renderWorkerLine(w, NOW))).toContain("tok:1200/400");
+    const t = stripAnsi(renderWorkerLine(w, NOW));
+    expect(t).toContain("run=claude opus ");
+    expect(t).not.toContain("run=claude opus high");
+  });
+
+  it("humanizes the per-worker token total on the tks= token", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, input_tokens: 32000, output_tokens: 2000 },
+      },
+    });
+    expect(stripAnsi(renderWorkerLine(w, NOW))).toContain("tks=34k");
+  });
+
+  it("carries the individual vitals as k=v pairs, never a stats= blob", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: {
+          ...worker().state.current,
+          tools_called_count: 11,
+          reasoning_events: 13,
+          text_chunk_count: 0,
+        },
+      },
+    });
+    const t = stripAnsi(renderWorkerLine(w, NOW));
+    expect(t).toContain("tools=11 reason=13 text=0");
+    expect(t).not.toContain("stats=");
   });
 });
 
@@ -174,7 +222,9 @@ describe("statusline style — full themed assembly", () => {
     expect(rows[2].endsWith(RESET)).toBe(true);
     expect(stripAnsi(rows[0])).toContain("» red-skills");
     expect(stripAnsi(rows[0])).toContain("prs=3");
-    expect(stripAnsi(rows[1])).toContain("w1 [live]");
+    expect(stripAnsi(rows[1])).toContain("w1"); // terse worker row, no [live] badge
+    expect(stripAnsi(rows[1])).toContain("run=claude opus high");
+    expect(stripAnsi(rows[1])).not.toContain("[live]");
     expect(stripAnsi(rows[2])).toContain("#20");
   });
 
