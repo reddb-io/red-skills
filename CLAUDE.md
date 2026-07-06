@@ -139,22 +139,22 @@ The body convention above is **section-level** — it decides *where* a sentence
 
 ### Wiki
 
-Incremental LLM Wiki for accumulating knowledge about `RedSkills, agents, skills, memory instrumentation, and engineering automation patterns`. Schema at `.red/agents/wiki.md`. Use `/wiki` for ingest, query, and lint.
+Incremental LLM Wiki for accumulating knowledge about `RedSkills, agents, skills, memory instrumentation, and engineering automation patterns`. Schema template at `plugins/dev/skills/knowledge/wiki-init/schema-template.md`. Use `/wiki` for ingest, query, and lint.
 
 ### Issue tracker
 
-GitHub Issues on `reddb-io/red-skills`. See `.red/agents/issue-tracker.md`.
+GitHub Issues on `reddb-io/red-skills`. See `plugins/dev/skills/engineering/setup-red-skills/issue-tracker-github.md`.
 
 ### Triage labels
 
-Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `.red/agents/triage-labels.md`.
+Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `plugins/dev/skills/engineering/setup-red-skills/triage-labels.md`.
 
 ### Domain docs
 
 Multi-context — start at `.red/CONTEXT-MAP.md`, then read the owning glossary in
-`.red/contexts/{dev,memory,brain}/CONTEXT.md`. `.red/CONTEXT.md` is a
+`.red/contexts/dev/CONTEXT.md`. `.red/CONTEXT.md` is a
 compatibility pointer only. ADRs remain in the single root `.red/adr/` sequence
-for now. See `.red/agents/domain.md`.
+for now. See `plugins/dev/skills/engineering/setup-red-skills/domain.md`.
 
 ## Development workflow
 

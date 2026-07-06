@@ -42,7 +42,6 @@ describe("label vocabulary docs", () => {
       readRepoFile("plugins/dev/skills/engineering/hitl/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/to-issues/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md"),
-      readRepoFile(".red/agents/triage-labels.md"),
       readRepoFile("README.md"),
     ]);
 
