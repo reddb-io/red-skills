@@ -21,6 +21,7 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 commits="$tmpdir/commits.json"
+workflow=".github/workflows/red-release.yml"
 cat > "$commits" <<'JSON'
 [
   {
@@ -86,6 +87,26 @@ if run_decider "true" "$stdout" "$outputs"; then
   fi
 else
   fail "decider failed with opt-in"
+fi
+
+if grep -qF 'run: scripts/test-red-release-bump-kind.sh' "$workflow"; then
+  pass "release workflow runs the bump-kind contract test"
+else
+  fail "release workflow must run scripts/test-red-release-bump-kind.sh"
+fi
+
+if grep -qF 'node scripts/decide-release-bump-kind.mjs' "$workflow" &&
+   grep -qF 'RED_RELEASE_ALLOW_MAJOR: ${{ vars.RED_RELEASE_ALLOW_MAJOR }}' "$workflow"; then
+  pass "release workflow delegates bump decisions to the guarded script"
+else
+  fail "release workflow must call the guarded bump-kind script with the maintainer variable"
+fi
+
+if grep -qF 'steps.bump.outputs.consume_major_opt_in == '\''true'\''' "$workflow" &&
+   grep -qF 'gh variable delete RED_RELEASE_ALLOW_MAJOR' "$workflow"; then
+  pass "release workflow consumes the major opt-in variable"
+else
+  fail "release workflow must consume RED_RELEASE_ALLOW_MAJOR after a major decision"
 fi
 
 if (( failures > 0 )); then
