@@ -49,6 +49,8 @@ export interface SpawnSupervisorOptions {
   passthrough?: readonly string[];
   /** Optional fleet request, forwarded as RED_AFK_REQUEST + `--request`. */
   request?: string;
+  /** Optional per-drain USD budget, forwarded as RED_AFK_DRAIN_MAX_COST_USD. */
+  drainBudgetUsd?: number;
 }
 
 /**
@@ -71,6 +73,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     RED_AFK_RUNNER: opts.runner,
   };
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
+  if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
 
   const out = openSync(logFile, "a");
   const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
