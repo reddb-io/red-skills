@@ -108,6 +108,21 @@ export async function readState(path: string): Promise<AfkState> {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeInto(target: Record<string, unknown>, patch: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    const existing = target[key];
+    if (isRecord(existing) && isRecord(value)) {
+      mergeInto(existing, value);
+    } else {
+      target[key] = value;
+    }
+  }
+}
+
 function setDotted(target: Record<string, unknown>, key: string, value: unknown): void {
   const parts = key.split(".").filter(Boolean);
   if (parts.length === 0) throw new Error("empty state field");
@@ -117,7 +132,68 @@ function setDotted(target: Record<string, unknown>, key: string, value: unknown)
     if (!existing || typeof existing !== "object" || Array.isArray(existing)) cursor[part] = {};
     cursor = cursor[part] as Record<string, unknown>;
   }
-  cursor[parts[parts.length - 1]!] = value;
+  const leaf = parts[parts.length - 1]!;
+  const existing = cursor[leaf];
+  if (isRecord(existing) && isRecord(value)) {
+    mergeInto(existing, value);
+  } else {
+    cursor[leaf] = value;
+  }
+}
+
+function isStampedIdentityValue(value: unknown): boolean {
+  if (typeof value === "string") return value !== "";
+  if (typeof value === "number") return value !== 0;
+  return value !== undefined && value !== null;
+}
+
+function restoreStampedDotted(
+  target: Record<string, unknown>,
+  previous: Record<string, unknown>,
+  key: string,
+): void {
+  const parts = key.split(".").filter(Boolean);
+  let prev: unknown = previous;
+  for (const part of parts) {
+    if (!isRecord(prev)) return;
+    prev = prev[part];
+  }
+  if (!isStampedIdentityValue(prev)) return;
+  setDotted(target, key, prev);
+}
+
+const IMMUTABLE_STATE_FIELDS = [
+  "worker_id",
+  "pid_start_time",
+  "started_at",
+  "origin",
+  "runner",
+  "current.number",
+  "current.started_at",
+  "current.runner",
+  "current.model",
+  "current.effort",
+] as const;
+
+export interface UpdateStateOptions {
+  /** Only true at real attempt teardown, when the worker is no longer live. */
+  allowPidReset?: boolean;
+}
+
+const stateUpdateQueues = new Map<string, Promise<void>>();
+
+function preserveStampedIdentity(
+  next: Record<string, unknown>,
+  previous: AfkState,
+  options: UpdateStateOptions,
+): void {
+  const prev = previous as unknown as Record<string, unknown>;
+  for (const key of IMMUTABLE_STATE_FIELDS) restoreStampedDotted(next, prev, key);
+  if (previous.pid > 0 && !options.allowPidReset) {
+    next.pid = previous.pid;
+  } else if (previous.pid > 0 && next.pid !== 0) {
+    next.pid = previous.pid;
+  }
 }
 
 export async function writeStateAtomic(path: string, state: AfkState): Promise<void> {
@@ -162,12 +238,36 @@ export function initStateSync(path: string, updates: Record<string, unknown> = {
   return parsed;
 }
 
-export async function updateState(path: string, updates: Record<string, unknown>): Promise<AfkState> {
-  const state = (await readState(path)) as unknown as Record<string, unknown>;
+async function updateStateUnlocked(
+  path: string,
+  updates: Record<string, unknown>,
+  options: UpdateStateOptions = {},
+): Promise<AfkState> {
+  const previous = await readState(path);
+  const state = structuredClone(previous) as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(updates)) setDotted(state, key, value);
+  preserveStampedIdentity(state, previous, options);
   const parsed = parseState(state);
   await writeStateAtomic(path, parsed);
   return parsed;
+}
+
+export async function updateState(
+  path: string,
+  updates: Record<string, unknown>,
+  options: UpdateStateOptions = {},
+): Promise<AfkState> {
+  const previous = stateUpdateQueues.get(path) ?? Promise.resolve();
+  const op = previous.catch(() => undefined).then(() => updateStateUnlocked(path, updates, options));
+  const tail = op.then(
+    () => undefined,
+    () => undefined,
+  );
+  stateUpdateQueues.set(path, tail);
+  tail.finally(() => {
+    if (stateUpdateQueues.get(path) === tail) stateUpdateQueues.delete(path);
+  });
+  return op;
 }
 
 export type PidStartTimeProbe = (pid: number) => string | null;
