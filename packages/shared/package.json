@@ -16,7 +16,6 @@
     "./plugin-gate.js": "./plugin-gate.ts"
   },
   "dependencies": {
-    "cli-args-parser": "^1.0.6",
-    "sigstore": "^2.3.1"
+    "cli-args-parser": "^1.0.6"
   }
 }
