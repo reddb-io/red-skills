@@ -331,7 +331,7 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   const waiting = state.current.waiting_count ?? 0;
   const hasVitals = tools > 0 || text > 0 || reasoning > 0 || waiting > 0;
   const vitalsFrag = hasVitals
-    ? `  tools:${tools} reason:${reasoning} text:${text}${waiting > 0 ? ` wait:${waiting}` : ""}`
+    ? `  tls:${tools} rsn:${reasoning} txt:${text}${waiting > 0 ? ` wait:${waiting}` : ""}`
     : "";
   const logFrag =
     worker.logLines !== undefined
@@ -484,9 +484,9 @@ function toonWorkerRow(worker: CompactWorker, now: number): Record<string, ToonV
     in_tok: state.current.input_tokens ?? 0,
     out_tok: state.current.output_tokens ?? 0,
     cost_usd: state.current.cost_usd ?? 0,
-    tools: state.current.tools_called_count ?? 0,
-    reason: state.current.reasoning_events ?? 0,
-    text: state.current.text_chunk_count ?? 0,
+    tls: state.current.tools_called_count ?? 0,
+    rsn: state.current.reasoning_events ?? 0,
+    txt: state.current.text_chunk_count ?? 0,
     wait: state.current.waiting_count ?? 0,
     log: worker.logLines ?? 0,
   };
