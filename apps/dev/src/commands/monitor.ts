@@ -1,9 +1,9 @@
 import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker, type MonitorRemote } from "../core/monitor.js";
-import { collectMonitorInputs, afkPaths, resolveRepoContext, STATUSLINE_CACHE_TTL_S } from "../runtime/wire.js";
+import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCacheTtl } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig, getConfig } from "../core/config.js";
 import {
   runCompanionPass,
   summarizeCompanionPass,
@@ -211,9 +211,14 @@ export async function monitorCommand(
 
   const { workers, events, fleet, remoteQueue, remoteHuman, remoteCacheAgeS } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
+  // Stale-marker threshold: same resolved TTL the statusline writer uses (env >
+  // afk.statusline_cache_ttl config > 180, #1217), so the monitor flags the cache
+  // stale on exactly the boundary the writer refreshes it.
+  const monitorCfg = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
+  const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(monitorCfg, key));
   const remote: MonitorRemote | undefined =
     remoteQueue !== undefined && remoteHuman !== undefined && remoteCacheAgeS !== undefined
-      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= STATUSLINE_CACHE_TTL_S }
+      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= cacheTtlS }
       : undefined;
   // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
   // restores the legacy compact text dashboard for a human TTY glance.
