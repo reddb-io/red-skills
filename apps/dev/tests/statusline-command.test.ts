@@ -193,9 +193,12 @@ describe("statusline command — rendered line", () => {
     // LINE 2 — the live worker, in the terse colored k=v form (issue #1175).
     expect(rows[1]).toContain("wA"); // worker id (no [live]/[quiet] badge)
     expect(rows[1]).toContain("run=claude"); // runner as a k=v token
-    expect(rows[1]).toContain("iss=7/10"); // progress counter
-    expect(rows[1]).toContain("#17 impl"); // issue NUMBER + bare stage (no stage: prefix)
+    expect(rows[1]).toContain("iss=17"); // the issue NUMBER (current.number), not a counter
+    expect(rows[1]).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
+    expect(rows[1]).toContain("tls="); // vitals renamed to 3-letter keys on the statusline line
     expect(rows[1]).toContain("loc=+12 -3"); // per-worker diff as loc= k=v
+    expect(rows[1]).not.toContain("iss=7/10"); // the old done/total counter is gone
+    expect(rows[1]).not.toContain("#17"); // standalone #<n> token dropped
     expect(rows[1]).not.toContain("[live]"); // liveness badge dropped
     expect(rows[1]).not.toContain("stage:impl"); // no stage: prefix
 
