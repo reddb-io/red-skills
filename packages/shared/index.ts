@@ -66,3 +66,4 @@ export {
   type EnsureBundleInput,
   type ResolveBundleInput,
 } from "./bundle-fetch.js";
+export * from "./outcome-event.js";

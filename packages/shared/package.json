@@ -13,7 +13,8 @@
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./self-update.js": "./self-update.ts",
     "./log.js": "./log.ts",
-    "./plugin-gate.js": "./plugin-gate.ts"
+    "./plugin-gate.js": "./plugin-gate.ts",
+    "./outcome-event.js": "./outcome-event.ts"
   },
   "dependencies": {
     "cli-args-parser": "^1.0.6"

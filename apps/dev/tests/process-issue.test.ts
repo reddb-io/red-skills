@@ -9,6 +9,7 @@ import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, SandboxMode } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
 import type { TrustProvenance } from "../src/core/trust-gate.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
@@ -41,6 +42,8 @@ interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
   recordedAttempts: AttemptRecordPayload[];
+  /** Brain outcome events fired after terminal attempt completion. */
+  outcomeEvents: OutcomeEvent[];
   /** Worker branches passed to the commit-leftovers salvage port. */
   salvageCalls: string[];
   /** Worker branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
@@ -139,6 +142,8 @@ interface HarnessOptions {
    * reject (proving a memory failure never fails the close); "ok" records the
    * payload; undefined omits the port entirely (older-caller safety). */
   recordAttempt?: "ok" | "throw";
+  /** When set, register the Brain outcome-event sink. "throw"/"hang" model Brain down/slow. */
+  recordOutcomeEvent?: "ok" | "throw" | "hang";
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
    * safety). Defaults to true (port present + recorded). */
   withSidecarPort?: boolean;
@@ -208,6 +213,7 @@ function harness(opts: HarnessOptions = {}): {
     ensuredLabels: [],
     sidecarWrites: [],
     recordedAttempts: [],
+    outcomeEvents: [],
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
@@ -530,6 +536,13 @@ function harness(opts: HarnessOptions = {}): {
       ? async (payload) => {
           if (opts.recordAttempt === "throw") throw new Error("memory exploded");
           trace.recordedAttempts.push(payload);
+        }
+      : undefined,
+    recordOutcomeEvent: opts.recordOutcomeEvent
+      ? async (event) => {
+          if (opts.recordOutcomeEvent === "throw") throw new Error("brain exploded");
+          if (opts.recordOutcomeEvent === "hang") return await new Promise<never>(() => {});
+          trace.outcomeEvents.push(event);
         }
       : undefined,
     // Commit-leftovers salvage port (codex DONE-without-commit). Omitted unless
@@ -2722,6 +2735,79 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(result.outcome).toBe("blocked");
     expect(result.envelopePosted).toBe(true);
     expect(result.preserved).toBe(true);
+  });
+});
+
+describe("processIssue — AFK→Brain outcome-event recording", () => {
+  it("emits one versioned outcome event for a completed DONE attempt", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "type:bug"],
+      classifyIssue: async () => "simple",
+      recordOutcomeEvent: "ok",
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.outcomeEvents).toHaveLength(1);
+    expect(trace.outcomeEvents[0]).toEqual({
+      schemaVersion: 1,
+      id: "afk:o/r:9:1",
+      emitter: "afk",
+      occurredAt: "2026-05-30T00:00:00Z",
+      taskClass: "simple",
+      chosenOption: {
+        kind: "runner",
+        runner: "claude",
+        model: "claude-opus-4-8",
+        effort: "high",
+      },
+      outcome: "success",
+      cost: { signal: "unknown" },
+      context: {
+        repository: "o/r",
+        issueNumber: 9,
+        attemptNumber: 1,
+        issueType: "bug",
+        workerId: "wAAAA",
+        branch: "afk/wAAAA/9-fix-the-thing",
+        durationMs: 0,
+        status: "done",
+      },
+    });
+  });
+
+  it("keeps the DONE close and timing path unchanged when Brain recording throws", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      recordOutcomeEvent: "throw",
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.envelopePosted).toBe(true);
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.postedEnvelopes).toContainEqual({ issue: 9, status: "done" });
+    expect(trace.outcomeEvents).toEqual([]);
+  });
+
+  it("does not wait for a slow Brain recorder before completing DONE", async () => {
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      recordOutcomeEvent: "hang",
+    });
+
+    const result = await Promise.race([
+      processIssue(deps, input),
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 100)),
+    ]);
+
+    expect(result).not.toBe("timed-out");
+    expect(result).toMatchObject({ outcome: "done", swept: true });
   });
 });
 

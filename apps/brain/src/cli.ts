@@ -11,6 +11,7 @@ import { buildBrainDashboard, buildBrainDashboardArtifact, serveBrainDashboardHt
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 import { loadIngestionState, saveIngestionState, scheduledIngest } from "./scheduled-ingestion.js";
 import type { KpiGroupBy, KpiInterval, KpiTimeField } from "./kpi-query.js";
+import { isOutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
@@ -69,9 +70,24 @@ async function main(): Promise<void> {
     case "dashboard":
       await dashboard(args);
       return;
+    case "outcome-event":
+      await outcomeEvent(args);
+      return;
     default:
       throw new Error(`unknown brain command: ${command}`);
   }
+}
+
+async function outcomeEvent(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "record") throw new Error("brain outcome-event requires subcommand: record");
+  const flags = parseFlags(rest);
+  const input = await readStdin();
+  const parsed = JSON.parse(input) as unknown;
+  if (!isOutcomeEvent(parsed)) throw new Error("invalid brain outcome event");
+  await withBrainRuntime(async ({ store }) => {
+    printJson(await store.appendOutcomeEvent(parsed));
+  }, stringFlag(flags, "root") ?? process.cwd());
 }
 
 async function capture(args: string[]): Promise<void> {
@@ -322,6 +338,14 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function printHelp(): void {
   console.log(`brain commands:
   init
@@ -337,6 +361,7 @@ function printHelp(): void {
   schedule-ingest [--session-key KEY] [--limit N] [--state PATH]
   kpi [--interval hour|day|week|month] [--group-by platform|event_type|target] [--time-field event|ingested] [--from T] [--to T] [--platform P] [--event-type T] [--target T]
   dashboard [--out PATH] [--json] [--serve] [--host 127.0.0.1] [--port 4738]
+  outcome-event record [--root PATH] < event.json
 `);
 }
 

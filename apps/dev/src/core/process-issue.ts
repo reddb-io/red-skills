@@ -83,6 +83,7 @@ import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookNa
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "./attempt-record.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import {
@@ -532,6 +533,13 @@ export interface ProcessIssueDeps {
    * Optional so tests/older callers omit it entirely (the call is `?.`-guarded).
    */
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
+  /**
+   * AFK→Brain outcome-event recording. Called best-effort after attempt
+   * completion with the shared versioned outcome-event contract. Optional and
+   * fully swallowed: Brain absence/down must never fail or delay the attempt
+   * terminal path.
+   */
+  recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   /**
    * Salvage uncommitted work the inner agent left in its worktree. The codex
    * runner sometimes edits, passes the gates, and emits `<promise>DONE</promise>`
@@ -1323,6 +1331,8 @@ export async function processIssue(
     startedEpoch,
     issueType,
     modelTier: activeTaskClass,
+    model: deps.model,
+    effort: deps.effort,
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
@@ -1563,6 +1573,8 @@ export async function processIssue(
       startedEpoch,
       issueType,
       modelTier: activeTaskClass,
+      model: initialTier.model,
+      effort: initialTier.effort,
     } satisfies StageCommon;
 
     // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
@@ -2300,29 +2312,67 @@ async function recordAttemptBestEffort(
   fields: { durationS?: number; mergeSha?: string; notes?: string; validationSummary?: string } = {},
 ): Promise<void> {
   const { deps, input } = c;
-  if (!deps.recordAttempt) return;
+  const payload = buildAttemptRecordPayload({
+    repo: input.repo,
+    issue: input.issue,
+    attempt: input.attempt,
+    outcome,
+    issueType: c.issueType,
+    modelTier: c.modelTier,
+    title: input.title,
+    body: input.body,
+    workerId: input.workerId,
+    branch: c.branch,
+    durationS: fields.durationS,
+    diffstat: undefined,
+    mergeSha: fields.mergeSha,
+    notes: fields.notes,
+    validationSummary: fields.validationSummary,
+  });
+  if (deps.recordAttempt) {
+    try {
+      await deps.recordAttempt(payload);
+    } catch (err) {
+      deps.appendIterLog(
+        `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      );
+    }
+  }
+  if (!deps.recordOutcomeEvent) return;
   try {
-    const payload = buildAttemptRecordPayload({
-      repo: input.repo,
-      issue: input.issue,
-      attempt: input.attempt,
-      outcome,
-      issueType: c.issueType,
-      modelTier: c.modelTier,
-      title: input.title,
-      body: input.body,
-      workerId: input.workerId,
-      branch: c.branch,
-      durationS: fields.durationS,
-      diffstat: undefined,
-      mergeSha: fields.mergeSha,
-      notes: fields.notes,
-      validationSummary: fields.validationSummary,
+    const event: OutcomeEvent = {
+      schemaVersion: 1,
+      id: `afk:${input.repo}:${input.issue}:${input.attempt}`,
+      emitter: "afk",
+      occurredAt: deps.nowIso(),
+      taskClass: c.modelTier,
+      chosenOption: {
+        kind: "runner",
+        runner: input.runner,
+        model: c.model,
+        effort: c.effort,
+      },
+      outcome: payload.outcome,
+      cost: { signal: "unknown" },
+      context: {
+        repository: input.repo,
+        issueNumber: input.issue,
+        attemptNumber: input.attempt,
+        issueType: payload.issueType,
+        workerId: input.workerId,
+        branch: c.branch,
+        durationMs: payload.durationMs,
+        status: payload.status,
+      },
+    };
+    void deps.recordOutcomeEvent(event).catch((err) => {
+      deps.appendIterLog(
+        `🤖 /afk brain outcome-event for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      );
     });
-    await deps.recordAttempt(payload);
   } catch (err) {
     deps.appendIterLog(
-      `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      `🤖 /afk brain outcome-event for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
     );
   }
 }
@@ -2339,6 +2389,8 @@ interface StageCommon {
   startedEpoch: number;
   issueType: string;
   modelTier: AfkModelTier;
+  model?: string;
+  effort?: AgentEffort;
 }
 
 /** Emit a failure-family envelope (blocked / no-sentinel / merge-conflict /

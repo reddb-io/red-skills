@@ -1,4 +1,5 @@
 import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
+import { isOutcomeEvent, type OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { contentHash, slugify } from "./hash.js";
 import { KpiQuery, type KpiQueryInput, type KpiResult } from "./kpi-query.js";
 import {
@@ -98,6 +99,7 @@ export class BrainStore {
   private db!: RedDB;
   private artifactCache: StoredBrainArtifact[] | null = null;
   private connectionCache: StoredBrainConnection[] | null = null;
+  private outcomeEventCache: OutcomeEvent[] | null = null;
 
   private constructor(private readonly opts: BrainStoreOptions) {}
 
@@ -119,6 +121,7 @@ export class BrainStore {
   async bootstrap(): Promise<void> {
     await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.artifacts}`);
     await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.connections}`);
+    await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.outcomeEvents}`);
   }
 
   private kv() {
@@ -295,6 +298,32 @@ export class BrainStore {
     return new KpiQuery(artifacts).events(input);
   }
 
+  async appendOutcomeEvent(event: OutcomeEvent): Promise<OutcomeEvent> {
+    if (!isOutcomeEvent(event)) throw new Error("invalid Brain outcome event");
+    const properties = { ...event };
+    const result = await this.db.query(
+      `INSERT INTO ${COLLECTIONS.outcomeEvents} NODE (label, node_type, properties) VALUES ($1, $2, $3) RETURNING *`,
+      event.id,
+      `outcome_event.v${event.schemaVersion}`,
+      properties as unknown as QueryParam,
+    );
+    if (!result.rows[0]) throw new Error("INSERT outcome event returned no row");
+    this.outcomeEventCache = null;
+    return event;
+  }
+
+  async replayOutcomeEvents(): Promise<OutcomeEvent[]> {
+    if (this.outcomeEventCache == null) {
+      const result = await this.db.query(`SELECT * FROM ${COLLECTIONS.outcomeEvents}`);
+      this.outcomeEventCache = result.rows
+        .map(rowToOutcomeEvent)
+        .filter(notNull)
+        .sort((a, b) => a.rid - b.rid)
+        .map(({ rid: _rid, event }) => event);
+    }
+    return [...this.outcomeEventCache];
+  }
+
   async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<BrainThinkResult> {
     const hits = (await this.search(query, Math.max(limit * 2, limit + 5), options))
       .filter((hit) => !isDerivedArtifact(hit.artifact))
@@ -453,6 +482,13 @@ function rowToConnection(row: Record<string, unknown>): StoredBrainConnection | 
     weight: Number(row.weight ?? 1),
     properties: parseProperties(row.properties ?? row.PROPERTIES) as unknown as StoredBrainConnection["properties"],
   };
+}
+
+function rowToOutcomeEvent(row: Record<string, unknown>): { rid: number; event: OutcomeEvent } | null {
+  const rid = Number(row.red_entity_id ?? row.rid);
+  const properties = parseProperties(row.properties ?? row.PROPERTIES);
+  if (!Number.isFinite(rid) || !isOutcomeEvent(properties)) return null;
+  return { rid, event: properties };
 }
 
 function parseProperties(value: unknown): Record<string, unknown> {
