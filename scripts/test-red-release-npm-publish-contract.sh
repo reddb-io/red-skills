@@ -75,6 +75,19 @@ else
   fail "registry smoke must fail when --version does not report the release version"
 fi
 
+if grep -qF 'already on the registry — publish already complete' "$WORKFLOW"; then
+  pass "publish is idempotent so a re-run can resume the release tail"
+else
+  fail "publish must no-op when the version is already on the registry (resumable release tail)"
+fi
+
+if grep -qF 'for attempt in 1 2 3 4 5 6 7 8 9 10' "$WORKFLOW" &&
+   grep -qF 'sleep $((attempt * 15))' "$WORKFLOW"; then
+  pass "registry smoke budget covers multi-minute registry propagation lag"
+else
+  fail "registry smoke must retry across a multi-minute propagation window (10 attempts, attempt*15s backoff)"
+fi
+
 if (( failures > 0 )); then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1

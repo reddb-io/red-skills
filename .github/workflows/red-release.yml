@@ -489,6 +489,15 @@ jobs:
           fi
           cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+          # Publish must be idempotent so a re-run after a transient
+          # post-publish failure (for example registry-propagation lag in the
+          # smoke step) can resume the release tail instead of dying on a
+          # publish-over-published conflict. npm versions are immutable, so an
+          # already-served version IS the successful publish outcome.
+          if npm view "@reddb-io/red-skills@${version}" version >/dev/null 2>&1; then
+            echo "@reddb-io/red-skills@${version} already on the registry — publish already complete, resuming release tail"
+            exit 0
+          fi
           # Stable releases publish to npm's default `latest` tag. The opt-in
           # canary channel is moved later with scripts/afk-promote-channel.sh,
           # which points npm dist-tag `canary` at an already-published version.
@@ -505,7 +514,10 @@ jobs:
           trap 'rm -rf "$smoke"' EXIT
           export npm_config_cache="$smoke/npm-cache"
           export npm_config_prefix="$smoke/npm-prefix"
-          for attempt in 1 2 3 4 5; do
+          # Registry read replicas can lag the publish by several minutes
+          # (v2.0.1 took >2min to become resolvable, exhausting the previous
+          # ~105s budget). 10 attempts at attempt*15s ≈ 11min total budget.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if output="$(npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version 2>&1)"; then
               printf '%s\n' "$output"
               if grep -qF "dev ${version} " <<<"$output"; then
@@ -516,11 +528,11 @@ jobs:
               exit 1
             fi
             printf '%s\n' "$output" >&2
-            if [ "$attempt" -eq 5 ]; then
+            if [ "$attempt" -eq 10 ]; then
               echo "::error::registry did not serve @reddb-io/red-skills@${version} after publish"
               exit 1
             fi
-            sleep $((attempt * 10))
+            sleep $((attempt * 15))
           done
 
       - name: Sync plugin manifest versions
