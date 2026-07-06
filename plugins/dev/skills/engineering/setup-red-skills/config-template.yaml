@@ -92,11 +92,12 @@ plugins:
 #     target: 2                   # default supervisor worker target
 #   release:                      # bundle release channel (ADR 0058)
 #     channel: canary             # `stable` (default = today's version-pinned
-#                                 # release) or `canary` (the floating pre-release
-#                                 # tag). The launcher reads this or the
+#                                 # release) or `canary` (npm dist-tag pointer to
+#                                 # an already-published stable package version).
+#                                 # The launcher reads this or the
 #                                 # `RED_SKILLS_CHANNEL` env var (env wins); absent
-#                                 # config keeps tracking stable. Promotion
-#                                 # canary→stable is a tag move (scripts/afk-promote-channel.sh),
+#                                 # config keeps tracking stable. Canary promotion
+#                                 # moves the npm dist-tag (scripts/afk-promote-channel.sh),
 #                                 # gated on the proof-by-drain telemetry.
 #   backpressure:                 # extra merge gates run on every successful
 #     - npm run test              # iteration (DONE + salvaged no-sentinel), after
