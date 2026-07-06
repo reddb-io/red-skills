@@ -81,6 +81,7 @@ import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
+import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent, AttemptBudget } from "../core/execution.js";
@@ -1205,9 +1206,33 @@ export function buildProcessDeps(
         const baseRef = info.base
           ? `origin/${info.base}`
           : `origin/${getConfig(config, "dev.trunk") || "main"}`;
-        const { added, removed } = await gitx
-          .diffstatShortstat({ cwd: worktree }, baseRef)
-          .catch(() => ({ added: 0, removed: 0 }));
+        // Writer-side LOC ownership (#1210 Part B): the render paths no longer
+        // shell out to `git diff --shortstat`, so this heartbeat is the runner-
+        // agnostic owner that stamps loc_added/loc_removed for ALL runners (codex
+        // included). The diffstat is EXPENSIVE, so memoize it against the current
+        // HEAD sha in the attempt dir — computed at most once per commit; while
+        // HEAD is unchanged the memoized volume is served without spawning git.
+        const memoPath = locMemoPath(current.attemptDir, "/");
+        const { added, removed } = await resolveAttemptLoc({
+          headSha: head,
+          compute: () =>
+            gitx.diffstatShortstat({ cwd: worktree }, baseRef).catch(() => ({ added: 0, removed: 0 })),
+          readMemo: () => {
+            try {
+              const m = JSON.parse(readFileSync(memoPath, "utf8")) as Partial<LocMemo>;
+              return { sha: String(m.sha ?? ""), added: Number(m.added ?? 0), removed: Number(m.removed ?? 0) };
+            } catch {
+              return null;
+            }
+          },
+          writeMemo: (m) => {
+            try {
+              writeFileSync(memoPath, JSON.stringify(m), "utf8");
+            } catch {
+              // best-effort, like the surrounding heartbeat writes
+            }
+          },
+        });
         // Remember the volume for the on_heartbeat vitals provider (#832).
         lastHeartbeatDiff = { added, removed };
         // Update the per-attempt peak diff (only grows; never decreases).

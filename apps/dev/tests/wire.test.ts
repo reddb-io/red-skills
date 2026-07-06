@@ -631,6 +631,52 @@ describe("collectStatuslineAfk — cache discipline", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("render performs NO git diffstat: 0/0 loc + a worktree falls to the sticky peak, never git (#1210)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      // Fresh gh cache → no gh subprocess either; this render must be fully
+      // subprocess-free.
+      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
+
+      // A live worker whose writer-stamped LOC is 0/0 but which points at a REAL
+      // git worktree (the project root) with a non-empty diff vs origin/main. The
+      // deleted fallback would have shelled `git diff --shortstat` and reported
+      // that volume; the render must instead serve the sticky peak and touch no
+      // git at all.
+      const dir = join(tmpDir, "workers", "wZ", "77-a1");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "afk.state.json"),
+        JSON.stringify({
+          pid: process.pid,
+          current: {
+            number: 77,
+            stage: "impl",
+            started_at: new Date().toISOString(),
+            loc_added: 0,
+            loc_removed: 0,
+            loc_peak_added: 84,
+            loc_peak_removed: 5,
+            worktree: root, // a real dir — the old fallback would diff it
+          },
+        }),
+        "utf8",
+      );
+
+      const result = await collectStatuslineAfk({ root, repo: "", remote: "origin" });
+      expect(result).not.toBeNull();
+      // The volume comes from the sticky peak (writer-owned), flagged as peak —
+      // proving the git fallback is gone.
+      expect(result!.added).toBe(84);
+      expect(result!.removed).toBe(5);
+      expect(result!.locIsPeak).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
