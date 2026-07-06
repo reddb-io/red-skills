@@ -69,11 +69,11 @@ describe("resolveChannel precedence", () => {
 });
 
 describe("channelReleaseRef", () => {
-  it("stable pins the installed version tag — preserves version-pinned fetches", () => {
+  it("stable displays the installed version tag — preserves existing boot output", () => {
     expect(channelReleaseRef("stable", "1.209.0")).toBe("v1.209.0");
   });
 
-  it("canary points at the floating canary tag — version-independent", () => {
+  it("canary displays the npm canary dist-tag — version-independent", () => {
     expect(channelReleaseRef("canary", "1.209.0")).toBe("canary");
     expect(channelReleaseRef("canary", "")).toBe("canary");
   });

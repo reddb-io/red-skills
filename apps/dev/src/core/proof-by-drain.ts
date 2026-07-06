@@ -1,12 +1,13 @@
 /**
- * proof-by-drain.ts — the canary→stable promotion gate, read from the AFK
- * history telemetry (ADR 0058).
+ * proof-by-drain.ts — the canary dist-tag promotion gate, read from the AFK
+ * history telemetry (ADR 0058/0091).
  *
- * A release channel is promoted by a *tag move* (see the ADR / the
+ * A canary channel is promoted by moving npm dist-tag `canary` to a chosen
+ * already-published stable package version (see the ADR / the
  * `afk-promote-channel.sh` script). Whether that move is *earned* is decided
  * here: the canary must demonstrate a healthy drain — enough successful merges,
  * observed over a long enough window, with a low enough failure ratio — before
- * the floating `canary` tag is moved onto `stable`.
+ * operators move the opt-in dist-tag pointer.
  *
  * The metrics come straight from the `afk-history.jsonl` ledger
  * ({@link HistoryRecord} in `history.ts`): `done` events carrying a `merge_sha`

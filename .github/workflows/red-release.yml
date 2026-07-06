@@ -70,6 +70,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-workflow-security-pins.sh
 
+      - name: Test canary channel promotion contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-afk-promote-channel.sh
+
       - name: Test red-release npm publish contract
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-npm-publish-contract.sh
@@ -483,14 +487,12 @@ jobs:
             echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills@${version}"
             exit 1
           fi
-          # canary channel → npm `canary` dist-tag; stable → `latest` (default).
-          tag_args=()
-          case "$version" in
-            *-*) tag_args=(--tag canary) ;;
-          esac
           cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
-          pnpm publish --access public --no-git-checks "${tag_args[@]}"
+          # Stable releases publish to npm's default `latest` tag. The opt-in
+          # canary channel is moved later with scripts/afk-promote-channel.sh,
+          # which points npm dist-tag `canary` at an already-published version.
+          pnpm publish --access public --no-git-checks
 
       - name: Smoke published npm package from registry
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'

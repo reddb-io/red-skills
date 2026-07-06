@@ -6,12 +6,13 @@ accepted
 
 ## Context
 
-The ADR 0038 launcher resolves the dev runtime bundle from a GitHub Release: it
-reads the installed plugin version from `.claude-plugin/plugin.json`, fetches
-`dev.bundle.min.mjs` + `dev.manifest.json` from the `v<version>` release, checksum-
-verifies, and caches it (ADR 0034/0039, `packages/shared/bundle-fetch.ts` +
-`entrypoint-cli.ts`). Every installation therefore tracks exactly the bundle for
-the version it has installed — a single, version-pinned line.
+The ADR 0038 launcher originally resolved the dev runtime bundle from a GitHub
+Release. ADR 0091 moved the client transport to npm: the launcher reads the
+installed plugin version from `.claude-plugin/plugin.json`, materializes
+`@reddb-io/red-skills@<version>`, copies the packaged
+`dist/dev.bundle.min.mjs` into the local cache, and lets npm provide tarball
+integrity. Every stable installation therefore tracks exactly the bundle for the
+version it has installed — a single, version-pinned line.
 
 That is safe but slow to validate a runtime change at fleet scale: a fix lands,
 a release is cut, and the only way to exercise it across real drains is to ship
@@ -28,15 +29,15 @@ promotion bar; threshold tuning stays operational (PRD Out of Scope).
 
 1. **Two channels, `stable` and `canary`.** `stable` is the default and is
    **byte-for-byte today's behaviour**: the launcher resolves the version-pinned
-   `v<version>` release and the `<plugin>-<version>.bundle.min.mjs` cache key. An
+   npm package and the `<plugin>-<version>.bundle.min.mjs` cache key. An
    installation with no channel configuration keeps tracking stable, unchanged.
 
-2. **`canary` tracks one floating tag.** The `canary` channel resolves the
-   `canary` release tag (not a version) and a channel-keyed cache file,
-   `<plugin>-canary.bundle.min.mjs`. Because the tag floats, the existing
-   checksum re-verification in `ensureBundle` is what refreshes a stale cache:
-   when the `canary` tag moves, the manifest sha256 changes, the cached bytes no
-   longer match, and the launcher re-downloads. No new cache-invalidation code.
+2. **`canary` tracks one npm dist-tag.** The `canary` channel resolves
+   `@reddb-io/red-skills@canary` and writes a channel-keyed cache file,
+   `<plugin>-canary.bundle.min.mjs`. Because the dist-tag floats, canary skips
+   the stable cache hit and refreshes that cache entry on each resolution. The
+   dist-tag points at an already-published stable package version, not a
+   separate prerelease build.
 
 3. **Resolution precedence is `env > config > default`.** The launcher reads
    `RED_SKILLS_CHANNEL` first, then `plugins.dev.afk.release.channel` from
@@ -52,11 +53,13 @@ promotion bar; threshold tuning stays operational (PRD Out of Scope).
    to stderr. Because every fleet worker boots through `afk.mjs`, a fleet's
    channel is auditable in its own logs.
 
-5. **Promotion is a tag move, gated by proof-by-drain.** Publishing a canary is
-   pointing the `canary` tag at the candidate commit and refreshing the `canary`
-   release assets. Promotion to stable advances a `stable` channel tag onto the
-   commit the canary has proven (`scripts/afk-promote-channel.sh`). **Rollback is
-   the same move in reverse** — re-point the tag at the previous good commit.
+5. **Canary promotion is an npm dist-tag move, gated by proof-by-drain.**
+   Publishing a canary is pointing npm dist-tag `canary` at a chosen published
+   stable version with `scripts/afk-promote-channel.sh`:
+   `npm dist-tag add @reddb-io/red-skills@<version> canary`. The stale GitHub
+   floating-tag promotion path is retired. **Rollback is the same move in
+   reverse** — point `canary` at the previous good published version. Stable is
+   the normal npm `latest` release flow, not a second floating GitHub tag.
 
 6. **The promotion gate is read from the AFK history telemetry.** `proof-by-drain`
    (`apps/dev/src/core/proof-by-drain.ts`) reads the `afk-history.jsonl` ledger
@@ -69,7 +72,7 @@ promotion bar; threshold tuning stays operational (PRD Out of Scope).
 ## Consequences
 
 - Existing installations are untouched: no channel config → stable → version-
-  pinned fetch with the existing cache key and release tag.
+  pinned npm materialization with the existing cache key.
 - A canary bug never poisons a stable cache: the cache keys are disjoint
   (`<plugin>-<version>` vs `<plugin>-canary`), so flipping a fleet back to stable
   serves the already-cached version-pinned bundle with no refetch.
@@ -78,9 +81,8 @@ promotion bar; threshold tuning stays operational (PRD Out of Scope).
 - The launcher stays dependency-free. Channel resolution adds a small flat-config
   reader inlined in `entrypoint-cli.ts` (no YAML dependency), consistent with how
   the dev runtime already parses `.red/config.yaml` (ADR 0042).
-- Open follow-ups (out of this slice): wiring the proof-by-drain verdict into the
-  release workflow so a canary is cut automatically, and letting the `stable`
-  channel optionally track the floating `stable` tag instead of `v<version>`.
+- Open follow-up (out of this slice): wiring the proof-by-drain verdict into the
+  release workflow so the npm `canary` dist-tag is moved automatically.
 
 ## Related
 
@@ -89,4 +91,5 @@ promotion bar; threshold tuning stays operational (PRD Out of Scope).
 - ADR 0042 — plugin config unified under `.red/config.yaml`
   (`plugins.dev.afk.*`).
 - ADR 0065 — AFK worker-vitals telemetry vocabulary (the history ledger).
+- ADR 0091 — npm is the only client transport; `canary` is the npm dist-tag.
 - PRD #614 — the parent program; this is issue #629.

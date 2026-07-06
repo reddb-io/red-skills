@@ -1,15 +1,15 @@
 /**
  * channel.ts — pure resolution of the AFK bundle *release channel* (ADR 0058).
  *
- * The ADR 0038 launcher fetches the dev bundle from a GitHub Release. A
- * *channel* selects WHICH release a given installation tracks:
+ * The ADR 0038 launcher materializes the dev bundle from npm (ADR 0091). A
+ * *channel* selects WHICH package reference a given installation tracks:
  *
- *   - `stable` (default) — the version-pinned release `v<installed-version>`.
+ *   - `stable` (default) — the version-pinned installed package version.
  *     This is exactly today's behaviour, so an installation with no channel
  *     config keeps working unchanged.
- *   - `canary` (opt-in)  — the floating `canary` release tag, re-pointed at each
- *     pre-release build. Promotion to stable is a tag move (see the ADR); the
- *     proof-by-drain gate is read from the AFK history telemetry.
+ *   - `canary` (opt-in)  — the npm `canary` dist-tag, re-pointed at an already
+ *     published stable package version. The proof-by-drain gate is read from
+ *     the AFK history telemetry before operators move that pointer.
  *
  * This module is dependency-free and side-effect-free so it can be bundled into
  * the dependency-free entrypoint (`entrypoint-cli.ts` → `afk.mjs` /
@@ -18,7 +18,7 @@
 
 export type ReleaseChannel = "stable" | "canary";
 
-/** The canonical channels, in promotion order (canary → stable). */
+/** The canonical channels. */
 export const RELEASE_CHANNELS: readonly ReleaseChannel[] = ["stable", "canary"];
 
 /** Absent channel config resolves here — today's version-pinned behaviour. */
@@ -27,7 +27,7 @@ export const DEFAULT_CHANNEL: ReleaseChannel = "stable";
 /** Env var that overrides the configured channel for a single process/fleet. */
 export const CHANNEL_ENV_VAR = "RED_SKILLS_CHANNEL";
 
-/** The floating release tag the `canary` channel tracks. */
+/** The npm dist-tag the `canary` channel tracks. */
 export const CANARY_TAG = "canary";
 
 /**
@@ -65,9 +65,9 @@ export function resolveChannel(opts: ResolveChannelOptions = {}): ReleaseChannel
 }
 
 /**
- * The GitHub Release tag a channel resolves to for a given installed version.
- * `stable` stays version-pinned (`v<version>`) — byte-identical to the pre-ADR
- * 0058 fetch — while `canary` tracks the floating {@link CANARY_TAG}.
+ * Human-readable channel ref for launcher boot output. `stable` keeps the
+ * historical `v<version>` display string, while `canary` reports the npm
+ * dist-tag name.
  */
 export function channelReleaseRef(channel: ReleaseChannel, version: string): string {
   return channel === "canary" ? CANARY_TAG : `v${version}`;
