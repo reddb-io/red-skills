@@ -1,0 +1,25 @@
+{
+  "name": "@reddb-io/red-skills",
+  "version": "2.0.0",
+  "description": "RedSkills plugin runtime bundles (dev, memory, brain) distributed over npm — the v2 client transport (ADR 0091). Carries the platform-independent JS bundles inside the tarball plus thin bin shims; no postinstall download.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reddb-io/red-skills.git",
+    "directory": "packaging/npm"
+  },
+  "bin": {
+    "red-skills-dev": "bin/red-skills-dev.mjs",
+    "red-skills-memory": "bin/red-skills-memory.mjs",
+    "red-skills-brain": "bin/red-skills-brain.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md"
+  ]
+}
