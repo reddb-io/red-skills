@@ -164,6 +164,65 @@ export function planAttemptCap(
   return reaped;
 }
 
+// ---------- liveness-gated reclaim (issue #1219) ----------
+
+/** One dead-worker candidate for the read-time liveness reclaim. The caller has
+ * already resolved the OWNING worker's `worker.pid` liveness and the issue's
+ * preservation state. */
+export interface LivenessReclaimInput {
+  /** Absolute attempt dir path (`.../workers/{wid}/{N}-a{n}`). */
+  attemptDir: string;
+  /** Absolute path of the attempt's heavy `worktree/`. */
+  worktreePath: string;
+  /** Whether the OWNING worker's `worker.pid` still resolves to a live process.
+   * Keyed on the per-WORKER pid (shared across a worker's attempts), NOT the
+   * per-attempt `state.pid`: a worker live on a later attempt keeps ALL its
+   * attempt dirs. */
+  workerPidAlive: boolean;
+  /** Whether the issue is in a post-mortem preservation state (`blocked:*` /
+   * `ready-for-human`, existing #256/#257 policy) — its JSONL/handoff is kept. */
+  preserved: boolean;
+}
+
+/** The reclaim decision for one dead-worker attempt dir. */
+export interface LivenessReclaimAction {
+  attemptDir: string;
+  worktreePath: string;
+  /** Always true for an emitted action — the disposable `worktree/` of a dead
+   * worker is ALWAYS removed, even when the JSONL is preserved. */
+  removeWorktree: boolean;
+  /** Reclaim the WHOLE attempt dir. False when the issue is preserved (keep the
+   * JSONL/handoff for post-mortem; only the worktree goes). */
+  reclaimDir: boolean;
+}
+
+/**
+ * Plan the read-time liveness-gated reclaim (issue #1219). PURE — no I/O; the
+ * caller resolves `workerPidAlive` and `preserved`.
+ *   - A live worker's dir (workerPidAlive) is NEVER touched.
+ *   - A dead worker's `worktree/` is ALWAYS removed (disposable heavy dir).
+ *   - A dead worker's whole attempt dir is reclaimed UNLESS the issue is
+ *     preserved (blocked:* / ready-for-human), in which case the JSONL/handoff
+ *     stay and only the worktree is torn down.
+ * This runs immediately at read time, not gated on the boot orphan/attempt-cap
+ * TTLs, so a killed/crashed worker leaves no graveyard behind it.
+ */
+export function planLivenessReclaim(
+  inputs: readonly LivenessReclaimInput[],
+): LivenessReclaimAction[] {
+  const out: LivenessReclaimAction[] = [];
+  for (const i of inputs) {
+    if (i.workerPidAlive) continue;
+    out.push({
+      attemptDir: i.attemptDir,
+      worktreePath: i.worktreePath,
+      removeWorktree: true,
+      reclaimDir: !i.preserved,
+    });
+  }
+  return out;
+}
+
 // ---------- env resolvers (attempt_ttl_s / attempt_keep) ----------
 
 function resolvePositiveInt(
