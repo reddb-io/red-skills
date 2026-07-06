@@ -435,12 +435,15 @@ transcripts.
 - **graph** — governed operational memory over a per-project embedded RedDB store
   at `.red/memory/graph.rdb`. `/memory:store` upserts a deduped operational fact;
   `/memory:recall` runs the governed recall engine — deterministic text seeds
-  expanded through the graph neighborhood, then ranked by `importance × recency ×
-  graph-centrality × tier-weight` (durable decisions outrank reasoning traces
-  outrank ephemeral session noise), with the head of any `SUPERSEDED_BY` chain
-  returned in place of superseded nodes (`--include-superseded` returns the full
-  chain). Vector projections can contribute when explicitly ready, but they are
-  not the source of truth. RedDB runs out-of-process from the
+  expanded through the graph neighborhood, then passed through a deterministic
+  ranking pipeline: query-variant RRF, exponential recency decay, MMR diversity,
+  and session round-robin interleaving. Defaults are `rrfK: 60`,
+  `recencyHalfLifeDays: 30`, `mmrLambda: 0.72`, `queryVariantLimit: 4`, and
+  `sessionRoundRobin: true`; override them sparsely under
+  `plugins.memory.recallRanking` in `.red/config.yaml`. The head of any
+  `SUPERSEDED_BY` chain is returned in place of superseded nodes
+  (`--include-superseded` returns the full chain). Vector projections can
+  contribute when explicitly ready, but they are not the source of truth. RedDB runs out-of-process from the
   SDK's bundled binary — no service to manage. Graph writes use multi-model DML
   and KV-backed dedupe; see [ADR 0007](../../.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
 
