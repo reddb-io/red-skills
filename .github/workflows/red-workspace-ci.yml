@@ -60,6 +60,9 @@ jobs:
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
+      - name: Check generated Codex manifests
+        run: pnpm codex:manifests:check
+
       - name: Typecheck workspace (apps + packages, excludes red-castle)
         run: pnpm typecheck
 
