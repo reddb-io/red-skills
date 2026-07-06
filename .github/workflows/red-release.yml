@@ -69,6 +69,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-workflow-security-pins.sh
 
+      - name: Test canary channel promotion contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-afk-promote-channel.sh
+
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-validate-agent-metadata.sh
@@ -548,14 +552,12 @@ jobs:
             echo "::warning::NPM_TOKEN secret absent — skipping npm publish of @reddb-io/red-skills@${NEXT#v}"
             exit 0
           fi
-          # canary channel → npm `canary` dist-tag; stable → `latest` (default).
-          tag_args=()
-          case "${NEXT#v}" in
-            *-*) tag_args=(--tag canary) ;;
-          esac
           cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
-          pnpm publish --access public --no-git-checks "${tag_args[@]}"
+          # Stable releases publish to npm's default `latest` tag. The opt-in
+          # canary channel is moved later with scripts/afk-promote-channel.sh,
+          # which points npm dist-tag `canary` at an already-published version.
+          pnpm publish --access public --no-git-checks
 
       - name: Build release manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
