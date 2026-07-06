@@ -88,4 +88,77 @@ describe("resolveAttemptLoc — commit-anchored LOC memo (#1210)", () => {
   it("locMemoPath sits beside the attempt state file", () => {
     expect(locMemoPath("/tmp/attempt")).toBe("/tmp/attempt/.loc-memo.json");
   });
+
+  // #1224 Part A: a codex worker never commits, so its HEAD sha is frozen for the
+  // whole attempt. The committed delta stays sha-memoized (0/0) while the
+  // uncommitted working-tree delta is recomputed EVERY tick and added on top — so
+  // the LOC counter reflects total work even with zero commits.
+  it("adds the uncommitted working-tree delta on top of the memoized committed delta", async () => {
+    let committedCalls = 0;
+    let uncommittedCalls = 0;
+    let uncommitted = { added: 0, removed: 0 };
+    let stored: LocMemo | null = null;
+    const deps = () => ({
+      headSha: "frozensha", // never advances — codex does not commit
+      compute: async () => {
+        committedCalls += 1;
+        return { added: 0, removed: 0 }; // no commits → committed delta is 0/0
+      },
+      computeUncommitted: async () => {
+        uncommittedCalls += 1;
+        return uncommitted;
+      },
+      readMemo: () => stored,
+      writeMemo: (m: LocMemo) => {
+        stored = m;
+      },
+    });
+
+    // First tick: worktree still empty.
+    const first = await resolveAttemptLoc(deps());
+    expect(first).toEqual({ added: 0, removed: 0 });
+
+    // Later tick: codex has written 120 uncommitted lines. HEAD sha unchanged, so
+    // the committed memo is a HIT (no recompute), but the uncommitted delta is
+    // recomputed and surfaces the work: +120, not the frozen +0.
+    uncommitted = { added: 120, removed: 4 };
+    const second = await resolveAttemptLoc(deps());
+    expect(second).toEqual({ added: 120, removed: 4 });
+
+    // Committed side computed at most once (memo hit on the frozen sha); the
+    // uncommitted side ran on every call.
+    expect(committedCalls).toBe(1);
+    expect(uncommittedCalls).toBe(2);
+  });
+
+  it("keeps the claude incremental-commit path correct: committed memo + uncommitted delta sum", async () => {
+    // A claude worker commits incrementally. After a commit the committed delta is
+    // sha-memoized; any not-yet-committed edits add on top of it.
+    let stored: LocMemo | null = { sha: "commitA", added: 50, removed: 2 };
+    const result = await resolveAttemptLoc({
+      headSha: "commitA", // memo hit — committed volume served without recompute
+      compute: async () => {
+        throw new Error("committed compute must not run on a memo hit");
+      },
+      computeUncommitted: async () => ({ added: 7, removed: 1 }), // uncommitted WIP
+      readMemo: () => stored,
+      writeMemo: (m) => {
+        stored = m;
+      },
+    });
+    expect(result).toEqual({ added: 57, removed: 3 });
+  });
+
+  it("omitting computeUncommitted preserves the legacy committed-only behaviour", async () => {
+    let stored: LocMemo | null = null;
+    const result = await resolveAttemptLoc({
+      headSha: "sha1",
+      compute: async () => ({ added: 9, removed: 0 }),
+      readMemo: () => stored,
+      writeMemo: (m) => {
+        stored = m;
+      },
+    });
+    expect(result).toEqual({ added: 9, removed: 0 });
+  });
 });

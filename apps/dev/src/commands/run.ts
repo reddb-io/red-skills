@@ -1209,14 +1209,23 @@ export function buildProcessDeps(
         // Writer-side LOC ownership (#1210 Part B): the render paths no longer
         // shell out to `git diff --shortstat`, so this heartbeat is the runner-
         // agnostic owner that stamps loc_added/loc_removed for ALL runners (codex
-        // included). The diffstat is EXPENSIVE, so memoize it against the current
-        // HEAD sha in the attempt dir — computed at most once per commit; while
-        // HEAD is unchanged the memoized volume is served without spawning git.
+        // included). The COMMITTED delta is EXPENSIVE but stable between commits,
+        // so memoize it against the current HEAD sha in the attempt dir — computed
+        // at most once per commit; while HEAD is unchanged the memoized volume is
+        // served without spawning git. The UNCOMMITTED working-tree delta is
+        // recomputed every tick and added on top (#1224 Part A): a codex worker
+        // never commits, so its HEAD sha is frozen and ONLY the working-tree diff
+        // reflects its work — memoizing the combined volume on HEAD sha would
+        // freeze the first tick's `+0 -0` for the whole attempt. The claude
+        // incremental path is unaffected: a new commit moves the delta into the
+        // sha-keyed committed memo. Render stays git-free either way.
         const memoPath = locMemoPath(current.attemptDir, "/");
         const { added, removed } = await resolveAttemptLoc({
           headSha: head,
           compute: () =>
-            gitx.diffstatShortstat({ cwd: worktree }, baseRef).catch(() => ({ added: 0, removed: 0 })),
+            gitx.diffstatCommitted({ cwd: worktree }, baseRef).catch(() => ({ added: 0, removed: 0 })),
+          computeUncommitted: () =>
+            gitx.diffstatUncommitted({ cwd: worktree }).catch(() => ({ added: 0, removed: 0 })),
           readMemo: () => {
             try {
               const m = JSON.parse(readFileSync(memoPath, "utf8")) as Partial<LocMemo>;

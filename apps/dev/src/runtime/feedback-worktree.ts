@@ -42,6 +42,27 @@ function slugForBranch(branch: string): string {
 }
 
 /**
+ * The environment for the feedback gate's `pnpm -C <scope> <script>` subprocess,
+ * with `RED_AFK_WORKERS_NAMESPACE` UNSET (#1224 Part C).
+ *
+ * A `/go` (or `scout`) worker runs the gate with `RED_AFK_WORKERS_NAMESPACE`
+ * pinned to its lane (`go-workers` / `scout-workers`) so its own worktree/state
+ * paths resolve into the lane. That env is inherited by every child process —
+ * INCLUDING the gate's test subprocess — where it poisons namespace-sensitive
+ * suites (worker-paths, supervisor-fs) that assert the DEFAULT lane. The result
+ * is a false full-suite red that churns/parks otherwise-green apps/dev work (this
+ * exact leak cost issue #1219 ~70 minutes). Strip the var for the gate's test
+ * subprocess ONLY — the worker's own namespace wiring (which owns the `/go` lane
+ * paths) is untouched, since this scrubs a fresh copy of `process.env` rather than
+ * mutating it.
+ */
+function gateSubprocessEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.RED_AFK_WORKERS_NAMESPACE;
+  return env;
+}
+
+/**
  * Split a feedback `-C` token into its worker branch and package scope.
  *
  * The feedback gate builds the token via `scopeDir(branch, scope)`: the branch
@@ -357,11 +378,11 @@ export function makeFeedbackWorktree(
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root });
+      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env: gateSubprocessEnv() });
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await io.pnpm(head, { cwd: root });
+    const r = await io.pnpm(head, { cwd: root, env: gateSubprocessEnv() });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 

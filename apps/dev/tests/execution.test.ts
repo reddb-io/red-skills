@@ -273,19 +273,32 @@ describe("buildRunOptions", () => {
     expect(seen).toEqual([{ mode: "podman", mountPath: undefined }]);
   });
 
-  it("does NOT inject any hooks when continuous push is not requested (default)", () => {
+  it("injects ONLY the submodule-ensure host hook when continuous push is not requested (#1224 Part B)", () => {
+    // The submodule safety net is ALWAYS present so a fresh worker worktree can
+    // run local vitest even if the ADR 0071 post-checkout hook was missed. With
+    // continuous push off, it is the sole onWorktreeReady hook.
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
-    expect(opts.hooks).toBeUndefined();
+    const hooks = opts.hooks?.host?.onWorktreeReady;
+    expect(hooks).toHaveLength(1);
+    const command = hooks?.[0]?.command ?? "";
+    expect(command.startsWith("sh -c ")).toBe(true);
+    // It self-heals the red-castle submodule idempotently (only when absent).
+    expect(command).toContain("packages/red-castle/package.json");
+    expect(command).toContain("git submodule update --init packages/red-castle");
+    // It must NOT carry the continuous-push behaviour when push is off.
+    expect(command).not.toContain("--force-with-lease");
   });
 
-  it("injects an onWorktreeReady host hook with the initial push + post-commit install when continuousPush is on", () => {
+  it("injects the submodule net + an onWorktreeReady host hook with the initial push + post-commit install when continuousPush is on", () => {
     const opts = buildRunOptions(
       makeDeps(async () => fakeResult()),
       { ...baseInput, continuousPush: true },
     );
     const hooks = opts.hooks?.host?.onWorktreeReady;
-    expect(hooks).toHaveLength(1);
-    const command = hooks?.[0]?.command ?? "";
+    // Two host hooks now: [0] submodule safety net, [1] continuous push (#1224).
+    expect(hooks).toHaveLength(2);
+    expect(hooks?.[0]?.command ?? "").toContain("git submodule update --init packages/red-castle");
+    const command = hooks?.[1]?.command ?? "";
     // It is a single portable `sh -c '...'` host command.
     expect(command.startsWith("sh -c ")).toBe(true);
     // (a) initial force-with-lease push of the worker branch up-front.
@@ -365,7 +378,9 @@ describe("buildRunOptions", () => {
       makeDeps(async () => fakeResult()),
       { ...baseInput, continuousPush: true, remote: "backup" },
     );
-    const command = opts.hooks?.host?.onWorktreeReady?.[0]?.command ?? "";
+    // Index [1]: the continuous-push hook rides behind the always-on submodule
+    // safety net at [0] (#1224 Part B).
+    const command = opts.hooks?.host?.onWorktreeReady?.[1]?.command ?? "";
     expect(command).toContain("git push backup -u");
     expect(command).toContain("git push backup HEAD --force-with-lease");
   });

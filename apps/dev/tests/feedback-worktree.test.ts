@@ -487,3 +487,51 @@ describe("makeFeedbackWorktree — rebaseOnto (Pattern 2 drift mitigation)", () 
     expect(calls.filter((c) => c.op === "rebase")).toHaveLength(1);
   });
 });
+
+describe("gate test subprocess env (#1224 Part C)", () => {
+  // A /go (or scout) worker runs the feedback gate with RED_AFK_WORKERS_NAMESPACE
+  // pinned to its lane. That must NOT leak into the gate's `pnpm -C <scope> test`
+  // subprocess, or namespace-sensitive suites (worker-paths, supervisor-fs) see
+  // the /go lane instead of the default and fail — a false full-suite red that
+  // parks otherwise-green work (this leak cost issue #1219 ~70 minutes).
+  function captureEnvIO(): { io: FeedbackWorktreeIO; envFor: (script: string) => NodeJS.ProcessEnv | undefined } {
+    const seen: Array<{ script: string; env: NodeJS.ProcessEnv | undefined }> = [];
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => true,
+      pnpm: async (args, opts) => {
+        // The gate rewrites the token to ["-C", <path>, <script>]; "install" is
+        // the materialise step, everything else is a gate check.
+        const script = args[0] === "install" ? "install" : (args[2] ?? args[1] ?? "");
+        seen.push({ script, env: opts.env });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      worktreeRemove: async () => {},
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    return { io, envFor: (script) => seen.find((s) => s.script === script)?.env };
+  }
+
+  it("runs the gate's pnpm test subprocess with RED_AFK_WORKERS_NAMESPACE unset", async () => {
+    const prev = process.env.RED_AFK_WORKERS_NAMESPACE;
+    process.env.RED_AFK_WORKERS_NAMESPACE = "go-workers"; // the /go lane leak
+    try {
+      const { io, envFor } = captureEnvIO();
+      const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+      await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+      const env = envFor("test");
+      // The gate's test subprocess env exists and does NOT carry the namespace.
+      expect(env).toBeDefined();
+      expect(env && "RED_AFK_WORKERS_NAMESPACE" in env).toBe(false);
+      // The worker's own process env is untouched (we scrub a copy, not the real env).
+      expect(process.env.RED_AFK_WORKERS_NAMESPACE).toBe("go-workers");
+    } finally {
+      if (prev === undefined) delete process.env.RED_AFK_WORKERS_NAMESPACE;
+      else process.env.RED_AFK_WORKERS_NAMESPACE = prev;
+    }
+  });
+});
