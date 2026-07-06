@@ -1368,6 +1368,7 @@ async function runRecall(args: ParsedArgs): Promise<void> {
         includeSuperseded: args.flags["include-superseded"] === true,
         scope: scopeFlags(args.flags),
         now: asOf ? 0 : undefined,
+        ranking: config.recallRanking,
       });
       const hits = layerFiltersOut ? [] : rawHits;
       if (hits.length === 0) {
@@ -3012,6 +3013,7 @@ async function runRegistryCliOperation(
       {
         store: graphContext.store,
         rootDir,
+        memoryConfig: graphContext.config,
         providerConfig: graphContext.config?.provider,
         transportSurface: "cli",
       },
@@ -3652,7 +3654,13 @@ async function runServe(args: ParsedArgs): Promise<void> {
   if (tokenEnv && !token) throw new Error(`--token-env ${tokenEnv} is not set`);
 
   const { store, config } = await openGraphStore(args);
-  const server = createMemoryHttpServer({ rootDir, store, token, providerConfig: config.provider });
+  const server = createMemoryHttpServer({
+    rootDir,
+    store,
+    token,
+    memoryConfig: config,
+    providerConfig: config.provider,
+  });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
