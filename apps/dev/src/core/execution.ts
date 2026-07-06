@@ -709,6 +709,37 @@ function shSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Build the `host.onWorktreeReady` command that GUARANTEES the `packages/red-castle`
+ * submodule is initialised in a fresh worker worktree before the inner agent runs
+ * (#1224 Part B — a belt-and-suspenders net for the ADR 0071 post-checkout hook).
+ *
+ * `git worktree add` does NOT populate submodules; the ADR 0071 tracked
+ * `post-checkout` hook is meant to run `git submodule update --init` on the new
+ * worktree, but it fires only when the hook is installed in the checkout's git
+ * dir — a missed install, or a host whose `core.hooksPath` was redirected before
+ * the hook ran, leaves `packages/red-castle` an empty gitlink (observed on worker
+ * wCNFH: the agent could not run vitest and implemented blind, while wU1TD — with
+ * the hook — was fine). sandcastle runs `host.onWorktreeReady` ON THE HOST with
+ * cwd = the new worktree, BEFORE the inner agent starts, so this re-asserts the
+ * submodule idempotently: if `packages/red-castle` has no checked-out content,
+ * run `git submodule update --init packages/red-castle`. `git submodule update`
+ * is a no-op on an already-initialised submodule (the common path when the hook
+ * DID fire), so this never does redundant work. Best-effort: a failure logs to
+ * stderr but the script always exits 0 — it can never abort the run.
+ */
+export function buildSubmoduleEnsureHook(): HostHookCommand {
+  const script = [
+    "# AFK submodule safety net (#1224 Part B): self-heal a missed post-checkout",
+    "# hook so a fresh worker worktree can always run local vitest.",
+    "if [ ! -e packages/red-castle/package.json ]; then",
+    '  git submodule update --init packages/red-castle >/dev/null 2>&1 || echo "[afk] warn: red-castle submodule init failed in worktree; local tests may be unavailable" >&2',
+    "fi",
+    "exit 0",
+  ].join("\n");
+  return { command: `sh -c ${shSingleQuote(script)}` };
+}
+
 /** Build the sandcastle `run` options for one issue iteration (pure). */
 export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): RunOptions {
   // Fork the worker branch off the resolved base (ADR 0031) via sandcastle's
@@ -721,15 +752,23 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     branch: input.branch,
     ...(input.base ? { baseBranch: input.base } : {}),
   };
-  // Continuous-push guarantee (issue #191): when enabled, inject a single
-  // host.onWorktreeReady hook that runs ON THE HOST in the new worktree to push
-  // the branch up-front and install the post-commit push hook. sandcastle only
-  // runs this for host-visible worktrees (noSandbox / bind-mount worktree mode);
-  // for fully-isolated providers the agent works in a synced copy the hook can't
-  // see, so continuous push simply does not fire there (final sync only).
-  const hooks: RunOptions["hooks"] | undefined = input.continuousPush
-    ? { host: { onWorktreeReady: [buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE)] } }
-    : undefined;
+  // host.onWorktreeReady runs ON THE HOST in the freshly-created worktree BEFORE
+  // the inner agent starts (host-visible worktree modes only). Two host hooks ride
+  // here, in order:
+  //   1. Submodule safety net (#1224 Part B) — ALWAYS injected: re-assert the
+  //      packages/red-castle submodule so a missed ADR 0071 post-checkout hook can
+  //      never leave the worktree unable to run local vitest. Idempotent + best-
+  //      effort (it never aborts the run).
+  //   2. Continuous-push guarantee (issue #191) — injected only when enabled:
+  //      push the branch up-front and install the post-commit push hook.
+  // sandcastle only runs these for host-visible worktrees (noSandbox / bind-mount
+  // worktree mode); for fully-isolated providers the agent works in a synced copy
+  // the hooks can't see (final sync only).
+  const worktreeReady: HostHookCommand[] = [buildSubmoduleEnsureHook()];
+  if (input.continuousPush) {
+    worktreeReady.push(buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE));
+  }
+  const hooks: RunOptions["hooks"] = { host: { onWorktreeReady: worktreeReady } };
   // Observability lane (native-path liveness): point sandcastle's file-log at
   // the attempt dir's afk.log (the unified log, set by the caller) and, when a
   // sink is provided, forward each
