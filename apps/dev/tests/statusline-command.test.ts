@@ -34,16 +34,36 @@ function sink(): { stream: NodeJS.WritableStream; text: () => string } {
   return { stream, text: () => buf };
 }
 
-/** Write a fake live worker state (pid = this process → always live). */
+/** Write a fake live worker state (pid = this process → always live). A caller
+ * can pass its own `pid` in `state` to override — e.g. `pid: 0` for a
+ * finished/retained attempt. `namespace` selects the worker lane (default the
+ * fleet `workers` lane; pass `go-workers`/`scout-workers` for those lanes). */
 async function writeWorkerState(
   root: string,
   worker: string,
   attempt: string,
   state: Record<string, unknown>,
+  namespace = "workers",
 ): Promise<void> {
-  const dir = join(root, ".red", "tmp", "workers", worker, attempt);
+  const dir = join(root, ".red", "tmp", namespace, worker, attempt);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk.state.json"), JSON.stringify({ pid: process.pid, ...state }), "utf8");
+}
+
+/** Write a FRESH liveness lane record into an attempt dir so the red-castle
+ * evaluator reads the attempt as lane-fresh ("alive"). This is what makes a
+ * just-finished attempt (pid 0) still look live during its post-mortem retention
+ * window — the exact condition issue #1177's statusline filter must survive. */
+async function writeFreshLivenessLane(
+  root: string,
+  worker: string,
+  attempt: string,
+  namespace = "workers",
+): Promise<void> {
+  const dir = join(root, ".red", "tmp", namespace, worker, attempt);
+  await mkdir(dir, { recursive: true });
+  const record = JSON.stringify({ at: Date.now(), kind: "iteration" }) + "\n";
+  await writeFile(join(dir, "liveness.lane.jsonl"), record, "utf8");
 }
 
 /** Pre-seed a FRESH gh count cache so collectStatuslineAfk never calls gh. */
@@ -204,6 +224,89 @@ describe("statusline command — rendered line", () => {
 
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
+  });
+
+  it("shows only the live successor attempt, not a finished/retained pid=0 sibling (issue #1177)", async () => {
+    // One worker `wELLN` that finished #1766 (attempt marked pid:0, dir retained
+    // for post-mortem, its liveness lane still fresh) and moved to a LIVE #1767.
+    // The statusline must render exactly ONE worker line — the live #1767 — never
+    // a second phantom line for the finished #1766.
+    await writeWorkerState(root, "wELLN", "1766-a1", {
+      worker_id: "wELLN",
+      pid: 0, // finished attempt: completion sweep stamped pid 0
+      runner: "claude",
+      current: { number: 1766, stage: "done", started_at: new Date().toISOString() },
+    });
+    // Fresh lane in the finished dir: without the pid filter this alone makes the
+    // evaluator read #1766 as lane-fresh "alive" → the phantom second line.
+    await writeFreshLivenessLane(root, "wELLN", "1766-a1");
+    await writeWorkerState(root, "wELLN", "1767-a1", {
+      worker_id: "wELLN",
+      runner: "claude",
+      current: { number: 1767, stage: "impl", started_at: new Date().toISOString() },
+    });
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+
+    const out = sink();
+    const oldColumns = process.env.COLUMNS;
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.COLUMNS = "200";
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+    } finally {
+      if (oldColumns === undefined) delete process.env.COLUMNS;
+      else process.env.COLUMNS = oldColumns;
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    const rows = stripAnsi(out.text()).trimEnd().split("\n");
+    expect(rows).toHaveLength(2); // header row + ONE live worker row (not two)
+    expect(rows[1]).toContain("iss=1767"); // the live successor
+    expect(rows[1]).not.toContain("iss=1766"); // the finished/retained sibling is dropped
+  });
+
+  it("applies the same live filter in the go-workers namespace (issue #1177)", async () => {
+    // Same finished-then-live pattern, but for a `/go` worker under go-workers.
+    await writeWorkerState(root, "gW", "2001-a1", {
+      worker_id: "gW",
+      pid: 0,
+      runner: "claude",
+      origin: "go",
+      current: { number: 2001, stage: "done", started_at: new Date().toISOString() },
+    }, "go-workers");
+    await writeFreshLivenessLane(root, "gW", "2001-a1", "go-workers");
+    await writeWorkerState(root, "gW", "2002-a1", {
+      worker_id: "gW",
+      runner: "claude",
+      origin: "go",
+      current: { number: 2002, stage: "impl", started_at: new Date().toISOString() },
+    }, "go-workers");
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+
+    const out = sink();
+    const oldColumns = process.env.COLUMNS;
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.COLUMNS = "200";
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+    } finally {
+      if (oldColumns === undefined) delete process.env.COLUMNS;
+      else process.env.COLUMNS = oldColumns;
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    const rows = stripAnsi(out.text()).trimEnd().split("\n");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain("iss=2002");
+    expect(rows[1]).not.toContain("iss=2001");
   });
 
   it("renders the 5h/7d rate-limit windows on the header when the payload exposes them", async () => {

@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import type { AfkState } from "../types/state.js";
-import { parseState, type PidStartTimeProbe } from "./state.js";
+import { parseState, isStateLive, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
 import { allWorkersRoots } from "./worker-paths.js";
 import {
@@ -55,6 +55,25 @@ export interface WorkerStateRecord {
   /** Raw red-castle evaluator verdict (ADR 0083 §3). The single source of truth
    * every rendering surface and the fleet reaper consume. */
   livenessVerdict: LivenessVerdict;
+  /**
+   * True when the state's OWN pid is genuinely alive per {@link isStateLive}
+   * (pid > 0 AND `kill(pid, 0)` AND, when recorded, `pid_start_time` matches).
+   * Distinct from the lane/cross-check verdict above: a finished/retained attempt
+   * is stamped `pid: 0` by the completion sweep, yet its per-attempt liveness lane
+   * can still read fresh during the post-mortem retention window — so the verdict
+   * alone would call it "alive". The statusline worker-line filter requires this
+   * pid-identity signal so a finished attempt (pid 0) never renders a phantom
+   * live-worker line beside the same worker's live successor attempt (issue #1177).
+   */
+  pidIdentityLive: boolean;
+  /**
+   * True only when `state.pid` is 0 but the host-side `worker.pid` file resolves
+   * to a live process (the isolation pre-sync fallback synthesized an "alive"
+   * verdict). Lets the statusline keep a genuinely-running container worker whose
+   * host-visible pid is legitimately 0, while still dropping finished/retained
+   * local attempts (pid 0, no live host pid).
+   */
+  hostPidLive: boolean;
 }
 
 /** Display threshold: lane records this old → not "active". Matches the old
@@ -174,6 +193,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   // sandbox mode, so it is the reliable host-side liveness signal for isolation
   // workers even before afk.state.json syncs back at run end.
   let finalVerdict = livenessVerdict;
+  let hostPidLive = false;
   if (livenessVerdict.status === "stalled" && state.pid === 0) {
     // worker.pid lives one directory above the attempt dir:
     // {workersRoot}/{workerId}/{N}-a{n}/afk.state.json → {workersRoot}/{workerId}/worker.pid
@@ -198,6 +218,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
         hostPidAlive = false;
       }
       if (hostPidAlive) {
+        hostPidLive = true;
         // Synthesize a "quiet-but-live" verdict: the orchestrator is running on
         // the host but afk.state.json has not synced yet (isolation pre-sync).
         finalVerdict = {
@@ -227,6 +248,13 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   // iterating, so surfaces show it as inactive (no [live] badge in the monitor/statusline).
   const active = liveness === "active";
 
+  // pid-identity liveness: the state's OWN pid resolves to a live process. Uses
+  // the same probes the evaluator/reaper share (kill + pid_start_time), so it is
+  // consistent with every other liveness read. A finished/retained attempt
+  // (pid 0) is false here even when its lane still reads fresh — the signal the
+  // statusline worker-line filter needs (issue #1177).
+  const pidIdentityLive = isStateLive(state, opts.kill, opts.pidStartTime);
+
   return {
     path,
     state,
@@ -234,6 +262,8 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
     active,
     liveness,
     livenessVerdict: finalVerdict,
+    pidIdentityLive,
+    hostPidLive,
   };
 }
 
