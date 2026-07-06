@@ -190,13 +190,14 @@ describe("statusline command — rendered line", () => {
     expect(rows[0]).toContain("prs=3");
     expect(rows[0]).toContain("iss=24");
 
-    // LINE 2 — the live worker, from the monitor's shared per-worker formatter.
-    expect(rows[1]).toContain("wA"); // worker id
-    expect(rows[1]).toContain("claude"); // runner
-    expect(rows[1]).toContain("issues 7/10"); // progress counter
-    expect(rows[1]).toContain("#17"); // issue
-    expect(rows[1]).toContain("stage:impl"); // stage
-    expect(rows[1]).toContain("+12 -3"); // per-worker diff
+    // LINE 2 — the live worker, in the terse colored k=v form (issue #1175).
+    expect(rows[1]).toContain("wA"); // worker id (no [live]/[quiet] badge)
+    expect(rows[1]).toContain("run=claude"); // runner as a k=v token
+    expect(rows[1]).toContain("iss=7/10"); // progress counter
+    expect(rows[1]).toContain("#17 impl"); // issue NUMBER + bare stage (no stage: prefix)
+    expect(rows[1]).toContain("loc=+12 -3"); // per-worker diff as loc= k=v
+    expect(rows[1]).not.toContain("[live]"); // liveness badge dropped
+    expect(rows[1]).not.toContain("stage:impl"); // no stage: prefix
 
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
