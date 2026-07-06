@@ -169,6 +169,44 @@ export function humanizeTokens(tokens: number): string {
 }
 
 /**
+ * Compact SI-style humanizer for an arbitrary count (issue #1175 — the themed
+ * per-worker `tks=` token). Distinct from {@link humanizeTokens} (which the
+ * header/plain forms use): this one shows AT MOST one decimal in every unit and
+ * strips a trailing `.0`, so 45000 → `45k` (not `45.0k`) and 1e6 → `1M`.
+ *
+ *   < 1e3 → the raw integer (`100`, `999`)
+ *   ≥ 1e3 → `k` (`1k`, `1.2k`, `45k`, `100k`)
+ *   ≥ 1e6 → `M` (`1M`, `1.1M`, `100M`)
+ *   ≥ 1e9 → `B` (`1B`, `2.3B`)
+ *
+ * Picks the largest unit whose scaled value is ≥ 1. Negative/zero → `0`.
+ */
+export function humanizeCount(n: number): string {
+  const scale = (v: number, suffix: string): string => {
+    const s = (Math.round(v * 10) / 10).toFixed(1);
+    return `${s.endsWith(".0") ? s.slice(0, -2) : s}${suffix}`;
+  };
+  if (n >= 1e9) return scale(n / 1e9, "B");
+  if (n >= 1e6) return scale(n / 1e6, "M");
+  if (n >= 1e3) return scale(n / 1e3, "k");
+  return String(n > 0 ? n : 0);
+}
+
+/**
+ * Shortens a model identifier to its friendly family token for the themed
+ * per-worker `run=` label (issue #1175): `claude-opus-4-8` → `opus`, `Opus` →
+ * `opus`, `claude-sonnet-5` → `sonnet`. Falls back to the input unchanged when
+ * no known family substring matches, so an unrecognised model still renders.
+ */
+export function shortModel(model: string): string {
+  const m = model.toLowerCase();
+  for (const family of ["opus", "sonnet", "haiku", "fable"]) {
+    if (m.includes(family)) return family;
+  }
+  return model;
+}
+
+/**
  * Humanizes an elapsed duration in milliseconds to a compact human-friendly
  * string that always carries the two most-significant units once past the
  * seconds floor: `10s`, `1m10s`, `1h10m`, `1d10h`. The lower unit is shown even
