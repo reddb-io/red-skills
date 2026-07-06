@@ -457,7 +457,8 @@ export interface MonitorInputs {
   remoteQueue?: number;
   remoteHuman?: number;
   /** Age of the statusline cache in seconds. Undefined when no cache file exists.
-   * The monitor render shows a stale marker when this exceeds STATUSLINE_CACHE_TTL_S. */
+   * The monitor render shows a stale marker when this exceeds the resolved
+   * statusline cache TTL ({@link resolveStatuslineCacheTtl}). */
   remoteCacheAgeS?: number;
 }
 
@@ -612,14 +613,35 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
 
 import type { AfkInput, RepoInput } from "../core/statusline.js";
 
-/** The TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
+/** The DEFAULT TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
  * GitHub-derived queue/human and open-PR/open-issue counts AND the repo-global
- * local diffstat. 240 s (4 min): the statusline renders on every prompt, so a
- * per-render gh/git round-trip (~5 s under load) would freeze the TUI. A single
- * named constant referenced by both the writer (statusline command) and the
+ * local diffstat. 180 s (3 min): the statusline renders on every prompt, so a
+ * per-render gh/git round-trip (~5 s under load) would freeze the TUI. The
+ * effective TTL is resolved by {@link resolveStatuslineCacheTtl}
+ * (RED_AFK_STATUSLINE_CACHE_TTL_S env > `afk.statusline_cache_ttl` config > this
+ * default) and threaded into both the writer (statusline command) and the
  * readers (monitor path + stale-marker threshold) so the network cost is paid at
- * most once per 4 minutes, never per render (issue #1178). */
-export const STATUSLINE_CACHE_TTL_S = 240;
+ * most once per TTL, never per render (issue #1178, #1217). */
+export const STATUSLINE_CACHE_TTL_S = 180;
+
+/**
+ * Resolve the effective statusline cache TTL (seconds) with precedence
+ * RED_AFK_STATUSLINE_CACHE_TTL_S env > `afk.statusline_cache_ttl` config >
+ * {@link STATUSLINE_CACHE_TTL_S} default (180). Mirrors the resolveAttemptBudget
+ * / parseAttemptTimeout precedence pattern. Typo-safe: a missing / non-numeric /
+ * zero / negative value from EITHER source falls through to the next source and
+ * ultimately the 180 default — never 0. A 0 TTL would make the cache always-stale
+ * and refresh on every render, defeating the whole purpose. Note the FLAT config
+ * key `afk.statusline_cache_ttl` — NOT nested under `afk.statusline`, which is
+ * already the boolean opt-out (YAML cannot make one key both a boolean and a map).
+ */
+export function resolveStatuslineCacheTtl(env: NodeJS.ProcessEnv, getCfg: (key: string) => string): number {
+  return (
+    parsePositive(env.RED_AFK_STATUSLINE_CACHE_TTL_S) ??
+    parsePositive(getCfg("afk.statusline_cache_ttl")) ??
+    STATUSLINE_CACHE_TTL_S
+  );
+}
 
 /** Maximum milliseconds to wait for a cold-cache gh count refresh. If the gh
  * CLI hangs (network stall, rate-limit backoff) the statusline falls back to
@@ -688,7 +710,10 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  * statusline process indefinitely. The refresh runs even when there are no live
  * workers so the queue/human badges stay current while the fleet is idle.
  */
-export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
+export async function collectStatuslineAfk(
+  ctx: RepoContext,
+  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
   const nowMs = Date.now();
@@ -789,9 +814,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     }
   }
 
-  // GitHub-derived counts with a 240 s (4 min) cache — refreshed before the
-  // early-return so queue/human stay current even when the fleet is idle
-  // (workers == 0).
+  // GitHub-derived counts with a 180 s (3 min) cache (configurable, #1217) —
+  // refreshed before the early-return so queue/human stay current even when the
+  // fleet is idle (workers == 0).
   const cachePath = join(paths.tmpDir, "statusline-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readStatuslineCache(cachePath);
@@ -817,7 +842,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // block the statusline render indefinitely. queue/human stay 0/0 on timeout
     // or on any gh/auth/network error.
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+  } else if (nowS - cached.ts >= cacheTtlS) {
     // Stale: await a bounded refresh so the cache is rewritten before the
     // process exits. Shows the previous value on timeout (fail-open). When
     // refresh fails, mark the age so the renderer can signal staleness.
@@ -973,7 +998,10 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
  * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
  * field is fail-open: any gh/git error leaves it 0.
  */
-export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput> {
+export async function collectStatuslineRepo(
+  ctx: RepoContext,
+  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
   const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
@@ -1012,7 +1040,7 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
   let repoCacheAgeS: number | undefined;
   if (!cached) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+  } else if (nowS - cached.ts >= cacheTtlS) {
     // Stale: await a bounded refresh so the cache is rewritten before the
     // process exits. Shows the previous value on timeout (fail-open). When
     // refresh fails, mark the age so the renderer can signal staleness.
