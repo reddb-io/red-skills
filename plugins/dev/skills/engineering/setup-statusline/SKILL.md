@@ -10,7 +10,15 @@ disable-model-invocation: true
 
 Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and live AFK state. **The two hosts get two shapes (per-runner split, ADR 0003):**
 
-- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%` — **then one line per live AFK worker**. Each worker line is the SAME compact row `/afk monitor --once` prints (single source of truth — worker id, stage, issue, elapsed, `+A -R`, tokens), so the two surfaces never drift. Zero live workers → only the header line.
+- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%` — **then one line per live AFK worker**. The worker line is a **terse, colored `k=v` form** that reads as a visual sibling of the header — every token follows the header's `key=value` colour convention:
+
+  ```
+  w82UX  run=claude opus high  iss=0/0  #1173 tests  00:04:41  loc=+10 -11  tks=34k  tools=11 reason=13 text=0
+  ```
+
+  The `wID` is **bold + red**; then `run=<runner> <model> <effort>` (model shortened, e.g. `claude-opus-4-8` → `opus`; the effort word is omitted when unavailable), `iss=<done>/<total>`, the bare `#<issue> <stage>` (issue NUMBER + stage word, no `stage:` prefix), the required `HH:MM:SS` elapsed, `loc=+A -R`, `tks=<humanized>` (SI k/M/B token total), and the vitals as INDIVIDUAL `k=v` pairs `tools=<t> reason=<r> text=<x>` (never a nested `stats=…:…` blob). The truncated issue TITLE, the `[live]`/`[quiet]` badge, `wait`, and `log` are **dropped** here — that verbosity stays on the fuller `/afk monitor` line. The two surfaces share only the per-worker FIELD DATA (`workerFields`), never a renderer, so the terse statusline form never bleeds into the monitor. Zero live workers → only the header line.
+
+  The **`/afk monitor` dashboard is unchanged**: it keeps its fuller per-worker row (title, `[live]`/`[quiet]`, `wait`, `log`) — it is a full dashboard, not a compact statusline.
 - **Codex — single line.** The `tui.status_line` footer is single-line only, so the plain producer stays ONE aggregate line (project · model · context · usage · repo counts · the AFK block). The multi-line layout is Claude-Code-only.
 
 The AFK rows are quiet when no worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
