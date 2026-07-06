@@ -416,6 +416,7 @@ export function factsToGraph(facts: ExtractedFact[], source = "conversation"): I
         tags: f.tags,
         source,
         confidence: "INFERRED" as const,
+        provenance_tier: "proxy" as const,
         structural_type: resolution.structuralType,
         engineering_code: resolution.engineeringCode ?? f.node_type,
         hash: contentHash(f.label, f.node_type, f.title, f.summary ?? ""),
