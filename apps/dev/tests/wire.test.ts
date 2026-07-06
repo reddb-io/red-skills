@@ -14,6 +14,7 @@ import {
   collectStatuslineAfk,
   collectStatuslineRepo,
   STATUSLINE_CACHE_TTL_S,
+  resolveStatuslineCacheTtl,
 } from "../src/runtime/wire.js";
 import { runBoot } from "../src/core/boot.js";
 
@@ -784,12 +785,53 @@ describe("collectStatuslineRepo — cache discipline", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STATUSLINE_CACHE_TTL_S — the single named TTL constant (#1178)
+// STATUSLINE_CACHE_TTL_S — the default TTL constant (#1178, lowered #1217)
 // ---------------------------------------------------------------------------
 
 describe("STATUSLINE_CACHE_TTL_S", () => {
-  it("is 240 s (4 minutes): the network cost is paid at most once per 4 min", () => {
-    expect(STATUSLINE_CACHE_TTL_S).toBe(240);
+  it("defaults to 180 s (3 minutes): the network cost is paid at most once per 3 min", () => {
+    expect(STATUSLINE_CACHE_TTL_S).toBe(180);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveStatuslineCacheTtl — env > config > 180, typo-safe fallback (#1217)
+// ---------------------------------------------------------------------------
+
+describe("resolveStatuslineCacheTtl (#1217)", () => {
+  const noCfg = () => "";
+
+  it("defaults to 180 when neither env nor config is set", () => {
+    expect(resolveStatuslineCacheTtl({}, noCfg)).toBe(180);
+    expect(resolveStatuslineCacheTtl({}, noCfg)).toBe(STATUSLINE_CACHE_TTL_S);
+  });
+
+  it("env RED_AFK_STATUSLINE_CACHE_TTL_S wins over config", () => {
+    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "300" : "");
+    expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "90" }, getCfg)).toBe(90);
+  });
+
+  it("uses the config value when env is absent", () => {
+    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "300" : "");
+    expect(resolveStatuslineCacheTtl({}, getCfg)).toBe(300);
+  });
+
+  it("falls back to config when env is garbage (non-numeric / 0 / negative)", () => {
+    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "240" : "");
+    expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "nope" }, getCfg)).toBe(240);
+    expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "0" }, getCfg)).toBe(240);
+    expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "-5" }, getCfg)).toBe(240);
+  });
+
+  it("falls back to 180 when BOTH env and config are garbage — never 0", () => {
+    const bad = (v: string) => resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: v }, () => v);
+    expect(bad("0")).toBe(180);
+    expect(bad("-1")).toBe(180);
+    expect(bad("abc")).toBe(180);
+    // config-only garbage also falls through to the default
+    expect(resolveStatuslineCacheTtl({}, () => "0")).toBe(180);
+    expect(resolveStatuslineCacheTtl({}, () => "-9")).toBe(180);
+    expect(resolveStatuslineCacheTtl({}, () => "xyz")).toBe(180);
   });
 });
 
