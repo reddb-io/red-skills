@@ -157,6 +157,19 @@ export interface LandingInput {
   issue: number;
   /** Issue title, for the merge/PR message + hook contexts. */
   title: string;
+  /**
+   * Sensitive-path guard bypass (issue #1171). Defaults false/undefined. When
+   * true, the step-0a sensitive-path guard scan is SKIPPED so a branch whose diff
+   * touches a protected path (CI workflow, lifecycle script, git hook, `.red/`
+   * config) can still land. This is set EXCLUSIVELY by the explicit
+   * `/requeue --adopt-branch` operator path (core/requeue + commands/requeue),
+   * after a maintainer has reviewed the diff — it is the human "already-reviewed"
+   * signal the ADR-0055 no-agent landing lane carries. HARD INVARIANT: it must be
+   * UNREACHABLE from any autonomous attempt (AFK/go inner-agent landing), so the
+   * guard keeps firing on every normal attempt. The default is false and only the
+   * operator adopt path ever passes true.
+   */
+  sensitivePathApproved?: boolean;
 }
 
 /** The pre_merge / post_merge hook context builders the caller owns (so the
@@ -307,7 +320,13 @@ export async function doLanding(
   // change (CI workflow, lifecycle script, git hook, .red/ config) that must
   // never auto-land — abort immediately and page a human. Opt-in: the guard is
   // skipped when getDiffPaths is absent (backwards-compatible default).
-  if (deps.getDiffPaths) {
+  //
+  // #1171 bypass: `input.sensitivePathApproved === true` means a maintainer has
+  // reviewed the protected diff and is landing it through the explicit
+  // `/requeue --adopt-branch` no-agent lane, so the guard is skipped ONLY here.
+  // The flag defaults false; no autonomous attempt path sets it, so the guard
+  // keeps firing on every normal AFK/go landing.
+  if (deps.getDiffPaths && input.sensitivePathApproved !== true) {
     const { changedFiles, packageJsonDiff } = await deps.getDiffPaths();
     const hits = checkSensitivePaths(changedFiles, packageJsonDiff);
     if (hits.length > 0) {
