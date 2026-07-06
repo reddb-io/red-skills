@@ -349,6 +349,21 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     return { outcome: "skipped", reason: "branch-absent" };
   }
 
+  const validatedBranchTip = await resolveFreshRemoteBranchTip(deps.mergeExec, {
+    repoDir: input.repoDir,
+    remote: input.remote,
+    branch,
+  });
+  if (!validatedBranchTip) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: skipped (branch-absent) — \`${branch}\` did not resolve to a fetched \`${input.remote}/${branch}\` tip.`,
+    );
+    return { outcome: "skipped", reason: "branch-absent" };
+  }
+  deps.appendIterLog(
+    `🤖 /afk reconcile #${issue}: validating fetched \`${input.remote}/${branch}\` tip \`${validatedBranchTip.slice(0, 12)}\`.`,
+  );
+
   // ---- 3. commits gate: the branch must carry work ----
   // changedFiles() is a three-dot diff that returns [] for an EMPTY branch.
   // The fetch gate above guarantees the branch is local, so [] here means
@@ -445,6 +460,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       repoDir: input.repoDir,
       remote: input.remote,
       branch,
+      validatedBranchTip,
       base,
       trunk: input.trunk,
       issue,
@@ -480,9 +496,23 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   await deps.fs.completionSweep(issue);
   await runCloseCascade(deps, issue);
   deps.appendIterLog(
-    `🤖 /afk reconcile #${issue}: \`${branch}\` validated green and landed without re-running the agent (merge \`${mergeSha}\`).`,
+    `🤖 /afk reconcile #${issue}: \`${branch}\` tip \`${validatedBranchTip.slice(0, 12)}\` validated green and landed without re-running the agent (merge \`${mergeSha}\`).`,
   );
   return { outcome: "landed", mergeSha, locked, posted };
+}
+
+async function resolveFreshRemoteBranchTip(
+  exec: MergeExec,
+  input: { repoDir: string; remote: string; branch: string },
+): Promise<string | undefined> {
+  const fetched = await exec(["git", "-C", input.repoDir, "fetch", input.remote, input.branch, "--quiet"]);
+  if (fetched.code !== 0) return undefined;
+  const resolved = await exec([
+    "git", "-C", input.repoDir,
+    "rev-parse", "--verify", "--quiet", `${input.remote}/${input.branch}`,
+  ]);
+  const tip = resolved.stdout.trim();
+  return resolved.code === 0 && tip !== "" ? tip : undefined;
 }
 
 // ---------- guard ----------
