@@ -9,7 +9,9 @@
     "bundle": "turbo run bundle --filter=!@reddb-io/red-castle",
     "typecheck": "turbo run typecheck --filter=!@reddb-io/red-castle",
     "test": "turbo run test --filter=!@reddb-io/red-castle",
-    "release:manifest": "node scripts/release-manifest.mjs"
+    "release:manifest": "node scripts/release-manifest.mjs",
+    "codex:manifests": "node scripts/generate-codex-manifests.mjs",
+    "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check"
   },
   "devDependencies": {
     "turbo": "^2.5.4",
