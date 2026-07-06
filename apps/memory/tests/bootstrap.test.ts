@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   assetUrl,
   compareSemver,
-  inRangeMajorTag,
+  newestSameMajorFromRegistry,
   parseSemver,
   parseSha256File,
   platformKey,
   pointerFileName,
   readPointerVersion,
+  registryPackageUrl,
   sameMajor,
   selectInRangeUpdate,
   sha256Hex,
@@ -89,9 +90,20 @@ describe("in-range self-update policy (ADR 0084, mirror of packages/shared/self-
     expect(selectInRangeUpdate("1.140.0", "1.145.0", "1.145.0")).toBeNull();
   });
 
-  it("inRangeMajorTag is the floating major tag", () => {
-    expect(inRangeMajorTag("1.140.0")).toBe("v1");
-    expect(inRangeMajorTag("2.3.4")).toBe("v2");
+  it("registryPackageUrl escapes the scoped name and never builds a releases/download URL", () => {
+    const url = registryPackageUrl();
+    expect(url).toMatch(/\/@reddb-io%2Fred-skills$/);
+    expect(url).not.toContain("releases/download");
+  });
+
+  it("newestSameMajorFromRegistry picks the newest same-major version (ADR 0091)", () => {
+    const meta = JSON.stringify({
+      versions: { "1.140.0": {}, "1.145.2": {}, "1.144.0": {}, "2.0.0": {} },
+    });
+    expect(newestSameMajorFromRegistry(meta, "1.140.0")).toBe("1.145.2");
+    // Never crosses a major, and tolerates malformed metadata.
+    expect(newestSameMajorFromRegistry(JSON.stringify({ versions: { "2.0.0": {} } }), "1.140.0")).toBeNull();
+    expect(newestSameMajorFromRegistry("not json", "1.140.0")).toBeNull();
   });
 
   it("pointerFileName / readPointerVersion round-trip", () => {
