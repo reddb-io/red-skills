@@ -113,7 +113,7 @@ import {
   type EvidenceCitation,
   type EvidenceProposalApplyState,
 } from "./evidence-card.js";
-import { graphRecallResult } from "./graph-recall.js";
+import { graphRecallResult, renderSignalProvenance } from "./graph-recall.js";
 import {
   buildMemoryGovernanceReport,
   type MemoryGovernanceReport,
@@ -1381,6 +1381,9 @@ async function runRecall(args: ParsedArgs): Promise<void> {
       for (const hit of hits) {
         console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
         console.log(`        ${hit.excerpt}`);
+        for (const line of renderSignalProvenance(hit.signal_provenance)) {
+          console.log(`        ${line}`);
+        }
         if (hit.hooks && hit.hooks.length > 0) {
           const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
           console.log(`        hooks: ${parts.join(", ")}`);
