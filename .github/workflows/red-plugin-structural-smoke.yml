@@ -1,0 +1,26 @@
+name: red-plugin-structural-smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-structural-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Test broken structural smoke fixture
+        run: scripts/test-plugin-structural-smoke.sh
+
+      - name: Run plugin structural smoke fleet
+        run: scripts/run-plugin-structural-smokes.sh
