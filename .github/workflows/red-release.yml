@@ -9,8 +9,9 @@ name: red-release
 #      - `feat:`                              → minor bump
 #      - anything else (`fix:`, `chore:`, …) → patch bump
 #      - no `feat`/`fix`/`!` commits          → skip (no release)
-#   3. Sync plugins/dev/.claude-plugin/plugin.json `version` field.
-#   4. Commit the bump back to main (marker `[skip release]` to avoid loop).
+#   3. Build, pack, contract-check, publish, and registry-smoke the npm package.
+#   4. Sync plugin/package manifest versions and commit the bump back to main
+#      (marker `[skip release]` to avoid loop).
 #   5. Create the git tag and a GitHub Release with auto-generated notes.
 #   6. Move the matching major tag (for example `v1`) to the same commit so
 #      reusable workflows and actions pinned to `@v1` keep receiving releases.
@@ -68,6 +69,10 @@ jobs:
       - name: Test workflow security pins
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-workflow-security-pins.sh
+
+      - name: Test red-release npm publish contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-red-release-npm-publish-contract.sh
 
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
@@ -187,79 +192,6 @@ jobs:
           writeFileSync('../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('dev runtime manifest:', JSON.stringify(manifest));
           EOF
-
-      - name: Sync plugin manifest versions
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          manifests=(
-            plugins/dev/.claude-plugin/plugin.json
-            plugins/dev/.codex-plugin/plugin.json
-            plugins/memory/.claude-plugin/plugin.json
-            plugins/memory/.codex-plugin/plugin.json
-            plugins/brain/.claude-plugin/plugin.json
-            plugins/brain/.codex-plugin/plugin.json
-          )
-          package_jsons=(
-            package.json
-            apps/dev/package.json
-            apps/memory/package.json
-            apps/brain/package.json
-            apps/opencode-host/package.json
-            apps/benchmark-memory/package.json
-            apps/benchmark-code-understanding/package.json
-            apps/code-nav/package.json
-            packages/shared/package.json
-            packages/build-info/package.json
-          )
-          # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
-          # `pnpm build` above. Stage both so a source change ships; they carry no
-          # version, so an unchanged source leaves them byte-identical (git add no-op).
-          fetch_bundle=plugins/dev/hooks/red-fetch.mjs
-          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
-          new="${NEXT#v}"
-          for manifest in "${manifests[@]}"; do
-            tmp=$(mktemp)
-            jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
-            mv "$tmp" "$manifest"
-          done
-          for package_json in "${package_jsons[@]}"; do
-            tmp=$(mktemp)
-            jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
-            mv "$tmp" "$package_json"
-          done
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # The bump commit stages ZERO files under .github/workflows/: the
-          # GITHUB_TOKEN cannot push commits that touch workflow files, so the
-          # first-party afk-attempt pin lives on the moving major @v1 tag (force-
-          # moved to HEAD each cut below) instead of being rewritten here.
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
-            echo "plugin/package manifests already at $new and entrypoints unchanged"
-          else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
-            git commit -m "chore(release): $NEXT [skip release]"
-            # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
-            # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
-            # workflow), so the bump push races it and loses on a plain push.
-            # Retry with a rebase so a concurrent push never wedges the release.
-            pushed=0
-            for attempt in 1 2 3; do
-              if git push origin HEAD:main; then pushed=1; break; fi
-              echo "push rejected (attempt $attempt) — rebasing onto origin/main"
-              git fetch origin main
-              git rebase origin/main
-            done
-            if [ "$pushed" != 1 ]; then
-              echo "::error::bump push to main failed after 3 attempts"
-              exit 1
-            fi
-          fi
 
       # ADR 0029: the Memory runtime ships as release assets, not committed
       # build output. esbuild bundles the CLI (all JS deps inlined) into one
@@ -511,8 +443,10 @@ jobs:
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver
       # (the packaged bin) against the packed tarball as a producer/consumer
-      # contract check BEFORE publishing. A broken tarball fails the release here
-      # rather than shipping.
+      # contract check BEFORE publishing. Publish and a real registry smoke both
+      # complete BEFORE any tag or manifest-stamp side effect, so a missing token,
+      # failed publish, or stale registry aborts the release while history still
+      # points at the previous working version.
       - name: Pack npm package + producer/consumer contract check
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
@@ -537,25 +471,128 @@ jobs:
           node "$smoke/node_modules/@reddb-io/red-skills/bin/red-skills-dev.mjs" --version
           rm -rf "$smoke"
 
-      - name: Publish to npm (guarded)
+      - name: Publish to npm
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
+          version="${NEXT#v}"
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::warning::NPM_TOKEN secret absent — skipping npm publish of @reddb-io/red-skills@${NEXT#v}"
-            exit 0
+            echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills@${version}"
+            exit 1
           fi
           # canary channel → npm `canary` dist-tag; stable → `latest` (default).
           tag_args=()
-          case "${NEXT#v}" in
+          case "$version" in
             *-*) tag_args=(--tag canary) ;;
           esac
           cd packaging/npm
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
           pnpm publish --access public --no-git-checks "${tag_args[@]}"
+
+      - name: Smoke published npm package from registry
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          version="${NEXT#v}"
+          smoke="$(mktemp -d)"
+          trap 'rm -rf "$smoke"' EXIT
+          export npm_config_cache="$smoke/npm-cache"
+          export npm_config_prefix="$smoke/npm-prefix"
+          for attempt in 1 2 3 4 5; do
+            if output="$(npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version 2>&1)"; then
+              printf '%s\n' "$output"
+              if grep -qF "dev ${version} " <<<"$output"; then
+                echo "registry smoke returned @reddb-io/red-skills@${version}"
+                exit 0
+              fi
+              echo "::error::registry smoke returned unexpected version output for @reddb-io/red-skills@${version}"
+              exit 1
+            fi
+            printf '%s\n' "$output" >&2
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::registry did not serve @reddb-io/red-skills@${version} after publish"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+      - name: Sync plugin manifest versions
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          manifests=(
+            plugins/dev/.claude-plugin/plugin.json
+            plugins/dev/.codex-plugin/plugin.json
+            plugins/memory/.claude-plugin/plugin.json
+            plugins/memory/.codex-plugin/plugin.json
+            plugins/brain/.claude-plugin/plugin.json
+            plugins/brain/.codex-plugin/plugin.json
+          )
+          package_jsons=(
+            package.json
+            apps/dev/package.json
+            apps/memory/package.json
+            apps/brain/package.json
+            apps/opencode-host/package.json
+            apps/benchmark-memory/package.json
+            apps/benchmark-code-understanding/package.json
+            apps/code-nav/package.json
+            packages/shared/package.json
+            packages/build-info/package.json
+          )
+          # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
+          # `pnpm build` above. Stage both so a source change ships; they carry no
+          # version, so an unchanged source leaves them byte-identical (git add no-op).
+          fetch_bundle=plugins/dev/hooks/red-fetch.mjs
+          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
+          new="${NEXT#v}"
+          for manifest in "${manifests[@]}"; do
+            tmp=$(mktemp)
+            jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
+            mv "$tmp" "$manifest"
+          done
+          for package_json in "${package_jsons[@]}"; do
+            tmp=$(mktemp)
+            jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
+            mv "$tmp" "$package_json"
+          done
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # The bump commit stages ZERO files under .github/workflows/: the
+          # GITHUB_TOKEN cannot push commits that touch workflow files, so the
+          # first-party afk-attempt pin lives on the moving major @v1 tag (force-
+          # moved to HEAD each cut below) instead of being rewritten here.
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
+            echo "plugin/package manifests already at $new and entrypoints unchanged"
+          else
+            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
+            git commit -m "chore(release): $NEXT [skip release]"
+            # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
+            # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
+            # workflow), so the bump push races it and loses on a plain push.
+            # Retry with a rebase so a concurrent push never wedges the release.
+            pushed=0
+            for attempt in 1 2 3; do
+              if git push origin HEAD:main; then pushed=1; break; fi
+              echo "push rejected (attempt $attempt) — rebasing onto origin/main"
+              git fetch origin main
+              git rebase origin/main
+            done
+            if [ "$pushed" != 1 ]; then
+              echo "::error::bump push to main failed after 3 attempts"
+              exit 1
+            fi
+          fi
 
       - name: Build release manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
