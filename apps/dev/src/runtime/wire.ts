@@ -904,6 +904,8 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
           title: state.current.title,
           stage: state.current.stage,
           started_at: state.current.started_at,
+          model: state.current.model,
+          effort: state.current.effort,
           input_tokens: state.current.input_tokens,
           output_tokens: state.current.output_tokens,
           cost_usd: state.current.cost_usd,
