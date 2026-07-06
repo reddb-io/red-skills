@@ -21,6 +21,9 @@ describe("issue lifecycle transition table", () => {
     const edges = new Set(ISSUE_LIFECYCLE_TRANSITIONS.map((row) => row.edge));
     const expected: IssueLifecycleEdge[] = [
       "claim",
+      "contest",
+      "contest-expired",
+      "contest-reclaimed",
       "retry",
       "dependency-unblocked",
       "dependency-blocked",
@@ -60,6 +63,33 @@ describe("issue lifecycle transition table", () => {
         edge: "retry",
         fromLabels: ["running"],
         removeLabels: ["running"],
+        addLabels: ["ready-for-agent"],
+      }),
+    ).toEqual(["ready-for-agent"]);
+
+    expect(
+      validateIssueLifecycleTransition({
+        edge: "contest",
+        fromLabels: ["running"],
+        removeLabels: [],
+        addLabels: ["contested"],
+      }).sort(),
+    ).toEqual(["contested", "running"]);
+
+    expect(
+      validateIssueLifecycleTransition({
+        edge: "contest-reclaimed",
+        fromLabels: ["running", "contested"],
+        removeLabels: ["contested"],
+        addLabels: [],
+      }),
+    ).toEqual(["running"]);
+
+    expect(
+      validateIssueLifecycleTransition({
+        edge: "contest-expired",
+        fromLabels: ["running", "contested"],
+        removeLabels: ["running", "contested"],
         addLabels: ["ready-for-agent"],
       }),
     ).toEqual(["ready-for-agent"]);
@@ -126,5 +156,14 @@ describe("issue lifecycle transition table", () => {
         addLabels: ["ready-for-agent", "blocked:validation"],
       }),
     ).toThrow(/queued\/active issue cannot also carry blocked:\*/);
+
+    expect(() =>
+      validateIssueLifecycleTransition({
+        edge: "contest-expired",
+        fromLabels: ["running"],
+        removeLabels: ["running"],
+        addLabels: ["ready-for-agent"],
+      }),
+    ).toThrow(/no legal row/);
   });
 });
