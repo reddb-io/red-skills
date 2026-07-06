@@ -1242,8 +1242,25 @@ function renderContext(
     // user hooks fired without re-reading the raw Envelope.
     const hooksLine = renderAttemptHooks(p.hooks);
     if (hooksLine) lines.push(`  ${hooksLine}`);
+    const lineageLine = renderSupersessionLine(p);
+    if (lineageLine) lines.push(`  ${lineageLine}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function renderSupersessionLine(p: RecalledNode["properties"]): string | null {
+  const supersededBy = numericProp(p.superseded_by);
+  if (supersededBy == null) return null;
+  const parts = [`superseded_by=memory_nodes:${supersededBy}`];
+  const validFrom = numericProp(p.valid_from);
+  const validUntil = numericProp(p.valid_until);
+  if (validFrom != null) parts.push(`valid_from=${validFrom}`);
+  if (validUntil != null) parts.push(`valid_until=${validUntil}`);
+  return `_lineage: ${parts.join(" ")}_`;
+}
+
+function numericProp(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function renderAttemptHooks(hooks: unknown): string | null {
