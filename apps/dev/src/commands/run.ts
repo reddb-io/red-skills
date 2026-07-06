@@ -79,7 +79,7 @@ import {
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
+import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
@@ -1860,6 +1860,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
           // agent stream event; `validating`/`merging` by the orchestrator at the
           // gate/landing steps (deps.markPhase).
           "current.phase": "setup",
+        });
+        // Durable write-once identity sidecar (issue #1219): the immutable
+        // worker_id/runner/origin/number/started_at the isolation fallback in
+        // readWorkerState reads so a live isolation worker whose host-side
+        // afk.state.json is still zeroed renders its real identity instead of the
+        // `?  run=-  00:00:00` ghost. Never clobbered by vitals updateState writes.
+        writeIdentitySync(attemptDir, {
+          worker_id: c.workerId,
+          runner: c.runner,
+          origin: flags.origin ?? "",
+          number: candidate.number,
+          started_at: startedAt,
         });
       } catch {
         // Best-effort — a failed seed must never block the worker's actual work.
