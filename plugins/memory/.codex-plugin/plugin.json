@@ -17,16 +17,17 @@
     "claude-code",
     "skills",
     "agents",
-    "memory",
-    "knowledge"
+    "memory"
   ],
-  "skills": "./skills/",
+  "skills": [
+    "./skills/core/"
+  ],
   "hooks": "./hooks/codex.hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RedSkills Memory",
-    "shortDescription": "Governed operational memory for code agents.",
-    "longDescription": "RedSkills Memory gives code agents governed operational memory that survives /clear and crosses sessions. It supports markdown-only notes and a RedDB-backed graph mode with repo ingest, zero-token governed recall, context packs, claim checks, readiness, graph export, optional lifecycle hooks, MCP/HTTP read access, Memory Workbench diagnostics, and Skill telemetry used by report-only curator diagnostics. Builds on the dev plugin processes.",
+    "shortDescription": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+    "longDescription": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
@@ -37,9 +38,10 @@
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Run $init to set up markdown-only notes or graph-backed governed memory.",
-      "Capture one scoped decision/gotcha/validation with $store, or extract durable facts with $extract.",
-      "Use $recall as the canonical governed context path, then verify with claim checks/readiness or inspect telemetry with $skills-status."
+      "Use $init when this workspace needs it.",
+      "Use $store when this workspace needs it.",
+      "Use $recall when this workspace needs it.",
+      "Use $ingest when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }
