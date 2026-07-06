@@ -142,7 +142,7 @@ describe("statusline style — header line", () => {
 });
 
 describe("statusline style — terse per-worker line (issue #1175)", () => {
-  it("renders the terse colored k=v line: bold-red wID, k=v tokens, #issue+stage, elapsed, loc, tks, individual vitals", () => {
+  it("renders the terse colored k=v line: bold-red wID, k=v tokens, iss=number, bare stage, elapsed, loc, tks, individual vitals", () => {
     const line = renderWorkerLine(worker(), NOW);
     expect(line.endsWith(RESET)).toBe(true);
     expect(line).toContain(NOBG); // fully transparent — no red block
@@ -153,16 +153,21 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     // wID renders bold, immediately (bold red).
     expect(line.startsWith(`${NOBG}${SOFT}${BOLD}w1`)).toBe(true);
     const t = stripAnsi(line);
-    // The terse spec, token by token.
+    // The terse spec, token by token (issue #1176 fixes).
     expect(t).toContain("w1"); // bare wID (no [live]/[quiet] badge)
     expect(t).toContain("run=claude opus high"); // runner + shortened model + effort
-    expect(t).toContain("iss=7/10"); // done/total
-    expect(t).toContain("#17 impl"); // issue NUMBER + bare stage (no stage: prefix)
+    expect(t).toContain("iss=17"); // the ISSUE NUMBER (current.number), not a done/total counter
+    expect(t).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
     expect(t).toContain("00:05:00"); // elapsed REQUIRED
     expect(t).toContain("loc=+12 -3"); // diff as loc= k=v
     expect(t).toContain("tks=0"); // humanized tokens (none yet)
-    expect(t).toContain("tools=0 reason=0 text=0"); // vitals as individual k=v pairs
+    expect(t).toContain("tls=0 rsn=0 txt=0"); // vitals as individual 3-letter k=v pairs
     // The DROPPED verbosity must be gone.
+    expect(t).not.toContain("iss=7/10"); // the old done/total counter is gone
+    expect(t).not.toContain("#17"); // the standalone #<n> token is dropped
+    expect(t).not.toContain("tools="); // renamed → tls= on the statusline line
+    expect(t).not.toContain("reason="); // renamed → rsn=
+    expect(t).not.toContain("text="); // renamed → txt=
     expect(t).not.toContain("[live]");
     expect(t).not.toContain("[quiet]");
     expect(t).not.toContain("redesign statusline"); // no title
@@ -170,6 +175,34 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).not.toContain("wait"); // no wait token
     expect(t).not.toMatch(/\blog:/); // no log token
     expect(t).not.toContain("stats="); // vitals are not a nested blob
+  });
+
+  it("makes EVERY k=v key on the statusline worker line exactly 3 letters (house rule, issue #1176)", () => {
+    const t = stripAnsi(renderWorkerLine(worker(), NOW));
+    // Collect every key that precedes an `=` and assert each is 3 chars.
+    const keys = [...t.matchAll(/([A-Za-z]+)=/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) expect(key).toHaveLength(3);
+    // The concrete set present.
+    expect(keys).toEqual(expect.arrayContaining(["run", "iss", "loc", "tks", "tls", "rsn", "txt"]));
+  });
+
+  it("populates iss=<number> for a /go-shaped worker state (no queue — total 0/done 0)", () => {
+    // A /go run has no queue, so done/total are 0/0 (the old counter was meaningless);
+    // current.number still carries the single issue number, set on claim like /afk.
+    const w = worker({
+      state: {
+        ...worker().state,
+        worker_id: "wGO",
+        done: 0,
+        total: 0,
+        current: { ...worker().state.current, number: 1766 },
+      },
+    });
+    const t = stripAnsi(renderWorkerLine(w, NOW));
+    expect(t).toContain("iss=1766"); // the issue number, populated for the /go lane
+    expect(t).not.toContain("iss=0/0"); // never the empty-queue counter
+    expect(t).not.toContain("#1766"); // no standalone #<n>
   });
 
   it("omits just the effort word when the worker has no effort (run=<runner> <model>)", () => {
@@ -207,7 +240,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
     const t = stripAnsi(renderWorkerLine(w, NOW));
-    expect(t).toContain("tools=11 reason=13 text=0");
+    expect(t).toContain("tls=11 rsn=13 txt=0");
     expect(t).not.toContain("stats=");
   });
 });
@@ -225,7 +258,7 @@ describe("statusline style — full themed assembly", () => {
     expect(stripAnsi(rows[1])).toContain("w1"); // terse worker row, no [live] badge
     expect(stripAnsi(rows[1])).toContain("run=claude opus high");
     expect(stripAnsi(rows[1])).not.toContain("[live]");
-    expect(stripAnsi(rows[2])).toContain("#20");
+    expect(stripAnsi(rows[2])).toContain("iss=20"); // second worker's issue number
   });
 
   it("emits only the header row when there are no live workers", () => {
