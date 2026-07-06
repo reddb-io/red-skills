@@ -444,7 +444,12 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { readWorkerState, readAllWorkerStates, type WorkerStateRecord } from "../core/worker-state-reader.js";
+import {
+  readWorkerState,
+  readAllWorkerStates,
+  currentRenderableWorkerRecords,
+  type WorkerStateRecord,
+} from "../core/worker-state-reader.js";
 import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
@@ -669,15 +674,13 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   // here never blocks the render. Live-worker dirs and blocked/ready-for-human
   // post-mortem artifacts are preserved (planLivenessReclaim).
   await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
-  const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+  const currentRecords = currentRenderableWorkerRecords(records);
+  const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness, livenessVerdict, renderableLive } of records) {
-    // The ONE shared render-gate (issue #1219): the monitor used to render EVERY
-    // globbed dir (no gate) — the graveyard of stale rows. Route it through the
-    // same `renderableLive` predicate the statusline uses so the dashboard drops
-    // dead/stalled/finished-pid-0 workers and both surfaces agree on liveness.
-    if (!renderableLive) continue;
+  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of currentRecords) {
+    // The shared current-worker selector applies the `renderableLive` gate and
+    // collapses retained sibling attempt dirs to one row per worker.
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. #1210 Part B: read it from the
     // state file's writer-stamped counts only — the monitor render performs NO
@@ -860,7 +863,7 @@ export async function collectStatuslineAfk(
   // Namespace-blind union across the fleet, `/go`, and `--scout` lanes so the
   // statusline counts a live `/go`/`--scout` worker (rendered per-origin via
   // state.origin), not only the `.red/tmp/workers` fleet lane.
-  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
+  const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -883,17 +886,9 @@ export async function collectStatuslineAfk(
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, renderableLive } of records) {
-    // The ONE shared render-gate (issue #1219): computed once in
-    // readAllWorkerStates as `livenessVerdict.status !== "stalled" &&
-    // (pidIdentityLive || hostPidLive)`. Drops stalled workers AND finished/
-    // retained pid-0 attempts (kept for post-mortem, whose per-attempt lane can
-    // still read fresh), while keeping busy workers with live descendants and
-    // live isolation workers (host-side worker.pid). The statusline aggregate,
-    // the per-worker lines, and the monitor dashboard all route through this
-    // same field so every surface agrees on who is live.
-    if (!renderableLive) continue;
-
+  for (const { state } of records) {
+    // Shared with the monitor/per-worker statusline collectors: renderable rows
+    // are already gated and collapsed to one current attempt per worker.
     workers += 1;
     blocked += state.blocked;
     if (runner === "" && state.runner) runner = state.runner;
@@ -1028,14 +1023,11 @@ export async function collectStatuslineAfk(
 export async function collectStatuslineWorkers(ctx: RepoContext): Promise<CompactWorker[]> {
   const paths = afkPaths(ctx.root);
   const nowMs = Date.now();
-  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
+  const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive, liveness, livenessVerdict, renderableLive } of records) {
-    // The ONE shared render-gate (issue #1219), identical to the aggregate
-    // collector and the monitor: drops stalled workers and finished/retained
-    // pid-0 attempts, keeps busy workers with live descendants and live
-    // isolation workers. See readAllWorkerStates / isRenderableLive.
-    if (!renderableLive) continue;
+  for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
+    // The shared current-worker selector applies the `renderableLive` gate and
+    // collapses retained sibling attempt dirs to one row per worker.
     // #1210 Part B: no per-render git subprocess — read the writer-stamped LOC
     // straight from the state file (the heartbeat owns it for every runner).
     const added = state.current.loc_added;
