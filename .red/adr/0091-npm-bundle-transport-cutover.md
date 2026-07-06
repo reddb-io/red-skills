@@ -46,8 +46,10 @@ registry shasum/provenance integrity, and **no postinstall download**.
    cache-first — and copies the packaged `dist/<plugin>.bundle.min.mjs` into the
    existing version-keyed cache. The GitHub-release download path and the
    client-side sigstore verification are **removed**. `canary` is the npm
-   `canary` dist-tag. Integrity is npm's tarball shasum; the client verifies no
-   signature.
+   `canary` dist-tag; `scripts/afk-promote-channel.sh` points that tag at an
+   already-published stable package version with
+   `npm dist-tag add @reddb-io/red-skills@<version> canary`. Integrity is npm's
+   tarball shasum; the client verifies no signature.
 3. **Self-update (amends ADR 0084).** Discovery queries the npm registry
    (`registry.npmjs.org/@reddb-io%2Fred-skills`) for the newest same-major
    version instead of the phantom `v1` release. The ADR 0084 atomic
@@ -57,10 +59,11 @@ registry shasum/provenance integrity, and **no postinstall download**.
    `pnpm pack`s it, runs the **real packaged client against the packed tarball**
    (`--version` smoke) as a producer/consumer contract check, then does an
    `NPM_TOKEN`-guarded `pnpm publish --access public --no-git-checks` (a
-   `::warning::` skip when the secret is absent; `--tag canary` for
-   prereleases). Cosign install + manifest signing are removed. Bundle assets are
-   still uploaded to the GitHub Release as an **inert backup** the client never
-   reads.
+   `::warning::` skip when the secret is absent). Stable releases publish to
+   npm's default `latest` tag. The opt-in canary channel is not a separate
+   prerelease build; it is a dist-tag pointer moved after publish. Cosign install
+   + manifest signing are removed. Bundle assets are still uploaded to the
+   GitHub Release as an **inert backup** the client never reads.
 5. **Version.** Versioning stays on the **1.x line** — the release auto-bump
    owns the version, and the npm package publishes at whatever version the
    release computes (maintainer decision on #1200: the transport cutover is
