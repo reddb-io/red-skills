@@ -1,72 +1,83 @@
 /**
- * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles.
+ * bundle-fetch.ts — pure-with-injected-IO resolver for per-plugin built bundles,
+ * distributed over **npm** (ADR 0091, v2 transport cutover).
  *
- * ADR 0034 ("Dynamic dist fetch") generalises the memory bootstrap (ADR 0029):
- * every plugin builds to a single `<plugin>.bundle.min.mjs` that ships as a
- * GitHub Release asset instead of living in the git tree. An installed plugin
- * resolves its bundle for the installed version, fetching it from the release
- * into a local cache the first time it is needed and verifying a published
- * sha256 checksum.
+ * ADR 0034 originally shipped every plugin bundle as a GitHub Release asset,
+ * fetched into a version-keyed cache and verified with a hand-rolled Sigstore
+ * signature over a checksum manifest. That channel broke: `cosign sign-blob`
+ * emits the legacy cosign bundle format the client's `sigstore-js` verify() no
+ * longer accepts ("invalid bundle"), and the self-update lane polled a
+ * `releases/download/v1/` release that never existed (eternal 404). There was no
+ * working installed base to preserve, so ADR 0091 **deletes** that channel: the
+ * bundles now ship inside a single npm package `@reddb-io/red-skills`, resolved
+ * at the exact pinned version via npm's own cache and shasum/provenance
+ * integrity. No GitHub-release download, no client-side signature verification.
  *
- * This module holds ZERO real IO: every side effect (download, file read/write,
- * existence check, hashing) is injected via {@link BundleIO}. The launcher
- * (`entrypoint-cli.ts`) wires these to node built-ins (`fetch`, `node:fs`,
- * `node:crypto`); the test wires them to in-memory fakes. That keeps the fetch
- * logic deterministic and unit-testable with no real network.
+ * This module holds ZERO real IO: every side effect (npm materialisation, file
+ * read/write, existence check, registry query) is injected via {@link BundleIO}.
+ * The launcher (`entrypoint-cli.ts`) wires these to node built-ins (`npm`,
+ * `node:fs`, `fetch`); the test wires them to in-memory fakes. That keeps
+ * resolution deterministic and unit-testable with no real network.
  */
 
-/** The checksum manifest published alongside each bundle on the release. */
-import { type ReleaseChannel, channelReleaseRef } from "./channel.js";
+import { type ReleaseChannel } from "./channel.js";
 
-export interface BundleManifest {
-  plugin: string;
-  version: string;
-  /** hex sha256 of the `<plugin>.bundle.min.mjs` asset bytes. */
-  sha256: string;
-}
+/** The single npm package that carries every plugin's built bundle. */
+export const NPM_PACKAGE = "@reddb-io/red-skills";
+
+/** Public npm registry base (self-update version discovery reads from here). */
+export const NPM_REGISTRY_BASE = "https://registry.npmjs.org";
+
+/** The npm dist-tag the `canary` channel tracks (replaces the floating GH tag). */
+export const CANARY_DIST_TAG = "canary";
 
 export interface ResolveBundleInput {
   plugin: string;
   version: string;
   cacheDir: string;
-  /** Release channel; absent = `stable` (version-pinned, pre-ADR 0058). */
+  /** Release channel; absent = `stable` (version-pinned). */
   channel?: ReleaseChannel;
-  /** `owner/name` GitHub repo that publishes the release; unused by resolve. */
+  /** Unused by resolve; kept for signature compatibility with callers. */
   repo?: string;
 }
 
 export interface EnsureBundleInput {
   plugin: string;
   version: string;
-  /** `owner/name` GitHub repo that publishes the release. */
-  repo: string;
+  /** `owner/name` GitHub repo — retained for call-site compatibility; unused. */
+  repo?: string;
   cacheDir: string;
-  /** Release channel; absent = `stable` (version-pinned, pre-ADR 0058). */
+  /** Release channel; absent = `stable` (version-pinned). */
   channel?: ReleaseChannel;
 }
 
-/** Injected IO surface. All async; all errors surface as BundleFetchError. */
+/**
+ * Injected IO surface. All async (except `sha256`); all errors surface as a
+ * typed {@link BundleFetchError}. There is deliberately NO signature-verify hook
+ * and NO raw-URL download hook: integrity is npm's shasum/provenance, and the
+ * only network access is a read-only registry query for self-update discovery.
+ */
 export interface BundleIO {
-  download(url: string): Promise<Uint8Array>;
+  /**
+   * Materialise the npm package `spec` (`@reddb-io/red-skills@<pin>`) into
+   * `stagingDir` using npm's own cache, and return the installed package root
+   * directory (the folder that contains `dist/<plugin>.bundle.min.mjs`). Honours
+   * npm's local cache-first behaviour, so a warm cache does no network IO.
+   */
+  materialize(spec: string, stagingDir: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
   writeFile(path: string, bytes: Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   sha256(bytes: Uint8Array): string;
-  verifyBundleSignature(input: {
-    artifact: Uint8Array;
-    signature: Uint8Array;
-    repo: string;
-    ref: string;
-    assetName: string;
-  }): Promise<void>;
+  /** Read-only registry GET (self-update version discovery only). */
+  fetchText(url: string): Promise<string>;
 }
 
 export type BundleFetchFailure =
-  | "network"
-  | "asset-missing"
-  | "checksum-mismatch"
-  | "manifest-invalid"
-  | "signature-invalid";
+  | "npm-unavailable"
+  | "package-missing"
+  | "bundle-missing"
+  | "network";
 
 /** Typed, diagnosable failure — never a bare throw. */
 export class BundleFetchError extends Error {
@@ -83,11 +94,10 @@ export class BundleFetchError extends Error {
 /**
  * Canonical cache filename for a plugin bundle.
  *
- * `stable` (or no channel) keys by version (`<plugin>-<version>.bundle.min.mjs`)
- * — unchanged from pre-ADR 0058. `canary` keys by the channel literal
- * (`<plugin>-canary.bundle.min.mjs`) since the floating tag has no stable
- * version; checksum re-verification in {@link ensureBundle} refreshes it when
- * the canary tag moves.
+ * `stable` (or no channel) keys by version (`<plugin>-<version>.bundle.min.mjs`).
+ * `canary` keys by the channel literal (`<plugin>-canary.bundle.min.mjs`) since
+ * the dist-tag has no stable version; re-resolution in {@link ensureBundle}
+ * refreshes it when the canary tag moves.
  */
 export function bundleFileName(
   plugin: string,
@@ -104,206 +114,179 @@ export function resolveBundle(input: ResolveBundleInput): string {
   return joinPath(cacheDir, bundleFileName(plugin, version, channel));
 }
 
-/** GitHub release-asset URL: `…/releases/download/v<version>/<name>`. */
-export function assetUrl(repo: string, version: string, name: string): string {
-  return assetUrlForRef(repo, `v${version}`, name);
-}
-
-/** GitHub release-asset URL for an arbitrary release ref (tag): `…/releases/download/<ref>/<name>`. */
-export function assetUrlForRef(repo: string, ref: string, name: string): string {
-  return `https://github.com/${repo}/releases/download/${ref}/${name}`;
-}
-
-/** Release asset name for a plugin's bundle. */
-export function bundleAssetName(plugin: string): string {
+/** Bundle filename inside the npm package tarball's `dist/`. */
+export function packagedBundleName(plugin: string): string {
   return `${plugin}.bundle.min.mjs`;
 }
 
-/** Release asset name for a plugin's checksum manifest. */
-export function manifestAssetName(plugin: string): string {
-  return `${plugin}.manifest.json`;
-}
-
-/** Release asset name for a plugin's Sigstore bundle over the checksum manifest. */
-export function manifestSignatureAssetName(plugin: string): string {
-  return `${manifestAssetName(plugin)}.sigstore.json`;
+/** `dist/<plugin>.bundle.min.mjs` — the bundle's path inside the package root. */
+export function packagedBundleRelPath(plugin: string): string {
+  return joinPath("dist", packagedBundleName(plugin));
 }
 
 /**
- * Ensure the bundle for `plugin@version` exists in `cacheDir` and matches the
- * published sha256; return its local path.
+ * The npm package spec the client resolves for a channel + version. `stable`
+ * pins the exact version (`@reddb-io/red-skills@2.0.0`); `canary` follows the
+ * `canary` dist-tag (`@reddb-io/red-skills@canary`). This is the ONLY thing the
+ * client ever asks npm for — no release tags, no `releases/download/` URLs.
+ */
+export function npmPackageSpec(
+  version: string,
+  channel: ReleaseChannel = "stable",
+): string {
+  const ref = channel === "canary" ? CANARY_DIST_TAG : version;
+  return `${NPM_PACKAGE}@${ref}`;
+}
+
+/** Registry metadata URL for the package (scoped name is `%2F`-escaped). */
+export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
+  return `${NPM_REGISTRY_BASE}/${pkg.replace("/", "%2F")}`;
+}
+
+/**
+ * Ensure the bundle for `plugin@version` exists in `cacheDir`; return its local
+ * path. Cache-first: a cache hit returns immediately with no npm invocation.
  *
- * - Cache hit (file exists, manifest sha256 matches): no download, returns path.
- * - Cache miss (or checksum drift): download manifest + bundle from the release,
- *   verify checksum, write to cache, return path.
+ * Cache miss: materialise `@reddb-io/red-skills@<pin>` via npm (npm verifies the
+ * tarball shasum itself), copy the packaged `dist/<plugin>.bundle.min.mjs` into
+ * the cache, return it. Integrity comes from npm; there is no client-side
+ * signature step.
  *
- * Failure modes raise a typed {@link BundleFetchError} and never write a bad
+ * Failure modes raise a typed {@link BundleFetchError} and never write a partial
  * bundle to the cache:
- *   - `network`           — manifest/bundle download failed (offline, etc.)
- *   - `asset-missing`     — release asset returned not-found
- *   - `manifest-invalid`  — manifest JSON malformed / wrong shape
- *   - `signature-invalid` — manifest signature missing or unverifiable
- *   - `checksum-mismatch` — downloaded bundle sha256 != manifest sha256
+ *   - `npm-unavailable` — the npm CLI could not be invoked
+ *   - `package-missing` — npm could not resolve the pinned package/version
+ *   - `bundle-missing`  — the package resolved but has no bundle for `plugin`
+ *   - `network`         — registry/materialisation network failure
  */
 export async function ensureBundle(
   io: BundleIO,
   input: EnsureBundleInput,
 ): Promise<string> {
-  const { plugin, version, repo, cacheDir, channel = "stable" } = input;
+  const { plugin, version, cacheDir, channel = "stable" } = input;
   const dest = resolveBundle({ plugin, version, cacheDir, channel });
-  const ref = channelReleaseRef(channel, version);
 
-  const signedManifest = await fetchManifestEnvelope(io, repo, plugin, ref);
-  const manifest = signedManifest.manifest;
+  // Cache-first: a present cached bundle is served without touching npm.
+  if (await io.exists(dest)) return dest;
 
-  // Cache hit: verify against the manifest before trusting it.
-  if (await io.exists(dest)) {
-    try {
-      const have = io.sha256(await io.readFile(dest));
-      if (have === manifest.sha256.toLowerCase()) {
-        await verifyManifestSignature(io, repo, ref, signedManifest);
-        return dest;
-      }
-    } catch {
-      // Unreadable cache file falls through to a re-download.
-    }
-  }
+  const spec = npmPackageSpec(version, channel);
+  const stagingDir = joinPath(
+    cacheDir,
+    `.staging-${plugin}-${channel === "canary" ? "canary" : version}`,
+  );
 
-  // Cache miss / drift: download, verify, then write.
-  const bundleName = bundleAssetName(plugin);
-  let bytes: Uint8Array;
+  let pkgRoot: string;
   try {
-    bytes = await io.download(assetUrlForRef(repo, ref, bundleName));
+    pkgRoot = await io.materialize(spec, stagingDir);
   } catch (err) {
-    throw classifyDownloadError(err, bundleName);
+    throw classifyMaterializeError(err, spec);
   }
 
-  const got = io.sha256(bytes);
-  if (got !== manifest.sha256.toLowerCase()) {
+  const src = joinPath(pkgRoot, packagedBundleRelPath(plugin));
+  if (!(await io.exists(src))) {
     throw new BundleFetchError(
-      "checksum-mismatch",
-      `checksum mismatch for ${bundleName}: ${got} != ${manifest.sha256}`,
+      "bundle-missing",
+      `npm package ${spec} has no ${packagedBundleRelPath(plugin)}`,
     );
   }
-  await verifyManifestSignature(io, repo, ref, signedManifest);
+  const bytes = await io.readFile(src);
 
-  // Only reached on a verified payload — a bad bundle is never cached.
+  // Only reached on a resolved package + present bundle.
   await io.writeFile(dest, bytes);
   return dest;
 }
 
 /**
- * Download + validate a plugin's checksum manifest from an arbitrary release
- * `ref` (a version tag `v<x>` or a floating tag). Exported so the in-range
- * self-update layer (ADR 0084, `self-update.ts`) can read the floating
- * major-line manifest that names the newest compatible version.
+ * Query the npm registry and return the newest published version whose major
+ * matches `installed` (same-major, ADR 0084 compatible range), or `null`. Reads
+ * the registry `versions` map — it never constructs a GitHub release URL. Used
+ * by the in-range self-update layer (`self-update.ts`).
  */
-export async function fetchManifest(
-  io: BundleIO,
-  repo: string,
-  plugin: string,
-  ref: string,
-): Promise<BundleManifest> {
-  const signedManifest = await fetchManifestEnvelope(io, repo, plugin, ref);
-  await verifyManifestSignature(io, repo, ref, signedManifest);
-  return signedManifest.manifest;
+export async function fetchNewestSameMajor(
+  io: Pick<BundleIO, "fetchText">,
+  installed: string,
+  pkg: string = NPM_PACKAGE,
+): Promise<string | null> {
+  let text: string;
+  try {
+    text = await io.fetchText(registryPackageUrl(pkg));
+  } catch (err) {
+    throw classifyMaterializeError(err, pkg);
+  }
+  return newestSameMajor(parseRegistryVersions(text), installed);
 }
 
-interface SignedManifestEnvelope {
-  name: string;
-  signatureName: string;
-  raw: Uint8Array;
-  signature: Uint8Array;
-  manifest: BundleManifest;
-}
-
-async function fetchManifestEnvelope(
-  io: BundleIO,
-  repo: string,
-  plugin: string,
-  ref: string,
-): Promise<SignedManifestEnvelope> {
-  const name = manifestAssetName(plugin);
-  const signatureName = manifestSignatureAssetName(plugin);
-  let raw: Uint8Array;
-  let signature: Uint8Array;
-  try {
-    raw = await io.download(assetUrlForRef(repo, ref, name));
-  } catch (err) {
-    throw classifyDownloadError(err, name);
-  }
-  try {
-    signature = await io.download(assetUrlForRef(repo, ref, signatureName));
-  } catch (err) {
-    throw new BundleFetchError(
-      "signature-invalid",
-      `manifest signature ${signatureName} is missing or unavailable`,
-      err,
-    );
-  }
+/** Parse the published-version list out of registry package metadata JSON. */
+export function parseRegistryVersions(text: string): string[] {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(raw));
-  } catch (err) {
-    throw new BundleFetchError("manifest-invalid", `manifest ${name} is not valid JSON`, err);
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
   }
-  if (!isManifest(parsed)) {
-    throw new BundleFetchError(
-      "manifest-invalid",
-      `manifest ${name} missing required fields {plugin, version, sha256}`,
-    );
-  }
-  return {
-    name,
-    signatureName,
-    raw,
-    signature,
-    manifest: { ...parsed, sha256: parsed.sha256.toLowerCase() },
-  };
+  if (typeof parsed !== "object" || parsed === null) return [];
+  const versions = (parsed as { versions?: unknown }).versions;
+  if (typeof versions !== "object" || versions === null) return [];
+  return Object.keys(versions as Record<string, unknown>);
 }
 
-async function verifyManifestSignature(
-  io: BundleIO,
-  repo: string,
-  ref: string,
-  envelope: SignedManifestEnvelope,
-): Promise<void> {
+/** The version a dist-tag points at in registry metadata, or undefined. */
+export function registryDistTagVersion(
+  text: string,
+  tag: string,
+): string | undefined {
+  let parsed: unknown;
   try {
-    await io.verifyBundleSignature({
-      artifact: envelope.raw,
-      signature: envelope.signature,
-      repo,
-      ref,
-      assetName: envelope.name,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new BundleFetchError(
-      "signature-invalid",
-      `manifest signature ${envelope.signatureName} failed verification: ${msg}`,
-      err,
-    );
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
   }
+  const tags = (parsed as { "dist-tags"?: Record<string, unknown> })["dist-tags"];
+  const v = tags?.[tag];
+  return typeof v === "string" ? v : undefined;
 }
 
-function isManifest(value: unknown): value is BundleManifest {
-  if (typeof value !== "object" || value === null) return false;
-  const m = value as Record<string, unknown>;
+/** Newest same-major version from a list, or null when none match. */
+export function newestSameMajor(
+  versions: readonly string[],
+  installed: string,
+): string | null {
+  const target = majorOf(installed);
+  if (target === null) return null;
+  let best: string | null = null;
+  for (const v of versions) {
+    if (majorOf(v) !== target) continue;
+    if (best === null || compareVersion(v, best) > 0) best = v;
+  }
+  return best;
+}
+
+function majorOf(version: string): number | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version).trim());
+  return m ? Number(m[1]) : null;
+}
+
+function compareVersion(a: string, b: string): number {
+  const pa = /^(\d+)\.(\d+)\.(\d+)/.exec(a.trim());
+  const pb = /^(\d+)\.(\d+)\.(\d+)/.exec(b.trim());
+  if (!pa || !pb) return 0;
   return (
-    typeof m.plugin === "string" &&
-    typeof m.version === "string" &&
-    typeof m.sha256 === "string" &&
-    /^[0-9a-f]{64}$/i.test(m.sha256)
+    Number(pa[1]) - Number(pb[1]) ||
+    Number(pa[2]) - Number(pb[2]) ||
+    Number(pa[3]) - Number(pb[3])
   );
 }
 
-/** Map a download error to a typed asset-missing (404-ish) vs network failure. */
-function classifyDownloadError(err: unknown, assetName: string): BundleFetchError {
+/** Map an npm/registry error to a typed package-missing vs network failure. */
+function classifyMaterializeError(err: unknown, spec: string): BundleFetchError {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/\b404\b|not found|missing/i.test(msg)) {
-    return new BundleFetchError("asset-missing", `release asset ${assetName} not found: ${msg}`, err);
+  if (/ENOENT|command not found|spawn npm/i.test(msg)) {
+    return new BundleFetchError("npm-unavailable", `npm is unavailable while resolving ${spec}: ${msg}`, err);
   }
-  return new BundleFetchError("network", `failed to download ${assetName}: ${msg}`, err);
+  if (/\b404\b|E404|not found|no matching version|notarget/i.test(msg)) {
+    return new BundleFetchError("package-missing", `npm could not resolve ${spec}: ${msg}`, err);
+  }
+  return new BundleFetchError("network", `failed to resolve ${spec}: ${msg}`, err);
 }
 
 /** Minimal POSIX-style join (cache paths only); avoids a node:path import here. */
