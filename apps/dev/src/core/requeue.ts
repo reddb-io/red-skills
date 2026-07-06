@@ -19,7 +19,6 @@ import {
   type CurrentBlocker,
 } from "./blocker-state.js";
 import {
-  IllegalIssueLifecycleTransitionError,
   blockedLabelsIn,
   validateIssueLifecycleTransition,
 } from "./issue-lifecycle.js";
@@ -162,19 +161,16 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     );
   }
 
-  try {
-    validateIssueLifecycleTransition({
-      edge: "requeue-mixed-blocked-refusal",
-      fromLabels: input.labels,
-      removeLabels: [],
-      addLabels: [],
-    });
-  } catch (error) {
-    if (!(error instanceof IllegalIssueLifecycleTransitionError) || !error.reason.startsWith("mixed blocked:*")) {
-      throw error;
-    }
+  // Mixed blocked:* labels → label state is ambiguous; /hitl must reconcile.
+  // A no-op-mutation probe through validateIssueLifecycleTransition cannot
+  // express this: the `requeue-mixed-blocked-refusal` marker edge is
+  // `to: "illegal"`, so a legal (non-mixed) label set finds no matching row and
+  // throws "no legal row" instead of passing — the regression that turned every
+  // non-mixed requeue into an IllegalIssueLifecycleTransitionError. Detect the
+  // ambiguous state directly instead.
+  if (blocked.length > 1) {
     return refuse(
-      `${error.reason}: label state is ambiguous — use /hitl to reconcile`,
+      `mixed blocked:* labels [${blocked.join(", ")}]: label state is ambiguous — use /hitl to reconcile`,
       true,
       activeBlocker,
       input.body,
