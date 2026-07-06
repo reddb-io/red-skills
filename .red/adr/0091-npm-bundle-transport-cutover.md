@@ -93,3 +93,19 @@ self-update *version discovery* moves to the npm registry (killing the phantom
 - The deliberate divergence from reddb's postinstall-fetch pattern (their
   binaries are per-platform Rust; ours are platform-independent JS that fit in
   the tarball) is recorded in the PR body.
+
+## Amendment 1: publish is the release side-effect barrier
+
+Accepted for issue #1204.
+
+Once npm became the only client transport, `pnpm publish` could no longer be a
+best-effort side effect after version stamping. A skipped or failed publish would
+leave tags and plugin manifests pointing at a version the registry cannot serve,
+breaking cold installs and self-update resolution.
+
+The release workflow therefore treats npm publish as the load-bearing barrier:
+it packs and locally smoke-tests the tarball, requires `NPM_TOKEN`, publishes,
+then runs the real `red-skills-dev --version` client through `npx` against the
+npm registry for the just-published version. Only after that registry smoke
+passes may the workflow stamp manifests, create the git tag, publish the GitHub
+Release, or move the major tag.
