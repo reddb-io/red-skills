@@ -1314,6 +1314,9 @@ export function buildProcessDeps(
         "current.phase": phase,
       }).catch(() => {});
     },
+    markState: (patch) => {
+      void updateState(join(current.attemptDir, "afk.state.json"), patch).catch(() => {});
+    },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.

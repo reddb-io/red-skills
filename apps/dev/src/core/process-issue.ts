@@ -496,6 +496,12 @@ export interface ProcessIssueDeps {
    */
   writeNotes?(path: string, content: string): void;
   /**
+   * Persist compact machine-readable attempt state beyond the coarse phase.
+   * The CLI binds this to afk.state.json updates; tests inject a recorder.
+   * Optional so older callers preserve their existing behaviour.
+   */
+  markState?(patch: Record<string, unknown>): void;
+  /**
    * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
    * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
    * lifecycle points the inner-agent stream cannot see: `validating` at the start
@@ -687,6 +693,38 @@ export interface ProcessIssueResult {
   preserved: boolean;
   /** True when the completion sweep ran (done only). */
   swept: boolean;
+}
+
+const CLEAN_EXIT_CODE = 0;
+const CRASH_EXIT_CODE = 1;
+const TIMEOUT_EXIT_CODE = 124;
+
+function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    "current.phase": "terminal",
+    "current.outcome": outcome,
+  };
+  if (outcome === "done") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  if (outcome === "blocked") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  if (outcome === "stalled") {
+    return {
+      ...base,
+      "current.last_exit_code": TIMEOUT_EXIT_CODE,
+      "current.failure_kind": "timeout",
+    };
+  }
+  if (outcome === "no-sentinel") {
+    return {
+      ...base,
+      "current.last_exit_code": CRASH_EXIT_CODE,
+      "current.failure_kind": "crash",
+    };
+  }
+  return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
+}
+
+function markTerminalState(deps: ProcessIssueDeps, outcome: ProcessOutcome): void {
+  deps.markState?.(stateExitPatch(outcome));
 }
 
 // ---------- the orchestration ----------
@@ -2189,6 +2227,7 @@ export async function processIssue(
   await deps.git.deleteLocalBranch(workerBranch);
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
+  markTerminalState(deps, "done");
 
   // ---- 9. close cascade (event-driven auto-unblock) ----
   // Issue N just closed; re-evaluate every open issue carrying `req:N`. Any
@@ -2532,6 +2571,7 @@ async function terminalFailure(
   record: { notes?: string; validationSummary?: string } = {},
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
+  markTerminalState(deps, outcome);
   const decision = await routeRecovery(deps, input.issue, outcome, input.attempt);
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
