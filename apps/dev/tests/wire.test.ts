@@ -676,6 +676,75 @@ describe("collectStatuslineRepo — cache discipline", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("fresh cache: serves the local diffstat from cache without a git subprocess (#1178)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+
+      // root is NOT a git repo, so any live `git diff` would return 0/0. A
+      // non-zero localAdded/localRemoved in the result can therefore only come
+      // from the fresh cache — proving the diff is cached, not recomputed.
+      const freshTs = nowS();
+      writeFileSync(
+        cachePath,
+        JSON.stringify({ openPrs: 4, openIssues: 10, localAdded: 42, localRemoved: 7, ts: freshTs }),
+        "utf8",
+      );
+
+      const result = await collectStatuslineRepo({ root, repo: "", remote: "origin" });
+      expect(result.localAdded).toBe(42); // served from cache, no git subprocess
+      expect(result.localRemoved).toBe(7);
+
+      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { ts: number };
+      expect(cache.ts).toBe(freshTs); // ts unchanged → nothing refreshed
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stale cache: folds the local diffstat into the same refresh (#1178)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
+      writeFileSync(
+        cachePath,
+        JSON.stringify({ openPrs: 3, openIssues: 5, localAdded: 99, localRemoved: 11, ts: staleTs }),
+        "utf8",
+      );
+
+      await withFakeGh(() => collectStatuslineRepo({ root, repo: "", remote: "origin" }));
+
+      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as {
+        localAdded: number;
+        localRemoved: number;
+        ts: number;
+      };
+      expect(cache.ts).toBeGreaterThan(staleTs); // refreshed
+      // The diff fields are rewritten by the same refresh (root is not a git
+      // repo → freshly-measured 0/0, overwriting the stale 99/11).
+      expect(cache.localAdded).toBe(0);
+      expect(cache.localRemoved).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STATUSLINE_CACHE_TTL_S — the single named TTL constant (#1178)
+// ---------------------------------------------------------------------------
+
+describe("STATUSLINE_CACHE_TTL_S", () => {
+  it("is 240 s (4 minutes): the network cost is paid at most once per 4 min", () => {
+    expect(STATUSLINE_CACHE_TTL_S).toBe(240);
+  });
 });
 
 // ---------------------------------------------------------------------------
