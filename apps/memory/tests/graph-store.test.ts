@@ -541,6 +541,58 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "co-occurrence edges cannot be written as causal labels",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const a = await store.upsertNode(factToNode("co occurrence node a", slugify));
+      const b = await store.upsertNode(factToNode("co occurrence node b", slugify));
+
+      await expect(
+        store.upsertEdge({
+          label: "CAUSES",
+          from_rid: a,
+          to_rid: b,
+          properties: { relation_kind: "co-occurrence" },
+        }),
+      ).rejects.toThrow(/co-occurrence edge cannot use causal label CAUSES/);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "new writes carry provenance_tier while legacy rows read without it",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const oracleRid = await store.upsertNode({
+        label: "oracle-validation",
+        node_type: "validation",
+        properties: {
+          title: "oracle validation",
+          content: "test command passed",
+          confidence: "EXTRACTED",
+        },
+      });
+      const proxyRid = await store.upsertNode(factToNode("manual legacy shaped fact", slugify));
+
+      await expect(store.getNode(oracleRid)).resolves.toMatchObject({
+        properties: { provenance_tier: "oracle" },
+      });
+      await expect(store.getNode(proxyRid)).resolves.toMatchObject({
+        properties: { provenance_tier: "proxy" },
+      });
+
+      const legacy = rowToNode({
+        rid: 999,
+        label: "legacy",
+        node_type: "concept",
+        PROPERTIES: { title: "legacy" },
+      });
+      expect(legacy.properties.provenance_tier).toBeUndefined();
+    },
+    TIMEOUT,
+  );
+
+  test(
     "listEdges reuses the edge snapshot until writes invalidate it",
     async () => {
       const store = await openStore(await tempRoot());
