@@ -1385,6 +1385,17 @@ async function runRecall(args: ParsedArgs): Promise<void> {
           const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
           console.log(`        hooks: ${parts.join(", ")}`);
         }
+        if (hit.superseded_by != null) {
+          const window = [
+            hit.valid_from != null ? `valid_from=${hit.valid_from}` : "",
+            hit.valid_until != null ? `valid_until=${hit.valid_until}` : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          console.log(
+            `        lineage: superseded_by=memory_nodes:${hit.superseded_by}${window ? ` ${window}` : ""}`,
+          );
+        }
       }
     } finally {
       await store.close();
