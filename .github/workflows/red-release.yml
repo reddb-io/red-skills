@@ -143,9 +143,10 @@ jobs:
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
-      - name: Install cosign
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        uses: sigstore/cosign-installer@v3
+      # ADR 0091: the plugin bundles are distributed over npm with npm's own
+      # tarball shasum/provenance for integrity — the client no longer verifies a
+      # hand-rolled sigstore manifest signature, so cosign is not installed and
+      # manifests are not signed.
 
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
       # from apps/dev (which lives outside the plugin tree) so the shipped
@@ -507,24 +508,53 @@ jobs:
           console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
           EOF
 
-      - name: Sign bundle manifests
+      # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
+      # the packaging/npm package, pnpm pack it, then run the REAL client resolver
+      # (the packaged bin) against the packed tarball as a producer/consumer
+      # contract check BEFORE publishing. A broken tarball fails the release here
+      # rather than shipping.
+      - name: Pack npm package + producer/consumer contract check
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
-          manifests=(
-            dist/dev.manifest.json
-            dist/code-nav.manifest.json
-            dist/benchmark-memory.manifest.json
-            dist/benchmark-code-understanding.manifest.json
-            dist/memory-runtime-manifest.json
-            dist/brain-runtime-manifest.json
-          )
-          for manifest in "${manifests[@]}"; do
-            cosign sign-blob \
-              --yes \
-              --bundle "${manifest}.sigstore.json" \
-              "$manifest"
-          done
+          version="${NEXT#v}"
+          # Pin the package version to the release version (2.0.0+).
+          node -e "const fs=require('fs');const p='packaging/npm/package.json';const j=JSON.parse(fs.readFileSync(p));j.version=process.env.NEXT.replace(/^v/,'');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+          # Stage the platform-independent JS bundles into the package's dist/.
+          node packaging/npm/scripts/prepare.mjs
+          cd packaging/npm
+          pnpm pack --pack-destination .
+          tarball="$(ls reddb-io-red-skills-*.tgz | head -n1)"
+          echo "packed $tarball"
+          # Contract check: install the packed tarball into a throwaway prefix and
+          # run the REAL packaged client (the bin the launcher execs) — proves the
+          # tarball resolves and runs before we publish it.
+          smoke="$(mktemp -d)"
+          npm install "./$tarball" --prefix "$smoke" --no-audit --no-fund --ignore-scripts --loglevel=error
+          node "$smoke/node_modules/@reddb-io/red-skills/bin/red-skills-dev.mjs" --version
+          rm -rf "$smoke"
+
+      - name: Publish to npm (guarded)
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning::NPM_TOKEN secret absent — skipping npm publish of @reddb-io/red-skills@${NEXT#v}"
+            exit 0
+          fi
+          # canary channel → npm `canary` dist-tag; stable → `latest` (default).
+          tag_args=()
+          case "${NEXT#v}" in
+            *-*) tag_args=(--tag canary) ;;
+          esac
+          cd packaging/npm
+          npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+          pnpm publish --access public --no-git-checks "${tag_args[@]}"
 
       - name: Build release manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -536,25 +566,19 @@ jobs:
           node scripts/release-manifest.mjs \
             dist/dev.bundle.min.mjs \
             dist/dev.manifest.json \
-            dist/dev.manifest.json.sigstore.json \
             dist/code-nav.bundle.min.mjs \
             dist/code-nav.manifest.json \
-            dist/code-nav.manifest.json.sigstore.json \
             dist/benchmark-memory.bundle.min.mjs \
             dist/benchmark-memory.manifest.json \
-            dist/benchmark-memory.manifest.json.sigstore.json \
             dist/opencode-host.bundle.min.mjs \
             dist/benchmark-code-understanding.bundle.min.mjs \
             dist/benchmark-code-understanding.manifest.json \
-            dist/benchmark-code-understanding.manifest.json.sigstore.json \
             dist/memory.bundle.min.mjs \
             dist/memory-mcp.bundle.min.mjs \
             dist/memory-runtime-manifest.json \
-            dist/memory-runtime-manifest.json.sigstore.json \
             dist/brain.bundle.min.mjs \
             dist/brain-mcp.bundle.min.mjs \
-            dist/brain-runtime-manifest.json \
-            dist/brain-runtime-manifest.json.sigstore.json
+            dist/brain-runtime-manifest.json
 
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -569,28 +593,26 @@ jobs:
 
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
+          # ADR 0091: the client resolves bundles over npm; these Release assets
+          # are kept as an INERT backup artifact the client never reads. No
+          # sigstore signatures are uploaded (client signature verification
+          # removed).
           assets=(
             dist/dev.bundle.min.mjs
             dist/dev.manifest.json
-            dist/dev.manifest.json.sigstore.json
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
-            dist/code-nav.manifest.json.sigstore.json
             dist/benchmark-memory.bundle.min.mjs
             dist/benchmark-memory.manifest.json
-            dist/benchmark-memory.manifest.json.sigstore.json
             dist/opencode-host.bundle.min.mjs
             dist/benchmark-code-understanding.bundle.min.mjs
             dist/benchmark-code-understanding.manifest.json
-            dist/benchmark-code-understanding.manifest.json.sigstore.json
             dist/memory.bundle.min.mjs
             dist/memory-mcp.bundle.min.mjs
             dist/memory-runtime-manifest.json
-            dist/memory-runtime-manifest.json.sigstore.json
             dist/brain.bundle.min.mjs
             dist/brain-mcp.bundle.min.mjs
             dist/brain-runtime-manifest.json
-            dist/brain-runtime-manifest.json.sigstore.json
             dist/release-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then
