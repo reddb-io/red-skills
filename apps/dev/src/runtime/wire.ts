@@ -729,7 +729,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, livenessVerdict } of records) {
+  for (const { state, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
     // Statusline counts workers the evaluator does not consider stalled. A busy
     // worker with live agent descendants shows as "alive" even when the liveness
     // lane is silent (wedged-substrate guard in the evaluator), so a long
@@ -737,6 +737,14 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // workers) is treated conservatively as live. Only "stalled" (stale lane AND
     // no live descendants) is excluded.
     if (livenessVerdict.status === "stalled") continue;
+    // But the statusline shows ONLY genuinely-live workers (issue #1177). A
+    // finished/retained attempt is stamped `pid: 0` and kept for post-mortem;
+    // its per-attempt lane can still read fresh during that window, so the
+    // "not stalled" gate alone would render it as a phantom live line beside the
+    // same worker's live successor attempt. Require the state's OWN pid to be
+    // alive (or, for isolation workers, the host-side worker.pid) so a pid-0
+    // sibling is always dropped.
+    if (!pidIdentityLive && !hostPidLive) continue;
 
     workers += 1;
     blocked += state.blocked;
@@ -875,11 +883,16 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
   const nowMs = Date.now();
   const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
+  for (const { state, active, live: pidLive, liveness, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
     // Same rule as the aggregate collector: count everything the evaluator does
     // not consider stalled (a long build/gate wait stays "alive"; "unknown"
     // container workers count conservatively). Only "stalled" is excluded.
     if (livenessVerdict.status === "stalled") continue;
+    // Statusline shows ONLY genuinely-live workers (issue #1177): a
+    // finished/retained attempt keeps its dir with `pid: 0` and a possibly-fresh
+    // lane during the post-mortem window, so require its OWN pid to be alive (or
+    // the isolation host pid) — a pid-0 sibling of a live successor is dropped.
+    if (!pidIdentityLive && !hostPidLive) continue;
     let added = state.current.loc_added;
     let removed = state.current.loc_removed;
     if (added === 0 && removed === 0 && state.current.worktree) {
