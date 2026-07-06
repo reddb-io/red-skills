@@ -9,10 +9,30 @@ if [[ -z "$PLUGIN_ROOT" ]]; then
   PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
-INPUT="$(cat 2>/dev/null || true)"
+INPUT="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
+
+allow() {
+  printf '{}'
+  exit 0
+}
+
+deny() {
+  local reason="$1"
+  printf '%s\n' "$reason" >&2
+  jq -nc --arg reason "$reason" '{
+    decision: "block",
+    reason: $reason,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $reason
+    }
+  }'
+  exit 0
+}
 
 BRANCH_LOCK_DIR="$PLUGIN_ROOT/skills/misc/branch-lock/scripts"
-[[ -d "$BRANCH_LOCK_DIR/lib" ]] || { printf '{}'; exit 0; }
+[[ -d "$BRANCH_LOCK_DIR/lib" ]] || allow
 
 # shellcheck source=../skills/misc/branch-lock/scripts/lib/lock-store.sh
 source "$BRANCH_LOCK_DIR/lib/lock-store.sh"
@@ -31,7 +51,7 @@ COMMAND="$(
     .command // .cmd // empty
   ' <<<"$INPUT" 2>/dev/null
 )"
-[[ -z "$COMMAND" ]] && { printf '{}'; exit 0; }
+[[ -z "$COMMAND" ]] && allow
 
 ROOT="$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null)"
 [[ -z "$ROOT" || "$ROOT" == "null" ]] && ROOT="${CODEX_PROJECT_DIR:-}"
@@ -39,13 +59,13 @@ ROOT="$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null)"
 if [[ -n "$ROOT" && ! -d "$ROOT/.git" ]]; then
   ROOT="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$ROOT")"
 fi
-[[ -z "$ROOT" ]] && { printf '{}'; exit 0; }
+[[ -z "$ROOT" ]] && allow
 
 # Per-directory plugin gate (ADR 0067): stay fully inert unless the dev plugin is
 # enabled in this repo. Mirrors branch-lock-hook.sh.
-dev_plugin_enabled "$ROOT/.red/config.yaml" || { printf '{}'; exit 0; }
+dev_plugin_enabled "$ROOT/.red/config.yaml" || allow
 
-scope_should_enforce "$ROOT" || { printf '{}'; exit 0; }
+scope_should_enforce "$ROOT" || allow
 
 # Untouchable primary (ADR 0083 §2): an agent may never move the primary
 # checkout's branch. Unconditional — no longer armed by the
@@ -53,7 +73,7 @@ scope_should_enforce "$ROOT" || { printf '{}'; exit 0; }
 # unable to *enable* switching). Agent-only hook, so human terminals are
 # unaffected (ADR 0006). Mirrors branch-lock-hook.sh.
 if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
-  cat >&2 <<EOF
+  deny "$(cat <<EOF
 BLOCKED by the untouchable-primary rule (ADR 0083): an agent can never switch
 the primary checkout's branch, regardless of configuration or lock state.
 The command '$COMMAND' would move the agent's primary checkout to another branch.
@@ -62,14 +82,14 @@ Allowed in the primary checkout: git commit, git worktree add, read-only git,
 and non-branch-changing commands. To work on another branch, create/use a
 worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
 EOF
-  exit 2
+  )"
 fi
 
 LOCKFILE="$ROOT/.red/tmp/branch-lock.yaml"
-LOCK_BRANCH="$(lock_store_read "$LOCKFILE")" || { printf '{}'; exit 0; }
+LOCK_BRANCH="$(lock_store_read "$LOCKFILE")" || allow
 
 if [[ "$(classify_git_command "$LOCK_BRANCH" "$COMMAND")" == "block" ]]; then
-  cat >&2 <<EOF
+  deny "$(cat <<EOF
 BLOCKED by branch lock: this session is locked to '$LOCK_BRANCH'.
 The command '$COMMAND' would switch the agent away from the locked branch or
 discard working-tree changes (stash, clean -f, reset --hard, whole-tree restore).
@@ -79,8 +99,7 @@ Allowed while locked: switching back to '$LOCK_BRANCH', targeted file restore
 soft/mixed reset, and 'git worktree add'. To change or release the lock, ask the
 user — they drive it with '/branch-lock <branch>' or '/branch-lock clear'.
 EOF
-  exit 2
+  )"
 fi
 
-printf '{}'
-exit 0
+allow

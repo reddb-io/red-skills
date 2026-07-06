@@ -24,7 +24,7 @@
 
 set -uo pipefail
 
-ctx="$(cat || true)"
+ctx="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
 
 state_file="${RED_AFK_STATE_FILE:-}"
 [[ -z "$state_file" || ! -f "$state_file" ]] && exit 0

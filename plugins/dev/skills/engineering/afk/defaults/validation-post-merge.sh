@@ -30,7 +30,7 @@
 
 set -uo pipefail
 
-ctx="$(cat || true)"
+ctx="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
 ws="${RED_AFK_WORKSPACE:-}"
 
 emit_ctx() {

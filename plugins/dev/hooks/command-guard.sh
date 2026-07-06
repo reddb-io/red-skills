@@ -30,10 +30,25 @@
 
 set -uo pipefail
 
-INPUT="$(cat 2>/dev/null || true)"
+INPUT="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
 
 allow() {
   printf '{}'
+  exit 0
+}
+
+deny() {
+  local reason="$1"
+  printf '%s\n' "$reason" >&2
+  jq -nc --arg reason "$reason" '{
+    decision: "block",
+    reason: $reason,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $reason
+    }
+  }'
   exit 0
 }
 
@@ -376,7 +391,7 @@ enforce_dev_worktree_policy() {
       "$allowed_root"/*)
         ;;
       *)
-        cat >&2 <<EOF
+        deny "$(cat <<EOF
 BLOCKED by RedSkills dev worktree guard.
 plugins.dev.enabled is true, so agent-created git worktrees must live under .red/tmp/.
 
@@ -386,7 +401,7 @@ Allowed root:            $allowed_root/
 
 Use: git worktree add .red/tmp/work-<slug> -b <branch> origin/main
 EOF
-        exit 2
+        )"
         ;;
     esac
   done
@@ -395,13 +410,13 @@ EOF
     local reason
     reason="$(primary_branch_movement_reason tokens || true)"
     if [[ -n "$reason" ]]; then
-      cat >&2 <<EOF
+      deny "$(cat <<EOF
 BLOCKED by RedSkills dev primary-checkout guard.
 plugins.dev.enabled is true, so agents must not create or switch branches in the primary checkout.
 
 $reason.
 EOF
-      exit 2
+      )"
     fi
   fi
 }
@@ -574,13 +589,13 @@ matches_rule() {
 while IFS=$'\t' read -r rule_scope rule; do
   [[ -n "$rule" ]] || continue
   if matches_rule "$COMMAND" "$rule"; then
-    cat >&2 <<EOF
+    deny "$(cat <<EOF
 BLOCKED by RedSkills command guard.
 The command '$COMMAND' matched command_guard.$rule_scope rule '$rule' from .red/config.yaml.
 
 Remove or narrow command_guard.$rule_scope if this command is intentional.
 EOF
-    exit 2
+    )"
   fi
 done < <(read_deny_patterns)
 
