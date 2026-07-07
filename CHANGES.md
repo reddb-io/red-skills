@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## create-plugin (internal/maintainer)
+
+- **status**: added
+- **upstream**: none
+- **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
+- **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
+
 ## audit-skills (engineering)
 
 - **status**: added
