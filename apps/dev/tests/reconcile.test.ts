@@ -277,6 +277,16 @@ describe("reconcile — green → land", () => {
     expect(trace.iterLogs.some((line) => line.includes("tip `feedfacecafe` validated green and landed"))).toBe(true);
   });
 
+  it("passes issue labels into the no-agent landing so the merge subject is releasable", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true, labels: ["running", "type:bug"] });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("landed");
+    expect(trace.mergeCalls.map((c) => c.join(" "))).toContain(
+      "gh -R o/r pr merge 42 --merge --subject fix: #9 Fix the thing",
+    );
+  });
+
   it("resolves feedback scopes from origin/<base>, not a stale local base", async () => {
     const { deps, input, trace } = harness({
       feedbackOk: true,
