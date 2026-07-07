@@ -62,6 +62,10 @@ interface Trace {
   changedFileCalls: Array<{ branch: string; base: string }>;
   /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
   pnpmArgs: string[][];
+  /** Handoff bodies written before the sandcastle run. */
+  handoffs: Array<{ path: string; content: string }>;
+  /** Fresh-branch preparation calls before sandcastle can reuse a worktree. */
+  freshWorkerBranchCalls: Array<{ branch: string; baseRef: string; force: boolean }>;
 }
 
 interface HarnessOptions {
@@ -123,6 +127,8 @@ interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** Restart-informed context block returned by the attempt ledger lookup. */
+  priorAttemptContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
   configTrunk?: string;
   /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
@@ -229,6 +235,8 @@ function harness(opts: HarnessOptions = {}): {
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
     pnpmArgs: [],
+    handoffs: [],
+    freshWorkerBranchCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -307,7 +315,9 @@ function harness(opts: HarnessOptions = {}): {
     },
     fs: {
       async ensureAttemptDir() {},
-      async writeHandoff() {},
+      async writeHandoff(path, content) {
+        trace.handoffs.push({ path, content });
+      },
       // Optional sidecar port: present unless the test opts it out (older-caller
       // safety). Records every (path, lines) write for assertion.
       writeValidationSidecar:
@@ -328,6 +338,10 @@ function harness(opts: HarnessOptions = {}): {
       async deleteLocalBranch() {},
       async fetchBase(base) {
         if (opts.fetchedBases) opts.fetchedBases.push(base);
+      },
+      async prepareFreshWorkerBranch(input) {
+        trace.freshWorkerBranchCalls.push(input);
+        return true;
       },
     },
     mergeExec: async (argv) => {
@@ -517,7 +531,7 @@ function harness(opts: HarnessOptions = {}): {
         return "https://github.com/o/r/issues/9";
       },
       async priorAttemptContext() {
-        return undefined;
+        return opts.priorAttemptContext;
       },
       async changedFiles(branch, base) {
         trace.changedFileCalls.push({ branch, base });
@@ -654,6 +668,65 @@ const labelTrace = (t: Trace): string[] =>
   t.labelEdits.map((e) => `-${e.remove.join("+")}|+${e.add.join("+")}`);
 
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
+  it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
+    const fetchedBases: string[] = [];
+    const priorAttemptContext = [
+      "prev-attempt: 1",
+      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+      "prev-failure-reason:",
+      "merge-conflict",
+    ].join("\n");
+    const { deps, input, trace } = harness({
+      attempt: 2,
+      priorAttemptContext,
+      fetchedBases,
+      outcome: "done",
+      feedbackOk: true,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(fetchedBases).toEqual(["main"]);
+    expect(trace.freshWorkerBranchCalls).toEqual([
+      {
+        branch: "afk/wAAAA/9-fix-the-thing",
+        baseRef: "origin/main",
+        force: true,
+      },
+    ]);
+    expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+    expect(trace.handoffs[0]?.content).toContain("prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing");
+    expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
+  });
+
+  it("keeps non-conflict same-run reuse eligible for the stale-base check only", async () => {
+    const priorAttemptContext = [
+      "prev-attempt: 1",
+      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+      "prev-failure-reason:",
+      "validation failed",
+    ].join("\n");
+    const { deps, input, trace } = harness({
+      attempt: 2,
+      priorAttemptContext,
+      outcome: "done",
+      feedbackOk: true,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.freshWorkerBranchCalls).toEqual([
+      {
+        branch: "afk/wAAAA/9-fix-the-thing",
+        baseRef: "origin/main",
+        force: false,
+      },
+    ]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
   it("runs claim → runAgent → push → feedback → land → close with the full transition + sweep", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false });
     const result = await processIssue(deps, input);
