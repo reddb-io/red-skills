@@ -2253,6 +2253,7 @@ export async function processIssue(
       trunk,
       issue,
       title: input.title,
+      labels,
       mainRed,
     },
     {
