@@ -18,7 +18,7 @@ import { stopCommand } from "./commands/stop.js";
 import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { shipCommand } from "./commands/ship.js";
-import { statuslineCommand } from "./commands/statusline.js";
+import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { triageCommand } from "./commands/triage.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
@@ -46,6 +46,7 @@ export type CliCommand =
   | "codex-statusline"
   | "route-model-tier"
   | "statusline"
+  | "statusline-refresh-counts"
   | "inject-development-workflow"
   | "version"
   | "__supervise";
@@ -87,6 +88,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "codex-statusline": {},
     "route-model-tier": {},
     statusline: {},
+    "statusline-refresh-counts": {},
     "inject-development-workflow": {},
     version: {},
     __supervise: {},
@@ -137,6 +139,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "codex-statusline") return codexStatuslineCommand(parsed.args);
   if (parsed.command === "route-model-tier") return routeModelTierCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
+  if (parsed.command === "statusline-refresh-counts") return statuslineRefreshCountsCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
   return runCommand({ args: parsed.args });

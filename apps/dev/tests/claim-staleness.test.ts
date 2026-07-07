@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CLAIM_REFRESH_S,
+  DEFAULT_CLAIM_REAPER_GRACE_S,
+  DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
   DEFAULT_CLAIM_STALE_TOLERANCE,
   DEFAULT_CLAIM_STALENESS,
   classifyClaim,
   classifyIssueClaims,
   makeStaleClaimPredicate,
   planStaleClaimSweep,
+  resolveClaimReaperConfig,
   resolveClaimStalenessConfig,
   staleWindowS,
+  type ClaimReaperConfig,
   type ClaimStalenessConfig,
 } from "../src/core/claim-staleness.js";
 import type { ClaimRecord } from "../src/core/claim.js";
@@ -32,37 +36,43 @@ const T0 = 1_700_000_000; // a fixed injected clock anchor (epoch seconds)
 
 describe("staleWindowS", () => {
   it("is cadence × (tolerance + 1) — comfortably exceeds the refresh cadence", () => {
-    const cfg: ClaimStalenessConfig = { refreshCadenceS: 300, tolerance: 3 };
-    expect(staleWindowS(cfg)).toBe(1200);
+    const cfg: ClaimStalenessConfig = { refreshCadenceS: 270, tolerance: 3 };
+    expect(staleWindowS(cfg)).toBe(1080);
     // The window strictly exceeds the cadence for any tolerance ≥ 0.
     expect(staleWindowS(cfg)).toBeGreaterThan(cfg.refreshCadenceS);
     expect(staleWindowS({ refreshCadenceS: 60, tolerance: 0 })).toBe(60);
   });
 
-  it("defaults to 300 × 4 = 1200s", () => {
+  it("defaults to 270 × 4 = 1080s", () => {
     expect(staleWindowS()).toBe(DEFAULT_CLAIM_REFRESH_S * (DEFAULT_CLAIM_STALE_TOLERANCE + 1));
-    expect(staleWindowS(DEFAULT_CLAIM_STALENESS)).toBe(1200);
+    expect(DEFAULT_CLAIM_REFRESH_S).toBe(270);
+    expect(staleWindowS(DEFAULT_CLAIM_STALENESS)).toBe(1080);
   });
 });
 
 describe("classifyClaim (pure, injected clock)", () => {
-  const cfg: ClaimStalenessConfig = { refreshCadenceS: 300, tolerance: 3 };
+  const cfg: ClaimReaperConfig = {
+    refreshCadenceS: 270,
+    tolerance: 3,
+    claimGraceS: 270,
+    recentCommitProtectionS: 2700,
+  };
 
   it("a just-refreshed claim is fresh", () => {
     expect(classifyClaim(recAt(T0), T0, cfg)).toBe("fresh");
   });
 
   it("a claim within the window (missed a few refreshes) is still fresh — never robbed", () => {
-    // 900s old < 1200s window: missed 2 refreshes, tolerated.
+    // 900s old < 1080s window: missed 3 refreshes, tolerated.
     expect(classifyClaim(recAt(T0 - 900), T0, cfg)).toBe("fresh");
   });
 
   it("a claim exactly at the window boundary is fresh (inclusive)", () => {
-    expect(classifyClaim(recAt(T0 - 1200), T0, cfg)).toBe("fresh");
+    expect(classifyClaim(recAt(T0 - 1080), T0, cfg)).toBe("fresh");
   });
 
   it("a claim past the window is stale — owner presumed dead, recoverable", () => {
-    expect(classifyClaim(recAt(T0 - 1201), T0, cfg)).toBe("stale");
+    expect(classifyClaim(recAt(T0 - 1081), T0, cfg)).toBe("stale");
     expect(classifyClaim(recAt(T0 - 99999), T0, cfg)).toBe("stale");
   });
 
@@ -83,7 +93,7 @@ describe("classifyClaim (pure, injected clock)", () => {
 
 describe("makeStaleClaimPredicate", () => {
   it("returns true only for records past the window — the reconciler's isStale seam", () => {
-    const isStale = makeStaleClaimPredicate(T0, { refreshCadenceS: 300, tolerance: 3 });
+    const isStale = makeStaleClaimPredicate(T0, { refreshCadenceS: 270, tolerance: 3 });
     expect(isStale(recAt(T0 - 100))).toBe(false);
     expect(isStale(recAt(T0 - 5000))).toBe(true);
     expect(isStale({ commentId: 9, worker: "h:w", kind: "claim" })).toBe(false);
@@ -97,8 +107,8 @@ describe("resolveClaimStalenessConfig", () => {
 
   it("reads RED_AFK_CLAIM_REFRESH_S and RED_AFK_CLAIM_STALE_TOLERANCE", () => {
     expect(
-      resolveClaimStalenessConfig({ RED_AFK_CLAIM_REFRESH_S: "600", RED_AFK_CLAIM_STALE_TOLERANCE: "5" }),
-    ).toEqual({ refreshCadenceS: 600, tolerance: 5 });
+      resolveClaimStalenessConfig({ RED_AFK_CLAIM_REFRESH_S: "1200", RED_AFK_CLAIM_STALE_TOLERANCE: "5" }),
+    ).toEqual({ refreshCadenceS: 1200, tolerance: 5 });
   });
 
   it("tolerates a zero tolerance (window = exactly one cadence)", () => {
@@ -117,8 +127,42 @@ describe("resolveClaimStalenessConfig", () => {
   });
 });
 
+describe("resolveClaimReaperConfig", () => {
+  it("defaults to the staleness policy plus explicit reaper guard thresholds", () => {
+    expect(resolveClaimReaperConfig({})).toEqual({
+      ...DEFAULT_CLAIM_STALENESS,
+      claimGraceS: DEFAULT_CLAIM_REAPER_GRACE_S,
+      recentCommitProtectionS: DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+    });
+  });
+
+  it("reads env overrides before plugins.dev.afk.* config values", () => {
+    const cfg = (key: string) =>
+      ({
+        "afk.claim_reaper.grace_s": "600",
+        "afk.claim_reaper.recent_commit_s": "1800",
+      })[key] ?? "";
+    expect(resolveClaimReaperConfig({ RED_AFK_CLAIM_REAPER_GRACE_S: "120" }, cfg)).toMatchObject({
+      claimGraceS: 120,
+      recentCommitProtectionS: 1800,
+    });
+  });
+
+  it("falls back on non-positive / non-numeric guard overrides", () => {
+    const cfg = (key: string) =>
+      ({
+        "afk.claim_reaper.grace_s": "0",
+        "afk.claim_reaper.recent_commit_s": "abc",
+      })[key] ?? "";
+    expect(resolveClaimReaperConfig({}, cfg)).toMatchObject({
+      claimGraceS: DEFAULT_CLAIM_REAPER_GRACE_S,
+      recentCommitProtectionS: DEFAULT_CLAIM_RECENT_COMMIT_PROTECTION_S,
+    });
+  });
+});
+
 describe("classifyIssueClaims", () => {
-  const isStale = makeStaleClaimPredicate(T0, { refreshCadenceS: 300, tolerance: 3 });
+  const isStale = makeStaleClaimPredicate(T0, { refreshCadenceS: 270, tolerance: 3 });
 
   it("a single fresh claim is the live owner, no stale owners", () => {
     const st = classifyIssueClaims([claimAt(10, "live:host", 60)], isStale);
@@ -158,7 +202,12 @@ describe("classifyIssueClaims", () => {
 });
 
 describe("planStaleClaimSweep", () => {
-  const cfg: ClaimStalenessConfig = { refreshCadenceS: 300, tolerance: 3 };
+  const cfg: ClaimReaperConfig = {
+    refreshCadenceS: 270,
+    tolerance: 3,
+    claimGraceS: 270,
+    recentCommitProtectionS: 2700,
+  };
 
   it("releases an issue held only by a stale claim", () => {
     const releases = planStaleClaimSweep(
@@ -202,5 +251,44 @@ describe("planStaleClaimSweep", () => {
       { issue: 1, staleOwners: ["dead:1"] },
       { issue: 3, staleOwners: ["dead:3"] },
     ]);
+  });
+
+  it("never releases a claim inside the explicit grace period, even with an aggressive stale window", () => {
+    const releases = planStaleClaimSweep(
+      [{ issue: 7, records: [claimAt(10, "fresh:host", 200)] }],
+      T0,
+      { refreshCadenceS: 60, tolerance: 0, claimGraceS: 300, recentCommitProtectionS: 2700 },
+    );
+    expect(releases).toEqual([]);
+  });
+
+  it("never releases a stale claim whose attempt branch has a recent commit", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 7,
+          records: [claimAt(10, "live-work:host", 9999)],
+          attemptBranchCommitS: T0 - 120,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([]);
+  });
+
+  it("still releases a stale claim when no commit landed inside the protection window", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 7,
+          records: [claimAt(10, "dead:host", 9999)],
+          attemptBranchCommitS: T0 - cfg.recentCommitProtectionS - 1,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([{ issue: 7, staleOwners: ["dead:host"] }]);
   });
 });

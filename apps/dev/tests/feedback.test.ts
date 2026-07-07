@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildValidationRecord,
+  decideBaselineDiffGate,
   isInfraFeedbackFailure,
   nearestPackageScope,
   outputSummary,
@@ -208,6 +209,7 @@ describe("runFeedback", () => {
       name: "test:plugins/memory",
       status: "passed",
       command: "pnpm -C /repo/plugins/memory test",
+      exitCode: 0,
       durationMs: 1234,
       summary: "command exited 0",
     };
@@ -261,6 +263,64 @@ describe("runFeedback", () => {
       "pnpm -C /wt/plugins/memory test",
     ]);
   });
+
+  it("runs validation subprocesses under a hermetic env contract so lane env cannot flip the verdict", async () => {
+    const prevNamespace = process.env.RED_AFK_WORKERS_NAMESPACE;
+    const prevWorkerId = process.env.RED_AFK_WORKER_ID;
+    const prevIterDir = process.env.RED_AFK_ITER_DIR;
+    const prevFlip = process.env.RED_AFK_GATE_TEST_FLIP_RESULT;
+    process.env.RED_AFK_WORKERS_NAMESPACE = "scout-workers";
+    process.env.RED_AFK_WORKER_ID = "scout-lane-worker";
+    process.env.RED_AFK_ITER_DIR = "/tmp/scout-workers/scout-lane-worker/1234-a1";
+    process.env.RED_AFK_GATE_TEST_FLIP_RESULT = "fail-if-inherited";
+    try {
+      const layout = fakeLayout({
+        packages: ["apps/dev"],
+        scripts: { "apps/dev": ["test"] },
+      });
+      const seen: NodeJS.ProcessEnv[] = [];
+      const exec: Exec = async (_args, opts) => {
+        if (!opts?.env) {
+          return { code: 67, stdout: "", stderr: "validation subprocess env was implicit" };
+        }
+        const env = opts?.env ?? {};
+        seen.push(env);
+        if (
+          env.RED_AFK_WORKERS_NAMESPACE ||
+          env.RED_AFK_WORKER_ID ||
+          env.RED_AFK_ITER_DIR ||
+          env.RED_AFK_GATE_TEST_FLIP_RESULT
+        ) {
+          return { code: 66, stdout: "", stderr: "lane env leaked into validation subprocess" };
+        }
+        return { code: 0, stdout: "ok", stderr: "" };
+      };
+
+      const result = await runFeedback(exec, {
+        worktree: "/wt",
+        scopes: ["apps/dev"],
+        layout,
+        now: fakeClock(),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBeDefined();
+      expect(seen[0]?.RED_AFK_WORKERS_NAMESPACE).toBeUndefined();
+      expect(seen[0]?.RED_AFK_WORKER_ID).toBeUndefined();
+      expect(seen[0]?.RED_AFK_ITER_DIR).toBeUndefined();
+      expect(seen[0]?.RED_AFK_GATE_TEST_FLIP_RESULT).toBeUndefined();
+    } finally {
+      if (prevNamespace === undefined) delete process.env.RED_AFK_WORKERS_NAMESPACE;
+      else process.env.RED_AFK_WORKERS_NAMESPACE = prevNamespace;
+      if (prevWorkerId === undefined) delete process.env.RED_AFK_WORKER_ID;
+      else process.env.RED_AFK_WORKER_ID = prevWorkerId;
+      if (prevIterDir === undefined) delete process.env.RED_AFK_ITER_DIR;
+      else process.env.RED_AFK_ITER_DIR = prevIterDir;
+      if (prevFlip === undefined) delete process.env.RED_AFK_GATE_TEST_FLIP_RESULT;
+      else process.env.RED_AFK_GATE_TEST_FLIP_RESULT = prevFlip;
+    }
+  });
 });
 
 describe("pure shaping helpers", () => {
@@ -286,6 +346,37 @@ describe("pure shaping helpers", () => {
     expect(outputSummary("failed", "line a\nline b\n")).toBe("line a line b");
     const long = `${"x".repeat(2000)}\n`;
     expect(outputSummary("failed", long).length).toBe(1000);
+  });
+});
+
+describe("decideBaselineDiffGate", () => {
+  it("blocks branch-only failures and records no pre-existing failures", () => {
+    expect(decideBaselineDiffGate(["test:apps/dev"], [])).toEqual({
+      shouldBlock: true,
+      blockingFailures: ["test:apps/dev"],
+      preExistingFailures: [],
+    });
+  });
+
+  it("does not block pre-existing failures and records them for main-red repair", () => {
+    expect(decideBaselineDiffGate(["test:apps/dev"], ["test:apps/dev"])).toEqual({
+      shouldBlock: false,
+      blockingFailures: [],
+      preExistingFailures: ["test:apps/dev"],
+    });
+  });
+
+  it("blocks mixed branch-only failures while recording pre-existing failures", () => {
+    expect(
+      decideBaselineDiffGate(
+        ["test:apps/dev", "typecheck:apps/dev", "test:apps/dev"],
+        ["test:apps/dev", "lint:apps/dev"],
+      ),
+    ).toEqual({
+      shouldBlock: true,
+      blockingFailures: ["typecheck:apps/dev"],
+      preExistingFailures: ["test:apps/dev"],
+    });
   });
 });
 
@@ -364,6 +455,32 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       "test:apps/dev",
       "command output exceeded the capture ceiling (maxBuffer length exceeded); stdout maxBuffer length exceeded",
     );
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
+  it("trusts a clean structured exit over misleading infra-looking text", () => {
+    const record = buildValidationRecord({
+      name: "test:apps/dev",
+      status: "failed",
+      command: "pnpm -C apps/dev test",
+      exitCode: 0,
+      summary: "stderr mentioned feedback worktree install failed, but the runner reported a clean exit",
+    });
+    const result: RunFeedbackResult = {
+      ok: false,
+      checks: [
+        { name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record },
+      ],
+      sidecar: [JSON.stringify(record)],
+      baselineDowngraded: [],
+      quarantined: [],
+    };
+
+    expect(isInfraFeedbackFailure(result)).toBe(false);
+  });
+
+  it("preserves keyword fallback when no structured exit evidence exists", () => {
+    const result = failedCheck("test:apps/dev", "feedback worktree install failed for afk/wX/123-slug (exit 1)");
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
 
@@ -462,6 +579,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     // ZERO baseline probes (the gate was green, no reason to probe).
     const baselineCalls = Object.entries(counts).filter(([k]) => k.includes("main"));
     expect(baselineCalls).toEqual([]);
+    expect(result.baselineProbeRan).toBeUndefined();
+    expect(result.baselineFailures).toBeUndefined();
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(5);
   });
 
@@ -488,6 +607,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     // test:apps/dev failed on worker AND on baseline → downgraded; gate passes.
     expect(result.ok).toBe(true);
     expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineFailures).toEqual(["test:apps/dev"]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("skipped");
     expect(testCheck.record.summary).toBe("pre-existing failure on baseline");
@@ -510,6 +631,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     });
     expect(result.ok).toBe(false);
     expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineFailures).toEqual([]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
   });

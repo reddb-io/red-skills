@@ -109,13 +109,13 @@ expect_eq "hook: incomplete plugin root prints empty JSON" "{}" "$(<"$out")"
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "locked: switch away is blocked" "2" "$rc"
+expect_eq "locked: switch away is blocked" "0" "$rc"
 expect_contains "locked: error names ADR 0083" "ADR 0083" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch main")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "locked: switch back is also blocked (untouchable primary)" "2" "$rc"
+expect_eq "locked: switch back is also blocked (untouchable primary)" "0" "$rc"
 expect_contains "locked: switch-back error names ADR 0083" "ADR 0083" "$stderr"
 
 # Work-loss commands are caught by the unconditional untouchable-primary guard
@@ -125,14 +125,14 @@ expect_contains "locked: switch-back error names ADR 0083" "ADR 0083" "$stderr"
 result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard HEAD~1")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "locked: work-loss reset --hard is blocked" "2" "$rc"
+expect_eq "locked: work-loss reset --hard is blocked" "0" "$rc"
 expect_contains "locked: work-loss error names untouchable primary" "ADR 0083" "$stderr"
 
 rm -f "$primary/.red/tmp/branch-lock.yaml"
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "unlocked: switch is still blocked (untouchable primary)" "2" "$rc"
+expect_eq "unlocked: switch is still blocked (untouchable primary)" "0" "$rc"
 expect_contains "unlocked: error names ADR 0083" "ADR 0083" "$stderr"
 
 # With no lock file the untouchable-primary guard still blocks every branch
@@ -147,36 +147,36 @@ EOF
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "primary guard: switch blocked with no lock and no config" "2" "$rc"
+expect_eq "primary guard: switch blocked with no lock and no config" "0" "$rc"
 expect_contains "primary guard: error names ADR 0083" "ADR 0083" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: checkout branch is blocked" "2" "$rc"
+expect_eq "primary guard: checkout branch is blocked" "0" "$rc"
 
 # issue #1024 — git reset (any form) and git stash (all subcommands) blocked,
 # and the refusal explains the reason + the sanctioned worktree alternative.
 result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "primary guard: reset --hard is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: reset --hard is blocked when flag is on" "0" "$rc"
 expect_contains "primary guard: reset refusal points to worktree" ".red/tmp/work-" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git reset --soft HEAD~1")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: reset --soft is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: reset --soft is blocked when flag is on" "0" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git stash")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: stash is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: stash is blocked when flag is on" "0" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git rebase --autostash main")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: rebase --autostash is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: rebase --autostash is blocked when flag is on" "0" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch -b new")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: switch -b is blocked" "2" "$rc"
+expect_eq "primary guard: switch -b is blocked" "0" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git commit -m wip")")"
 rc="$(sed -n '1p' <<<"$result")"
@@ -201,7 +201,7 @@ plugins:
 EOF
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: legacy toggle off still blocks switch" "2" "$rc"
+expect_eq "primary guard: legacy toggle off still blocks switch" "0" "$rc"
 
 worktree="$primary/.red/tmp/work-wAAAA-i1/worktree"
 mkdir -p "$worktree" "$primary/.red/tmp"

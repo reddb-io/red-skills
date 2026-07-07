@@ -162,6 +162,22 @@ describe("statusline command — rendered line", () => {
     else process.env.NO_COLOR = oldNoColor;
   });
 
+  it("--legend emits the token decode table and does not render the live statusline", async () => {
+    const out = sink();
+    const code = await statuslineCommand(["--legend", root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    const text = out.text();
+    expect(text).toContain("token  name");
+    expect(text).toContain("tls");
+    expect(text).toContain("tools_called_count");
+    expect(text).toContain("rsn");
+    expect(text).toContain("reasoning_events");
+    expect(text).toContain("txt");
+    expect(text).toContain("text_chunk_count");
+    expect(text).not.toContain("Opus·high");
+    expect(text).not.toContain("\x1b[");
+  });
+
   it("emits the multi-line themed layout: header row + one row per live worker", async () => {
     // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7,
     // total 10; cached rq11 rh3; repo cache pr3 is24.
@@ -215,7 +231,7 @@ describe("statusline command — rendered line", () => {
     expect(rows[1]).toContain("run=claude"); // runner as a k=v token
     expect(rows[1]).toContain("iss=17"); // the issue NUMBER (current.number), not a counter
     expect(rows[1]).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
-    expect(rows[1]).toContain("tls="); // vitals renamed to 3-letter keys on the statusline line
+    expect(rows[1]).toContain("tls="); // shared 3-letter vitals vocabulary
     expect(rows[1]).toContain("loc=+12 -3"); // per-worker diff as loc= k=v
     expect(rows[1]).not.toContain("iss=7/10"); // the old done/total counter is gone
     expect(rows[1]).not.toContain("#17"); // standalone #<n> token dropped

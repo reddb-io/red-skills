@@ -6,6 +6,7 @@ import {
   TIER_AGENT_TIERS,
   type PreToolUseInput,
 } from "../src/core/model-tier-route.js";
+import type { ModelTierBanditAdvice } from "../../brain/src/model-tier-bandit.js";
 import { Readable } from "node:stream";
 import { renderClaudeDecision, routeModelTierCommand } from "../src/commands/route-model-tier.js";
 
@@ -33,6 +34,38 @@ const task = (tool_input: Record<string, unknown>): PreToolUseInput => ({
   tool_name: "Task",
   tool_input,
 });
+
+const banditAdvice = {
+  source: "brain.model-tier-bandit",
+  taskClass: "bugfix",
+  recommendedTier: "complex",
+  confidence: 0.2,
+  posterior: [
+    {
+      tier: "complex",
+      alpha: 3,
+      beta: 1,
+      mean: 0.75,
+      observations: 2,
+      successes: 2,
+      failures: 0,
+      consecutiveFailures: 0,
+      sample: 0.75,
+    },
+    {
+      tier: "validate",
+      alpha: 2,
+      beta: 2,
+      mean: 0.5,
+      observations: 2,
+      successes: 1,
+      failures: 1,
+      consecutiveFailures: 1,
+      sample: 0.5,
+    },
+  ],
+  explanation: "brain bandit advice for 'bugfix': complex posterior alpha=3, beta=1, mean=0.75.",
+} satisfies ModelTierBanditAdvice;
 
 describe("modelFamily", () => {
   it("extracts the family from full ids and aliases", () => {
@@ -143,6 +176,39 @@ describe("routeModelTier — capability degrade ladder", () => {
   it("audits (allow + nudge) when the host can neither rewrite nor block", () => {
     const action = routeModelTier(task({ subagent_type: "validate", model: "opus" }), defaults(), "audit");
     expect(action.kind).toBe("audit");
+  });
+});
+
+describe("routeModelTier — bandit advice", () => {
+  it("surfaces a brain bandit recommendation without changing a correctly-tiered route", () => {
+    const action = routeModelTier(
+      task({ subagent_type: "validate", model: "haiku" }),
+      defaults(),
+      "rewrite",
+      { advice: banditAdvice },
+    );
+
+    expect(action).toEqual({ kind: "noop", advice: banditAdvice });
+  });
+
+  it("adopts the brain bandit recommendation only when explicitly requested", () => {
+    const action = routeModelTier(
+      task({ subagent_type: "validate", model: "haiku", prompt: "p" }),
+      defaults(),
+      "rewrite",
+      { advice: banditAdvice, adoptAdvice: true },
+    );
+
+    expect(action.kind).toBe("rewrite");
+    if (action.kind !== "rewrite") return;
+    expect(action.tier).toBe("complex");
+    expect(action.model).toBe("claude-opus-4-8");
+    expect(action.advice).toBe(banditAdvice);
+    expect(action.updatedInput).toMatchObject({
+      subagent_type: "validate",
+      model: "claude-opus-4-8",
+      effort: "medium",
+    });
   });
 });
 

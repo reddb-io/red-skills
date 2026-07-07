@@ -31,7 +31,11 @@
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Exec as PnpmExec, PackageLayout } from "../core/feedback.js";
+import {
+  buildFeedbackSubprocessEnv,
+  type Exec as PnpmExec,
+  type PackageLayout,
+} from "../core/feedback.js";
 import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostAttemptFormatExec } from "../core/post-attempt-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
@@ -346,7 +350,8 @@ export function makeFeedbackWorktree(
   // feedback hands pnpm a `-C <token>` arg where <token> is `<branch>` or
   // `<branch>/<scope>`. Peel the scope off the end (via the package layout),
   // materialise the branch, and rewrite the dir onto the real checkout path.
-  const pnpm: PnpmExec = async (args) => {
+  const pnpm: PnpmExec = async (args, opts) => {
+    const env = opts?.env ?? buildFeedbackSubprocessEnv();
     // args === ["pnpm", "-C", dir, script]
     const cIdx = args.indexOf("-C");
     if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
@@ -357,11 +362,11 @@ export function makeFeedbackWorktree(
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root });
+      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env });
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await io.pnpm(head, { cwd: root });
+    const r = await io.pnpm(head, { cwd: root, env });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 

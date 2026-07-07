@@ -23,6 +23,7 @@ const WT = "/wt";
 // (#1006). Distinct from WT so a test can assert the fetch/rebase/force-push
 // never `git -C`'d the primary checkout (`/repo`).
 const RWT = "/rwt";
+const DEFAULT_BRANCH_TIP = "feedfacecafebeef";
 
 interface Harness {
   deps: LandingDeps;
@@ -33,6 +34,7 @@ interface Harness {
   firedHooks: string[];
   removedWorktrees: string[];
   removedRebaseWorktrees: string[];
+  mainRedRepairLookups: number;
   /** cwds the conflict resolver was dispatched in. */
   resolverCwds: string[];
 }
@@ -66,7 +68,9 @@ interface Opts {
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
   commitCount?: number;
-  /** Enable the PR-path pre-merge rebase provisioner (#1006). */
+  /** Resolved origin/<branch> tip used by stale-local-ref regressions. */
+  branchTip?: string;
+  /** Enable the PR-path pre-merge rebase provisioner (#1006). Defaults true for PR landings (#1212). */
   rebaseWorktree?: boolean;
   /** The rebase provisioner returns null (could not provision → rebase skipped). */
   noRebaseWorktree?: boolean;
@@ -96,6 +100,14 @@ interface Opts {
    * `/requeue --adopt-branch` human land of a reviewed protected diff.
    */
   sensitivePathApproved?: boolean;
+  /** Main-red tracking gate (#1237): set input.mainRed. */
+  mainRed?: boolean;
+  /** Main-red tracking gate (#1237): whether the open repair issue finder returns an issue. */
+  mainRedRepairIssue?: boolean;
+  /** Issue labels used to derive the landing-created conventional merge title. */
+  labels?: string[];
+  /** Force the admin PR path to create a PR instead of reusing an open one. */
+  createPr?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -104,13 +116,18 @@ function harness(opts: Opts = {}): Harness {
   const firedHooks: string[] = [];
   const removedWorktrees: string[] = [];
   const removedRebaseWorktrees: string[] = [];
+  let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   let mergeResolved = false;
+  let prCreated = false;
 
   const deps: LandingDeps = {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      if (j.includes("merge-base --is-ancestor origin/")) {
+        return { code: opts.branchTip ? 0 : 1, stdout: "", stderr: "" };
+      }
       // ADR 0083 landing precondition (#1018), against the primary checkout.
       // `merge-base --is-ancestor local origin/<trunk>` — exit 1 = diverged.
       if (j.includes("merge-base --is-ancestor")) {
@@ -134,7 +151,12 @@ function harness(opts: Opts = {}): Harness {
         return { code: opts.rebasePushCode ?? 0, stdout: "", stderr: "" };
       }
       if (argv.includes("pr") && argv.includes("list")) {
+        if (opts.createPr && !prCreated) return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "42\n", stderr: "" };
+      }
+      if (argv.includes("pr") && argv.includes("create")) {
+        prCreated = true;
+        return { code: 0, stdout: "", stderr: "" };
       }
       // The rollback anchor + landed sha the locked worktree path reads.
       if (j.includes("rev-parse --short HEAD")) {
@@ -142,6 +164,9 @@ function harness(opts: Opts = {}): Harness {
       }
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: `${opts.commitCount ?? 3}\n`, stderr: "" };
+      }
+      if (j.includes("rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing")) {
+        return { code: 0, stdout: `${opts.branchTip ?? DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
       if (opts.integrateCode !== undefined && j.includes("merge --ff-only")) {
         return { code: opts.integrateCode, stdout: "", stderr: "" };
@@ -199,10 +224,11 @@ function harness(opts: Opts = {}): Harness {
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
     },
-    // #1006: only wired when the test opts in, so the existing PR-path suites keep
-    // skipping the rebase (opt-in — an absent provisioner is a no-op).
-    makeRebaseWorktree: opts.rebaseWorktree ? async () => (opts.noRebaseWorktree ? null : RWT) : undefined,
-    removeRebaseWorktree: opts.rebaseWorktree
+    // #1212: PR-path fresh-base integration is mandatory, so the harness wires a
+    // working rebase worktree by default. Tests that exercise infra provisioning
+    // failures opt out explicitly.
+    makeRebaseWorktree: opts.rebaseWorktree === false ? undefined : async () => (opts.noRebaseWorktree ? null : RWT),
+    removeRebaseWorktree: opts.rebaseWorktree !== false
       ? async (dir) => {
           removedRebaseWorktrees.push(dir);
         }
@@ -217,6 +243,13 @@ function harness(opts: Opts = {}): Harness {
           packageJsonDiff: "",
         })
       : undefined,
+    findMainRedRepairIssue:
+      opts.mainRed === undefined
+        ? undefined
+        : async () => {
+            mainRedRepairLookups += 1;
+            return opts.mainRedRepairIssue ? { number: 123 } : null;
+          },
   };
 
   const input: LandingInput = {
@@ -236,9 +269,11 @@ function harness(opts: Opts = {}): Harness {
     trunk: "main",
     issue: 9,
     title: "Fix the thing",
+    ...(opts.labels ? { labels: opts.labels } : {}),
     // #1171: only set when the test opts in; default undefined keeps the guard
     // armed for every existing landing assertion.
     sensitivePathApproved: opts.sensitivePathApproved,
+    mainRed: opts.mainRed,
   };
 
   const hooks: LandingHookContexts = {
@@ -255,6 +290,9 @@ function harness(opts: Opts = {}): Harness {
     firedHooks,
     removedWorktrees,
     removedRebaseWorktrees,
+    get mainRedRepairLookups() {
+      return mainRedRepairLookups;
+    },
     resolverCwds,
   };
 }
@@ -295,6 +333,27 @@ describe("doLanding — happy paths", () => {
     expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
   });
 
+  it("unlocked + red main + open main-red repair issue → admin-merges", async () => {
+    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.mainRedRepairLookups).toBe(1);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+  });
+
+  it("unlocked + red main + no main-red repair issue → refuses before admin-merge", async () => {
+    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toBe("main-red-untracked");
+    expect(r.message).toContain("Refusing admin-merge onto red main");
+    expect(h.mainRedRepairLookups).toBe(1);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
   it("default unlocked landing → merge runs without --admin (branch protection is honored, #1103)", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
@@ -309,7 +368,7 @@ describe("doLanding — happy paths", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -327,13 +386,43 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
     expect(j.some((c) => c.includes("merge --ff-only origin/main"))).toBe(false);
     // Attempt branch was merged (into current HEAD = lock-branch after the precheck fix).
-    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     // Push targeted the lock branch (worktree HEAD → refs/heads/<base>), not main.
     expect(j.some((c) => c.includes("push origin HEAD:refs/heads/feature-locked"))).toBe(true);
     // The ADR 0083 precondition READS refs/heads/main (the trunk, read-only); the
     // landing's WRITE ops (merge/push) must never target main.
     expect(j.some((c) => (c.includes("merge --") || c.includes("push ")) && c.includes("main"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
+});
+
+describe("doLanding — conventional landing titles (#1267)", () => {
+  it.each([
+    { labels: ["type:bug"], title: "fix: #9 Fix the thing" },
+    { labels: ["bug"], title: "fix: #9 Fix the thing" },
+    { labels: ["type:feature"], title: "feat: #9 Fix the thing" },
+    { labels: ["enhancement"], title: "feat: #9 Fix the thing" },
+    { labels: ["type:task"], title: "chore: #9 Fix the thing" },
+  ])("direct/no-agent landing maps $labels to $title", async ({ labels, title }) => {
+    const h = harness({ locked: true, labels });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r.ok).toBe(true);
+    expect(joined(h.mergeCalls)).toContain(
+      `git -C ${WT} merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP} -m ${title}`,
+    );
+  });
+
+  it("admin PR landing uses the conventional title for the PR and merge commit subject", async () => {
+    const h = harness({ locked: false, createPr: true, labels: ["type:feature"] });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    expect(j).toContain(
+      "gh -R o/r pr create --base main --head afk/wAAAA/9-fix-the-thing --title feat: #9 Fix the thing --body Automated AFK landing for #9. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the `afk-attempts/*` snapshot branches.\n\nCloses #9",
+    );
+    expect(j).toContain("gh -R o/r pr merge 42 --merge --subject feat: #9 Fix the thing");
   });
 });
 
@@ -644,7 +733,7 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing`))).toBe(true);
+    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
     assertPrimaryUntouched(h);
     expect(h.removedWorktrees).toEqual([WT]);
@@ -756,21 +845,30 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     expect(j.some((c) => c.includes("pr merge"))).toBe(false);
   });
 
-  it("no provisioner (opt-out) → rebase skipped, PR lands exactly as before", async () => {
-    const h = harness({ locked: false });
+  it("no provisioner → aborts as infra and never admin-merges", async () => {
+    const h = harness({ locked: false, rebaseWorktree: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
-    // No rebase touched the worker branch; the admin-merge still ran.
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: false,
+    });
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(false);
   });
 
-  it("worktree could not be provisioned → rebase skipped, PR still lands (never risks the primary)", async () => {
-    const h = harness({ locked: false, rebaseWorktree: true, noRebaseWorktree: true });
+  it("worktree could not be provisioned → aborts as infra and never admin-merges", async () => {
+    const h = harness({ locked: false, noRebaseWorktree: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: false,
+    });
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(false);
   });
 
   it("the DIRECT (non-PR) path ignores the rebase provisioner (it integrates origin itself)", async () => {
@@ -787,7 +885,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   // the lock only resolves `base`. Four cells: {no lock, lock=X} × {true, false}.
   // `prMerged` = the admin-PR path ran; `directMerged` = the worktree merge ran.
   const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --merge"));
-  const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"));
+  const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify"));
 
   it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
     const h = harness({ locked: false, openPr: true });
@@ -812,6 +910,31 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     // Merge ran in the isolated worktree, pushing main from its HEAD.
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
+  });
+
+  it("no lock + false + stale local main → fast-forwards the freshly fetched origin/main to the validated branch tip", async () => {
+    const branchTip = "1234567890abcdef";
+    const h = harness({ locked: false, openPr: false, branchTip });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+
+    const j = joined(h.mergeCalls);
+    const fetchBaseIdx = j.findIndex((c) => c === "git -C /repo fetch origin main --quiet");
+    const integrateIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only origin/main`);
+    const resolveTipIdx = j.findIndex(
+      (c) => c === `git -C ${WT} rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing`,
+    );
+    const ancestorIdx = j.findIndex((c) => c === `git -C ${WT} merge-base --is-ancestor origin/main ${branchTip}`);
+    const fastForwardIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only ${branchTip}`);
+    const pushIdx = j.findIndex((c) => c === `git -C ${WT} push origin HEAD:refs/heads/main`);
+
+    expect(fetchBaseIdx).toBeGreaterThanOrEqual(0);
+    expect(integrateIdx).toBeGreaterThan(fetchBaseIdx);
+    expect(resolveTipIdx).toBeGreaterThan(integrateIdx);
+    expect(ancestorIdx).toBeGreaterThan(resolveTipIdx);
+    expect(fastForwardIdx).toBeGreaterThan(ancestorIdx);
+    expect(pushIdx).toBeGreaterThan(fastForwardIdx);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
   });
 
   it("lock=X + true (default) → admin-merged PR with base = the lock branch, not main (new)", async () => {

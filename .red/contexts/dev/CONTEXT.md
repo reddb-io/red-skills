@@ -138,6 +138,10 @@ _Avoid_: afk clone, sandbox checkout
 The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers.
 _Avoid_: Claude fleet, task mirror, auto-monitor loop
 
+**AFK polling cadence rule**:
+The prompt-cache-aware rule for recurring AFK lane cadences: default recurring polls should be cache-warm at 270 seconds or less, or intentionally amortized at 20 minutes or more. Do not add defaults in the dead zone around 300 seconds. The current recurring-cadence inventory is: **Fleet supervisor** health tick `RED_AFK_POLL_S` 15s before/after; event-driven supervisor fallback `RED_AFK_WAKE_FALLBACK_S` 60s before/after; worker proof-of-life heartbeat `RED_AFK_HEARTBEAT_S` 60s before/after; periodic dependency Unblock Sweep `RED_AFK_UNBLOCK_SWEEP_INTERVAL_S` 60s before/after; statusline/monitor expensive-fact cache `RED_AFK_STATUSLINE_CACHE_TTL_S` 180s before/after; stale-claim refresh `RED_AFK_CLAIM_REFRESH_S` 300s before, 270s after. Supervisor watchdog values such as `RED_AFK_SUPERVISOR_STALE_S` and `RED_AFK_SUPERVISOR_RESTART_WINDOW_S` are recovery windows rather than polling cadences; keep them above their safety thresholds instead of treating them as recurring polls.
+_Avoid_: 300s default poll, prompt-cache dead-zone cadence
+
 **Auto-monitor loop**:
 An optional session-level observability loop that periodically renders AFK monitor state.
 _Avoid_: fleet supervisor, worker scheduler

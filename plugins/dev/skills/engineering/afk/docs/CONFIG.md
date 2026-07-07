@@ -21,6 +21,11 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 | — | `RED_AFK_IDLE_TIMEOUT_S` | `600` | Sandcastle's per-iteration **silence** watchdog (seconds): an iteration that produces no stream output for this long is aborted. The actual termination bound on a quiet hang. Env-only; typo-safe (non-numeric / zero / negative is ignored → default). |
 | `afk.attempt_timeout` | `RED_AFK_ATTEMPT_TIMEOUT_S` | `2700` | Commit-anchored attempt **progress** guard (seconds, ADR 0044/0045): a busy run that lands no new commit within the cap is aborted (`timeout` → `blocked:stalled` / `ready-for-human`, worktree/PR preserved), resetting on every commit. Armed only under `none` isolation. Typo-safe (env > config > default). |
+| `afk.claim_reaper.refresh_s` | `RED_AFK_CLAIM_REFRESH_S` | `300` | Cross-host stale-claim refresh cadence (seconds). The stale window is `refresh_s × (stale_tolerance + 1)`. |
+| `afk.claim_reaper.stale_tolerance` | `RED_AFK_CLAIM_STALE_TOLERANCE` | `3` | Consecutive missed claim refreshes tolerated before the stale-claim sweep may recover the issue. `0` is allowed. |
+| `afk.claim_reaper.grace_s` | `RED_AFK_CLAIM_REAPER_GRACE_S` | `300` | Minimum claim age before the stale-claim sweep may recover a `running` issue, even if the stale window is configured aggressively. |
+| `afk.claim_reaper.recent_commit_s` | `RED_AFK_CLAIM_REAPER_RECENT_COMMIT_S` | `2700` | Sliding progress-protection window: a live `afk/*/<issue>-*` attempt branch with a commit this recent protects the claimed issue from stale-claim recovery. |
+| `afk.statusline_cache_ttl` | `RED_AFK_STATUSLINE_CACHE_TTL_S` | `180` | TTL (seconds) of every EXPENSIVE FETCHED statusline number — the GitHub-derived queue/human + open-PR/open-issue counts AND the repo-global local diffstat, cached in `.red/tmp/statusline-cache.json` / `.red/tmp/statusline-repo-cache.json` (issue #1178, #1217). The statusline renders on every prompt, so a per-render gh/git round-trip would freeze the TUI; the network cost is paid at most once per TTL. Also drives the monitor's stale-cache marker. Use the **flat** key — do **not** nest it under `afk.statusline` (that key is the boolean statusline opt-out; YAML cannot make one key both a boolean and a map). Typo-safe (env > config > default): a non-numeric / zero / negative value in **either** source falls through to the next and ultimately the 180 default — never 0 (a 0 TTL would refresh on every render, defeating the cache). |
 | `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
 | `afk.worktree_launches_pull_request` | — | `true` | Landing **mode**, decoupled from the branch-lock (ADR 0030 amended, #842). `true` (default) → the attempt lands via an **admin-merged PR** into the resolved base; `false` → a **direct merge** into that base (offline, no PR — only the post-commit push the worker already does). The branch-lock now only resolves the *target* base (lock > pin > main, ADR 0031); this flag decides PR-vs-direct **independently**. So: no lock + `true` → admin-PR to `main`; no lock + `false` → direct merge to `main`; lock=`X` + `true` → admin-PR to `X`; lock=`X` + `false` → direct merge to `X`. *How* a PR merges (admin vs `wait_for_review` vs `review_gate`) stays governed by `afk.merge.*`. **Migration:** the default `true` flips the old *locked* behaviour (which direct-merged) — a locked repo now gets an admin-PR to its lock branch; set `false` to keep the old offline/direct-promotion flow. |
 | `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
@@ -34,6 +39,7 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.companion.diff_drift_loc` | — | `4000` | Companion drift threshold: total churn (added + removed) at/above this is judged `scope-creep` (sprawling past the issue), the highest-priority signal. |
 | `afk.companion.min_progress_loc` | — | `5` | Companion progress floor: a worker that has added at least this many lines has produced real work and is never flagged for churn/stuck. |
 | `afk.companion.*` (cap) | `RED_AFK_RETRY_DRIFT` | `2` | Companion bounded re-enqueue budget. Each detected drift on an attempt injects **one** correction (write-only, idempotent via a fingerprint, rewriting `## Agent brief`); once the attempt count reaches this cap the companion **escalates** to `ready-for-human` (a `## Current blocker` of kind `drift`) instead of correcting again. Shares the bounded-recovery policy (`core/recovery.ts`); never kills a process — termination/respawn is the reaper + fleet's job. |
+| `afk.drain.max_cost_usd` | `RED_AFK_DRAIN_MAX_COST_USD` / `fleet --budget-usd` | _(unset)_ | Per-drain USD budget for the fleet supervisor. Spend is read from WorkerVitals (`current.cost_usd`) in worker state files, not a parallel ledger. Tiers are OK below 75%, WARNING at 75%, CRITICAL at 90%, and HARD_STOP at 100%. CRITICAL spawns new workers with one model-tier-policy downgrade; HARD_STOP stops all new spawns, lets in-flight workers finish, and records a TOON budget event in `.red/tmp/afk-supervisor.log`. |
 
 ```yaml
 afk:
@@ -50,6 +56,7 @@ afk:
   sandbox: none
   max_iterations: 12      # override the default re-invocation ceiling here
   attempt_timeout: 2700   # commit-anchored progress guard (seconds)
+  statusline_cache_ttl: 180   # statusline gh/git cache TTL (seconds); flat key, NOT under afk.statusline
   backpressure:           # extra pre-merge gate, runs after the feedback gate
     - npm run test
     - npm run lint
@@ -62,7 +69,7 @@ afk:
     threshold: complex       # cheapest tier counted as non-mechanical (validate|simple|complex|think)
 ```
 
-`RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `attempt_timeout` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and no-commit-progress (attempt guard) — are detailed under *Attempt Completion & Termination Bounds*.
+`RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, `attempt_timeout`, and `statusline_cache_ttl` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and no-commit-progress (attempt guard) — are detailed under *Attempt Completion & Termination Bounds*.
 
 ### Backpressure gate
 
@@ -96,6 +103,29 @@ lines to the session output, per-issue hooks write them to the attempt's
 `afk.log`, and fleet hooks use the analogous `[afk:fleet-hooks]` prefix in the
 supervisor log. A quiet Worker can therefore still show policy/hook activity
 without pretending the inner agent lane advanced.
+
+### Hook Hardening Contract
+
+Shipped RedSkills hook implementations and hook launchers must satisfy this
+checklist even though operator-authored AFK hooks may still use the lifecycle
+exit-code policy table above:
+
+- Exit 0 unconditionally. Blocking host hooks return a structured denial
+  payload on stdout; crashes and missing dependencies fail open with `{}`.
+- Drain stdin with a deadline. Shell hooks use
+  `timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat ... || true`; Node hooks
+  use an async bounded drain rather than `readFileSync(0)`.
+- Arm a bounded, unref'd process deadline for Node hook processes that do work
+  after startup. A hook must not keep a host session alive because a timer or
+  child process is still referenced.
+- Parse tool input as structured stdin JSON. Do not interpolate raw tool input
+  into a shell command string; if a hook must deny a command, emit JSON that asks
+  the host to deny it.
+
+Run `scripts/audit-hook-hardening-contract.sh` before shipping changes to
+`plugins/*/hooks/`, AFK library hooks, or hook launcher wrappers. The audit is
+intentionally greppable: it catches pattern-matchable regressions and includes a
+violating fixture that must fail.
 
 The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 

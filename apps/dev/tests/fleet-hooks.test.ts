@@ -53,6 +53,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     unblockSweepIntervalS: 60,
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
+    reapContestWindowS: 30,
     ...over,
   };
 }

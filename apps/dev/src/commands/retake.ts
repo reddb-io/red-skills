@@ -1,4 +1,6 @@
 import { execTool, type ExecFn, type ExecOutput } from "../runtime/exec.js";
+import { join, dirname } from "node:path";
+import { readAllWorkerStates } from "../core/worker-state-reader.js";
 import {
   branchMatchesIssue,
   normalizeBranchName,
@@ -13,6 +15,7 @@ import {
   type RetakeIssue,
   type RetakePullRequest,
   type RetakeWorktree,
+  type RetakeWorkerState,
 } from "../core/retake.js";
 
 interface RetakeFlags {
@@ -247,15 +250,39 @@ async function collectWorktrees(exec: ExecFn, cwd: string, issue: number): Promi
   return worktrees;
 }
 
+async function collectWorkerState(cwd: string, issue: number): Promise<RetakeWorkerState | undefined> {
+  const records = await readAllWorkerStates(join(cwd, ".red", "tmp")).catch(() => []);
+  const matches = records
+    .filter((record) => Number(record.state.current.number) === issue)
+    .sort((a, b) => String(b.state.current.last_event_at ?? "").localeCompare(String(a.state.current.last_event_at ?? "")));
+  const rec = matches[0];
+  if (rec === undefined) return undefined;
+  const current = rec.state.current;
+  const attemptMatch = /-a([0-9]+)$/.exec(dirname(rec.path));
+  const lastExitCode = Number((current as Record<string, unknown>).last_exit_code);
+  return {
+    path: rec.path,
+    attemptDir: dirname(rec.path),
+    issue,
+    attempt: attemptMatch?.[1] ? Number.parseInt(attemptMatch[1], 10) : undefined,
+    phase: typeof current.phase === "string" ? current.phase : undefined,
+    outcome: typeof (current as Record<string, unknown>).outcome === "string"
+      ? String((current as Record<string, unknown>).outcome)
+      : undefined,
+    lastExitCode: Number.isFinite(lastExitCode) ? lastExitCode : undefined,
+  };
+}
+
 async function collectRetakeFacts(exec: ExecFn, cwd: string, flags: RetakeFlags): Promise<RetakeFacts> {
   const repo = await resolveRepo(exec, cwd, flags.repo);
-  const [issue, pullRequests, branches, worktrees] = await Promise.all([
+  const [issue, pullRequests, branches, worktrees, workerState] = await Promise.all([
     collectIssue(exec, cwd, repo, flags.issue),
     collectPullRequests(exec, cwd, repo, flags.issue, flags.prLimit),
     collectBranches(exec, cwd, flags.issue),
     collectWorktrees(exec, cwd, flags.issue),
+    collectWorkerState(cwd, flags.issue),
   ]);
-  return { issue, pullRequests, branches, worktrees };
+  return { issue, pullRequests, branches, worktrees, workerState };
 }
 
 function renderRetakeReport(facts: RetakeFacts): string {
@@ -280,6 +307,16 @@ function renderRetakeReport(facts: RetakeFacts): string {
   if (facts.worktrees.length === 0) lines.push("  none found");
   for (const worktree of facts.worktrees) {
     lines.push(`  ${worktree.path} ${worktree.branch ?? "(detached)"} ${worktree.dirty ? "dirty" : "clean"}`);
+  }
+  lines.push("");
+  lines.push("worker state:");
+  if (facts.workerState === undefined) {
+    lines.push("  none found");
+  } else {
+    const s = facts.workerState;
+    lines.push(
+      `  ${s.attemptDir} phase=${s.phase ?? "unknown"} outcome=${s.outcome ?? "unknown"} exit=${s.lastExitCode ?? "unknown"}`,
+    );
   }
   lines.push("");
   lines.push(`next: ${recommendation.summary}`);

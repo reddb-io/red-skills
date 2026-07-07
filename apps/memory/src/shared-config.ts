@@ -16,6 +16,7 @@
  */
 
 import type { AiProviderConfig } from "./extract-conversation.js";
+import { DEFAULT_RECALL_RANKING_CONFIG } from "./recall-ranking.js";
 import {
   CONFIG_VERSION,
   DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
@@ -126,6 +127,23 @@ export function parsePluginsMemory(text: string): MemoryConfig | null {
   if (Number.isFinite(byteBudget) && byteBudget > 0) l2.byteBudget = byteBudget;
   if (l2.ttlMs !== undefined || l2.byteBudget !== undefined) config.l2 = l2;
 
+  const rankingRrfK = Number(flat[`${p}recallRanking.rrfK`]);
+  const rankingHalfLife = Number(flat[`${p}recallRanking.recencyHalfLifeDays`]);
+  const rankingMmrLambda = Number(flat[`${p}recallRanking.mmrLambda`]);
+  const rankingVariantLimit = Number(flat[`${p}recallRanking.queryVariantLimit`]);
+  const rankingRoundRobin = flat[`${p}recallRanking.sessionRoundRobin`];
+  const recallRanking: NonNullable<MemoryConfig["recallRanking"]> = {};
+  if (Number.isFinite(rankingRrfK) && rankingRrfK > 0) recallRanking.rrfK = rankingRrfK;
+  if (Number.isFinite(rankingHalfLife) && rankingHalfLife > 0)
+    recallRanking.recencyHalfLifeDays = rankingHalfLife;
+  if (Number.isFinite(rankingMmrLambda) && rankingMmrLambda >= 0 && rankingMmrLambda <= 1)
+    recallRanking.mmrLambda = rankingMmrLambda;
+  if (Number.isInteger(rankingVariantLimit) && rankingVariantLimit > 0)
+    recallRanking.queryVariantLimit = rankingVariantLimit;
+  if (rankingRoundRobin === "true" || rankingRoundRobin === "false")
+    recallRanking.sessionRoundRobin = rankingRoundRobin === "true";
+  if (Object.keys(recallRanking).length > 0) config.recallRanking = recallRanking;
+
   const provider: Record<string, string> = {};
   for (const [k, v] of Object.entries(flat)) {
     const m = k.startsWith(`${p}provider.`) ? k.slice(`${p}provider.`.length) : undefined;
@@ -180,6 +198,41 @@ export function emitMemoryBlockLines(config: MemoryConfig): string[] {
       sub.push(`      byteBudget: ${config.l2.byteBudget}`);
     if (sub.length > 0) {
       lines.push("    l2:");
+      lines.push(...sub);
+    }
+  }
+
+  if (config.recallRanking) {
+    const sub: string[] = [];
+    const defaults = DEFAULT_RECALL_RANKING_CONFIG;
+    if (config.recallRanking.rrfK !== undefined && config.recallRanking.rrfK !== defaults.rrfK)
+      sub.push(`      rrfK: ${config.recallRanking.rrfK}`);
+    if (
+      config.recallRanking.recencyHalfLifeDays !== undefined &&
+      config.recallRanking.recencyHalfLifeDays !== defaults.recencyHalfLifeDays
+    ) {
+      sub.push(`      recencyHalfLifeDays: ${config.recallRanking.recencyHalfLifeDays}`);
+    }
+    if (
+      config.recallRanking.mmrLambda !== undefined &&
+      config.recallRanking.mmrLambda !== defaults.mmrLambda
+    ) {
+      sub.push(`      mmrLambda: ${config.recallRanking.mmrLambda}`);
+    }
+    if (
+      config.recallRanking.queryVariantLimit !== undefined &&
+      config.recallRanking.queryVariantLimit !== defaults.queryVariantLimit
+    ) {
+      sub.push(`      queryVariantLimit: ${config.recallRanking.queryVariantLimit}`);
+    }
+    if (
+      config.recallRanking.sessionRoundRobin !== undefined &&
+      config.recallRanking.sessionRoundRobin !== defaults.sessionRoundRobin
+    ) {
+      sub.push(`      sessionRoundRobin: ${config.recallRanking.sessionRoundRobin}`);
+    }
+    if (sub.length > 0) {
+      lines.push("    recallRanking:");
       lines.push(...sub);
     }
   }

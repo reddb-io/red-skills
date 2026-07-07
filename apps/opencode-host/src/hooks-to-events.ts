@@ -94,11 +94,9 @@ function toolExecuteBeforeTemplate(input: {
   // the source Claude/Codex hook is a `sh -c` shell command, and
   // Bun's shell is the opencode-native equivalent. For PreToolUse we
   // synthesize a Claude/Codex-shaped JSON payload from opencode's typed
-  // `(input, output)` and pipe it to the source hook on stdin. Non-zero
-  // exits are permission denials: for shell tools, rewrite the command to a
-  // harmless failing command that surfaces the hook's stderr; for non-shell
-  // tools, throw so opencode aborts the hook path instead of silently allowing
-  // a denied operation.
+  // `(input, output)` and pipe it to the source hook on stdin. Hooks prefer a
+  // zero-exit structured denial payload; legacy non-zero exits are still treated
+  // as permission denials.
   const cases = input.hookGroups
     .map((g) => {
       const matcherRe = matcherToRegex(g.matcher);
@@ -143,9 +141,19 @@ function toolExecuteBeforeTemplate(input: {
     "        await writer.write(__encoder.encode(__payload));",
     "        await writer.close();",
     "        const result = await proc;",
-    "        if (result.exitCode === 0) return false;",
+    "        const stdout = __decoder.decode(result.stdout).trim();",
+    "        let structuredReason = \"\";",
+    "        if (stdout.length > 0) {",
+    "          try {",
+    "            const parsed = JSON.parse(stdout) as { decision?: string; reason?: string; hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };",
+    "            if (parsed.decision === \"block\" || parsed.hookSpecificOutput?.permissionDecision === \"deny\") {",
+    "              structuredReason = parsed.hookSpecificOutput?.permissionDecisionReason || parsed.reason || `RedSkills PreToolUse hook denied ${input.tool}.`;",
+    "            }",
+    "          } catch { /* non-JSON stdout is ignored */ }",
+    "        }",
+    "        if (result.exitCode === 0 && structuredReason.length === 0) return false;",
     "        const stderr = __decoder.decode(result.stderr).trim();",
-    "        const reason = stderr.length > 0 ? stderr : `RedSkills PreToolUse hook denied ${input.tool}.`;",
+    "        const reason = structuredReason || (stderr.length > 0 ? stderr : `RedSkills PreToolUse hook denied ${input.tool}.`);",
     "        if (output.args && typeof output.args === \"object\" && \"command\" in output.args) {",
     "          output.args = { ...output.args, command: __denyCommand(reason, result.exitCode) };",
     "          return true;",

@@ -62,6 +62,115 @@ describe("state", () => {
     expect(after.current.stage).toBe("tests");
   });
 
+  it("preserves stamped identity, vitals, and loc when a stage writer carries default identity fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    initStateSync(path, {
+      worker_id: "w8UV2",
+      pid: 4242,
+      pid_start_time: "12345",
+      runner: "codex",
+      origin: "afk",
+      started_at: "2026-07-06T20:00:00.000Z",
+      "current.number": 1238,
+      "current.runner": "codex",
+      "current.model": "gpt-5",
+      "current.effort": "high",
+      "current.stage": "setup",
+      "current.phase": "setup",
+      "current.tools_called_count": 9,
+      "current.loc_added": 22,
+      "current.loc_removed": 3,
+      "current.last_event_at": "2026-07-06T20:01:00.000Z",
+    });
+
+    const after = await updateState(path, {
+      worker_id: "",
+      pid: 0,
+      pid_start_time: "",
+      runner: "",
+      origin: "",
+      started_at: "",
+      current: {
+        number: "",
+        runner: "",
+        model: "",
+        effort: "",
+        stage: "impl",
+      },
+    });
+
+    expect(after.worker_id).toBe("w8UV2");
+    expect(after.pid).toBe(4242);
+    expect(after.pid_start_time).toBe("12345");
+    expect(after.runner).toBe("codex");
+    expect(after.origin).toBe("afk");
+    expect(after.started_at).toBe("2026-07-06T20:00:00.000Z");
+    expect(after.current.number).toBe(1238);
+    expect(after.current.runner).toBe("codex");
+    expect(after.current.model).toBe("gpt-5");
+    expect(after.current.effort).toBe("high");
+    expect(after.current.stage).toBe("impl");
+    expect(after.current.tools_called_count).toBe(9);
+    expect(after.current.loc_added).toBe(22);
+    expect(after.current.loc_removed).toBe(3);
+    expect(after.current.last_event_at).toBe("2026-07-06T20:01:00.000Z");
+  });
+
+  it("preserves live pid and current identity when stamping the validating phase", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    initStateSync(path, {
+      worker_id: "wSVD3",
+      pid: 263126,
+      runner: "codex",
+      "current.number": 1238,
+      "current.runner": "codex",
+      "current.model": "gpt-5",
+      "current.effort": "high",
+      "current.stage": "tests",
+      "current.phase": "coding",
+    });
+
+    const after = await updateState(path, {
+      worker_id: "",
+      pid: 0,
+      runner: "",
+      "current.number": "",
+      "current.runner": "",
+      "current.model": "",
+      "current.effort": "",
+      "current.phase": "validating",
+    });
+
+    expect(after.worker_id).toBe("wSVD3");
+    expect(after.pid).toBe(263126);
+    expect(after.runner).toBe("codex");
+    expect(after.current).toMatchObject({
+      number: 1238,
+      runner: "codex",
+      model: "gpt-5",
+      effort: "high",
+      stage: "tests",
+      phase: "validating",
+    });
+  });
+
+  it("only allows pid to reset to zero when the caller marks a real teardown", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    initStateSync(path, { worker_id: "wLIVE", pid: 99, "current.number": 1238 });
+
+    const phase = await updateState(path, { pid: 0, "current.phase": "validating" });
+    expect(phase.pid).toBe(99);
+
+    const terminal = await updateState(path, { pid: 0 }, { allowPidReset: true });
+    expect(terminal.pid).toBe(0);
+  });
+
   it("checks liveness via the injected kill -0 predicate", () => {
     expect(isStateLive({ pid: 0 }, () => true)).toBe(false);
     expect(isStateLive({ pid: 123 }, (pid) => pid === 123)).toBe(true);

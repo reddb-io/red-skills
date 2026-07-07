@@ -113,7 +113,7 @@ import {
   type EvidenceCitation,
   type EvidenceProposalApplyState,
 } from "./evidence-card.js";
-import { graphRecallResult } from "./graph-recall.js";
+import { graphRecallResult, renderSignalProvenance } from "./graph-recall.js";
 import {
   buildMemoryGovernanceReport,
   type MemoryGovernanceReport,
@@ -1368,6 +1368,7 @@ async function runRecall(args: ParsedArgs): Promise<void> {
         includeSuperseded: args.flags["include-superseded"] === true,
         scope: scopeFlags(args.flags),
         now: asOf ? 0 : undefined,
+        ranking: config.recallRanking,
       });
       const hits = layerFiltersOut ? [] : rawHits;
       if (hits.length === 0) {
@@ -1380,9 +1381,23 @@ async function runRecall(args: ParsedArgs): Promise<void> {
       for (const hit of hits) {
         console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
         console.log(`        ${hit.excerpt}`);
+        for (const line of renderSignalProvenance(hit.signal_provenance)) {
+          console.log(`        ${line}`);
+        }
         if (hit.hooks && hit.hooks.length > 0) {
           const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
           console.log(`        hooks: ${parts.join(", ")}`);
+        }
+        if (hit.superseded_by != null) {
+          const window = [
+            hit.valid_from != null ? `valid_from=${hit.valid_from}` : "",
+            hit.valid_until != null ? `valid_until=${hit.valid_until}` : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          console.log(
+            `        lineage: superseded_by=memory_nodes:${hit.superseded_by}${window ? ` ${window}` : ""}`,
+          );
         }
       }
     } finally {
@@ -3012,6 +3027,7 @@ async function runRegistryCliOperation(
       {
         store: graphContext.store,
         rootDir,
+        memoryConfig: graphContext.config,
         providerConfig: graphContext.config?.provider,
         transportSurface: "cli",
       },
@@ -3652,7 +3668,13 @@ async function runServe(args: ParsedArgs): Promise<void> {
   if (tokenEnv && !token) throw new Error(`--token-env ${tokenEnv} is not set`);
 
   const { store, config } = await openGraphStore(args);
-  const server = createMemoryHttpServer({ rootDir, store, token, providerConfig: config.provider });
+  const server = createMemoryHttpServer({
+    rootDir,
+    store,
+    token,
+    memoryConfig: config,
+    providerConfig: config.provider,
+  });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {

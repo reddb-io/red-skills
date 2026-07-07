@@ -114,6 +114,61 @@ export async function fetchBranch(ctx: GitContext, branch: string): Promise<void
   await runGit(ctx, ["fetch", "origin", branch]);
 }
 
+export interface FreshWorkerBranchInput {
+  branch: string;
+  baseRef: string;
+  remote?: string;
+  force?: boolean;
+}
+
+/**
+ * Remove stale sandcastle worker-branch state before a retry enters `runAgent`.
+ *
+ * red-castle's named-branch collision path reuses an existing managed worktree
+ * and only fast-forwards it from `origin/<branch>`; it does not re-parent that
+ * branch onto a freshly-fetched `origin/<base>`. For a merge-conflict retry, or
+ * any branch whose merge-base with `baseRef` is not the current base tip, AFK
+ * must clear the local worktree + refs so red-castle's `baseBranch` creation path
+ * is used again. The prior diff is preserved by the attempt snapshot ref, not by
+ * the live retry branch.
+ */
+export async function prepareFreshWorkerBranch(
+  ctx: GitContext,
+  input: FreshWorkerBranchInput,
+): Promise<boolean> {
+  const branch = input.branch.trim();
+  const baseRef = input.baseRef.trim();
+  const remote = input.remote?.trim() || "origin";
+  if (!branch || !baseRef) return false;
+
+  const base = await runGit(ctx, ["rev-parse", "--verify", "--quiet", baseRef]);
+  const baseTip = base.code === 0 ? base.stdout.trim() : "";
+  if (!baseTip) return false;
+
+  const worktreePath = await worktreePathForBranch(ctx, branch);
+  const localBranchExists = await branchExists(ctx, branch);
+  const remoteTrackingRef = `refs/remotes/${remote}/${branch}`;
+  const remoteTracking = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteTrackingRef]);
+  const remoteTrackingExists = remoteTracking.code === 0 && remoteTracking.stdout.trim() !== "";
+
+  const compareRef = localBranchExists ? branch : remoteTrackingExists ? `${remote}/${branch}` : undefined;
+  let stale = false;
+  if (compareRef) {
+    const mergeBase = await runGit(ctx, ["merge-base", compareRef, baseRef]);
+    stale = mergeBase.code !== 0 || mergeBase.stdout.trim() !== baseTip;
+  }
+
+  const hasReusableState = Boolean(worktreePath || localBranchExists || remoteTrackingExists);
+  const shouldClean = input.force ? hasReusableState : stale;
+  if (!shouldClean) return false;
+
+  if (worktreePath) await worktreeRemove(ctx, worktreePath);
+  if (localBranchExists) await deleteLocalBranch(ctx, branch);
+  if (remoteTrackingExists) await runGit(ctx, ["update-ref", "-d", remoteTrackingRef]);
+  await runGit(ctx, ["push", remote, "--delete", branch]);
+  return true;
+}
+
 /**
  * Has the worker branch ALREADY landed in `<base>`? — the own-merge signal for
  * the goal predicate (ADR 0057). When the attempt-guard poll observes the claimed
@@ -173,10 +228,45 @@ export async function diffstatShortstat(ctx: GitContext, base: string): Promise<
   const mb = await runGit(ctx, ["merge-base", base, "HEAD"]);
   if (mb.code === 0 && mb.stdout.trim() !== "") ref = mb.stdout.trim();
   const r = await runGit(ctx, ["diff", "--shortstat", ref]);
-  if (r.code !== 0) return { added: 0, removed: 0 };
-  const ins = /(\d+) insertion/.exec(r.stdout);
-  const del = /(\d+) deletion/.exec(r.stdout);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
+}
+
+/** Extract the `N insertion` / `N deletion` integers from a `--shortstat` line,
+ * defaulting each to 0 when absent. Shared by the committed/uncommitted probes. */
+function parseShortstat(stdout: string): { added: number; removed: number } {
+  const ins = /(\d+) insertion/.exec(stdout);
+  const del = /(\d+) deletion/.exec(stdout);
   return { added: ins ? Number(ins[1]) : 0, removed: del ? Number(del[1]) : 0 };
+}
+
+/**
+ * Parsed diffstat of the attempt's **committed** work at `ctx.cwd` — the commits
+ * on the branch since it left `<base>`, EXCLUDING the working tree. Resolves
+ * `merge-base(<base>, HEAD)` and diffs that against HEAD (`git diff --shortstat
+ * <merge-base>..HEAD`), falling back to a plain `<base>..HEAD` when no merge-base
+ * resolves. This is the sha-memoizable half of the #1224 LOC counter: while HEAD
+ * is unchanged the committed volume is stable, so it is computed at most once per
+ * commit and the render path stays git-free.
+ */
+export async function diffstatCommitted(ctx: GitContext, base: string): Promise<{ added: number; removed: number }> {
+  let ref = base;
+  const mb = await runGit(ctx, ["merge-base", base, "HEAD"]);
+  if (mb.code === 0 && mb.stdout.trim() !== "") ref = mb.stdout.trim();
+  const r = await runGit(ctx, ["diff", "--shortstat", `${ref}..HEAD`]);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
+}
+
+/**
+ * Parsed diffstat of the attempt's **uncommitted** working-tree edits at
+ * `ctx.cwd` — everything not yet committed (`git diff --shortstat HEAD`). This is
+ * the NON-memoizable half of the #1224 LOC counter: a codex worker never commits,
+ * so its HEAD sha is frozen and only this working-tree delta reflects its work.
+ * The writer recomputes it on every heartbeat tick and adds it to the memoized
+ * committed volume, so total attempt LOC surfaces even with zero commits.
+ */
+export async function diffstatUncommitted(ctx: GitContext): Promise<{ added: number; removed: number }> {
+  const r = await runGit(ctx, ["diff", "--shortstat", "HEAD"]);
+  return parseShortstat(r.code === 0 ? r.stdout : "");
 }
 
 /** `git log -n <count>` one-line block for a ref (the inner-prompt recent
@@ -432,16 +522,33 @@ export async function pushBranch(
 
 /**
  * List origin refs under a namespace ("afk/" | "afk-attempts/") via ls-remote,
- * shaped as BranchRef[]. The optional last-commit epoch is left unset (the
- * snapshot 404 grace falls back to "keep" without it).
+ * shaped as BranchRef[]. Best-effort fills the last-commit epoch when the commit
+ * object is present locally; callers that need it must degrade safely when it is
+ * absent.
  */
 export async function listRemoteBranches(ctx: GitContext, namespace: string): Promise<BranchRef[]> {
   const r = await runGit(ctx, ["ls-remote", "--heads", "origin", `refs/heads/${namespace}*`]);
   if (r.code !== 0) return [];
   const refs: BranchRef[] = [];
   for (const line of r.stdout.split("\n")) {
-    const m = /\trefs\/heads\/(.+)$/.exec(line);
-    if (m && m[1]) refs.push({ branch: m[1] });
+    const m = /^([0-9a-fA-F]+)\trefs\/heads\/(.+)$/.exec(line);
+    if (!m || !m[1] || !m[2]) continue;
+    const ref: BranchRef = { branch: m[2] };
+    const commitS = await remoteCommitEpoch(ctx, m[1], m[2]);
+    if (commitS !== undefined) ref.commitS = commitS;
+    refs.push(ref);
   }
   return refs;
+}
+
+async function remoteCommitEpoch(ctx: GitContext, sha: string, branch: string): Promise<number | undefined> {
+  const read = async (): Promise<number | undefined> => {
+    const ts = await runGit(ctx, ["show", "-s", "--format=%ct", sha]);
+    const commitS = Number((ts.stdout ?? "").trim());
+    return ts.code === 0 && Number.isFinite(commitS) ? commitS : undefined;
+  };
+  const local = await read();
+  if (local !== undefined) return local;
+  await runGit(ctx, ["fetch", "--quiet", "--no-tags", "origin", `refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  return read();
 }

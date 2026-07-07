@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { CONFIG_VERSION, DEFAULT_NOTES_DIR } from "../src/config.js";
 import { graphConfig, markdownOnlyConfig } from "../src/init.js";
+import { DEFAULT_RECALL_RANKING_CONFIG } from "../src/recall-ranking.js";
 import {
   emitMemoryBlockLines,
   mergeMemoryBlock,
@@ -48,6 +49,28 @@ describe("parsePluginsMemory", () => {
     });
   });
 
+  test("reads deterministic recall-ranking overrides", () => {
+    const text = [
+      "plugins:",
+      "  memory:",
+      "    mode: graph",
+      "    recallRanking:",
+      "      rrfK: 42",
+      "      recencyHalfLifeDays: 14",
+      "      mmrLambda: 0.6",
+      "      queryVariantLimit: 3",
+      "      sessionRoundRobin: false",
+      "",
+    ].join("\n");
+    expect(parsePluginsMemory(text)?.recallRanking).toEqual({
+      rrfK: 42,
+      recencyHalfLifeDays: 14,
+      mmrLambda: 0.6,
+      queryVariantLimit: 3,
+      sessionRoundRobin: false,
+    });
+  });
+
   test("returns null when there is no plugins.memory block", () => {
     expect(parsePluginsMemory("")).toBeNull();
     expect(parsePluginsMemory("plugins:\n  dev:\n    afk:\n      default_runner: codex\n")).toBeNull();
@@ -77,6 +100,27 @@ describe("emitMemoryBlockLines (sparse)", () => {
     expect(lines.join("\n")).not.toContain("reddb:");
     expect(lines.join("\n")).not.toContain("version:");
     expect(lines.join("\n")).not.toContain("storePath:"); // default → omitted
+  });
+
+  test("recall-ranking defaults stay sparse and overrides emit", () => {
+    const defaults = emitMemoryBlockLines({
+      ...graphConfig(),
+      recallRanking: { ...DEFAULT_RECALL_RANKING_CONFIG },
+    }).join("\n");
+    expect(defaults).not.toContain("recallRanking:");
+
+    const lines = emitMemoryBlockLines({
+      ...graphConfig(),
+      recallRanking: {
+        recencyHalfLifeDays: 14,
+        mmrLambda: 0.6,
+        sessionRoundRobin: false,
+      },
+    });
+    expect(lines).toContain("    recallRanking:");
+    expect(lines).toContain("      recencyHalfLifeDays: 14");
+    expect(lines).toContain("      mmrLambda: 0.6");
+    expect(lines).toContain("      sessionRoundRobin: false");
   });
 });
 

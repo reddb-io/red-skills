@@ -39,8 +39,106 @@ export interface ExecResult {
   stderr: string;
 }
 
+export interface FeedbackExecOptions {
+  /** Explicit validation subprocess environment. Never default to the worker shell. */
+  env: NodeJS.ProcessEnv;
+}
+
 /** Injected `pnpm` executor. Receives a full argv (incl. the `pnpm` head). */
-export type Exec = (args: string[]) => Promise<ExecResult>;
+export type Exec = (args: string[], opts?: FeedbackExecOptions) => Promise<ExecResult>;
+
+/**
+ * Feedback validation subprocess env contract.
+ *
+ * Allow: stable OS/toolchain variables needed to find node/pnpm and their
+ * caches/config. Deny: AFK lane/routing/model/auth variables and common secret
+ * prefixes. Everything else from the worker shell is omitted, so `/afk`,
+ * `/go`, and scout lanes validate the same diff under the same gate contract.
+ */
+export const FEEDBACK_SUBPROCESS_ENV_ALLOW_EXACT = [
+  "APPDATA",
+  "CI",
+  "COLORTERM",
+  "ComSpec",
+  "COREPACK_HOME",
+  "FORCE_COLOR",
+  "HOME",
+  "LANG",
+  "LOCALAPPDATA",
+  "LOGNAME",
+  "NO_COLOR",
+  "NPM_CONFIG_USERCONFIG",
+  "PATH",
+  "PATHEXT",
+  "PNPM_HOME",
+  "SHELL",
+  "SystemRoot",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERPROFILE",
+  "TZ",
+  "npm_config_userconfig",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_ALLOW_PREFIX = [
+  "COREPACK_",
+  "LC_",
+  "NPM_CONFIG_",
+  "PNPM_",
+  "XDG_",
+  "YARN_",
+  "npm_config_",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_DENY_EXACT = [
+  "ANTHROPIC_API_KEY",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "MINIMAX_API_KEY",
+  "NODE_AUTH_TOKEN",
+  "NPM_TOKEN",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "RED_AFK_WORKERS_NAMESPACE",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_DENY_PREFIX = [
+  "ANTHROPIC_",
+  "CLAUDE_",
+  "CODEX_",
+  "MINIMAX_",
+  "OPENAI_",
+  "OPENROUTER_",
+  "RED_AFK_",
+  "RED_SKILLS_",
+] as const;
+
+function envNameMatches(name: string, exact: readonly string[], prefixes: readonly string[]): boolean {
+  return exact.includes(name) || prefixes.some((prefix) => name.startsWith(prefix));
+}
+
+export function buildFeedbackSubprocessEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (typeof value !== "string") continue;
+    if (
+      envNameMatches(name, FEEDBACK_SUBPROCESS_ENV_DENY_EXACT, FEEDBACK_SUBPROCESS_ENV_DENY_PREFIX)
+    ) {
+      continue;
+    }
+    if (
+      envNameMatches(name, FEEDBACK_SUBPROCESS_ENV_ALLOW_EXACT, FEEDBACK_SUBPROCESS_ENV_ALLOW_PREFIX)
+    ) {
+      env[name] = value;
+    }
+  }
+  return env;
+}
 
 /**
  * Injected package-layout lookup — the pure analogue of probing the worktree
@@ -66,16 +164,58 @@ export type ValidationStatus = "passed" | "failed" | "skipped";
 
 /**
  * One `red.afk.validation.v1` sidecar record. Optional fields are omitted (not
- * null) when absent, exactly like the bash `jq` builder: `command` and
- * `durationMs` are present only for checks that ran, `summary` only when set.
+ * null) when absent, exactly like the bash `jq` builder: `command`, `exitCode`,
+ * and `durationMs` are present only for checks that ran, `summary` only when set.
  */
 export interface ValidationRecord {
   schema: typeof VALIDATION_SCHEMA;
   name: string;
   status: ValidationStatus;
   command?: string;
+  exitCode?: number;
   durationMs?: number;
   summary?: string;
+}
+
+export interface BaselineDiffGateDecision {
+  /** True when at least one branch failure is green on the baseline. */
+  shouldBlock: boolean;
+  /** Failures present on the branch and absent from the baseline failing set. */
+  blockingFailures: readonly string[];
+  /** Failures present on both branch and baseline; callers must record these. */
+  preExistingFailures: readonly string[];
+}
+
+/**
+ * Pure baseline-diff gate predicate. A branch blocks only for failures that
+ * are new relative to the baseline failing set. Failures red in both places
+ * are pre-existing main-red failures and are returned separately so callers
+ * can route them to the main-red repair path instead of silently dropping them.
+ */
+export function decideBaselineDiffGate(
+  branchFailingSet: readonly string[],
+  baselineFailingSet: readonly string[],
+): BaselineDiffGateDecision {
+  const baselineFailures = new Set(baselineFailingSet);
+  const seen = new Set<string>();
+  const blockingFailures: string[] = [];
+  const preExistingFailures: string[] = [];
+
+  for (const failure of branchFailingSet) {
+    if (seen.has(failure)) continue;
+    seen.add(failure);
+    if (baselineFailures.has(failure)) {
+      preExistingFailures.push(failure);
+    } else {
+      blockingFailures.push(failure);
+    }
+  }
+
+  return {
+    shouldBlock: blockingFailures.length > 0,
+    blockingFailures,
+    preExistingFailures,
+  };
 }
 
 // ---------- pure scope resolution ----------
@@ -148,6 +288,7 @@ export function buildValidationRecord(input: {
   name: string;
   status: ValidationStatus;
   command?: string;
+  exitCode?: number;
   durationMs?: number;
   summary?: string;
 }): ValidationRecord {
@@ -157,6 +298,7 @@ export function buildValidationRecord(input: {
     status: input.status,
   };
   if (input.command !== undefined && input.command !== "") record.command = input.command;
+  if (input.exitCode !== undefined && Number.isFinite(input.exitCode)) record.exitCode = Math.trunc(input.exitCode);
   if (input.durationMs !== undefined) record.durationMs = input.durationMs;
   if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
   return record;
@@ -195,6 +337,9 @@ export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
   if (feedback.ok) return false;
   for (const check of feedback.checks) {
     if (check.status !== "failed") continue;
+    const exitCode = check.record.exitCode;
+    if (exitCode === 0) continue;
+    if (exitCode === 137) return true;
     const summary = check.record.summary ?? "";
     if (
       summary.includes("feedback worktree setup failed") ||
@@ -306,6 +451,19 @@ export interface RunFeedbackResult {
    */
   baselineDowngraded: readonly string[];
   /**
+   * True when the baseline probe actually ran. This distinguishes "main is
+   * green for the failing worker checks" from "the happy path skipped the
+   * baseline probe entirely".
+   */
+  baselineProbeRan?: boolean;
+  /**
+   * The failed baseline check names observed by the probe. These are the
+   * pre-existing main failures a caller can surface in a repair issue. Equal to
+   * `baselineDowngraded` today, but kept as its own field because callers care
+   * about the baseline's state, not the worker reclassification mechanism.
+   */
+  baselineFailures?: readonly string[];
+  /**
    * Quarantine entries that were active for this gate run — the full validated
    * list from `RunFeedbackInput.quarantine`. Always empty when no quarantine
    * was configured. Surfaced for envelope builders that want to render the
@@ -348,12 +506,13 @@ async function runChecksForBaseline(
   refs: readonly BaselineCheckRef[],
   layout: PackageLayout,
   now: () => number,
+  env: NodeJS.ProcessEnv,
 ): Promise<Map<string, "passed" | "failed">> {
   const out = new Map<string, "passed" | "failed">();
   for (const { name, script, scope } of refs) {
     if (!layout.hasScript(scope, script)) continue;
     const dir = scopeDir(baselineWorktree, scope);
-    const result = await exec(["pnpm", "-C", dir, script]);
+    const result = await exec(["pnpm", "-C", dir, script], { env });
     out.set(name, result.code === 0 ? "passed" : "failed");
   }
   // `now` is part of the signature for symmetry with the main run; the
@@ -387,6 +546,7 @@ async function runChecksForBaseline(
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
   const { worktree, scopes, layout, now, baselineWorktree, validationScope } = input;
+  const subprocessEnv = buildFeedbackSubprocessEnv();
   const quarantine = input.quarantine ?? [];
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];
@@ -473,12 +633,12 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
           ? `pnpm -C ${dir} ${script} -- ${excludeArgs.join(" ")}`
           : `pnpm -C ${dir} ${script}`;
       const start = now();
-      const result = await exec(args);
+      const result = await exec(args, { env: subprocessEnv });
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
       const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
-      const record = buildValidationRecord({ name, status, command, durationMs, summary });
+      const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
       push({ name, script, label, scope, status, record });
     }
   }
@@ -498,12 +658,12 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const dir = scopeDir(worktree, ".");
     const command = `pnpm -C ${dir} typecheck`;
     const start = now();
-    const result = await exec(["pnpm", "-C", dir, "typecheck"]);
+    const result = await exec(["pnpm", "-C", dir, "typecheck"], { env: subprocessEnv });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
     const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
-    const record = buildValidationRecord({ name, status, command, durationMs, summary });
+    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     push({ name, script: "typecheck", label, scope, status, record });
   }
 
@@ -513,7 +673,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const failing = checks
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
-    const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now);
+    const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
+    const baselineFailing = [...baselineResults.entries()]
+      .filter(([, status]) => status === "failed")
+      .map(([name]) => name);
+    const gateDecision = decideBaselineDiffGate(
+      failing.map((check) => check.name),
+      baselineFailing,
+    );
+    const preExisting = new Set(gateDecision.preExistingFailures);
 
     // Re-classify any check that ALSO failed on the baseline as
     // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
@@ -524,8 +692,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     for (let i = 0; i < checks.length; i += 1) {
       const check = checks[i]!;
       if (check.status !== "failed") continue;
-      const baselineStatus = baselineResults.get(check.name);
-      if (baselineStatus === "failed") {
+      if (preExisting.has(check.name)) {
         const newRecord = buildValidationRecord({
           name: check.name,
           status: "skipped",
@@ -537,8 +704,17 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         downgraded.push(check.name);
       }
     }
-    failed = checks.some((c) => c.status === "failed");
-    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded, quarantined: quarantine, validationScope };
+    failed = gateDecision.shouldBlock;
+    return {
+      ok: !failed,
+      checks,
+      sidecar,
+      baselineDowngraded: downgraded,
+      baselineProbeRan: true,
+      baselineFailures: gateDecision.preExistingFailures,
+      quarantined: quarantine,
+      validationScope,
+    };
   }
 
   return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine, validationScope };

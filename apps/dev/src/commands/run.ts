@@ -42,6 +42,8 @@ import {
 import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
+import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
@@ -79,7 +81,7 @@ import {
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
+import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
@@ -778,6 +780,10 @@ export function buildProcessDeps(
         const { hitlCardCommand } = await import("./hitl-card.js");
         await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
       },
+      findMainRedRepairIssue: () => ghx.findMainRedRepairIssue(ghCtx),
+      createMainRedRepairIssue: (spec) => ghx.createMainRedRepairIssue(ghCtx, spec),
+      updateMainRedRepairIssue: (issue, spec) => ghx.updateMainRedRepairIssue(ghCtx, issue, spec),
+      closeMainRedRepairIssue: (issue, closeComment) => ghx.closeMainRedRepairIssue(ghCtx, issue, closeComment),
     },
     claimGh: {
       // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
@@ -842,6 +848,8 @@ export function buildProcessDeps(
       fetchBase: async (base) => {
         await gitx.gitExec(gitCtx)(["fetch", ctx.remote, base]);
       },
+      prepareFreshWorkerBranch: (input) =>
+        gitx.prepareFreshWorkerBranch(gitCtx, { ...input, remote: ctx.remote }),
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
@@ -1209,14 +1217,23 @@ export function buildProcessDeps(
         // Writer-side LOC ownership (#1210 Part B): the render paths no longer
         // shell out to `git diff --shortstat`, so this heartbeat is the runner-
         // agnostic owner that stamps loc_added/loc_removed for ALL runners (codex
-        // included). The diffstat is EXPENSIVE, so memoize it against the current
-        // HEAD sha in the attempt dir — computed at most once per commit; while
-        // HEAD is unchanged the memoized volume is served without spawning git.
+        // included). The COMMITTED delta is EXPENSIVE but stable between commits,
+        // so memoize it against the current HEAD sha in the attempt dir — computed
+        // at most once per commit; while HEAD is unchanged the memoized volume is
+        // served without spawning git. The UNCOMMITTED working-tree delta is
+        // recomputed every tick and added on top (#1224 Part A): a codex worker
+        // never commits, so its HEAD sha is frozen and ONLY the working-tree diff
+        // reflects its work — memoizing the combined volume on HEAD sha would
+        // freeze the first tick's `+0 -0` for the whole attempt. The claude
+        // incremental path is unaffected: a new commit moves the delta into the
+        // sha-keyed committed memo. Render stays git-free either way.
         const memoPath = locMemoPath(current.attemptDir, "/");
         const { added, removed } = await resolveAttemptLoc({
           headSha: head,
           compute: () =>
-            gitx.diffstatShortstat({ cwd: worktree }, baseRef).catch(() => ({ added: 0, removed: 0 })),
+            gitx.diffstatCommitted({ cwd: worktree }, baseRef).catch(() => ({ added: 0, removed: 0 })),
+          computeUncommitted: () =>
+            gitx.diffstatUncommitted({ cwd: worktree }).catch(() => ({ added: 0, removed: 0 })),
           readMemo: () => {
             try {
               const m = JSON.parse(readFileSync(memoPath, "utf8")) as Partial<LocMemo>;
@@ -1305,6 +1322,9 @@ export function buildProcessDeps(
         "current.phase": phase,
       }).catch(() => {});
     },
+    markState: (patch) => {
+      void updateState(join(current.attemptDir, "afk.state.json"), patch).catch(() => {});
+    },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
@@ -1317,6 +1337,7 @@ export function buildProcessDeps(
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+    recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
     // PRD cascade rebase (issue #1007): after a successful DONE landing, rebase
     // every open sibling branch (same prd:N, not held by a live worker) onto the
     // new base HEAD. Best-effort — failures log a warning, never fail the close.
@@ -1488,6 +1509,59 @@ function makeRecordAttempt(
       process.stderr.write(`[afk] memory attempt-record skipped (best-effort): ${String(err)}\n`);
     }
   };
+}
+
+function makeRecordOutcomeEvent(
+  gitRoot: string,
+  current: CurrentAttempt,
+  exec?: ExecFn,
+): (event: OutcomeEvent) => Promise<void> {
+  return async (event: OutcomeEvent): Promise<void> => {
+    try {
+      const configPath = join(gitRoot, ".red", "config.yaml");
+      const configText = readFileSync(configPath, "utf8");
+      if (!pluginEnabledInConfig(configText, "brain")) return;
+      const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
+      const brainCli = resolveBrainCli(gitRoot, env);
+      if (!brainCli) return;
+      const dir = current.attemptDir || gitRoot;
+      await fsx.ensureDir(dir);
+      const json = JSON.stringify(event);
+      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}-a${event.context?.attemptNumber ?? "unknown"}.json`), json, "utf8");
+      const run = exec ?? (await import("../runtime/exec.js")).execTool;
+      const [cmd, ...head] = brainCli;
+      await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env,
+        input: json,
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] brain outcome-event skipped (best-effort): ${String(err)}\n`);
+    }
+  };
+}
+
+function resolveBrainCli(gitRoot: string, env: NodeJS.ProcessEnv): string[] | undefined {
+  const override = env.RED_BRAIN_CLI;
+  if (override) return existsSync(override) ? ["node", override] : undefined;
+  const pathHit = findOnPath("brain", env.PATH);
+  if (pathHit) return ["brain"];
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT ?? env.CODEX_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const sibling = join(pluginRoot, "..", "brain", "dist", "cli.js");
+    if (existsSync(sibling)) return ["node", sibling];
+  }
+  const inRepo = join(gitRoot, "plugins", "brain", "dist", "cli.js");
+  if (existsSync(inRepo)) return ["node", inRepo];
+  return undefined;
+}
+
+function findOnPath(bin: string, pathValue: string | undefined): string | undefined {
+  for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
+    const candidate = join(dir, bin);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /** Per-issue mutable context the session-scoped process deps close over — the
@@ -1780,7 +1854,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         return result;
       }
       const sp = join(pi.attemptDir, "afk.state.json");
-      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
+      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
       return result;
     },
     processDeps: buildProcessDeps(
@@ -1860,6 +1934,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
           // agent stream event; `validating`/`merging` by the orchestrator at the
           // gate/landing steps (deps.markPhase).
           "current.phase": "setup",
+        });
+        // Durable write-once identity sidecar (issue #1219): the immutable
+        // worker_id/runner/origin/number/started_at the isolation fallback in
+        // readWorkerState reads so a live isolation worker whose host-side
+        // afk.state.json is still zeroed renders its real identity instead of the
+        // `?  run=-  00:00:00` ghost. Never clobbered by vitals updateState writes.
+        writeIdentitySync(attemptDir, {
+          worker_id: c.workerId,
+          runner: c.runner,
+          origin: flags.origin ?? "",
+          number: candidate.number,
+          started_at: startedAt,
         });
       } catch {
         // Best-effort — a failed seed must never block the worker's actual work.

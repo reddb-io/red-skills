@@ -1,0 +1,8 @@
+{
+  "name": "alpha",
+  "version": "0.1.0",
+  "description": "Alpha fixture plugin.",
+  "skills": [
+    "./skills/core/do-thing"
+  ]
+}

@@ -17,6 +17,7 @@ import {
   type MemoryEdge,
   type MemoryNode,
   type MemoryProvenance,
+  type ProvenanceTier,
   type MemoryScope,
   type NodeType,
   defaultTier,
@@ -152,6 +153,7 @@ type PathAlgorithm = "bfs" | "dijkstra";
 const STRATEGIES: readonly TraverseStrategy[] = ["bfs", "dfs"];
 const DIRECTIONS: readonly GraphDirection[] = ["outgoing", "incoming", "both"];
 const ALGORITHMS: readonly PathAlgorithm[] = ["bfs", "dijkstra"];
+const CAUSAL_EDGE_LABELS = new Set<EdgeLabel>(["CAUSES", "PREVENTS", "BLOCKS", "ENABLES"]);
 
 /** Reject anything not in the allowlist — these tokens are interpolated raw
  *  into the graph DSL (they cannot be bound as `$1` params), so they must never
@@ -297,6 +299,7 @@ export class MemoryStore {
       ...(scopeId ? { scope_id: scopeId } : {}),
       importance: props.importance ?? DEFAULT_IMPORTANCE,
       tier,
+      provenance_tier: props.provenance_tier ?? defaultProvenanceTier(props),
       ...(layer != null ? { layer } : {}),
       created_at: createdAt,
       updated_at: now,
@@ -393,6 +396,7 @@ export class MemoryStore {
           to_rid: conflict.rid,
           properties: conflictEdgeProps(conflict),
         });
+        await this.supersede(conflict.rid, rid, conflict.reason);
       }
     } catch {
       // best-effort — never block the underlying write
@@ -459,8 +463,11 @@ export class MemoryStore {
       const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.nodes}`);
       this.nodeCache = r.rows.map(rowToNode);
     }
+    const archive = await this.readSupersessionArchiveMap();
     const evicted = await this.evictedRids();
-    return this.nodeCache.filter((n) => !isExpired(n, now) && !evicted.has(n.rid));
+    return this.nodeCache
+      .filter((n) => !isExpired(n, now) && !evicted.has(n.rid))
+      .map((node) => applySupersessionArchive(node, archive[node.rid]));
   }
 
   private invalidateNodeCache(): void {
@@ -494,12 +501,15 @@ export class MemoryStore {
 
   /** Upsert an edge, deduped by (from, to, label) via KV. */
   async upsertEdge(edge: MemoryEdge): Promise<number> {
+    enforceEdgeProvenance(edge);
     const existing = await this.findEdge(edge.from_rid, edge.to_rid, edge.label);
     if (existing != null) return existing;
     const key = edgeKey(edge.from_rid, edge.to_rid, edge.label);
 
     const properties = {
       ...(edge.properties ?? {}),
+      provenance_tier:
+        edge.properties?.provenance_tier ?? defaultProvenanceTier(edge.properties ?? {}),
       created_at: edge.properties?.created_at ?? Date.now(),
     };
     // Same multi-model rule as nodes: the engine requires the `EDGE` keyword.
@@ -604,15 +614,21 @@ export class MemoryStore {
    * recall instead.
    */
   async supersede(oldRid: number, newRid: number, reason?: string): Promise<number> {
+    const now = Date.now();
     const edgeRid = await this.upsertEdge({
       label: "SUPERSEDED_BY",
       from_rid: oldRid,
       to_rid: newRid,
-      properties: reason ? { reason } : undefined,
+      properties: {
+        ...(reason ? { reason } : {}),
+        valid_until: now,
+        archived_at: now,
+      },
     });
     const map = await this.readSupersededMap();
     map[oldRid] = newRid;
     await this.kv().put(SUPERSEDED_KEY, map);
+    await this.archiveSupersededNode(oldRid, newRid, now, reason);
     await this.emitEngineOp({
       op: "conflict-detected",
       outcome: "succeeded",
@@ -659,6 +675,36 @@ export class MemoryStore {
     const raw = await this.kv().get(SUPERSEDED_KEY);
     if (raw == null) return {};
     return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, number>;
+  }
+
+  private async archiveSupersededNode(
+    oldRid: number,
+    newRid: number,
+    now: number,
+    reason?: string,
+  ): Promise<void> {
+    const archive = await this.readSupersessionArchiveMap();
+    const existing = archive[oldRid];
+    const nodes = this.nodeCache ?? (await this.listNodes());
+    const node = nodes.find((candidate) => candidate.rid === oldRid);
+    archive[oldRid] = {
+      ...(existing ?? {}),
+      superseded_by: newRid,
+      valid_from:
+        existing?.valid_from ??
+        numberOrUndefined(node?.properties.valid_from) ??
+        numberOrUndefined(node?.properties.created_at),
+      valid_until: now,
+      archived_at: now,
+      ...(reason ? { reason } : {}),
+    };
+    await this.kv().put(SUPERSESSION_ARCHIVE_KEY, archive);
+  }
+
+  private async readSupersessionArchiveMap(): Promise<SupersessionArchiveMap> {
+    const raw = await this.kv().get(SUPERSESSION_ARCHIVE_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as SupersessionArchiveMap;
   }
 
   // -------------------------------------------------------------------
@@ -783,6 +829,11 @@ export class MemoryStore {
       if (sup[node.rid] != null) {
         delete sup[node.rid];
         await this.kv().put(SUPERSEDED_KEY, sup);
+      }
+      const archive = await this.readSupersessionArchiveMap();
+      if (archive[node.rid] != null) {
+        delete archive[node.rid];
+        await this.kv().put(SUPERSESSION_ARCHIVE_KEY, archive);
       }
       await this.kv().delete(nodeExpiryKey(node.rid));
     } finally {
@@ -1552,6 +1603,36 @@ function conflictEdgeProps(conflict: DetectedConflict): {
   };
 }
 
+function defaultProvenanceTier(input: {
+  confidence?: unknown;
+  provenance?: { confidence?: unknown } | null;
+}): ProvenanceTier {
+  const confidence = input.confidence ?? input.provenance?.confidence;
+  return confidence === "EXTRACTED" ? "oracle" : "proxy";
+}
+
+function enforceEdgeProvenance(edge: MemoryEdge): void {
+  if (!CAUSAL_EDGE_LABELS.has(edge.label)) return;
+  if (!isCoOccurrenceEdge(edge.properties)) return;
+  throw new Error(`co-occurrence edge cannot use causal label ${edge.label}`);
+}
+
+function isCoOccurrenceEdge(props: MemoryEdge["properties"]): boolean {
+  if (!props) return false;
+  const candidates = [
+    props.relation_kind,
+    props.source_kind,
+    props.extraction_kind,
+    props.inference_kind,
+  ];
+  return candidates.some((value) => normalizeProvenanceMarker(value) === "co-occurrence");
+}
+
+function normalizeProvenanceMarker(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.toLowerCase().replace(/_/g, "-");
+}
+
 /**
  * Normalize a RedDB graph row into a MemoryNode. The engine returns promoted
  * columns uppercased (`PROPERTIES`, `HASH`) alongside lowercase `rid`, `label`,
@@ -1564,6 +1645,26 @@ export function rowToNode(row: Record<string, unknown>): StoredNode {
     label: String(row.label ?? ""),
     node_type: (row.node_type as NodeType) ?? "concept",
     properties: properties ?? { title: String(row.label ?? "") },
+  };
+}
+
+function applySupersessionArchive(
+  node: StoredNode,
+  archive?: SupersessionArchiveRecord,
+): StoredNode {
+  if (!archive) return node;
+  return {
+    ...node,
+    properties: {
+      ...node.properties,
+      ...(archive.valid_from != null ? { valid_from: archive.valid_from } : {}),
+      valid_until: archive.valid_until,
+      valid_to: archive.valid_until,
+      archived_at: archive.archived_at,
+      superseded_by: archive.superseded_by,
+      superseded_by_rid: archive.superseded_by,
+      ...(archive.reason ? { supersession_reason: archive.reason } : {}),
+    },
   };
 }
 
@@ -1683,6 +1784,21 @@ function edgeTo(edge: Record<string, unknown>): number {
  *  graph, not one per node — see `supersede`. */
 const SUPERSEDED_KEY = "node:superseded:all";
 
+type SupersessionArchiveRecord = {
+  superseded_by: number;
+  valid_from?: number;
+  valid_until: number;
+  archived_at: number;
+  reason?: string;
+};
+
+type SupersessionArchiveMap = Record<string, SupersessionArchiveRecord>;
+
+/** Aggregate archive overlay: oldRid → validity/linkage stamp. The original
+ *  graph node row is preserved; read paths merge this stamp for audit recall.
+ */
+const SUPERSESSION_ARCHIVE_KEY = "node:supersession_archive:all";
+
 /** Aggregate logical edge-deletion map: edge rid → removed. */
 const REMOVED_EDGES_KEY = "edge:removed:all";
 
@@ -1699,6 +1815,10 @@ export function isExpired(node: StoredNode, now: number = Date.now()): boolean {
   if (node.properties.tier !== "ephemeral") return false;
   const expiresAt = node.properties.expires_at;
   return typeof expiresAt === "number" && now >= expiresAt;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /** Aggregate access overlay: rid → {recall count, last-accessed time}. One KV

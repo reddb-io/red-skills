@@ -82,6 +82,12 @@ export interface ReasoningAttemptPayload {
   attemptNumber: number;
   /** Terminal outcome reported by AFK. */
   status: ReasoningAttemptStatus | string;
+  /** Canonical issue type bucket, e.g. `bug`, `prd`, or `unknown`. */
+  issueType?: string;
+  /** AFK model tier used for the attempt, e.g. `validate`, `simple`, `complex`, or `think`. */
+  modelTier?: string;
+  /** Coarse routing outcome for later policy queries. */
+  outcome?: "success" | "failure" | "escalated";
   /** Issue title at the time of recording, if known. */
   issueTitle?: string;
   /** Issue URL at the time of recording, if known. */
@@ -243,6 +249,9 @@ export async function recordReasoningAttempt(
       worker_id: payload.workerId,
       ...(parentPrd != null ? { parent_prd: parentPrd } : {}),
       status: payload.status,
+      issue_type: payload.issueType,
+      model_tier: payload.modelTier,
+      outcome: payload.outcome,
       branch: payload.branch,
       duration_ms: payload.durationMs,
       diffstat: payload.diffstat,

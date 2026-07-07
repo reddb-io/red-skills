@@ -16,6 +16,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
+import { buildRef } from "../core/remote-branch.js";
 import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
 import { readWorkerState } from "../core/worker-state-reader.js";
 import {
@@ -79,6 +80,36 @@ export function iterDirsForWorker(root: string, wid: string): string[] {
     }
   }
   return out;
+}
+
+/** Sum `current.cost_usd` from the current AFK worker state files. This is the
+ * supervisor's per-drain spend signal and deliberately reads the existing
+ * WorkerVitals field rather than maintaining a parallel ledger. */
+export function sumWorkerCostUsd(tmpDir: string): number {
+  const workersRoot = join(tmpDir, "workers");
+  let workerDirs: string[];
+  try {
+    workerDirs = readdirSync(workersRoot);
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const wid of workerDirs) {
+    const wdir = join(workersRoot, wid);
+    let attempts: string[];
+    try {
+      attempts = readdirSync(wdir);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      const rec = readWorkerState(join(wdir, attempt, "afk.state.json"));
+      if (rec === null) continue;
+      const cost = rec.state.current.cost_usd;
+      if (Number.isFinite(cost) && cost > 0) total += cost;
+    }
+  }
+  return total;
 }
 
 /** `.current.number` from a dir's afk.state.json, or null. Mirrors
@@ -231,6 +262,7 @@ export function resolveIterDirInfo(
   let issue: number | null = null;
   let workerId = "";
   let startedAt = "";
+  let branch: string | undefined;
   // Single owner (core/worker-state-reader): null when the dir has no/malformed
   // state, in which case issue/worker stay empty and teardown still proceeds.
   const rec = readWorkerState(join(dir, "afk.state.json"));
@@ -239,6 +271,9 @@ export function resolveIterDirInfo(
     if (typeof n === "number" && Number.isInteger(n)) issue = n;
     workerId = rec.state.worker_id;
     startedAt = rec.state.started_at;
+    if (issue !== null && workerId.length > 0) {
+      branch = buildRef("afk", workerId, issue, rec.state.current.title) ?? undefined;
+    }
   }
 
   let durationS = 0;
@@ -256,7 +291,7 @@ export function resolveIterDirInfo(
   // re-claim cap (#402). Degrades to attempt 1 when the path is non-canonical.
   const attempt = parseWorkerAttemptPath(dir)?.attempt ?? 1;
 
-  return { path: dir, issue, workerId, logTail, notes, durationS, attempt };
+  return { path: dir, issue, workerId, branch, logTail, notes, durationS, attempt };
 }
 
 /**

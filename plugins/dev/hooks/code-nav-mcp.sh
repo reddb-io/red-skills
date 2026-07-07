@@ -69,7 +69,7 @@ fi
 if [ -z "$bundle" ]; then
   expected="${ver:-<unknown>}"
   printf 'code-nav: could not locate code-nav-mcp bundle for %s (looked in cache %s and repo-root dist; red-fetch on-demand also failed)\\n' "$expected" "$cache" >&2
-  exit 1
+  exit 0
 fi
 
 exec node "$bundle"

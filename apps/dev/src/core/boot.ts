@@ -43,8 +43,9 @@ import {
 } from "./boot-sweep.js";
 import {
   planStaleClaimSweep,
+  renderDeadClaimSweepAudit,
   renderStaleClaimSweepAudit,
-  resolveClaimStalenessConfig,
+  resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
@@ -214,6 +215,8 @@ export interface BootDeps {
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
   env?: Record<string, string | undefined>;
+  /** Flat dev config values from `.red/config.yaml` (namespaced keys folded to accessors). */
+  config?: Record<string, string | undefined>;
   /** When provided, the reconcile sweep (step 7) validates and lands each
    * owned parked-mechanical branch without re-running the agent. */
   reconcileRunner?: ReconcileBootRunner;
@@ -474,7 +477,7 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
     // Best-effort: a failed listing skips the sweep this boot, never aborting it.
     return { released: [] };
   }
-  const config = resolveClaimStalenessConfig(deps.env ?? process.env);
+  const config = resolveClaimReaperConfig(deps.env ?? process.env, (key) => deps.config?.[key] ?? "");
   const plans = planStaleClaimSweep(claimed, deps.nowS, config);
   const released: number[] = [];
   for (const p of plans) {
@@ -497,7 +500,12 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
       }
       const addLabels = currentLabels.includes(LABEL_HUMAN) ? [] : [LABEL_READY];
       await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
-      await deps.gh.comment(p.issue, renderStaleClaimSweepAudit(p.staleOwners));
+      const claimedIssue = claimed.find((c) => c.issue === p.issue);
+      const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
+      const body = p.staleOwners.some((owner) => deadOwners.has(owner))
+        ? renderDeadClaimSweepAudit(p.staleOwners)
+        : renderStaleClaimSweepAudit(p.staleOwners);
+      await deps.gh.comment(p.issue, body);
       released.push(p.issue);
     } catch {
       // Best-effort: a failed release leaves the issue for the next boot's sweep.

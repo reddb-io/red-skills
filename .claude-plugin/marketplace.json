@@ -22,6 +22,11 @@
       "name": "brain",
       "source": "./plugins/brain",
       "description": "reddb.io brain plugin — project-local RedDB knowledge repository for freeform captures, typed artifacts, graph connections, and human-facing recall."
+    },
+    {
+      "name": "internal",
+      "source": "./plugins/internal",
+      "description": "reddb.io internal plugin — maintainer-only skills for operating the red-skills repository."
     }
   ]
 }

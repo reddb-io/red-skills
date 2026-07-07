@@ -7,3 +7,5 @@ plugins:
     enabled: true                # opt this directory into the dev plugin (ADR 0067)
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
+  internal:
+    enabled: true                # maintainer-only repo operations plugin (ADR 0067)

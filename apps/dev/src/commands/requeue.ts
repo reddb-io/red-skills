@@ -20,11 +20,12 @@ import { join } from "node:path";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
+import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { LABEL_SENSITIVE_PATH } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
-import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
+import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
 import { getConfig, loadConfig } from "../core/config.js";
@@ -39,6 +40,8 @@ export interface RequeueGh {
   editBody(issue: number, body: string): Promise<void>;
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   comment(issue: number, body: string): Promise<void>;
+  listClaims?(issue: number): Promise<RawClaimComment[]>;
+  postClaim?(issue: number, body: string): Promise<void>;
 }
 
 /** Metadata passed to the adopt runner after the requeue transition is applied. */
@@ -82,6 +85,7 @@ function parseIssue(raw: string | undefined): number | undefined {
 
 function ghFor(cwd: string, repo: string): RequeueGh {
   const repoArgs = repo ? ["--repo", repo] : [];
+  const countCachePath = statuslineCountCachePath(cwd);
   const run = (args: readonly string[]): ReturnType<ExecFn> =>
     execTool("gh", args, { cwd, maxBuffer: 32 * 1024 * 1024 });
   return {
@@ -103,13 +107,60 @@ function ghFor(cwd: string, repo: string): RequeueGh {
       const args = ["issue", "edit", String(issue), ...repoArgs];
       for (const l of remove) args.push("--remove-label", l);
       for (const l of add) args.push("--add-label", l);
-      const out = await run(args);
-      if (out.code !== 0) throw new Error(`edit labels #${issue} failed: ${out.stderr.trim() || out.stdout.trim()}`);
+      const ok = await editLabelsWithStatuslineCache(
+        countCachePath,
+        async () => {
+          const out = await run(args);
+          if (out.code !== 0) throw new Error(`edit labels #${issue} failed: ${out.stderr.trim() || out.stdout.trim()}`);
+          return true;
+        },
+        remove,
+        add,
+      );
+      if (!ok) throw new Error(`edit labels #${issue} failed`);
     },
     async comment(issue, body) {
       await run(["issue", "comment", String(issue), ...repoArgs, "--body", body]);
     },
+    listClaims: (issue) => ghx.listClaimComments({ cwd, repo }, issue),
+    postClaim: async (issue, body) => {
+      await ghx.postClaimComment({ cwd, repo }, issue, body);
+    },
   };
+}
+
+function activeClaimOwners(comments: readonly RawClaimComment[]): string[] {
+  interface Fold {
+    latestId: number;
+    latestKind: "claim" | "concede";
+  }
+  const folds = new Map<string, Fold>();
+  for (const r of parseClaimRecords(comments)) {
+    const f = folds.get(r.worker);
+    if (!f || r.commentId >= f.latestId) {
+      folds.set(r.worker, { latestId: r.commentId, latestKind: r.kind });
+    }
+  }
+  return [...folds.entries()]
+    .filter(([, f]) => f.latestKind === "claim")
+    .map(([worker]) => worker)
+    .sort();
+}
+
+async function sweepRequeueClaims(gh: RequeueGh, issue: number): Promise<string[]> {
+  if (!gh.listClaims || !gh.postClaim) return [];
+  const owners = activeClaimOwners(await gh.listClaims(issue));
+  for (const owner of owners) {
+    await gh.postClaim(issue, renderClaimComment({ worker: owner }, "concede"));
+  }
+  if (owners.length > 0) {
+    const who = owners.map((owner) => `\`${owner}\``).join(", ");
+    await gh.comment(
+      issue,
+      `🤖 /requeue claim sweep: conceded active AFK claim ${owners.length === 1 ? "marker" : "markers"} on behalf of ${who} before requeueing.`,
+    );
+  }
+  return owners;
 }
 
 function directiveComment(plan: RequeuePlan, guidance?: string): string {
@@ -176,6 +227,7 @@ async function runAdoptLanding(
   stdout: NodeJS.WritableStream,
 ): Promise<"landed" | "parked" | "skipped"> {
   const paths = afkPaths(cwd);
+  const countCachePath = statuslineCountCachePath(cwd);
   const ghCtx: GhContext = { cwd, repo };
   const gitCtx: GitContext = { cwd };
   const lockPath = branchLockPath(cwd);
@@ -206,8 +258,12 @@ async function runAdoptLanding(
     const reconcileDeps: ReconcileDeps = {
       gh: {
         editLabels: async (n, remove, add) => {
-          await ghx.editLabels(ghCtx, n, remove, add);
-          return true;
+          return editLabelsWithStatuslineCache(
+            countCachePath,
+            () => ghx.editLabels(ghCtx, n, remove, add),
+            remove,
+            add,
+          );
         },
         ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
         comment: (n, body) => ghx.comment(ghCtx, n, body),
@@ -375,6 +431,7 @@ export async function requeueCommand(
 
   // Apply the requeue transition when the issue is parked and requeueable.
   if (plan.requeueable) {
+    await sweepRequeueClaims(gh, issue);
     if (plan.bodyChanged) await gh.editBody(issue, plan.body);
     await gh.comment(issue, directiveComment(plan, guidance));
     await gh.editLabels(issue, plan.removeLabels, plan.addLabels);

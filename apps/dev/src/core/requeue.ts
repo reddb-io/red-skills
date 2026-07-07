@@ -18,6 +18,10 @@ import {
   parseCurrentBlocker,
   type CurrentBlocker,
 } from "./blocker-state.js";
+import {
+  blockedLabelsIn,
+  validateIssueLifecycleTransition,
+} from "./issue-lifecycle.js";
 import { LABEL_HUMAN, LABEL_READY } from "./triage-labels.js";
 
 /**
@@ -95,10 +99,6 @@ export interface RequeuePlan {
   removeLabels: string[];
 }
 
-function blockedLabelsIn(labels: readonly string[]): string[] {
-  return labels.filter((l) => l.startsWith("blocked:"));
-}
-
 function refuse(
   reason: string,
   refuseForHitl: boolean,
@@ -162,6 +162,12 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   }
 
   // Mixed blocked:* labels → label state is ambiguous; /hitl must reconcile.
+  // A no-op-mutation probe through validateIssueLifecycleTransition cannot
+  // express this: the `requeue-mixed-blocked-refusal` marker edge is
+  // `to: "illegal"`, so a legal (non-mixed) label set finds no matching row and
+  // throws "no legal row" instead of passing — the regression that turned every
+  // non-mixed requeue into an IllegalIssueLifecycleTransitionError. Detect the
+  // ambiguous state directly instead.
   if (blocked.length > 1) {
     return refuse(
       `mixed blocked:* labels [${blocked.join(", ")}]: label state is ambiguous — use /hitl to reconcile`,
@@ -222,6 +228,13 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     : input.body;
 
   const removeLabels = [...(hasHuman ? [LABEL_HUMAN] : []), ...blocked];
+  const addLabels = [LABEL_READY];
+  validateIssueLifecycleTransition({
+    edge: "requeue",
+    fromLabels: input.labels,
+    removeLabels,
+    addLabels,
+  });
 
   return {
     requeueable: true,
@@ -232,7 +245,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     // `ready-for-agent` is always applied — a gh add of a label the issue
     // already carries is idempotent, so the transition is the same whether the
     // maintainer pre-flipped labels or not.
-    addLabels: [LABEL_READY],
+    addLabels,
     removeLabels,
   };
 }

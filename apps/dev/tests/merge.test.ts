@@ -775,9 +775,10 @@ describe("resolveMergeConflict (one-shot self-resolver)", () => {
 
 describe("preMergeRebase (#1006)", () => {
   const base = { repo: "/wt", remote: "origin", base: "main", branch: "afk/w/9-x" };
+  const needsRebase = { match: (a: string[]) => a.includes("merge-base"), result: { code: 1 } };
 
   it("clean rebase → fetches base, rebases, force-pushes the branch, ok", async () => {
-    const { exec, calls } = fakeExec();
+    const { exec, calls } = fakeExec([needsRebase]);
     const r = await preMergeRebase(exec, base);
     expect(r).toEqual({ ok: true });
     const j = joined(calls);
@@ -786,6 +787,17 @@ describe("preMergeRebase (#1006)", () => {
     expect(j).toContain("git -C /wt push origin HEAD:refs/heads/afk/w/9-x --force-with-lease");
     // A clean rebase never aborts.
     expect(j.some((c) => c.includes("rebase --abort"))).toBe(false);
+  });
+
+  it("freshly fetched base already ancestors HEAD → no rebase needed", async () => {
+    const { exec, calls } = fakeExec();
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt fetch origin main --quiet");
+    expect(j).toContain("git -C /wt merge-base --is-ancestor origin/main HEAD");
+    expect(j.some((c) => c.includes("rebase"))).toBe(false);
+    expect(j.some((c) => c.includes("push"))).toBe(false);
   });
 
   it("a fetch failure short-circuits before any rebase", async () => {
@@ -799,6 +811,7 @@ describe("preMergeRebase (#1006)", () => {
 
   it("a rebase conflict aborts the rebase and never pushes → conflict", async () => {
     const { exec, calls } = fakeExec([
+      needsRebase,
       { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
     ]);
     const r = await preMergeRebase(exec, base);
@@ -810,6 +823,7 @@ describe("preMergeRebase (#1006)", () => {
 
   it("#1095: an opt-in resolver that resolves the conflict → proceeds to push (no abort)", async () => {
     const { exec, calls } = fakeExec([
+      needsRebase,
       { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
     ]);
     let resolverRepo = "";
@@ -830,6 +844,7 @@ describe("preMergeRebase (#1006)", () => {
 
   it("#1095: a resolver that DECLINES → aborts exactly as before → conflict", async () => {
     const { exec, calls } = fakeExec([
+      needsRebase,
       { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
     ]);
     const r = await preMergeRebase(exec, { ...base, resolveMechanical: async () => false });
@@ -842,6 +857,7 @@ describe("preMergeRebase (#1006)", () => {
   it("a force-with-lease reject retries (re-fetch + re-rebase) then succeeds on the 2nd push", async () => {
     let pushes = 0;
     const { exec, calls } = fakeExec([
+      needsRebase,
       {
         match: (a) => a.includes("push"),
         result: { code: 1 },
@@ -870,6 +886,7 @@ describe("preMergeRebase (#1006)", () => {
         pushes++;
         return { code: 1, stdout: "", stderr: "rejected" };
       }
+      if (argv.includes("merge-base")) return { code: 1, stdout: "", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await preMergeRebase(exec, { ...base, maxPushRetries: 2 });
@@ -886,6 +903,7 @@ describe("preMergeRebase (#1006)", () => {
         // First rebase clean; the retry's re-rebase conflicts.
         return { code: rebases >= 2 ? 1 : 0, stdout: "", stderr: "" };
       }
+      if (argv.includes("merge-base")) return { code: 1, stdout: "", stderr: "" };
       if (argv.includes("push")) return { code: 1, stdout: "", stderr: "rejected" };
       return { code: 0, stdout: "", stderr: "" };
     };

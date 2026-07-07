@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import { OUTCOME_EVENT_SCHEMA_VERSION, type OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
+import { recommendModelTier } from "../src/model-tier-bandit.js";
 import {
   createAfkHeadlessAutoLinkProvider,
   parseAutoLinkProviderResponse,
@@ -148,6 +150,87 @@ describe("BrainStore hybrid search", () => {
       expect(result.answer).toContain("Missing evidence:");
     } finally {
       await store.close();
+    }
+  });
+});
+
+describe("BrainStore outcome events", () => {
+  it("appends versioned outcome events and replays them in write order", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    const first: OutcomeEvent = {
+      schemaVersion: OUTCOME_EVENT_SCHEMA_VERSION,
+      id: "afk:o/r:9:1",
+      emitter: "afk",
+      occurredAt: "2026-07-06T20:14:16.000Z",
+      taskClass: "think",
+      chosenOption: { kind: "runner", runner: "claude", model: "claude-opus-4-8", effort: "high" },
+      outcome: "success",
+      cost: { signal: "unknown" },
+      context: {
+        repository: "o/r",
+        issueNumber: 9,
+        attemptNumber: 1,
+        issueType: "bug",
+        workerId: "wAAAA",
+        branch: "afk/wAAAA/9-fix-the-thing",
+        durationMs: 12_000,
+        status: "done",
+      },
+    };
+    const second: OutcomeEvent = {
+      ...first,
+      id: "afk:o/r:10:1",
+      occurredAt: "2026-07-06T20:15:16.000Z",
+      outcome: "failure",
+      context: { ...first.context, issueNumber: 10, status: "blocked" },
+    };
+
+    try {
+      await store.appendOutcomeEvent(first);
+      await store.appendOutcomeEvent(second);
+
+      expect(await store.replayOutcomeEvents()).toEqual([first, second]);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("persists the model-tier bandit document derived from outcome events", async () => {
+    const root = await tempRoot();
+    const uri = `file://${join(root, "brain.rdb")}`;
+    const store = await BrainStore.open({ uri });
+    const first: OutcomeEvent = {
+      schemaVersion: OUTCOME_EVENT_SCHEMA_VERSION,
+      id: "afk:o/r:11:1",
+      emitter: "afk",
+      occurredAt: "2026-07-06T20:14:16.000Z",
+      taskClass: "feature",
+      chosenOption: { kind: "validate", runner: "claude", model: "claude-haiku-4-5", effort: "low" },
+      outcome: "success",
+      cost: { signal: "low" },
+    };
+
+    try {
+      await store.appendOutcomeEvent(first);
+      const document = await store.refreshModelTierBanditDocument();
+
+      expect(document.buckets.feature?.arms.validate.posterior.alpha).toBe(2);
+    } finally {
+      await store.close();
+    }
+
+    const reopened = await BrainStore.open({ uri });
+    try {
+      const document = await reopened.loadModelTierBanditDocument();
+      expect(document?.buckets.feature?.arms.validate.observations).toBe(1);
+      const advice = recommendModelTier(document!, "feature", { samplePosterior: (stats) => stats.mean });
+      expect(advice.posterior.find((arm) => arm.tier === "validate")).toMatchObject({
+        alpha: 2,
+        beta: 1,
+      });
+    } finally {
+      await reopened.close();
     }
   });
 });

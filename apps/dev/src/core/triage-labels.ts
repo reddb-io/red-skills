@@ -10,6 +10,7 @@
 export const LABEL_READY = "ready-for-agent";
 export const LABEL_RUNNING = "running";
 export const LABEL_HUMAN = "ready-for-human";
+export const LABEL_CONTESTED = "contested";
 // PR-object entry label (PRD #745, issue #746): a maintainer applies this to a
 // PR to request the advisory cloud review. It is the only PR-specific label —
 // the review then transitions the PR through the shared lifecycle vocabulary
@@ -54,6 +55,7 @@ export const LABEL_TRIAGE_SUMMON = "triage:summon";
 export const LABEL_PRD = "type:prd";
 export const LABEL_URGENT = "priority:urgent";
 export const LABEL_HIGH = "priority:high";
+export const LABEL_BUG = "bug";
 
 // Blocked reason labels
 export const LABEL_VALIDATION = "blocked:validation";
@@ -95,6 +97,11 @@ export const LABEL_TRUNK_DIVERGED = "blocked:trunk-diverged";
 // configuration — an intent-class change that can never auto-land. A human
 // must review the change before it reaches the base branch.
 export const LABEL_SENSITIVE_PATH = "blocked:sensitive-path";
+// Main-red tracking gate (#1237): admin-merge may continue onto a red main only
+// while the auto-filed main-red repair issue is open. If main is red and that
+// visibility issue is absent, landing refuses with this human-only label instead
+// of silently delivering onto untracked red.
+export const LABEL_MAIN_RED_UNTRACKED = "blocked:main-red-untracked";
 // AFK runner improvement (#908): the per-attempt resource budget guard aborted
 // the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
 // it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;

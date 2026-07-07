@@ -6,7 +6,7 @@
 // then ONE line per live AFK worker.
 //
 //   line 1 (header, ALWAYS): [wine » project (branch) v· model·effort] ctx=… 5h=… 7d=… prs=… iss=… loc=+A -R
-//   line 2..N (one per live worker): the monitor's compact per-worker line
+//   line 2..N (one per live worker): the terse per-worker statusline line
 //
 // Only the leading IDENTITY ZONE of line 1 (project + model·effort) carries a
 // wine-red BACKGROUND; the rest of line 1 is background-transparent, each KPI a
@@ -15,11 +15,11 @@
 // exposes them); `prs=`/`iss=` are repo-global GitHub counts; `loc=+A -R` is the
 // LOCAL branch diff vs origin/main.
 //
-// The per-worker lines REUSE the monitor's `renderWorkerCompactLine` verbatim
-// (core/monitor.ts) — the single source of truth shared with `/afk monitor
-// --once`, so the two surfaces never drift. Each line is tinted soft-red as a
-// whole (a colour wrapper, never a structural rewrite) and ends with a reset so
-// the background never bleeds. Zero live workers → only line 1 is emitted.
+// The per-worker lines share the monitor's `workerFields` data extraction
+// (core/monitor.ts) and keep the same vitals vocabulary (`tls`/`rsn`/`txt`),
+// while rendering the compact Claude Code-specific layout. Each line is tinted
+// soft-red and ends with a reset so the background never bleeds. Zero live
+// workers → only line 1 is emitted.
 //
 // CODEX keeps the single aggregate line: its `tui.status_line` footer is
 // single-line only (per-runner split, ADR 0003), so the NO_COLOR path returns the
@@ -57,6 +57,35 @@ const NOBOLD = "\x1b[22m";
 const RESET = "\x1b[0m";
 
 const BRANCH_MAX = 28;
+const WORKER_GUTTER = "  ";
+
+type WorkerColumn = "workerId" | "run" | "org" | "iss" | "stage" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
+const WORKER_COLUMNS: readonly WorkerColumn[] = [
+  "workerId",
+  "run",
+  "org",
+  "iss",
+  "stage",
+  "elapsed",
+  "loc",
+  "tks",
+  "tls",
+  "rsn",
+  "txt",
+];
+type WorkerCells = Record<WorkerColumn, string>;
+type WorkerWidths = Record<WorkerColumn, number>;
+
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+function visibleWidth(s: string): number {
+  return stripAnsi(s).length;
+}
+
+function padVisible(s: string, width: number): string {
+  return s + " ".repeat(Math.max(0, width - visibleWidth(s)));
+}
 
 /** A transparent-zone `key=value`: light-red KEY, default-fg VALUE, back to SOFT. */
 const kv = (key: string, value: string): string => `${KEY}${key}=${VAL}${value}${SOFT}`;
@@ -158,16 +187,62 @@ export function renderHeaderLine(
 
 // ---------- line 2..N: one line per live worker ----------
 
+function workerCells(worker: CompactWorker, now: number): WorkerCells {
+  const f = workerFields(worker, now);
+  const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
+    .filter((x): x is string => Boolean(x))
+    .join(" ");
+  return {
+    workerId: f.workerId,
+    run: `run=${runVal}`,
+    org: `org=${f.origin || "afk"}`,
+    iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
+    stage: f.issue === null ? "" : f.stage,
+    elapsed: f.elapsed,
+    loc: `loc=${formatDiff(f.added, f.removed)}`,
+    tks: `tks=${humanizeCount(f.tokens)}`,
+    tls: `tls=${String(f.tools)}`,
+    rsn: `rsn=${String(f.reasoning)}`,
+    txt: `txt=${String(f.text)}`,
+  };
+}
+
+function workerWidths(rows: readonly WorkerCells[]): WorkerWidths {
+  const widths = Object.fromEntries(WORKER_COLUMNS.map((column) => [column, 0])) as WorkerWidths;
+  for (const row of rows) {
+    for (const column of WORKER_COLUMNS) widths[column] = Math.max(widths[column], visibleWidth(row[column]));
+  }
+  return widths;
+}
+
+function colorWorkerCell(column: WorkerColumn, raw: string): string {
+  if (column === "workerId") return `${BOLD}${raw}${NOBOLD}`;
+  const eq = raw.indexOf("=");
+  if (eq > 0) return `${KEY}${raw.slice(0, eq + 1)}${VAL}${raw.slice(eq + 1)}${SOFT}`;
+  return raw;
+}
+
+function formatWorkerCells(row: WorkerCells, widths: WorkerWidths): string {
+  const parts = WORKER_COLUMNS.map((column) => colorWorkerCell(column, padVisible(row[column], widths[column])));
+  return `${NOBG}${SOFT}${parts.join(WORKER_GUTTER)}${RESET}`;
+}
+
+function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): string[] {
+  const rows = workers.map((worker) => workerCells(worker, now));
+  const widths = workerWidths(rows);
+  return rows.map((row) => formatWorkerCells(row, widths));
+}
+
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
- *   <wID>  run=<runner> <model> <effort>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
+ *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
  * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
  * VALUE — so no token is a distinct blob. EVERY key on this line is EXACTLY 3
- * letters (house rule, issue #1176), so the vitals renamed tools/reason/text →
- * tls/rsn/txt HERE ONLY (the monitor dashboard line keeps tools:/reason:/text:).
+ * letters (house rule, issue #1176). The vitals use the shared monitor/statusline
+ * vocabulary `tls`/`rsn`/`txt` for tools, reasoning, and text activity.
  * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
  * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
  * queue counter (meaningless for a single-issue /go run) — and the standalone
@@ -185,6 +260,10 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // wID — bold red, reusing BOLD + the SOFT red tone (no new ANSI).
   parts.push(`${BOLD}${f.workerId}${NOBOLD}`);
   parts.push(kv("run", runVal));
+  // org=<afk|go> — spawn-time provenance (issue #1219). 3-letter key (house
+  // rule), same kv colour convention. An unstamped worker is an afk-fleet
+  // worker, so default the display to afk.
+  parts.push(kv("org", f.origin || "afk"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
   // <stage> follows bare and the legacy standalone #<n> token is dropped.
   if (f.issue !== null) {
@@ -195,7 +274,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   parts.push(kv("loc", formatDiff(f.added, f.removed)));
   parts.push(kv("tks", humanizeCount(f.tokens)));
   // The vitals as INDIVIDUAL 3-letter k=v pairs (single-spaced group), same
-  // convention. Renamed from tools/reason/text on the STATUSLINE line only.
+  // convention and vocabulary as the monitor dashboard.
   parts.push(`${kv("tls", String(f.tools))} ${kv("rsn", String(f.reasoning))} ${kv("txt", String(f.text))}`);
   return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
 }
@@ -217,7 +296,7 @@ export interface StyleOptions {
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
   const lines = [renderHeaderLine(input.project, input.claude, input.repo)];
   const now = opts.now ?? 0;
-  for (const worker of opts.workers ?? []) lines.push(renderWorkerLine(worker, now));
+  lines.push(...renderWorkerLines(opts.workers ?? [], now));
   return lines.join("\n");
 }
 

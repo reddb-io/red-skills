@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; ver=\"$(node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.claude-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
+            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; ver=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.claude-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
           }
         ]
       }
@@ -16,11 +16,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/skills/misc/branch-lock/scripts/branch-lock-hook.sh\"; if [ -f \"$hook\" ]; then bash \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/skills/misc/branch-lock/scripts/branch-lock-hook.sh\"; if [ -f \"$hook\" ]; then bash \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           },
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       },
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(node \"$f\" run dev route-model-tier --host claude <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" run dev route-model-tier --host claude <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
           }
         ]
       }

@@ -37,6 +37,7 @@ import {
   type Exec as MergeExec,
   type WaitForReviewInput,
 } from "./merge.js";
+import { decideMainRedAdminMerge, type MainRedRepairIssue } from "./main-red-repair.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
 
@@ -74,9 +75,10 @@ export interface LandingDeps {
    * PR path's pre-merge rebase (#1006), so the fetch / rebase / force-push run OFF
    * the primary checkout — the primary branch is sacred (#572). Returns the
    * worktree dir, or null when one could not be provisioned. Paired with
-   * {@link removeRebaseWorktree}. Absent → the pre-merge rebase is SKIPPED and the
-   * PR lands exactly as before (opt-in). Only the PR path uses it; the direct path
-   * already integrates origin inside its own detached landing worktree.
+   * {@link removeRebaseWorktree}. Absent → the PR landing is refused as infra
+   * before the admin-merge; fresh-base integration is a mandatory PR-path
+   * precondition (#1212). Only the PR path uses it; the direct path already
+   * integrates origin inside its own detached landing worktree.
    */
   makeRebaseWorktree?(branch: string): Promise<string | null>;
   /** Tear down a worktree returned by {@link makeRebaseWorktree} (best-effort). */
@@ -115,6 +117,8 @@ export interface LandingDeps {
    * immediately. Ignored on the locked path, which never opens a PR.
    */
   ciAwait?: CiAwaitInput;
+  /** Find the open auto-filed main-red repair issue for the #1237 admin-merge gate. */
+  findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -141,6 +145,13 @@ export interface LandingInput {
   remote: string;
   /** The worker branch sandcastle committed on (push + land source). */
   branch: string;
+  /**
+   * The already-validated worker tip SHA, when the caller resolved one before
+   * landing. Reconcile uses this to guarantee the commit being landed is the
+   * commit that passed validation, instead of re-reading a mutable local branch
+   * ref after the gate.
+   */
+  validatedBranchTip?: string;
   /** Resolved base branch (lock > pin > main). */
   base: string;
   /**
@@ -157,6 +168,8 @@ export interface LandingInput {
   issue: number;
   /** Issue title, for the merge/PR message + hook contexts. */
   title: string;
+  /** Issue labels used to derive the landing-created conventional merge title. */
+  labels?: readonly string[];
   /**
    * Sensitive-path guard bypass (issue #1171). Defaults false/undefined. When
    * true, the step-0a sensitive-path guard scan is SKIPPED so a branch whose diff
@@ -170,6 +183,29 @@ export interface LandingInput {
    * operator adopt path ever passes true.
    */
   sensitivePathApproved?: boolean;
+  /**
+   * True when the feedback baseline probe found pre-existing failures on the
+   * trunk/main baseline. Used by the admin-PR path to enforce the tracked-red
+   * visibility gate (#1237). Defaults false/undefined so green-main landings are
+   * unaffected.
+   */
+  mainRed?: boolean;
+}
+
+export function landingMergeTitle(input: { issue: number; title: string; labels?: readonly string[] }): string {
+  const labels = new Set((input.labels ?? []).map((label) => label.trim().toLowerCase()));
+  let prefix = "chore";
+  if (labels.has("type:bug") || labels.has("bug")) {
+    prefix = "fix";
+  } else if (
+    labels.has("type:feature") ||
+    labels.has("feature") ||
+    labels.has("type:enhancement") ||
+    labels.has("enhancement")
+  ) {
+    prefix = "feat";
+  }
+  return `${prefix}: #${input.issue} ${input.title}`;
 }
 
 /** The pre_merge / post_merge hook context builders the caller owns (so the
@@ -203,6 +239,8 @@ export type LandingResult =
         | "ci-pending"
         | "pr-conflict"
         | "pr-merge-failed"
+        | "infra"
+        | "main-red-untracked"
         // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
         // `<trunk>` ref has DIVERGED from `origin/<trunk>`. The landing aborted
         // BEFORE integrating the attempt branch and NEVER repaired the divergence
@@ -222,6 +260,10 @@ export type LandingResult =
       originTrunkSha?: string;
       /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
       sensitivePaths?: SensitivePathHit[];
+      /** Main-red tracking gate (`main-red-untracked`): actionable refusal text. */
+      message?: string;
+      /** Infra failure (`infra`): actionable refusal text for the terminal note. */
+      infraReason?: string;
     };
 
 /**
@@ -392,13 +434,21 @@ export async function doLanding(
  * fast-forward so the primary checkout is never written to (ADR 0083 §2, #1019).
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
+  if (input.base === input.trunk && input.mainRed === true) {
+    const current = deps.findMainRedRepairIssue ? await deps.findMainRedRepairIssue() : null;
+    const decision = decideMainRedAdminMerge({ mainRed: true, openRepairIssue: current });
+    if (!decision.ok) {
+      return { ok: false, reason: "main-red-untracked", locked: input.locked, message: decision.message };
+    }
+  }
+
   // Pre-merge rebase (#1006): rebase the worker branch onto the fetched base tip
   // in an ISOLATED worktree and force-push it before opening/merging the PR, so
   // the admin-merge is never rejected as a stale non-fast-forward and then
   // false-flagged blocked:merge-conflict. A real rebase conflict — or a
   // --force-with-lease reject that survives the bounded retry — parks
-  // blocked:merge-conflict through the existing `pr-conflict` route. Opt-in:
-  // without the worktree provisioner the rebase is skipped (today's behaviour).
+  // blocked:merge-conflict through the existing `pr-conflict` route. Missing or
+  // failed provisioning is infra, never a silent skip (#1212).
   const rebaseFail = await preMergeRebaseInWorktree(deps, input);
   if (rebaseFail) return rebaseFail;
 
@@ -410,6 +460,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     target: input.base,
     n: input.issue,
     title: input.title,
+    mergeTitle: landingMergeTitle(input),
     waitForReview: deps.waitForReview,
     ciAwait: deps.ciAwait,
     // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
@@ -440,19 +491,32 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
  * on the worker branch and {@link preMergeRebase} it onto the fetched base,
  * force-pushing the result. Returns a failing {@link LandingResult} to abort the
  * landing (parked as blocked:merge-conflict via `pr-conflict`) on a real conflict
- * or an exhausted force-with-lease retry; returns `undefined` — "proceed to the
- * admin-merge" — on success, when no provisioner is wired (opt-in), or when a
- * worktree could not be provisioned (skip rather than risk the primary; the
- * CI-aware poll still catches a genuinely stale base). The worktree is always
- * torn down.
+ * or an exhausted force-with-lease retry; returns an infra failure when the
+ * rebase worktree provisioner is absent or cannot create a checkout; returns
+ * `undefined` — "proceed to the admin-merge" — only on completed integration.
+ * The worktree is always torn down.
  */
 async function preMergeRebaseInWorktree(
   deps: LandingDeps,
   input: LandingInput,
 ): Promise<LandingResult | undefined> {
-  if (!deps.makeRebaseWorktree) return undefined;
+  if (!deps.makeRebaseWorktree) {
+    return {
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: input.locked,
+    };
+  }
   const dir = await deps.makeRebaseWorktree(input.branch);
-  if (!dir) return undefined;
+  if (!dir) {
+    return {
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: input.locked,
+    };
+  }
   try {
     const rebased = await preMergeRebase(deps.mergeExec, {
       repo: dir,
@@ -496,6 +560,13 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     });
     if (!integrated.ok) return { ok: false, reason: "integrate-failed", locked: input.locked };
 
+    const branchTip = input.validatedBranchTip ?? (await resolveRemoteBranchTip(deps.mergeExec, {
+      repo: landDir,
+      remote: input.remote,
+      branch: input.branch,
+    }));
+    if (!branchTip) return { ok: false, reason: "land-failed", locked: input.locked };
+
     // Zero-commit guard: `git merge --no-ff` succeeds on a branch with no new
     // commits (it creates a no-op merge commit), which would incorrectly close
     // the issue as done without delivering any work. The PR path rejects this
@@ -503,7 +574,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // here: route a zero-commit direct landing to land-failed.
     const countRes = await deps.mergeExec([
       "git", "-C", landDir,
-      "rev-list", "--count", `origin/${input.base}..origin/${input.branch}`,
+      "rev-list", "--count", `origin/${input.base}..${branchTip}`,
     ]);
     const commitCount = parseInt(countRes.stdout.trim(), 10);
     if (countRes.code !== 0 || !Number.isInteger(commitCount) || commitCount === 0) {
@@ -513,13 +584,37 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // Capture the integrated tip from the worktree as the rollback anchor.
     const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
 
+    const fastForwardable = await deps.mergeExec([
+      "git", "-C", landDir,
+      "merge-base", "--is-ancestor", `origin/${input.base}`, branchTip,
+    ]);
+    if (fastForwardable.code === 0) {
+      const ff = await deps.mergeExec(["git", "-C", landDir, "merge", "--ff-only", branchTip]);
+      if (ff.code !== 0) return { ok: false, reason: "land-failed", locked: input.locked };
+      const push = await deps.mergeExec([
+        "git",
+        "-C",
+        landDir,
+        "push",
+        input.remote,
+        `HEAD:refs/heads/${input.base}`,
+      ]);
+      if (push.code !== 0) {
+        await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
+        return { ok: false, reason: "land-failed", locked: input.locked };
+      }
+      const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+      return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
+    }
+
     const merged = await landMerge(deps.mergeExec, {
       repo: landDir,
       remote: input.remote,
-      branch: input.branch,
+      branch: branchTip,
       target: input.base,
       n: input.issue,
       title: input.title,
+      mergeTitle: landingMergeTitle(input),
       preMergeSha,
     });
     let landed = merged.ok;
@@ -564,4 +659,16 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
   } finally {
     await deps.removeLandingWorktree?.(landDir);
   }
+}
+
+async function resolveRemoteBranchTip(
+  exec: MergeExec,
+  input: { repo: string; remote: string; branch: string },
+): Promise<string | undefined> {
+  const r = await exec([
+    "git", "-C", input.repo,
+    "rev-parse", "--verify", "--quiet", `${input.remote}/${input.branch}`,
+  ]);
+  const tip = r.stdout.trim();
+  return r.code === 0 && tip !== "" ? tip : undefined;
 }

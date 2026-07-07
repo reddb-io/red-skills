@@ -39,13 +39,16 @@ import {
   type SandboxMode,
 } from "./execution.js";
 import {
-  relevantScopes,
   runFeedback,
   isInfraFeedbackFailure,
   type Exec as PnpmExec,
   type PackageLayout,
   type RunFeedbackResult,
 } from "./feedback.js";
+import {
+  planMainRedRepair,
+  type MainRedRepairIssue,
+} from "./main-red-repair.js";
 import {
   computeValidationScope,
   formatValidationScope,
@@ -82,8 +85,9 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
-import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
-import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
+import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "./attempt-record.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
+import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import {
   parseTrustPolicy,
@@ -166,6 +170,18 @@ export interface ProcessGh {
    * behaviour preserved).
    */
   renderDecisionCard?(issue: number): Promise<void>;
+  /** Find the single open auto-filed main-red repair issue, if any. Optional so
+   * older callers degrade to the historical baseline-downgrade behaviour. */
+  findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
+  /** Create the auto-filed main-red repair issue. */
+  createMainRedRepairIssue?(spec: { title: string; body: string; labels: readonly string[] }): Promise<number>;
+  /** Refresh the auto-filed main-red repair issue's title/body/labels. */
+  updateMainRedRepairIssue?(
+    issue: number,
+    spec: { title: string; body: string; labels: readonly string[] },
+  ): Promise<void>;
+  /** Close the auto-filed main-red repair issue once the baseline probe is green. */
+  closeMainRedRepairIssue?(issue: number, comment: string): Promise<void>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -213,6 +229,16 @@ export interface ProcessGit {
    * to sandcastle's HEAD default.
    */
   fetchBase?(base: string): Promise<void>;
+  /**
+   * Adapter-side guard for sandcastle's named-branch reuse path. After
+   * `fetchBase()` refreshes `origin/<base>`, remove stale local worker state
+   * before `runAgent()` so red-castle must recreate the worker branch from
+   * `baseRef` instead of reusing a branch whose merge-base predates the fresh
+   * base tip. `force` is true for a retry after a prior merge-conflict terminal;
+   * non-conflict retries still get a stale-merge-base check inside the runtime
+   * implementation, preserving same-run reuse when the branch is already current.
+   */
+  prepareFreshWorkerBranch?(input: { branch: string; baseRef: string; force: boolean }): Promise<boolean | void>;
 }
 
 /** Injected lookups the composed deciders need (issue body for the pin, the
@@ -252,6 +278,21 @@ export interface ProcessLookups {
    * it (`claim-lost`). Optional so legacy wiring/tests degrade to `claim-lost`.
    */
   branchMerged?(branch: string, base: string): Promise<boolean>;
+}
+
+function remoteTrackingBaseRef(remote: string, base: string): string {
+  if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
+    return base;
+  }
+  return `${remote}/${base}`;
+}
+
+function isMergeConflictRetry(priorAttemptContext: string | undefined): boolean {
+  if (!priorAttemptContext) return false;
+  const marker = "prev-failure-reason:";
+  const idx = priorAttemptContext.indexOf(marker);
+  const failureReason = idx === -1 ? priorAttemptContext : priorAttemptContext.slice(idx + marker.length);
+  return /\bmerge-conflict\b/.test(failureReason);
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -496,6 +537,12 @@ export interface ProcessIssueDeps {
    */
   writeNotes?(path: string, content: string): void;
   /**
+   * Persist compact machine-readable attempt state beyond the coarse phase.
+   * The CLI binds this to afk.state.json updates; tests inject a recorder.
+   * Optional so older callers preserve their existing behaviour.
+   */
+  markState?(patch: Record<string, unknown>): void;
+  /**
    * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
    * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
    * lifecycle points the inner-agent stream cannot see: `validating` at the start
@@ -526,6 +573,13 @@ export interface ProcessIssueDeps {
    * Optional so tests/older callers omit it entirely (the call is `?.`-guarded).
    */
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
+  /**
+   * AFK→Brain outcome-event recording. Called best-effort after attempt
+   * completion with the shared versioned outcome-event contract. Optional and
+   * fully swallowed: Brain absence/down must never fail or delay the attempt
+   * terminal path.
+   */
+  recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   /**
    * Salvage uncommitted work the inner agent left in its worktree. The codex
    * runner sometimes edits, passes the gates, and emits `<promise>DONE</promise>`
@@ -654,13 +708,11 @@ export interface ProcessIssueInput {
 // ---------- result ----------
 
 // The subset of `AttemptOutcome` that the per-issue lifecycle itself can return.
-// `infra` (boot setup) originates outside processIssue, so it is excluded here
-// while the shared owner (attempt-outcome) keeps the full union. `stalled` is
-// now ALSO a processIssue terminal: the attempt progress guard (execution.ts)
-// surfaces a `timeout` agent-outcome which processIssue maps to `stalled` (→
-// blocked:stalled, ready-for-human). Exclude<> ties this to the single owner so
-// the two can never drift.
-export type ProcessOutcome = Exclude<AttemptOutcome, "infra">;
+// `infra` now includes landing-infra preconditions (for example a missing
+// pre-merge rebase worktree, #1212) in addition to boot setup. `stalled` is also
+// a processIssue terminal: the attempt progress guard (execution.ts) surfaces a
+// `timeout` agent-outcome which processIssue maps to `stalled`.
+export type ProcessOutcome = AttemptOutcome;
 
 export interface ProcessIssueResult {
   outcome: ProcessOutcome;
@@ -689,6 +741,38 @@ export interface ProcessIssueResult {
   swept: boolean;
 }
 
+const CLEAN_EXIT_CODE = 0;
+const CRASH_EXIT_CODE = 1;
+const TIMEOUT_EXIT_CODE = 124;
+
+function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    "current.phase": "terminal",
+    "current.outcome": outcome,
+  };
+  if (outcome === "done") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  if (outcome === "blocked") return { ...base, "current.last_exit_code": CLEAN_EXIT_CODE };
+  if (outcome === "stalled") {
+    return {
+      ...base,
+      "current.last_exit_code": TIMEOUT_EXIT_CODE,
+      "current.failure_kind": "timeout",
+    };
+  }
+  if (outcome === "no-sentinel") {
+    return {
+      ...base,
+      "current.last_exit_code": CRASH_EXIT_CODE,
+      "current.failure_kind": "crash",
+    };
+  }
+  return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
+}
+
+function markTerminalState(deps: ProcessIssueDeps, outcome: ProcessOutcome): void {
+  deps.markState?.(stateExitPatch(outcome));
+}
+
 // ---------- the orchestration ----------
 
 import {
@@ -699,7 +783,9 @@ import {
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
   LABEL_SENSITIVE_PATH,
+  LABEL_SPEC,
 } from "./triage-labels.js";
+import { validateIssueLifecycleTransition, type IssueLifecycleEdge } from "./issue-lifecycle.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -734,6 +820,18 @@ async function editLabelsTagged(
   if (typed === null) return deps.gh.editLabels(issue, remove, add);
   await deps.gh.ensureLabel(typed);
   return deps.gh.editLabels(issue, remove, [...add, typed]);
+}
+
+async function editIssueLifecycleLabels(
+  deps: ProcessIssueDeps,
+  issue: number,
+  fromLabels: readonly string[],
+  remove: string[],
+  add: string[],
+  edge: IssueLifecycleEdge,
+): Promise<boolean> {
+  validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
+  return deps.gh.editLabels(issue, remove, add);
 }
 
 /**
@@ -787,7 +885,7 @@ async function routeRecovery(
     // Build the escalate label set from the typed label (computed independent of
     // the composer's own decision) so a hook-FORCED escalate still pages cleanly.
     const addLabels = disp.typedLabel !== null ? [LABEL_HUMAN, disp.typedLabel] : [LABEL_HUMAN];
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], addLabels);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], addLabels, "human-blocked");
     // The budget-exhausted page comment only rides the composer's OWN escalate
     // (it tells a retry-budget story); a hook-forced escalate stays silent.
     if (decision === disp.decision && disp.escalationComment !== null) {
@@ -815,7 +913,7 @@ async function routeRecovery(
     }
   } else {
     // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
   }
   return decision;
 }
@@ -957,7 +1055,7 @@ async function refuseNoSandboxForUntrustedAuthor(
   hooksFired: HookName[],
   reason: string,
 ): Promise<ProcessIssueResult> {
-  await deps.gh.editLabels(input.issue, [LABEL_READY], [LABEL_HUMAN]);
+  await editIssueLifecycleLabels(deps, input.issue, [LABEL_READY], [LABEL_READY], [LABEL_HUMAN], "preflight-blocked");
   await deps.gh.comment(
     input.issue,
     `🤖 /afk preflight stopped: ${reason}. Autonomous execution refused; maintainer intervention required.`,
@@ -969,7 +1067,7 @@ async function refuseNoSandboxForUntrustedAuthor(
       // best-effort: card render failure is non-fatal.
     }
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "blocked",
     issue: input.issue,
@@ -977,6 +1075,55 @@ async function refuseNoSandboxForUntrustedAuthor(
     preserved: false,
     swept: false,
   };
+}
+
+async function syncMainRedRepairIssue(
+  deps: ProcessIssueDeps,
+  feedback: RunFeedbackResult,
+): Promise<void> {
+  if (!feedback.baselineProbeRan) return;
+  const {
+    findMainRedRepairIssue,
+    createMainRedRepairIssue,
+    updateMainRedRepairIssue,
+    closeMainRedRepairIssue,
+  } = deps.gh;
+  if (!findMainRedRepairIssue || !createMainRedRepairIssue || !updateMainRedRepairIssue || !closeMainRedRepairIssue) {
+    return;
+  }
+
+  try {
+    const current = await findMainRedRepairIssue();
+    const plan = planMainRedRepair(feedback.baselineFailures ?? [], current);
+    switch (plan.action) {
+      case "noop":
+        return;
+      case "create": {
+        const created = await createMainRedRepairIssue({
+          title: plan.title,
+          body: plan.body,
+          labels: plan.labels,
+        });
+        deps.appendIterLog(`🤖 /afk baseline probe: opened main-red repair issue #${created}.`);
+        return;
+      }
+      case "update":
+        await updateMainRedRepairIssue(plan.issue, {
+          title: plan.title,
+          body: plan.body,
+          labels: plan.labels,
+        });
+        deps.appendIterLog(`🤖 /afk baseline probe: updated main-red repair issue #${plan.issue}.`);
+        return;
+      case "close":
+        await closeMainRedRepairIssue(plan.issue, plan.comment);
+        deps.appendIterLog(`🤖 /afk baseline probe: closed main-red repair issue #${plan.issue}.`);
+        return;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.appendIterLog(`warn: main-red repair issue sync failed: ${message}`);
+  }
 }
 
 /**
@@ -994,6 +1141,15 @@ export async function processIssue(
   const hooksFired: HookName[] = [];
   const startedEpoch = deps.nowEpoch();
   const resolved: ResolvedHooks = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+  let ownsCommentClaim = false;
+  const releaseClaim = async () => {
+    if (ownsCommentClaim) {
+      ownsCommentClaim = false;
+      await releaseOwnedClaim(deps, input);
+      return;
+    }
+    await deps.claimLock.release(issue);
+  };
 
   // FIX J: the env slice the pre_worktree hook chain mutates (e.g. the cargo /
   // gradle defaults inject CARGO_TARGET_DIR=.../slot-N for per-slot build
@@ -1064,22 +1220,24 @@ export async function processIssue(
     if (decision.verdict === "lost") {
       // acquireClaim already conceded our marker; nothing to project, next issue.
       await deps.claimLock.release(issue);
-      return claimLost(issue, hooksFired);
+      return claimLost(issue, hooksFired, deps, decision);
     }
+    ownsCommentClaim = true;
   } else if (labels.includes(LABEL_RUNNING)) {
     // Legacy lock (no claimGh): `running` present means another worker holds it.
     await deps.claimLock.release(issue);
-    return claimLost(issue, hooksFired);
+    return claimLost(issue, hooksFired, deps, undefined, "running label already present");
   }
 
   const activeBlocker = parseCurrentBlocker(input.body);
   if (activeBlocker && !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind)) {
-    await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
+    await deps.gh.ensureLabel(LABEL_SPEC);
+    await editIssueLifecycleLabels(deps, issue, labels, [LABEL_READY], [LABEL_HUMAN, LABEL_SPEC], "preflight-blocked");
     await deps.gh.comment(
       issue,
       `🤖 /afk preflight stopped: active Current blocker (${activeBlocker.kind}) still requires human input: ${activeBlocker.next}`,
     );
-    await deps.claimLock.release(issue);
+    await releaseClaim();
     return {
       outcome: "blocked",
       issue,
@@ -1118,8 +1276,8 @@ export async function processIssue(
       deps.appendIterLog(
         `🤖 /afk trust gate refused #${issue} [${describeTrustPosture(trustPolicy)}]: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
       );
-      await deps.claimLock.release(issue);
-      return claimLost(issue, hooksFired);
+      await releaseClaim();
+      return claimLost(issue, hooksFired, deps, undefined, verdict.reason);
     }
   }
 
@@ -1148,9 +1306,10 @@ export async function processIssue(
   // already won via the GitHub-native arbiter, so a failed label edit must not
   // abandon the attempt. Legacy callers (no `claimGh`) keep the old semantics
   // where the edit-to-running was the lock and its failure lost the claim.
-  const promoted = await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]);
+  const claimRemoveLabels = [LABEL_READY, ...blockedLabelsIn(labels)];
+  const promoted = await editIssueLifecycleLabels(deps, issue, labels, claimRemoveLabels, [LABEL_RUNNING], "claim");
   if (!promoted && !deps.claimGh) {
-    await deps.claimLock.release(issue);
+    await releaseClaim();
     return claimLost(issue, hooksFired);
   }
 
@@ -1160,8 +1319,8 @@ export async function processIssue(
   if (branch === null) {
     // A malformed ref refuses the iteration; restore the claim like the bash
     // "refusing malformed live branch ref" guard (return before running).
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
-    await deps.claimLock.release(issue);
+    await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
+    await releaseClaim();
     return claimLost(issue, hooksFired);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
@@ -1242,7 +1401,12 @@ export async function processIssue(
   // remote-tracking ref to runAgent so sandcastle's baseBranch start point
   // uses the freshly-fetched ref, not the potentially-stale local branch.
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
-  const baseRef = `${input.remote}/${base}`;
+  const baseRef = remoteTrackingBaseRef(input.remote, base);
+  await deps.git.prepareFreshWorkerBranch?.({
+    branch,
+    baseRef,
+    force: isMergeConflictRetry(priorAttemptContext),
+  });
   // Pin to a sandcastle-backed runner. claude/codex/opencode (ADR 0059) +
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
@@ -1255,6 +1419,7 @@ export async function processIssue(
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
   // promptFile against process.cwd(), not against this cwd.
   let activeTaskClass: AfkModelTier = taskClass;
+  const issueType = deriveIssueType(labels);
   let escalatedSimpleFeedback = false;
   let workerBranch = branch;
   let current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
@@ -1266,9 +1431,14 @@ export async function processIssue(
     slug,
     hooksFired,
     startedEpoch,
+    issueType,
+    modelTier: activeTaskClass,
+    model: deps.model,
+    effort: deps.effort,
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
+  let mainRed = false;
   let currentHandoff = handoff;
   let goVerifyRetriesUsed = 0;
   let salvagedUncommittedFiles = 0;
@@ -1504,6 +1674,10 @@ export async function processIssue(
       slug,
       hooksFired,
       startedEpoch,
+      issueType,
+      modelTier: activeTaskClass,
+      model: initialTier.model,
+      effort: initialTier.effort,
     } satisfies StageCommon;
 
     // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
@@ -1610,7 +1784,7 @@ export async function processIssue(
         // Scout runs read-only — the inner agent never commits, so there is
         // nothing to salvage. Always treat no-sentinel as a hard failure.
         input.runMode !== "scout" &&
-        (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
+        (await deps.lookups.changedFiles(workerBranch, baseRef)).length > 0 &&
         (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
       if (!branchHasWork) {
         await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
@@ -1660,7 +1834,7 @@ export async function processIssue(
       } catch {
         // best-effort: a label failure on an already-closed issue is cosmetic.
       }
-      await deps.claimLock.release(issue);
+      await releaseClaim();
       return {
         outcome,
         issue,
@@ -1717,7 +1891,7 @@ export async function processIssue(
         // reconcile already closed the issue, dropped labels, deleted the remote
         // branch, swept the attempt dir + ran the close cascade — only the claim
         // lock (which AFK, not reconcile, owns) remains to release.
-        await deps.claimLock.release(issue);
+        await releaseClaim();
         return {
           outcome: "done",
           issue,
@@ -1732,7 +1906,7 @@ export async function processIssue(
         };
       }
       if (reconciled.outcome === "parked") {
-        await deps.claimLock.release(issue);
+        await releaseClaim();
         return {
           outcome: "feedback-failed",
           issue,
@@ -1777,7 +1951,7 @@ export async function processIssue(
         "_Scout completed without output. Check the attempt log for details._";
       await deps.gh.comment(issue, `## 🔍 Scout Report\n\n${report}`);
       await deps.gh.close(issue);
-      await deps.claimLock.release(issue);
+      await releaseClaim();
       return {
         outcome: "done",
         issue,
@@ -1836,19 +2010,16 @@ export async function processIssue(
     // happy path costs nothing.
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
-    const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
-    // Compute the validation scope: when a workspace graph is injected, expand
-    // to the full dependency cone (touched packages + transitive dependents);
-    // otherwise fall back to the current directly-touched-packages behaviour.
-    // Root-config changes (lockfile, tsconfig, .github/**) always escalate to
-    // whole-workspace regardless of which approach is used.
-    let validationScope: ValidationScope;
-    if (deps.graph) {
-      validationScope = computeValidationScope(changedFiles, deps.layout, deps.graph);
-    } else {
-      const scopes = relevantScopes(deps.layout, changedFiles);
-      validationScope = { type: "cone", packages: scopes, triggerPackages: scopes };
-    }
+    const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
+    // Compute the validation scope: expand to the full dependency cone when a
+    // workspace graph is injected, otherwise keep the directly-touched package
+    // cone. Root-config and explicit core-module changes always escalate to
+    // whole-workspace before any package scoping.
+    const validationScope = computeValidationScope(
+      changedFiles,
+      deps.layout,
+      deps.graph ?? { packages: [] },
+    );
     const feedbackScopes = scopesForValidationScope(validationScope);
     // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
     // non-zero exit VETOES validation and routes the attempt to the abort-after-
@@ -1884,6 +2055,8 @@ export async function processIssue(
         }),
       );
     }
+    mainRed = feedback.baselineProbeRan === true && (feedback.baselineFailures?.length ?? 0) > 0;
+    await syncMainRedRepairIssue(deps, feedback);
     // post_feedback (#832): the scope-derived gate has produced its verdict.
     await fireHook(
       "post_feedback",
@@ -2044,6 +2217,7 @@ export async function processIssue(
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      findMainRedRepairIssue: deps.gh.findMainRedRepairIssue,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -2079,6 +2253,8 @@ export async function processIssue(
       trunk,
       issue,
       title: input.title,
+      labels,
+      mainRed,
     },
     {
       preMerge: () =>
@@ -2112,12 +2288,29 @@ export async function processIssue(
     if (landing.reason === "sensitive-paths") {
       return await sensitivePathGuarded(common, landing.sensitivePaths ?? [], landing.locked);
     }
+    if (landing.reason === "main-red-untracked") {
+      return await mainRedUntrackedBlocked(
+        common,
+        landing.message ?? "Admin-merge refused: main is red without an open main-red repair issue.",
+        landing.locked,
+      );
+    }
     // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
     // could not land because the `enforce_admins` base's required checks failed /
     // are still pending. NOT a merge conflict — preserve the OPEN PR and park to
     // ready-for-human with `blocked:ci` rather than re-running the whole agent.
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
+    if (landing.reason === "infra") {
+      const reason = landing.infraReason ?? "landing infrastructure precondition failed";
+      return await terminalFailure(
+        common,
+        "infra",
+        "infra",
+        { log: reason },
+        { notes: reason },
+      );
     }
     if (landing.reason === "pr-conflict") {
       return await prLandingBlocked(
@@ -2168,6 +2361,7 @@ export async function processIssue(
   await deps.git.deleteLocalBranch(workerBranch);
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
+  markTerminalState(deps, "done");
 
   // ---- 9. close cascade (event-driven auto-unblock) ----
   // Issue N just closed; re-evaluate every open issue carrying `req:N`. Any
@@ -2240,27 +2434,67 @@ async function recordAttemptBestEffort(
   fields: { durationS?: number; mergeSha?: string; notes?: string; validationSummary?: string } = {},
 ): Promise<void> {
   const { deps, input } = c;
-  if (!deps.recordAttempt) return;
+  const payload = buildAttemptRecordPayload({
+    repo: input.repo,
+    issue: input.issue,
+    attempt: input.attempt,
+    outcome,
+    issueType: c.issueType,
+    modelTier: c.modelTier,
+    title: input.title,
+    body: input.body,
+    workerId: input.workerId,
+    branch: c.branch,
+    durationS: fields.durationS,
+    diffstat: undefined,
+    mergeSha: fields.mergeSha,
+    notes: fields.notes,
+    validationSummary: fields.validationSummary,
+  });
+  if (deps.recordAttempt) {
+    try {
+      await deps.recordAttempt(payload);
+    } catch (err) {
+      deps.appendIterLog(
+        `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      );
+    }
+  }
+  if (!deps.recordOutcomeEvent) return;
   try {
-    const payload = buildAttemptRecordPayload({
-      repo: input.repo,
-      issue: input.issue,
-      attempt: input.attempt,
-      outcome,
-      title: input.title,
-      body: input.body,
-      workerId: input.workerId,
-      branch: c.branch,
-      durationS: fields.durationS,
-      diffstat: undefined,
-      mergeSha: fields.mergeSha,
-      notes: fields.notes,
-      validationSummary: fields.validationSummary,
+    const event: OutcomeEvent = {
+      schemaVersion: 1,
+      id: `afk:${input.repo}:${input.issue}:${input.attempt}`,
+      emitter: "afk",
+      occurredAt: deps.nowIso(),
+      taskClass: c.modelTier,
+      chosenOption: {
+        kind: "runner",
+        runner: input.runner,
+        model: c.model,
+        effort: c.effort,
+      },
+      outcome: payload.outcome,
+      cost: { signal: "unknown" },
+      context: {
+        repository: input.repo,
+        issueNumber: input.issue,
+        attemptNumber: input.attempt,
+        issueType: payload.issueType,
+        workerId: input.workerId,
+        branch: c.branch,
+        durationMs: payload.durationMs,
+        status: payload.status,
+      },
+    };
+    void deps.recordOutcomeEvent(event).catch((err) => {
+      deps.appendIterLog(
+        `🤖 /afk brain outcome-event for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      );
     });
-    await deps.recordAttempt(payload);
   } catch (err) {
     deps.appendIterLog(
-      `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+      `🤖 /afk brain outcome-event for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
     );
   }
 }
@@ -2275,6 +2509,10 @@ interface StageCommon {
   slug: string;
   hooksFired: HookName[];
   startedEpoch: number;
+  issueType: string;
+  modelTier: AfkModelTier;
+  model?: string;
+  effort?: AgentEffort;
 }
 
 /** Emit a failure-family envelope (blocked / no-sentinel / merge-conflict /
@@ -2389,6 +2627,20 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
         next: "Review the sensitive change, then requeue if it is safe to land.",
       };
+    case "main-red-untracked":
+      return {
+        status: "blocked",
+        kind: "main-red-untracked",
+        summary: oneLine(sections.log, "Admin-merge refused because main is red without an open main-red repair issue."),
+        next: "Restore or create the auto-filed main-red repair issue, then requeue.",
+      };
+    case "infra":
+      return {
+        status: "blocked",
+        kind: "infra",
+        summary: oneLine(sections.log, "Landing infrastructure precondition failed."),
+        next: "Fix the landing infrastructure failure, then requeue.",
+      };
     case "manual-landing":
       return {
         status: "blocked",
@@ -2410,6 +2662,8 @@ const ACTIONABLE_BLOCKER_KINDS = new Set([
   "decision",
   "trunk-diverged",
   "sensitive-path",
+  "main-red-untracked",
+  "infra",
 ]);
 
 function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -2507,6 +2761,7 @@ async function terminalFailure(
   record: { notes?: string; validationSummary?: string } = {},
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
+  markTerminalState(deps, outcome);
   const decision = await routeRecovery(deps, input.issue, outcome, input.attempt);
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
@@ -2535,7 +2790,7 @@ async function terminalFailure(
   // shared tail (no-sentinel / blocked / feedback-failed / stalled) did not, so
   // a retry-routed or human-requeued issue stayed un-claimable until the live
   // worker process exited and boot's stale-claim sweep reclaimed the dir (#568).
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome,
     issue: input.issue,
@@ -2601,7 +2856,7 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
   // ADR 0083 §4 exit barrier (#1021): cross the barrier before reporting the
   // merge-conflict terminal so the preserved branch is salvaged + on origin.
   const receipt = await crossTerminalBarrier(deps, c.branch);
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome: "merge-conflict",
     issue: input.issue,
@@ -2653,7 +2908,7 @@ async function ciBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: reason,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome,
     issue: input.issue,
@@ -2697,7 +2952,7 @@ async function prLandingBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: `${prRef}: ${reason}`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome,
     issue: input.issue,
@@ -2745,7 +3000,7 @@ async function trunkDivergedBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: detail,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "trunk-diverged",
     issue: input.issue,
@@ -2787,9 +3042,46 @@ async function sensitivePathGuarded(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: detail,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "sensitive-path",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Main-red tracking gate park (#1237). The feedback baseline probe says trunk is
+ * red, but the auto-filed main-red repair issue is not open, so admin-merge
+ * refuses before opening/merging a PR. This keeps red main visible as tracked
+ * work instead of allowing silent delivery onto an untracked broken baseline.
+ */
+async function mainRedUntrackedBlocked(
+  c: StageCommon,
+  message: string,
+  locked: boolean,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const detail =
+    `${message} The attempt branch is intact and validated, but landing is held until the tracked-red ` +
+    `repair issue exists. Requeue after the auto-file path recreates it.`;
+  await routeRecovery(deps, input.issue, "main-red-untracked", input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("main-red-untracked", { log: detail }));
+  const posted = await emitFailure(c, envelopeStatusFor("main-red-untracked"), "main-red-untracked", { log: detail });
+  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
+  await recordAttemptBestEffort(c, "main-red-untracked", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: detail,
+  });
+  await releaseOwnedClaim(deps, input);
+  return {
+    outcome: "main-red-untracked",
     issue: input.issue,
     branch: c.branch,
     base: c.base,
@@ -2850,7 +3142,7 @@ async function handoffForReview(
     validationSummary: validationSidecar.join("\n"),
     notes: `review-requested: PR #${opened.prNumber} labelled ${reviewLabel}`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
 
   return {
     outcome: "review-requested",
@@ -2934,7 +3226,7 @@ async function handoffForManualLanding(
     validationSummary: validationSidecar.join("\n"),
     notes: `manual-landing: ${prRef} held for human merge`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
 
   return {
     outcome: "manual-landing",
@@ -3082,8 +3374,35 @@ async function runCascadeRebase(
 
 // ---------- claim / hook-abort short-circuits ----------
 
-function claimLost(issue: number, hooksFired: HookName[]): ProcessIssueResult {
+function claimLost(
+  issue: number,
+  hooksFired: HookName[],
+  deps?: Pick<ProcessIssueDeps, "appendIterLog" | "nowEpoch">,
+  decision?: ClaimDecision,
+  fallbackReason?: string,
+): ProcessIssueResult {
+  if (deps) {
+    const parts = [`🤖 /afk claim-lost #${issue}`];
+    if (decision?.winner) parts.push(`holder=${decision.winner}`);
+    if (decision?.winnerClaimId !== undefined) parts.push(`claim_id=${decision.winnerClaimId}`);
+    if (decision?.winnerCreatedAt) {
+      const createdMs = Date.parse(decision.winnerCreatedAt);
+      if (!Number.isNaN(createdMs)) parts.push(`age_s=${Math.max(0, deps.nowEpoch() - Math.floor(createdMs / 1000))}`);
+    }
+    parts.push(`reason=${decision?.reason ?? fallbackReason ?? "issue no longer claimable"}`);
+    deps.appendIterLog(parts.join(" "));
+  }
   return { outcome: "claim-lost", issue, hooksFired, preserved: false, swept: false };
+}
+
+async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInput): Promise<void> {
+  if (deps.claimGh) {
+    await deps.claimGh.concede(
+      input.issue,
+      renderClaimComment({ worker: input.claimant ?? input.workerId, runner: input.runner }, "concede"),
+    );
+  }
+  await deps.claimLock.release(input.issue);
 }
 
 /** Abort after a successful claim (a pre_* hook aborted): restore
@@ -3113,7 +3432,7 @@ async function abortAfterClaim(
   // branch may not yet exist on origin (nothing committed); the receipt records
   // that truthfully (`pushed:false`) rather than throwing.
   const receipt = await crossTerminalBarrier(deps, branch);
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome: "hook-aborted",
     issue: input.issue,
@@ -3161,7 +3480,7 @@ async function exhausted(
       reason: both ? "both-runners" : runner,
     });
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "exhausted",
     issue: input.issue,
@@ -3212,7 +3531,7 @@ async function runnerRecoverable(
       reason: both ? "both-runners" : runner,
     });
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "runner-transient",
     issue: input.issue,

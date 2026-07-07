@@ -126,7 +126,7 @@ export async function runBackpressure(
       result.code === KILLED_EXIT_CODE
         ? `command timed out after ${timeoutMs}ms`
         : outputSummary(status, `${result.stdout}${result.stderr}`);
-    const record = buildValidationRecord({ name, status, command, durationMs, summary });
+    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     checks.push({ name, command, status, record });
     sidecar.push(formatValidationLine(record));
   }

@@ -32,10 +32,21 @@ export interface RetakeWorktree {
   dirty: boolean;
 }
 
+export interface RetakeWorkerState {
+  path: string;
+  attemptDir: string;
+  issue: number;
+  attempt?: number;
+  phase?: string;
+  outcome?: string;
+  lastExitCode?: number;
+}
+
 export type RetakeChecksState = "green" | "pending" | "failing" | "unknown";
 
 export type RetakeRecommendationKind =
   | "resolve-hitl"
+  | "continue-state"
   | "ship-pr"
   | "fix-pr"
   | "continue-worktree"
@@ -67,6 +78,7 @@ export interface RetakeFacts {
   pullRequests: readonly RetakePullRequest[];
   branches: readonly RetakeBranch[];
   worktrees: readonly RetakeWorktree[];
+  workerState?: RetakeWorkerState;
 }
 
 const FAILURE_CHECK_VALUES = new Set(["FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]);
@@ -164,6 +176,18 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
     };
   }
 
+  if (facts.workerState !== undefined && facts.workerState.issue === facts.issue.number) {
+    const suffix =
+      facts.workerState.outcome !== undefined
+        ? ` Last recorded outcome: ${facts.workerState.outcome}.`
+        : "";
+    return {
+      kind: "continue-state",
+      summary: `Worker state file anchors attempt ${facts.workerState.attempt ?? "?"}.${suffix}`,
+      command: `cd ${facts.workerState.attemptDir}`,
+    };
+  }
+
   const blockedPr = openPrs.find((pr) =>
     pr.reviewDecision?.toUpperCase() === "CHANGES_REQUESTED" ||
     pr.checksState === "failing" ||
@@ -227,6 +251,14 @@ export function planRetakeApply(facts: RetakeFacts): RetakeApplyPlan {
   const recommendation = recommendRetake(facts);
   const issue = facts.issue.number;
   const worktreePath = `.red/tmp/work-ship-${issue}`;
+
+  if (recommendation.kind === "continue-state") {
+    return {
+      summary: recommendation.summary,
+      operations: [],
+      nextCommand: recommendation.command,
+    };
+  }
 
   if (recommendation.kind === "create-branch") {
     const branch = `codex/${issue}-retake`;

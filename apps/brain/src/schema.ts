@@ -46,6 +46,7 @@ export type ConnectionKind = (typeof CONNECTION_KINDS)[number];
 export const COLLECTIONS = {
   artifacts: "brain_artifacts",
   connections: "brain_connections",
+  outcomeEvents: "brain_outcome_events",
   kv: "brain_kv",
 } as const;
 

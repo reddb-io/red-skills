@@ -9,6 +9,7 @@ import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, SandboxMode } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
 import type { TrustProvenance } from "../src/core/trust-gate.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
@@ -20,6 +21,8 @@ import type { AttemptProgressInfo } from "../src/core/execution.js";
 // than reaching into the modules being composed. Execution itself is the
 // injected `runAgent` port (ADR 0033): a fake returning a scripted
 // RunAgentResult, replacing the old fake runner-spawn + worktree-create deps.
+
+const DEFAULT_BRANCH_TIP = "feedfacecafebeef";
 
 interface Trace {
   labelEdits: Array<{ issue: number; remove: string[]; add: string[] }>;
@@ -41,6 +44,8 @@ interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
   recordedAttempts: AttemptRecordPayload[];
+  /** Brain outcome events fired after terminal attempt completion. */
+  outcomeEvents: OutcomeEvent[];
   /** Worker branches passed to the commit-leftovers salvage port. */
   salvageCalls: string[];
   /** Worker branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
@@ -49,8 +54,18 @@ interface Trace {
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
+  /** Compact state patches written to afk.state.json. */
+  statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
   cascadeRebaseAttempts: string[];
+  /** Arguments passed into feedback scope changed-file resolution. */
+  changedFileCalls: Array<{ branch: string; base: string }>;
+  /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
+  pnpmArgs: string[][];
+  /** Handoff bodies written before the sandcastle run. */
+  handoffs: Array<{ path: string; content: string }>;
+  /** Fresh-branch preparation calls before sandcastle can reuse a worktree. */
+  freshWorkerBranchCalls: Array<{ branch: string; baseRef: string; force: boolean }>;
 }
 
 interface HarnessOptions {
@@ -100,6 +115,8 @@ interface HarnessOptions {
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
   preWorktreeEnv?: Record<string, string>;
   changedFiles?: string[];
+  changedFilesByBase?: Record<string, string[]>;
+  packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
    * (present). Set false to model "sandcastle commits never reached the host". */
   branchPresent?: boolean;
@@ -110,6 +127,8 @@ interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** Restart-informed context block returned by the attempt ledger lookup. */
+  priorAttemptContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
   configTrunk?: string;
   /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
@@ -137,6 +156,8 @@ interface HarnessOptions {
    * reject (proving a memory failure never fails the close); "ok" records the
    * payload; undefined omits the port entirely (older-caller safety). */
   recordAttempt?: "ok" | "throw";
+  /** When set, register the Brain outcome-event sink. "throw"/"hang" model Brain down/slow. */
+  recordOutcomeEvent?: "ok" | "throw" | "hang";
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
    * safety). Defaults to true (port present + recorded). */
   withSidecarPort?: boolean;
@@ -206,10 +227,16 @@ function harness(opts: HarnessOptions = {}): {
     ensuredLabels: [],
     sidecarWrites: [],
     recordedAttempts: [],
+    outcomeEvents: [],
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
+    statePatches: [],
     cascadeRebaseAttempts: [],
+    changedFileCalls: [],
+    pnpmArgs: [],
+    handoffs: [],
+    freshWorkerBranchCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -288,7 +315,9 @@ function harness(opts: HarnessOptions = {}): {
     },
     fs: {
       async ensureAttemptDir() {},
-      async writeHandoff() {},
+      async writeHandoff(path, content) {
+        trace.handoffs.push({ path, content });
+      },
       // Optional sidecar port: present unless the test opts it out (older-caller
       // safety). Records every (path, lines) write for assertion.
       writeValidationSidecar:
@@ -310,9 +339,25 @@ function harness(opts: HarnessOptions = {}): {
       async fetchBase(base) {
         if (opts.fetchedBases) opts.fetchedBases.push(base);
       },
+      async prepareFreshWorkerBranch(input) {
+        trace.freshWorkerBranchCalls.push(input);
+        return true;
+      },
     },
     mergeExec: async (argv) => {
       const j = argv.join(" ");
+      if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+        return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
+      }
+      if (j === "git -C /wt rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+        return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
+      }
+      if (j.includes("merge-base --is-ancestor origin/")) {
+        return { code: 1, stdout: "", stderr: "" };
+      }
       // landPr reuses an open PR via `gh pr list`; reply with a number so it
       // resolves without a create round-trip.
       if (argv.includes("pr") && argv.includes("list")) {
@@ -358,6 +403,7 @@ function harness(opts: HarnessOptions = {}): {
       return { code: 0, stdout: "", stderr: "" };
     },
     pnpm: async (args) => {
+      trace.pnpmArgs.push([...args]);
       // AFK runner improvement: feedback now optionally probes the base branch
       // (the `baselineWorktree` passed to `runFeedback`) when the worker run
       // fails. The baseline probe re-runs ONLY the failing checks; every other
@@ -383,7 +429,7 @@ function harness(opts: HarnessOptions = {}): {
       return { code: ok ? 0 : 1, stdout: "", stderr: "" };
     },
     layout: {
-      hasPackage: (scope) => scope === ".",
+      hasPackage: (scope) => (opts.packageScopes ? opts.packageScopes.includes(scope) : scope === "."),
       hasScript: () => true,
     },
     // Backpressure gate (#430): a fake shell exec that fails when opted out. The
@@ -445,6 +491,8 @@ function harness(opts: HarnessOptions = {}): {
     // the locked merge/push/rollback runs there instead of the primary checkout.
     makeLandingWorktree: async () => "/wt",
     removeLandingWorktree: async () => {},
+    makeRebaseWorktree: async () => "/rwt",
+    removeRebaseWorktree: async () => {},
     hooks: {
       config,
       resolveOptions: {
@@ -485,10 +533,11 @@ function harness(opts: HarnessOptions = {}): {
         return "https://github.com/o/r/issues/9";
       },
       async priorAttemptContext() {
-        return undefined;
+        return opts.priorAttemptContext;
       },
-      async changedFiles() {
-        return opts.changedFiles ?? ["packages/x/src/a.ts"];
+      async changedFiles(branch, base) {
+        trace.changedFileCalls.push({ branch, base });
+        return opts.changedFilesByBase?.[base] ?? opts.changedFiles ?? ["packages/x/src/a.ts"];
       },
       async diffstat() {
         return "+1 -0 files=1";
@@ -516,6 +565,9 @@ function harness(opts: HarnessOptions = {}): {
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
     },
+    markState: (patch) => {
+      trace.statePatches.push(patch);
+    },
     recoveryEnv: opts.recoveryEnv ?? {},
     // ADR 0017 recording port: omitted by default (older-caller safety). "ok"
     // records the payload; "throw" rejects, proving a memory failure never
@@ -524,6 +576,13 @@ function harness(opts: HarnessOptions = {}): {
       ? async (payload) => {
           if (opts.recordAttempt === "throw") throw new Error("memory exploded");
           trace.recordedAttempts.push(payload);
+        }
+      : undefined,
+    recordOutcomeEvent: opts.recordOutcomeEvent
+      ? async (event) => {
+          if (opts.recordOutcomeEvent === "throw") throw new Error("brain exploded");
+          if (opts.recordOutcomeEvent === "hang") return await new Promise<never>(() => {});
+          trace.outcomeEvents.push(event);
         }
       : undefined,
     // Commit-leftovers salvage port (codex DONE-without-commit). Omitted unless
@@ -611,6 +670,65 @@ const labelTrace = (t: Trace): string[] =>
   t.labelEdits.map((e) => `-${e.remove.join("+")}|+${e.add.join("+")}`);
 
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
+  it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
+    const fetchedBases: string[] = [];
+    const priorAttemptContext = [
+      "prev-attempt: 1",
+      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+      "prev-failure-reason:",
+      "merge-conflict",
+    ].join("\n");
+    const { deps, input, trace } = harness({
+      attempt: 2,
+      priorAttemptContext,
+      fetchedBases,
+      outcome: "done",
+      feedbackOk: true,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(fetchedBases).toEqual(["main"]);
+    expect(trace.freshWorkerBranchCalls).toEqual([
+      {
+        branch: "afk/wAAAA/9-fix-the-thing",
+        baseRef: "origin/main",
+        force: true,
+      },
+    ]);
+    expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+    expect(trace.handoffs[0]?.content).toContain("prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing");
+    expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
+  });
+
+  it("keeps non-conflict same-run reuse eligible for the stale-base check only", async () => {
+    const priorAttemptContext = [
+      "prev-attempt: 1",
+      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+      "prev-failure-reason:",
+      "validation failed",
+    ].join("\n");
+    const { deps, input, trace } = harness({
+      attempt: 2,
+      priorAttemptContext,
+      outcome: "done",
+      feedbackOk: true,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.freshWorkerBranchCalls).toEqual([
+      {
+        branch: "afk/wAAAA/9-fix-the-thing",
+        baseRef: "origin/main",
+        force: false,
+      },
+    ]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
   it("runs claim → runAgent → push → feedback → land → close with the full transition + sweep", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false });
     const result = await processIssue(deps, input);
@@ -886,9 +1004,9 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
 
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(true);
-    // landMerge issues `git -C /repo merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing …`.
+    // landMerge issues `git -C <landing-worktree> merge --no-ff --no-verify <validated-tip> …`.
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     // No PR list/create/merge on the locked path.
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
@@ -958,8 +1076,8 @@ describe("processIssue — landing mode decoupled from the lock (#842)", () => {
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(false);
     const joined = calls.map((c) => c.join(" "));
-    // Direct merge of the attempt branch; no PR list/merge anywhere.
-    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    // Direct merge of the validated attempt tip; no PR list/merge anywhere.
+    expect(joined.some((c) => c.includes(`merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP}`))).toBe(true);
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
 });
@@ -1119,6 +1237,12 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(nsEdit.add).toContain("blocked:crashed");
     expect(trace.ensuredLabels).toContain("blocked:crashed");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
+    expect(trace.statePatches).toContainEqual({
+      "current.phase": "terminal",
+      "current.outcome": "no-sentinel",
+      "current.last_exit_code": 1,
+      "current.failure_kind": "crash",
+    });
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
     // #568: the no-sentinel terminal also releases the per-issue claim.
@@ -2321,6 +2445,34 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
   });
 
+  it("resolves feedback scopes from the fetched origin base, not a stale local base", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      packageScopes: ["packages/stale", "packages/fresh"],
+      changedFilesByBase: {
+        main: ["packages/stale/src/old.ts"],
+        "origin/main": ["packages/fresh/src/new.ts"],
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.changedFileCalls).toContainEqual({
+      branch: "afk/wAAAA/9-fix-the-thing",
+      base: "origin/main",
+    });
+    const pnpmDirs = trace.pnpmArgs
+      .map((args) => {
+        const idx = args.indexOf("-C");
+        return idx >= 0 ? args[idx + 1] : undefined;
+      })
+      .filter(Boolean);
+    expect(pnpmDirs).toContain("afk/wAAAA/9-fix-the-thing/packages/fresh");
+    expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
+  });
+
   it("resolves an unlocked, pinless issue to the configured Trunk and forks off origin/<trunk> (ADR 0083)", async () => {
     const fetchedBases: string[] = [];
     const { deps, input, trace } = harness({
@@ -2626,7 +2778,13 @@ describe("processIssue — validation.jsonl sidecar (SKILL.md §Validation Sidec
 
 describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)", () => {
   it("records the attempt AFTER the DONE envelope with the mapped payload", async () => {
-    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, recordAttempt: "ok" });
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "type:bug"],
+      classifyIssue: async () => "simple",
+      recordAttempt: "ok",
+    });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
@@ -2636,6 +2794,9 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(p.issueNumber).toBe(9);
     expect(p.attemptNumber).toBe(1);
     expect(p.status).toBe("done");
+    expect(p.issueType).toBe("bug");
+    expect(p.modelTier).toBe("simple");
+    expect(p.outcome).toBe("success");
     expect(p.issueTitle).toBe("Fix the thing");
     expect(p.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(p.mergeCommit).toBe("abc1234");
@@ -2650,6 +2811,7 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(result.outcome).toBe("blocked");
     expect(trace.recordedAttempts).toHaveLength(1);
     expect(trace.recordedAttempts[0]!.status).toBe("blocked");
+    expect(trace.recordedAttempts[0]!.outcome).toBe("failure");
   });
 
   it("records the attempt on the merge-conflict path", async () => {
@@ -2703,6 +2865,79 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
   });
 });
 
+describe("processIssue — AFK→Brain outcome-event recording", () => {
+  it("emits one versioned outcome event for a completed DONE attempt", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "type:bug"],
+      classifyIssue: async () => "simple",
+      recordOutcomeEvent: "ok",
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.outcomeEvents).toHaveLength(1);
+    expect(trace.outcomeEvents[0]).toEqual({
+      schemaVersion: 1,
+      id: "afk:o/r:9:1",
+      emitter: "afk",
+      occurredAt: "2026-05-30T00:00:00Z",
+      taskClass: "simple",
+      chosenOption: {
+        kind: "runner",
+        runner: "claude",
+        model: "claude-opus-4-8",
+        effort: "high",
+      },
+      outcome: "success",
+      cost: { signal: "unknown" },
+      context: {
+        repository: "o/r",
+        issueNumber: 9,
+        attemptNumber: 1,
+        issueType: "bug",
+        workerId: "wAAAA",
+        branch: "afk/wAAAA/9-fix-the-thing",
+        durationMs: 0,
+        status: "done",
+      },
+    });
+  });
+
+  it("keeps the DONE close and timing path unchanged when Brain recording throws", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      recordOutcomeEvent: "throw",
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.envelopePosted).toBe(true);
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.postedEnvelopes).toContainEqual({ issue: 9, status: "done" });
+    expect(trace.outcomeEvents).toEqual([]);
+  });
+
+  it("does not wait for a slow Brain recorder before completing DONE", async () => {
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      recordOutcomeEvent: "hang",
+    });
+
+    const result = await Promise.race([
+      processIssue(deps, input),
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 100)),
+    ]);
+
+    expect(result).not.toBe("timed-out");
+    expect(result).toMatchObject({ outcome: "done", swept: true });
+  });
+});
+
 describe("processIssue — timeout (attempt progress guard fired)", () => {
   it("reconcile skip (no commits) → on_attempt_error → ready-for-human + blocked:stalled, no post_attempt", async () => {
     // No commits on the branch → the ADR 0055 reconcile skips (nothing to land)
@@ -2721,6 +2956,12 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(trace.ensuredLabels).toContain("blocked:stalled");
     // The failure envelope rides the generic `blocked` status bucket.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.statePatches).toContainEqual({
+      "current.phase": "terminal",
+      "current.outcome": "stalled",
+      "current.last_exit_code": 124,
+      "current.failure_kind": "timeout",
+    });
     // on_attempt_timeout fires when the guard trips; on_reconcile reports the
     // ADR 0055 skip; then on_attempt_error escalates. post_attempt does NOT fire.
     expect(result.hooksFired).toEqual([

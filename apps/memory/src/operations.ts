@@ -116,7 +116,9 @@ import {
   type DocSearchViewerArtifact,
 } from "./doc-search-viewer.js";
 import { ask, type AskResult } from "./engine.js";
+import type { MemoryConfig } from "./config.js";
 import type { AiProviderConfig } from "./extract-conversation.js";
+import { graphRecallResult, type GraphRecallResult } from "./graph-recall.js";
 import {
   buildMemoryExtractionStatus,
   type MemoryExtractionStatus,
@@ -394,6 +396,7 @@ export interface MemoryOperationContext {
   store: MemoryStore;
   rootDir?: string;
   now?: number;
+  memoryConfig?: MemoryConfig;
   providerConfig?: AiProviderConfig;
   transportSurface?: string;
 }
@@ -545,6 +548,13 @@ const SmartSearchInputSchema = ScopeInputSchema.extend({
   include_superseded: z.boolean().default(false),
 });
 type SmartSearchInput = z.infer<typeof SmartSearchInputSchema>;
+
+const RecallRankingInputSchema = ScopeInputSchema.extend({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+  include_superseded: z.boolean().default(false),
+});
+type RecallRankingInput = z.infer<typeof RecallRankingInputSchema>;
 
 const PrePrReviewInputSchema = z.object({
   changed_files: z.array(z.string().min(1)).optional(),
@@ -884,6 +894,7 @@ const DocRelatedOutputSchema = objectOutputSchema<DocRelatedReport>();
 const DocRelatedViewerOutputSchema = objectOutputSchema<DocRelatedViewerArtifact>();
 const DocSearchOutputSchema = objectOutputSchema<DocSearchReport>();
 const DocCoverageOutputSchema = objectOutputSchema<DocCoverageReport>();
+const RecallRankingOutputSchema = objectOutputSchema<GraphRecallResult>();
 const SmartSearchOutputSchema = objectOutputSchema<MemorySmartSearchReport>();
 const SmartSearchViewerOutputSchema =
   objectOutputSchema<MemorySmartSearchViewerArtifact>();
@@ -1277,6 +1288,15 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
     joinedPositionalInput("query", [
       flagField("limit", "number"),
       flagField("cache", "string"),
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.recall-ranking"],
+    joinedPositionalInput("query", [
+      flagField("limit", "number"),
+      flagField("include_superseded", "boolean"),
+      ...SCOPE_INPUT_FIELDS,
     ]),
     JSON_REPORT_OUTPUT,
   ),
@@ -2933,6 +2953,36 @@ const GLOBAL_SEARCH_OPERATION: MemoryOperationDefinition<
     }),
 };
 
+const RECALL_RANKING_OPERATION: MemoryOperationDefinition<
+  RecallRankingInput,
+  GraphRecallResult
+> = {
+  id: "memory.recall-ranking",
+  title: "Memory recall ranking",
+  description:
+    "Read-only governed recall through the deterministic ranking pipeline: candidate retrieval, query-variant RRF, recency decay, MMR diversity, and session round-robin interleaving.",
+  inputSchema: RecallRankingInputSchema,
+  outputSchema: RecallRankingOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "recall-ranked", supportsJson: true },
+    mcp: {
+      toolName: "memory_recall_ranked",
+      description:
+        "Read-only governed recall through the deterministic ranking pipeline. Returns ranked hits plus diagnostics; uses plugins.memory.recallRanking defaults and overrides when available.",
+    },
+  },
+  execute: (ctx, input) =>
+    graphRecallResult(ctx.store, input.query, input.limit ?? 10, {
+      includeSuperseded: input.include_superseded,
+      scope: scopeFromInput(input),
+      now: ctx.now,
+      ranking: ctx.memoryConfig?.recallRanking,
+    }),
+};
+
 const ONBOARDING_MAP_OPERATION: MemoryOperationDefinition<OnboardingMapInput, OnboardingMap> = {
   id: "memory.onboarding-map",
   title: "Memory onboarding map",
@@ -3516,6 +3566,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
   GLOBAL_SEARCH_OPERATION,
+  RECALL_RANKING_OPERATION,
   REFERENCE_RADAR_OPERATION,
   CONTEXT_PACK_OPERATION,
   CONTEXT_PACK_VIEWER_OPERATION,

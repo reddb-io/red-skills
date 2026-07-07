@@ -1,6 +1,12 @@
 import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
+import { isOutcomeEvent, type OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { contentHash, slugify } from "./hash.js";
 import { KpiQuery, type KpiQueryInput, type KpiResult } from "./kpi-query.js";
+import {
+  MODEL_TIER_BANDIT_SCHEMA_VERSION,
+  replayModelTierBandit,
+  type ModelTierBanditDocument,
+} from "./model-tier-bandit.js";
 import {
   AUTO_LINK_CONNECTION_KINDS,
   artifactToAutoLinkArtifact,
@@ -98,6 +104,8 @@ export class BrainStore {
   private db!: RedDB;
   private artifactCache: StoredBrainArtifact[] | null = null;
   private connectionCache: StoredBrainConnection[] | null = null;
+  private outcomeEventCache: OutcomeEvent[] | null = null;
+  private modelTierBanditCache: ModelTierBanditDocument | null = null;
 
   private constructor(private readonly opts: BrainStoreOptions) {}
 
@@ -119,6 +127,7 @@ export class BrainStore {
   async bootstrap(): Promise<void> {
     await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.artifacts}`);
     await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.connections}`);
+    await this.db.execute(`CREATE GRAPH IF NOT EXISTS ${COLLECTIONS.outcomeEvents}`);
   }
 
   private kv() {
@@ -295,6 +304,54 @@ export class BrainStore {
     return new KpiQuery(artifacts).events(input);
   }
 
+  async appendOutcomeEvent(event: OutcomeEvent): Promise<OutcomeEvent> {
+    if (!isOutcomeEvent(event)) throw new Error("invalid Brain outcome event");
+    const properties = { ...event };
+    const result = await this.db.query(
+      `INSERT INTO ${COLLECTIONS.outcomeEvents} NODE (label, node_type, properties) VALUES ($1, $2, $3) RETURNING *`,
+      event.id,
+      `outcome_event.v${event.schemaVersion}`,
+      properties as unknown as QueryParam,
+    );
+    if (!result.rows[0]) throw new Error("INSERT outcome event returned no row");
+    this.outcomeEventCache = null;
+    return event;
+  }
+
+  async replayOutcomeEvents(): Promise<OutcomeEvent[]> {
+    if (this.outcomeEventCache == null) {
+      const result = await this.db.query(`SELECT * FROM ${COLLECTIONS.outcomeEvents}`);
+      this.outcomeEventCache = result.rows
+        .map(rowToOutcomeEvent)
+        .filter(notNull)
+        .sort((a, b) => a.rid - b.rid)
+        .map(({ rid: _rid, event }) => event);
+    }
+    return [...this.outcomeEventCache];
+  }
+
+  async loadModelTierBanditDocument(): Promise<ModelTierBanditDocument | null> {
+    if (this.modelTierBanditCache != null) return this.modelTierBanditCache;
+    const stored = await this.kv().get(modelTierBanditKey());
+    if (stored == null) return null;
+    const parsed = typeof stored === "string" ? (JSON.parse(stored) as unknown) : stored;
+    if (!isModelTierBanditDocument(parsed)) return null;
+    this.modelTierBanditCache = parsed;
+    return parsed;
+  }
+
+  async saveModelTierBanditDocument(document: ModelTierBanditDocument): Promise<ModelTierBanditDocument> {
+    if (!isModelTierBanditDocument(document)) throw new Error("invalid Brain model-tier bandit document");
+    await this.kv().put(modelTierBanditKey(), JSON.stringify(document));
+    this.modelTierBanditCache = document;
+    return document;
+  }
+
+  async refreshModelTierBanditDocument(): Promise<ModelTierBanditDocument> {
+    const document = replayModelTierBandit(await this.replayOutcomeEvents());
+    return this.saveModelTierBanditDocument(document);
+  }
+
   async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<BrainThinkResult> {
     const hits = (await this.search(query, Math.max(limit * 2, limit + 5), options))
       .filter((hit) => !isDerivedArtifact(hit.artifact))
@@ -453,6 +510,13 @@ function rowToConnection(row: Record<string, unknown>): StoredBrainConnection | 
     weight: Number(row.weight ?? 1),
     properties: parseProperties(row.properties ?? row.PROPERTIES) as unknown as StoredBrainConnection["properties"],
   };
+}
+
+function rowToOutcomeEvent(row: Record<string, unknown>): { rid: number; event: OutcomeEvent } | null {
+  const rid = Number(row.red_entity_id ?? row.rid);
+  const properties = parseProperties(row.properties ?? row.PROPERTIES);
+  if (!Number.isFinite(rid) || !isOutcomeEvent(properties)) return null;
+  return { rid, event: properties };
 }
 
 function parseProperties(value: unknown): Record<string, unknown> {
@@ -710,6 +774,16 @@ function artifactHashKey(hash: string): string {
 
 function connectionKey(from: number, to: number, kind: ConnectionKind): string {
   return `connection.${from}.${kind}.${to}`;
+}
+
+function modelTierBanditKey(): string {
+  return `model-tier-bandit.v${MODEL_TIER_BANDIT_SCHEMA_VERSION}`;
+}
+
+function isModelTierBanditDocument(value: unknown): value is ModelTierBanditDocument {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.schemaVersion === MODEL_TIER_BANDIT_SCHEMA_VERSION && typeof candidate.buckets === "object";
 }
 
 function countBy(values: string[]): Record<string, number> {

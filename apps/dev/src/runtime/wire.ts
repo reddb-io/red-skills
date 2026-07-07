@@ -9,8 +9,11 @@
 // actually runs), so `monitor`, `reap`, and an empty `run` never pull the
 // provider subpaths.
 
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { hostname } from "node:os";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
@@ -29,12 +32,13 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
 } from "@reddb-io/red-castle";
-import type { BranchRef } from "../core/branch-cleanup.js";
+import { liveIssueFromBranch, type BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
 import { collectLogLineCounts } from "./log-cursor.js";
+import { isLivePid } from "./kill-tree.js";
 
 // ---------- repo resolution ----------
 
@@ -444,7 +448,13 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { readWorkerState, readAllWorkerStates } from "../core/worker-state-reader.js";
+import {
+  readWorkerState,
+  readAllWorkerStates,
+  currentRenderableWorkerRecords,
+  type WorkerStateRecord,
+} from "../core/worker-state-reader.js";
+import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -457,7 +467,8 @@ export interface MonitorInputs {
   remoteQueue?: number;
   remoteHuman?: number;
   /** Age of the statusline cache in seconds. Undefined when no cache file exists.
-   * The monitor render shows a stale marker when this exceeds STATUSLINE_CACHE_TTL_S. */
+   * The monitor render shows a stale marker when this exceeds the resolved
+   * statusline cache TTL ({@link resolveStatuslineCacheTtl}). */
   remoteCacheAgeS?: number;
 }
 
@@ -520,10 +531,139 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
   }
 }
 
+/** Injected seams for {@link reclaimDeadWorkers} (real defaults wire gh/git/fs). */
+export interface DeadWorkerSweepDeps {
+  /** Raw `worker.pid` text for a worker dir. Default reads `{workerDir}/worker.pid`. */
+  readWorkerPid?: (workerDir: string) => string | null;
+  /** `kill -0` liveness probe. Default `process.kill(pid, 0)`. */
+  killAlive?: (pid: number) => boolean;
+  /** Whether an issue is in a post-mortem preservation state (blocked:* /
+   * ready-for-human). Default `gh issue view --json labels`. Returns `true`
+   * (conservative — keep the JSONL) whenever it cannot resolve. */
+  isPreserved?: (issue: number) => Promise<boolean>;
+  /** `git worktree remove --force`. Default runtime git against `root`. */
+  removeWorktree?: (worktreePath: string) => Promise<void>;
+  /** `rm -rf`. Default `fsx.removeDir`. */
+  removeDir?: (dir: string) => Promise<void>;
+  /** Path existence probe. Default `existsSync`. */
+  exists?: (path: string) => boolean;
+}
+
+/**
+ * Read-time liveness-gated teardown (issue #1219): as workers finish/crash, take
+ * them out of context — remove the heavy local `worktree/` and reclaim the
+ * attempt dir immediately, without waiting for the boot TTLs (reclaim.ts). Runs
+ * across the SAME namespace union the reader uses (workers/go-workers/
+ * scout-workers) since it consumes {@link readAllWorkerStates} records.
+ *
+ * Safety rules (see {@link planLivenessReclaim}):
+ *   - NEVER touch a live worker's dir — keyed on the OWNING worker's `worker.pid`
+ *     (shared across a worker's attempts), so a worker live on a later attempt
+ *     keeps ALL its dirs.
+ *   - A dead worker's disposable `worktree/` is ALWAYS removed.
+ *   - The whole attempt dir is reclaimed UNLESS the issue is preserved
+ *     (blocked:* / ready-for-human), where the JSONL/handoff stay for post-mortem.
+ *
+ * Best-effort throughout: every fs/git/gh failure is swallowed so the sweep never
+ * breaks the read it rides on. Returns the reclaimed attempt-dir paths.
+ */
+export async function reclaimDeadWorkers(
+  root: string,
+  records: ReadonlyArray<WorkerStateRecord>,
+  repo = "",
+  deps: DeadWorkerSweepDeps = {},
+): Promise<string[]> {
+  const exists = deps.exists ?? ((p: string) => existsSync(p));
+  const readWorkerPid =
+    deps.readWorkerPid ??
+    ((workerDir: string): string | null => {
+      try {
+        return readFileSync(join(workerDir, "worker.pid"), "utf8");
+      } catch {
+        return null;
+      }
+    });
+  const killAlive =
+    deps.killAlive ??
+    ((pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const isPreserved =
+    deps.isPreserved ??
+    (async (issue: number): Promise<boolean> => {
+      try {
+        const labels = await ghx.viewLabels({ cwd: root, repo }, issue);
+        // Empty labels (gh failed) → conservative: keep the JSONL.
+        if (labels.length === 0) return true;
+        return labels.some((l) => l === LABEL_HUMAN || l.startsWith("blocked:"));
+      } catch {
+        return true;
+      }
+    });
+  const removeWorktree =
+    deps.removeWorktree ??
+    (async (worktreePath: string): Promise<void> => {
+      await gitx.worktreeRemove({ cwd: root }, worktreePath);
+    });
+  const removeDir = deps.removeDir ?? ((dir: string) => fsx.removeDir(dir));
+
+  // Per-worker `worker.pid` liveness, memoized so a worker's several attempt dirs
+  // resolve it once.
+  const workerAliveCache = new Map<string, boolean>();
+  const workerPidAlive = (workerDir: string): boolean => {
+    const cached = workerAliveCache.get(workerDir);
+    if (cached !== undefined) return cached;
+    const raw = readWorkerPid(workerDir);
+    const pid = raw ? parseInt(raw.trim(), 10) : NaN;
+    // Absent/unparseable worker.pid → treat as ALIVE (never reclaim a dir we
+    // cannot prove belongs to a dead worker).
+    const alive = Number.isFinite(pid) && pid > 0 ? killAlive(pid) : true;
+    workerAliveCache.set(workerDir, alive);
+    return alive;
+  };
+
+  // Build the pure planner inputs, resolving preservation only for dead workers.
+  const inputs: LivenessReclaimInput[] = [];
+  for (const rec of records) {
+    const attemptDir = dirname(rec.path);
+    const workerDir = dirname(attemptDir);
+    // A renderable-live record (or a worker still live on any attempt) is never
+    // a reclaim candidate.
+    const alive = rec.renderableLive || workerPidAlive(workerDir);
+    const num = rec.state.current.number;
+    const issue = typeof num === "number" ? num : Number.parseInt(String(num), 10);
+    const preserved =
+      Number.isFinite(issue) && issue > 0 ? await isPreserved(issue) : true;
+    inputs.push({
+      attemptDir,
+      worktreePath: join(attemptDir, "worktree"),
+      workerPidAlive: alive,
+      preserved,
+    });
+  }
+
+  const reclaimed: string[] = [];
+  for (const action of planLivenessReclaim(inputs)) {
+    if (action.removeWorktree && exists(action.worktreePath)) {
+      await removeWorktree(action.worktreePath).catch(() => undefined);
+    }
+    if (action.reclaimDir) {
+      await removeDir(action.attemptDir).catch(() => undefined);
+      reclaimed.push(action.attemptDir);
+    }
+  }
+  return reclaimed;
+}
+
 /** Read every worker state file + the history ledger into the pure renderer's
  * inputs, plus one `git diff --shortstat` per live worktree for the diff column
  * (small fleet → a handful of cheap git calls, like the statusline does). */
-export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
+export async function collectMonitorInputs(root = process.cwd(), repo = ""): Promise<MonitorInputs> {
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The single source of liveness truth for all
@@ -533,10 +673,18 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   // tagged distinctly by state.origin. (Not the single-lane paths.workersRoot,
   // which would render only the `.red/tmp/workers` fleet lane.)
   const records = await readAllWorkerStates(paths.tmpDir);
-  const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+  // Read-time liveness-gated teardown (issue #1219): reclaim dead-worker
+  // worktrees/dirs immediately, not on the boot TTL. Best-effort — a failure
+  // here never blocks the render. Live-worker dirs and blocked/ready-for-human
+  // post-mortem artifacts are preserved (planLivenessReclaim).
+  await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
+  const currentRecords = currentRenderableWorkerRecords(records);
+  const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of records) {
+  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of currentRecords) {
+    // The shared current-worker selector applies the `renderableLive` gate and
+    // collapses retained sibling attempt dirs to one row per worker.
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. #1210 Part B: read it from the
     // state file's writer-stamped counts only — the monitor render performs NO
@@ -612,14 +760,36 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
 
 import type { AfkInput, RepoInput } from "../core/statusline.js";
 
-/** The TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
+/** The DEFAULT TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
  * GitHub-derived queue/human and open-PR/open-issue counts AND the repo-global
- * local diffstat. 240 s (4 min): the statusline renders on every prompt, so a
- * per-render gh/git round-trip (~5 s under load) would freeze the TUI. A single
- * named constant referenced by both the writer (statusline command) and the
+ * local diffstat. 180 s (3 min): the statusline renders on every prompt, so a
+ * per-render gh/git round-trip (~5 s under load) would freeze the TUI. The
+ * effective TTL is resolved by {@link resolveStatuslineCacheTtl}
+ * (RED_AFK_STATUSLINE_CACHE_TTL_S env > `afk.statusline_cache_ttl` config > this
+ * default) and threaded into both the writer (statusline command) and the
  * readers (monitor path + stale-marker threshold) so the network cost is paid at
- * most once per 4 minutes, never per render (issue #1178). */
-export const STATUSLINE_CACHE_TTL_S = 240;
+ * most once per TTL, never per render (issue #1178, #1217). */
+export const STATUSLINE_CACHE_TTL_S = 900;
+export const STATUSLINE_REFRESH_LOCK_TTL_S = 60;
+
+/**
+ * Resolve the effective statusline cache TTL (seconds) with precedence
+ * RED_AFK_STATUSLINE_CACHE_TTL_S env > `afk.statusline_cache_ttl` config >
+ * {@link STATUSLINE_CACHE_TTL_S} default (180). Mirrors the resolveAttemptBudget
+ * / parseAttemptTimeout precedence pattern. Typo-safe: a missing / non-numeric /
+ * zero / negative value from EITHER source falls through to the next source and
+ * ultimately the 180 default — never 0. A 0 TTL would make the cache always-stale
+ * and refresh on every render, defeating the whole purpose. Note the FLAT config
+ * key `afk.statusline_cache_ttl` — NOT nested under `afk.statusline`, which is
+ * already the boolean opt-out (YAML cannot make one key both a boolean and a map).
+ */
+export function resolveStatuslineCacheTtl(env: NodeJS.ProcessEnv, getCfg: (key: string) => string): number {
+  return (
+    parsePositive(env.RED_AFK_STATUSLINE_CACHE_TTL_S) ??
+    parsePositive(getCfg("afk.statusline_cache_ttl")) ??
+    STATUSLINE_CACHE_TTL_S
+  );
+}
 
 /** Maximum milliseconds to wait for a cold-cache gh count refresh. If the gh
  * CLI hangs (network stall, rate-limit backoff) the statusline falls back to
@@ -650,6 +820,22 @@ interface StatuslineCache {
   ts: number;
 }
 
+type DetachedSpawn = (
+  command: string,
+  args: readonly string[],
+  options: { detached: true; stdio: "ignore"; env: NodeJS.ProcessEnv },
+) => Pick<ChildProcess, "unref">;
+
+export interface StatuslineRefreshSpawnOptions {
+  spawn?: DetachedSpawn;
+  nowS?: number;
+  argv1?: string;
+}
+
+export function statuslineCountCachePath(root: string): string {
+  return join(afkPaths(root).tmpDir, "statusline-cache.json");
+}
+
 function readStatuslineCache(path: string): StatuslineCache | null {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
@@ -665,11 +851,159 @@ function readStatuslineCache(path: string): StatuslineCache | null {
 
 function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void {
   try {
+    mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, JSON.stringify(cache), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
+  }
+}
+
+export function parseGitHubRepoSlugFromRemoteUrl(url: string): string {
+  const trimmed = url.trim();
+  const ssh = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/.exec(trimmed);
+  if (ssh) return ssh[1] ?? "";
+  const https = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(trimmed);
+  if (https) return https[1] ?? "";
+  return "";
+}
+
+function readGitFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+export function inferGitHubRepoSlug(root: string): string {
+  const dotGit = join(root, ".git");
+  const gitMarker = readGitFile(dotGit);
+  const configCandidates = [join(dotGit, "config")];
+  const gitDir = /^gitdir:\s*(.+)$/m.exec(gitMarker)?.[1]?.trim();
+  if (gitDir) {
+    const absoluteGitDir = gitDir.startsWith("/") ? gitDir : join(root, gitDir);
+    configCandidates.push(join(absoluteGitDir, "config"));
+    configCandidates.push(join(absoluteGitDir, "..", "..", "config"));
+  }
+  for (const configPath of configCandidates) {
+    const config = readGitFile(configPath);
+    const origin = /\[remote "origin"\][\s\S]*?\n\s*url\s*=\s*(.+)\n/.exec(`${config}\n`)?.[1];
+    const slug = origin ? parseGitHubRepoSlugFromRemoteUrl(origin) : "";
+    if (slug) return slug;
+  }
+  return "";
+}
+
+function statuslineRefreshLockPath(cachePath: string): string {
+  return `${cachePath}.refresh.lock`;
+}
+
+function releaseStatuslineRefreshLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // best-effort
+  }
+}
+
+function acquireStatuslineRefreshLock(lockPath: string, nowS: number): boolean {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const payload = JSON.stringify({ pid: process.pid, ts: nowS });
+  try {
+    writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
+    return true;
+  } catch {
+    const existing = readStatuslineCache(lockPath);
+    if (existing && nowS - existing.ts < STATUSLINE_REFRESH_LOCK_TTL_S) return false;
+    releaseStatuslineRefreshLock(lockPath);
+    try {
+      writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function applyStatuslineCountCacheLabelDelta(
+  cachePath: string,
+  remove: readonly string[],
+  add: readonly string[],
+  nowS: number = Math.floor(Date.now() / 1000),
+): boolean {
+  const cached = readStatuslineCache(cachePath);
+  if (!cached) return false;
+  const removed = new Set(remove);
+  const added = new Set(add);
+  const deltaFor = (label: string): number => (added.has(label) ? 1 : 0) - (removed.has(label) ? 1 : 0);
+  const queueDelta = deltaFor(LABEL_READY);
+  const humanDelta = deltaFor(LABEL_HUMAN);
+  if (queueDelta === 0 && humanDelta === 0) return false;
+  writeStatuslineCacheAtomic(cachePath, {
+    queue: Math.max(0, cached.queue + queueDelta),
+    human: Math.max(0, cached.human + humanDelta),
+    ts: nowS,
+  });
+  return true;
+}
+
+export async function editLabelsWithStatuslineCache(
+  cachePath: string,
+  edit: () => Promise<boolean>,
+  remove: readonly string[],
+  add: readonly string[],
+): Promise<boolean> {
+  const ok = await edit();
+  if (ok) applyStatuslineCountCacheLabelDelta(cachePath, remove, add);
+  return ok;
+}
+
+export async function refreshStatuslineCountCache(
+  root: string,
+  repo: string = inferGitHubRepoSlug(root),
+  lockPath?: string,
+): Promise<void> {
+  try {
+    const cachePath = statuslineCountCachePath(root);
+    const counts = await ghx.countStatuslineQueueCounts({ cwd: root, repo });
+    writeStatuslineCacheAtomic(cachePath, { ...counts, ts: Math.floor(Date.now() / 1000) });
+  } finally {
+    if (lockPath) releaseStatuslineRefreshLock(lockPath);
+  }
+}
+
+export function startDetachedStatuslineCountRefresh(
+  ctx: RepoContext,
+  options: StatuslineRefreshSpawnOptions = {},
+): boolean {
+  const cachePath = statuslineCountCachePath(ctx.root);
+  const nowS = options.nowS ?? Math.floor(Date.now() / 1000);
+  const lockPath = statuslineRefreshLockPath(cachePath);
+  const repo = ctx.repo || inferGitHubRepoSlug(ctx.root);
+  const argv1 = options.argv1 ?? process.argv[1];
+  if (!repo || !argv1) return false;
+  if (!acquireStatuslineRefreshLock(lockPath, nowS)) return false;
+  try {
+    const child = (options.spawn ?? spawn)(process.execPath, [
+      argv1,
+      "statusline-refresh-counts",
+      ctx.root,
+      "--repo",
+      repo,
+      "--lock",
+      lockPath,
+    ], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, RED_AFK_STATUSLINE_REFRESH_CHILD: "1" },
+    });
+    child.unref();
+    return true;
+  } catch {
+    releaseStatuslineRefreshLock(lockPath);
+    return false;
   }
 }
 
@@ -688,14 +1022,18 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  * statusline process indefinitely. The refresh runs even when there are no live
  * workers so the queue/human badges stay current while the fleet is idle.
  */
-export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
+export async function collectStatuslineAfk(
+  ctx: RepoContext,
+  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+  refreshOptions: StatuslineRefreshSpawnOptions = {},
+): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
   const nowMs = Date.now();
   // Namespace-blind union across the fleet, `/go`, and `--scout` lanes so the
   // statusline counts a live `/go`/`--scout` worker (rendered per-origin via
   // state.origin), not only the `.red/tmp/workers` fleet lane.
-  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
+  const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -718,23 +1056,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
-    // Statusline counts workers the evaluator does not consider stalled. A busy
-    // worker with live agent descendants shows as "alive" even when the liveness
-    // lane is silent (wedged-substrate guard in the evaluator), so a long
-    // build/gate wait no longer makes the AFK block vanish. "unknown" (container
-    // workers) is treated conservatively as live. Only "stalled" (stale lane AND
-    // no live descendants) is excluded.
-    if (livenessVerdict.status === "stalled") continue;
-    // But the statusline shows ONLY genuinely-live workers (issue #1177). A
-    // finished/retained attempt is stamped `pid: 0` and kept for post-mortem;
-    // its per-attempt lane can still read fresh during that window, so the
-    // "not stalled" gate alone would render it as a phantom live line beside the
-    // same worker's live successor attempt. Require the state's OWN pid to be
-    // alive (or, for isolation workers, the host-side worker.pid) so a pid-0
-    // sibling is always dropped.
-    if (!pidIdentityLive && !hostPidLive) continue;
-
+  for (const { state } of records) {
+    // Shared with the monitor/per-worker statusline collectors: renderable rows
+    // are already gated and collapsed to one current attempt per worker.
     workers += 1;
     blocked += state.blocked;
     if (runner === "" && state.runner) runner = state.runner;
@@ -789,26 +1113,23 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     }
   }
 
-  // GitHub-derived counts with a 240 s (4 min) cache — refreshed before the
-  // early-return so queue/human stay current even when the fleet is idle
-  // (workers == 0).
-  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  // GitHub-derived counts with a 180 s (3 min) cache (configurable, #1217) —
+  // refreshed before the early-return so queue/human stay current even when the
+  // fleet is idle (workers == 0).
+  const cachePath = statuslineCountCachePath(ctx.root);
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readStatuslineCache(cachePath);
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
 
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
   let refreshSucceeded = false;
   const refresh = async (): Promise<void> => {
-    const [q, h] = await Promise.all([
-      ghx.countReadyForAgent(ghCtx),
-      ghx.countReadyForHuman(ghCtx),
-    ]);
-    queue = q;
-    human = h;
+    const counts = await ghx.countStatuslineQueueCounts(ghCtx);
+    queue = counts.queue;
+    human = counts.human;
     refreshSucceeded = true;
-    writeStatuslineCacheAtomic(cachePath, { queue: q, human: h, ts: nowS });
+    writeStatuslineCacheAtomic(cachePath, { queue, human, ts: nowS });
   };
 
   let cacheAgeS: number | undefined;
@@ -817,13 +1138,13 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // block the statusline render indefinitely. queue/human stay 0/0 on timeout
     // or on any gh/auth/network error.
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
-    // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open). When
-    // refresh fails, mark the age so the renderer can signal staleness.
+  } else if (nowS - cached.ts >= cacheTtlS) {
     const staleAgeS = nowS - cached.ts;
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-    if (!refreshSucceeded) cacheAgeS = staleAgeS;
+    cacheAgeS = staleAgeS;
+    startDetachedStatuslineCountRefresh(
+      { ...ctx, repo: ghCtx.repo },
+      { ...refreshOptions, nowS },
+    );
   }
 
   if (workers <= 0) return null;
@@ -869,18 +1190,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 export async function collectStatuslineWorkers(ctx: RepoContext): Promise<CompactWorker[]> {
   const paths = afkPaths(ctx.root);
   const nowMs = Date.now();
-  const records = await readAllWorkerStates(paths.tmpDir, { nowMs });
+  const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive, liveness, livenessVerdict, pidIdentityLive, hostPidLive } of records) {
-    // Same rule as the aggregate collector: count everything the evaluator does
-    // not consider stalled (a long build/gate wait stays "alive"; "unknown"
-    // container workers count conservatively). Only "stalled" is excluded.
-    if (livenessVerdict.status === "stalled") continue;
-    // Statusline shows ONLY genuinely-live workers (issue #1177): a
-    // finished/retained attempt keeps its dir with `pid: 0` and a possibly-fresh
-    // lane during the post-mortem window, so require its OWN pid to be alive (or
-    // the isolation host pid) — a pid-0 sibling of a live successor is dropped.
-    if (!pidIdentityLive && !hostPidLive) continue;
+  for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
+    // The shared current-worker selector applies the `renderableLive` gate and
+    // collapses retained sibling attempt dirs to one row per worker.
     // #1210 Part B: no per-render git subprocess — read the writer-stamped LOC
     // straight from the state file (the heartbeat owns it for every runner).
     const added = state.current.loc_added;
@@ -973,7 +1287,10 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
  * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
  * field is fail-open: any gh/git error leaves it 0.
  */
-export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput> {
+export async function collectStatuslineRepo(
+  ctx: RepoContext,
+  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
   const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
@@ -1012,7 +1329,7 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
   let repoCacheAgeS: number | undefined;
   if (!cached) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+  } else if (nowS - cached.ts >= cacheTtlS) {
     // Stale: await a bounded refresh so the cache is rewritten before the
     // process exits. Shows the previous value on timeout (fail-open). When
     // refresh fails, mark the age so the renderer can signal staleness.
@@ -1094,7 +1411,7 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
 import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../core/boot.js";
 import type { AttemptDir } from "../core/reclaim.js";
 import type { IssueStateRow } from "./gh.js";
-import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
 import { parseClaimRecords } from "../core/claim.js";
 
@@ -1242,9 +1559,19 @@ async function resolveBranchIssueCache(
 export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const paths = afkPaths(ctx.root);
+  const cfg = loadConfig(paths.configPath, { warn: () => undefined });
+  const countCachePath = statuslineCountCachePath(ctx.root);
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
+  const liveBranchCommitByIssue = new Map<number, number>();
+  for (const ref of options.branches.remoteLiveRefs) {
+    const issue = liveIssueFromBranch(ref.branch);
+    if (issue === null || !Number.isFinite(ref.commitS)) continue;
+    const previous = liveBranchCommitByIssue.get(issue);
+    if (previous === undefined || ref.commitS! > previous) liveBranchCommitByIssue.set(issue, ref.commitS!);
+  }
   return {
     fs: {
       ensureDir: fsx.ensureDir,
@@ -1254,7 +1581,12 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
     },
     gh: {
       editLabels: async (issue, remove, add) => {
-        await ghx.editLabels(ghCtx, issue, remove, add);
+        await editLabelsWithStatuslineCache(
+          countCachePath,
+          () => ghx.editLabels(ghCtx, issue, remove, add),
+          remove,
+          add,
+        );
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -1302,12 +1634,31 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       // A per-issue read failure drops that issue from the sweep (best-effort).
       claimedIssues: async () => {
         const claimed = [];
+        const hostPrefix = `${hostname()}:`;
         for (const [issue, row] of issueStates) {
           if (row.state !== "OPEN") continue;
           if (!row.labels.includes(LABEL_RUNNING)) continue;
           try {
             const comments = await ghx.listClaimComments(ghCtx, issue);
-            claimed.push({ issue, records: parseClaimRecords(comments) });
+            const records = parseClaimRecords(comments);
+            const deadOwners = records
+              .map((r) => r.worker)
+              .filter((worker, idx, workers) => workers.indexOf(worker) === idx)
+              .filter((worker) => {
+                if (!worker.startsWith(hostPrefix)) return false;
+                const workerId = worker.slice(hostPrefix.length);
+                if (!workerId) return false;
+                const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+                if (!existsSync(pidPath)) return true;
+                const pid = Number(readFileSync(pidPath, "utf8").trim());
+                return !Number.isInteger(pid) || !isLivePid(pid);
+              });
+            claimed.push({
+              issue,
+              records,
+              deadOwners,
+              attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
+            });
           } catch {
             // best-effort: skip an issue whose claim comments cannot be read.
           }
@@ -1316,6 +1667,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
     },
     nowS,
+    config: cfg,
   };
 }
 

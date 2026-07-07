@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { MemoryStore } from "./graph-store.js";
+import type { MemoryConfig } from "./config.js";
 import type { AiProviderConfig } from "./extract-conversation.js";
 import { recall } from "./engine.js";
 import {
@@ -30,6 +31,7 @@ export interface MemoryHttpServerOptions {
   store: MemoryStore;
   token?: string;
   now?: number;
+  memoryConfig?: MemoryConfig;
   providerConfig?: AiProviderConfig;
 }
 
@@ -257,6 +259,7 @@ async function handleRegistryHttpOperation(
         store: opts.store,
         rootDir: opts.rootDir,
         now: opts.now,
+        memoryConfig: opts.memoryConfig,
         providerConfig: opts.providerConfig,
         transportSurface: "http",
       },

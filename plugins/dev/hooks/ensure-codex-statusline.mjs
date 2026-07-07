@@ -23,11 +23,37 @@ import { dirname, join } from "node:path";
 
 const DEFAULT_STATUS_LINE =
   '["project", "git-branch", "model-with-reasoning", "context-remaining", "task-progress"]';
+const HOOK_TIMEOUT_MS = Number(process.env.RED_SKILLS_HOOK_TIMEOUT_MS || 5000);
+const STDIN_TIMEOUT_MS = Number(process.env.RED_SKILLS_HOOK_STDIN_TIMEOUT_MS || 5000);
 
 function emitAndExit() {
   // Codex hook contract: pass the context through unchanged.
   process.stdout.write("{}");
   process.exit(0);
+}
+
+const hookDeadline = setTimeout(emitAndExit, Number.isFinite(HOOK_TIMEOUT_MS) ? HOOK_TIMEOUT_MS : 5000);
+hookDeadline.unref();
+
+async function drainStdin() {
+  const timeoutMs = Number.isFinite(STDIN_TIMEOUT_MS) ? STDIN_TIMEOUT_MS : 5000;
+  await new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", done);
+      process.stdin.off("error", done);
+      process.stdin.pause();
+      resolve();
+    };
+    const onData = () => {};
+    const timer = setTimeout(done, timeoutMs);
+    timer.unref();
+    process.stdin.on("data", onData);
+    process.stdin.once("end", done);
+    process.stdin.once("error", done);
+    process.stdin.resume();
+  });
 }
 
 // ── Per-directory plugin gate (ADR 0067) ─────────────────────────────────────
@@ -72,12 +98,8 @@ function devEnabled(cwd) {
   return false;
 }
 
-// Drain stdin (the piped hook context) so the producer never blocks; ignore it.
-try {
-  readFileSync(0);
-} catch {
-  /* no stdin / closed — fine */
-}
+// Drain stdin with a deadline so the producer never blocks; ignore the payload.
+await drainStdin();
 
 // Gate before touching any global config: dormant unless dev is enabled here.
 if (!devEnabled(process.cwd())) emitAndExit();

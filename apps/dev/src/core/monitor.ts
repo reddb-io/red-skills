@@ -253,6 +253,10 @@ export function compactWorkerTag(worker: CompactWorker): "live" | "quiet" | "sta
 export interface WorkerFields {
   workerId: string;
   runner: string;
+  /** Spawn-time provenance (`state.origin`, e.g. `afk` | `go`), or undefined when
+   * unstamped. Both per-worker surfaces render it as a 3-letter `org=` token,
+   * defaulting the DISPLAY to `afk` when absent (issue #1219). */
+  origin?: string;
   /** Model identifier the attempt ran with, or undefined (pre-schema state). */
   model?: string;
   /** Reasoning-effort level, or undefined when unavailable. */
@@ -281,6 +285,7 @@ export function workerFields(worker: CompactWorker, now: number): WorkerFields {
   return {
     workerId: state.worker_id || "?",
     runner: state.runner || "-",
+    origin: state.origin || undefined,
     model: state.current.model || undefined,
     effort: state.current.effort || undefined,
     done: state.done,
@@ -302,6 +307,9 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   const workerId = state.worker_id || "?";
   const tag = compactWorkerTag(worker);
   const runner = state.runner || "-";
+  // Spawn-time provenance token (issue #1219) — for parity with the statusline's
+  // `org=` token. An unstamped worker is an afk-fleet worker, so default to afk.
+  const org = state.origin || "afk";
   const total = state.total;
   const done = state.done;
 
@@ -323,7 +331,7 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   const waiting = state.current.waiting_count ?? 0;
   const hasVitals = tools > 0 || text > 0 || reasoning > 0 || waiting > 0;
   const vitalsFrag = hasVitals
-    ? `  tools:${tools} reason:${reasoning} text:${text}${waiting > 0 ? ` wait:${waiting}` : ""}`
+    ? `  tls:${tools} rsn:${reasoning} txt:${text}${waiting > 0 ? ` wait:${waiting}` : ""}`
     : "";
   const logFrag =
     worker.logLines !== undefined
@@ -339,7 +347,7 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
     cur = `  idle${diff}${logFrag}`;
   }
 
-  return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;
+  return `${workerId} [${tag}] ${runner} org=${org}  issues ${done}/${total}${flags}${cur}`;
 }
 
 /**
@@ -393,9 +401,12 @@ export function renderCompactDashboard(
 ): string {
   let added = 0;
   let removed = 0;
-  // Per-source counts: aggregate state.origin from all workers (not just live
-  // ones — liveness filtering happens at the collection layer). Only non-empty
-  // origins are counted; both surfaces read from the same state.origin field.
+  // Per-source counts: aggregate state.origin over the workers handed to the
+  // renderer. Liveness filtering now happens at the collection layer (issue
+  // #1219: collectMonitorInputs gates every record through `renderableLive`), so
+  // this counts only live workers — matching the statusline's per-source tally,
+  // which counts inside its own liveness gate. Only non-empty origins are
+  // counted; both surfaces read from the same state.origin field.
   const sourceMap = new Map<string, number>();
   for (const w of workers) {
     added += w.diffAdded ?? 0;
@@ -473,9 +484,9 @@ function toonWorkerRow(worker: CompactWorker, now: number): Record<string, ToonV
     in_tok: state.current.input_tokens ?? 0,
     out_tok: state.current.output_tokens ?? 0,
     cost_usd: state.current.cost_usd ?? 0,
-    tools: state.current.tools_called_count ?? 0,
-    reason: state.current.reasoning_events ?? 0,
-    text: state.current.text_chunk_count ?? 0,
+    tls: state.current.tools_called_count ?? 0,
+    rsn: state.current.reasoning_events ?? 0,
+    txt: state.current.text_chunk_count ?? 0,
     wait: state.current.waiting_count ?? 0,
     log: worker.logLines ?? 0,
   };

@@ -541,6 +541,58 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "co-occurrence edges cannot be written as causal labels",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const a = await store.upsertNode(factToNode("co occurrence node a", slugify));
+      const b = await store.upsertNode(factToNode("co occurrence node b", slugify));
+
+      await expect(
+        store.upsertEdge({
+          label: "CAUSES",
+          from_rid: a,
+          to_rid: b,
+          properties: { relation_kind: "co-occurrence" },
+        }),
+      ).rejects.toThrow(/co-occurrence edge cannot use causal label CAUSES/);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "new writes carry provenance_tier while legacy rows read without it",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const oracleRid = await store.upsertNode({
+        label: "oracle-validation",
+        node_type: "validation",
+        properties: {
+          title: "oracle validation",
+          content: "test command passed",
+          confidence: "EXTRACTED",
+        },
+      });
+      const proxyRid = await store.upsertNode(factToNode("manual legacy shaped fact", slugify));
+
+      await expect(store.getNode(oracleRid)).resolves.toMatchObject({
+        properties: { provenance_tier: "oracle" },
+      });
+      await expect(store.getNode(proxyRid)).resolves.toMatchObject({
+        properties: { provenance_tier: "proxy" },
+      });
+
+      const legacy = rowToNode({
+        rid: 999,
+        label: "legacy",
+        node_type: "concept",
+        PROPERTIES: { title: "legacy" },
+      });
+      expect(legacy.properties.provenance_tier).toBeUndefined();
+    },
+    TIMEOUT,
+  );
+
+  test(
     "listEdges reuses the edge snapshot until writes invalidate it",
     async () => {
       const store = await openStore(await tempRoot());
@@ -608,6 +660,60 @@ describe("MemoryStore over a file:// RedDB", () => {
       const rids = hits.map((h) => h.rid);
       expect(rids).toContain(current);
       expect(rids).toContain(old);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "conflicting fact write archives the old belief and audit recall shows lineage",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const old = await store.upsertNode({
+        label: "release-window",
+        node_type: "decision",
+        properties: {
+          title: "release window",
+          content: "release window is friday afternoon",
+          created_at: 1_000,
+        },
+      });
+
+      const current = await store.upsertNode({
+        label: "release-window",
+        node_type: "decision",
+        properties: {
+          title: "release window",
+          content: "release window is tuesday morning",
+          created_at: 2_000,
+        },
+      });
+
+      expect(await store.supersededBy(old)).toBe(current);
+      const archived = await store.getNode(old);
+      expect(archived?.properties).toMatchObject({
+        superseded_by: current,
+        valid_until: expect.any(Number),
+        archived_at: expect.any(Number),
+      });
+
+      const defaultHits = await graphRecall(store, "release window friday tuesday", 10);
+      expect(defaultHits.map((hit) => hit.rid)).toContain(current);
+      expect(defaultHits.map((hit) => hit.rid)).not.toContain(old);
+
+      const auditHits = await graphRecall(
+        store,
+        "what did we believe before release window changed to tuesday",
+        10,
+        {
+          includeSuperseded: true,
+        },
+      );
+      const auditOld = auditHits.find((hit) => hit.rid === old);
+      expect(auditOld).toMatchObject({
+        superseded_by: current,
+        valid_until: expect.any(Number),
+      });
+      expect(auditOld?.excerpt).toContain("release window is friday afternoon");
     },
     TIMEOUT,
   );

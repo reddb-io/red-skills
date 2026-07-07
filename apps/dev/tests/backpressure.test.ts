@@ -99,6 +99,7 @@ describe("runBackpressure", () => {
       name: "backpressure:npm run test",
       status: "passed",
       command: "npm run test",
+      exitCode: 0,
       durationMs: 1234,
       summary: "command exited 0",
     };

@@ -50,6 +50,8 @@ export interface ContractNode {
   source_location: string | null;
   /** Write provenance as stored by Memory; null when unavailable. */
   provenance: Record<string, unknown> | null;
+  /** Authority tier for ranking/governance; null when unavailable on legacy rows. */
+  provenance_tier: "oracle" | "proxy" | null;
   /** Freshness timestamps and retention horizon, in epoch ms when available. */
   freshness: ContractFreshness;
   /** Node salience signal for ranking/filtering; null when unavailable. */
@@ -81,6 +83,8 @@ export interface ContractEdge {
   source_location: string | null;
   /** Write provenance as stored by Memory; null when unavailable. */
   provenance: Record<string, unknown> | null;
+  /** Authority tier for ranking/governance; null when unavailable on legacy rows. */
+  provenance_tier: "oracle" | "proxy" | null;
   /** Freshness timestamps and retention horizon, in epoch ms when available. */
   freshness: ContractFreshness;
   /** Edges are directed; `source → target` is the semantic direction. */
@@ -143,6 +147,7 @@ const PROMOTED_NODE_PROPS = new Set([
   "source",
   "source_location",
   "provenance",
+  "provenance_tier",
   "created_at",
   "updated_at",
   "accessed_at",
@@ -156,6 +161,7 @@ const PROMOTED_EDGE_PROPS = new Set([
   "source",
   "source_location",
   "provenance",
+  "provenance_tier",
   "created_at",
   "updated_at",
   "expires_at",
@@ -206,6 +212,11 @@ function confidenceValue(props: Record<string, unknown>): string | null {
   return stringValue(props.confidence) ?? stringValue(provenance?.confidence);
 }
 
+function provenanceTierValue(props: Record<string, unknown>): "oracle" | "proxy" | null {
+  const value = props.provenance_tier;
+  return value === "oracle" || value === "proxy" ? value : null;
+}
+
 function sourceLocation(props: Record<string, unknown>): string | null {
   return stringValue(props.source_location) ?? stringValue(props.source);
 }
@@ -245,6 +256,7 @@ export function buildGraphContract({
       confidence: confidenceValue(props),
       source_location: sourceLocation(props),
       provenance: recordValue(props.provenance),
+      provenance_tier: provenanceTierValue(props),
       freshness: freshness(props),
       direction: "directed" as const,
       metadata: metadataWithout(props, PROMOTED_EDGE_PROPS),
@@ -266,6 +278,7 @@ export function buildGraphContract({
       confidence: confidenceValue(props),
       source_location: sourceLocation(props),
       provenance: recordValue(props.provenance),
+      provenance_tier: provenanceTierValue(props),
       freshness: freshness(props, true),
       salience: numberValue(props.salience),
       orphan: !inbound.has(node.rid),
@@ -313,6 +326,7 @@ const ContractNodeZ = z.object({
   confidence: z.string().nullable(),
   source_location: z.string().nullable(),
   provenance: z.record(z.unknown()).nullable(),
+  provenance_tier: z.enum(["oracle", "proxy"]).nullable(),
   freshness: z.object({
     created_at: z.number().nullable(),
     updated_at: z.number().nullable(),
@@ -335,6 +349,7 @@ const ContractEdgeZ = z.object({
   confidence: z.string().nullable(),
   source_location: z.string().nullable(),
   provenance: z.record(z.unknown()).nullable(),
+  provenance_tier: z.enum(["oracle", "proxy"]).nullable(),
   freshness: z.object({
     created_at: z.number().nullable(),
     updated_at: z.number().nullable(),
@@ -411,6 +426,7 @@ export function graphContractJsonSchema(): Record<string, any> {
             "confidence",
             "source_location",
             "provenance",
+            "provenance_tier",
             "freshness",
             "salience",
             "orphan",
@@ -428,6 +444,7 @@ export function graphContractJsonSchema(): Record<string, any> {
             confidence: { type: ["string", "null"] },
             source_location: { type: ["string", "null"] },
             provenance: { type: ["object", "null"] },
+            provenance_tier: { enum: ["oracle", "proxy", null] },
             freshness: {
               type: "object",
               required: ["created_at", "updated_at"],
@@ -460,6 +477,7 @@ export function graphContractJsonSchema(): Record<string, any> {
             "confidence",
             "source_location",
             "provenance",
+            "provenance_tier",
             "freshness",
             "direction",
             "metadata",
@@ -476,6 +494,7 @@ export function graphContractJsonSchema(): Record<string, any> {
             confidence: { type: ["string", "null"] },
             source_location: { type: ["string", "null"] },
             provenance: { type: ["object", "null"] },
+            provenance_tier: { enum: ["oracle", "proxy", null] },
             freshness: {
               type: "object",
               required: ["created_at", "updated_at"],

@@ -130,6 +130,14 @@ export const CONFIG_DEFAULTS = {
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
   // gated on the proof-by-drain telemetry.
   "afk.release.channel": "stable",
+  // Cross-host stale-claim reaper (#1187). A running issue whose claim marker
+  // stopped refreshing is released only after the stale window AND this minimum
+  // grace have both elapsed; a recent commit on an `afk/*/<issue>-*` live branch
+  // protects the worker for `recent_commit_s` even when the claim marker is old.
+  "afk.claim_reaper.refresh_s": "300",
+  "afk.claim_reaper.stale_tolerance": "3",
+  "afk.claim_reaper.grace_s": "300",
+  "afk.claim_reaper.recent_commit_s": "2700",
   // Warm worktree-pool model (treehouse, ADR Track 1B / issue #909). When false
   // (default) AFK uses today's cold per-attempt worktree (`git worktree add` +
   // submodule init + deps install every attempt). When true, attempts ACQUIRE a
@@ -201,6 +209,15 @@ export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
 
 export const AFK_MODEL_TIERS = ["validate", "simple", "complex", "think"] as const;
 export type AfkModelTier = (typeof AFK_MODEL_TIERS)[number];
+
+const AFK_MODEL_TIER_ORDER: readonly AfkModelTier[] = AFK_MODEL_TIERS;
+
+/** One-step downgrade in the model-tier-policy vocabulary. The cheapest tier is
+ * already the floor, so it stays `validate`. */
+export function downgradeAfkModelTier(tier: AfkModelTier): AfkModelTier {
+  const idx = AFK_MODEL_TIER_ORDER.indexOf(tier);
+  return idx <= 0 ? "validate" : AFK_MODEL_TIER_ORDER[idx - 1]!;
+}
 
 export interface ResolvedTier {
   model: string;
@@ -466,7 +483,10 @@ export function resolveTier(
   // ship a full table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral
   // hermes) falls back to the claude table via the shared `toAgentRunner` seam.
   const tierRunner = toAgentRunner(runner as Runner);
-  const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const requestedTier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const tier = env.RED_AFK_TASK_TIER_DOWNGRADE === "1"
+    ? downgradeAfkModelTier(requestedTier)
+    : requestedTier;
   const modelKey = defaultTierKey(tierRunner, tier, "model")!;
   const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
   const defaultModel = CONFIG_DEFAULTS[modelKey];

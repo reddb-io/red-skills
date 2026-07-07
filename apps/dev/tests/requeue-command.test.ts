@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Writable } from "node:stream";
 import { formatCurrentBlocker } from "../src/core/blocker-state.js";
+import { renderClaimComment } from "../src/core/claim.js";
 import { isRequeueComplete } from "../src/core/requeue.js";
 import { requeueCommand, type RequeueGh, type RequeueAdoptRunner } from "../src/commands/requeue.js";
 
@@ -28,9 +29,10 @@ function captureStderr(): { restore: () => void; text: () => string } {
 }
 
 function fakeGh(state: { state: string; body: string; labels: string[] }) {
-  const calls = { editBody: 0, editLabels: 0, comment: 0 };
+  const calls = { editBody: 0, editLabels: 0, comment: 0, postClaim: 0 };
   let lastRemove: string[] = [];
   let lastAdd: string[] = [];
+  const postedClaims: string[] = [];
   const gh: RequeueGh = {
     async view() {
       return state;
@@ -48,8 +50,15 @@ function fakeGh(state: { state: string; body: string; labels: string[] }) {
     async comment() {
       calls.comment += 1;
     },
+    async listClaims() {
+      return [];
+    },
+    async postClaim(_issue, body) {
+      calls.postClaim += 1;
+      postedClaims.push(body);
+    },
   };
-  return { gh, calls, get state() { return state; }, get lastRemove() { return lastRemove; }, get lastAdd() { return lastAdd; } };
+  return { gh, calls, postedClaims, get state() { return state; }, get lastRemove() { return lastRemove; }, get lastAdd() { return lastAdd; } };
 }
 
 const validationBlocker = {
@@ -94,6 +103,28 @@ describe("requeue command — happy path", () => {
     expect(calls.editLabels).toBe(1);
     expect(isRequeueComplete(state.body, ["ready-for-agent"])).toBe(true);
     expect(text()).toContain("Requeue #42");
+  });
+
+  it("concedes active claim markers before requeueing", async () => {
+    const { gh, calls, postedClaims } = fakeGh({
+      state: "OPEN",
+      body: parkedBody,
+      labels: ["ready-for-human", "blocked:validation"],
+    });
+    gh.listClaims = async () => [
+      { id: 10, body: renderClaimComment({ worker: "host:wOLD" }) },
+      { id: 20, body: renderClaimComment({ worker: "host:wDONE" }) },
+      { id: 30, body: renderClaimComment({ worker: "host:wDONE" }, "concede") },
+    ];
+    const { stream } = capture();
+
+    const code = await requeueCommand(["#42", "--guidance", "Retry is now safe."], "/tmp", stream, gh);
+
+    expect(code).toBe(0);
+    expect(calls.postClaim).toBe(1);
+    expect(postedClaims[0]).toContain("worker=host:wOLD");
+    expect(postedClaims[0]).toContain("kind=concede");
+    expect(calls.comment).toBe(2);
   });
 
   it("never mutates and reports a no-op when the issue is not parked", async () => {

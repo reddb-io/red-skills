@@ -29,9 +29,11 @@ import { type RecoveryEnv } from "./recovery.js";
 import {
   LABEL_READY,
   LABEL_RUNNING,
+  LABEL_CONTESTED,
   LABEL_HUMAN,
   LABEL_RUNNER_ERROR,
 } from "./triage-labels.js";
+import { validateIssueLifecycleTransition } from "./issue-lifecycle.js";
 import {
   computeHalfOpenBackoff,
   isHalfOpenDue,
@@ -39,6 +41,7 @@ import {
 } from "./slot-circuit.js";
 import type { FleetHookContext, FleetHookDispatchResult } from "./fleet-hook-dispatcher.js";
 import type { FleetHookName } from "./fleet-hook-config.js";
+import { encodeToon } from "./toon.js";
 
 // ---------- tunables ----------
 
@@ -158,6 +161,16 @@ export interface SupervisorConfig {
    * falls back to the default.
    */
   supervisorRestartWindowS: number;
+  /**
+   * Per-drain USD budget. Undefined means today's behaviour: no budget ladder,
+   * no spawn downgrade, and no hard stop. Spend is read from the WorkerVitals
+   * lane (`current.cost_usd`) through SupervisorFs.fleetCostUsd.
+   */
+  drainBudgetUsd?: number;
+  /** RED_AFK_REAP_CONTEST_WINDOW_S — seconds a stall-reaped retry waits for the
+   * original attempt branch to advance before rotating the issue back to
+   * ready-for-agent. */
+  reapContestWindowS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -178,7 +191,40 @@ export const SUPERVISOR_DEFAULTS = {
   unblockSweepIntervalS: 60,
   supervisorMaxRestarts: 5,
   supervisorRestartWindowS: 300,
+  reapContestWindowS: 30,
 } as const satisfies SupervisorConfig;
+
+export type DrainBudgetTier = "OK" | "WARNING" | "CRITICAL" | "HARD_STOP";
+
+export interface DrainBudgetStatus {
+  tier: DrainBudgetTier;
+  spentUsd: number;
+  limitUsd: number;
+  percent: number;
+}
+
+function parsePositiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export type SupervisorConfigReader = (key: string) => string;
+
+export function evaluateDrainBudget(
+  spentUsd: number,
+  limitUsd: number | undefined,
+): DrainBudgetStatus | undefined {
+  if (limitUsd === undefined || limitUsd <= 0) return undefined;
+  const spent = Math.max(0, spentUsd);
+  const percent = spent / limitUsd;
+  const tier: DrainBudgetTier =
+    percent >= 1 ? "HARD_STOP" :
+    percent >= 0.9 ? "CRITICAL" :
+    percent >= 0.75 ? "WARNING" :
+    "OK";
+  return { tier, spentUsd: spent, limitUsd, percent };
+}
 
 /**
  * Resolve a SupervisorConfig from an env bag, mirroring the `${VAR:-default}`
@@ -188,6 +234,7 @@ export const SUPERVISOR_DEFAULTS = {
  */
 export function resolveSupervisorConfig(
   env: Record<string, string | undefined> = process.env,
+  getCfg: SupervisorConfigReader = () => "",
 ): SupervisorConfig {
   const num = (key: string, fallback: number): number => {
     const raw = env[key];
@@ -240,6 +287,10 @@ export function resolveSupervisorConfig(
     supervisorRestartWindowS:
       num("RED_AFK_SUPERVISOR_RESTART_WINDOW_S", SUPERVISOR_DEFAULTS.supervisorRestartWindowS) ||
       SUPERVISOR_DEFAULTS.supervisorRestartWindowS,
+    drainBudgetUsd:
+      parsePositiveNumber(env.RED_AFK_DRAIN_MAX_COST_USD) ??
+      parsePositiveNumber(getCfg("afk.drain.max_cost_usd")),
+    reapContestWindowS: num("RED_AFK_REAP_CONTEST_WINDOW_S", SUPERVISOR_DEFAULTS.reapContestWindowS),
   };
 }
 
@@ -447,7 +498,7 @@ export interface ReconcileCandidate {
 export interface SupervisorProc {
   /** Spawn a worker for a slot; returns its pid and spawn epoch. Mirrors
    * spawn_slot's `nohup … &` + bookkeeping. */
-  spawnSlot(slot: number): Promise<{ pid: number; spawnEpoch: number }>;
+  spawnSlot(slot: number, policy?: SpawnPolicy): Promise<{ pid: number; spawnEpoch: number }>;
   /** True when the pid is alive (kill -0). Mirrors `kill -0 "$pid"`. */
   isAlive(pid: number): boolean;
   /** kill_tree the pid and its descendants: SIGTERM, grace, then SIGKILL, and
@@ -505,6 +556,16 @@ export interface SupervisorFs {
   parkedSlotWork(slot: number, lastPid: number | null): SweepWork;
   /** Remove a swept iter dir (rm -rf). Mirrors the per-pair `rm -rf "$dir"`. */
   removeDir(path: string): Promise<void>;
+  /**
+   * Cumulative fleet spend for this drain, derived from existing WorkerVitals
+   * state (`current.cost_usd`) rather than a parallel accounting channel.
+   */
+  fleetCostUsd?(): number;
+}
+
+export interface SpawnPolicy {
+  /** Set at CRITICAL so the spawned worker downgrades one model-policy tier. */
+  taskTierDowngrade?: boolean;
 }
 
 /** gh side effects. Best-effort: a failure is logged in bash but never blocks
@@ -587,6 +648,8 @@ export interface FleetHeartbeat {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Optional per-drain budget status; absent when no budget is configured. */
+  drainBudget?: DrainBudgetStatus;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
   slotDetails: HeartbeatSlotDetail[];
 }
@@ -598,6 +661,8 @@ export interface IterDirInfo {
   /** .current.number, or null when the worker died before claiming. */
   issue: number | null;
   workerId: string;
+  /** Live attempt branch (`afk/{worker}/{issue}-{slug}`), when recoverable. */
+  branch?: string;
   /** Tail of afk.log for the no-sentinel envelope's log section. */
   logTail: string;
   /** Extracted agent notes for the envelope's notes section, if any. */
@@ -694,9 +759,20 @@ export interface SupervisorDeps {
    * kill for that pass. Absent → no-op (backward-compatible). (#833)
    */
   dispatchFleetHook?(name: FleetHookName, context: FleetHookContext): Promise<FleetHookDispatchResult>;
+  /** Resolve the current local HEAD of an attempt branch. Best-effort: undefined
+   * means the contest window cannot observe advancement yet. */
+  attemptBranchHead?(branch: string): Promise<string | undefined>;
 }
 
 // ---------- per-slot runtime state ----------
+
+export interface ReapContestState {
+  issue: number;
+  branch: string;
+  headAtReap: string | undefined;
+  openedEpoch: number;
+  deadlineEpoch: number;
+}
 
 /** The supervisor's per-slot bookkeeping, mirroring the SLOT_* arrays. A fresh
  * slot is `freshSlot()`. The tick mutates these in place (the bash arrays are
@@ -730,6 +806,10 @@ export interface SlotState {
    * has been spawned. The probe's death resolves to either closed (success)
    * or re-parked-open (fast-death failure). */
   halfOpen: boolean;
+  /** Pending post-reap retry contest. While present, the issue carries
+   * `running` + `contested`; a late commit on `branch` reclaims the issue,
+   * otherwise the normal clean retry label flip runs when `deadlineEpoch` passes. */
+  contest: ReapContestState | null;
 }
 
 export function freshSlot(): SlotState {
@@ -747,6 +827,7 @@ export function freshSlot(): SlotState {
     idleParked: false,
     backoffStep: 0,
     halfOpen: false,
+    contest: null,
   };
 }
 
@@ -774,6 +855,10 @@ export interface SupervisorState {
    * the event lane delivered. Updated by runSupervisor after each iteration.
    */
   wakeStats: WakeStats;
+  /** Once HARD_STOP is reached, no new workers are spawned for this supervisor. */
+  drainBudgetHardStopped: boolean;
+  /** Last budget tier logged, to avoid repeating unchanged OK/WARNING/CRITICAL. */
+  lastDrainBudgetTier?: DrainBudgetTier;
 }
 
 /** Build the initial runtime for `target` slots. */
@@ -783,6 +868,7 @@ export function initSupervisorState(target: number): SupervisorState {
     lastProgressEpoch: 0,
     lastUnblockSweepEpoch: 0,
     wakeStats: freshWakeStats(),
+    drainBudgetHardStopped: false,
   };
 }
 
@@ -963,6 +1049,7 @@ export interface TickResult {
    * tick or when readyQueueDepth is unavailable). Used by emitFleetHeartbeat
    * so the queue is fetched exactly once per tick. */
   queueDepth: number;
+  drainBudget?: DrainBudgetStatus;
   /**
    * True when the tick was abandoned — guardedTick timed out or threw. An
    * abandoned tick does NOT advance lastProgressEpoch in the heartbeat; only
@@ -1033,6 +1120,7 @@ async function emitFleetHeartbeat(
     readyForAgent,
     ...fleetSlotCounts(state),
     spawnsThisTick: result.respawned.length,
+    ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
     slotDetails: buildSlotDetails(state, config),
   };
   try {
@@ -1130,6 +1218,7 @@ export async function reapStalledSlot(
   slot: number,
   state: SlotState,
   deps: SupervisorDeps,
+  config: Pick<SupervisorConfig, "reapContestWindowS"> = SUPERVISOR_DEFAULTS,
 ): Promise<void> {
   if (state.reaped) return;
   state.reaped = true;
@@ -1168,8 +1257,11 @@ export async function reapStalledSlot(
     // so the descriptor's (remove, add) sets are applied swapped.
     const disp = dispose("stalled", info.attempt, deps.recoveryEnv ?? {});
     if (disp.decision === "retry") {
-      // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
-      await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+      const opened = await openReapContest(slot, state, info, deps, config.reapContestWindowS);
+      if (!opened) {
+        // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
+        await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+      }
     } else {
       if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
       // Escalation also sheds any stale ready-for-agent — the reaped slot was
@@ -1189,6 +1281,121 @@ export async function reapStalledSlot(
   if (info && confirmedDead) await deps.fs.teardownIterDir(info);
 }
 
+async function branchHeadForContest(deps: SupervisorDeps, branch: string): Promise<string | undefined> {
+  try {
+    return await deps.attemptBranchHead?.(branch);
+  } catch {
+    return undefined;
+  }
+}
+
+function logReapContest(
+  deps: SupervisorDeps,
+  event: "opened" | "reclaimed" | "expired",
+  details: Record<string, string | number | undefined>,
+): void {
+  deps.log?.(
+    encodeToon({
+      schema_version: "red.afk.reap_contest.v1",
+      event,
+      ...details,
+    }),
+  );
+}
+
+async function openReapContest(
+  slot: number,
+  state: SlotState,
+  info: IterDirInfo,
+  deps: SupervisorDeps,
+  windowS: number,
+): Promise<boolean> {
+  if (info.issue === null || !info.branch || windowS <= 0) return false;
+  const openedEpoch = deps.now();
+  const deadlineEpoch = openedEpoch + windowS;
+  const headAtReap = await branchHeadForContest(deps, info.branch);
+
+  validateIssueLifecycleTransition({
+    edge: "contest",
+    fromLabels: [LABEL_RUNNING],
+    removeLabels: [],
+    addLabels: [LABEL_CONTESTED],
+  });
+  await deps.gh.editLabels(info.issue, [LABEL_CONTESTED], []);
+  state.contest = {
+    issue: info.issue,
+    branch: info.branch,
+    headAtReap,
+    openedEpoch,
+    deadlineEpoch,
+  };
+  logReapContest(deps, "opened", {
+    slot,
+    issue: info.issue,
+    branch: info.branch,
+    head_at_reap: headAtReap,
+    deadline_epoch: deadlineEpoch,
+  });
+  return true;
+}
+
+export type ReapContestResolution = "pending" | "reclaimed" | "expired" | null;
+
+export async function resolveReapContest(
+  slot: number,
+  state: SlotState,
+  deps: SupervisorDeps,
+  _config: Pick<SupervisorConfig, "reapContestWindowS"> = SUPERVISOR_DEFAULTS,
+): Promise<ReapContestResolution> {
+  const contest = state.contest;
+  if (contest === null) return null;
+
+  const now = deps.now();
+  const currentHead = await branchHeadForContest(deps, contest.branch);
+  if (
+    now <= contest.deadlineEpoch &&
+    contest.headAtReap !== undefined &&
+    currentHead !== undefined &&
+    currentHead !== contest.headAtReap
+  ) {
+    validateIssueLifecycleTransition({
+      edge: "contest-reclaimed",
+      fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+      removeLabels: [LABEL_CONTESTED],
+      addLabels: [],
+    });
+    await deps.gh.editLabels(contest.issue, [], [LABEL_CONTESTED]);
+    state.contest = null;
+    logReapContest(deps, "reclaimed", {
+      slot,
+      issue: contest.issue,
+      branch: contest.branch,
+      head_at_reap: contest.headAtReap,
+      head_at_resolution: currentHead,
+    });
+    return "reclaimed";
+  }
+
+  if (now < contest.deadlineEpoch) return "pending";
+
+  validateIssueLifecycleTransition({
+    edge: "contest-expired",
+    fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+    removeLabels: [LABEL_RUNNING, LABEL_CONTESTED],
+    addLabels: [LABEL_READY],
+  });
+  await deps.gh.editLabels(contest.issue, [LABEL_READY], [LABEL_RUNNING, LABEL_CONTESTED]);
+  state.contest = null;
+  logReapContest(deps, "expired", {
+    slot,
+    issue: contest.issue,
+    branch: contest.branch,
+    head_at_reap: contest.headAtReap,
+    head_at_resolution: currentHead,
+  });
+  return "expired";
+}
+
 /**
  * pollStallDetector (supervisor.sh ~611): sample every non-parked slot. Flag /
  * clear the stall bit from the agent-lane mtime vs the stall threshold, then —
@@ -1201,7 +1408,7 @@ export async function reapStalledSlot(
 export async function pollStallDetector(
   state: SupervisorState,
   deps: SupervisorDeps,
-  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner">,
+  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS">,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
@@ -1281,7 +1488,7 @@ export async function pollStallDetector(
             }
           }
           if (!vetoed) {
-            await reapStalledSlot(i, slot, deps);
+            await reapStalledSlot(i, slot, deps, config);
             reaped.push(i);
           }
         }
@@ -1293,6 +1500,65 @@ export async function pollStallDetector(
   }
 
   return reaped;
+}
+
+function readDrainBudget(state: SupervisorState, deps: SupervisorDeps, config: SupervisorConfig): DrainBudgetStatus | undefined {
+  if (config.drainBudgetUsd === undefined) return undefined;
+  let spent = 0;
+  try {
+    spent = deps.fs.fleetCostUsd?.() ?? 0;
+  } catch {
+    spent = 0;
+  }
+  const budget = evaluateDrainBudget(spent, config.drainBudgetUsd);
+  if (budget?.tier === "HARD_STOP") state.drainBudgetHardStopped = true;
+  return budget;
+}
+
+function logDrainBudgetTransition(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  budget: DrainBudgetStatus | undefined,
+  queueDepth: number,
+): void {
+  if (!budget || state.lastDrainBudgetTier === budget.tier) return;
+  state.lastDrainBudgetTier = budget.tier;
+  deps.log?.(
+    encodeToon({
+      schema_version: "red.afk.drain_budget.v1",
+      tier: budget.tier,
+      spent_usd: Number(budget.spentUsd.toFixed(4)),
+      limit_usd: Number(budget.limitUsd.toFixed(4)),
+      percent: Number((budget.percent * 100).toFixed(2)),
+      ready_for_agent: queueDepth,
+      action:
+        budget.tier === "HARD_STOP"
+          ? "hard_stop_no_new_spawns_inflight_finish"
+          : budget.tier === "CRITICAL"
+            ? "new_spawns_downgrade_one_model_tier"
+            : "observe",
+    }),
+  );
+}
+
+function spawnPolicyForBudget(
+  state: SupervisorState,
+  budget: DrainBudgetStatus | undefined,
+): SpawnPolicy | "hard-stop" | undefined {
+  if (state.drainBudgetHardStopped || budget?.tier === "HARD_STOP") return "hard-stop";
+  if (budget?.tier === "CRITICAL") return { taskTierDowngrade: true };
+  return undefined;
+}
+
+async function spawnSlotForBudget(
+  slot: number,
+  deps: SupervisorDeps,
+  state: SupervisorState,
+  budget: DrainBudgetStatus | undefined,
+): Promise<{ pid: number; spawnEpoch: number } | null> {
+  const policy = spawnPolicyForBudget(state, budget);
+  if (policy === "hard-stop") return null;
+  return policy ? deps.proc.spawnSlot(slot, policy) : deps.proc.spawnSlot(slot);
 }
 
 /**
@@ -1317,7 +1583,12 @@ export async function handleDeadSlot(
   deps: SupervisorDeps,
   config: SupervisorConfig,
   queueDepth = 0,
+  spawnPolicy?: SpawnPolicy | "hard-stop",
 ): Promise<{ parked: boolean }> {
+  const spawn = async (): Promise<{ pid: number; spawnEpoch: number } | null> => {
+    if (spawnPolicy === "hard-stop") return null;
+    return spawnPolicy ? deps.proc.spawnSlot(slot, spawnPolicy) : deps.proc.spawnSlot(slot);
+  };
   // Half-open probe death: resolve the circuit transition before the normal path.
   if (state.parked && state.halfOpen) {
     const now = deps.now();
@@ -1346,7 +1617,8 @@ export async function handleDeadSlot(
     // Respawn immediately so the closed slot has a live worker.
     state.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(slot);
+      const spawned = await spawn();
+      if (spawned === null) return { parked: true };
       state.pid = spawned.pid;
       state.spawnEpoch = spawned.spawnEpoch;
     } finally {
@@ -1384,7 +1656,11 @@ export async function handleDeadSlot(
     // Clean drain but queue has work → respawn immediately without feeding the breaker.
     state.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(slot);
+      const spawned = await spawn();
+      if (spawned === null) {
+        state.pid = null;
+        return { parked: true };
+      }
       state.pid = spawned.pid;
       state.spawnEpoch = spawned.spawnEpoch;
     } finally {
@@ -1429,7 +1705,11 @@ export async function handleDeadSlot(
 
   state.spawning = true;
   try {
-    const spawned = await deps.proc.spawnSlot(slot);
+    const spawned = await spawn();
+    if (spawned === null) {
+      state.pid = null;
+      return { parked: true };
+    }
     state.pid = spawned.pid;
     state.spawnEpoch = spawned.spawnEpoch;
   } finally {
@@ -1555,15 +1835,25 @@ export async function superviseTick(
     queueDepth = 0;
   }
   result.queueDepth = queueDepth;
+  const drainBudget = readDrainBudget(state, deps, config);
+  result.drainBudget = drainBudget;
+  logDrainBudgetTransition(state, deps, drainBudget, queueDepth);
+  const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
+
+  for (let i = 0; i < state.slots.length; i += 1) {
+    await resolveReapContest(i, state.slots[i]!, deps, config);
+  }
 
   // Un-park idle-parked slots when the queue has work to do.
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
     if (!slot.idleParked || queueDepth === 0) continue;
+    if (spawnPolicy === "hard-stop") continue;
     slot.idleParked = false;
     slot.spawning = true;
     try {
-      const spawned = await deps.proc.spawnSlot(i);
+      const spawned = await spawnSlotForBudget(i, deps, state, drainBudget);
+      if (spawned === null) continue;
       slot.pid = spawned.pid;
       slot.spawnEpoch = spawned.spawnEpoch;
       slot.stalled = false;
@@ -1597,6 +1887,7 @@ export async function superviseTick(
     for (let i = 0; i < state.slots.length; i += 1) {
       const slot = state.slots[i]!;
       if (!slot.parked || slot.halfOpen || slot.spawning) continue;
+      if (spawnPolicy === "hard-stop") continue;
       if (!isHalfOpenDue(slot.tripEpoch, slot.backoffStep, now, config)) continue;
       deps.log?.(
         `circuit half-open: slot ${i} cooldown expired, spawning probe ` +
@@ -1605,7 +1896,8 @@ export async function superviseTick(
       slot.halfOpen = true;
       slot.spawning = true;
       try {
-        const spawned = await deps.proc.spawnSlot(i);
+        const spawned = await spawnSlotForBudget(i, deps, state, drainBudget);
+        if (spawned === null) continue;
         slot.pid = spawned.pid;
         slot.spawnEpoch = spawned.spawnEpoch;
         slot.stalled = false;
@@ -1659,7 +1951,20 @@ export async function superviseTick(
       // the stranded claim must be snapshotted here, while it still resolves.
       const deadInfo = deps.fs.resolveIterDir(i);
       result.deaths.push(i);
-      const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth);
+      if (spawnPolicy === "hard-stop") {
+        slot.pid = null;
+        slot.stalled = false;
+        slot.stallSinceEpoch = 0;
+        slot.reaped = false;
+        try {
+          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps);
+          if (reconciled !== null) result.crashReconciled.push(reconciled);
+        } catch {
+          // best-effort, same as the respawn path.
+        }
+        continue;
+      }
+      const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth, spawnPolicy);
       if (parked) {
         // A circuit-trip park already swept this slot's claimed issues
         // (sweepParkedSlot); an idle-park drained cleanly with no live claim.
@@ -1689,8 +1994,10 @@ export async function superviseTick(
 
   // Reconcile dispatch: use any free slot (e.g. just stall-reaped) for a parked
   // candidate. Best-effort; a failure or absent candidate is silently skipped.
-  const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
-  if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
+  if (spawnPolicy !== "hard-stop") {
+    const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
+    if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
+  }
 
   // Periodic dependency Unblock Sweep (#844). The boot-time sweep and the
   // event-driven close-cascade are both best-effort; when a cascade misses an
@@ -1795,9 +2102,12 @@ export async function runSupervisor(
   }
 
   // Spawn the initial fleet to target.
+  const initialBudget = readDrainBudget(state, deps, config);
+  logDrainBudgetTransition(state, deps, initialBudget, 0);
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
-    const spawned = await deps.proc.spawnSlot(i);
+    const spawned = await spawnSlotForBudget(i, deps, state, initialBudget);
+    if (spawned === null) continue;
     slot.pid = spawned.pid;
     slot.spawnEpoch = spawned.spawnEpoch;
     // Notify on_slot_spawn for each initial slot. Best-effort.

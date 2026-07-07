@@ -1,9 +1,17 @@
-import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker, type MonitorRemote } from "../core/monitor.js";
-import { collectMonitorInputs, afkPaths, resolveRepoContext, STATUSLINE_CACHE_TTL_S } from "../runtime/wire.js";
+import {
+  FLEET_STALE_AFTER_S,
+  renderCompactDashboard,
+  renderCompactDashboardToon,
+  type CompactWorker,
+  type FleetState,
+  type MonitorRemote,
+} from "../core/monitor.js";
+import { renderStatuslineLegend } from "../core/statusline-legend.js";
+import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCacheTtl } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig, getConfig } from "../core/config.js";
 import {
   runCompanionPass,
   summarizeCompanionPass,
@@ -143,6 +151,28 @@ export function runMirrorPlan(
   return `${callsOut}${JSON.stringify(noticeRecord)}\n`;
 }
 
+function reactiveWorkerAlert(worker: CompactWorker): string | null {
+  if (worker.livenessVerdict?.status !== "stalled") return null;
+  const issue = worker.state.current.number;
+  const issuePart = issue === "" || issue === null || issue === undefined ? "idle" : `#${issue}`;
+  const reason = worker.livenessVerdict.reason ? `: ${worker.livenessVerdict.reason}` : "";
+  return `actionable: worker ${worker.state.worker_id} ${issuePart} stalled${reason}`;
+}
+
+function reactiveFleetAlert(fleet: FleetState | undefined, now: number): string | null {
+  if (!fleet) return null;
+  const ageS = now - fleet.epoch;
+  if (ageS < FLEET_STALE_AFTER_S) return null;
+  return `actionable: fleet heartbeat stale ${ageS}s; inspect .red/tmp/afk-supervisor.log`;
+}
+
+function renderReactiveCheck(workers: readonly CompactWorker[], fleet: FleetState | undefined, now: number): string {
+  const alerts = workers.map(reactiveWorkerAlert).filter((line): line is string => line !== null);
+  const fleetAlert = reactiveFleetAlert(fleet, now);
+  if (fleetAlert) alerts.unshift(fleetAlert);
+  return alerts.join("\n");
+}
+
 /** Read all of stdin to a string (empty when nothing is piped / TTY). */
 async function readStdin(stdin: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
@@ -171,6 +201,11 @@ export async function monitorCommand(
   stdout: NodeJS.WritableStream = process.stdout,
   stdin: NodeJS.ReadableStream = process.stdin,
 ): Promise<number> {
+  if (args.includes("--legend")) {
+    stdout.write(`${renderStatuslineLegend()}\n`);
+    return 0;
+  }
+
   if (args.includes("--mirror-plan")) {
     const runnerIdx = args.indexOf("--runner");
     const runnerFlag = runnerIdx !== -1 ? args[runnerIdx + 1] : undefined;
@@ -184,6 +219,13 @@ export async function monitorCommand(
     const trackedJsonl = await readStdin(stdin);
     const out = runMirrorPlan(workers, trackedJsonl, { host });
     if (out !== "") stdout.write(out);
+    return 0;
+  }
+
+  if (args.includes("--reactive-check")) {
+    const { workers, fleet } = await collectMonitorInputs(cwd);
+    const out = renderReactiveCheck(workers, fleet ?? undefined, Math.floor(Date.now() / 1000));
+    if (out !== "") stdout.write(`${out}\n`);
     return 0;
   }
 
@@ -211,9 +253,14 @@ export async function monitorCommand(
 
   const { workers, events, fleet, remoteQueue, remoteHuman, remoteCacheAgeS } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
+  // Stale-marker threshold: same resolved TTL the statusline writer uses (env >
+  // afk.statusline_cache_ttl config > 180, #1217), so the monitor flags the cache
+  // stale on exactly the boundary the writer refreshes it.
+  const monitorCfg = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
+  const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(monitorCfg, key));
   const remote: MonitorRemote | undefined =
     remoteQueue !== undefined && remoteHuman !== undefined && remoteCacheAgeS !== undefined
-      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= STATUSLINE_CACHE_TTL_S }
+      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= cacheTtlS }
       : undefined;
   // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
   // restores the legacy compact text dashboard for a human TTY glance.

@@ -14,6 +14,7 @@ import {
   initSupervisorState,
   resolveSupervisorConfig,
   runSupervisor,
+  type SpawnPolicy,
   type SupervisorDeps,
 } from "../core/supervisor.js";
 import { appendRecord } from "../core/jsonl-log.js";
@@ -31,6 +32,7 @@ import {
   workerLivenessFor,
   parkedSlotWorkFor,
   resolveIterDirInfo,
+  sumWorkerCostUsd,
   teardownIterDirNative,
 } from "../runtime/supervisor-fs.js";
 import * as ghx from "../runtime/gh.js";
@@ -42,6 +44,7 @@ import { buildStateChangeWake } from "../runtime/state-watch.js";
 import { resolveFleetHooks } from "../core/fleet-hook-config.js";
 import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
 import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
+import { getConfig, loadConfig } from "../core/config.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -71,6 +74,16 @@ function fleetHeartbeatState(hb: FleetHeartbeat): string {
         parked: hb.slotsParked,
       },
       spawns_this_tick: hb.spawnsThisTick,
+      ...(hb.drainBudget
+        ? {
+            drain_budget: {
+              tier: hb.drainBudget.tier,
+              spent_usd: Number(hb.drainBudget.spentUsd.toFixed(4)),
+              limit_usd: Number(hb.drainBudget.limitUsd.toFixed(4)),
+              percent: Number((hb.drainBudget.percent * 100).toFixed(2)),
+            },
+          }
+        : {}),
     },
     null,
     2,
@@ -112,6 +125,7 @@ export const PASSTHROUGH_DENYLIST: readonly string[] = [
   "RED_AFK_WORKER_ID",
   "RED_AFK_EXIT_CODE",
   "RED_AFK_DURATION_S",
+  "RED_AFK_TASK_TIER_DOWNGRADE",
 ];
 
 /**
@@ -166,8 +180,12 @@ export function buildWorkerEnv(
 export function buildSlotEnv(
   workerEnv: Record<string, string>,
   slot: number,
+  policy: SpawnPolicy = {},
 ): Record<string, string> {
-  return { ...workerEnv, RED_AFK_SLOT: String(slot) };
+  const out: Record<string, string> = { ...workerEnv, RED_AFK_SLOT: String(slot) };
+  if (policy.taskTierDowngrade) out.RED_AFK_TASK_TIER_DOWNGRADE = "1";
+  else delete out.RED_AFK_TASK_TIER_DOWNGRADE;
+  return out;
 }
 
 /**
@@ -335,7 +353,7 @@ function buildSupervisorDeps(
 
   return {
     proc: {
-      spawnSlot: async (slot) => {
+      spawnSlot: async (slot, policy) => {
         // Forward the PRD/issue filter + runner-swap policy so a supervised
         // fleet honours the same filter a single `/afk run` would (gap 5).
         const runArgs = ["run", "--once", "--runner", runner, ...slotArgs];
@@ -346,7 +364,7 @@ function buildSupervisorDeps(
         const slotFd = openSync(slotLogFile, "a");
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: buildSlotEnv(workerEnv, slot),
+          env: buildSlotEnv(workerEnv, slot, policy),
           detached: true,
           stdio: ["ignore", slotFd, slotFd],
         });
@@ -409,6 +427,7 @@ function buildSupervisorDeps(
           // best-effort
         }
       },
+      fleetCostUsd: () => sumWorkerCostUsd(tmpDir),
     },
     gh: {
       comment: async (issue, body) => {
@@ -513,6 +532,7 @@ function buildSupervisorDeps(
         return [];
       }
     },
+    attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
     // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
     // a dispatch failure is returned to the caller; the caller catches and logs.
@@ -543,6 +563,14 @@ function buildSupervisorDeps(
               slots_total: String(hb.slotsTotal),
               slots_parked: String(hb.slotsParked),
               spawns_this_tick: String(hb.spawnsThisTick),
+              ...(hb.drainBudget
+                ? {
+                    drain_budget_tier: hb.drainBudget.tier,
+                    drain_budget_spent_usd: hb.drainBudget.spentUsd.toFixed(4),
+                    drain_budget_limit_usd: hb.drainBudget.limitUsd.toFixed(4),
+                    drain_budget_percent: (hb.drainBudget.percent * 100).toFixed(2),
+                  }
+                : {}),
             },
           },
         });
@@ -588,7 +616,8 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   if (existsSync(stopFile)) rmSync(stopFile, { force: true });
 
   const logFd = openSync(logFile, "a");
-  const config = resolveSupervisorConfig();
+  const values = loadConfig(paths.configPath, { warn: () => undefined });
+  const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
   const state = initSupervisorState(config.target);
   const repo = await resolveRepoSlug(root).catch(() => "");
   const ghCtx = { cwd: root, repo };

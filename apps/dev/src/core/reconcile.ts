@@ -129,6 +129,13 @@ export interface ReconcileLookups {
   isLocked(): Promise<boolean>;
 }
 
+function remoteTrackingBaseRef(remote: string, base: string): string {
+  if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
+    return base;
+  }
+  return `${remote}/${base}`;
+}
+
 /**
  * All injected IO for one reconcile. Deliberately a structural SUBSET of
  * `ProcessIssueDeps` (same nested member shapes) so process-issue can pass its
@@ -279,7 +286,7 @@ export type ReconcileResult =
       // that the `validation-infra` recovery policy re-queues (or escalates
       // when the cap is exhausted). The original `feedback-failed` keeps its
       // semantic meaning (the worker's code really has a problem, page human).
-      reason: "feedback-failed" | "feedback-failed-infra" | "merge-conflict";
+      reason: "feedback-failed" | "feedback-failed-infra" | "merge-conflict" | "infra";
       posted: boolean;
     }
   | { outcome: "skipped"; reason: ReconcileSkipReason };
@@ -297,6 +304,7 @@ export type ReconcileResult =
  */
 export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Promise<ReconcileResult> {
   const { issue, branch, base, labels, body } = input;
+  const baseRef = remoteTrackingBaseRef(input.remote, base);
 
   // ---- 1. guard: mechanical class only ----
   const disqualifier = mechanicalDisqualifier(labels, body);
@@ -349,11 +357,26 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     return { outcome: "skipped", reason: "branch-absent" };
   }
 
+  const validatedBranchTip = await resolveFreshRemoteBranchTip(deps.mergeExec, {
+    repoDir: input.repoDir,
+    remote: input.remote,
+    branch,
+  });
+  if (!validatedBranchTip) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: skipped (branch-absent) — \`${branch}\` did not resolve to a fetched \`${input.remote}/${branch}\` tip.`,
+    );
+    return { outcome: "skipped", reason: "branch-absent" };
+  }
+  deps.appendIterLog(
+    `🤖 /afk reconcile #${issue}: validating fetched \`${input.remote}/${branch}\` tip \`${validatedBranchTip.slice(0, 12)}\`.`,
+  );
+
   // ---- 3. commits gate: the branch must carry work ----
   // changedFiles() is a three-dot diff that returns [] for an EMPTY branch.
   // The fetch gate above guarantees the branch is local, so [] here means
   // genuinely no commits — not a missing ref.
-  const changedFiles = await deps.lookups.changedFiles(branch, base);
+  const changedFiles = await deps.lookups.changedFiles(branch, baseRef);
   if (changedFiles.length === 0) {
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: skipped (no-commits) — \`${branch}\` carries no work vs \`${base}\`.`,
@@ -445,10 +468,12 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       repoDir: input.repoDir,
       remote: input.remote,
       branch,
+      validatedBranchTip,
       base,
       trunk: input.trunk,
       issue,
       title: input.title,
+      labels: input.labels,
       // #1171: the operator adopt-branch path passes this true after reviewing a
       // protected diff, so doLanding's sensitive-path guard is skipped ONLY here.
       // Undefined for every autonomous caller → the guard fires as before.
@@ -460,6 +485,14 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     },
   );
   if (!landing.ok) {
+    if (landing.reason === "infra") {
+      return await parkInfraLanding(
+        deps,
+        input,
+        landing.infraReason ?? "landing infrastructure precondition failed",
+        startedEpoch,
+      );
+    }
     // The land path's own gates (drift-guard + integrate/rebase) rejected the
     // branch — park it as a merge conflict, exactly like the DONE path does.
     return await parkMergeConflict(deps, input, landing.reason, startedEpoch);
@@ -480,9 +513,23 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   await deps.fs.completionSweep(issue);
   await runCloseCascade(deps, issue);
   deps.appendIterLog(
-    `🤖 /afk reconcile #${issue}: \`${branch}\` validated green and landed without re-running the agent (merge \`${mergeSha}\`).`,
+    `🤖 /afk reconcile #${issue}: \`${branch}\` tip \`${validatedBranchTip.slice(0, 12)}\` validated green and landed without re-running the agent (merge \`${mergeSha}\`).`,
   );
   return { outcome: "landed", mergeSha, locked, posted };
+}
+
+async function resolveFreshRemoteBranchTip(
+  exec: MergeExec,
+  input: { repoDir: string; remote: string; branch: string },
+): Promise<string | undefined> {
+  const fetched = await exec(["git", "-C", input.repoDir, "fetch", input.remote, input.branch, "--quiet"]);
+  if (fetched.code !== 0) return undefined;
+  const resolved = await exec([
+    "git", "-C", input.repoDir,
+    "rev-parse", "--verify", "--quiet", `${input.remote}/${input.branch}`,
+  ]);
+  const tip = resolved.stdout.trim();
+  return resolved.code === 0 && tip !== "" ? tip : undefined;
 }
 
 // ---------- guard ----------
@@ -626,6 +673,32 @@ async function parkInfraRetry(
   return { outcome: "parked", reason: "feedback-failed-infra", posted };
 }
 
+/** Landing infrastructure failed before integration could safely run. This is
+ * not a merge conflict and must not consume the merge-conflict recovery budget. */
+async function parkInfraLanding(
+  deps: ReconcileDeps,
+  input: ReconcileInput,
+  reason: string,
+  startedEpoch: number,
+): Promise<ReconcileResult> {
+  const { issue, labels } = input;
+  const disp = dispose("infra", input.attempt, deps.recoveryEnv ?? {});
+  const typed = disp.typedLabel ?? LABEL_INFRA;
+  await deps.gh.ensureLabel(typed);
+  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
+  const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
+    log: `reconcile land infra failure: ${reason}`,
+  });
+  await recordAttemptBestEffort(deps, input, "infra", {
+    durationS: deps.nowEpoch() - startedEpoch,
+    notes: `Reconcile validated the branch green but landing infrastructure failed (${reason}).`,
+  });
+  deps.appendIterLog(
+    `🤖 /afk reconcile #${issue}: \`${input.branch}\` passed validation but landing infrastructure failed (${reason}) — escalating.`,
+  );
+  return { outcome: "parked", reason: "infra", posted };
+}
+
 /** The land path rejected the branch (integrate/rebase/drift) → park as a merge
  * conflict, mirroring the DONE path's merge-failed terminal. */
 async function parkMergeConflict(
@@ -744,6 +817,7 @@ async function recordAttemptBestEffort(
         issue: input.issue,
         attempt: input.attempt,
         outcome,
+        labels: input.labels,
         title: input.title,
         body: input.body,
         workerId: input.workerId,

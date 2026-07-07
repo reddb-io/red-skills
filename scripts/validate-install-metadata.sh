@@ -111,6 +111,23 @@ validate_plugin() {
 
 validate_plugin dev
 validate_plugin memory
+validate_plugin internal
+
+awk '
+  /^  internal:[[:space:]]*$/ { in_internal = 1; next }
+  /^  [^[:space:]][^:]*:/ { in_internal = 0 }
+  in_internal && /^    enabled: true([[:space:]]+#.*)?$/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' .red/config.yaml \
+  || fail "internal: this repo must explicitly enable plugins.internal.enabled"
+
+jq -e '.plugins[] | select(.name == "internal" and (.description | test("maintainer-only"; "i")))' \
+  .agents/plugins/marketplace.json >/dev/null \
+  || fail "internal: Codex marketplace description must mark it maintainer-only"
+
+jq -e '.plugins[] | select(.name == "internal" and (.description | test("maintainer-only"; "i")))' \
+  .claude-plugin/marketplace.json >/dev/null \
+  || fail "internal: Claude marketplace description must mark it maintainer-only"
 
 validate_dev_fetch_hooks() {
   local root="$tmp/dev-plugin-root"

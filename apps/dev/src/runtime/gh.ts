@@ -24,6 +24,10 @@ import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from
 import type { ActorTrustVerdict, RepoVisibility } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
+import {
+  MAIN_RED_REPAIR_TITLE,
+  type MainRedRepairIssue,
+} from "../core/main-red-repair.js";
 
 export interface GhContext {
   /** owner/repo slug for `gh ... --repo`. */
@@ -378,6 +382,79 @@ export async function createIssue(
   return num;
 }
 
+/** Find the single open auto-filed main-red repair issue by its stable title. */
+export async function findMainRedRepairIssue(ctx: GhContext): Promise<MainRedRepairIssue | null> {
+  const r = await runGh(ctx, [
+    "issue",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "open",
+    "--limit",
+    "50",
+    "--search",
+    `"${MAIN_RED_REPAIR_TITLE}" in:title`,
+    "--json",
+    "number,title,body,labels",
+  ]);
+  if (r.code !== 0) return null;
+  try {
+    const rows = JSON.parse(r.stdout || "[]") as Array<{
+      number?: number;
+      title?: string;
+      body?: string;
+      labels?: Array<{ name?: string }>;
+    }>;
+    if (!Array.isArray(rows)) return null;
+    const row = rows
+      .filter((item) => String(item.title ?? "") === MAIN_RED_REPAIR_TITLE)
+      .sort((a, b) => Number(a.number ?? 0) - Number(b.number ?? 0))[0];
+    if (!row || !Number(row.number)) return null;
+    return {
+      number: Number(row.number),
+      title: String(row.title ?? ""),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Create the auto-filed main-red repair issue. */
+export async function createMainRedRepairIssue(
+  ctx: GhContext,
+  spec: { title: string; body: string; labels: readonly string[] },
+): Promise<number> {
+  return createIssue(ctx, spec);
+}
+
+/** Refresh the auto-filed main-red repair issue. */
+export async function updateMainRedRepairIssue(
+  ctx: GhContext,
+  issue: number,
+  spec: { title: string; body: string; labels: readonly string[] },
+): Promise<void> {
+  const args = [
+    "issue",
+    "edit",
+    String(issue),
+    ...repoArgs(ctx),
+    "--title",
+    spec.title,
+    "--body",
+    spec.body,
+  ];
+  for (const label of spec.labels) args.push("--add-label", label);
+  await runGh(ctx, args);
+}
+
+/** Close the auto-filed main-red repair issue once main is green again. */
+export async function closeMainRedRepairIssue(ctx: GhContext, issue: number, closeComment: string): Promise<void> {
+  await comment(ctx, issue, closeComment);
+  await closeIssue(ctx, issue);
+}
+
 /** Idempotently create the `runner-error` label (best-effort). Mirrors
  * supervisor.sh ensure_runner_error_label — a label that already exists exits
  * non-zero and is swallowed. */
@@ -721,6 +798,51 @@ async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
     return Array.isArray(parsed) ? parsed.length : 0;
   } catch {
     return 0;
+  }
+}
+
+export interface StatuslineQueueCounts {
+  queue: number;
+  human: number;
+}
+
+function statuslineSearchQuery(repo: string, label: string): string {
+  return `repo:${repo} is:issue is:open label:"${label}"`;
+}
+
+/** Count both statusline queue buckets with one GraphQL search request. */
+export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
+  if (!ctx.repo) return { queue: 0, human: 0 };
+  const query = `
+    query($ready: String!, $human: String!) {
+      ready: search(type: ISSUE, query: $ready) { issueCount }
+      human: search(type: ISSUE, query: $human) { issueCount }
+    }
+  `;
+  const r = await runGh(ctx, [
+    "api",
+    "graphql",
+    "-f",
+    `query=${query}`,
+    "-F",
+    `ready=${statuslineSearchQuery(ctx.repo, LABEL_READY)}`,
+    "-F",
+    `human=${statuslineSearchQuery(ctx.repo, LABEL_HUMAN)}`,
+  ]);
+  if (r.code !== 0) return { queue: 0, human: 0 };
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      data?: {
+        ready?: { issueCount?: unknown };
+        human?: { issueCount?: unknown };
+      };
+    };
+    return {
+      queue: Number(parsed.data?.ready?.issueCount ?? 0),
+      human: Number(parsed.data?.human?.issueCount ?? 0),
+    };
+  } catch {
+    return { queue: 0, human: 0 };
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "red-skills",
-  "version": "2.1.0",
+  "version": "2.5.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.5.0",
@@ -9,6 +9,7 @@
     "bundle": "turbo run bundle --filter=!@reddb-io/red-castle",
     "typecheck": "turbo run typecheck --filter=!@reddb-io/red-castle",
     "test": "turbo run test --filter=!@reddb-io/red-castle",
+    "audit:hooks": "bash scripts/audit-hook-hardening-contract.sh",
     "release:manifest": "node scripts/release-manifest.mjs",
     "codex:manifests": "node scripts/generate-codex-manifests.mjs",
     "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check"

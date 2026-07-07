@@ -79,8 +79,22 @@ const ROOT_TRIGGER_FILES = new Set([
   ".nvmrc",
 ]);
 
+/**
+ * Reviewable manifest of shared/core modules whose changes have cross-cutting
+ * blast radius beyond the package cone. Touching any path here escalates the
+ * AFK feedback gate to the whole workspace suite.
+ */
+export const CORE_MODULE_MANIFEST = [
+  "apps/dev/src/core",
+  "packages/shared",
+] as const;
+
 function stripDotSlash(file: string): string {
   return file.startsWith("./") ? file.slice(2) : file;
+}
+
+function isPathAtOrUnder(file: string, manifestPath: string): boolean {
+  return file === manifestPath || file.startsWith(`${manifestPath}/`);
 }
 
 /**
@@ -96,6 +110,24 @@ export function isRootTrigger(file: string): boolean {
   // Root-level files only (no directory separator = sits directly at repo root).
   if (!clean.includes("/")) return ROOT_TRIGGER_FILES.has(clean);
   return false;
+}
+
+function coreModuleTriggerFile(touchedFiles: readonly string[]): string | undefined {
+  for (const file of touchedFiles) {
+    const clean = stripDotSlash(file);
+    if (CORE_MODULE_MANIFEST.some((manifestPath) => isPathAtOrUnder(clean, manifestPath))) {
+      return clean;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Pure predicate for whether a changed-file set must run the whole workspace
+ * suite because it touches an explicit shared/core module manifest entry.
+ */
+export function scopeNeedsWholeSuite(touchedFiles: readonly string[]): boolean {
+  return coreModuleTriggerFile(touchedFiles) !== undefined;
 }
 
 /**
@@ -152,6 +184,11 @@ export function computeValidationScope(
     if (isRootTrigger(file)) {
       return { type: "whole-workspace", triggerFile: stripDotSlash(file) };
     }
+  }
+
+  const coreTrigger = coreModuleTriggerFile(changedFiles);
+  if (coreTrigger !== undefined) {
+    return { type: "whole-workspace", triggerFile: coreTrigger };
   }
 
   const touchedDirs = relevantScopes(layout, changedFiles);

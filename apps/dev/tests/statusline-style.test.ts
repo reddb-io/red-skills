@@ -165,9 +165,9 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     // The DROPPED verbosity must be gone.
     expect(t).not.toContain("iss=7/10"); // the old done/total counter is gone
     expect(t).not.toContain("#17"); // the standalone #<n> token is dropped
-    expect(t).not.toContain("tools="); // renamed → tls= on the statusline line
-    expect(t).not.toContain("reason="); // renamed → rsn=
-    expect(t).not.toContain("text="); // renamed → txt=
+    expect(t).not.toContain("tools="); // unified as tls=
+    expect(t).not.toContain("reason="); // unified as rsn=
+    expect(t).not.toContain("text="); // unified as txt=
     expect(t).not.toContain("[live]");
     expect(t).not.toContain("[quiet]");
     expect(t).not.toContain("redesign statusline"); // no title
@@ -185,6 +185,17 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     for (const key of keys) expect(key).toHaveLength(3);
     // The concrete set present.
     expect(keys).toEqual(expect.arrayContaining(["run", "iss", "loc", "tks", "tls", "rsn", "txt"]));
+  });
+
+  it("renders org=<afk|go> (issue #1219): the stamped origin, defaulting to afk when unstamped", () => {
+    // Unstamped worker → org=afk (an unstamped worker is an afk-fleet worker).
+    expect(stripAnsi(renderWorkerLine(worker(), NOW))).toContain("org=afk");
+    // A /go worker carries origin: "go".
+    const go = worker({ state: { ...worker().state, origin: "go" } });
+    expect(stripAnsi(renderWorkerLine(go, NOW))).toContain("org=go");
+    // An explicit afk origin still renders org=afk.
+    const afk = worker({ state: { ...worker().state, origin: "afk" } });
+    expect(stripAnsi(renderWorkerLine(afk, NOW))).toContain("org=afk");
   });
 
   it("populates iss=<number> for a /go-shaped worker state (no queue — total 0/done 0)", () => {
@@ -266,6 +277,64 @@ describe("statusline style — full themed assembly", () => {
     expect(out).not.toContain("\n");
     expect(stripAnsi(out)).toContain("Opus·high");
     expect(stripAnsi(out)).toContain("prs=3");
+  });
+
+  it("aligns multi-worker rows by visible cell width while preserving ANSI color", () => {
+    const out = styleStatusline(input, {
+      now: NOW,
+      workers: [
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "wLONG",
+            runner: "codex",
+            current: {
+              ...worker().state.current,
+              number: 1243,
+              model: "gpt-5.5",
+              effort: "high",
+              stage: "validation",
+              input_tokens: 32000,
+              output_tokens: 2000,
+              tools_called_count: 38,
+            },
+          },
+          diffAdded: 248,
+          diffRemoved: 29,
+        }),
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "w2",
+            runner: "codex",
+            current: {
+              ...worker().state.current,
+              number: 9,
+              model: undefined,
+              effort: undefined,
+              stage: "impl",
+              tools_called_count: 8,
+            },
+          },
+          diffAdded: 83,
+          diffRemoved: 1,
+        }),
+      ],
+    });
+    const [header, firstRaw, secondRaw] = out.split("\n");
+    const rows = [stripAnsi(firstRaw), stripAnsi(secondRaw)];
+    for (const token of ["run=", "org=", "iss=", "00:05:00", "loc=", "tks=", "tls=", "rsn=", "txt="]) {
+      const starts = rows.map((row) => row.indexOf(token));
+      expect(starts[0]).toBeGreaterThanOrEqual(0);
+      expect(starts[1]).toBeGreaterThanOrEqual(0);
+      expect(starts[1]).toBe(starts[0]);
+    }
+    expect(rows[1].indexOf("impl")).toBe(rows[0].indexOf("validation"));
+    expect(header).toBe(renderHeaderLine(input.project, claude, repo));
+    expect(firstRaw).toContain(KEY);
+    expect(secondRaw).toContain(KEY);
+    expect(firstRaw).toContain(BOLD);
+    expect(secondRaw).toContain(BOLD);
   });
 
   it("defaults to the header row alone when no workers/now are supplied", () => {

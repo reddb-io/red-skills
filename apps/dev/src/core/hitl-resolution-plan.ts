@@ -1,6 +1,7 @@
 import type { HitlDecisionExtraction } from "./hitl-decision-extraction.js";
 import { clearCurrentBlocker, parseCurrentBlocker, upsertCurrentBlocker } from "./blocker-state.js";
 import { upsertAgentBrief } from "./agent-brief.js";
+import { validateIssueLifecycleTransition } from "./issue-lifecycle.js";
 import { LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
 
 export interface HitlResolutionIssue {
@@ -74,6 +75,14 @@ ${input.disposition.kind}${next}
 
 export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPlan {
   if (input.disposition.kind === "delegable") {
+    const removeLabels = [LABEL_HUMAN, ...staleBlockerLabels(input.issue.labels)];
+    const addLabels = [LABEL_READY];
+    validateIssueLifecycleTransition({
+      edge: "human-delegable",
+      fromLabels: input.issue.labels ?? [LABEL_HUMAN],
+      removeLabels,
+      addLabels,
+    });
     const cleared = clearCurrentBlocker(input.issue.body, {
       summary:
         parseCurrentBlocker(input.issue.body)?.summary ??
@@ -83,11 +92,17 @@ export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPl
     return {
       commentBody: directiveComment(input),
       bodyUpdate: upsertAgentBrief(cleared, input.disposition.agentBrief),
-      addLabels: [LABEL_READY],
-      removeLabels: [LABEL_HUMAN, ...staleBlockerLabels(input.issue.labels)],
+      addLabels,
+      removeLabels,
     };
   }
 
+  validateIssueLifecycleTransition({
+    edge: "human-blocked",
+    fromLabels: input.issue.labels ?? [],
+    removeLabels: [],
+    addLabels: [LABEL_HUMAN],
+  });
   return {
     commentBody: directiveComment(input),
     bodyUpdate: upsertCurrentBlocker(input.issue.body, {
