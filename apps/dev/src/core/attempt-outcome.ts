@@ -37,6 +37,7 @@ import {
   LABEL_BUDGET,
   LABEL_TRUNK_DIVERGED,
   LABEL_SENSITIVE_PATH,
+  LABEL_MAIN_RED_UNTRACKED,
 } from "./triage-labels.js";
 
 /**
@@ -101,6 +102,10 @@ export type AttemptOutcome =
   // auto-landing them would bypass auditability regardless of test/CI status.
   // Human-only (non-recoverable): a bounded retry does not change the diff.
   | "sensitive-path"
+  // Main-red tracking gate (#1237): admin-merge onto a red main is allowed only
+  // while the auto-filed main-red repair issue is open. If the repair issue is
+  // absent, landing refuses so the red baseline stays visible and tracked.
+  | "main-red-untracked"
   | "infra";
 
 /**
@@ -159,6 +164,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_TRUNK_DIVERGED;
     case "sensitive-path":
       return LABEL_SENSITIVE_PATH;
+    case "main-red-untracked":
+      return LABEL_MAIN_RED_UNTRACKED;
     case "infra":
       return LABEL_INFRA;
     case "done":
@@ -224,6 +231,10 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     // sensitive-path (#1102) folds into the generic `blocked` bucket — the diff
     // touched a sensitive path; a human must review it before landing.
     case "sensitive-path":
+    // main-red-untracked (#1237) folds into the generic `blocked` bucket — the
+    // branch passed its gate, but main is red without the auto-filed repair
+    // issue that keeps continued delivery visible and tracked.
+    case "main-red-untracked":
     case "infra":
     // review-requested is a handoff, not a failure: the per-issue lifecycle
     // emits no terminal failure envelope for it (it parks the issue + opens the
@@ -294,6 +305,10 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     // sensitive-path (#1102) is NON-recoverable: a retry runs the same diff and
     // hits the same guard. Only a human reviewing the sensitive change clears it.
     case "sensitive-path":
+    // main-red-untracked (#1237) is NON-recoverable until the missing auto-filed
+    // repair issue exists; rerunning the agent would re-hit the same visibility
+    // gate.
+    case "main-red-untracked":
     case "infra":
     case "done":
     case "claim-lost":
