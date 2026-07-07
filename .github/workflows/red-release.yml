@@ -5,7 +5,10 @@ name: red-release
 #      mid-iteration — auto-pushing a release commit would yank origin/main
 #      out from under in-flight workers, causing merge-conflict cascades).
 #   2. Parse conventional commits since the last vX.Y.Z tag.
-#      - BREAKING CHANGE / `feat!:` / `fix!:` → major bump
+#      - BREAKING CHANGE / `feat!:` / `fix!:` → major bump only when the
+#        maintainer has set repository variable `RED_RELEASE_ALLOW_MAJOR=true`;
+#        otherwise the request degrades to minor with a warning naming the
+#        commits that asked for a major.
 #      - `feat:`                              → minor bump
 #      - anything else (`fix:`, `chore:`, …) → patch bump
 #      - no `feat`/`fix`/`!` commits          → skip (no release)
@@ -23,6 +26,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: write
 
 concurrency:
   group: red-release
@@ -78,6 +82,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-npm-publish-contract.sh
 
+      - name: Test red-release bump-kind contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-red-release-bump-kind.sh
+
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-validate-agent-metadata.sh
@@ -85,28 +93,19 @@ jobs:
       - name: Decide bump kind
         id: bump
         if: steps.fleet.outputs.running == '0'
+        env:
+          RED_RELEASE_ALLOW_MAJOR: ${{ vars.RED_RELEASE_ALLOW_MAJOR }}
         run: |
           set -euo pipefail
-          latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
-          if [ -z "$latest" ]; then
-            range="HEAD"
-          else
-            range="${latest}..HEAD"
-          fi
-          subjects=$(git log "$range" --format='%s%n%b' || true)
+          node scripts/decide-release-bump-kind.mjs
 
-          kind="none"
-          if grep -qE '(^|\n)(feat|fix)!:|BREAKING CHANGE' <<<"$subjects"; then
-            kind="major"
-          elif grep -qE '(^|\n)feat(\([^)]*\))?:' <<<"$subjects"; then
-            kind="minor"
-          elif grep -qE '(^|\n)fix(\([^)]*\))?:' <<<"$subjects"; then
-            kind="patch"
-          fi
-
-          echo "previous=$latest" >> "$GITHUB_OUTPUT"
-          echo "kind=$kind" >> "$GITHUB_OUTPUT"
-          echo "Bump kind: $kind (previous tag: ${latest:-none})"
+      - name: Consume major bump opt-in
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.consume_major_opt_in == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh variable delete RED_RELEASE_ALLOW_MAJOR --repo "$GITHUB_REPOSITORY"
 
       - name: Skip if no releasable commits
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind == 'none'
