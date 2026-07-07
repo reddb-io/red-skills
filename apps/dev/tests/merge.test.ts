@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  fastForwardLocalTarget,
   integrateOrigin,
   landMerge,
   landPr,
@@ -187,6 +188,11 @@ describe("landPr (unlocked path)", () => {
       if (cmd.includes("pr list")) {
         return { code: 0, stdout: prMade ? "77\n" : "\n", stderr: "" };
       }
+      // fastForwardLocalTarget guards: on the target branch, clean tree (empty
+      // porcelain, the default), and a pure fast-forward (is-ancestor code 0).
+      if (cmd.includes("symbolic-ref --short HEAD")) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     };
     const calls: string[][] = [];
@@ -271,12 +277,15 @@ describe("landPr (unlocked path)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("locked → admin-merges but NEVER fast-forwards the primary checkout (ADR 0083 §2, #1019)", async () => {
-    // Untouchable primary: a LOCKED landing integrates on origin/<target> only; the
-    // best-effort local ff of the primary's <target> is skipped so no write touches
-    // the primary checkout. The maintainer promotes by pulling.
+  it("locked → admin-merges AND now guard-fast-forwards the primary (ADR 0083 §2 amended)", async () => {
+    // The §2 invariant was about never EATING primary WIP (#1019). A locked
+    // landing on a clean primary sitting on <target> may safely advance the local
+    // base to the just-merged origin tip, so the next worker forks a fresh base.
     const { exec, calls } = fakeExec([
       { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+      // Guards satisfied: on <target>, clean tree (empty porcelain default),
+      // pure fast-forward (is-ancestor code 0 default).
+      { match: (a) => a.join(" ").includes("symbolic-ref --short HEAD"), result: { stdout: "feature-locked\n" } },
     ]);
     const result = await landPr(exec, {
       repo: "reddb-io/red-skills",
@@ -290,11 +299,55 @@ describe("landPr (unlocked path)", () => {
     });
     expect(result.ok).toBe(true);
     const c = joined(calls);
-    // The admin-merge still ran (the integration lands remotely on origin).
     expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
-    // No local fast-forward, and no `git -C /repo` write op at all.
-    expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
-    expect(c.some((x) => x.includes("git -C /repo fetch"))).toBe(false);
+    // The guarded promotion now runs for the locked path too.
+    expect(c).toContain("git -C /repo merge --ff-only origin/feature-locked");
+  });
+});
+
+describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 amended)", () => {
+  const base = { gitRepo: "/repo", remote: "origin", target: "main" } as const;
+  const onTarget = { match: (a: string[]) => a.join(" ").includes("symbolic-ref --short HEAD"), result: { stdout: "main\n" } };
+
+  it("fast-forwards a clean primary sitting on <target> with a pure-ff base", async () => {
+    const { exec, calls } = fakeExec([onTarget]);
+    await fastForwardLocalTarget(exec, base);
+    const c = joined(calls);
+    expect(c).toContain("git -C /repo fetch origin main --quiet");
+    expect(c).toContain("git -C /repo merge --ff-only origin/main");
+  });
+
+  it("no-ops when the primary is NOT on <target> (human moved HEAD)", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ").includes("symbolic-ref --short HEAD"), result: { stdout: "some-feature\n" } },
+    ]);
+    await fastForwardLocalTarget(exec, base);
+    const c = joined(calls);
+    // Bailed before touching the remote or the working tree.
+    expect(c.some((x) => x.includes("merge --ff-only"))).toBe(false);
+    expect(c.some((x) => x.includes("fetch"))).toBe(false);
+  });
+
+  it("no-ops on a DIRTY primary — pending WIP is sacred (#1019)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M apps/dev/src/x.ts\n" } },
+    ]);
+    await fastForwardLocalTarget(exec, base);
+    const c = joined(calls);
+    expect(c.some((x) => x.includes("merge --ff-only"))).toBe(false);
+    expect(c.some((x) => x.includes("fetch"))).toBe(false);
+  });
+
+  it("no-ops when local <target> is ahead/diverged (not a strict ancestor)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      { match: (a) => a.join(" ").includes("merge-base --is-ancestor"), result: { code: 1 } },
+    ]);
+    await fastForwardLocalTarget(exec, base);
+    const c = joined(calls);
+    // Fetch may run before the ancestry test, but no fast-forward is issued.
+    expect(c.some((x) => x.includes("merge --ff-only"))).toBe(false);
   });
 });
 
