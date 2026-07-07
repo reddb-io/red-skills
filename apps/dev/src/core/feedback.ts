@@ -177,6 +177,47 @@ export interface ValidationRecord {
   summary?: string;
 }
 
+export interface BaselineDiffGateDecision {
+  /** True when at least one branch failure is green on the baseline. */
+  shouldBlock: boolean;
+  /** Failures present on the branch and absent from the baseline failing set. */
+  blockingFailures: readonly string[];
+  /** Failures present on both branch and baseline; callers must record these. */
+  preExistingFailures: readonly string[];
+}
+
+/**
+ * Pure baseline-diff gate predicate. A branch blocks only for failures that
+ * are new relative to the baseline failing set. Failures red in both places
+ * are pre-existing main-red failures and are returned separately so callers
+ * can route them to the main-red repair path instead of silently dropping them.
+ */
+export function decideBaselineDiffGate(
+  branchFailingSet: readonly string[],
+  baselineFailingSet: readonly string[],
+): BaselineDiffGateDecision {
+  const baselineFailures = new Set(baselineFailingSet);
+  const seen = new Set<string>();
+  const blockingFailures: string[] = [];
+  const preExistingFailures: string[] = [];
+
+  for (const failure of branchFailingSet) {
+    if (seen.has(failure)) continue;
+    seen.add(failure);
+    if (baselineFailures.has(failure)) {
+      preExistingFailures.push(failure);
+    } else {
+      blockingFailures.push(failure);
+    }
+  }
+
+  return {
+    shouldBlock: blockingFailures.length > 0,
+    blockingFailures,
+    preExistingFailures,
+  };
+}
+
 // ---------- pure scope resolution ----------
 
 /** Drop a leading `./`, matching the bash `${file#./}`. */
@@ -633,6 +674,14 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
     const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
+    const baselineFailing = [...baselineResults.entries()]
+      .filter(([, status]) => status === "failed")
+      .map(([name]) => name);
+    const gateDecision = decideBaselineDiffGate(
+      failing.map((check) => check.name),
+      baselineFailing,
+    );
+    const preExisting = new Set(gateDecision.preExistingFailures);
 
     // Re-classify any check that ALSO failed on the baseline as
     // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
@@ -643,8 +692,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     for (let i = 0; i < checks.length; i += 1) {
       const check = checks[i]!;
       if (check.status !== "failed") continue;
-      const baselineStatus = baselineResults.get(check.name);
-      if (baselineStatus === "failed") {
+      if (preExisting.has(check.name)) {
         const newRecord = buildValidationRecord({
           name: check.name,
           status: "skipped",
@@ -656,14 +704,14 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         downgraded.push(check.name);
       }
     }
-    failed = checks.some((c) => c.status === "failed");
+    failed = gateDecision.shouldBlock;
     return {
       ok: !failed,
       checks,
       sidecar,
       baselineDowngraded: downgraded,
       baselineProbeRan: true,
-      baselineFailures: downgraded,
+      baselineFailures: gateDecision.preExistingFailures,
       quarantined: quarantine,
       validationScope,
     };
