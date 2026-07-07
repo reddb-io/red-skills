@@ -168,6 +168,8 @@ export interface LandingInput {
   issue: number;
   /** Issue title, for the merge/PR message + hook contexts. */
   title: string;
+  /** Issue labels used to derive the landing-created conventional merge title. */
+  labels?: readonly string[];
   /**
    * Sensitive-path guard bypass (issue #1171). Defaults false/undefined. When
    * true, the step-0a sensitive-path guard scan is SKIPPED so a branch whose diff
@@ -188,6 +190,22 @@ export interface LandingInput {
    * unaffected.
    */
   mainRed?: boolean;
+}
+
+export function landingMergeTitle(input: { issue: number; title: string; labels?: readonly string[] }): string {
+  const labels = new Set((input.labels ?? []).map((label) => label.trim().toLowerCase()));
+  let prefix = "chore";
+  if (labels.has("type:bug") || labels.has("bug")) {
+    prefix = "fix";
+  } else if (
+    labels.has("type:feature") ||
+    labels.has("feature") ||
+    labels.has("type:enhancement") ||
+    labels.has("enhancement")
+  ) {
+    prefix = "feat";
+  }
+  return `${prefix}: #${input.issue} ${input.title}`;
 }
 
 /** The pre_merge / post_merge hook context builders the caller owns (so the
@@ -442,6 +460,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     target: input.base,
     n: input.issue,
     title: input.title,
+    mergeTitle: landingMergeTitle(input),
     waitForReview: deps.waitForReview,
     ciAwait: deps.ciAwait,
     // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
@@ -595,6 +614,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       target: input.base,
       n: input.issue,
       title: input.title,
+      mergeTitle: landingMergeTitle(input),
       preMergeSha,
     });
     let landed = merged.ok;
