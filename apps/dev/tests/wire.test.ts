@@ -16,6 +16,10 @@ import {
   collectStatuslineAfk,
   collectStatuslineRepo,
   STATUSLINE_CACHE_TTL_S,
+  applyStatuslineCountCacheLabelDelta,
+  editLabelsWithStatuslineCache,
+  parseGitHubRepoSlugFromRemoteUrl,
+  inferGitHubRepoSlug,
   resolveStatuslineCacheTtl,
 } from "../src/runtime/wire.js";
 import { runBoot } from "../src/core/boot.js";
@@ -554,6 +558,15 @@ function nowS(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+function detachedSpawnRecorder() {
+  const calls: Array<{ command: string; args: readonly string[] }> = [];
+  const spawn = (command: string, args: readonly string[]) => {
+    calls.push({ command, args });
+    return { unref() { /* test double */ } };
+  };
+  return { calls, spawn };
+}
+
 // ---------------------------------------------------------------------------
 // collectStatuslineAfk — cache discipline (#818)
 // ---------------------------------------------------------------------------
@@ -578,7 +591,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
     }
   });
 
-  it("stale cache: awaits gh + rewrites cache before returning", async () => {
+  it("stale cache: serves stale values immediately and starts one detached refresh", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
       const tmpDir = join(root, ".red", "tmp");
@@ -587,11 +600,53 @@ describe("collectStatuslineAfk — cache discipline", () => {
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ queue: 5, human: 3, ts: staleTs }), "utf8");
+      writeRenderableAttempt(root, "w1", 55, new Date().toISOString());
+      const rec = detachedSpawnRecorder();
 
-      await withFakeGh(() => collectStatuslineAfk({ root, repo: "", remote: "origin" }));
+      const result = await collectStatuslineAfk(
+        { root, repo: "o/r", remote: "origin" },
+        STATUSLINE_CACHE_TTL_S,
+        { spawn: rec.spawn, argv1: "/tmp/afk.mjs" },
+      );
 
       const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { queue: number; human: number; ts: number };
-      expect(cache.ts).toBeGreaterThan(staleTs); // ts advanced beyond the stale value
+      expect(result?.queue).toBe(5);
+      expect(result?.human).toBe(3);
+      expect(result?.cacheAgeS).toBeGreaterThanOrEqual(STATUSLINE_CACHE_TTL_S);
+      expect(cache.ts).toBe(staleTs);
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]!.args).toContain("statusline-refresh-counts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stale cache: concurrent renders share one detached refresh lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = join(tmpDir, "statusline-cache.json");
+      writeFileSync(
+        cachePath,
+        JSON.stringify({ queue: 8, human: 1, ts: nowS() - STATUSLINE_CACHE_TTL_S - 10 }),
+        "utf8",
+      );
+      writeRenderableAttempt(root, "w1", 55, new Date().toISOString());
+      const rec = detachedSpawnRecorder();
+
+      const renders = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          collectStatuslineAfk(
+            { root, repo: "o/r", remote: "origin" },
+            STATUSLINE_CACHE_TTL_S,
+            { spawn: rec.spawn, argv1: "/tmp/afk.mjs" },
+          ),
+        ),
+      );
+
+      expect(renders.every((r) => r?.queue === 8 && r.human === 1 && r.cacheAgeS !== undefined)).toBe(true);
+      expect(rec.calls).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -628,7 +683,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
     }
   });
 
-  it("0 live workers: still refreshes stale cache before returning null", async () => {
+  it("0 live workers: still starts detached stale refresh before returning null", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
       const tmpDir = join(root, ".red", "tmp");
@@ -637,14 +692,18 @@ describe("collectStatuslineAfk — cache discipline", () => {
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ queue: 9, human: 1, ts: staleTs }), "utf8");
+      const rec = detachedSpawnRecorder();
 
-      const result = await withFakeGh(() =>
-        collectStatuslineAfk({ root, repo: "", remote: "origin" }),
+      const result = await collectStatuslineAfk(
+        { root, repo: "o/r", remote: "origin" },
+        STATUSLINE_CACHE_TTL_S,
+        { spawn: rec.spawn, argv1: "/tmp/afk.mjs" },
       );
 
       expect(result).toBeNull(); // 0 workers → null
       const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { ts: number };
-      expect(cache.ts).toBeGreaterThan(staleTs); // refreshed despite 0 workers
+      expect(cache.ts).toBe(staleTs);
+      expect(rec.calls).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -732,6 +791,84 @@ describe("collectStatuslineAfk — cache discipline", () => {
       expect(result!.added).toBe(84);
       expect(result!.removed).toBe(5);
       expect(result!.locIsPeak).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("statusline count cache write-through", () => {
+  it("applies claim, park, requeue, and close label deltas without count reads", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-write-through-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = join(tmpDir, "statusline-cache.json");
+      writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: 100 }), "utf8");
+
+      expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-agent"], ["running"], 200)).toBe(true);
+      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 3, human: 2, ts: 200 });
+
+      expect(applyStatuslineCountCacheLabelDelta(cachePath, ["running"], ["ready-for-human", "blocked:validation"], 300)).toBe(true);
+      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 3, human: 3, ts: 300 });
+
+      expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human", "blocked:validation"], ["ready-for-agent"], 400)).toBe(true);
+      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 4, human: 2, ts: 400 });
+
+      expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human"], [], 500)).toBe(true);
+      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 4, human: 1, ts: 500 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("wraps a successful mutation with write-through and does not add API calls", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-write-through-"));
+    try {
+      const cachePath = join(root, ".red", "tmp", "statusline-cache.json");
+      mkdirSync(join(root, ".red", "tmp"), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify({ queue: 1, human: 0, ts: 100 }), "utf8");
+      let edits = 0;
+
+      const ok = await editLabelsWithStatuslineCache(
+        cachePath,
+        async () => {
+          edits += 1;
+          return true;
+        },
+        ["ready-for-agent"],
+        ["running"],
+      );
+
+      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { queue: number; human: number; ts: number };
+      expect(ok).toBe(true);
+      expect(edits).toBe(1);
+      expect(cache.queue).toBe(0);
+      expect(cache.human).toBe(0);
+      expect(cache.ts).toBeGreaterThan(100);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("statusline repo slug inference", () => {
+  it("parses GitHub ssh and https remotes", () => {
+    expect(parseGitHubRepoSlugFromRemoteUrl("git@github.com:reddb-io/red-skills.git")).toBe("reddb-io/red-skills");
+    expect(parseGitHubRepoSlugFromRemoteUrl("https://github.com/reddb-io/red-skills.git")).toBe("reddb-io/red-skills");
+    expect(parseGitHubRepoSlugFromRemoteUrl("ssh://example.com/reddb-io/red-skills.git")).toBe("");
+  });
+
+  it("infers the repo slug from local .git/config without gh", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      mkdirSync(join(root, ".git"), { recursive: true });
+      writeFileSync(
+        join(root, ".git", "config"),
+        "[remote \"origin\"]\n\turl = git@github.com:reddb-io/red-skills.git\n",
+        "utf8",
+      );
+      expect(inferGitHubRepoSlug(root)).toBe("reddb-io/red-skills");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -843,24 +980,24 @@ describe("collectStatuslineRepo — cache discipline", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STATUSLINE_CACHE_TTL_S — the default TTL constant (#1178, lowered #1217)
+// STATUSLINE_CACHE_TTL_S — the default TTL constant (#1178, lowered #1217, raised #1216)
 // ---------------------------------------------------------------------------
 
 describe("STATUSLINE_CACHE_TTL_S", () => {
-  it("defaults to 180 s (3 minutes): the network cost is paid at most once per 3 min", () => {
-    expect(STATUSLINE_CACHE_TTL_S).toBe(180);
+  it("defaults to 900 s (15 minutes): TTL is reconciliation-only for statusline counts", () => {
+    expect(STATUSLINE_CACHE_TTL_S).toBe(900);
   });
 });
 
 // ---------------------------------------------------------------------------
-// resolveStatuslineCacheTtl — env > config > 180, typo-safe fallback (#1217)
+// resolveStatuslineCacheTtl — env > config > 900, typo-safe fallback (#1217)
 // ---------------------------------------------------------------------------
 
 describe("resolveStatuslineCacheTtl (#1217)", () => {
   const noCfg = () => "";
 
-  it("defaults to 180 when neither env nor config is set", () => {
-    expect(resolveStatuslineCacheTtl({}, noCfg)).toBe(180);
+  it("defaults to 900 when neither env nor config is set", () => {
+    expect(resolveStatuslineCacheTtl({}, noCfg)).toBe(900);
     expect(resolveStatuslineCacheTtl({}, noCfg)).toBe(STATUSLINE_CACHE_TTL_S);
   });
 
@@ -881,15 +1018,15 @@ describe("resolveStatuslineCacheTtl (#1217)", () => {
     expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "-5" }, getCfg)).toBe(240);
   });
 
-  it("falls back to 180 when BOTH env and config are garbage — never 0", () => {
+  it("falls back to 900 when BOTH env and config are garbage — never 0", () => {
     const bad = (v: string) => resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: v }, () => v);
-    expect(bad("0")).toBe(180);
-    expect(bad("-1")).toBe(180);
-    expect(bad("abc")).toBe(180);
+    expect(bad("0")).toBe(900);
+    expect(bad("-1")).toBe(900);
+    expect(bad("abc")).toBe(900);
     // config-only garbage also falls through to the default
-    expect(resolveStatuslineCacheTtl({}, () => "0")).toBe(180);
-    expect(resolveStatuslineCacheTtl({}, () => "-9")).toBe(180);
-    expect(resolveStatuslineCacheTtl({}, () => "xyz")).toBe(180);
+    expect(resolveStatuslineCacheTtl({}, () => "0")).toBe(900);
+    expect(resolveStatuslineCacheTtl({}, () => "-9")).toBe(900);
+    expect(resolveStatuslineCacheTtl({}, () => "xyz")).toBe(900);
   });
 });
 
