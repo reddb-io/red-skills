@@ -1,4 +1,11 @@
-import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker, type MonitorRemote } from "../core/monitor.js";
+import {
+  FLEET_STALE_AFTER_S,
+  renderCompactDashboard,
+  renderCompactDashboardToon,
+  type CompactWorker,
+  type FleetState,
+  type MonitorRemote,
+} from "../core/monitor.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCacheTtl } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
@@ -144,6 +151,28 @@ export function runMirrorPlan(
   return `${callsOut}${JSON.stringify(noticeRecord)}\n`;
 }
 
+function reactiveWorkerAlert(worker: CompactWorker): string | null {
+  if (worker.livenessVerdict?.status !== "stalled") return null;
+  const issue = worker.state.current.number;
+  const issuePart = issue === "" || issue === null || issue === undefined ? "idle" : `#${issue}`;
+  const reason = worker.livenessVerdict.reason ? `: ${worker.livenessVerdict.reason}` : "";
+  return `actionable: worker ${worker.state.worker_id} ${issuePart} stalled${reason}`;
+}
+
+function reactiveFleetAlert(fleet: FleetState | undefined, now: number): string | null {
+  if (!fleet) return null;
+  const ageS = now - fleet.epoch;
+  if (ageS < FLEET_STALE_AFTER_S) return null;
+  return `actionable: fleet heartbeat stale ${ageS}s; inspect .red/tmp/afk-supervisor.log`;
+}
+
+function renderReactiveCheck(workers: readonly CompactWorker[], fleet: FleetState | undefined, now: number): string {
+  const alerts = workers.map(reactiveWorkerAlert).filter((line): line is string => line !== null);
+  const fleetAlert = reactiveFleetAlert(fleet, now);
+  if (fleetAlert) alerts.unshift(fleetAlert);
+  return alerts.join("\n");
+}
+
 /** Read all of stdin to a string (empty when nothing is piped / TTY). */
 async function readStdin(stdin: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
@@ -190,6 +219,13 @@ export async function monitorCommand(
     const trackedJsonl = await readStdin(stdin);
     const out = runMirrorPlan(workers, trackedJsonl, { host });
     if (out !== "") stdout.write(out);
+    return 0;
+  }
+
+  if (args.includes("--reactive-check")) {
+    const { workers, fleet } = await collectMonitorInputs(cwd);
+    const out = renderReactiveCheck(workers, fleet ?? undefined, Math.floor(Date.now() / 1000));
+    if (out !== "") stdout.write(`${out}\n`);
     return 0;
   }
 

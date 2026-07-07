@@ -68,18 +68,19 @@ The sparkline only counts `event == "done"`. Blockers and exhausted runs are rec
 
 ## Self-Cancel (binding when invoked under Claude Code)
 
-Every `/afk monitor` run — whether typed by the user or fired by the auto-monitor cron — is responsible for tearing down the cron once there's nothing left to watch.
+Every `/afk monitor` run — whether typed by the user or fired by the auto-monitor cron — is responsible for tearing down the cron once there's nothing left to watch. The historical full-render cron exists only when the rich RedSkills command-backed statusline is absent. When a rich statusline is present, the passive dashboard render is skipped by default; an explicitly armed reactive tick must run the bundle command `red-skills-dev monitor --reactive-check`, not the `/dev:afk monitor` slash command, so it does not re-inject this skill on every tick.
 
 After rendering the dashboard, the agent must:
 
 1. Count observable workers with status `[live]` or `[quiet]` in the rendered output (i.e., orchestrator pid identity alive, post-orphan-cleanup).
 2. If `observable_workers == 0`:
    - Fetch `CronList` and `CronDelete` via `ToolSearch` if not already loaded.
-   - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
+   - `CronList` — find every job with `prompt == "/dev:afk monitor"` or a prompt containing `red-skills-dev monitor --reactive-check`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
    - `CronDelete` each match.
    - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
 3. If `observable_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
    - Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (deferred tools).
+   - If `.claude/settings.json` contains the RedSkills command-backed statusline, do not arm the full-render cron; the footer is the passive view.
    - `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip** (cron already present; it continues firing every 10 minutes).
    - Otherwise `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)` and tell the user one line: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
    - If `CronCreate` is unavailable (non-Claude-Code host), skip silently.
