@@ -133,3 +133,36 @@ export async function runBackpressure(
 
   return { ok: !failed, checks, sidecar };
 }
+
+/**
+ * Header line for the aggregated backpressure evidence ledger (issue #1279). It
+ * states, in-band, that the review is purely additive observability so nobody
+ * reads a COMMENT review as a gate: the merge/park decision is owned entirely by
+ * {@link runBackpressure}'s `ok` flag and is byte-for-byte unchanged by this.
+ */
+export const BACKPRESSURE_REVIEW_HEADER =
+  "🤖 backpressure evidence ledger — operator-declared merge-gate checks " +
+  "(non-blocking, observability only; the merge/park decision is unchanged).";
+
+/**
+ * Render the aggregated, NON-BLOCKING backpressure evidence ledger for a PR
+ * review body (issue #1279). PURE — no IO, no clock. Maps every executed
+ * {@link BackpressureCheck} (both positive and negative) to one line:
+ *   - passed → `✅ backpressure:<cmd>`
+ *   - failed → `❌ backpressure:<cmd> → <summary>`
+ * (the check's `name` is already `backpressure:<cmd>`). Returns `null` for an
+ * empty check list so the caller posts NOTHING — an empty ledger is never a
+ * review. This renders an EVIDENCE view of what already ran; it never re-decides
+ * the merge, which stays owned by {@link RunBackpressureResult.ok}.
+ */
+export function renderBackpressureReviewBody(
+  checks: readonly BackpressureCheck[],
+): string | null {
+  if (checks.length === 0) return null;
+  const lines = checks.map((check) =>
+    check.status === "passed"
+      ? `✅ ${check.name}`
+      : `❌ ${check.name} → ${check.record.summary ?? "command failed"}`,
+  );
+  return [BACKPRESSURE_REVIEW_HEADER, "", ...lines].join("\n");
+}

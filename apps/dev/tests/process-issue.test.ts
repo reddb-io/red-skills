@@ -42,6 +42,8 @@ interface Trace {
   ensuredLabels: string[];
   /** validation.jsonl writes: (path, lines) per write. */
   sidecarWrites: Array<{ path: string; lines: string[] }>;
+  /** Non-blocking backpressure evidence reviews posted via the #1279 seam. */
+  backpressureReviews: Array<{ pr: number; body: string }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
   recordedAttempts: AttemptRecordPayload[];
   /** Brain outcome events fired after terminal attempt completion. */
@@ -226,6 +228,7 @@ function harness(opts: HarnessOptions = {}): {
     listByLabelCalls: [],
     ensuredLabels: [],
     sidecarWrites: [],
+    backpressureReviews: [],
     recordedAttempts: [],
     outcomeEvents: [],
     salvageCalls: [],
@@ -440,6 +443,11 @@ function harness(opts: HarnessOptions = {}): {
       stderr: "",
     }),
     backpressureCommands: opts.backpressureCommands,
+    // Non-blocking backpressure evidence review seam (#1279): record every
+    // aggregated COMMENT review the engine posts once the PR number is known.
+    postBackpressureReview: async (pr, body) => {
+      trace.backpressureReviews.push({ pr, body });
+    },
     goVerifyRetries: opts.goVerifyRetries,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
@@ -1387,6 +1395,61 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
+  });
+
+  it("posts ONE aggregated non-blocking backpressure review on the PR, the merge/close unchanged (#1279)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: true,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    // Merge/close decision is byte-for-byte the pre-#1279 behaviour.
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+
+    // Exactly ONE aggregated COMMENT review, on the landed PR (#42), all-green.
+    expect(trace.backpressureReviews).toHaveLength(1);
+    const review = trace.backpressureReviews[0]!;
+    expect(review.pr).toBe(42);
+    expect(review.body).toContain("✅ backpressure:npm run e2e");
+    // In-band statement that the ledger is non-blocking observability.
+    expect(review.body).toContain("non-blocking");
+    expect(review.body).not.toMatch(/APPROVE|REQUEST_CHANGES/);
+  });
+
+  it("posts NO review when no backpressure command is configured — an empty ledger is never a review (#1279)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.backpressureReviews).toEqual([]);
+  });
+
+  it("a FAILED backpressure command parks blocked:validation exactly as before, posting no review (no-new-blocking, #1279)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: false,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    // The park is the pre-#1279 behaviour: blocked:validation, never merged.
+    expect(result.outcome).toBe("feedback-failed");
+    expect(labelTrace(trace)).toEqual([
+      "-ready-for-agent|+running",
+      "-running|+ready-for-human+blocked:validation",
+    ]);
+    expect(trace.pushedAttempt).toEqual([]);
+    // The failing gate blocks BEFORE any PR is opened → no surface to attach the
+    // ledger to; the review path fires nothing and cannot change the park.
+    expect(trace.backpressureReviews).toEqual([]);
   });
 });
 
