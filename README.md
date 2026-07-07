@@ -35,7 +35,7 @@ Attribution is preserved in [NOTICE](./NOTICE).
 Recommended for normal installs and upgrades:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash
 ```
 
 The installer resolves the latest GitHub Release, stores it under
@@ -58,22 +58,22 @@ Useful options:
 
 ```bash
 # inspect without writing
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --dry-run
 
 # install only one host
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --only opencode
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --only opencode
 
 # pin a release
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --version v1.248.1
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --version v2.6.0
 
 # force plugin reinstall where the host supports removal
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --force
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --force
 
 # uninstall from every detected host
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --uninstall
 
 # uninstall and remove the ~/.red-skills release cache
-curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --uninstall --purge
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --uninstall --purge
 ```
 
 After installing, restart any already-open CLI sessions so they reload plugin
@@ -471,17 +471,17 @@ for adopter repos that want cloud execution without a local fleet.
 | --- | --- | --- |
 | Trigger + policy | [`reusable-afk-attempt.yml`](./.github/workflows/reusable-afk-attempt.yml) | `workflow_call`, manual dispatch, and trust gate. |
 | Execution | [`.github/actions/afk-attempt`](./.github/actions/afk-attempt/action.yml) | Sets up Node, runner CLI, auth env, and invokes the AFK launcher. |
-| Runtime distribution | `afk.mjs` + GitHub Release assets | Fetches the versioned `dev` bundle matching the checked-out red-skills ref. |
+| Runtime distribution | `afk.mjs` + the `@reddb-io/red-skills` npm package | Resolves the versioned `dev` bundle matching the checked-out red-skills ref via npm (ADR 0091), cache-first. |
 
 Adoption paths:
 
 - **Turnkey caller:** install or copy an `rs-afk-attempt.yml` caller that wires
   issue/manual triggers to
-  `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`.
+  `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v2`.
 - **Composable action:** use
-  `reddb-io/red-skills/.github/actions/afk-attempt@v1` from your own workflow.
+  `reddb-io/red-skills/.github/actions/afk-attempt@v2` from your own workflow.
 
-Pin `@v1` to track the latest compatible v1 release. Pin a SHA when the caller
+Pin `@v2` to track the latest compatible v2 release. Pin a SHA when the caller
 needs a fully immutable action/runtime pair.
 
 Workflow naming convention:
@@ -513,12 +513,20 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
 | [`packages/build-info`](./packages/build-info) | Shared runtime build metadata helpers consumed by bundled apps. |
 | [`packages/red-castle`](./packages/red-castle) | AFK execution substrate (vendored submodule, `@reddb-io/red-castle`): sandcastle fork that owns per-attempt worktree isolation, agent spawning, and signal detection. |
+| [`packaging/npm`](./packaging/npm) | The publishable `@reddb-io/red-skills` npm package (outside the pnpm workspace): built plugin bundles plus the three `red-skills-*` bin shims. The v2 client transport (ADR 0091). |
 | [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, issue-tracker docs, and agent rules. |
 | [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable AFK attempt workflows. |
 
 Installed plugin trees are definitions and launchers. Runtime bundles are built
-from `apps/*` and shipped as GitHub Release assets. Session-start hooks fetch the
-right bundle into the local RedSkills cache.
+from `apps/*` and shipped inside the [`@reddb-io/red-skills`](./packaging/npm)
+npm package (ADR 0091) — one tarball carrying the `dev`, `memory`, and `brain`
+JS bundles plus the `red-skills-dev` / `red-skills-memory` / `red-skills-brain`
+bin shims. Session-start launchers resolve the version-pinned package via npm
+(`npx -y @reddb-io/red-skills@<pin>` semantics), cache-first, and integrity is
+npm's own tarball shasum — no GitHub-release download and no client-side
+signature step. The Memory/Brain native `red` engine binary is the one
+per-platform artifact that cannot ride in the tarball; those plugins resolve it
+separately at runtime.
 
 ## Configuration
 
@@ -552,6 +560,24 @@ Model defaults and escalation rules are documented in
 [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md).
 The runtime source of truth is `CONFIG_DEFAULTS` in
 [`apps/dev/src/core/config.ts`](./apps/dev/src/core/config.ts).
+
+Operator-declared pre-merge checks (backpressure):
+
+```yaml
+plugins:
+  dev:
+    afk:
+      backpressure:
+        - pnpm lint
+        - cargo fmt --check
+```
+
+`afk.backpressure` is an ordered list of shell commands run in the worker-branch
+worktree after the implicit feedback gate (test/typecheck/lint/build) passes on
+the DONE path. Any non-zero command blocks the merge and parks the issue exactly
+like a feedback failure. When the list is non-empty, every executed check — pass
+and fail alike — is also rendered as a single aggregated, non-blocking `COMMENT`
+PR review, so the PR carries a legible evidence ledger without adding a new gate.
 
 House rules:
 
@@ -604,10 +630,12 @@ the runtime apps and shared packages while excluding unrelated heavy packages
 where needed.
 
 Release is automated by [red-release.yml](./.github/workflows/red-release.yml):
-pushes to `main` with release-worthy commits bump versions, build bundles,
-publish release assets, update plugin metadata, and move the matching major tag
-such as `v1` to the same release commit so reusable workflows pinned to `@v1`
-keep advancing.
+pushes to `main` with release-worthy commits bump versions, build bundles, stage
+them into the `@reddb-io/red-skills` npm package, run the real packaged client
+against the packed tarball as a producer/consumer contract check, `npm publish`,
+smoke the published package from the registry, update plugin metadata, cut a git
+tag with a GitHub Release, and move the matching major tag such as `v2` to the
+same release commit so reusable workflows pinned to `@v2` keep advancing.
 
 The `release` job runs in the GitHub environment named `red-release`. Repository
 settings must keep that environment protected with required reviewers, because
