@@ -104,6 +104,10 @@ interface Opts {
   mainRed?: boolean;
   /** Main-red tracking gate (#1237): whether the open repair issue finder returns an issue. */
   mainRedRepairIssue?: boolean;
+  /** Issue labels used to derive the landing-created conventional merge title. */
+  labels?: string[];
+  /** Force the admin PR path to create a PR instead of reusing an open one. */
+  createPr?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -115,6 +119,7 @@ function harness(opts: Opts = {}): Harness {
   let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   let mergeResolved = false;
+  let prCreated = false;
 
   const deps: LandingDeps = {
     mergeExec: async (argv): Promise<ExecResult> => {
@@ -146,7 +151,12 @@ function harness(opts: Opts = {}): Harness {
         return { code: opts.rebasePushCode ?? 0, stdout: "", stderr: "" };
       }
       if (argv.includes("pr") && argv.includes("list")) {
+        if (opts.createPr && !prCreated) return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "42\n", stderr: "" };
+      }
+      if (argv.includes("pr") && argv.includes("create")) {
+        prCreated = true;
+        return { code: 0, stdout: "", stderr: "" };
       }
       // The rollback anchor + landed sha the locked worktree path reads.
       if (j.includes("rev-parse --short HEAD")) {
@@ -259,6 +269,7 @@ function harness(opts: Opts = {}): Harness {
     trunk: "main",
     issue: 9,
     title: "Fix the thing",
+    ...(opts.labels ? { labels: opts.labels } : {}),
     // #1171: only set when the test opts in; default undefined keeps the guard
     // armed for every existing landing assertion.
     sensitivePathApproved: opts.sensitivePathApproved,
@@ -382,6 +393,36 @@ describe("doLanding — happy paths", () => {
     // landing's WRITE ops (merge/push) must never target main.
     expect(j.some((c) => (c.includes("merge --") || c.includes("push ")) && c.includes("main"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
+});
+
+describe("doLanding — conventional landing titles (#1267)", () => {
+  it.each([
+    { labels: ["type:bug"], title: "fix: #9 Fix the thing" },
+    { labels: ["bug"], title: "fix: #9 Fix the thing" },
+    { labels: ["type:feature"], title: "feat: #9 Fix the thing" },
+    { labels: ["enhancement"], title: "feat: #9 Fix the thing" },
+    { labels: ["type:task"], title: "chore: #9 Fix the thing" },
+  ])("direct/no-agent landing maps $labels to $title", async ({ labels, title }) => {
+    const h = harness({ locked: true, labels });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r.ok).toBe(true);
+    expect(joined(h.mergeCalls)).toContain(
+      `git -C ${WT} merge --no-ff --no-verify ${DEFAULT_BRANCH_TIP} -m ${title}`,
+    );
+  });
+
+  it("admin PR landing uses the conventional title for the PR and merge commit subject", async () => {
+    const h = harness({ locked: false, createPr: true, labels: ["type:feature"] });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    expect(j).toContain(
+      "gh -R o/r pr create --base main --head afk/wAAAA/9-fix-the-thing --title feat: #9 Fix the thing --body Automated AFK landing for #9. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the `afk-attempts/*` snapshot branches.\n\nCloses #9",
+    );
+    expect(j).toContain("gh -R o/r pr merge 42 --merge --subject feat: #9 Fix the thing");
   });
 });
 
