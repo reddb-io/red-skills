@@ -1,0 +1,21 @@
+{
+  "name": "fixture-marketplace",
+  "plugins": [
+    {
+      "name": "alpha",
+      "source": {
+        "source": "local",
+        "path": "./plugins/alpha"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "beta",
+      "source": {
+        "source": "local",
+        "path": "./plugins/beta"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

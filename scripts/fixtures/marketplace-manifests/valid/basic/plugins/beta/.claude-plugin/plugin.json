@@ -1,0 +1,11 @@
+{
+  "name": "beta",
+  "version": "0.1.0",
+  "description": "Beta fixture plugin.",
+  "dependencies": [
+    "alpha"
+  ],
+  "skills": [
+    "./skills/core/remember"
+  ]
+}

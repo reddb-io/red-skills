@@ -1,0 +1,36 @@
+name: red-marketplace-ci
+
+on:
+  pull_request:
+    paths:
+      - ".claude-plugin/marketplace.json"
+      - ".agents/plugins/marketplace.json"
+      - "plugins/**"
+      - "scripts/validate-marketplace-manifests.sh"
+      - "scripts/test-validate-marketplace-manifests.sh"
+      - "scripts/fixtures/marketplace-manifests/**"
+  push:
+    branches: [main]
+    paths:
+      - ".claude-plugin/marketplace.json"
+      - ".agents/plugins/marketplace.json"
+      - "plugins/**"
+      - "scripts/validate-marketplace-manifests.sh"
+      - "scripts/test-validate-marketplace-manifests.sh"
+      - "scripts/fixtures/marketplace-manifests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-marketplace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate marketplace manifests
+        run: scripts/validate-marketplace-manifests.sh
+
+      - name: Test marketplace manifest validator
+        run: scripts/test-validate-marketplace-manifests.sh

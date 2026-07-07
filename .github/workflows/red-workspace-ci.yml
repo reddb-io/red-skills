@@ -36,6 +36,9 @@ jobs:
       - name: Test red-release npm publish contract
         run: scripts/test-red-release-npm-publish-contract.sh
 
+      - name: Test marketplace manifest validator
+        run: scripts/test-validate-marketplace-manifests.sh
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
