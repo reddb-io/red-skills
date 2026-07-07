@@ -119,6 +119,15 @@ export interface LandingDeps {
   ciAwait?: CiAwaitInput;
   /** Find the open auto-filed main-red repair issue for the #1237 admin-merge gate. */
   findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
+  /**
+   * Non-blocking observability hook (issue #1279): invoked by the PR landing path
+   * the moment the PR number is RESOLVED (open-or-reused, before the merge), so
+   * the caller can attach the aggregated backpressure evidence review to the PR.
+   * Best-effort and fully DECOUPLED — landPr swallows any rejection and the hook
+   * never affects whether/how the PR merges. Absent (the default) or on the
+   * direct path (no PR) → never called.
+   */
+  onPrResolved?: (prNumber: number) => Promise<void>;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -463,6 +472,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     mergeTitle: landingMergeTitle(input),
     waitForReview: deps.waitForReview,
     ciAwait: deps.ciAwait,
+    // Non-blocking backpressure evidence review (#1279): threaded through so
+    // landPr can attach the ledger the moment it resolves the PR number.
+    onPrResolved: deps.onPrResolved,
     // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
     // its step-4 local fast-forward, so the integration reaches the maintainer
     // only via `origin/<locked-branch>` (they promote by pulling). The lock only
