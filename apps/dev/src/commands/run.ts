@@ -780,6 +780,10 @@ export function buildProcessDeps(
         const { hitlCardCommand } = await import("./hitl-card.js");
         await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
       },
+      findMainRedRepairIssue: () => ghx.findMainRedRepairIssue(ghCtx),
+      createMainRedRepairIssue: (spec) => ghx.createMainRedRepairIssue(ghCtx, spec),
+      updateMainRedRepairIssue: (issue, spec) => ghx.updateMainRedRepairIssue(ghCtx, issue, spec),
+      closeMainRedRepairIssue: (issue, closeComment) => ghx.closeMainRedRepairIssue(ghCtx, issue, closeComment),
     },
     claimGh: {
       // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
