@@ -27,6 +27,8 @@ import {
   collectStatuslineAfk,
   collectStatuslineRepo,
   collectStatuslineWorkers,
+  inferGitHubRepoSlug,
+  refreshStatuslineCountCache,
   resolveStatuslineCacheTtl,
 } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
@@ -190,7 +192,7 @@ export async function statuslineCommand(
   // project root and let gh infer the repo from cwd (repo slug ""). The repo
   // header stats (line 1) render ALWAYS; the AFK block (line 2) only with live
   // workers, so both collectors run every render (each cheap + cached).
-  const repoCtx = { root, repo: "", remote: "origin" };
+  const repoCtx = { root, repo: inferGitHubRepoSlug(root), remote: "origin" };
   // Resolve the cache TTL ONCE here (env > afk.statusline_cache_ttl config > 180,
   // #1217) and thread it into both collectors — the hot render path never loads
   // config a second time per collector.
@@ -219,5 +221,21 @@ export async function statuslineCommand(
     now: nowS,
   });
   stdout.write(`${line}\n`);
+  return 0;
+}
+
+export async function statuslineRefreshCountsCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  const root = args[0] ?? cwd;
+  let repo = "";
+  let lock = "";
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--repo") {
+      repo = args[++i] ?? "";
+    } else if (arg === "--lock") {
+      lock = args[++i] ?? "";
+    }
+  }
+  await refreshStatuslineCountCache(root, repo || inferGitHubRepoSlug(root), lock || undefined);
   return 0;
 }
