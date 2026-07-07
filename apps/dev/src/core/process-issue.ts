@@ -1430,6 +1430,7 @@ export async function processIssue(
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
+  let mainRed = false;
   let currentHandoff = handoff;
   let goVerifyRetriesUsed = 0;
   let salvagedUncommittedFiles = 0;
@@ -2046,6 +2047,7 @@ export async function processIssue(
         }),
       );
     }
+    mainRed = feedback.baselineProbeRan === true && (feedback.baselineFailures?.length ?? 0) > 0;
     await syncMainRedRepairIssue(deps, feedback);
     // post_feedback (#832): the scope-derived gate has produced its verdict.
     await fireHook(
@@ -2207,6 +2209,7 @@ export async function processIssue(
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      findMainRedRepairIssue: deps.gh.findMainRedRepairIssue,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -2242,6 +2245,7 @@ export async function processIssue(
       trunk,
       issue,
       title: input.title,
+      mainRed,
     },
     {
       preMerge: () =>
@@ -2274,6 +2278,13 @@ export async function processIssue(
     // lifecycle script, git hook, or .red/ config — pages a human, never retries.
     if (landing.reason === "sensitive-paths") {
       return await sensitivePathGuarded(common, landing.sensitivePaths ?? [], landing.locked);
+    }
+    if (landing.reason === "main-red-untracked") {
+      return await mainRedUntrackedBlocked(
+        common,
+        landing.message ?? "Admin-merge refused: main is red without an open main-red repair issue.",
+        landing.locked,
+      );
     }
     // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
     // could not land because the `enforce_admins` base's required checks failed /
@@ -2597,6 +2608,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
         next: "Review the sensitive change, then requeue if it is safe to land.",
       };
+    case "main-red-untracked":
+      return {
+        status: "blocked",
+        kind: "main-red-untracked",
+        summary: oneLine(sections.log, "Admin-merge refused because main is red without an open main-red repair issue."),
+        next: "Restore or create the auto-filed main-red repair issue, then requeue.",
+      };
     case "manual-landing":
       return {
         status: "blocked",
@@ -2618,6 +2636,7 @@ const ACTIONABLE_BLOCKER_KINDS = new Set([
   "decision",
   "trunk-diverged",
   "sensitive-path",
+  "main-red-untracked",
 ]);
 
 function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -2999,6 +3018,43 @@ async function sensitivePathGuarded(
   await deps.claimLock.release(input.issue);
   return {
     outcome: "sensitive-path",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Main-red tracking gate park (#1237). The feedback baseline probe says trunk is
+ * red, but the auto-filed main-red repair issue is not open, so admin-merge
+ * refuses before opening/merging a PR. This keeps red main visible as tracked
+ * work instead of allowing silent delivery onto an untracked broken baseline.
+ */
+async function mainRedUntrackedBlocked(
+  c: StageCommon,
+  message: string,
+  locked: boolean,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const detail =
+    `${message} The attempt branch is intact and validated, but landing is held until the tracked-red ` +
+    `repair issue exists. Requeue after the auto-file path recreates it.`;
+  await routeRecovery(deps, input.issue, "main-red-untracked", input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("main-red-untracked", { log: detail }));
+  const posted = await emitFailure(c, envelopeStatusFor("main-red-untracked"), "main-red-untracked", { log: detail });
+  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
+  await recordAttemptBestEffort(c, "main-red-untracked", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: detail,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "main-red-untracked",
     issue: input.issue,
     branch: c.branch,
     base: c.base,

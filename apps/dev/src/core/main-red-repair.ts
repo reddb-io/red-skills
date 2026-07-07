@@ -16,6 +16,8 @@ export type MainRedRepairPlan =
   | { action: "update"; issue: number; title: string; body: string; labels: readonly string[] }
   | { action: "close"; issue: number; comment: string };
 
+export type MainRedAdminMergeDecision = { ok: true } | { ok: false; message: string };
+
 export function normalizeBaselineFailures(failures: readonly string[]): string[] {
   return [...new Set(failures.map((f) => f.trim()).filter((f) => f.length > 0))].sort();
 }
@@ -65,5 +67,21 @@ export function planMainRedRepair(
     title: MAIN_RED_REPAIR_TITLE,
     body,
     labels,
+  };
+}
+
+export function decideMainRedAdminMerge(input: {
+  mainRed: boolean;
+  openRepairIssue: MainRedRepairIssue | null;
+}): MainRedAdminMergeDecision {
+  if (!input.mainRed) return { ok: true };
+  if (input.openRepairIssue) return { ok: true };
+
+  return {
+    ok: false,
+    message:
+      "Refusing admin-merge onto red main because no open main-red repair issue exists. " +
+      `Restore the tracked-red visibility gate by letting syncMainRedRepairIssue auto-file "${MAIN_RED_REPAIR_TITLE}" ` +
+      "from the AFK feedback baseline probe before landing.",
   };
 }

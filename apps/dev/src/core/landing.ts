@@ -37,6 +37,7 @@ import {
   type Exec as MergeExec,
   type WaitForReviewInput,
 } from "./merge.js";
+import { decideMainRedAdminMerge, type MainRedRepairIssue } from "./main-red-repair.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
 
@@ -115,6 +116,8 @@ export interface LandingDeps {
    * immediately. Ignored on the locked path, which never opens a PR.
    */
   ciAwait?: CiAwaitInput;
+  /** Find the open auto-filed main-red repair issue for the #1237 admin-merge gate. */
+  findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -177,6 +180,13 @@ export interface LandingInput {
    * operator adopt path ever passes true.
    */
   sensitivePathApproved?: boolean;
+  /**
+   * True when the feedback baseline probe found pre-existing failures on the
+   * trunk/main baseline. Used by the admin-PR path to enforce the tracked-red
+   * visibility gate (#1237). Defaults false/undefined so green-main landings are
+   * unaffected.
+   */
+  mainRed?: boolean;
 }
 
 /** The pre_merge / post_merge hook context builders the caller owns (so the
@@ -210,6 +220,7 @@ export type LandingResult =
         | "ci-pending"
         | "pr-conflict"
         | "pr-merge-failed"
+        | "main-red-untracked"
         // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
         // `<trunk>` ref has DIVERGED from `origin/<trunk>`. The landing aborted
         // BEFORE integrating the attempt branch and NEVER repaired the divergence
@@ -229,6 +240,8 @@ export type LandingResult =
       originTrunkSha?: string;
       /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
       sensitivePaths?: SensitivePathHit[];
+      /** Main-red tracking gate (`main-red-untracked`): actionable refusal text. */
+      message?: string;
     };
 
 /**
@@ -399,6 +412,14 @@ export async function doLanding(
  * fast-forward so the primary checkout is never written to (ADR 0083 §2, #1019).
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
+  if (input.base === input.trunk && input.mainRed === true) {
+    const current = deps.findMainRedRepairIssue ? await deps.findMainRedRepairIssue() : null;
+    const decision = decideMainRedAdminMerge({ mainRed: true, openRepairIssue: current });
+    if (!decision.ok) {
+      return { ok: false, reason: "main-red-untracked", locked: input.locked, message: decision.message };
+    }
+  }
+
   // Pre-merge rebase (#1006): rebase the worker branch onto the fetched base tip
   // in an ISOLATED worktree and force-push it before opening/merging the PR, so
   // the admin-merge is never rejected as a stale non-fast-forward and then
