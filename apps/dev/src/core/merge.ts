@@ -543,6 +543,14 @@ export interface LandPrInput {
    * immediately, fine on a base with no required status checks.
    */
   ciAwait?: CiAwaitInput;
+  /**
+   * Non-blocking observability hook (issue #1279): invoked once the PR number is
+   * RESOLVED (opened or reused), BEFORE any review/CI wait or the merge, so the
+   * caller can attach an aggregated evidence review to the open PR. Best-effort —
+   * a rejection is swallowed here so it can never fail or alter the landing.
+   * Absent (the default) → never called.
+   */
+  onPrResolved?: (prNumber: number) => Promise<void>;
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -577,7 +585,7 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, locked } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, locked, onPrResolved } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -596,6 +604,17 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // 2. Reuse an open PR for this head/base, else create one.
   const prNumber = await ensurePr(exec, { repo, branch, target, n, title, mergeTitle });
   if (prNumber === undefined) return { ok: false, reason: "no-pr" };
+
+  // Non-blocking evidence review (#1279): the PR number is now known — attach the
+  // aggregated backpressure ledger before any wait/merge. Best-effort and fully
+  // decoupled: a rejection is swallowed so it can never fail or alter the landing.
+  if (onPrResolved) {
+    try {
+      await onPrResolved(prNumber);
+    } catch {
+      // observability only — never let a failed review post block the merge.
+    }
+  }
 
   // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
   // until the configured review check concludes, then fall through to merge
