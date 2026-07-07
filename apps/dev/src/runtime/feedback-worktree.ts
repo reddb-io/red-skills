@@ -42,8 +42,8 @@ function slugForBranch(branch: string): string {
 }
 
 /**
- * The environment for the feedback gate's `pnpm -C <scope> <script>` subprocess,
- * with `RED_AFK_WORKERS_NAMESPACE` UNSET (#1224 Part C).
+ * The environment for the feedback gate's validation subprocesses, with AFK
+ * worker-dispatch path overrides UNSET (#1215 / #1224 Part C).
  *
  * A `/go` (or `scout`) worker runs the gate with `RED_AFK_WORKERS_NAMESPACE`
  * pinned to its lane (`go-workers` / `scout-workers`) so its own worktree/state
@@ -51,14 +51,18 @@ function slugForBranch(branch: string): string {
  * INCLUDING the gate's test subprocess — where it poisons namespace-sensitive
  * suites (worker-paths, supervisor-fs) that assert the DEFAULT lane. The result
  * is a false full-suite red that churns/parks otherwise-green apps/dev work (this
- * exact leak cost issue #1219 ~70 minutes). Strip the var for the gate's test
- * subprocess ONLY — the worker's own namespace wiring (which owns the `/go` lane
- * paths) is untouched, since this scrubs a fresh copy of `process.env` rather than
- * mutating it.
+ * exact leak cost issue #1219 ~70 minutes). Strip the path-routing dispatch
+ * vars for the gate subprocesses ONLY — the worker's own namespace wiring (which
+ * owns the `/go` lane paths) is untouched, since this scrubs a fresh copy of
+ * `process.env` rather than mutating it.
  */
 function gateSubprocessEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  delete env.RED_AFK_WORKERS_NAMESPACE;
+  for (const key of Object.keys(env)) {
+    if (key === "RED_AFK_WORKERS_NAMESPACE" || key.startsWith("RED_AFK_WORKER") || key.startsWith("RED_AFK_ITER")) {
+      delete env[key];
+    }
+  }
   return env;
 }
 
