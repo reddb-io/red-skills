@@ -34,6 +34,7 @@ interface Harness {
   firedHooks: string[];
   removedWorktrees: string[];
   removedRebaseWorktrees: string[];
+  mainRedRepairLookups: number;
   /** cwds the conflict resolver was dispatched in. */
   resolverCwds: string[];
 }
@@ -99,6 +100,10 @@ interface Opts {
    * `/requeue --adopt-branch` human land of a reviewed protected diff.
    */
   sensitivePathApproved?: boolean;
+  /** Main-red tracking gate (#1237): set input.mainRed. */
+  mainRed?: boolean;
+  /** Main-red tracking gate (#1237): whether the open repair issue finder returns an issue. */
+  mainRedRepairIssue?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -107,6 +112,7 @@ function harness(opts: Opts = {}): Harness {
   const firedHooks: string[] = [];
   const removedWorktrees: string[] = [];
   const removedRebaseWorktrees: string[] = [];
+  let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   let mergeResolved = false;
 
@@ -226,6 +232,13 @@ function harness(opts: Opts = {}): Harness {
           packageJsonDiff: "",
         })
       : undefined,
+    findMainRedRepairIssue:
+      opts.mainRed === undefined
+        ? undefined
+        : async () => {
+            mainRedRepairLookups += 1;
+            return opts.mainRedRepairIssue ? { number: 123 } : null;
+          },
   };
 
   const input: LandingInput = {
@@ -248,6 +261,7 @@ function harness(opts: Opts = {}): Harness {
     // #1171: only set when the test opts in; default undefined keeps the guard
     // armed for every existing landing assertion.
     sensitivePathApproved: opts.sensitivePathApproved,
+    mainRed: opts.mainRed,
   };
 
   const hooks: LandingHookContexts = {
@@ -264,6 +278,9 @@ function harness(opts: Opts = {}): Harness {
     firedHooks,
     removedWorktrees,
     removedRebaseWorktrees,
+    get mainRedRepairLookups() {
+      return mainRedRepairLookups;
+    },
     resolverCwds,
   };
 }
@@ -302,6 +319,27 @@ describe("doLanding — happy paths", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
+  });
+
+  it("unlocked + red main + open main-red repair issue → admin-merges", async () => {
+    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.mainRedRepairLookups).toBe(1);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+  });
+
+  it("unlocked + red main + no main-red repair issue → refuses before admin-merge", async () => {
+    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toBe("main-red-untracked");
+    expect(r.message).toContain("Refusing admin-merge onto red main");
+    expect(h.mainRedRepairLookups).toBe(1);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
   });
 
   it("default unlocked landing → merge runs without --admin (branch protection is honored, #1103)", async () => {
