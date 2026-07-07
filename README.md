@@ -276,6 +276,12 @@ Important states:
 | [`memory`](./plugins/memory/README.md) | Governed operational memory: decisions, validations, reasoning attempts, stale-claim checks, context packs, and skill telemetry evidence. | You want agents to stop repeating old mistakes after context resets. |
 | [`brain`](./plugins/brain/README.md) | Project-local knowledge: typed artifacts, personal/project facts, sources, graph connections, search, cited answers, and dashboards. | You want durable knowledge the human may ask about later. |
 
+Maintainer-only plugin:
+
+| Plugin | Job | Use it when |
+| --- | --- | --- |
+| [`internal`](./plugins/internal/README.md) | Maintainer-only skills for operating this repository. Installable through the normal marketplace flow, but active only when `plugins.internal.enabled: true` is present. | You maintain `red-skills` itself. |
+
 The short version:
 
 - **Dev moves work.**
@@ -482,6 +488,7 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`plugins/dev`](./plugins/dev) | Plugin definition, skills, hooks, scripts, MCP config, and docs for engineering workflow. |
 | [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
 | [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
+| [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
 | [`apps/dev`](./apps/dev) | AFK, ship, dashboard, triage, runner, release/channel, and workflow runtime code. |
 | [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
 | [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |

@@ -1,0 +1,37 @@
+{
+  "name": "internal",
+  "version": "2.1.0",
+  "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "claude-code",
+    "skills",
+    "agents",
+    "maintainer"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RedSkills Internal",
+    "shortDescription": "Maintainer-only RedSkills repository operations.",
+    "longDescription": "RedSkills Internal is a maintainer-only plugin for operating the red-skills repository. It is installable through the normal marketplace flow, but repo activation is strictly gated by plugins.internal.enabled.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Run $bootstrap to confirm the internal plugin is enabled for this repo."
+    ],
+    "brandColor": "#7C3AED"
+  }
+}
