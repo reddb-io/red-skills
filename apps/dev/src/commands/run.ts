@@ -48,6 +48,7 @@ import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
+import { buildReviewGh } from "../runtime/review-gh.js";
 import type { GitContext } from "../runtime/git.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
@@ -897,6 +898,13 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: mergedBackpressureCommands,
+    // Non-blocking backpressure evidence review (#1279): render the executed
+    // backpressure checks as ONE aggregated `event: COMMENT` review on the PR.
+    // Reuses ReviewGh.postReview (COMMENT-only, no APPROVE/REQUEST_CHANGES) with
+    // no inline comments — purely a top-level evidence ledger. Observability only;
+    // it never touches the merge/park decision.
+    postBackpressureReview: (pr, body) =>
+      buildReviewGh(ghCtx).postReview(pr, { summary: body, comments: [] }),
     goVerifyRetries,
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
