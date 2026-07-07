@@ -87,7 +87,7 @@ import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "./attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
-import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
+import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import {
   parseTrustPolicy,
@@ -1067,7 +1067,7 @@ async function refuseNoSandboxForUntrustedAuthor(
       // best-effort: card render failure is non-fatal.
     }
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "blocked",
     issue: input.issue,
@@ -1141,6 +1141,15 @@ export async function processIssue(
   const hooksFired: HookName[] = [];
   const startedEpoch = deps.nowEpoch();
   const resolved: ResolvedHooks = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+  let ownsCommentClaim = false;
+  const releaseClaim = async () => {
+    if (ownsCommentClaim) {
+      ownsCommentClaim = false;
+      await releaseOwnedClaim(deps, input);
+      return;
+    }
+    await deps.claimLock.release(issue);
+  };
 
   // FIX J: the env slice the pre_worktree hook chain mutates (e.g. the cargo /
   // gradle defaults inject CARGO_TARGET_DIR=.../slot-N for per-slot build
@@ -1211,12 +1220,13 @@ export async function processIssue(
     if (decision.verdict === "lost") {
       // acquireClaim already conceded our marker; nothing to project, next issue.
       await deps.claimLock.release(issue);
-      return claimLost(issue, hooksFired);
+      return claimLost(issue, hooksFired, deps, decision);
     }
+    ownsCommentClaim = true;
   } else if (labels.includes(LABEL_RUNNING)) {
     // Legacy lock (no claimGh): `running` present means another worker holds it.
     await deps.claimLock.release(issue);
-    return claimLost(issue, hooksFired);
+    return claimLost(issue, hooksFired, deps, undefined, "running label already present");
   }
 
   const activeBlocker = parseCurrentBlocker(input.body);
@@ -1227,7 +1237,7 @@ export async function processIssue(
       issue,
       `🤖 /afk preflight stopped: active Current blocker (${activeBlocker.kind}) still requires human input: ${activeBlocker.next}`,
     );
-    await deps.claimLock.release(issue);
+    await releaseClaim();
     return {
       outcome: "blocked",
       issue,
@@ -1266,8 +1276,8 @@ export async function processIssue(
       deps.appendIterLog(
         `🤖 /afk trust gate refused #${issue} [${describeTrustPosture(trustPolicy)}]: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
       );
-      await deps.claimLock.release(issue);
-      return claimLost(issue, hooksFired);
+      await releaseClaim();
+      return claimLost(issue, hooksFired, deps, undefined, verdict.reason);
     }
   }
 
@@ -1299,7 +1309,7 @@ export async function processIssue(
   const claimRemoveLabels = [LABEL_READY, ...blockedLabelsIn(labels)];
   const promoted = await editIssueLifecycleLabels(deps, issue, labels, claimRemoveLabels, [LABEL_RUNNING], "claim");
   if (!promoted && !deps.claimGh) {
-    await deps.claimLock.release(issue);
+    await releaseClaim();
     return claimLost(issue, hooksFired);
   }
 
@@ -1310,7 +1320,7 @@ export async function processIssue(
     // A malformed ref refuses the iteration; restore the claim like the bash
     // "refusing malformed live branch ref" guard (return before running).
     await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
-    await deps.claimLock.release(issue);
+    await releaseClaim();
     return claimLost(issue, hooksFired);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
@@ -1824,7 +1834,7 @@ export async function processIssue(
       } catch {
         // best-effort: a label failure on an already-closed issue is cosmetic.
       }
-      await deps.claimLock.release(issue);
+      await releaseClaim();
       return {
         outcome,
         issue,
@@ -1881,7 +1891,7 @@ export async function processIssue(
         // reconcile already closed the issue, dropped labels, deleted the remote
         // branch, swept the attempt dir + ran the close cascade — only the claim
         // lock (which AFK, not reconcile, owns) remains to release.
-        await deps.claimLock.release(issue);
+        await releaseClaim();
         return {
           outcome: "done",
           issue,
@@ -1896,7 +1906,7 @@ export async function processIssue(
         };
       }
       if (reconciled.outcome === "parked") {
-        await deps.claimLock.release(issue);
+        await releaseClaim();
         return {
           outcome: "feedback-failed",
           issue,
@@ -1941,7 +1951,7 @@ export async function processIssue(
         "_Scout completed without output. Check the attempt log for details._";
       await deps.gh.comment(issue, `## 🔍 Scout Report\n\n${report}`);
       await deps.gh.close(issue);
-      await deps.claimLock.release(issue);
+      await releaseClaim();
       return {
         outcome: "done",
         issue,
@@ -2779,7 +2789,7 @@ async function terminalFailure(
   // shared tail (no-sentinel / blocked / feedback-failed / stalled) did not, so
   // a retry-routed or human-requeued issue stayed un-claimable until the live
   // worker process exited and boot's stale-claim sweep reclaimed the dir (#568).
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome,
     issue: input.issue,
@@ -2845,7 +2855,7 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
   // ADR 0083 §4 exit barrier (#1021): cross the barrier before reporting the
   // merge-conflict terminal so the preserved branch is salvaged + on origin.
   const receipt = await crossTerminalBarrier(deps, c.branch);
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome: "merge-conflict",
     issue: input.issue,
@@ -2897,7 +2907,7 @@ async function ciBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: reason,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome,
     issue: input.issue,
@@ -2941,7 +2951,7 @@ async function prLandingBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: `${prRef}: ${reason}`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome,
     issue: input.issue,
@@ -2989,7 +2999,7 @@ async function trunkDivergedBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: detail,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "trunk-diverged",
     issue: input.issue,
@@ -3031,7 +3041,7 @@ async function sensitivePathGuarded(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: detail,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "sensitive-path",
     issue: input.issue,
@@ -3068,7 +3078,7 @@ async function mainRedUntrackedBlocked(
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: detail,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "main-red-untracked",
     issue: input.issue,
@@ -3131,7 +3141,7 @@ async function handoffForReview(
     validationSummary: validationSidecar.join("\n"),
     notes: `review-requested: PR #${opened.prNumber} labelled ${reviewLabel}`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
 
   return {
     outcome: "review-requested",
@@ -3215,7 +3225,7 @@ async function handoffForManualLanding(
     validationSummary: validationSidecar.join("\n"),
     notes: `manual-landing: ${prRef} held for human merge`,
   });
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
 
   return {
     outcome: "manual-landing",
@@ -3363,8 +3373,35 @@ async function runCascadeRebase(
 
 // ---------- claim / hook-abort short-circuits ----------
 
-function claimLost(issue: number, hooksFired: HookName[]): ProcessIssueResult {
+function claimLost(
+  issue: number,
+  hooksFired: HookName[],
+  deps?: Pick<ProcessIssueDeps, "appendIterLog" | "nowEpoch">,
+  decision?: ClaimDecision,
+  fallbackReason?: string,
+): ProcessIssueResult {
+  if (deps) {
+    const parts = [`🤖 /afk claim-lost #${issue}`];
+    if (decision?.winner) parts.push(`holder=${decision.winner}`);
+    if (decision?.winnerClaimId !== undefined) parts.push(`claim_id=${decision.winnerClaimId}`);
+    if (decision?.winnerCreatedAt) {
+      const createdMs = Date.parse(decision.winnerCreatedAt);
+      if (!Number.isNaN(createdMs)) parts.push(`age_s=${Math.max(0, deps.nowEpoch() - Math.floor(createdMs / 1000))}`);
+    }
+    parts.push(`reason=${decision?.reason ?? fallbackReason ?? "issue no longer claimable"}`);
+    deps.appendIterLog(parts.join(" "));
+  }
   return { outcome: "claim-lost", issue, hooksFired, preserved: false, swept: false };
+}
+
+async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInput): Promise<void> {
+  if (deps.claimGh) {
+    await deps.claimGh.concede(
+      input.issue,
+      renderClaimComment({ worker: input.claimant ?? input.workerId, runner: input.runner }, "concede"),
+    );
+  }
+  await deps.claimLock.release(input.issue);
 }
 
 /** Abort after a successful claim (a pre_* hook aborted): restore
@@ -3394,7 +3431,7 @@ async function abortAfterClaim(
   // branch may not yet exist on origin (nothing committed); the receipt records
   // that truthfully (`pushed:false`) rather than throwing.
   const receipt = await crossTerminalBarrier(deps, branch);
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return preservedTerminal(receipt, {
     outcome: "hook-aborted",
     issue: input.issue,
@@ -3442,7 +3479,7 @@ async function exhausted(
       reason: both ? "both-runners" : runner,
     });
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "exhausted",
     issue: input.issue,
@@ -3493,7 +3530,7 @@ async function runnerRecoverable(
       reason: both ? "both-runners" : runner,
     });
   }
-  await deps.claimLock.release(input.issue);
+  await releaseOwnedClaim(deps, input);
   return {
     outcome: "runner-transient",
     issue: input.issue,
