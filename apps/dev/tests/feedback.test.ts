@@ -489,6 +489,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     // ZERO baseline probes (the gate was green, no reason to probe).
     const baselineCalls = Object.entries(counts).filter(([k]) => k.includes("main"));
     expect(baselineCalls).toEqual([]);
+    expect(result.baselineProbeRan).toBeUndefined();
+    expect(result.baselineFailures).toBeUndefined();
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(5);
   });
 
@@ -515,6 +517,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     // test:apps/dev failed on worker AND on baseline → downgraded; gate passes.
     expect(result.ok).toBe(true);
     expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineFailures).toEqual(["test:apps/dev"]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("skipped");
     expect(testCheck.record.summary).toBe("pre-existing failure on baseline");
@@ -537,6 +541,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     });
     expect(result.ok).toBe(false);
     expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineFailures).toEqual([]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
   });
