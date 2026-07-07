@@ -214,6 +214,16 @@ export interface ProcessGit {
    * to sandcastle's HEAD default.
    */
   fetchBase?(base: string): Promise<void>;
+  /**
+   * Adapter-side guard for sandcastle's named-branch reuse path. After
+   * `fetchBase()` refreshes `origin/<base>`, remove stale local worker state
+   * before `runAgent()` so red-castle must recreate the worker branch from
+   * `baseRef` instead of reusing a branch whose merge-base predates the fresh
+   * base tip. `force` is true for a retry after a prior merge-conflict terminal;
+   * non-conflict retries still get a stale-merge-base check inside the runtime
+   * implementation, preserving same-run reuse when the branch is already current.
+   */
+  prepareFreshWorkerBranch?(input: { branch: string; baseRef: string; force: boolean }): Promise<boolean | void>;
 }
 
 /** Injected lookups the composed deciders need (issue body for the pin, the
@@ -260,6 +270,14 @@ function remoteTrackingBaseRef(remote: string, base: string): string {
     return base;
   }
   return `${remote}/${base}`;
+}
+
+function isMergeConflictRetry(priorAttemptContext: string | undefined): boolean {
+  if (!priorAttemptContext) return false;
+  const marker = "prev-failure-reason:";
+  const idx = priorAttemptContext.indexOf(marker);
+  const failureReason = idx === -1 ? priorAttemptContext : priorAttemptContext.slice(idx + marker.length);
+  return /\bmerge-conflict\b/.test(failureReason);
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -1312,6 +1330,11 @@ export async function processIssue(
   // uses the freshly-fetched ref, not the potentially-stale local branch.
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
   const baseRef = remoteTrackingBaseRef(input.remote, base);
+  await deps.git.prepareFreshWorkerBranch?.({
+    branch,
+    baseRef,
+    force: isMergeConflictRetry(priorAttemptContext),
+  });
   // Pin to a sandcastle-backed runner. claude/codex/opencode (ADR 0059) +
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
