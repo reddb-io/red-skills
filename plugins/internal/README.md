@@ -15,6 +15,16 @@ Per ADR 0067, installed plugins do not imply activation. This plugin must not
 create or edit `.red/`; `/setup-red-skills` remains the only RedSkills bootstrap
 path that creates project configuration.
 
-The initial `bootstrap` skill is intentionally a no-op placeholder so the
-marketplace install path is demoable end-to-end before real maintainer skills
-accumulate here.
+## Skills
+
+- `bootstrap` confirms the internal plugin is installed and enabled for the
+  current repository.
+- `create-plugin` scaffolds new repository plugins with both host manifests, a
+  seed skill, README, CHANGES stub, structural smoke script, and marketplace
+  entries.
+
+## Contract Changes
+
+Change `create-plugin` before changing the plugin marketplace contract. New
+plugins are born from that scaffold, so contract drift should appear first in
+the generator and its acceptance test.
