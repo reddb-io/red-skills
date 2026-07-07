@@ -217,6 +217,8 @@ export interface ClaimedIssue {
   /** Most recent commit epoch across this issue's live attempt branches. When
    * recent enough, it proves active progress even if the claim marker is old. */
   attemptBranchCommitS?: number;
+  /** Claim owners proven dead on this host by their per-worker `worker.pid`. */
+  deadOwners?: readonly string[];
 }
 
 /** A planned release: the issue to return to the executable pool + the stale
@@ -238,6 +240,15 @@ export function renderStaleClaimSweepAudit(staleOwners: readonly string[]): stri
   );
 }
 
+/** Render the audit comment for an immediate same-host ghost-claim release. */
+export function renderDeadClaimSweepAudit(staleOwners: readonly string[]): string {
+  const who = staleOwners.map((w) => `\`${w}\``).join(", ");
+  return (
+    `🤖 AFK same-host ghost-claim sweep: released this issue back to \`ready-for-agent\` — ` +
+    `${staleOwners.length === 1 ? "the claim" : "the claims"} held by ${who} had a dead \`worker.pid\`.`
+  );
+}
+
 /**
  * Plan which claimed issues to release back to the executable pool (pure). An
  * issue is released ONLY when it has at least one stale claim AND no LIVE claim
@@ -254,9 +265,11 @@ export function planStaleClaimSweep(
   const isStale = makeStaleClaimPredicate(nowS, config);
   const releases: StaleClaimRelease[] = [];
   for (const c of claimed) {
-    const state = classifyIssueClaims(c.records, isStale);
+    const deadOwners = new Set(c.deadOwners ?? []);
+    const state = classifyIssueClaims(c.records, (record) => deadOwners.has(record.worker) || isStale(record));
     if (state.liveOwner === null && state.staleOwners.length > 0) {
-      if (isRecentAttemptCommit(c.attemptBranchCommitS, nowS, config.recentCommitProtectionS)) continue;
+      const hasDeadOwner = state.staleOwners.some((owner) => deadOwners.has(owner));
+      if (!hasDeadOwner && isRecentAttemptCommit(c.attemptBranchCommitS, nowS, config.recentCommitProtectionS)) continue;
       releases.push({ issue: c.issue, staleOwners: state.staleOwners });
     }
   }
