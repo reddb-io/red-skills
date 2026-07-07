@@ -198,6 +198,8 @@ function harness(opts: HarnessOptions = {}): {
       trace.firedHooks.push(name);
       return true;
     },
+    makeRebaseWorktree: async () => "/rwt",
+    removeRebaseWorktree: async () => {},
     nowEpoch: () => 1000,
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
