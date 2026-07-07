@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   branchExists,
   fetchBranch,
   changedFiles,
+  prepareFreshWorkerBranch,
   worktreePathForBranch,
   worktreePathUnder,
   salvageUncommitted,
@@ -28,6 +34,15 @@ function recordingExec(
 
 const ok = (stdout = ""): ExecOutput => ({ code: 0, stdout, stderr: "" });
 const fail = (code = 1): ExecOutput => ({ code, stdout: "", stderr: "" });
+const execFileP = promisify(execFile);
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileP("git", args, {
+    cwd,
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return stdout.trim();
+}
 
 describe("branchExists (FIX E)", () => {
   it("returns true when rev-parse --verify finds the local ref", async () => {
@@ -64,6 +79,82 @@ describe("fetchBranch (FIX E recovery)", () => {
     const ctx: GitContext = { cwd: "/repo", exec };
     await fetchBranch(ctx, "");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("prepareFreshWorkerBranch (merge-conflict retry freshness)", () => {
+  it("removes stale local and tracking state so the retry branch is recreated from the moved base tip", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fresh-worker-"));
+    const origin = join(root, "origin.git");
+    const repo = join(root, "repo");
+    const staleWt = join(root, "stale-wt");
+    const retryWt = join(root, "retry-wt");
+    const branch = "afk/w1213/9-conflict";
+
+    try {
+      await git(root, ["init", "--bare", "--initial-branch=main", origin]);
+      await git(root, ["clone", origin, repo]);
+      await git(repo, ["config", "user.email", "agent@example.test"]);
+      await git(repo, ["config", "user.name", "Agent"]);
+
+      await writeFile(join(repo, "base.txt"), "base one\n");
+      await git(repo, ["add", "base.txt"]);
+      await git(repo, ["commit", "-m", "base one"]);
+      await git(repo, ["push", "-u", "origin", "main"]);
+
+      await git(repo, ["checkout", "-b", branch]);
+      await writeFile(join(repo, "attempt.txt"), "stale attempt\n");
+      await git(repo, ["add", "attempt.txt"]);
+      await git(repo, ["commit", "-m", "stale attempt"]);
+      await git(repo, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+      await git(repo, ["checkout", "main"]);
+      await git(repo, ["worktree", "add", staleWt, branch]);
+
+      await writeFile(join(repo, "base.txt"), "base two\n");
+      await git(repo, ["add", "base.txt"]);
+      await git(repo, ["commit", "-m", "base two"]);
+      await git(repo, ["push", "origin", "main"]);
+      await git(repo, ["fetch", "origin", "main"]);
+      const movedBaseTip = await git(repo, ["rev-parse", "origin/main"]);
+
+      await expect(
+        prepareFreshWorkerBranch({ cwd: repo }, { branch, baseRef: "origin/main", remote: "origin", force: true }),
+      ).resolves.toBe(true);
+
+      await expect(git(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).rejects.toThrow();
+      await expect(
+        git(repo, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]),
+      ).rejects.toThrow();
+      await expect(git(repo, ["ls-remote", "--exit-code", "--heads", "origin", branch])).rejects.toThrow();
+
+      await git(repo, ["worktree", "add", "-b", branch, retryWt, "origin/main"]);
+      const retryMergeBase = await git(repo, ["merge-base", branch, "origin/main"]);
+      expect(retryMergeBase).toBe(movedBaseTip);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a current branch alone when its merge-base is already the base tip", async () => {
+    const { exec, calls } = recordingExec((_cmd, args) => {
+      const joined = args.join(" ");
+      if (joined === "rev-parse --verify --quiet origin/main") return ok("base-tip\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/afk/w/1-current") return ok("branch-tip\n");
+      if (joined === "rev-parse --verify --quiet refs/remotes/origin/afk/w/1-current") return fail();
+      if (joined === "worktree list --porcelain") return ok("");
+      if (joined === "merge-base afk/w/1-current origin/main") return ok("base-tip\n");
+      return ok("");
+    });
+
+    await expect(
+      prepareFreshWorkerBranch(
+        { cwd: "/repo", exec },
+        { branch: "afk/w/1-current", baseRef: "origin/main", remote: "origin", force: false },
+      ),
+    ).resolves.toBe(false);
+
+    expect(calls.some((c) => c.includes("update-ref"))).toBe(false);
+    expect(calls.some((c) => c.includes("-D"))).toBe(false);
   });
 });
 
