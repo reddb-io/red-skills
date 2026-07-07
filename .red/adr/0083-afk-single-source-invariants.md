@@ -74,6 +74,28 @@ local merge into the locked branch (ADR 0030/0031) is replaced by a push to
 its base/target semantics — only the write moves from the primary checkout to
 the remote.
 
+#### Amendment (2026-07-07): the guarded post-merge fast-forward
+
+The original "no primary write" rule left a repo running
+`lock.primary-branch: true` with a local base that **derives behind origin every
+session** — the maintainer was expected to "promote by pulling", and in practice
+never did (observed 415 commits behind, most of it fleet-landed work). Because
+AFK worker worktrees fork from the primary's **local** `<base>`, the next slice
+then branches from a stale base and silently fails validation on fixes that only
+landed on origin.
+
+So §2 is relaxed for exactly one operation: after a **successful** landing, the
+finalizer advances the primary's local `<base>` to the merged origin tip via
+`fastForwardLocalTarget` (`apps/dev/src/core/merge.ts`), for **both** lock
+states. The §2 **safety intent** — never eat primary WIP (the #1019 failure) — is
+preserved by making that promotion a guaranteed no-op on any primary it must not
+touch: it runs only when the primary is **on** `<base>`, its working tree is
+**clean**, and the local `<base>` is a **strict ancestor** of the remote tip; it
+uses `merge --ff-only` only — never `reset`, `rebase`, or a `--no-ff` merge
+commit. A destructive write to the primary remains a hard failure. Net: the
+letter ("no primary write") is narrowed, the intent ("no landing destroys the
+operator's WIP") is unchanged.
+
 ### 3. Liveness lane (owner: red-castle)
 
 Red-castle exposes the canonical "is this attempt alive" signal:

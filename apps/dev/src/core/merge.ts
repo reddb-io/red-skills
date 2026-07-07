@@ -519,12 +519,12 @@ export interface LandPrInput {
   /** Worktree dir to force-push the attempt branch from; skipped when absent. */
   worktree?: string;
   /**
-   * Untouchable primary (ADR 0083 §2, #1019). When the landing is LOCKED, the
-   * primary checkout is read-only with NO exceptions — including the branch-lock
-   * landing — so the step-4 best-effort local fast-forward of `<target>` is
-   * SKIPPED: the integration lands on `origin/<target>` (the admin-merge is
-   * remote) and the maintainer promotes by pulling. Absent/false (the UNLOCKED
-   * default) keeps the local fast-forward unchanged (issue #1019 criterion 3).
+   * Session lock state, retained for caller compatibility and result
+   * observability. It no longer gates the step-4 local fast-forward (ADR 0083 §2
+   * amended): {@link fastForwardLocalTarget} now promotes the primary for both
+   * lock states, guarded so it is a guaranteed no-op on any primary it must not
+   * touch — the #1019 WIP-eating failure mode stays impossible without keeping a
+   * locked repo's local base permanently stale.
    */
   locked?: boolean;
   /**
@@ -574,6 +574,53 @@ export interface LandPrResult {
 const PR_BODY_PREFIX = "Automated AFK landing for #";
 
 /**
+ * Best-effort, non-destructive fast-forward of the primary checkout's local
+ * `<target>` to `<remote>/<target>` after a successful landing. This is the
+ * post-merge promotion the operator would otherwise do by hand: without it a
+ * repo running `lock.primary-branch: true` leaves local `main` deriving *behind*
+ * origin every session (observed 415 commits behind), and because AFK worker
+ * worktrees fork from the primary's LOCAL `main`, the next slice branches from
+ * that stale base and silently fails validation on fixes that only landed on
+ * origin. ADR 0083 §2's amendment (2026-07-07) documents the carve-out.
+ *
+ * Runs for BOTH lock states (ADR 0083 §2 amended). The §2 invariant existed to
+ * stop a landing from EATING primary WIP (#1019's pre-merge snapshot). That
+ * SAFETY intent is preserved here — this can never touch a dirty or diverged
+ * primary — while its literal "no primary write, no exceptions" is relaxed so
+ * locked repos stop rotting their local base:
+ *   1. no-op unless the primary is actually ON `<target>` (a locked primary is
+ *      pinned to main; if the human moved HEAD, leave it alone);
+ *   2. no-op if the working tree is DIRTY (uncommitted WIP is sacred, #1019);
+ *   3. no-op unless local `<target>` is a strict ancestor of the remote tip
+ *      (a 0-ahead pure fast-forward — an ahead/diverged local never gets a
+ *      merge commit or a reset);
+ *   4. `merge --ff-only` only — never `reset`, never `--no-ff`.
+ * Every git call is best-effort; any non-zero exit leaves the primary untouched.
+ */
+export async function fastForwardLocalTarget(
+  exec: Exec,
+  input: { gitRepo: string; remote: string; target: string },
+): Promise<void> {
+  const { gitRepo, remote, target } = input;
+  // 1. Only advance the branch the operator is actually on.
+  const head = await exec(["git", "-C", gitRepo, "symbolic-ref", "--short", "HEAD"]);
+  if (head.code !== 0 || head.stdout.trim() !== target) return;
+  // 2. A dirty primary keeps pending WIP — never write over it (#1019).
+  const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
+  if (status.code !== 0 || status.stdout.trim() !== "") return;
+  // Refresh the remote ref so the ancestry test and the FF see the merge.
+  await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
+  // 3. Pure fast-forward only: local <target> must be an ancestor of the tip.
+  const ancestor = await exec([
+    "git", "-C", gitRepo,
+    "merge-base", "--is-ancestor", target, `${remote}/${target}`,
+  ]);
+  if (ancestor.code !== 0) return;
+  // 4. Advance the pointer. ff-only can only succeed as a pure fast-forward.
+  await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
+}
+
+/**
  * UNLOCKED landing (ADR 0030): land the attempt via a PR into `<target>`. Steps
  * mirror land_pr in afk.sh:
  *   1. force-push the attempt branch to `<remote>` (when a worktree is given);
@@ -585,7 +632,10 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, locked, onPrResolved } = input;
+  // `locked` (LandPrInput) is no longer read here: step 4 promotes the primary
+  // for both lock states via the hardened fastForwardLocalTarget, which is a
+  // guaranteed no-op on any primary it must not touch.
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -644,16 +694,12 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   const merge = await exec(mergeArgs);
   if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
 
-  // 4. Fast-forward local <target> to the merge commit (best-effort) — UNLOCKED
-  // ONLY. A LOCKED landing must never write to the primary checkout (ADR 0083 §2,
-  // untouchable primary, no exceptions — including the branch-lock landing): the
-  // integration already lives on `origin/<target>` after the remote merge,
-  // and the maintainer promotes by pulling, so the primary's local `<target>` is
-  // left untouched. The UNLOCKED path keeps its fast-forward (issue #1019 crit. 3).
-  if (!locked) {
-    await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
-    await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
-  }
+  // 4. Promote the primary's local <target> to the freshly merged origin tip —
+  // for BOTH lock states now (ADR 0083 §2 amended). Hardened so it can never
+  // touch a dirty or diverged primary, so a locked repo no longer leaves local
+  // main deriving behind origin while its worker worktrees keep forking from
+  // that stale base (see fastForwardLocalTarget).
+  await fastForwardLocalTarget(exec, { gitRepo, remote, target });
 
   return { ok: true, prNumber };
 }

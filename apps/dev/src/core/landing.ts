@@ -27,6 +27,7 @@
 // result (`mergeSha`) since the primary HEAD no longer advances.
 
 import {
+  fastForwardLocalTarget,
   integrateOrigin,
   landMerge,
   landPr,
@@ -616,6 +617,11 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
         return { ok: false, reason: "land-failed", locked: input.locked };
       }
       const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+      // Promote the primary's local <base> to the just-pushed origin tip — the
+      // direct path lands entirely in the worktree, so without this the primary
+      // never advances and its local base rots (ADR 0083 §2 amended). The helper
+      // is a guaranteed no-op on any primary it must not touch.
+      await fastForwardLocalTarget(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
       return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
     }
 
@@ -667,6 +673,9 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // The merge commit lives on the worktree's HEAD (and now origin/<base>); the
     // primary HEAD did not advance, so carry the landed sha back for the close.
     const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+    // Best-effort promote the primary's local <base> to the merged origin tip
+    // (ADR 0083 §2 amended) — guarded to never touch a dirty or diverged primary.
+    await fastForwardLocalTarget(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
     return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
   } finally {
     await deps.removeLandingWorktree?.(landDir);

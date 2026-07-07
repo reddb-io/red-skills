@@ -42,6 +42,13 @@ interface Harness {
 interface Opts {
   locked?: boolean;
   /**
+   * Make the primary checkout's working tree DIRTY (`git status --porcelain`
+   * returns a modified path). Drives the fastForwardLocalTarget WIP guard: a
+   * dirty primary must skip the post-merge promotion (ADR 0083 §2's #1019
+   * safety intent), even though §2's literal no-write rule is relaxed.
+   */
+  dirtyPrimary?: boolean;
+  /**
    * Landing MODE (#842), decoupled from the lock. Defaults to `!locked` so the
    * pre-#842 coupling is preserved for the existing path tests (locked → direct,
    * unlocked → PR); the (lock × flag) matrix suite below sets it explicitly to
@@ -125,6 +132,14 @@ function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      // fastForwardLocalTarget probes (ADR 0083 §2 amended): the primary sits on
+      // <base>, and its tree is clean unless the test opts into dirtyPrimary.
+      if (j.includes("symbolic-ref --short HEAD")) {
+        return { code: 0, stdout: `${input.base}\n`, stderr: "" };
+      }
+      if (j.includes("status --porcelain")) {
+        return { code: 0, stdout: opts.dirtyPrimary ? " M apps/dev/src/x.ts\n" : "", stderr: "" };
+      }
       if (j.includes("merge-base --is-ancestor origin/")) {
         return { code: opts.branchTip ? 0 : 1, stdout: "", stderr: "" };
       }
@@ -691,15 +706,19 @@ describe("doLanding — locked conflict self-resolve", () => {
 describe("doLanding — the primary checkout is sacred (#572)", () => {
   // Acceptance: a push-reject rollback never `git reset --hard`s the primary
   // working tree, and primary WIP survives a failed land. The locked merge/push/
-  // rollback all run in the isolated worktree (`/wt`); the ONLY `git -C /repo`
-  // touch is the non-destructive attempt-branch push (via remoteGit).
+  // rollback all run in the isolated worktree (`/wt`). The one allowed `git -C
+  // /repo` write is the guarded post-merge ff-only promotion (ADR 0083 §2
+  // amended); a DESTRUCTIVE op (reset, rebase, or a `--no-ff` merge commit) must
+  // never target the primary checkout.
   function assertPrimaryUntouched(h: Harness): void {
     const primaryOps = h.mergeCalls.filter((c) => c.includes("-C") && c.includes("/repo"));
-    // No destructive op ever targets the primary checkout.
     for (const op of primaryOps) {
       expect(op.includes("reset")).toBe(false);
-      expect(op.includes("merge")).toBe(false);
       expect(op.includes("rebase")).toBe(false);
+      // `merge` element (not `merge-base`) is allowed only as a pure ff.
+      if (op.includes("merge")) {
+        expect(op.includes("--ff-only")).toBe(true);
+      }
     }
   }
 
@@ -980,51 +999,69 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   });
 });
 
-describe("doLanding — untouchable primary in the LOCKED landing (ADR 0083 §2, #1019)", () => {
-  // ADR 0083 §2: the primary checkout is READ-ONLY for agents, with NO exceptions
-  // — including the branch-lock landing. The integrated result reaches the
-  // maintainer only via `origin/<locked-branch>`; the maintainer promotes by
-  // pulling. So NO landing path may run a git WRITE verb against the primary
-  // (`git -C /repo`). The only legitimate `git -C /repo` touches are the
-  // read-only precondition probes (fetch a remote ref, rev-parse, merge-base).
-  const WRITE_VERBS = new Set(["merge", "reset", "rebase", "checkout", "switch", "commit", "cherry-pick"]);
-  /** Every `git -C /repo …` call carrying a mutating verb (`merge --ff-only`
-   * included; the read-only `merge-base` token is deliberately NOT `merge`). */
-  function primaryWrites(h: Harness): string[] {
+describe("doLanding — primary promotion is a guarded fast-forward only (ADR 0083 §2 amended, #1019)", () => {
+  // ADR 0083 §2 (amended): a landing may now advance the primary's local <base>
+  // to the freshly merged origin tip — for LOCKED landings too — via the
+  // hardened fastForwardLocalTarget, so a locked repo's local base stops rotting
+  // and the next worker forks a fresh base. The §2 SAFETY intent is preserved:
+  // the ONLY primary write any landing path may issue is `merge --ff-only`, and
+  // never on a dirty or diverged primary. A DESTRUCTIVE verb against `/repo`
+  // (`merge --no-ff`, reset, rebase, checkout, switch, commit, cherry-pick)
+  // remains categorically forbidden.
+  const DESTRUCTIVE_VERBS = new Set(["reset", "rebase", "checkout", "switch", "commit", "cherry-pick"]);
+  /** `git -C /repo …` calls that mutate primary content beyond a pure ff — the
+   * forbidden set. `merge --ff-only` is the one allowed primary write, so a
+   * `merge` token counts only when it is NOT `--ff-only`. */
+  function destructivePrimaryWrites(h: Harness): string[] {
     return h.mergeCalls
       .filter((argv) => {
         const i = argv.indexOf("/repo");
-        return i >= 1 && argv[i - 1] === "-C" && argv.some((tok) => WRITE_VERBS.has(tok));
+        if (i < 1 || argv[i - 1] !== "-C") return false;
+        const destructiveMerge = argv.includes("merge") && !argv.includes("--ff-only");
+        return destructiveMerge || argv.some((tok) => DESTRUCTIVE_VERBS.has(tok));
       })
       .map((argv) => argv.join(" "));
   }
 
-  it("locked + PR (default flag) → admin-merges remotely, NEVER fast-forwards the primary's local lock branch", async () => {
+  it("locked + PR (default flag) → admin-merges remotely AND guard-fast-forwards the primary's local lock branch", async () => {
     const h = harness({ locked: true, openPr: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true });
     const j = joined(h.mergeCalls);
-    // The PR is admin-merged remotely — the integration lands on origin, not local.
+    // The PR is admin-merged remotely — the integration lands on origin.
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
-    // The step-4 best-effort local fast-forward of the primary's lock branch is GONE.
-    expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
-    expect(j.some((c) => c.includes("git -C /repo fetch origin feature-locked"))).toBe(false);
-    // No landing path wrote to the primary checkout.
-    expect(primaryWrites(h)).toEqual([]);
+    // The guarded promotion now advances the primary's local lock branch too.
+    expect(j).toContain("git -C /repo merge --ff-only origin/feature-locked");
+    // …but no destructive write ever touches the primary.
+    expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
-  it("locked + direct → integrates/merges/pushes only in the isolated worktree, primary write-free", async () => {
+  it("locked + PR on a DIRTY primary → skips the promotion (WIP is sacred, #1019)", async () => {
+    const h = harness({ locked: true, openPr: true, dirtyPrimary: true });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true });
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    // The dirty-tree guard makes the promotion a no-op — the primary is untouched.
+    expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
+    expect(destructivePrimaryWrites(h)).toEqual([]);
+  });
+
+  it("locked + direct → merges/pushes in the worktree, then guard-fast-forwards the primary", async () => {
     const h = harness({ locked: true, openPr: false });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     // The integrated result reaches the maintainer on origin/<lock-branch>.
     expect(joined(h.mergeCalls)).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
-    expect(primaryWrites(h)).toEqual([]);
+    // The primary's local lock branch is promoted by the guarded ff, nothing more.
+    expect(joined(h.mergeCalls)).toContain("git -C /repo merge --ff-only origin/feature-locked");
+    expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
-  it("locked + direct conflict self-resolve stays in the worktree, primary write-free", async () => {
+  it("locked + direct conflict self-resolve stays in the worktree, primary destructive-write-free", async () => {
     const h = harness({ locked: true, openPr: false, mergeNoFfCode: 1, conflictResolve: "resolve" });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
@@ -1032,7 +1069,7 @@ describe("doLanding — untouchable primary in the LOCKED landing (ADR 0083 §2,
     // The resolver ran in the worktree, and the resolved lock branch pushed from it.
     expect(h.resolverCwds).toEqual([WT]);
     expect(joined(h.mergeCalls)).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
-    expect(primaryWrites(h)).toEqual([]);
+    expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
   it("UNLOCKED PR landing is unchanged — still fast-forwards the primary's local main (criterion 3)", async () => {
