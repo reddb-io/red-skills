@@ -56,7 +56,12 @@ import {
   type ValidationScope,
   type WorkspaceGraph,
 } from "./validation-scope.js";
-import { runBackpressure, type BackpressureExec } from "./backpressure.js";
+import {
+  runBackpressure,
+  renderBackpressureReviewBody,
+  type BackpressureExec,
+  type BackpressureCheck,
+} from "./backpressure.js";
 import { runPostAttemptFormat, type PostAttemptFormatExec } from "./post-attempt-format.js";
 import {
   openReviewPr,
@@ -356,6 +361,17 @@ export interface ProcessIssueDeps {
    * scope-derived feedback gate; it does not replace it.
    */
   backpressureCommands?: readonly string[];
+  /**
+   * Non-blocking backpressure evidence review seam (issue #1279). When present,
+   * the engine posts ONE aggregated `event: COMMENT` PR review rendering the
+   * executed backpressure checks (positive AND negative) as a legible ledger on
+   * the AFK/go PR — purely additive observability. Optional → absent means no
+   * review is ever posted (today's behaviour) and the merge/park decision is
+   * unaffected either way. Bound in production to {@link ReviewGh.postReview}
+   * (event COMMENT), so it can never carry APPROVE/REQUEST_CHANGES gate
+   * semantics or trip GitHub's self-review restriction.
+   */
+  postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   /**
    * `/go` only: bounded number of post-DONE machine-gate correction attempts.
    * The initial DONE validation is not counted; a value of 2 allows two
@@ -2148,6 +2164,11 @@ export async function processIssue(
         now: deps.nowEpoch,
       });
       backpressureSidecar = backpressure.sidecar;
+      // Capture the checks so the landing/handoff paths can render the
+      // non-blocking evidence ledger (#1279) once the PR number is known. This is
+      // observability only — the merge/park decision below stays owned by
+      // `backpressure.ok` and is unchanged by capturing the checks here.
+      common.backpressureChecks = backpressure.checks;
       if (!backpressure.ok) {
         // Persist BOTH gates' records (feedback passed, backpressure failed) for
         // Memory, but surface only the failing backpressure records in the envelope.
@@ -2222,6 +2243,11 @@ export async function processIssue(
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
+      // Non-blocking backpressure evidence review (#1279): fired by the PR-landing
+      // path the moment the PR number is resolved (before the merge), so the
+      // aggregated COMMENT ledger lands on the open PR. Best-effort + fully
+      // decoupled — it never affects whether or how the PR merges.
+      onPrResolved: (pr) => emitBackpressureReview(common, pr),
       // Sensitive-path guard (issue #1102): diff the worker branch against the
       // resolved base before landing. Uses three-dot notation so the diff reflects
       // only what this branch changed, not the entire base history.
@@ -2513,6 +2539,35 @@ interface StageCommon {
   modelTier: AfkModelTier;
   model?: string;
   effort?: AgentEffort;
+  /**
+   * Backpressure checks that ran on the DONE path (issue #1279), captured so the
+   * downstream landing/handoff paths can render the non-blocking evidence ledger
+   * once the PR number is known. Absent/empty → nothing to post.
+   */
+  backpressureChecks?: readonly BackpressureCheck[];
+}
+
+/**
+ * Post the aggregated, NON-BLOCKING backpressure evidence review (issue #1279)
+ * on the PR once its number is known. Best-effort observability that is fully
+ * DECOUPLED from the merge/park decision: no seam / no PR / empty ledger → a
+ * no-op, and ANY posting failure is swallowed so it can never change or block a
+ * landing. Reuses the injected {@link ProcessIssueDeps.postBackpressureReview}
+ * seam (bound to the `event: COMMENT` review surface in production).
+ */
+async function emitBackpressureReview(
+  c: StageCommon,
+  prNumber: number | undefined,
+): Promise<void> {
+  const { deps } = c;
+  if (prNumber === undefined || !deps.postBackpressureReview) return;
+  const body = renderBackpressureReviewBody(c.backpressureChecks ?? []);
+  if (body === null) return;
+  try {
+    await deps.postBackpressureReview(prNumber, body);
+  } catch {
+    // Best-effort: the ledger is audit-only — never fail or alter the landing.
+  }
 }
 
 /** Emit a failure-family envelope (blocked / no-sentinel / merge-conflict /
@@ -3127,6 +3182,11 @@ async function handoffForReview(
     return await mergeFailed(c, "review-pr-open-failed");
   }
 
+  // Non-blocking backpressure evidence review (#1279): the review-gate handoff
+  // opened a PR that stays OPEN for the fresh-agent review — attach the ledger so
+  // the checks are visible before the human/agent merge. Best-effort, decoupled.
+  await emitBackpressureReview(c, opened.prNumber);
+
   // Park for the review→merge flow: drop running, add ready-for-human.
   // `review-requested` carries no typed `blocked:*` label (it is a handoff, not a
   // failure), so editLabelsTagged appends nothing extra to the routing labels.
@@ -3190,6 +3250,11 @@ async function handoffForManualLanding(
   if (!opened.ok) {
     return await mergeFailed(c, "manual-landing-pr-open-failed");
   }
+
+  // Non-blocking backpressure evidence review (#1279): manual landing leaves the
+  // PR OPEN for a human's final merge click — attach the ledger so the executed
+  // checks are visible on it. Best-effort, decoupled from the (held) merge.
+  await emitBackpressureReview(c, opened.prNumber);
 
   const prRef = opened.prNumber !== undefined ? `PR #${opened.prNumber}` : "the open PR";
   const prUrl = opened.prNumber !== undefined ? `https://github.com/${input.repo}/pull/${opened.prNumber}` : undefined;
