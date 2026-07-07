@@ -844,6 +844,8 @@ export function buildProcessDeps(
       fetchBase: async (base) => {
         await gitx.gitExec(gitCtx)(["fetch", ctx.remote, base]);
       },
+      prepareFreshWorkerBranch: (input) =>
+        gitx.prepareFreshWorkerBranch(gitCtx, { ...input, remote: ctx.remote }),
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
