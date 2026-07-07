@@ -114,6 +114,61 @@ export async function fetchBranch(ctx: GitContext, branch: string): Promise<void
   await runGit(ctx, ["fetch", "origin", branch]);
 }
 
+export interface FreshWorkerBranchInput {
+  branch: string;
+  baseRef: string;
+  remote?: string;
+  force?: boolean;
+}
+
+/**
+ * Remove stale sandcastle worker-branch state before a retry enters `runAgent`.
+ *
+ * red-castle's named-branch collision path reuses an existing managed worktree
+ * and only fast-forwards it from `origin/<branch>`; it does not re-parent that
+ * branch onto a freshly-fetched `origin/<base>`. For a merge-conflict retry, or
+ * any branch whose merge-base with `baseRef` is not the current base tip, AFK
+ * must clear the local worktree + refs so red-castle's `baseBranch` creation path
+ * is used again. The prior diff is preserved by the attempt snapshot ref, not by
+ * the live retry branch.
+ */
+export async function prepareFreshWorkerBranch(
+  ctx: GitContext,
+  input: FreshWorkerBranchInput,
+): Promise<boolean> {
+  const branch = input.branch.trim();
+  const baseRef = input.baseRef.trim();
+  const remote = input.remote?.trim() || "origin";
+  if (!branch || !baseRef) return false;
+
+  const base = await runGit(ctx, ["rev-parse", "--verify", "--quiet", baseRef]);
+  const baseTip = base.code === 0 ? base.stdout.trim() : "";
+  if (!baseTip) return false;
+
+  const worktreePath = await worktreePathForBranch(ctx, branch);
+  const localBranchExists = await branchExists(ctx, branch);
+  const remoteTrackingRef = `refs/remotes/${remote}/${branch}`;
+  const remoteTracking = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteTrackingRef]);
+  const remoteTrackingExists = remoteTracking.code === 0 && remoteTracking.stdout.trim() !== "";
+
+  const compareRef = localBranchExists ? branch : remoteTrackingExists ? `${remote}/${branch}` : undefined;
+  let stale = false;
+  if (compareRef) {
+    const mergeBase = await runGit(ctx, ["merge-base", compareRef, baseRef]);
+    stale = mergeBase.code !== 0 || mergeBase.stdout.trim() !== baseTip;
+  }
+
+  const hasReusableState = Boolean(worktreePath || localBranchExists || remoteTrackingExists);
+  const shouldClean = input.force ? hasReusableState : stale;
+  if (!shouldClean) return false;
+
+  if (worktreePath) await worktreeRemove(ctx, worktreePath);
+  if (localBranchExists) await deleteLocalBranch(ctx, branch);
+  if (remoteTrackingExists) await runGit(ctx, ["update-ref", "-d", remoteTrackingRef]);
+  await runGit(ctx, ["push", remote, "--delete", branch]);
+  return true;
+}
+
 /**
  * Has the worker branch ALREADY landed in `<base>`? — the own-merge signal for
  * the goal predicate (ADR 0057). When the attempt-guard poll observes the claimed
