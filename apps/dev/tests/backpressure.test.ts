@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  BACKPRESSURE_REVIEW_HEADER,
   DEFAULT_BACKPRESSURE_TIMEOUT_MS,
+  renderBackpressureReviewBody,
   runBackpressure,
+  type BackpressureCheck,
   type BackpressureExec,
 } from "../src/core/backpressure.js";
 import { KILLED_EXIT_CODE } from "../src/runtime/exec.js";
@@ -183,5 +186,62 @@ describe("runBackpressure", () => {
     expect(hung?.record.summary).toBe("command timed out after 250ms");
     // The earlier command still passed — only the hung one blocks.
     expect(result.checks.find((c) => c.name === "backpressure:npm run test")?.status).toBe("passed");
+  });
+});
+
+describe("renderBackpressureReviewBody (#1279)", () => {
+  /** Build a minimal {@link BackpressureCheck} for the rendering tests. */
+  function check(command: string, status: "passed" | "failed", summary?: string): BackpressureCheck {
+    return {
+      name: `backpressure:${command}`,
+      command,
+      status,
+      record: { schema: "red.afk.validation.v1", name: `backpressure:${command}`, status, summary },
+    };
+  }
+
+  it("renders NOTHING (null) for an empty check list — an empty ledger is never a review", () => {
+    expect(renderBackpressureReviewBody([])).toBeNull();
+  });
+
+  it("aggregates mixed pass/fail into ONE body with the correct per-check lines", () => {
+    const body = renderBackpressureReviewBody([
+      check("npm run test", "passed"),
+      check("npm run lint", "failed", "lint broke here"),
+      check("npm run build", "passed"),
+    ]);
+
+    // Header states, in-band, that the ledger is non-blocking observability.
+    expect(body).not.toBeNull();
+    const lines = (body as string).split("\n");
+    expect(lines[0]).toBe(BACKPRESSURE_REVIEW_HEADER);
+    expect(BACKPRESSURE_REVIEW_HEADER).toContain("non-blocking");
+    expect(BACKPRESSURE_REVIEW_HEADER).toContain("unchanged");
+    // Both positive and negative checks are included, one line each, in order.
+    expect(lines).toContain("✅ backpressure:npm run test");
+    expect(lines).toContain("❌ backpressure:npm run lint → lint broke here");
+    expect(lines).toContain("✅ backpressure:npm run build");
+    // ONE aggregated body — a single COMMENT review, never one per check.
+    expect(lines.filter((l) => l.startsWith("✅") || l.startsWith("❌"))).toHaveLength(3);
+    // Never carries approve/request-changes gate semantics.
+    expect(body).not.toMatch(/APPROVE|REQUEST_CHANGES/);
+  });
+
+  it("falls back to a generic summary when a failed check carries none", () => {
+    const body = renderBackpressureReviewBody([check("flaky", "failed")]);
+    expect(body).toContain("❌ backpressure:flaky → command failed");
+  });
+
+  it("flows straight from runBackpressure output — passed-only ledger has no ❌ line", async () => {
+    const { exec } = fakeExec();
+    const result = await runBackpressure(exec, {
+      worktree: "/wt",
+      commands: ["npm run test", "npm run lint"],
+      now: fakeClock(),
+    });
+    const body = renderBackpressureReviewBody(result.checks);
+    expect(body).toContain("✅ backpressure:npm run test");
+    expect(body).toContain("✅ backpressure:npm run lint");
+    expect(body).not.toContain("❌");
   });
 });
