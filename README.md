@@ -149,6 +149,19 @@ command-backed statusline. Use `$dev:afk monitor` when the client exposes
 namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
 names.
 
+### Codex Manifest Maintenance
+
+Codex manifests are generated artifacts. Do not hand-edit
+`.agents/plugins/marketplace.json` or `plugins/*/.codex-plugin/plugin.json`.
+Change the Claude-side marketplace/plugin manifests or plugin tree, then run:
+
+```bash
+pnpm codex:manifests
+```
+
+CI runs `pnpm codex:manifests:check` and fails when committed Codex manifests
+drift from the generator output.
+
 ### Manual: OpenCode
 
 OpenCode support is generated from the same plugin source tree as Claude Code

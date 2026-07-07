@@ -45,7 +45,6 @@
     },
     {
       "name": "internal",
-      "description": "Maintainer-only RedSkills repository operations plugin.",
       "source": {
         "source": "local",
         "path": "./plugins/internal"

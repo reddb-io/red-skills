@@ -23,12 +23,12 @@
     "./skills/productivity/",
     "./skills/misc/"
   ],
-  "mcpServers": "./.mcp.json",
   "hooks": "./hooks/codex.hooks.json",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RedSkills Dev",
-    "shortDescription": "Engineering workflow skills for code agents.",
-    "longDescription": "RedSkills Dev provides small, composable engineering skills for planning, triage, TDD, diagnosis, graph-aware codebase understanding with /zoom-out, local knowledge wikis, autonomous GitHub issue execution through /afk, and interactive review-respecting PR finalization through /ship.",
+    "shortDescription": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, interactive /ship finalizer, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
+    "longDescription": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, interactive /ship finalizer, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
@@ -39,10 +39,10 @@
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Run $setup-red-skills for this repo.",
-      "Use $triage on open issues.",
-      "Drain ready issues with $afk.",
-      "Finalize reviewed work with $ship."
+      "Use $afk when this workspace needs it.",
+      "Use $go when this workspace needs it.",
+      "Use $model-tier-policy when this workspace needs it.",
+      "Use $curate when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }

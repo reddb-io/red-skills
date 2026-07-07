@@ -58,24 +58,26 @@ conventional Turborepo layout — `apps/<plugin>/` and `packages/shared/` at the
 repo root — with shared dependency versions consolidated into a pnpm `catalog:`.
 
 Future plugins (e.g. `data`, `ops`) live as additional siblings under
-`plugins/` with their own `.claude-plugin/plugin.json`,
+`plugins/` with their own `.claude-plugin/plugin.json`, generated
 `.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears
-as a separate entry in both marketplace manifests, and any runtime code for it
-lives under `apps/<plugin>/`.
+as a separate entry in the Claude marketplace manifest; the Codex marketplace
+manifest is generated from it. Any runtime code for a plugin lives under
+`apps/<plugin>/`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 
 ## Rules
 
-1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). The owning plugin's `.codex-plugin/plugin.json` must expose the same `skills/` tree. Skills in `in-progress/` appear in neither.
-2. Each entry in `README.md` links the skill name to its `SKILL.md`.
-3. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
-4. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.
-5. Glossary docs use the ADR 0021 multi-context model: `.red/CONTEXT.md` is only
+1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). Skills in `in-progress/` appear in neither.
+2. Codex manifests are generated artifacts. Do not hand-edit `.agents/plugins/marketplace.json` or `plugins/*/.codex-plugin/plugin.json`; change the Claude-side manifests or plugin tree, then run `pnpm codex:manifests`.
+3. Each entry in `README.md` links the skill name to its `SKILL.md`.
+4. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
+5. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.
+6. Glossary docs use the ADR 0021 multi-context model: `.red/CONTEXT.md` is only
    a compatibility pointer to `.red/CONTEXT-MAP.md`; live glossary terms belong
    in `.red/contexts/{dev,memory,brain}/CONTEXT.md`, in the context that owns
    the term.
-6. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
+7. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
 
 ## Plugin activation (ADR 0067)
 

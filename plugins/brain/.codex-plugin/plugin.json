@@ -14,17 +14,17 @@
     "claude-code",
     "skills",
     "agents",
-    "brain",
-    "knowledge",
-    "reddb"
+    "brain"
   ],
-  "skills": "./skills/",
+  "skills": [
+    "./skills/core/"
+  ],
   "hooks": "./hooks/codex.hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RedSkills Brain",
-    "shortDescription": "Project-local RedDB knowledge repository.",
-    "longDescription": "RedSkills Brain creates a project-local RedDB knowledge repository under .red/brain. It captures typed artifacts, stores graph connections, exposes CLI and MCP operations, and initializes automatically when supported agent sessions start in a workspace.",
+    "shortDescription": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+    "longDescription": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
@@ -35,10 +35,10 @@
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Use $capture to save this into the project Brain.",
-      "Search Brain before answering a project-history question.",
-      "Run $status to inspect the project Brain store.",
-      "Run $view to open Brain artifacts and typed connections in red-ui."
+      "Use $capture when this workspace needs it.",
+      "Use $search when this workspace needs it.",
+      "Use $think when this workspace needs it.",
+      "Use $status when this workspace needs it."
     ],
     "brandColor": "#2563EB"
   }

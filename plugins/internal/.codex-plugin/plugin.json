@@ -14,24 +14,27 @@
     "claude-code",
     "skills",
     "agents",
-    "maintainer"
+    "internal"
   ],
-  "skills": "./skills/",
+  "skills": [
+    "./skills/maintainer/"
+  ],
   "interface": {
     "displayName": "RedSkills Internal",
-    "shortDescription": "Maintainer-only RedSkills repository operations.",
-    "longDescription": "RedSkills Internal is a maintainer-only plugin for operating the red-skills repository. It is installable through the normal marketplace flow, but repo activation is strictly gated by plugins.internal.enabled.",
+    "shortDescription": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+    "longDescription": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
       "Interactive",
       "Read",
+      "Write",
       "Shell"
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Run $bootstrap to confirm the internal plugin is enabled for this repo."
+      "Use $bootstrap when this workspace needs it."
     ],
-    "brandColor": "#7C3AED"
+    "brandColor": "#D92D20"
   }
 }
