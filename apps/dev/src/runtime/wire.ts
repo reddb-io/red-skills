@@ -9,7 +9,9 @@
 // actually runs), so `monitor`, `reap`, and an empty `run` never pull the
 // provider subpaths.
 
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -765,7 +767,8 @@ import type { AfkInput, RepoInput } from "../core/statusline.js";
  * default) and threaded into both the writer (statusline command) and the
  * readers (monitor path + stale-marker threshold) so the network cost is paid at
  * most once per TTL, never per render (issue #1178, #1217). */
-export const STATUSLINE_CACHE_TTL_S = 180;
+export const STATUSLINE_CACHE_TTL_S = 900;
+export const STATUSLINE_REFRESH_LOCK_TTL_S = 60;
 
 /**
  * Resolve the effective statusline cache TTL (seconds) with precedence
@@ -815,6 +818,22 @@ interface StatuslineCache {
   ts: number;
 }
 
+type DetachedSpawn = (
+  command: string,
+  args: readonly string[],
+  options: { detached: true; stdio: "ignore"; env: NodeJS.ProcessEnv },
+) => Pick<ChildProcess, "unref">;
+
+export interface StatuslineRefreshSpawnOptions {
+  spawn?: DetachedSpawn;
+  nowS?: number;
+  argv1?: string;
+}
+
+export function statuslineCountCachePath(root: string): string {
+  return join(afkPaths(root).tmpDir, "statusline-cache.json");
+}
+
 function readStatuslineCache(path: string): StatuslineCache | null {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
@@ -830,11 +849,159 @@ function readStatuslineCache(path: string): StatuslineCache | null {
 
 function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void {
   try {
+    mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, JSON.stringify(cache), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
+  }
+}
+
+export function parseGitHubRepoSlugFromRemoteUrl(url: string): string {
+  const trimmed = url.trim();
+  const ssh = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/.exec(trimmed);
+  if (ssh) return ssh[1] ?? "";
+  const https = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(trimmed);
+  if (https) return https[1] ?? "";
+  return "";
+}
+
+function readGitFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+export function inferGitHubRepoSlug(root: string): string {
+  const dotGit = join(root, ".git");
+  const gitMarker = readGitFile(dotGit);
+  const configCandidates = [join(dotGit, "config")];
+  const gitDir = /^gitdir:\s*(.+)$/m.exec(gitMarker)?.[1]?.trim();
+  if (gitDir) {
+    const absoluteGitDir = gitDir.startsWith("/") ? gitDir : join(root, gitDir);
+    configCandidates.push(join(absoluteGitDir, "config"));
+    configCandidates.push(join(absoluteGitDir, "..", "..", "config"));
+  }
+  for (const configPath of configCandidates) {
+    const config = readGitFile(configPath);
+    const origin = /\[remote "origin"\][\s\S]*?\n\s*url\s*=\s*(.+)\n/.exec(`${config}\n`)?.[1];
+    const slug = origin ? parseGitHubRepoSlugFromRemoteUrl(origin) : "";
+    if (slug) return slug;
+  }
+  return "";
+}
+
+function statuslineRefreshLockPath(cachePath: string): string {
+  return `${cachePath}.refresh.lock`;
+}
+
+function releaseStatuslineRefreshLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // best-effort
+  }
+}
+
+function acquireStatuslineRefreshLock(lockPath: string, nowS: number): boolean {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const payload = JSON.stringify({ pid: process.pid, ts: nowS });
+  try {
+    writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
+    return true;
+  } catch {
+    const existing = readStatuslineCache(lockPath);
+    if (existing && nowS - existing.ts < STATUSLINE_REFRESH_LOCK_TTL_S) return false;
+    releaseStatuslineRefreshLock(lockPath);
+    try {
+      writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function applyStatuslineCountCacheLabelDelta(
+  cachePath: string,
+  remove: readonly string[],
+  add: readonly string[],
+  nowS: number = Math.floor(Date.now() / 1000),
+): boolean {
+  const cached = readStatuslineCache(cachePath);
+  if (!cached) return false;
+  const removed = new Set(remove);
+  const added = new Set(add);
+  const deltaFor = (label: string): number => (added.has(label) ? 1 : 0) - (removed.has(label) ? 1 : 0);
+  const queueDelta = deltaFor(LABEL_READY);
+  const humanDelta = deltaFor(LABEL_HUMAN);
+  if (queueDelta === 0 && humanDelta === 0) return false;
+  writeStatuslineCacheAtomic(cachePath, {
+    queue: Math.max(0, cached.queue + queueDelta),
+    human: Math.max(0, cached.human + humanDelta),
+    ts: nowS,
+  });
+  return true;
+}
+
+export async function editLabelsWithStatuslineCache(
+  cachePath: string,
+  edit: () => Promise<boolean>,
+  remove: readonly string[],
+  add: readonly string[],
+): Promise<boolean> {
+  const ok = await edit();
+  if (ok) applyStatuslineCountCacheLabelDelta(cachePath, remove, add);
+  return ok;
+}
+
+export async function refreshStatuslineCountCache(
+  root: string,
+  repo: string = inferGitHubRepoSlug(root),
+  lockPath?: string,
+): Promise<void> {
+  try {
+    const cachePath = statuslineCountCachePath(root);
+    const counts = await ghx.countStatuslineQueueCounts({ cwd: root, repo });
+    writeStatuslineCacheAtomic(cachePath, { ...counts, ts: Math.floor(Date.now() / 1000) });
+  } finally {
+    if (lockPath) releaseStatuslineRefreshLock(lockPath);
+  }
+}
+
+export function startDetachedStatuslineCountRefresh(
+  ctx: RepoContext,
+  options: StatuslineRefreshSpawnOptions = {},
+): boolean {
+  const cachePath = statuslineCountCachePath(ctx.root);
+  const nowS = options.nowS ?? Math.floor(Date.now() / 1000);
+  const lockPath = statuslineRefreshLockPath(cachePath);
+  const repo = ctx.repo || inferGitHubRepoSlug(ctx.root);
+  const argv1 = options.argv1 ?? process.argv[1];
+  if (!repo || !argv1) return false;
+  if (!acquireStatuslineRefreshLock(lockPath, nowS)) return false;
+  try {
+    const child = (options.spawn ?? spawn)(process.execPath, [
+      argv1,
+      "statusline-refresh-counts",
+      ctx.root,
+      "--repo",
+      repo,
+      "--lock",
+      lockPath,
+    ], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, RED_AFK_STATUSLINE_REFRESH_CHILD: "1" },
+    });
+    child.unref();
+    return true;
+  } catch {
+    releaseStatuslineRefreshLock(lockPath);
+    return false;
   }
 }
 
@@ -856,6 +1023,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
 export async function collectStatuslineAfk(
   ctx: RepoContext,
   cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+  refreshOptions: StatuslineRefreshSpawnOptions = {},
 ): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
@@ -946,23 +1114,20 @@ export async function collectStatuslineAfk(
   // GitHub-derived counts with a 180 s (3 min) cache (configurable, #1217) —
   // refreshed before the early-return so queue/human stay current even when the
   // fleet is idle (workers == 0).
-  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const cachePath = statuslineCountCachePath(ctx.root);
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readStatuslineCache(cachePath);
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
 
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
   let refreshSucceeded = false;
   const refresh = async (): Promise<void> => {
-    const [q, h] = await Promise.all([
-      ghx.countReadyForAgent(ghCtx),
-      ghx.countReadyForHuman(ghCtx),
-    ]);
-    queue = q;
-    human = h;
+    const counts = await ghx.countStatuslineQueueCounts(ghCtx);
+    queue = counts.queue;
+    human = counts.human;
     refreshSucceeded = true;
-    writeStatuslineCacheAtomic(cachePath, { queue: q, human: h, ts: nowS });
+    writeStatuslineCacheAtomic(cachePath, { queue, human, ts: nowS });
   };
 
   let cacheAgeS: number | undefined;
@@ -972,12 +1137,12 @@ export async function collectStatuslineAfk(
     // or on any gh/auth/network error.
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= cacheTtlS) {
-    // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open). When
-    // refresh fails, mark the age so the renderer can signal staleness.
     const staleAgeS = nowS - cached.ts;
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-    if (!refreshSucceeded) cacheAgeS = staleAgeS;
+    cacheAgeS = staleAgeS;
+    startDetachedStatuslineCountRefresh(
+      { ...ctx, repo: ghCtx.repo },
+      { ...refreshOptions, nowS },
+    );
   }
 
   if (workers <= 0) return null;
@@ -1244,7 +1409,7 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
 import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../core/boot.js";
 import type { AttemptDir } from "../core/reclaim.js";
 import type { IssueStateRow } from "./gh.js";
-import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
 import { parseClaimRecords } from "../core/claim.js";
 
@@ -1393,6 +1558,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const cfg = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
+  const countCachePath = statuslineCountCachePath(ctx.root);
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
   const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
@@ -1412,7 +1578,12 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
     },
     gh: {
       editLabels: async (issue, remove, add) => {
-        await ghx.editLabels(ghCtx, issue, remove, add);
+        await editLabelsWithStatuslineCache(
+          countCachePath,
+          () => ghx.editLabels(ghCtx, issue, remove, add),
+          remove,
+          add,
+        );
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
