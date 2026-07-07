@@ -33,7 +33,8 @@
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Use $bootstrap when this workspace needs it."
+      "Use $bootstrap when this workspace needs it.",
+      "Use $create-plugin when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }

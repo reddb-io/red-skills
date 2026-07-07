@@ -20,6 +20,7 @@ describe("Codex manifest generator", () => {
     await mkdir(join(root, ".claude-plugin"), { recursive: true });
     await mkdir(join(root, "plugins/dev/.claude-plugin"), { recursive: true });
     await mkdir(join(root, "plugins/example/.claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/internal/.claude-plugin"), { recursive: true });
 
     await writeJson(join(root, ".claude-plugin/marketplace.json"), {
       name: "red-skills",
@@ -34,6 +35,11 @@ describe("Codex manifest generator", () => {
           source: "./plugins/example",
           description: "Example plugin — shows fixture generation.",
           dependencies: ["dev"],
+        },
+        {
+          name: "internal",
+          source: "./plugins/internal",
+          description: "Internal plugin — maintainer-only repository operations.",
         },
       ],
     });
@@ -55,6 +61,13 @@ describe("Codex manifest generator", () => {
       skills: ["./skills/core/init", "./skills/core/recall"],
     });
 
+    await writeJson(join(root, "plugins/internal/.claude-plugin/plugin.json"), {
+      name: "internal",
+      version: "9.9.9",
+      description: "Internal plugin — maintainer-only repository operations.",
+      skills: ["./skills/core/bootstrap"],
+    });
+
     await execFileAsync("node", [generator, "--root", root]);
 
     const marketplace = JSON.parse(await readFile(join(root, ".agents/plugins/marketplace.json"), "utf8"));
@@ -69,6 +82,20 @@ describe("Codex manifest generator", () => {
         authentication: "ON_USE",
       },
       dependencies: ["dev"],
+      description: "Example plugin - shows fixture generation.",
+      category: "Developer Tools",
+    });
+    expect(marketplace.plugins).toContainEqual({
+      name: "internal",
+      source: {
+        source: "local",
+        path: "./plugins/internal",
+      },
+      policy: {
+        installation: "AVAILABLE",
+        authentication: "ON_USE",
+      },
+      description: "Internal plugin - maintainer-only repository operations.",
       category: "Developer Tools",
     });
 
