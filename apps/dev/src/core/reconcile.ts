@@ -473,6 +473,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       trunk: input.trunk,
       issue,
       title: input.title,
+      labels: input.labels,
       // #1171: the operator adopt-branch path passes this true after reviewing a
       // protected diff, so doLanding's sensitive-path guard is skipped ONLY here.
       // Undefined for every autonomous caller → the guard fires as before.

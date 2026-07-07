@@ -196,6 +196,8 @@ export interface LandMergeInput {
   n: number;
   /** Issue title, for the merge message. */
   title: string;
+  /** Full merge commit subject. Defaults to the historical `merge: #N <title>`. */
+  mergeTitle?: string;
   /** Integrated tip captured before the merge, for rollback on push reject. */
   preMergeSha: string;
 }
@@ -223,6 +225,7 @@ export interface LandMergeResult {
  */
 export async function landMerge(exec: Exec, input: LandMergeInput): Promise<LandMergeResult> {
   const { repo, remote, branch, target, n, title, preMergeSha } = input;
+  const mergeTitle = input.mergeTitle ?? `merge: #${n} ${title}`;
 
   const merge = await exec([
     "git",
@@ -237,7 +240,7 @@ export async function landMerge(exec: Exec, input: LandMergeInput): Promise<Land
     "--no-verify",
     branch,
     "-m",
-    `merge: #${n} ${title}`,
+    mergeTitle,
   ]);
   if (merge.code !== 0) return { ok: false, rolledBack: false };
 
@@ -511,6 +514,8 @@ export interface LandPrInput {
   n: number;
   /** Issue title, for the PR title. */
   title: string;
+  /** Full PR title / merge commit subject. Defaults to the historical `merge: #N <title>`. */
+  mergeTitle?: string;
   /** Worktree dir to force-push the attempt branch from; skipped when absent. */
   worktree?: string;
   /**
@@ -572,7 +577,7 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview, ciAwait, locked } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, locked } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -589,7 +594,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   }
 
   // 2. Reuse an open PR for this head/base, else create one.
-  const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
+  const prNumber = await ensurePr(exec, { repo, branch, target, n, title, mergeTitle });
   if (prNumber === undefined) return { ok: false, reason: "no-pr" };
 
   // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
@@ -615,7 +620,9 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   }
 
   // 3. Merge: branch protection is honored rather than bypassed (#1103).
-  const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"]);
+  const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
+  if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
+  const merge = await exec(mergeArgs);
   if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
 
   // 4. Fast-forward local <target> to the merge commit (best-effort) — UNLOCKED
@@ -641,9 +648,10 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
  */
 async function ensurePr(
   exec: Exec,
-  input: { repo: string; branch: string; target: string; n: number; title: string },
+  input: { repo: string; branch: string; target: string; n: number; title: string; mergeTitle?: string },
 ): Promise<number | undefined> {
   const { repo, branch, target, n, title } = input;
+  const prTitle = input.mergeTitle ?? `merge: #${n} ${title}`;
   let prNumber = await listOpenPr(exec, repo, branch, target);
   if (prNumber === undefined) {
     const create = await exec([
@@ -657,7 +665,7 @@ async function ensurePr(
       "--head",
       branch,
       "--title",
-      `merge: #${n} ${title}`,
+      prTitle,
       "--body",
       `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`,
     ]);
