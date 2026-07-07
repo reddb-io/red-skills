@@ -31,7 +31,11 @@
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Exec as PnpmExec, PackageLayout } from "../core/feedback.js";
+import {
+  buildFeedbackSubprocessEnv,
+  type Exec as PnpmExec,
+  type PackageLayout,
+} from "../core/feedback.js";
 import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostAttemptFormatExec } from "../core/post-attempt-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
@@ -39,31 +43,6 @@ import * as gitx from "./git.js";
 
 function slugForBranch(branch: string): string {
   return branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "wt";
-}
-
-/**
- * The environment for the feedback gate's validation subprocesses, with AFK
- * worker-dispatch path overrides UNSET (#1215 / #1224 Part C).
- *
- * A `/go` (or `scout`) worker runs the gate with `RED_AFK_WORKERS_NAMESPACE`
- * pinned to its lane (`go-workers` / `scout-workers`) so its own worktree/state
- * paths resolve into the lane. That env is inherited by every child process —
- * INCLUDING the gate's test subprocess — where it poisons namespace-sensitive
- * suites (worker-paths, supervisor-fs) that assert the DEFAULT lane. The result
- * is a false full-suite red that churns/parks otherwise-green apps/dev work (this
- * exact leak cost issue #1219 ~70 minutes). Strip the path-routing dispatch
- * vars for the gate subprocesses ONLY — the worker's own namespace wiring (which
- * owns the `/go` lane paths) is untouched, since this scrubs a fresh copy of
- * `process.env` rather than mutating it.
- */
-function gateSubprocessEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key === "RED_AFK_WORKERS_NAMESPACE" || key.startsWith("RED_AFK_WORKER") || key.startsWith("RED_AFK_ITER")) {
-      delete env[key];
-    }
-  }
-  return env;
 }
 
 /**
@@ -371,7 +350,8 @@ export function makeFeedbackWorktree(
   // feedback hands pnpm a `-C <token>` arg where <token> is `<branch>` or
   // `<branch>/<scope>`. Peel the scope off the end (via the package layout),
   // materialise the branch, and rewrite the dir onto the real checkout path.
-  const pnpm: PnpmExec = async (args) => {
+  const pnpm: PnpmExec = async (args, opts) => {
+    const env = opts?.env ?? buildFeedbackSubprocessEnv();
     // args === ["pnpm", "-C", dir, script]
     const cIdx = args.indexOf("-C");
     if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
@@ -382,11 +362,11 @@ export function makeFeedbackWorktree(
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env: gateSubprocessEnv() });
+      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env });
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await io.pnpm(head, { cwd: root, env: gateSubprocessEnv() });
+    const r = await io.pnpm(head, { cwd: root, env });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
