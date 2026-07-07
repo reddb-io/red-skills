@@ -708,13 +708,11 @@ export interface ProcessIssueInput {
 // ---------- result ----------
 
 // The subset of `AttemptOutcome` that the per-issue lifecycle itself can return.
-// `infra` (boot setup) originates outside processIssue, so it is excluded here
-// while the shared owner (attempt-outcome) keeps the full union. `stalled` is
-// now ALSO a processIssue terminal: the attempt progress guard (execution.ts)
-// surfaces a `timeout` agent-outcome which processIssue maps to `stalled` (→
-// blocked:stalled, ready-for-human). Exclude<> ties this to the single owner so
-// the two can never drift.
-export type ProcessOutcome = Exclude<AttemptOutcome, "infra">;
+// `infra` now includes landing-infra preconditions (for example a missing
+// pre-merge rebase worktree, #1212) in addition to boot setup. `stalled` is also
+// a processIssue terminal: the attempt progress guard (execution.ts) surfaces a
+// `timeout` agent-outcome which processIssue maps to `stalled`.
+export type ProcessOutcome = AttemptOutcome;
 
 export interface ProcessIssueResult {
   outcome: ProcessOutcome;
@@ -2293,6 +2291,16 @@ export async function processIssue(
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
     }
+    if (landing.reason === "infra") {
+      const reason = landing.infraReason ?? "landing infrastructure precondition failed";
+      return await terminalFailure(
+        common,
+        "infra",
+        "infra",
+        { log: reason },
+        { notes: reason },
+      );
+    }
     if (landing.reason === "pr-conflict") {
       return await prLandingBlocked(
         common,
@@ -2615,6 +2623,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Admin-merge refused because main is red without an open main-red repair issue."),
         next: "Restore or create the auto-filed main-red repair issue, then requeue.",
       };
+    case "infra":
+      return {
+        status: "blocked",
+        kind: "infra",
+        summary: oneLine(sections.log, "Landing infrastructure precondition failed."),
+        next: "Fix the landing infrastructure failure, then requeue.",
+      };
     case "manual-landing":
       return {
         status: "blocked",
@@ -2637,6 +2652,7 @@ const ACTIONABLE_BLOCKER_KINDS = new Set([
   "trunk-diverged",
   "sensitive-path",
   "main-red-untracked",
+  "infra",
 ]);
 
 function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
