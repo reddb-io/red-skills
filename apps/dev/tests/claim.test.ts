@@ -93,10 +93,15 @@ describe("reconcileClaim interleavings", () => {
 
   it("late-arrival concede: a worker whose claim id is higher loses to the earlier claim", () => {
     // We post and GitHub gives us id 200, but an earlier active claim (id 50) exists.
-    const records = [rec(50, "other:host"), rec(200, "h:me")];
+    const records = [
+      { ...rec(50, "other:host"), createdAt: "2026-07-07T03:08:14Z" },
+      rec(200, "h:me"),
+    ];
     const d = reconcileClaim(records, self("h:me", 200));
     expect(d.verdict).toBe("lost");
     expect(d.winner).toBe("other:host");
+    expect(d.winnerClaimId).toBe(50);
+    expect(d.winnerCreatedAt).toBe("2026-07-07T03:08:14Z");
   });
 
   it("a flapping claimant cannot jump the queue by re-claiming", () => {
