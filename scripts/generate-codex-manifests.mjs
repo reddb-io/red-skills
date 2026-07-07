@@ -140,6 +140,7 @@ export function buildCodexMarketplace(claudeMarketplace) {
         },
       };
       maybeSet(codexPlugin, "dependencies", plugin.dependencies);
+      maybeSet(codexPlugin, "description", codexText(plugin.description));
       codexPlugin.category = "Developer Tools";
       return codexPlugin;
     }),
