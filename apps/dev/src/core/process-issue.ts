@@ -39,7 +39,6 @@ import {
   type SandboxMode,
 } from "./execution.js";
 import {
-  relevantScopes,
   runFeedback,
   isInfraFeedbackFailure,
   type Exec as PnpmExec,
@@ -2003,18 +2002,15 @@ export async function processIssue(
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
-    // Compute the validation scope: when a workspace graph is injected, expand
-    // to the full dependency cone (touched packages + transitive dependents);
-    // otherwise fall back to the current directly-touched-packages behaviour.
-    // Root-config changes (lockfile, tsconfig, .github/**) always escalate to
-    // whole-workspace regardless of which approach is used.
-    let validationScope: ValidationScope;
-    if (deps.graph) {
-      validationScope = computeValidationScope(changedFiles, deps.layout, deps.graph);
-    } else {
-      const scopes = relevantScopes(deps.layout, changedFiles);
-      validationScope = { type: "cone", packages: scopes, triggerPackages: scopes };
-    }
+    // Compute the validation scope: expand to the full dependency cone when a
+    // workspace graph is injected, otherwise keep the directly-touched package
+    // cone. Root-config and explicit core-module changes always escalate to
+    // whole-workspace before any package scoping.
+    const validationScope = computeValidationScope(
+      changedFiles,
+      deps.layout,
+      deps.graph ?? { packages: [] },
+    );
     const feedbackScopes = scopesForValidationScope(validationScope);
     // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
     // non-zero exit VETOES validation and routes the attempt to the abort-after-
