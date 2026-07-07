@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildValidationRecord,
+  decideBaselineDiffGate,
   isInfraFeedbackFailure,
   nearestPackageScope,
   outputSummary,
@@ -345,6 +346,37 @@ describe("pure shaping helpers", () => {
     expect(outputSummary("failed", "line a\nline b\n")).toBe("line a line b");
     const long = `${"x".repeat(2000)}\n`;
     expect(outputSummary("failed", long).length).toBe(1000);
+  });
+});
+
+describe("decideBaselineDiffGate", () => {
+  it("blocks branch-only failures and records no pre-existing failures", () => {
+    expect(decideBaselineDiffGate(["test:apps/dev"], [])).toEqual({
+      shouldBlock: true,
+      blockingFailures: ["test:apps/dev"],
+      preExistingFailures: [],
+    });
+  });
+
+  it("does not block pre-existing failures and records them for main-red repair", () => {
+    expect(decideBaselineDiffGate(["test:apps/dev"], ["test:apps/dev"])).toEqual({
+      shouldBlock: false,
+      blockingFailures: [],
+      preExistingFailures: ["test:apps/dev"],
+    });
+  });
+
+  it("blocks mixed branch-only failures while recording pre-existing failures", () => {
+    expect(
+      decideBaselineDiffGate(
+        ["test:apps/dev", "typecheck:apps/dev", "test:apps/dev"],
+        ["test:apps/dev", "lint:apps/dev"],
+      ),
+    ).toEqual({
+      shouldBlock: true,
+      blockingFailures: ["typecheck:apps/dev"],
+      preExistingFailures: ["test:apps/dev"],
+    });
   });
 });
 
