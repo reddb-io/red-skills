@@ -47,6 +47,10 @@ import {
   type RunFeedbackResult,
 } from "./feedback.js";
 import {
+  planMainRedRepair,
+  type MainRedRepairIssue,
+} from "./main-red-repair.js";
+import {
   computeValidationScope,
   formatValidationScope,
   scopesForValidationScope,
@@ -167,6 +171,18 @@ export interface ProcessGh {
    * behaviour preserved).
    */
   renderDecisionCard?(issue: number): Promise<void>;
+  /** Find the single open auto-filed main-red repair issue, if any. Optional so
+   * older callers degrade to the historical baseline-downgrade behaviour. */
+  findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
+  /** Create the auto-filed main-red repair issue. */
+  createMainRedRepairIssue?(spec: { title: string; body: string; labels: readonly string[] }): Promise<number>;
+  /** Refresh the auto-filed main-red repair issue's title/body/labels. */
+  updateMainRedRepairIssue?(
+    issue: number,
+    spec: { title: string; body: string; labels: readonly string[] },
+  ): Promise<void>;
+  /** Close the auto-filed main-red repair issue once the baseline probe is green. */
+  closeMainRedRepairIssue?(issue: number, comment: string): Promise<void>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -1062,6 +1078,55 @@ async function refuseNoSandboxForUntrustedAuthor(
     preserved: false,
     swept: false,
   };
+}
+
+async function syncMainRedRepairIssue(
+  deps: ProcessIssueDeps,
+  feedback: RunFeedbackResult,
+): Promise<void> {
+  if (!feedback.baselineProbeRan) return;
+  const {
+    findMainRedRepairIssue,
+    createMainRedRepairIssue,
+    updateMainRedRepairIssue,
+    closeMainRedRepairIssue,
+  } = deps.gh;
+  if (!findMainRedRepairIssue || !createMainRedRepairIssue || !updateMainRedRepairIssue || !closeMainRedRepairIssue) {
+    return;
+  }
+
+  try {
+    const current = await findMainRedRepairIssue();
+    const plan = planMainRedRepair(feedback.baselineFailures ?? [], current);
+    switch (plan.action) {
+      case "noop":
+        return;
+      case "create": {
+        const created = await createMainRedRepairIssue({
+          title: plan.title,
+          body: plan.body,
+          labels: plan.labels,
+        });
+        deps.appendIterLog(`🤖 /afk baseline probe: opened main-red repair issue #${created}.`);
+        return;
+      }
+      case "update":
+        await updateMainRedRepairIssue(plan.issue, {
+          title: plan.title,
+          body: plan.body,
+          labels: plan.labels,
+        });
+        deps.appendIterLog(`🤖 /afk baseline probe: updated main-red repair issue #${plan.issue}.`);
+        return;
+      case "close":
+        await closeMainRedRepairIssue(plan.issue, plan.comment);
+        deps.appendIterLog(`🤖 /afk baseline probe: closed main-red repair issue #${plan.issue}.`);
+        return;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.appendIterLog(`warn: main-red repair issue sync failed: ${message}`);
+  }
 }
 
 /**
@@ -1985,6 +2050,7 @@ export async function processIssue(
         }),
       );
     }
+    await syncMainRedRepairIssue(deps, feedback);
     // post_feedback (#832): the scope-derived gate has produced its verdict.
     await fireHook(
       "post_feedback",
