@@ -39,8 +39,106 @@ export interface ExecResult {
   stderr: string;
 }
 
+export interface FeedbackExecOptions {
+  /** Explicit validation subprocess environment. Never default to the worker shell. */
+  env: NodeJS.ProcessEnv;
+}
+
 /** Injected `pnpm` executor. Receives a full argv (incl. the `pnpm` head). */
-export type Exec = (args: string[]) => Promise<ExecResult>;
+export type Exec = (args: string[], opts?: FeedbackExecOptions) => Promise<ExecResult>;
+
+/**
+ * Feedback validation subprocess env contract.
+ *
+ * Allow: stable OS/toolchain variables needed to find node/pnpm and their
+ * caches/config. Deny: AFK lane/routing/model/auth variables and common secret
+ * prefixes. Everything else from the worker shell is omitted, so `/afk`,
+ * `/go`, and scout lanes validate the same diff under the same gate contract.
+ */
+export const FEEDBACK_SUBPROCESS_ENV_ALLOW_EXACT = [
+  "APPDATA",
+  "CI",
+  "COLORTERM",
+  "ComSpec",
+  "COREPACK_HOME",
+  "FORCE_COLOR",
+  "HOME",
+  "LANG",
+  "LOCALAPPDATA",
+  "LOGNAME",
+  "NO_COLOR",
+  "NPM_CONFIG_USERCONFIG",
+  "PATH",
+  "PATHEXT",
+  "PNPM_HOME",
+  "SHELL",
+  "SystemRoot",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERPROFILE",
+  "TZ",
+  "npm_config_userconfig",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_ALLOW_PREFIX = [
+  "COREPACK_",
+  "LC_",
+  "NPM_CONFIG_",
+  "PNPM_",
+  "XDG_",
+  "YARN_",
+  "npm_config_",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_DENY_EXACT = [
+  "ANTHROPIC_API_KEY",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "MINIMAX_API_KEY",
+  "NODE_AUTH_TOKEN",
+  "NPM_TOKEN",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "RED_AFK_WORKERS_NAMESPACE",
+] as const;
+
+export const FEEDBACK_SUBPROCESS_ENV_DENY_PREFIX = [
+  "ANTHROPIC_",
+  "CLAUDE_",
+  "CODEX_",
+  "MINIMAX_",
+  "OPENAI_",
+  "OPENROUTER_",
+  "RED_AFK_",
+  "RED_SKILLS_",
+] as const;
+
+function envNameMatches(name: string, exact: readonly string[], prefixes: readonly string[]): boolean {
+  return exact.includes(name) || prefixes.some((prefix) => name.startsWith(prefix));
+}
+
+export function buildFeedbackSubprocessEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (typeof value !== "string") continue;
+    if (
+      envNameMatches(name, FEEDBACK_SUBPROCESS_ENV_DENY_EXACT, FEEDBACK_SUBPROCESS_ENV_DENY_PREFIX)
+    ) {
+      continue;
+    }
+    if (
+      envNameMatches(name, FEEDBACK_SUBPROCESS_ENV_ALLOW_EXACT, FEEDBACK_SUBPROCESS_ENV_ALLOW_PREFIX)
+    ) {
+      env[name] = value;
+    }
+  }
+  return env;
+}
 
 /**
  * Injected package-layout lookup — the pure analogue of probing the worktree
@@ -367,12 +465,13 @@ async function runChecksForBaseline(
   refs: readonly BaselineCheckRef[],
   layout: PackageLayout,
   now: () => number,
+  env: NodeJS.ProcessEnv,
 ): Promise<Map<string, "passed" | "failed">> {
   const out = new Map<string, "passed" | "failed">();
   for (const { name, script, scope } of refs) {
     if (!layout.hasScript(scope, script)) continue;
     const dir = scopeDir(baselineWorktree, scope);
-    const result = await exec(["pnpm", "-C", dir, script]);
+    const result = await exec(["pnpm", "-C", dir, script], { env });
     out.set(name, result.code === 0 ? "passed" : "failed");
   }
   // `now` is part of the signature for symmetry with the main run; the
@@ -406,6 +505,7 @@ async function runChecksForBaseline(
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
   const { worktree, scopes, layout, now, baselineWorktree, validationScope } = input;
+  const subprocessEnv = buildFeedbackSubprocessEnv();
   const quarantine = input.quarantine ?? [];
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];
@@ -492,7 +592,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
           ? `pnpm -C ${dir} ${script} -- ${excludeArgs.join(" ")}`
           : `pnpm -C ${dir} ${script}`;
       const start = now();
-      const result = await exec(args);
+      const result = await exec(args, { env: subprocessEnv });
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
@@ -517,7 +617,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const dir = scopeDir(worktree, ".");
     const command = `pnpm -C ${dir} typecheck`;
     const start = now();
-    const result = await exec(["pnpm", "-C", dir, "typecheck"]);
+    const result = await exec(["pnpm", "-C", dir, "typecheck"], { env: subprocessEnv });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
@@ -532,7 +632,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const failing = checks
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
-    const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now);
+    const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
 
     // Re-classify any check that ALSO failed on the baseline as
     // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
