@@ -43,6 +43,7 @@ import {
 } from "./boot-sweep.js";
 import {
   planStaleClaimSweep,
+  renderDeadClaimSweepAudit,
   renderStaleClaimSweepAudit,
   resolveClaimReaperConfig,
   type ClaimedIssue,
@@ -499,7 +500,12 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
       }
       const addLabels = currentLabels.includes(LABEL_HUMAN) ? [] : [LABEL_READY];
       await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
-      await deps.gh.comment(p.issue, renderStaleClaimSweepAudit(p.staleOwners));
+      const claimedIssue = claimed.find((c) => c.issue === p.issue);
+      const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
+      const body = p.staleOwners.some((owner) => deadOwners.has(owner))
+        ? renderDeadClaimSweepAudit(p.staleOwners)
+        : renderStaleClaimSweepAudit(p.staleOwners);
+      await deps.gh.comment(p.issue, body);
       released.push(p.issue);
     } catch {
       // Best-effort: a failed release leaves the issue for the next boot's sweep.
