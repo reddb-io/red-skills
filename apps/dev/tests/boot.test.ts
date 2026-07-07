@@ -667,6 +667,20 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     expect(ghCalls.comment).toEqual([]);
   });
 
+  it("releases a fresh same-host ghost claim when worker.pid is dead", async () => {
+    const claimedIssues = async () => [
+      { issue: 42, records: [claim(10, "host1:wXY", 120)], deadOwners: ["host1:wXY"] },
+    ];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [42] });
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 42, remove: ["running"], add: ["ready-for-agent"] },
+    ]);
+    expect(ghCalls.comment[0].body).toContain("same-host ghost-claim sweep");
+    expect(ghCalls.comment[0].body).toContain("worker.pid");
+  });
+
   it("honours RED_AFK_CLAIM_REFRESH_S / tolerance from env", async () => {
     // 700s old: stale under the default 1200s window? no. Tighten the window to
     // 60×(1+0)=60s via env → 700s is now stale.

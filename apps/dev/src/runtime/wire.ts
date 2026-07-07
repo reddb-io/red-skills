@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { hostname } from "node:os";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
@@ -37,6 +38,7 @@ import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
 import { collectLogLineCounts } from "./log-cursor.js";
+import { isLivePid } from "./kill-tree.js";
 
 // ---------- repo resolution ----------
 
@@ -1557,7 +1559,8 @@ async function resolveBranchIssueCache(
 export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
-  const cfg = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
+  const paths = afkPaths(ctx.root);
+  const cfg = loadConfig(paths.configPath, { warn: () => undefined });
   const countCachePath = statuslineCountCachePath(ctx.root);
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);
@@ -1631,14 +1634,29 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       // A per-issue read failure drops that issue from the sweep (best-effort).
       claimedIssues: async () => {
         const claimed = [];
+        const hostPrefix = `${hostname()}:`;
         for (const [issue, row] of issueStates) {
           if (row.state !== "OPEN") continue;
           if (!row.labels.includes(LABEL_RUNNING)) continue;
           try {
             const comments = await ghx.listClaimComments(ghCtx, issue);
+            const records = parseClaimRecords(comments);
+            const deadOwners = records
+              .map((r) => r.worker)
+              .filter((worker, idx, workers) => workers.indexOf(worker) === idx)
+              .filter((worker) => {
+                if (!worker.startsWith(hostPrefix)) return false;
+                const workerId = worker.slice(hostPrefix.length);
+                if (!workerId) return false;
+                const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+                if (!existsSync(pidPath)) return true;
+                const pid = Number(readFileSync(pidPath, "utf8").trim());
+                return !Number.isInteger(pid) || !isLivePid(pid);
+              });
             claimed.push({
               issue,
-              records: parseClaimRecords(comments),
+              records,
+              deadOwners,
               attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
             });
           } catch {
