@@ -55,6 +55,7 @@ export const LABEL_TRIAGE_SUMMON = "triage:summon";
 export const LABEL_PRD = "type:prd";
 export const LABEL_URGENT = "priority:urgent";
 export const LABEL_HIGH = "priority:high";
+export const LABEL_BUG = "bug";
 
 // Blocked reason labels
 export const LABEL_VALIDATION = "blocked:validation";
