@@ -26,8 +26,9 @@ import type { ClaimRecord } from "./claim.js";
 
 /** Default seconds between a live worker's claim refreshes. Coarser than the
  * heartbeat (60s) so refresh re-posts do not flood the issue thread, yet far
- * tighter than any realistic attempt duration. */
-export const DEFAULT_CLAIM_REFRESH_S = 300;
+ * tighter than any realistic attempt duration. Kept at the cache-warm edge of
+ * the AFK polling cadence rule, not in the prompt-cache dead zone. */
+export const DEFAULT_CLAIM_REFRESH_S = 270;
 
 /** Default count of consecutive missed refreshes tolerated before a claim is
  * presumed stale. The window then spans `cadence × (tolerance + 1)` so a worker
@@ -303,7 +304,7 @@ function resolveNonNegativeInt(raw: string | undefined, fallback: number): numbe
 
 /**
  * Resolve the staleness policy from the environment. `RED_AFK_CLAIM_REFRESH_S`
- * (positive int, default 300) and `RED_AFK_CLAIM_STALE_TOLERANCE` (non-negative
+ * (positive int, default 270) and `RED_AFK_CLAIM_STALE_TOLERANCE` (non-negative
  * int, default 3). A missing / non-numeric / non-positive cadence falls back to
  * the default so an operator typo can never collapse the window to zero and rob
  * live claims; tolerance accepts 0 (window = exactly one cadence).

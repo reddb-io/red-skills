@@ -1002,13 +1002,13 @@ describe("resolveStatuslineCacheTtl (#1217)", () => {
   });
 
   it("env RED_AFK_STATUSLINE_CACHE_TTL_S wins over config", () => {
-    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "300" : "");
+    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "240" : "");
     expect(resolveStatuslineCacheTtl({ RED_AFK_STATUSLINE_CACHE_TTL_S: "90" }, getCfg)).toBe(90);
   });
 
   it("uses the config value when env is absent", () => {
-    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "300" : "");
-    expect(resolveStatuslineCacheTtl({}, getCfg)).toBe(300);
+    const getCfg = (key: string) => (key === "afk.statusline_cache_ttl" ? "240" : "");
+    expect(resolveStatuslineCacheTtl({}, getCfg)).toBe(240);
   });
 
   it("falls back to config when env is garbage (non-numeric / 0 / negative)", () => {
