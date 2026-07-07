@@ -724,6 +724,51 @@ async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
   }
 }
 
+export interface StatuslineQueueCounts {
+  queue: number;
+  human: number;
+}
+
+function statuslineSearchQuery(repo: string, label: string): string {
+  return `repo:${repo} is:issue is:open label:"${label}"`;
+}
+
+/** Count both statusline queue buckets with one GraphQL search request. */
+export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
+  if (!ctx.repo) return { queue: 0, human: 0 };
+  const query = `
+    query($ready: String!, $human: String!) {
+      ready: search(type: ISSUE, query: $ready) { issueCount }
+      human: search(type: ISSUE, query: $human) { issueCount }
+    }
+  `;
+  const r = await runGh(ctx, [
+    "api",
+    "graphql",
+    "-f",
+    `query=${query}`,
+    "-F",
+    `ready=${statuslineSearchQuery(ctx.repo, LABEL_READY)}`,
+    "-F",
+    `human=${statuslineSearchQuery(ctx.repo, LABEL_HUMAN)}`,
+  ]);
+  if (r.code !== 0) return { queue: 0, human: 0 };
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      data?: {
+        ready?: { issueCount?: unknown };
+        human?: { issueCount?: unknown };
+      };
+    };
+    return {
+      queue: Number(parsed.data?.ready?.issueCount ?? 0),
+      human: Number(parsed.data?.human?.issueCount ?? 0),
+    };
+  } catch {
+    return { queue: 0, human: 0 };
+  }
+}
+
 /** Count issues that carry NO labels (the unlabeled straggler bucket). */
 export async function countUnlabeled(ctx: GhContext): Promise<number> {
   const r = await runGh(ctx, 
