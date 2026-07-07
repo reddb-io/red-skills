@@ -76,6 +76,10 @@ export interface ClaimDecision {
   winner: string | null;
   /** One-line rationale, for logs. */
   reason: string;
+  /** The winning claimant's earliest claim comment id, for operator diagnostics. */
+  winnerClaimId?: number;
+  /** The timestamp attached to the winning claimant's latest marker, when known. */
+  winnerCreatedAt?: string;
   /** Stale cross-host claimants this decision RECOVERED — workers whose latest
    * marker `isStale` rejected and who would otherwise have held an earlier claim
    * than the winner. Empty unless a stale claim was superseded. Drives the single
@@ -322,6 +326,8 @@ export function reconcileClaim(
     return {
       verdict: "won",
       winner: winner.worker,
+      winnerClaimId: winner.claimId,
+      winnerCreatedAt: folds.get(winner.worker)?.latestRecord.createdAt,
       reason:
         contenders.length === 1
           ? "solo claim"
@@ -332,6 +338,8 @@ export function reconcileClaim(
   return {
     verdict: "lost",
     winner: winner.worker,
+    winnerClaimId: winner.claimId,
+    winnerCreatedAt: folds.get(winner.worker)?.latestRecord.createdAt,
     reason: `worker ${winner.worker} holds earlier claim (id ${winner.claimId} < our ${self.commentId})`,
     recovered: [],
   };
