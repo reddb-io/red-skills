@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  CORE_MODULE_MANIFEST,
   computeValidationScope,
   formatValidationScope,
   isRootTrigger,
+  scopeNeedsWholeSuite,
   scopesForValidationScope,
   type ValidationScope,
   type WorkspaceGraph,
@@ -67,12 +69,25 @@ describe("isRootTrigger", () => {
 
   it("does NOT trigger on package-level tsconfig.json", () => {
     expect(isRootTrigger("apps/dev/tsconfig.json")).toBe(false);
-    expect(isRootTrigger("packages/shared/package.json")).toBe(false);
+    expect(isRootTrigger("packages/leaf/package.json")).toBe(false);
   });
 
   it("does NOT trigger on normal source files", () => {
     expect(isRootTrigger("apps/dev/src/index.ts")).toBe(false);
     expect(isRootTrigger("README.md")).toBe(false);
+  });
+});
+
+// ---- scopeNeedsWholeSuite ----
+
+describe("scopeNeedsWholeSuite", () => {
+  it("escalates core-module touches via the explicit manifest", () => {
+    expect(CORE_MODULE_MANIFEST).toContain("apps/dev/src/core");
+    expect(scopeNeedsWholeSuite(["apps/dev/src/core/process-issue.ts"])).toBe(true);
+  });
+
+  it("keeps leaf touches on the scoped package path", () => {
+    expect(scopeNeedsWholeSuite(["apps/dev/tests/feedback.test.ts"])).toBe(false);
   });
 });
 
@@ -117,70 +132,79 @@ describe("computeValidationScope — whole-workspace escalation", () => {
     expect(scope.type).toBe("whole-workspace");
     expect(scopesForValidationScope(scope)).toEqual(["."]);
   });
+
+  it("escalates to whole-workspace on a manifest core-module change", () => {
+    const scope = computeValidationScope(["apps/dev/src/core/process-issue.ts"], layout, g);
+    expect(scope.type).toBe("whole-workspace");
+    if (scope.type === "whole-workspace") {
+      expect(scope.triggerFile).toBe("apps/dev/src/core/process-issue.ts");
+    }
+    expect(scopesForValidationScope(scope)).toEqual(["."]);
+  });
 });
 
 // ---- computeValidationScope — cone expansion ----
 
 describe("computeValidationScope — cone expansion", () => {
   it("leaf-package change → exact cone (package only when no dependents)", () => {
-    // packages/shared has no dependents in this graph.
-    const layout = fakeLayout(["packages/shared"]);
-    const g = graph(["packages/shared"]);
-    const scope = computeValidationScope(["packages/shared/src/index.ts"], layout, g);
+    // packages/leaf has no dependents in this graph.
+    const layout = fakeLayout(["packages/leaf"]);
+    const g = graph(["packages/leaf"]);
+    const scope = computeValidationScope(["packages/leaf/src/index.ts"], layout, g);
 
     expect(scope.type).toBe("cone");
     if (scope.type === "cone") {
-      expect(scope.packages).toEqual(["packages/shared"]);
-      expect(scope.triggerPackages).toEqual(["packages/shared"]);
+      expect(scope.packages).toEqual(["packages/leaf"]);
+      expect(scope.triggerPackages).toEqual(["packages/leaf"]);
     }
   });
 
   it("leaf-package change → cone includes direct dependents", () => {
-    // apps/dev depends on packages/shared — changing shared must run apps/dev too.
-    const layout = fakeLayout(["apps/dev", "packages/shared"]);
-    const g = graph(["apps/dev", "packages/shared"], ["packages/shared"]);
-    // Note: first entry "apps/dev" has no dependsOn; second is packages/shared.
+    // apps/dev depends on packages/leaf — changing leaf must run apps/dev too.
+    const layout = fakeLayout(["apps/dev", "packages/leaf"]);
+    const g = graph(["apps/dev", "packages/leaf"], ["packages/leaf"]);
+    // Note: first entry "apps/dev" has no dependsOn; second is packages/leaf.
     // Rebuild to express the dependency properly:
     const g2 = fakeGraph([
-      { dir: "apps/dev", dependsOn: ["packages/shared"] },
-      { dir: "packages/shared", dependsOn: [] },
+      { dir: "apps/dev", dependsOn: ["packages/leaf"] },
+      { dir: "packages/leaf", dependsOn: [] },
     ]);
-    const scope = computeValidationScope(["packages/shared/src/utils.ts"], layout, g2);
+    const scope = computeValidationScope(["packages/leaf/src/utils.ts"], layout, g2);
 
     expect(scope.type).toBe("cone");
     if (scope.type === "cone") {
-      expect(scope.packages).toEqual(["apps/dev", "packages/shared"]);
-      expect(scope.triggerPackages).toEqual(["packages/shared"]);
+      expect(scope.packages).toEqual(["apps/dev", "packages/leaf"]);
+      expect(scope.triggerPackages).toEqual(["packages/leaf"]);
     }
   });
 
   it("leaf-package change → cone includes transitive dependents (BFS)", () => {
-    // apps/ui → apps/dev → packages/shared. Changing shared must reach apps/ui.
-    const layout = fakeLayout(["apps/dev", "apps/ui", "packages/shared"]);
+    // apps/ui → apps/dev → packages/leaf. Changing leaf must reach apps/ui.
+    const layout = fakeLayout(["apps/dev", "apps/ui", "packages/leaf"]);
     const g = fakeGraph([
-      { dir: "apps/dev", dependsOn: ["packages/shared"] },
+      { dir: "apps/dev", dependsOn: ["packages/leaf"] },
       { dir: "apps/ui", dependsOn: ["apps/dev"] },
-      { dir: "packages/shared", dependsOn: [] },
+      { dir: "packages/leaf", dependsOn: [] },
     ]);
-    const scope = computeValidationScope(["packages/shared/src/index.ts"], layout, g);
+    const scope = computeValidationScope(["packages/leaf/src/index.ts"], layout, g);
 
     expect(scope.type).toBe("cone");
     if (scope.type === "cone") {
-      expect(scope.packages).toEqual(["apps/dev", "apps/ui", "packages/shared"]);
-      expect(scope.triggerPackages).toEqual(["packages/shared"]);
+      expect(scope.packages).toEqual(["apps/dev", "apps/ui", "packages/leaf"]);
+      expect(scope.triggerPackages).toEqual(["packages/leaf"]);
     }
   });
 
   it("multi-package change → union of cones (sorted LC_ALL=C)", () => {
-    // apps/dev and packages/shared are both touched; apps/ui depends on apps/dev.
-    const layout = fakeLayout(["apps/dev", "apps/ui", "packages/shared"]);
+    // apps/dev and packages/leaf are both touched; apps/ui depends on apps/dev.
+    const layout = fakeLayout(["apps/dev", "apps/ui", "packages/leaf"]);
     const g = fakeGraph([
       { dir: "apps/dev", dependsOn: [] },
       { dir: "apps/ui", dependsOn: ["apps/dev"] },
-      { dir: "packages/shared", dependsOn: [] },
+      { dir: "packages/leaf", dependsOn: [] },
     ]);
     const scope = computeValidationScope(
-      ["apps/dev/src/x.ts", "packages/shared/src/y.ts"],
+      ["apps/dev/src/x.ts", "packages/leaf/src/y.ts"],
       layout,
       g,
     );
@@ -188,9 +212,9 @@ describe("computeValidationScope — cone expansion", () => {
     expect(scope.type).toBe("cone");
     if (scope.type === "cone") {
       // apps/dev is triggered directly AND via apps/ui's dependency on apps/dev;
-      // packages/shared is touched directly.
-      expect(scope.packages).toEqual(["apps/dev", "apps/ui", "packages/shared"]);
-      expect(scope.triggerPackages.sort()).toEqual(["apps/dev", "packages/shared"]);
+      // packages/leaf is touched directly.
+      expect(scope.packages).toEqual(["apps/dev", "apps/ui", "packages/leaf"]);
+      expect(scope.triggerPackages.sort()).toEqual(["apps/dev", "packages/leaf"]);
     }
   });
 
@@ -218,10 +242,10 @@ describe("scopesForValidationScope", () => {
   it("cone → the cone package dirs", () => {
     const scope: ValidationScope = {
       type: "cone",
-      packages: ["apps/dev", "packages/shared"],
-      triggerPackages: ["packages/shared"],
+      packages: ["apps/dev", "packages/leaf"],
+      triggerPackages: ["packages/leaf"],
     };
-    expect(scopesForValidationScope(scope)).toEqual(["apps/dev", "packages/shared"]);
+    expect(scopesForValidationScope(scope)).toEqual(["apps/dev", "packages/leaf"]);
   });
 
   it("empty cone → []", () => {
@@ -250,13 +274,13 @@ describe("formatValidationScope", () => {
   it("formats an expanded cone (trigger ≠ cone)", () => {
     const scope: ValidationScope = {
       type: "cone",
-      packages: ["apps/dev", "packages/shared"],
-      triggerPackages: ["packages/shared"],
+      packages: ["apps/dev", "packages/leaf"],
+      triggerPackages: ["packages/leaf"],
     };
     const result = formatValidationScope(scope);
-    expect(result).toContain("scope: cone [`apps/dev`, `packages/shared`]");
+    expect(result).toContain("scope: cone [`apps/dev`, `packages/leaf`]");
     expect(result).toContain("expanded from");
-    expect(result).toContain("`packages/shared`");
+    expect(result).toContain("`packages/leaf`");
   });
 
   it("formats an empty cone", () => {
@@ -282,13 +306,13 @@ describe("gate integration — runFeedback runs the cone", () => {
   }
 
   it("passes cone packages as pnpm -C targets", async () => {
-    // Changed file in packages/shared; apps/dev depends on it → cone = both.
-    const layout = fakeLayout(["apps/dev", "packages/shared"]);
+    // Changed file in packages/leaf; apps/dev depends on it → cone = both.
+    const layout = fakeLayout(["apps/dev", "packages/leaf"]);
     const g = fakeGraph([
-      { dir: "apps/dev", dependsOn: ["packages/shared"] },
-      { dir: "packages/shared", dependsOn: [] },
+      { dir: "apps/dev", dependsOn: ["packages/leaf"] },
+      { dir: "packages/leaf", dependsOn: [] },
     ]);
-    const changedFiles = ["packages/shared/src/index.ts"];
+    const changedFiles = ["packages/leaf/src/index.ts"];
     const scope = computeValidationScope(changedFiles, layout, g);
     const scopes = scopesForValidationScope(scope);
 
@@ -304,10 +328,10 @@ describe("gate integration — runFeedback runs the cone", () => {
     expect(result.ok).toBe(true);
     expect(result.validationScope).toBe(scope);
 
-    // Gate must have invoked pnpm for BOTH apps/dev and packages/shared.
+    // Gate must have invoked pnpm for BOTH apps/dev and packages/leaf.
     const dirs = new Set(pnpmCalls.map((a) => a[a.indexOf("-C") + 1] ?? ""));
     expect(dirs.has("/wt/apps/dev")).toBe(true);
-    expect(dirs.has("/wt/packages/shared")).toBe(true);
+    expect(dirs.has("/wt/packages/leaf")).toBe(true);
   });
 
   it("whole-workspace trigger passes ['.'] as the only scope", async () => {
