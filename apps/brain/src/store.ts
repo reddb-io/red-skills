@@ -3,6 +3,11 @@ import { isOutcomeEvent, type OutcomeEvent } from "@reddb-io/shared/outcome-even
 import { contentHash, slugify } from "./hash.js";
 import { KpiQuery, type KpiQueryInput, type KpiResult } from "./kpi-query.js";
 import {
+  MODEL_TIER_BANDIT_SCHEMA_VERSION,
+  replayModelTierBandit,
+  type ModelTierBanditDocument,
+} from "./model-tier-bandit.js";
+import {
   AUTO_LINK_CONNECTION_KINDS,
   artifactToAutoLinkArtifact,
   autoLinkThinkQuery,
@@ -100,6 +105,7 @@ export class BrainStore {
   private artifactCache: StoredBrainArtifact[] | null = null;
   private connectionCache: StoredBrainConnection[] | null = null;
   private outcomeEventCache: OutcomeEvent[] | null = null;
+  private modelTierBanditCache: ModelTierBanditDocument | null = null;
 
   private constructor(private readonly opts: BrainStoreOptions) {}
 
@@ -322,6 +328,28 @@ export class BrainStore {
         .map(({ rid: _rid, event }) => event);
     }
     return [...this.outcomeEventCache];
+  }
+
+  async loadModelTierBanditDocument(): Promise<ModelTierBanditDocument | null> {
+    if (this.modelTierBanditCache != null) return this.modelTierBanditCache;
+    const stored = await this.kv().get(modelTierBanditKey());
+    if (stored == null) return null;
+    const parsed = typeof stored === "string" ? (JSON.parse(stored) as unknown) : stored;
+    if (!isModelTierBanditDocument(parsed)) return null;
+    this.modelTierBanditCache = parsed;
+    return parsed;
+  }
+
+  async saveModelTierBanditDocument(document: ModelTierBanditDocument): Promise<ModelTierBanditDocument> {
+    if (!isModelTierBanditDocument(document)) throw new Error("invalid Brain model-tier bandit document");
+    await this.kv().put(modelTierBanditKey(), JSON.stringify(document));
+    this.modelTierBanditCache = document;
+    return document;
+  }
+
+  async refreshModelTierBanditDocument(): Promise<ModelTierBanditDocument> {
+    const document = replayModelTierBandit(await this.replayOutcomeEvents());
+    return this.saveModelTierBanditDocument(document);
   }
 
   async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<BrainThinkResult> {
@@ -746,6 +774,16 @@ function artifactHashKey(hash: string): string {
 
 function connectionKey(from: number, to: number, kind: ConnectionKind): string {
   return `connection.${from}.${kind}.${to}`;
+}
+
+function modelTierBanditKey(): string {
+  return `model-tier-bandit.v${MODEL_TIER_BANDIT_SCHEMA_VERSION}`;
+}
+
+function isModelTierBanditDocument(value: unknown): value is ModelTierBanditDocument {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.schemaVersion === MODEL_TIER_BANDIT_SCHEMA_VERSION && typeof candidate.buckets === "object";
 }
 
 function countBy(values: string[]): Record<string, number> {

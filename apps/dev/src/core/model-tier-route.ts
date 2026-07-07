@@ -73,7 +73,7 @@ export interface PreToolUseInput {
  *                nudge and allow.
  */
 export type RouteAction =
-  | { kind: "noop" }
+  | { kind: "noop"; advice?: ModelTierPolicyAdvice }
   | {
       kind: "rewrite";
       tier: AfkModelTier;
@@ -81,12 +81,27 @@ export type RouteAction =
       effort: AgentEffort;
       updatedInput: Record<string, unknown>;
       reason: string;
+      advice?: ModelTierPolicyAdvice;
     }
-  | { kind: "block"; tier: AfkModelTier; model: string; reason: string }
-  | { kind: "audit"; tier: AfkModelTier; model: string; reason: string };
+  | { kind: "block"; tier: AfkModelTier; model: string; reason: string; advice?: ModelTierPolicyAdvice }
+  | { kind: "audit"; tier: AfkModelTier; model: string; reason: string; advice?: ModelTierPolicyAdvice };
 
 /** Which leg of the enforcement ladder the host can honour. */
 export type EnforcementCapability = "rewrite" | "block" | "audit";
+
+export interface ModelTierPolicyAdvice {
+  source: string;
+  taskClass: string;
+  recommendedTier: AfkModelTier;
+  confidence: number;
+  posterior: readonly unknown[];
+  explanation: string;
+}
+
+export interface RouteModelTierOptions {
+  advice?: ModelTierPolicyAdvice;
+  adoptAdvice?: boolean;
+}
 
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
@@ -121,15 +136,17 @@ export function routeModelTier(
   input: PreToolUseInput,
   config: ConfigValues,
   capability: EnforcementCapability = "rewrite",
+  options: RouteModelTierOptions = {},
 ): RouteAction {
   if (!input.tool_name || !SUBAGENT_TOOLS.has(input.tool_name)) return { kind: "noop" };
 
   const subagentType = readSubagentType(input);
   if (!subagentType) return { kind: "noop" };
 
-  const tier = TIER_AGENT_TIERS[subagentType];
-  if (!tier) return { kind: "noop" };
+  const declaredTier = TIER_AGENT_TIERS[subagentType];
+  if (!declaredTier) return adviceNoop(options.advice);
 
+  const tier = options.adoptAdvice && options.advice ? options.advice.recommendedTier : declaredTier;
   const resolved = resolveTier(config, "claude", tier);
   const expectedFamily = modelFamily(resolved.model);
   const dispatched = readModel(input);
@@ -137,7 +154,7 @@ export function routeModelTier(
 
   // Already correctly tiered: a model on the expected family. Nothing to do.
   if (dispatchedFamily !== undefined && dispatchedFamily === expectedFamily) {
-    return { kind: "noop" };
+    return adviceNoop(options.advice);
   }
 
   const reason =
@@ -147,13 +164,18 @@ export function routeModelTier(
     (dispatched
       ? `dispatch requested '${dispatched}'`
       : `dispatch left the model unset`) +
-    `.`;
+    `.` +
+    (options.adoptAdvice && options.advice
+      ? ` Adopted brain advice: ${options.advice.explanation}`
+      : options.advice
+        ? ` Brain advice available but not adopted: ${options.advice.explanation}`
+        : "");
 
   if (capability === "block") {
-    return { kind: "block", tier, model: resolved.model, reason };
+    return { kind: "block", tier, model: resolved.model, reason, ...(options.advice ? { advice: options.advice } : {}) };
   }
   if (capability === "audit") {
-    return { kind: "audit", tier, model: resolved.model, reason };
+    return { kind: "audit", tier, model: resolved.model, reason, ...(options.advice ? { advice: options.advice } : {}) };
   }
 
   // path (a): rewrite. Preserve the full original input, override model and effort.
@@ -166,5 +188,10 @@ export function routeModelTier(
     effort: resolved.effort,
     updatedInput,
     reason,
+    ...(options.advice ? { advice: options.advice } : {}),
   };
+}
+
+function adviceNoop(advice: ModelTierPolicyAdvice | undefined): RouteAction {
+  return advice ? { kind: "noop", advice } : { kind: "noop" };
 }
