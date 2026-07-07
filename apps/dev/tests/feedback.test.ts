@@ -262,6 +262,64 @@ describe("runFeedback", () => {
       "pnpm -C /wt/plugins/memory test",
     ]);
   });
+
+  it("runs validation subprocesses under a hermetic env contract so lane env cannot flip the verdict", async () => {
+    const prevNamespace = process.env.RED_AFK_WORKERS_NAMESPACE;
+    const prevWorkerId = process.env.RED_AFK_WORKER_ID;
+    const prevIterDir = process.env.RED_AFK_ITER_DIR;
+    const prevFlip = process.env.RED_AFK_GATE_TEST_FLIP_RESULT;
+    process.env.RED_AFK_WORKERS_NAMESPACE = "scout-workers";
+    process.env.RED_AFK_WORKER_ID = "scout-lane-worker";
+    process.env.RED_AFK_ITER_DIR = "/tmp/scout-workers/scout-lane-worker/1234-a1";
+    process.env.RED_AFK_GATE_TEST_FLIP_RESULT = "fail-if-inherited";
+    try {
+      const layout = fakeLayout({
+        packages: ["apps/dev"],
+        scripts: { "apps/dev": ["test"] },
+      });
+      const seen: NodeJS.ProcessEnv[] = [];
+      const exec: Exec = async (_args, opts) => {
+        if (!opts?.env) {
+          return { code: 67, stdout: "", stderr: "validation subprocess env was implicit" };
+        }
+        const env = opts?.env ?? {};
+        seen.push(env);
+        if (
+          env.RED_AFK_WORKERS_NAMESPACE ||
+          env.RED_AFK_WORKER_ID ||
+          env.RED_AFK_ITER_DIR ||
+          env.RED_AFK_GATE_TEST_FLIP_RESULT
+        ) {
+          return { code: 66, stdout: "", stderr: "lane env leaked into validation subprocess" };
+        }
+        return { code: 0, stdout: "ok", stderr: "" };
+      };
+
+      const result = await runFeedback(exec, {
+        worktree: "/wt",
+        scopes: ["apps/dev"],
+        layout,
+        now: fakeClock(),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBeDefined();
+      expect(seen[0]?.RED_AFK_WORKERS_NAMESPACE).toBeUndefined();
+      expect(seen[0]?.RED_AFK_WORKER_ID).toBeUndefined();
+      expect(seen[0]?.RED_AFK_ITER_DIR).toBeUndefined();
+      expect(seen[0]?.RED_AFK_GATE_TEST_FLIP_RESULT).toBeUndefined();
+    } finally {
+      if (prevNamespace === undefined) delete process.env.RED_AFK_WORKERS_NAMESPACE;
+      else process.env.RED_AFK_WORKERS_NAMESPACE = prevNamespace;
+      if (prevWorkerId === undefined) delete process.env.RED_AFK_WORKER_ID;
+      else process.env.RED_AFK_WORKER_ID = prevWorkerId;
+      if (prevIterDir === undefined) delete process.env.RED_AFK_ITER_DIR;
+      else process.env.RED_AFK_ITER_DIR = prevIterDir;
+      if (prevFlip === undefined) delete process.env.RED_AFK_GATE_TEST_FLIP_RESULT;
+      else process.env.RED_AFK_GATE_TEST_FLIP_RESULT = prevFlip;
+    }
+  });
 });
 
 describe("pure shaping helpers", () => {
