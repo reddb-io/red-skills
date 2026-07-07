@@ -312,6 +312,19 @@ export interface RunFeedbackResult {
    */
   baselineDowngraded: readonly string[];
   /**
+   * True when the baseline probe actually ran. This distinguishes "main is
+   * green for the failing worker checks" from "the happy path skipped the
+   * baseline probe entirely".
+   */
+  baselineProbeRan?: boolean;
+  /**
+   * The failed baseline check names observed by the probe. These are the
+   * pre-existing main failures a caller can surface in a repair issue. Equal to
+   * `baselineDowngraded` today, but kept as its own field because callers care
+   * about the baseline's state, not the worker reclassification mechanism.
+   */
+  baselineFailures?: readonly string[];
+  /**
    * Quarantine entries that were active for this gate run — the full validated
    * list from `RunFeedbackInput.quarantine`. Always empty when no quarantine
    * was configured. Surfaced for envelope builders that want to render the
@@ -544,7 +557,16 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       }
     }
     failed = checks.some((c) => c.status === "failed");
-    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded, quarantined: quarantine, validationScope };
+    return {
+      ok: !failed,
+      checks,
+      sidecar,
+      baselineDowngraded: downgraded,
+      baselineProbeRan: true,
+      baselineFailures: downgraded,
+      quarantined: quarantine,
+      validationScope,
+    };
   }
 
   return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine, validationScope };
