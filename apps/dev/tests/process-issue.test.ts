@@ -491,6 +491,8 @@ function harness(opts: HarnessOptions = {}): {
     // the locked merge/push/rollback runs there instead of the primary checkout.
     makeLandingWorktree: async () => "/wt",
     removeLandingWorktree: async () => {},
+    makeRebaseWorktree: async () => "/rwt",
+    removeRebaseWorktree: async () => {},
     hooks: {
       config,
       resolveOptions: {

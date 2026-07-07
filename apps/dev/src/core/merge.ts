@@ -129,7 +129,8 @@ export interface PreMergeRebaseResult {
  * false-flagged `blocked:merge-conflict`. The whole sequence runs on `repo` — a
  * throwaway worktree on the worker branch (#572) — so the primary checkout is
  * never touched. Sequence, mirroring the issue spec:
- *   1. `git fetch <remote> <base>` then `git rebase <remote>/<base>`;
+ *   1. `git fetch <remote> <base>`, then short-circuit if `<remote>/<base>` is
+ *      already an ancestor of `HEAD`; otherwise `git rebase <remote>/<base>`;
  *   2. on a rebase conflict → `git rebase --abort` → `{ ok:false, conflict }`;
  *   3. `git push <remote> HEAD:refs/heads/<branch> --force-with-lease`;
  *   4. on a push reject (a landing race), re-fetch + re-rebase the advanced base
@@ -143,9 +144,11 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
 
   // Fetch the base tip and rebase the worker branch onto it. Reused by the
   // push-retry loop so a racing base advance is re-integrated before each retry.
-  const rebaseOntoBase = async (): Promise<PreMergeRebaseResult> => {
+  const rebaseOntoBase = async (): Promise<PreMergeRebaseResult & { alreadyIntegrated?: boolean }> => {
     const fetch = await exec(["git", "-C", repo, "fetch", remote, base, "--quiet"]);
     if (fetch.code !== 0) return { ok: false, reason: "fetch-failed" };
+    const alreadyIntegrated = await exec(["git", "-C", repo, "merge-base", "--is-ancestor", baseRef, "HEAD"]);
+    if (alreadyIntegrated.code === 0) return { ok: true, alreadyIntegrated: true };
     const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
     if (rebase.code !== 0) {
       // #1095: give the opt-in mechanical resolver a chance to auto-resolve
@@ -162,6 +165,7 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
 
   const first = await rebaseOntoBase();
   if (!first.ok) return first;
+  if (first.alreadyIntegrated) return { ok: true };
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const push = await exec([

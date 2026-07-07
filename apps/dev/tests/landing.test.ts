@@ -70,7 +70,7 @@ interface Opts {
   commitCount?: number;
   /** Resolved origin/<branch> tip used by stale-local-ref regressions. */
   branchTip?: string;
-  /** Enable the PR-path pre-merge rebase provisioner (#1006). */
+  /** Enable the PR-path pre-merge rebase provisioner (#1006). Defaults true for PR landings (#1212). */
   rebaseWorktree?: boolean;
   /** The rebase provisioner returns null (could not provision → rebase skipped). */
   noRebaseWorktree?: boolean;
@@ -214,10 +214,11 @@ function harness(opts: Opts = {}): Harness {
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
     },
-    // #1006: only wired when the test opts in, so the existing PR-path suites keep
-    // skipping the rebase (opt-in — an absent provisioner is a no-op).
-    makeRebaseWorktree: opts.rebaseWorktree ? async () => (opts.noRebaseWorktree ? null : RWT) : undefined,
-    removeRebaseWorktree: opts.rebaseWorktree
+    // #1212: PR-path fresh-base integration is mandatory, so the harness wires a
+    // working rebase worktree by default. Tests that exercise infra provisioning
+    // failures opt out explicitly.
+    makeRebaseWorktree: opts.rebaseWorktree === false ? undefined : async () => (opts.noRebaseWorktree ? null : RWT),
+    removeRebaseWorktree: opts.rebaseWorktree !== false
       ? async (dir) => {
           removedRebaseWorktrees.push(dir);
         }
@@ -803,21 +804,30 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     expect(j.some((c) => c.includes("pr merge"))).toBe(false);
   });
 
-  it("no provisioner (opt-out) → rebase skipped, PR lands exactly as before", async () => {
-    const h = harness({ locked: false });
+  it("no provisioner → aborts as infra and never admin-merges", async () => {
+    const h = harness({ locked: false, rebaseWorktree: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
-    // No rebase touched the worker branch; the admin-merge still ran.
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: false,
+    });
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(false);
   });
 
-  it("worktree could not be provisioned → rebase skipped, PR still lands (never risks the primary)", async () => {
-    const h = harness({ locked: false, rebaseWorktree: true, noRebaseWorktree: true });
+  it("worktree could not be provisioned → aborts as infra and never admin-merges", async () => {
+    const h = harness({ locked: false, noRebaseWorktree: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: false,
+    });
     expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(false);
   });
 
   it("the DIRECT (non-PR) path ignores the rebase provisioner (it integrates origin itself)", async () => {
