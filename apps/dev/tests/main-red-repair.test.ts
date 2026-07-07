@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decideMainRedAdminMerge,
   MAIN_RED_REPAIR_TITLE,
   planMainRedRepair,
   renderMainRedRepairBody,
@@ -53,5 +54,25 @@ describe("renderMainRedRepairBody", () => {
     expect(body).toContain("## Failing checks");
     expect(body).toContain("- test:apps/dev");
     expect(body).toContain("- typecheck:workspace");
+  });
+});
+
+describe("decideMainRedAdminMerge", () => {
+  it("allows admin-merge onto a green main", () => {
+    expect(decideMainRedAdminMerge({ mainRed: false, openRepairIssue: null })).toEqual({ ok: true });
+  });
+
+  it("allows admin-merge onto a red main when a repair issue is open", () => {
+    expect(decideMainRedAdminMerge({ mainRed: true, openRepairIssue: { number: 123 } })).toEqual({ ok: true });
+  });
+
+  it("refuses admin-merge onto a red main with no open repair issue", () => {
+    const decision = decideMainRedAdminMerge({ mainRed: true, openRepairIssue: null });
+
+    expect(decision.ok).toBe(false);
+    if (decision.ok) throw new Error("unreachable");
+    expect(decision.message).toContain("Refusing admin-merge onto red main");
+    expect(decision.message).toContain("main-red repair issue");
+    expect(decision.message).toContain("syncMainRedRepairIssue");
   });
 });
