@@ -75,9 +75,10 @@ export interface LandingDeps {
    * PR path's pre-merge rebase (#1006), so the fetch / rebase / force-push run OFF
    * the primary checkout — the primary branch is sacred (#572). Returns the
    * worktree dir, or null when one could not be provisioned. Paired with
-   * {@link removeRebaseWorktree}. Absent → the pre-merge rebase is SKIPPED and the
-   * PR lands exactly as before (opt-in). Only the PR path uses it; the direct path
-   * already integrates origin inside its own detached landing worktree.
+   * {@link removeRebaseWorktree}. Absent → the PR landing is refused as infra
+   * before the admin-merge; fresh-base integration is a mandatory PR-path
+   * precondition (#1212). Only the PR path uses it; the direct path already
+   * integrates origin inside its own detached landing worktree.
    */
   makeRebaseWorktree?(branch: string): Promise<string | null>;
   /** Tear down a worktree returned by {@link makeRebaseWorktree} (best-effort). */
@@ -220,6 +221,7 @@ export type LandingResult =
         | "ci-pending"
         | "pr-conflict"
         | "pr-merge-failed"
+        | "infra"
         | "main-red-untracked"
         // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
         // `<trunk>` ref has DIVERGED from `origin/<trunk>`. The landing aborted
@@ -242,6 +244,8 @@ export type LandingResult =
       sensitivePaths?: SensitivePathHit[];
       /** Main-red tracking gate (`main-red-untracked`): actionable refusal text. */
       message?: string;
+      /** Infra failure (`infra`): actionable refusal text for the terminal note. */
+      infraReason?: string;
     };
 
 /**
@@ -425,8 +429,8 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   // the admin-merge is never rejected as a stale non-fast-forward and then
   // false-flagged blocked:merge-conflict. A real rebase conflict — or a
   // --force-with-lease reject that survives the bounded retry — parks
-  // blocked:merge-conflict through the existing `pr-conflict` route. Opt-in:
-  // without the worktree provisioner the rebase is skipped (today's behaviour).
+  // blocked:merge-conflict through the existing `pr-conflict` route. Missing or
+  // failed provisioning is infra, never a silent skip (#1212).
   const rebaseFail = await preMergeRebaseInWorktree(deps, input);
   if (rebaseFail) return rebaseFail;
 
@@ -468,19 +472,32 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
  * on the worker branch and {@link preMergeRebase} it onto the fetched base,
  * force-pushing the result. Returns a failing {@link LandingResult} to abort the
  * landing (parked as blocked:merge-conflict via `pr-conflict`) on a real conflict
- * or an exhausted force-with-lease retry; returns `undefined` — "proceed to the
- * admin-merge" — on success, when no provisioner is wired (opt-in), or when a
- * worktree could not be provisioned (skip rather than risk the primary; the
- * CI-aware poll still catches a genuinely stale base). The worktree is always
- * torn down.
+ * or an exhausted force-with-lease retry; returns an infra failure when the
+ * rebase worktree provisioner is absent or cannot create a checkout; returns
+ * `undefined` — "proceed to the admin-merge" — only on completed integration.
+ * The worktree is always torn down.
  */
 async function preMergeRebaseInWorktree(
   deps: LandingDeps,
   input: LandingInput,
 ): Promise<LandingResult | undefined> {
-  if (!deps.makeRebaseWorktree) return undefined;
+  if (!deps.makeRebaseWorktree) {
+    return {
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: input.locked,
+    };
+  }
   const dir = await deps.makeRebaseWorktree(input.branch);
-  if (!dir) return undefined;
+  if (!dir) {
+    return {
+      ok: false,
+      reason: "infra",
+      infraReason: "pre-merge rebase worktree could not be provisioned",
+      locked: input.locked,
+    };
+  }
   try {
     const rebased = await preMergeRebase(deps.mergeExec, {
       repo: dir,
