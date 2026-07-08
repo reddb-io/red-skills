@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # /go
 
-**One demand in, one clean PR out — no PRD, no triage, no queue. `/go` is only for genuinely untracked, ad-hoc, one-off demands.** Anything that is or should be a tracked issue belongs to `/afk`, never `/go`. `/go` is the middle tier of the dispatch spectrum: `/goal` (unstructured directive) → **`/go` (concrete demand)** → `/afk` (structured backlog). See ADR 0081.
+**One demand in, one clean PR out — no Spec, no triage, no queue. `/go` is only for genuinely untracked, ad-hoc, one-off demands.** Anything that is or should be a tracked issue belongs to `/afk`, never `/go`. `/go` is the middle tier of the dispatch spectrum: `/goal` (unstructured directive) → **`/go` (concrete demand)** → `/afk` (structured backlog). See ADR 0081.
 
 Add `--scout` to investigate without touching any code: the agent reads the codebase and posts a markdown report as a comment. Nothing commits, nothing pushes, nothing merges — enforced by the engine, not by convention.
 
@@ -84,7 +84,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.
 - ❌ Do **not** treat `+yolo` or a provided `--dod` as approval. The approval question still happens first.
-- ❌ Do **not** reach for `/go` for a directive you keep green conversationally (that is `/goal`) or for a whole backlog (that is a PRD → `/afk`).
+- ❌ Do **not** reach for `/go` for a directive you keep green conversationally (that is `/goal`) or for a whole backlog (that is a Spec → `/afk`).
 
 </what-to-do>
 
@@ -97,7 +97,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 | `/goal` | unstructured directive | none | none | n/a | Conversational steering; no artifact |
 | **`/go`** | **one concrete, untracked demand** | **disposable `lane:go` issue + PR** | **dedicated, `go-workers/`** | **interactive (pause/ask)** | **Ad-hoc only — never for tracked issues** |
 | **`/go --scout`** | **read-only question** | **report comment** | **dedicated, `scout-workers/`** | **none (read-only path)** | Investigation without code changes |
-| **`/afk` (default)** | **triaged backlog (tracked issues)** | **PRD → issues** | **fleet, `workers/`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
+| **`/afk` (default)** | **triaged backlog (tracked issues)** | **Spec → issues** | **fleet, `workers/`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
 
 ## Scout isolation, concretely
 
@@ -123,7 +123,7 @@ The validation gate splits findings two ways:
 
 - **An issue that is or should be a tracked GitHub issue → `/afk`.** This is the hard boundary: `/go` is **only** for untracked ad-hoc demands, never for issue-form work or when work should live on the backlog.
 - A directive you're steering conversationally, no artifact wanted → `/goal`.
-- A batch of related work → author a PRD with `/to-prd`, then `/afk`.
+- A batch of related work → author a Spec with `/to-spec`, then `/afk`.
 - A fire that must jump the queue → `/urgent`.
 - Hand-done work on your own branch that needs only validation + landing → `/requeue` (the no-agent landing lane, ADR 0055).
 

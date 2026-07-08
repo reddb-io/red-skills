@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "Implement a PRD or set of issues interactively — guided, human-driven counterpart to the autonomous /afk fleet."
+description: "Implement a Spec or set of issues interactively — guided, human-driven counterpart to the autonomous /afk fleet."
 disable-model-invocation: true
 ---
 
@@ -8,22 +8,22 @@ disable-model-invocation: true
 
 <what-to-do>
 
-**Interactive PRD execution — you drive, the agent assists; for unattended autonomous execution, use `/afk` instead.**
+**Interactive Spec execution — you drive, the agent assists; for unattended autonomous execution, use `/afk` instead.**
 
 `/implement` is the human-in-the-loop complement to `/afk`:
 
 | | `/implement` | `/afk` |
 |---|---|---|
 | **Driver** | You — interactive, step-by-step | Autonomous fleet, no human in the loop |
-| **Scope** | One PRD / issue set, right now | Drains the full `ready-for-agent` queue |
+| **Scope** | One Spec / issue set, right now | Drains the full `ready-for-agent` queue |
 | **Worktree** | Dedicated `.red/tmp/work-*` worktree | Isolated worktree per issue, sandcastle |
 | **Finish** | You run `/requeue` when satisfied | Agent merges, closes, claims next issue |
 
-Use `/implement` when you want to implement a PRD or issues yourself — with test-first discipline and review — but need the agent to guide each step. Use `/afk` when you want the fleet to work unsupervised.
+Use `/implement` when you want to implement a Spec or issues yourself — with test-first discipline and review — but need the agent to guide each step. Use `/afk` when you want the fleet to work unsupervised.
 
 ### Steps
 
-1. **Agree the scope.** Identify the PRD or issues to implement. If they are not yet on the tracker, run `/to-issues` to break the plan down first.
+1. **Agree the scope.** Identify the Spec or issues to implement. If they are not yet on the tracker, run `/to-tickets` to break the plan down first.
 
 2. **Work the issues — `/tdd` at pre-agreed seams.** For each issue (or logical seam inside a larger issue), invoke `/tdd`: write the failing test first, then the minimum code to pass it, then refactor. The seams are the boundaries you agreed in Step 1 — do not cross seam boundaries before the current slice is GREEN.
 
@@ -40,7 +40,7 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 - ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/requeue`.
 - ❌ Do **not** skip `/tdd`; writing code before a failing test is undefined behaviour for this skill.
 - ❌ Do **not** run `/code-review` while any test is red.
-- ✅ **Do** let `/to-issues` decompose large PRDs before starting — smaller seams mean smaller merge risk.
+- ✅ **Do** let `/to-tickets` decompose large Specs before starting — smaller seams mean smaller merge risk.
 - ✅ **Do** run typechecking after every cycle, not just at the end.
 
 </what-to-do>
@@ -57,8 +57,8 @@ git worktree add .red/tmp/work-<slug> -b feat/<slug>
 
 `/requeue` expects the worktree to be under `.red/tmp/work-*/`. After the adopted branch lands, the worktree is pruned automatically.
 
-## PRD / issue model
+## Spec / issue model
 
-Issues live on GitHub (`reddb-io/red-skills`). A PRD is itself a GitHub issue labeled `type:prd`. Run `/to-prd` to create one from the current conversation; run `/to-issues` to break it into independently-grabbable slices.
+Issues live on GitHub (`reddb-io/red-skills`). A Spec is itself a GitHub issue labeled `type:spec`. Run `/to-spec` to create one from the current conversation; run `/to-tickets` to break it into independently-grabbable slices.
 
 </supporting-info>

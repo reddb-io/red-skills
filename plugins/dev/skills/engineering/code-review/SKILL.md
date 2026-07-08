@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Two-axis code review of the diff between HEAD and a fixed point — Standards (does the code follow this repo's documented coding standards and the Fowler smell baseline?) and Spec (does it implement what the issue/PRD asked for?). Runs both reviews as parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+description: Two-axis code review of the diff between HEAD and a fixed point — Standards (does the code follow this repo's documented coding standards and the Fowler smell baseline?) and Spec (does it implement what the issue/Spec asked for?). Runs both reviews as parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
 ---
 
 # Code Review
@@ -8,7 +8,7 @@ description: Two-axis code review of the diff between HEAD and a fixed point —
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 - **Standards** — does the code conform to this repo's documented coding standards, and does it avoid the universal Fowler smell baseline?
-- **Spec** — does the code faithfully implement the originating issue / PRD / spec?
+- **Spec** — does the code faithfully implement the originating issue / Spec / spec?
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
@@ -30,7 +30,7 @@ Look for the originating spec, in this order:
 
 1. Issue references in the commit messages (`#123`, `Closes #45`, etc.) — fetch via `gh issue view` per `.red/agents/issue-tracker.md`.
 2. A path the user passed as an argument.
-3. A PRD/spec file under `docs/` or `specs/` matching the branch name or feature.
+3. A Spec/spec file under `docs/` or `specs/` matching the branch name or feature.
 4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
 
 ### 3. Identify the standards sources

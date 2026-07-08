@@ -12,7 +12,7 @@ Write a handoff document to a path from `mktemp -t handoff-XXXXXX.md` (read the 
 - **State:** what was done, what is in progress, what is blocked
 - **Next action:** the first concrete step the next session should take
 - **Skills:** which skills the next session should invoke, if any
-- **Refs:** paths or URLs to any PRDs, plans, ADRs, issues, commits, or diffs — do not reproduce their content
+- **Refs:** paths or URLs to any Specs, plans, ADRs, issues, commits, or diffs — do not reproduce their content
 
 Use this template:
 

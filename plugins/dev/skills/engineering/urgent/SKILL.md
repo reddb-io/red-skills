@@ -1,6 +1,6 @@
 ---
 name: urgent
-description: Create a `priority:urgent` issue that bypasses triage and jumps to the front of the `/afk` queue — the next AFK iteration is guaranteed to pick it up, even when AFK is running with a `--prd N` or `--issues a,b,c` filter. Use when something is on fire (production down, security regression, blocking another team) and the standard reporter → triage → AFK pipeline is too slow.
+description: Create a `priority:urgent` issue that bypasses triage and jumps to the front of the `/afk` queue — the next AFK iteration is guaranteed to pick it up, even when AFK is running with a `--spec N` or `--issues a,b,c` filter. Use when something is on fire (production down, security regression, blocking another team) and the standard reporter → triage → AFK pipeline is too slow.
 argument-hint: "[urgent task — leave empty for a 2-question interview]"
 ---
 
@@ -41,7 +41,7 @@ Print exactly:
 ```
 ✓ filed #<N> [URGENT]: <title>
   <url>
-  next AFK iteration will pick this up first, ahead of any --prd / --issues filter.
+  next AFK iteration will pick this up first, ahead of any --spec / --issues filter.
 ```
 
 Then stop. Do not invoke `/afk` automatically — if a worker is already running it will pick up `priority:urgent` on its next claim (Issue Selection re-fetches the queue each iteration). If no worker is running, the user starts `/afk` themselves.
@@ -80,7 +80,7 @@ Branches are not used here — both interview questions are open-ended free text
 
 ## Source
 
-Filed via `/urgent`. Bypassed `/triage` by design. AFK selection prepends `priority:urgent` issues to its queue on every iteration, ahead of any `--prd` / `--issues` filter.
+Filed via `/urgent`. Bypassed `/triage` by design. AFK selection prepends `priority:urgent` issues to its queue on every iteration, ahead of any `--spec` / `--issues` filter.
 ````
 
 The template is intentionally minimal — there's no Reproduction or Context section. Urgent issues are "do this now, sort out the rest later". The agent (via `/afk`) will read the body, ask follow-ups via `## Notes` if needed, and proceed.
@@ -112,8 +112,8 @@ Do not add anything else. In particular:
 
 `/afk` issue_selection now does:
 
-1. Fetch all open `priority:urgent ready-for-agent` issues (independent of any `--prd` / `--issues` filter).
-2. Fetch the filtered list as before (`--prd`, `--issues`, or all `ready-for-agent`).
+1. Fetch all open `priority:urgent ready-for-agent` issues (independent of any `--spec` / `--issues` filter).
+2. Fetch the filtered list as before (`--spec`, `--issues`, or all `ready-for-agent`).
 3. Concat: urgent first (ordered by issue number ascending, so the oldest fire goes first), then the filtered list, deduplicated.
 
 Result: every iteration of every `/afk` run claims a `priority:urgent` issue before anything else, regardless of which `/afk` invocation flags were used. Once urgents are drained, the original filter takes over.
@@ -124,7 +124,7 @@ If two `/afk` workers are running in parallel and there's one urgent issue, the 
 
 - A bug you discovered that isn't actively breaking anyone: `/report-bug`.
 - An issue you want sooner but not at the cost of jumping the queue: `/triage` and bump to `priority:high`.
-- A whole batch of "important" work: `/to-issues` plus `priority:high`.
+- A whole batch of "important" work: `/to-tickets` plus `priority:high`.
 - Something the team agreed should be next but you don't want to skip review: open a regular issue, let `/triage` walk it through.
 
 `/urgent` is a budget. Spend it like one.

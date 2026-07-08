@@ -65,7 +65,7 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 
 - ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration, except for the end-of-session doc-landing finalizer.
 - ❌ Do **not** summarise the user's answers back at them. They know what they said.
-- ❌ Do **not** propose a final plan, design doc, or PRD. This skill ends in shared understanding, not artefacts.
+- ❌ Do **not** propose a final plan, design doc, or Spec. This skill ends in shared understanding, not artefacts.
 - ❌ Do **not** ask more than one question per turn.
 - ❌ Do **not** fetch URLs the user only **mentions** in passing. A ref becomes a fetch only when the user explicitly asks ("look at this", "ingest X") or the next question requires its content.
 - ❌ Do **not** answer a decision yourself — an agent that answers its own questions has broken the interview.
