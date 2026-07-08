@@ -13,6 +13,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
 - **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
 
+## start (engineering) — facts-vs-decisions distinction in hard rules (issue #1288)
+
+- **status**: modified
+- **upstream**: `272f99b` (upstream `grilling`)
+- **why**: upstream v1.1.0 grilling fix — the old "explore instead of asking" rule could be read as license for the agent to answer decisions autonomously (self-grilling failure mode, especially with Fable). Facts can be looked up; decisions belong to the human.
+- **what changed**: replaced the blanket "explore when a question can be answered by reading code instead of asking" rule with three targeted rules: a ❌ prohibition on answering decisions yourself ("broken the interview"), a ✅ rule to look up facts in the codebase, and a ✅ rule to put every decision to the human and wait. Updated the docs-contract test to pin the three new load-bearing phrases.
+
 ## to-prd (engineering) — cascade gate before publish (issue #1285)
 
 - **status**: modified
