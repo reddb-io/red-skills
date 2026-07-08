@@ -28,6 +28,8 @@ interface Trace {
   listByLabelCalls: string[];
   firedHooks: string[];
   iterLogs: string[];
+  /** Presence stages reconcile advanced through via `markStage` (#1306). */
+  stageMarks: string[];
   mergeCalls: string[][];
   pnpmCalls: number;
   pnpmArgs: string[][];
@@ -79,6 +81,7 @@ function harness(opts: HarnessOptions = {}): {
     listByLabelCalls: [],
     firedHooks: [],
     iterLogs: [],
+    stageMarks: [],
     mergeCalls: [],
     pnpmCalls: 0,
     pnpmArgs: [],
@@ -203,6 +206,9 @@ function harness(opts: HarnessOptions = {}): {
     nowEpoch: () => 1000,
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
+    },
+    markStage: async (stage) => {
+      trace.stageMarks.push(stage);
     },
     recordAttempt: opts.recordAttempt
       ? async (payload) => {
@@ -392,6 +398,32 @@ describe("reconcile — red → park", () => {
     expect(park.add).toContain("ready-for-human");
     expect(park.add).toContain("blocked:merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+  });
+});
+
+describe("reconcile — presence stage progression (#1306)", () => {
+  it("advances the caller's stage validate → land on a green landed reconcile", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("landed");
+    expect(trace.stageMarks).toEqual(["validating", "landing"]);
+  });
+
+  it("stops at validating when the gate fails (never reaches landing)", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: false });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("parked");
+    expect(trace.stageMarks).toEqual(["validating"]);
+  });
+
+  it("marks no stage for a skipped (non-mechanical) reconcile — the gate never runs", async () => {
+    const { deps, input, trace } = harness({ labels: ["running", "blocked:spec"] });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("skipped");
+    expect(trace.stageMarks).toEqual([]);
   });
 });
 
