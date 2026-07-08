@@ -35,6 +35,30 @@ function shimEnv(home: string, extra: Record<string, string> = {}): NodeJS.Proce
 }
 
 describe("label vocabulary docs", () => {
+  it("teaches publishers to write native dependency edges and req labels together", async () => {
+    const toTickets = await readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md");
+    const triage = await readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md");
+
+    for (const skill of [toTickets, triage]) {
+      expect(skill).toContain("native sub-issue relationship");
+      expect(skill).toContain("native blocked-by relationship");
+      expect(skill).toContain("req:N labels remain the machine truth");
+      expect(skill).toContain("human surface");
+      expect(skill).toContain("Do not clean up either side");
+    }
+  });
+
+  it("keeps the Blocked by body fallback beside native dependency edges", async () => {
+    const toTickets = await readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md");
+    const triage = await readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md");
+
+    for (const skill of [toTickets, triage]) {
+      expect(skill).toContain("body fallback");
+      expect(skill).toContain("## Blocked by");
+      expect(skill).toContain("- [ ] #N");
+    }
+  });
+
   it("does not teach obsolete slice-routing labels", async () => {
     const docs = await Promise.all([
       readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md"),
