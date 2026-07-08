@@ -202,6 +202,16 @@ export interface ReconcileDeps {
   /** Append one plain line to the iteration's afk.log. */
   appendIterLog(line: string): void;
   /**
+   * Advance the caller's worker-presence stage as reconcile crosses its
+   * validate → land phases (issue #1306). Optional — the autonomous AFK caller
+   * leaves it unset (its stage is driven by the agent-event sink); the
+   * `/requeue --adopt-branch` presence lane wires it to update its short-lived
+   * `origin="requeue"` presence state file so the live-worker surfaces show
+   * `validating` then `landing`. Best-effort at the call site — a failed update
+   * never fails the reconcile.
+   */
+  markStage?(stage: "validating" | "landing"): Promise<void>;
+  /**
    * ADR 0083 §4 exit barrier (every-terminal, #1021). The no-agent reconcile lane
    * obtains its branch-preservation write through the SAME barrier every other
    * terminal path uses: salvage-commit dirty paths + push the parked branch to
@@ -388,6 +398,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   // The merge-conflict reland route (#1095) trusts the prior green validation
   // and skips the gate; every other reland runs it exactly as the DONE path does.
   const startedEpoch = deps.nowEpoch();
+  // Presence stage (#1306): the adopt-landing lane's row now shows `validating`.
+  await deps.markStage?.("validating").catch(() => {});
   let feedback: RunFeedbackResult;
   if (input.trustPriorValidation) {
     // #1095 merge-conflict reland: the branch validated green before the
@@ -448,6 +460,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   // the lock which only resolved `base` (#842); `locked` is read for the echo.
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
+  // Presence stage (#1306): the adopt-landing lane's row now shows `landing`.
+  await deps.markStage?.("landing").catch(() => {});
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
