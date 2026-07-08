@@ -18,6 +18,16 @@ Walk down each branch of the design tree, resolving dependencies between decisio
 4. When their answer changes the tree, re-evaluate before asking the next question.
 5. Stop when the user says stop, or when every reachable branch is resolved.
 
+## End-of-session doc-landing finalizer
+
+When the grilling session ends (the user stops or every reachable branch is resolved), run one end-of-session doc-landing finalizer before exiting:
+
+1. Detect modified or untracked docs in the primary checkout across the domain glossary (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`) and ADRs (`.red/adr/**`). A session with no doc changes skips the finalizer silently.
+2. If docs changed, do this first: Announce the file list and ADR numbers to the user, and accept a decline. A decline leaves the docs unlanded; the cascade gate remains the enforcement point.
+3. If accepted, land the docs through the standard lane: create one worktree under `.red/tmp/` from a freshly fetched `origin/{base}` (base resolved lock > pin > main), copy only the dirty doc files into that worktree, commit them as a `docs:`-typed change, push the branch, open a PR, merge it, and rely on the existing post-landing fast-forward to bring the local base up.
+4. Restate these safety prohibitions before landing: never commit in the primary checkout, never switch its branch, never stash, never reset.
+5. Land at most one batch PR per session.
+
 ## Boot behavior (turn 1 — first invocation only)
 
 The argument is optional. Treat it as the plan or context to grill.
@@ -53,7 +63,7 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 
 **Hard rules — do not break these:**
 
-- ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration.
+- ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration, except for the end-of-session doc-landing finalizer.
 - ❌ Do **not** summarise the user's answers back at them. They know what they said.
 - ❌ Do **not** propose a final plan, design doc, or PRD. This skill ends in shared understanding, not artefacts.
 - ❌ Do **not** ask more than one question per turn.

@@ -13,6 +13,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
 - **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
 
+## start (engineering) — land grill-session docs before cascade (issue #1284)
+
+- **status**: modified
+- **upstream**: `272f99b` (upstream `grilling`)
+- **why**: PRD #1283 — `/start` mutates glossary/ADR docs inline, and downstream `/to-prd`, `/to-issues`, and `/afk` work must read the same origin-visible docs truth instead of session-local primary-checkout edits.
+- **what changed**: Added the end-of-session doc-landing finalizer directive to `/start`: detect dirty `.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`, and `.red/adr/**` files; announce file list and ADR numbers with a decline path; land one batch docs PR through an isolated `.red/tmp/` worktree from freshly fetched `origin/{base}` (base resolved lock > pin > main); and restate the primary-checkout prohibitions against commit, branch switch, stash, and reset. Added ADR 0092 for the finalizer + follow-up cascade-gate decision and a docs-contract test pinning the load-bearing phrases.
+
 ## audit-skills (engineering)
 
 - **status**: added
