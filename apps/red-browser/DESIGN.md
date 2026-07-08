@@ -3,7 +3,7 @@
 Design/scoping output for issue #992 (Track 3C of PRD #907, under the PRD #928
 arch-lock). **No product implementation lands in this slice** — the output is
 this doc plus the proposed implementation slices at the end, ready for
-`/to-issues`.
+`/to-tickets`.
 
 ## Decision inputs (already settled)
 
@@ -134,7 +134,7 @@ apps consume — otherwise each app forks its own encoder and they drift.
 
 ---
 
-## 4. Proposed implementation slices (for `/to-issues`)
+## 4. Proposed implementation slices (for `/to-tickets`)
 
 Tracer-bullet vertical slices, each independently grabbable, ordered so each
 unblocks the next. Parent: #907 / arch-lock #928.

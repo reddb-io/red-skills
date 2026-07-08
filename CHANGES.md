@@ -6,6 +6,33 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## to-spec (engineering) — renamed from to-prd; vocabulary big bang (issue #1293)
+
+- **status**: renamed-from-to-prd
+- **upstream**: `272f99b`
+- **why**: upstream v1.1.0 + ADR 0093 adopt the Spec/Ticket vocabulary at total scope — the artifact this skill produces carries implementation and testing decisions, so it is a specification, not a PRD. Atomic big-bang flip, no compatibility window.
+- **what changed**: Renamed the skill directory `to-prd/` → `to-spec/` and `name:`/`description` frontmatter (PRD → Spec). Flipped body vocabulary — `type:prd` → `type:spec`, `prd:{N}` → `spec:{N}`, `/to-issues` → `/to-tickets`, PRD → Spec throughout. Retained the RedSkills-only Human Decisions template section and the #1285 cascade gate unchanged.
+
+---
+
+## to-tickets (engineering) — renamed from to-issues; vocabulary big bang + wide-refactor section (issue #1293)
+
+- **status**: renamed-from-to-issues
+- **upstream**: `272f99b`
+- **why**: upstream v1.1.0 + ADR 0093 — "issue" is tracker-jargon; "Ticket" names the unit of work. Renamed at total vocabulary scope alongside the runtime/label flip.
+- **what changed**: Renamed the skill directory `to-issues/` → `to-tickets/`, the `# To Tickets` title, and `name:`/`description` frontmatter. Flipped `type:prd` → `type:spec`, `prd:{N}` → `spec:{N}`, PRD → Spec. Updated the `## Parent` template to emit a literal `Spec #N` line (the pin-reader parses it for branch-pin inheritance). Absorbed the upstream **wide refactors — expand → migrate → contract** reference section for blast-radius-wide mechanical changes, with a big-bang exception note.
+
+---
+
+## setup-red-skills, triage, hitl, requeue, retake, afk, doctor, implement, go, dashboard, review-adrs, urgent, code-review, start, write-a-skill (engineering/productivity) — Spec/Ticket label vocabulary (issue #1293)
+
+- **status**: modified
+- **upstream**: `272f99b` (where applicable; RedSkills-original skills: —)
+- **why**: ADR 0093 big-bang flip — every skill that seeds, documents, or references the label vocabulary must speak `type:spec`/`spec:N` and the `/to-spec` / `/to-tickets` skill names, with no `type:prd`/`prd:N`/`--prd` survivors outside historical records.
+- **what changed**: Flipped `type:prd` → `type:spec`, `prd:N`/`prd:{N}` → `spec:N`/`spec:{N}`, `--prd` → `--spec`, `/to-prd` → `/to-spec`, `/to-issues` → `/to-tickets`, and PRD → Spec across the triage-label vocabulary doc, `/setup-red-skills` seeding prose, and the prose of the listed skills. Historical `(PRD #NNN)` attribution comments left intact. The AFK runtime (`--spec` flag, `spec:` body-line, `spec:N` label + `type:spec` hard filter, cascade-rebase, statusline/dashboard counters), the `LABEL_TYPE_SPEC` constant, pin-reader `Spec #N` parsing, and the existing dev suites were flipped in the same change; Codex manifests regenerated.
+
+---
+
 ## prototype (engineering) — model-invoked flip with leading-word description (issue #1291)
 
 - **status**: modified

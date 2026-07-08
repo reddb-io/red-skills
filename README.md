@@ -235,7 +235,7 @@ marketplace registration in a temporary home, and manual skill-link installs.
 ## What Makes It Different
 
 **Issue to PR is the product.** RedSkills treats GitHub Issues as the work
-queue, not a side note. `/triage`, `/to-prd`, `/to-issues`, `/afk`, `/go`,
+queue, not a side note. `/triage`, `/to-spec`, `/to-tickets`, `/afk`, `/go`,
 `/hitl`, and `/requeue` all speak the same issue-state vocabulary.
 
 **Agents work in disposable worktrees.** AFK execution and interactive landing
@@ -258,7 +258,7 @@ and MCP servers are generated from the same plugin definitions and runtime apps.
 ## The Loop
 
 ```text
-Plan -> PRD -> sliced issues -> ready-for-agent -> isolated worktree
+Plan -> Spec -> sliced issues -> ready-for-agent -> isolated worktree
   -> validation -> PR -> review/checks -> merge -> Memory evidence
 ```
 
@@ -330,8 +330,8 @@ without changing anything, or `/doctor --fix` for the approved repair path.
 
 ```text
 /start                  # sharpen a plan against domain language and ADRs
-/to-prd                 # publish the plan as a PRD issue
-/to-issues <prd>        # cut vertical implementation slices
+/to-spec                 # publish the plan as a Spec issue
+/to-tickets <spec>        # cut vertical implementation slices
 /triage                 # make an issue delegable
 /afk                    # drain ready-for-agent work in isolated worktrees
 ```
@@ -339,7 +339,7 @@ without changing anything, or `/doctor --fix` for the approved repair path.
 Shortcuts:
 
 - Already have a delegable issue? Use `/afk --issues N`.
-- Already have a spec? Use `/to-issues` or `/triage`.
+- Already have a spec? Use `/to-tickets` or `/triage`.
 - Hit a bug? Use `/report-bug`, then `/triage`.
 - Something is urgent? Use `/urgent`; it creates a `priority:urgent`
   `ready-for-agent` issue that jumps the queue.
@@ -378,7 +378,7 @@ the [code-nav MCP server](./apps/code-nav/README.md).
 Core responsibilities:
 
 - Bootstrap RedSkills with [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md).
-- Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), and [`to-issues`](./plugins/dev/skills/engineering/to-issues/SKILL.md).
+- Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), and [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md).
 - Execute delegable work with [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), or dispatch one concrete demand with [`go`](./plugins/dev/skills/engineering/go/SKILL.md).
 - Land a hand-worked branch with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md) (the retired `ship` migrated there — ADR 0081).
 - Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md).
@@ -582,10 +582,10 @@ PR review, so the PR carries a legible evidence ledger without adding a new gate
 House rules:
 
 - Labels are kebab-case or `prefix:value`: `needs-triage`, `ready-for-agent`,
-  `ready-for-human`, `priority:urgent`, `blocked:dependency`, `prd:42`.
+  `ready-for-human`, `priority:urgent`, `blocked:dependency`, `spec:42`.
 - RedSkills-managed workflows use role prefixes: `red-*`, `reusable-*`, or
   `rs-*`.
-- Issues and PRDs live on GitHub Issues.
+- Issues and Specs live on GitHub Issues.
 - Project artifacts live under `.red/`.
 - Use SSH git remotes for AFK-managed repositories.
 - Do task work in isolated worktrees; the primary checkout's branch is for the
@@ -598,7 +598,7 @@ This is a map, not a replacement for the skill files. Open the linked
 
 | Area | Skills |
 | --- | --- |
-| Dev setup and issue flow | [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md), [`doctor`](./plugins/dev/skills/engineering/doctor/SKILL.md), [`start`](./plugins/dev/skills/engineering/start/SKILL.md), [`to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), [`to-issues`](./plugins/dev/skills/engineering/to-issues/SKILL.md), [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md), [`urgent`](./plugins/dev/skills/engineering/urgent/SKILL.md) |
+| Dev setup and issue flow | [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md), [`doctor`](./plugins/dev/skills/engineering/doctor/SKILL.md), [`start`](./plugins/dev/skills/engineering/start/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md), [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md), [`urgent`](./plugins/dev/skills/engineering/urgent/SKILL.md) |
 | Dev execution and landing | [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), [`go`](./plugins/dev/skills/engineering/go/SKILL.md), [`ship`](./plugins/dev/skills/engineering/ship/SKILL.md), [`implement`](./plugins/dev/skills/engineering/implement/SKILL.md), [`tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`verify`](./plugins/dev/skills/engineering/verify/SKILL.md), [`ground-truth`](./plugins/dev/skills/engineering/ground-truth/SKILL.md), [`diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md), [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md), [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md), [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md), [`resolving-merge-conflicts`](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md) |
 | Dev operations and understanding | [`dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md), [`audit-skills`](./plugins/dev/skills/engineering/audit-skills/SKILL.md), [`daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md), [`context`](./plugins/dev/skills/engineering/context/SKILL.md), [`zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md), [`review-adrs`](./plugins/dev/skills/engineering/review-adrs/SKILL.md), [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md), [`setup-statusline`](./plugins/dev/skills/engineering/setup-statusline/SKILL.md), [`prototype`](./plugins/dev/skills/engineering/prototype/SKILL.md), [`review`](./plugins/dev/skills/engineering/review/SKILL.md), [`code-review`](./plugins/dev/skills/engineering/code-review/SKILL.md), [`curate`](./plugins/dev/skills/engineering/curate/SKILL.md) |
 | Dev knowledge, productivity, and utilities | [`wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md), [`wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md), [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`write-a-skill`](./plugins/dev/skills/productivity/write-a-skill/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |

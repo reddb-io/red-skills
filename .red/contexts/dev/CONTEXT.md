@@ -79,7 +79,7 @@ A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive age
 _Avoid_: pinned branch
 
 **Pinned branch**:
-The branch an **Issue** or PRD declares that AFK must base work on and merge back into.
+The branch an **Issue** or Spec declares that AFK must base work on and merge back into.
 _Avoid_: branch lock
 
 **Trunk**:
@@ -193,7 +193,7 @@ _Avoid_: memory cleaner, silent curator
 - An **Issue tracker** holds many **Issues**.
 - An **Issue** carries one **Triage role** at a time.
 - Every **Issue** label should belong to a clear **Label family**; labels outside state, type, priority, relationship/dependency, or operational diagnostic families are candidates for removal or deprecation.
-- The **HITL queue** contains non-PRD **Issues** selected by the `ready-for-human` state.
+- The **HITL queue** contains non-Spec **Issues** selected by the `ready-for-human` state.
 - **HITL selection** chooses one recommended **Issue** from the **HITL queue** and lets the maintainer `skip` when that Issue is not the right decision target.
 - **HITL decision extraction** identifies the pending decision for the selected **Issue** before **HITL resolution** begins.
 - **HITL decision recording** preserves the maintainer's answer as **Human guidance** and prepares the **Issue** for delegation when possible.
@@ -217,4 +217,4 @@ _Avoid_: memory cleaner, silent curator
 ## Flagged ambiguities
 
 - "backlog" previously meant both the issue-hosting tool and the body of work; resolved: use **Issue tracker** for the tool and avoid "backlog" as a domain term.
-- "branch lock" and "pinned branch" were previously conflated; resolved: **Branch lock** is the operator's local opt-in (interactive enforcement *plus* the higher-precedence AFK base/landing toggle, ADR 0030/0031), while **Pinned branch** is the per-Issue/PRD base declaration the lock overrides when present.
+- "branch lock" and "pinned branch" were previously conflated; resolved: **Branch lock** is the operator's local opt-in (interactive enforcement *plus* the higher-precedence AFK base/landing toggle, ADR 0030/0031), while **Pinned branch** is the per-Issue/Spec base declaration the lock overrides when present.
