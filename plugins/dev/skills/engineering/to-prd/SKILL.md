@@ -19,7 +19,13 @@ Check with the user that these seams match their expectations.
 
 **Capture every HITL call** made during the conversation that led to this PRD — testing seam choices, module shape choices, trade-offs the user took a side on, alternatives they rejected, constraints they imposed. These go into the `Human Decisions` section of the template. Do not silently fold them into `Implementation Decisions` — once `/to-issues` slices this PRD and `/afk` picks up the children, the human's calls become indistinguishable from agent inference unless they are flagged here.
 
-3. Write the PRD using the template below, then publish it to the project issue tracker.
+3. **Cascade gate — run before publishing.** AFK workers branch from `origin/{base}` and cannot see the primary checkout's working-tree edits, so never publish while docs are unlanded.
+
+   a. `git fetch origin`, then compare the `.red/` docs (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`, `.red/adr/**`) between the primary working tree and `origin/{base}` (base resolved lock > pin > main). "Landed" means reachable from `origin/{base}`, not merely present on disk — origin-first comparison, mirroring the `/review-adrs` convention.
+   b. **On mismatch:** run the doc-landing procedure from the `/start` end-of-session finalizer (canonized by ADR 0092) first, then continue to step 4.
+   c. **If landing is impossible** (no network, no push access): abort — never publish while docs are unlanded. State clearly which files must be landed and stop.
+
+4. Write the PRD using the template below, then publish it to the project issue tracker.
 
    **Labels on publish:** apply `type:prd` and `needs-slicing`. **Do not apply `ready-for-agent` to a PRD — a PRD is not an implementable unit; `/to-issues` must slice it first.** `/afk` hard-filters anything tagged `type:prd` so an accidental `ready-for-agent` will be ignored, but the right pre-condition is to not set it in the first place.
 
