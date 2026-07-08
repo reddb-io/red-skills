@@ -11,6 +11,7 @@ import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
+import { relabelSweepCommand } from "./commands/relabel-sweep.js";
 import { requeueCommand } from "./commands/requeue.js";
 import { retakeCommand } from "./commands/retake.js";
 import { reviewCommand } from "./commands/review.js";
@@ -35,6 +36,7 @@ export type CliCommand =
   | "daily-review"
   | "weekly-review"
   | "reap"
+  | "relabel-sweep"
   | "requeue"
   | "retake"
   | "review"
@@ -77,6 +79,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "daily-review": {},
     "weekly-review": {},
     reap: {},
+    "relabel-sweep": {},
     requeue: {},
     retake: {},
     review: {},
@@ -128,6 +131,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "daily-review") return activityReviewCommand("daily", parsed.args);
   if (parsed.command === "weekly-review") return activityReviewCommand("weekly", parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);
+  if (parsed.command === "relabel-sweep") return relabelSweepCommand(parsed.args);
   if (parsed.command === "requeue") return requeueCommand(parsed.args);
   if (parsed.command === "retake") return retakeCommand(parsed.args);
   if (parsed.command === "review") return reviewCommand(parsed.args);
