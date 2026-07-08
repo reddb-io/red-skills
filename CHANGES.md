@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## relabel-sweep (internal/maintainer)
+
+- **status**: added
+- **upstream**: none
+- **why**: issue #1292 (Spec #1286, ADR 0093) — the big-bang Spec/Ticket vocabulary flip needs a one-shot sweep to migrate open Tickets' historical label families to the new vocabulary; closed Tickets keep their labels (history is not rewritten).
+- **what changed**: added the `dev relabel-sweep` runtime command (`apps/dev/src/commands/relabel-sweep.ts`) plus its pure planner (`apps/dev/src/core/relabel-sweep.ts`). It migrates OPEN Tickets' labels `type:prd → type:spec` and `prd:N → spec:N`, creating the missing target labels on demand, and leaves `req:*` and every other family untouched. `--dry-run` prints the complete per-Ticket plan and writes nothing; the real run applies exactly that plan and is idempotent (a replay finds no old-vocabulary labels and no-ops). The tool ships inert — executing the real sweep against the repo is a separate operator Ticket. Unit-tested planner + injected-gh command control flow; wired into the CLI router.
+
 ## create-plugin (internal/maintainer)
 
 - **status**: added
