@@ -77,8 +77,8 @@ export interface HandoffInput {
    * prior success), so the handoff is byte-for-byte unchanged.
    */
   repairInstruction?: string;
-  /** Optional PRD reference for the `prd: #N` line (FILTER_KIND=prd in bash). */
-  prdRef?: string;
+  /** Optional Spec reference for the `spec: #N` line (FILTER_KIND=spec in bash). */
+  specRef?: string;
   /**
    * The effective binding merge gate for this attempt: the operator-declared
    * `afk.backpressure` commands the orchestrator will run against the worker
@@ -302,7 +302,7 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push(`# Issue #${input.issue} — ${input.title} [AFK]`);
   lines.push("");
   lines.push(`source: ${input.url}`);
-  if (isPresent(input.prdRef)) lines.push(`prd: #${input.prdRef}`);
+  if (isPresent(input.specRef)) lines.push(`spec: #${input.specRef}`);
   lines.push(`runner: ${input.runner}`);
   lines.push(`started: ${input.started}`);
   lines.push(`attempt: ${input.attempt}`);

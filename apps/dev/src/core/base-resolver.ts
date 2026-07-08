@@ -9,7 +9,7 @@
 //      the lock is absolute and overrides any pin (the human pinned this
 //      checkout on purpose; the lock comes from the branch-lock skill's
 //      lock_store_read against `.red/tmp/branch-lock.yaml`);
-//   2. else the pinned branch — the issue/PRD `branch:` resolution (pin-reader's
+//   2. else the pinned branch — the Ticket/Spec `branch:` resolution (pin-reader's
 //      `resolvePin`, which collapses "no pin" to the Trunk);
 //   3. else the Trunk — the repo's configured focal branch
 //      (`plugins.dev.trunk`, default `main`; ADR 0083).
@@ -50,7 +50,7 @@ export interface ResolveBaseDeps {
    * Empty/undefined falls back to `main`, preserving pre-trunk behaviour.
    */
   configTrunk?: string;
-  /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
+  /** Fetch the raw body for Ticket/Spec number `n`, or `undefined` if missing. */
   fetchIssueBody: (n: number) => Promise<string | undefined>;
 }
 

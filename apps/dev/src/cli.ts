@@ -61,7 +61,7 @@ export interface ParsedCli {
 /**
  * Command-router schema for the dev CLI, expressed against the shared layer
  * (`packages/shared/args.ts`). A leading `run` is peeled like any other
- * command; a flag-led (`--prd …`) or empty invocation falls through to the
+ * command; a flag-led (`--spec …`) or empty invocation falls through to the
  * `run` default with the full argv preserved, reproducing the legacy
  * default-`/afk` interface. `errorOnUnknownCommand` makes a typo'd subcommand
  * (a non-flag leading token matching no command) error instead of silently

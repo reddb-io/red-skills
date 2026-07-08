@@ -67,25 +67,25 @@ export interface IssueCandidate {
 }
 
 /** The selection filter, mirroring FILTER_KIND/FILTER_VALUE. `issues` keeps the
- * argument order; `prd` keeps prd-linked issues; `all` keeps every remainder. */
+ * argument order; `spec` keeps spec-linked Tickets; `all` keeps every remainder. */
 export type SelectionFilter =
   | { kind: "all" }
   | { kind: "issues"; numbers: number[] }
-  | { kind: "prd"; prd: number };
+  | { kind: "spec"; spec: number };
 
-import { LABEL_PRD, LABEL_URGENT, LABEL_HIGH, LABEL_READY, LABEL_TYPE_SCOUT } from "./triage-labels.js";
+import { LABEL_TYPE_SPEC, LABEL_URGENT, LABEL_HIGH, LABEL_READY, LABEL_TYPE_SCOUT } from "./triage-labels.js";
 
 function hasLabel(c: IssueCandidate, label: string): boolean {
   return c.labels.includes(label);
 }
 
-/** prd-link test: `prd: #N` / `prd: N` in the body, or a `prd:N` label.
- * Mirrors the select_issues `prd` jq clause (body regex + label index). */
-function matchesPrd(c: IssueCandidate, prd: number): boolean {
-  if (hasLabel(c, `prd:${prd}`)) return true;
-  // `prd:\s*#?<N>\b` — optional whitespace, optional `#`, then the number on a
-  // word boundary (so prd:24 does not match a prd:240 candidate).
-  return new RegExp(`prd:\\s*#?${prd}\\b`).test(c.body ?? "");
+/** spec-link test: `spec: #N` / `spec: N` in the body, or a `spec:N` label.
+ * Mirrors the select_issues `spec` jq clause (body regex + label index). */
+function matchesSpec(c: IssueCandidate, spec: number): boolean {
+  if (hasLabel(c, `spec:${spec}`)) return true;
+  // `spec:\s*#?<N>\b` — optional whitespace, optional `#`, then the number on a
+  // word boundary (so spec:24 does not match a spec:240 candidate).
+  return new RegExp(`spec:\\s*#?${spec}\\b`).test(c.body ?? "");
 }
 
 /** Stable priority sort for the non-urgent remainder: `priority:high` (rank 0)
@@ -117,23 +117,23 @@ export class IssueSelectionError extends Error {
  * already-listed candidate pool (the caller injects the `gh issue list` result),
  * applying — in order:
  *
- *   1. PRD exclusion (hard): drop every `type:prd` candidate before any filter.
+ *   1. Spec exclusion (hard): drop every `type:spec` candidate before any filter.
  *   2. Urgent prepend (hard, ahead of filters): split out `priority:urgent`;
  *      they jump the head sorted by number ascending (oldest fires first).
  *   3. Filter the non-urgent remainder:
  *        - issues: keep the requested numbers in ARGUMENT order; throw an
  *          IssueSelectionError if any requested number is missing from the pool
- *          or (present but) not labelled ready-for-agent. type:prd numbers were
- *          already dropped in step 1, so an explicit PRD reads as "missing".
- *        - prd: keep candidates with a prd:#N body ref / prd:N label.
+ *          or (present but) not labelled ready-for-agent. type:spec numbers were
+ *          already dropped in step 1, so an explicit Spec reads as "missing".
+ *        - spec: keep candidates with a spec:#N body ref / spec:N label.
  *        - all: keep the whole remainder.
  *      The filtered remainder is sorted priority:high→rest, then number asc.
  *   4. Concat `[urgent…] + [filtered…]`, deduped by number keeping the urgent
  *      slot at the front.
  */
 export function selectIssues(candidates: readonly IssueCandidate[], filter: SelectionFilter): IssueCandidate[] {
-  // 1. PRD exclusion (hard).
-  const pool = candidates.filter((c) => !hasLabel(c, LABEL_PRD));
+  // 1. Spec exclusion (hard).
+  const pool = candidates.filter((c) => !hasLabel(c, LABEL_TYPE_SPEC));
 
   // 2. Urgent prepend — split, sorted by number ascending.
   const urgent = pool.filter((c) => hasLabel(c, LABEL_URGENT)).sort((a, b) => a.number - b.number);
@@ -163,8 +163,8 @@ export function selectIssues(candidates: readonly IssueCandidate[], filter: Sele
       filtered = ordered; // argument order preserved, no priority re-sort.
       break;
     }
-    case "prd":
-      filtered = sortByPriority(rest.filter((c) => matchesPrd(c, filter.prd)));
+    case "spec":
+      filtered = sortByPriority(rest.filter((c) => matchesSpec(c, filter.spec)));
       break;
     case "all":
     default:

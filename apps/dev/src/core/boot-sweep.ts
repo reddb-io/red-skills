@@ -72,7 +72,7 @@ export function refToNumber(ref: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** A `req:<N>` dependency label — the queryable edge that mirrors `prd:<N>`. An
+/** A `req:<N>` dependency label — the queryable edge that mirrors `spec:<N>`. An
  * issue carrying `req:101` declares it "requires #101 to close before it can be
  * worked"; multiple `req:*` labels stack (req:101, req:102, …). */
 const REQ_LABEL_RE = /^req:([0-9]+)$/;

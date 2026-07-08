@@ -636,10 +636,10 @@ export interface ProcessIssueDeps {
    */
   terminalExitBarrier?(branch: string): Promise<TerminalReceipt>;
   /**
-   * Post-merge PRD cascade rebase (issue #1007, `afk.landing.cascade_rebase`).
+   * Post-merge Spec cascade rebase (issue #1007, `afk.landing.cascade_rebase`).
    * Provides the IO surface for {@link runCascadeRebase}: after a successful DONE
-   * landing, AFK rebases every open sibling branch (same prd:N label, not held by
-   * a live worker) onto the new base HEAD, keeping PRD siblings fresh between
+   * landing, AFK rebases every open sibling branch (same spec:N label, not held by
+   * a live worker) onto the new base HEAD, keeping Spec siblings fresh between
    * landings. All three operations are best-effort — a failure logs a warning and
    * never rolls back the primary landing. Optional: when absent the cascade rebase
    * is skipped entirely (legacy callers / tests that predate #1007).
@@ -647,7 +647,7 @@ export interface ProcessIssueDeps {
   cascadeRebase?: CascadeRebasePort;
 }
 
-/** Injectable IO for the post-merge PRD cascade rebase (#1007). */
+/** Injectable IO for the post-merge Spec cascade rebase (#1007). */
 export interface CascadeRebasePort {
   /**
    * List remote branch names under the `afk/` namespace (e.g.
@@ -700,10 +700,10 @@ export interface ProcessIssueInput {
   repo: string;
   repoDir: string;
   remote: string;
-  /** Pin-resolution input for resolveBase (the issue/PRD number + body). */
+  /** Pin-resolution input for resolveBase (the Ticket/Spec number + body). */
   baseInput: ResolveBaseInput;
-  /** Optional PRD reference for the handoff `prd:` line. */
-  prdRef?: string;
+  /** Optional Spec reference for the handoff `spec:` line. */
+  specRef?: string;
   /** Execution mode modifier: `"scout"` activates the read-only investigation
    * path — agent runs without committing, no push / PR / landing; report is
    * posted as a comment and the disposable issue closes. Forwarded from the
@@ -1373,7 +1373,7 @@ export async function processIssue(
     url,
     comments,
     priorAttemptContext,
-    prdRef: input.prdRef,
+    specRef: input.specRef,
     // Surface the operator-declared backpressure commands as the binding
     // `<merge-gate>` so the inner agent satisfies the EXACT gate the
     // orchestrator enforces after DONE, instead of bouncing as
@@ -2397,12 +2397,12 @@ export async function processIssue(
   // run.
   await runCloseCascade(deps, issue);
 
-  // ---- 10. PRD cascade rebase (keep sibling branches fresh) ----
-  // After landing, rebase every open sibling branch (same prd:N, not held by
+  // ---- 10. Spec cascade rebase (keep sibling branches fresh) ----
+  // After landing, rebase every open sibling branch (same spec:N, not held by
   // a live worker) onto the new base HEAD so the next worker to pick up a
   // sibling starts from a near-current base. Best-effort: per-branch failures
   // are logged as warnings and never roll back the primary landing.
-  // `labels` was fetched at claim time (step 1) and carries the prd:N labels.
+  // `labels` was fetched at claim time (step 1) and carries the spec:N labels.
   await runCascadeRebase(deps, input, issue, base, labels);
 
   return {
@@ -3358,15 +3358,15 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
   }
 }
 
-// ---------- PRD cascade rebase (issue #1007) ----------
+// ---------- Spec cascade rebase (issue #1007) ----------
 
-const PRD_LABEL_RE = /^prd:([0-9]+)$/;
+const SPEC_LABEL_RE = /^spec:([0-9]+)$/;
 const AFK_BRANCH_RE = /^afk\/([A-Za-z0-9._-]+)\/([0-9]+)-/;
 
 /**
- * Best-effort post-merge cascade rebase for PRD siblings (issue #1007).
- * Called after a DONE close when the issue carries a `prd:N` label. Finds every
- * open issue carrying the same `prd:N` label, locates their live `afk/*` remote
+ * Best-effort post-merge cascade rebase for Spec siblings (issue #1007).
+ * Called after a DONE close when the issue carries a `spec:N` label. Finds every
+ * open issue carrying the same `spec:N` label, locates their live `afk/*` remote
  * branches, skips any held by a live worker, and rebases the rest onto the new
  * `base` HEAD with `--force-with-lease`. A per-branch failure is logged as a
  * warning and never rolls back the primary landing.
@@ -3387,18 +3387,18 @@ async function runCascadeRebase(
   if (getConfig(deps.hooks.config, "afk.landing.cascade_rebase") === "false") return;
 
   try {
-    // Extract prd:N numbers from the claim-time labels.
-    const prdNumbers: number[] = [];
+    // Extract spec:N numbers from the claim-time labels.
+    const specNumbers: number[] = [];
     for (const l of labels) {
-      const m = PRD_LABEL_RE.exec(l);
-      if (m) prdNumbers.push(Number(m[1]));
+      const m = SPEC_LABEL_RE.exec(l);
+      if (m) specNumbers.push(Number(m[1]));
     }
-    if (prdNumbers.length === 0) return;
+    if (specNumbers.length === 0) return;
 
-    // Collect open sibling issue numbers (same prd:N, not the closed issue itself).
+    // Collect open sibling issue numbers (same spec:N, not the closed issue itself).
     const siblingNums = new Set<number>();
-    for (const prd of prdNumbers) {
-      const siblings = await deps.gh.listByLabel(`prd:${prd}`);
+    for (const spec of specNumbers) {
+      const siblings = await deps.gh.listByLabel(`spec:${spec}`);
       for (const s of siblings) {
         if (s.number !== closedIssue) siblingNums.add(s.number);
       }

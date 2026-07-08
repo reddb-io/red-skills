@@ -191,8 +191,8 @@ export function buildSlotEnv(
 /**
  * Parse the supervisor's own argv (forwarded by fleet.ts) into the filter /
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
- * fleet honours the same PRD/issue filter + alternate/fallback policy a single
- * `/afk run` would. Recognises the value flags `--prd` / `--issues` / `--request`
+ * fleet honours the same Spec/Ticket filter + alternate/fallback policy a single
+ * `/afk run` would. Recognises the value flags `--spec` / `--issues` / `--request`
  * (with `-r`) and the boolean flags `--alternate` / `--fallback-runner`, all in
  * both `--flag value` and `--flag=value` forms. Unknown args are dropped (the
  * supervisor only forwards the known filter/policy surface). Returns the argv
@@ -201,7 +201,7 @@ export function buildSlotEnv(
 export function slotFilterArgs(args: readonly string[]): string[] {
   const out: string[] = [];
   const valueFlags = new Map<string, string>([
-    ["--prd", "--prd"],
+    ["--spec", "--spec"],
     ["--issues", "--issues"],
     ["--request", "--request"],
     ["-r", "--request"],
@@ -354,7 +354,7 @@ function buildSupervisorDeps(
   return {
     proc: {
       spawnSlot: async (slot, policy) => {
-        // Forward the PRD/issue filter + runner-swap policy so a supervised
+        // Forward the Spec/Ticket filter + runner-swap policy so a supervised
         // fleet honours the same filter a single `/afk run` would (gap 5).
         const runArgs = ["run", "--once", "--runner", runner, ...slotArgs];
         // Each slot gets its own log file so the circuit-trip sweep can
@@ -621,7 +621,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const state = initSupervisorState(config.target);
   const repo = await resolveRepoSlug(root).catch(() => "");
   const ghCtx = { cwd: root, repo };
-  // The filter/policy flags fleet.ts forwarded (--prd/--issues/--alternate/
+  // The filter/policy flags fleet.ts forwarded (--spec/--issues/--alternate/
   // --fallback-runner/--request), threaded into every slot's `run --once`.
   const slotArgs = slotFilterArgs(args);
   // Base env for fleet hooks: RED_AFK_REPO, RED_AFK_ROOT, RED_AFK_RUNNER.
