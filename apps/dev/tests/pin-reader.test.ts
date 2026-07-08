@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BRANCH, parseBranchPin, parseParentPrd, resolvePin } from "../src/core/pin-reader.js";
+import { DEFAULT_BRANCH, parseBranchPin, parseParentSpec, resolvePin } from "../src/core/pin-reader.js";
 
 describe("parseBranchPin", () => {
   it("pulls the branch out of a bare branch line", () => {
@@ -32,25 +32,25 @@ describe("parseBranchPin", () => {
   });
 });
 
-describe("parseParentPrd", () => {
-  it("extracts the PRD number from a Parent section", () => {
-    expect(parseParentPrd("## Parent\nPRD #59\n\n## What to build")).toBe(59);
+describe("parseParentSpec", () => {
+  it("extracts the Spec number from a Parent section", () => {
+    expect(parseParentSpec("## Parent\nSpec #59\n\n## What to build")).toBe(59);
   });
 
   it("tolerates spaces around the hash", () => {
-    expect(parseParentPrd("Parent: PRD # 12")).toBe(12);
+    expect(parseParentSpec("Parent: Spec # 12")).toBe(12);
   });
 
-  it("returns undefined when there is no PRD reference", () => {
-    expect(parseParentPrd("## What to build\nno parent reference")).toBeUndefined();
+  it("returns undefined when there is no Spec reference", () => {
+    expect(parseParentSpec("## What to build\nno parent reference")).toBeUndefined();
   });
 });
 
 describe("resolvePin", () => {
   const issueWithPin = "## What to build\nbranch: issue/own";
-  const issueNoPin = "## What to build\n## Parent\nPRD #59";
-  const prdWithPin = "## PRD\nbranch: prd/shared";
-  const prdNoPin = "## PRD\nno pin here either";
+  const issueNoPin = "## What to build\n## Parent\nSpec #59";
+  const specWithPin = "## Spec\nbranch: spec/shared";
+  const specNoPin = "## Spec\nno pin here either";
 
   const fetcherFor = (bodies: Record<number, string>) => {
     const calls: number[] = [];
@@ -63,21 +63,21 @@ describe("resolvePin", () => {
     };
   };
 
-  it("prefers the issue's own pin over the PRD's", async () => {
-    const deps = fetcherFor({ 59: prdWithPin });
+  it("prefers the issue's own pin over the Spec's", async () => {
+    const deps = fetcherFor({ 59: specWithPin });
     expect(await resolvePin({ issueBody: issueWithPin }, deps)).toBe("issue/own");
     // own pin wins without ever fetching the parent
     expect(deps.calls).toEqual([]);
   });
 
-  it("inherits the parent PRD pin when the issue has none", async () => {
-    const deps = fetcherFor({ 59: prdWithPin });
-    expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe("prd/shared");
+  it("inherits the parent Spec pin when the issue has none", async () => {
+    const deps = fetcherFor({ 59: specWithPin });
+    expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe("spec/shared");
     expect(deps.calls).toEqual([59]);
   });
 
   it("defaults to main when no pin exists anywhere", async () => {
-    const deps = fetcherFor({ 59: prdNoPin });
+    const deps = fetcherFor({ 59: specNoPin });
     expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe(DEFAULT_BRANCH);
     expect(DEFAULT_BRANCH).toBe("main");
   });
@@ -96,7 +96,7 @@ describe("resolvePin", () => {
 
   // Trunk collapse (ADR 0083): a pinless item lands on the configured trunk.
   it("collapses a pinless item to the injected defaultBranch (the Trunk)", async () => {
-    const deps = { ...fetcherFor({ 59: prdNoPin }), defaultBranch: "develop" };
+    const deps = { ...fetcherFor({ 59: specNoPin }), defaultBranch: "develop" };
     expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe("develop");
   });
 

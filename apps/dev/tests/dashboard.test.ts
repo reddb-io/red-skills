@@ -25,7 +25,7 @@ describe("dashboard report", () => {
       periodDays: 30,
       localWorkers: { live: 2, stale: 1, total: 3 },
       issues: [
-        issue({ number: 1, title: "PRD: dashboard", labels: ["type:prd"] }),
+        issue({ number: 1, title: "Spec: dashboard", labels: ["type:spec"] }),
         issue({ number: 2, labels: ["running"], body: "due: 2026-06-05" }),
         issue({ number: 3, body: "deadline: 2026-06-01" }),
         issue({
@@ -40,7 +40,7 @@ describe("dashboard report", () => {
     });
 
     expect(report.operations).toMatchObject({
-      open_prds: 1,
+      open_specs: 1,
       open_issues: 2,
       global_running_workers: 1,
       local_workers: { live: 2, stale: 1, total: 3 },
@@ -139,7 +139,7 @@ describe("dashboard report", () => {
     // Indentation key:value tree with nested groups and a definitive empty state.
     expect(toon).toContain("schema_version: red.dev.dashboard.v1");
     expect(toon).toContain("operations:");
-    expect(toon).toContain("  open_prds: 0");
+    expect(toon).toContain("  open_specs: 0");
     expect(toon).toContain("local_workers:");
     expect(toon).toContain("    live: 2");
     expect(toon).toMatch(/warnings\[\d+\]:/);

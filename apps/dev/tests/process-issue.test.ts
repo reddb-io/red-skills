@@ -198,7 +198,7 @@ interface HarnessOptions {
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
   /** Exit code for the final `gh pr merge` command. Defaults to 0. */
   prMergeCode?: number;
-  /** PRD cascade rebase (#1007): remote afk/* branches returned by
+  /** Spec cascade rebase (#1007): remote afk/* branches returned by
    * cascadeRebase.listAFKBranches. When set, injects the cascadeRebase port. */
   siblingBranches?: string[];
   /** Worker IDs considered live (skipped by cascade rebase). */
@@ -622,7 +622,7 @@ function harness(opts: HarnessOptions = {}): {
               pushed,
             };
           },
-    // PRD cascade rebase port (#1007): injected when siblingBranches is set.
+    // Spec cascade rebase port (#1007): injected when siblingBranches is set.
     cascadeRebase:
       opts.siblingBranches !== undefined
         ? {
@@ -666,7 +666,7 @@ function harness(opts: HarnessOptions = {}): {
     repoDir: "/repo",
     remote: "origin",
     baseInput: { issueBody: opts.body ?? "## Agent brief\nDo it." },
-    prdRef: undefined,
+    specRef: undefined,
     runMode: opts.runMode,
     laneLabel: opts.laneLabel,
   };
@@ -3360,20 +3360,20 @@ describe("processIssue — scout mode (runMode: 'scout')", () => {
   });
 });
 
-// ---------- PRD cascade rebase (#1007) ----------
+// ---------- Spec cascade rebase (#1007) ----------
 
-describe("PRD cascade rebase after DONE landing", () => {
-  it("rebases two sibling branches onto main after merge of issue A (prd:42)", async () => {
+describe("Spec cascade rebase after DONE landing", () => {
+  it("rebases two sibling branches onto main after merge of issue A (spec:42)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
-      // Issue 9 carries prd:42 — so after close, AFK should rebase prd:42 siblings.
-      labels: ["ready-for-agent", "prd:42"],
-      // Two open issues carry prd:42; they are the siblings.
+      // Issue 9 carries spec:42 — so after close, AFK should rebase spec:42 siblings.
+      labels: ["ready-for-agent", "spec:42"],
+      // Two open issues carry spec:42; they are the siblings.
       dependentsByLabel: {
-        "prd:42": [
-          { number: 20, labels: ["prd:42", "ready-for-agent"] },
-          { number: 21, labels: ["prd:42", "ready-for-agent"] },
+        "spec:42": [
+          { number: 20, labels: ["spec:42", "ready-for-agent"] },
+          { number: 21, labels: ["spec:42", "ready-for-agent"] },
         ],
       },
       // Two remote afk branches, one for each sibling.
@@ -3389,19 +3389,19 @@ describe("PRD cascade rebase after DONE landing", () => {
       "afk/wBBBB/20-fix-sibling-a",
       "afk/wCCCC/21-fix-sibling-b",
     ]);
-    // The prd:42 label lookup fired.
-    expect(trace.listByLabelCalls).toContain("prd:42");
+    // The spec:42 label lookup fired.
+    expect(trace.listByLabelCalls).toContain("spec:42");
   });
 
   it("skips a sibling branch whose worker is still alive", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
-      labels: ["ready-for-agent", "prd:42"],
+      labels: ["ready-for-agent", "spec:42"],
       dependentsByLabel: {
-        "prd:42": [
-          { number: 20, labels: ["prd:42"] },
-          { number: 21, labels: ["prd:42"] },
+        "spec:42": [
+          { number: 20, labels: ["spec:42"] },
+          { number: 21, labels: ["spec:42"] },
         ],
       },
       siblingBranches: [
@@ -3422,9 +3422,9 @@ describe("PRD cascade rebase after DONE landing", () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
-      labels: ["ready-for-agent", "prd:42"],
+      labels: ["ready-for-agent", "spec:42"],
       dependentsByLabel: {
-        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+        "spec:42": [{ number: 20, labels: ["spec:42"] }],
       },
       siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
       cascadeRebaseFail: true,
@@ -3438,7 +3438,7 @@ describe("PRD cascade rebase after DONE landing", () => {
     expect(trace.iterLogs.some((l) => l.includes("cascade-rebase warning"))).toBe(true);
   });
 
-  it("does not rebase when the issue carries no prd:N label", async () => {
+  it("does not rebase when the issue carries no spec:N label", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -3454,9 +3454,9 @@ describe("PRD cascade rebase after DONE landing", () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
-      labels: ["ready-for-agent", "prd:42"],
+      labels: ["ready-for-agent", "spec:42"],
       dependentsByLabel: {
-        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+        "spec:42": [{ number: 20, labels: ["spec:42"] }],
       },
       siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
       config: { "afk.landing.cascade_rebase": "false" },
@@ -3469,7 +3469,7 @@ describe("PRD cascade rebase after DONE landing", () => {
   it("does not run cascade rebase on a non-done outcome (blocked)", async () => {
     const { deps, input, trace } = harness({
       outcome: "blocked",
-      labels: ["ready-for-agent", "prd:42"],
+      labels: ["ready-for-agent", "spec:42"],
       siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
     });
     const result = await processIssue(deps, input);
@@ -3477,14 +3477,14 @@ describe("PRD cascade rebase after DONE landing", () => {
     expect(trace.cascadeRebaseAttempts).toEqual([]);
   });
 
-  it("skips branches that do not belong to a prd sibling issue", async () => {
+  it("skips branches that do not belong to a spec sibling issue", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
-      labels: ["ready-for-agent", "prd:42"],
+      labels: ["ready-for-agent", "spec:42"],
       dependentsByLabel: {
         // Only issue 20 is a sibling; issue 99 is not listed.
-        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+        "spec:42": [{ number: 20, labels: ["spec:42"] }],
       },
       siblingBranches: [
         "afk/wBBBB/20-fix-sibling-a",

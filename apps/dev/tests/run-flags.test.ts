@@ -100,7 +100,7 @@ describe("parseRunFlags", () => {
   });
 
   it("defaults --alternate and --fallback-runner to false", () => {
-    const f = parseRunFlags(["--prd", "7"]);
+    const f = parseRunFlags(["--spec", "7"]);
     expect(f.alternate).toBe(false);
     expect(f.fallbackRunner).toBe(false);
   });
@@ -116,9 +116,9 @@ describe("parseRunFlags", () => {
     expect(f.fallbackRunner).toBe(true);
   });
 
-  it("parses --prd into a prd filter", () => {
-    expect(parseRunFlags(["--prd", "42"]).filter).toEqual({ kind: "prd", prd: 42 });
-    expect(parseRunFlags(["--prd=7"]).filter).toEqual({ kind: "prd", prd: 7 });
+  it("parses --spec into a spec filter", () => {
+    expect(parseRunFlags(["--spec", "42"]).filter).toEqual({ kind: "spec", spec: 42 });
+    expect(parseRunFlags(["--spec=7"]).filter).toEqual({ kind: "spec", spec: 7 });
   });
 
   it("parses --origin and --lane (the /go provenance + isolated lane), undefined by default", () => {
@@ -156,7 +156,7 @@ describe("parseRunFlags", () => {
   });
 
   it("throws when a value flag is missing its argument", () => {
-    expect(() => parseRunFlags(["--prd"])).toThrow();
+    expect(() => parseRunFlags(["--spec"])).toThrow();
   });
 
   it("parses --force as a boolean, defaulting to false (#1027)", () => {

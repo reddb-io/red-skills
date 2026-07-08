@@ -4,11 +4,11 @@ import { DEFAULT_BRANCH } from "../src/core/pin-reader.js";
 
 describe("resolveBase", () => {
   const issueWithPin = "## What to build\nbranch: feature/some-pin";
-  const issueNoPin = "## What to build\n## Parent\nPRD #59";
-  const prdWithPin = "## PRD\nbranch: prd/shared";
+  const issueNoPin = "## What to build\n## Parent\nSpec #59";
+  const specWithPin = "## Spec\nbranch: spec/shared";
 
   // Injected fakes — no real fs / gh. `lock` is the locked branch (or undefined),
-  // `bodies` backs the parent-PRD fetch used by pin resolution.
+  // `bodies` backs the parent-Spec fetch used by pin resolution.
   const depsFor = (lock: string | undefined, bodies: Record<number, string> = {}) => {
     const lockCalls: number[] = [];
     const fetchCalls: number[] = [];
@@ -27,7 +27,7 @@ describe("resolveBase", () => {
   };
 
   it("lock wins over a pin (the key ADR 0031 wiring)", async () => {
-    const deps = depsFor("work-branch", { 59: prdWithPin });
+    const deps = depsFor("work-branch", { 59: specWithPin });
     expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("work-branch");
     // lock short-circuits: pin resolution never runs, so the parent is never fetched
     expect(deps.fetchCalls).toEqual([]);
@@ -44,15 +44,15 @@ describe("resolveBase", () => {
     expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("feature/some-pin");
   });
 
-  it("inherits the parent PRD pin through resolvePin when unlocked", async () => {
-    const deps = depsFor(undefined, { 59: prdWithPin });
-    expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("prd/shared");
+  it("inherits the parent Spec pin through resolvePin when unlocked", async () => {
+    const deps = depsFor(undefined, { 59: specWithPin });
+    expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("spec/shared");
     expect(deps.fetchCalls).toEqual([59]);
   });
 
   // dev.lock.branch (config-level static lock) — precedence runtime > config > pin > main.
   it("uses the config lock (dev.lock.branch) when the runtime lock is unset", async () => {
-    const deps = { ...depsFor(undefined, { 59: prdWithPin }), configLockedBranch: "config/branch" };
+    const deps = { ...depsFor(undefined, { 59: specWithPin }), configLockedBranch: "config/branch" };
     expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("config/branch");
     expect(deps.fetchCalls).toEqual([]); // config lock short-circuits pin resolution
   });
@@ -111,11 +111,11 @@ describe("resolveBase", () => {
     );
   });
 
-  it("collapses a pinless parent-PRD chain to the trunk, not to main", async () => {
-    // The issue references a parent PRD, but neither carries a `branch:` pin —
+  it("collapses a pinless parent-Spec chain to the trunk, not to main", async () => {
+    // The issue references a parent Spec, but neither carries a `branch:` pin —
     // the pin-reader collapse must land on the trunk (ADR 0083), not on `main`.
     const deps = {
-      ...depsFor(undefined, { 59: "## PRD\nno pin here either" }),
+      ...depsFor(undefined, { 59: "## Spec\nno pin here either" }),
       configTrunk: "workspace/forattini",
     };
     expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("workspace/forattini");

@@ -26,9 +26,9 @@ function cand(number: number, labels: string[] = ["ready-for-agent"], over: Part
 // ---------- selectIssues ----------
 
 describe("selectIssues", () => {
-  it("drops every type:prd candidate before any filter", () => {
+  it("drops every type:spec candidate before any filter", () => {
     const list = [
-      cand(1, ["ready-for-agent", "type:prd"]),
+      cand(1, ["ready-for-agent", "type:spec"]),
       cand(2, ["ready-for-agent"]),
     ];
     const out = selectIssues(list, { kind: "all" });
@@ -47,13 +47,13 @@ describe("selectIssues", () => {
     expect(out.map((c) => c.number)).toEqual([3, 9, 2, 5]);
   });
 
-  it("urgents jump even past a --prd filter and the filter applies only to the rest", () => {
+  it("urgents jump even past a --spec filter and the filter applies only to the rest", () => {
     const list = [
       cand(9, ["ready-for-agent", "priority:urgent"]),
-      cand(2, ["ready-for-agent"], { body: "prd: #44" }),
-      cand(3, ["ready-for-agent"]), // not in prd 44 → dropped by the filter
+      cand(2, ["ready-for-agent"], { body: "spec: #44" }),
+      cand(3, ["ready-for-agent"]), // not in spec 44 → dropped by the filter
     ];
-    const out = selectIssues(list, { kind: "prd", prd: 44 });
+    const out = selectIssues(list, { kind: "spec", spec: 44 });
     expect(out.map((c) => c.number)).toEqual([9, 2]);
   });
 
@@ -74,19 +74,19 @@ describe("selectIssues", () => {
     }
   });
 
-  it("--issues treats an explicit type:prd number as missing (it was dropped)", () => {
-    const list = [cand(10), cand(7, ["ready-for-agent", "type:prd"])];
+  it("--issues treats an explicit type:spec number as missing (it was dropped)", () => {
+    const list = [cand(10), cand(7, ["ready-for-agent", "type:spec"])];
     expect(() => selectIssues(list, { kind: "issues", numbers: [10, 7] })).toThrow(IssueSelectionError);
   });
 
-  it("--prd matches body `prd: #N`, `prd:N` label, and word-boundary-rejects a superstring", () => {
+  it("--spec matches body `spec: #N`, `spec:N` label, and word-boundary-rejects a superstring", () => {
     const list = [
-      cand(1, ["ready-for-agent"], { body: "implements prd: #24 stuff" }),
-      cand(2, ["ready-for-agent", "prd:24"]),
-      cand(3, ["ready-for-agent"], { body: "prd: #240 not this one" }),
+      cand(1, ["ready-for-agent"], { body: "implements spec: #24 stuff" }),
+      cand(2, ["ready-for-agent", "spec:24"]),
+      cand(3, ["ready-for-agent"], { body: "spec: #240 not this one" }),
       cand(4, ["ready-for-agent"]),
     ];
-    const out = selectIssues(list, { kind: "prd", prd: 24 });
+    const out = selectIssues(list, { kind: "spec", spec: 24 });
     expect(out.map((c) => c.number)).toEqual([1, 2]);
   });
 
@@ -103,10 +103,10 @@ describe("selectIssues", () => {
 
   it("dedupes an urgent that also matched the filter, keeping it at the front only", () => {
     const list = [
-      cand(9, ["ready-for-agent", "priority:urgent"], { body: "prd: #44" }),
-      cand(2, ["ready-for-agent"], { body: "prd: #44" }),
+      cand(9, ["ready-for-agent", "priority:urgent"], { body: "spec: #44" }),
+      cand(2, ["ready-for-agent"], { body: "spec: #44" }),
     ];
-    const out = selectIssues(list, { kind: "prd", prd: 44 });
+    const out = selectIssues(list, { kind: "spec", spec: 44 });
     expect(out.map((c) => c.number)).toEqual([9, 2]);
   });
 });
