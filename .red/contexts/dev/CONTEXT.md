@@ -10,16 +10,20 @@ operator-controlled mutations.
 The repo's GitHub Issues; RedSkills policy is GitHub, never a local tracker or alternate provider.
 _Avoid_: backlog manager, backlog backend, issue host, local-markdown tracker
 
-**Issue**:
-A single tracked unit of work inside the **Issue tracker**: bug, task, PRD, or implementation slice.
-_Avoid_: ticket, except when quoting external systems
+**Ticket**:
+A single tracked unit of work inside the **Issue tracker**: bug, task, **Spec**, or implementation slice. GitHub materialises a Ticket as an Issue.
+_Avoid_: issue, except when naming the GitHub object itself (upstream v1.1.0 rename, adopted; historical ADRs/envelopes keep "issue")
+
+**Spec**:
+The specification document for a body of work — problem, solution, user stories, human and implementation decisions — published to the **Issue tracker** as a parent **Ticket** and sliced into child Tickets.
+_Avoid_: PRD, except when reading historical ADRs, labels, or envelopes (upstream v1.1.0 rename, adopted)
 
 **Label family**:
-A coherent class of **Issue** labels with one job: current state, permanent type, priority, relationship/dependency, or operational diagnostic.
+A coherent class of **Ticket** labels with one job: current state, permanent type, priority, relationship/dependency, or operational diagnostic.
 _Avoid_: loose label, tag bucket
 
 **HITL queue**:
-The operator-facing set of non-PRD **Issues** that need human decision resolution, selected by `ready-for-human`.
+The operator-facing set of non-Spec **Tickets** that need human decision resolution, selected by `ready-for-human`.
 _Avoid_: human backlog, HITL backlog
 
 **HITL resolution**:
