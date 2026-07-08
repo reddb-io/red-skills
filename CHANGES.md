@@ -13,6 +13,20 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
 - **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
 
+## to-prd (engineering) — cascade gate before publish (issue #1285)
+
+- **status**: modified
+- **upstream**: `aaf2453` (upstream `to-prd`)
+- **why**: PRD #1283 — AFK workers branch from `origin/{base}` and cannot see primary-checkout working-tree edits; the cascade gate prevents publishing a PRD while the `.red/` docs it references are unlanded.
+- **what changed**: Added a new Step 3 "Cascade gate" before the publish step: `git fetch origin`, compare `.red/` docs between working tree and `origin/{base}` (origin-first comparison), run the `/start` end-of-session doc-landing procedure (ADR 0092) on mismatch, or abort loudly if landing is impossible. Old Step 3 (write + publish) renumbered to Step 4.
+
+## to-issues (engineering) — cascade gate before publish (issue #1285)
+
+- **status**: modified
+- **upstream**: `e74f006` (upstream `to-issues`)
+- **why**: PRD #1283 — same invariant as `/to-prd`: AFK workers cannot see unlanded docs; the gate must run before any issues enter `ready-for-agent`.
+- **what changed**: Added a new Step 5 "Cascade gate" between the quiz step and the publish step: identical origin-first comparison and doc-landing-procedure reference (ADR 0092), with loud abort when landing is impossible. Old Step 5 (publish) renumbered to Step 6. Added `cascade-gate-docs.test.ts` pinning the load-bearing gate phrases in both skills.
+
 ## start (engineering) — land grill-session docs before cascade (issue #1284)
 
 - **status**: modified
