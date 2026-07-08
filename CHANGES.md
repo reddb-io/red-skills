@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## to-tickets and triage (engineering) — native dependency edges alongside req labels (issue #1295)
+
+- **status**: modified
+- **upstream**: `272f99b` (where applicable)
+- **why**: ADR 0094 adopts upstream v1.1.0's native dependency surface for humans while keeping RedSkills' proven `req:N` label runtime as the machine truth.
+- **what changed**: `/to-tickets` now directs publishers to create native sub-issue relationships for parent Spec children and native blocked-by relationships for dependencies while retaining `spec:N`, `blocked:dependency`, one `req:N` label per blocker, and the strict `## Blocked by` body fallback. `/triage` now carries the same both-surfaces directive when it creates or refreshes child/dependency metadata, with an explicit do-not-clean-up warning for the controlled redundancy.
+
 ## to-spec (engineering) — renamed from to-prd; vocabulary big bang (issue #1293)
 
 - **status**: renamed-from-to-prd
