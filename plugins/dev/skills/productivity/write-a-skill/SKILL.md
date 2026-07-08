@@ -197,6 +197,12 @@ writing any RedSkills SKILL.md. Each carries a one-line before → after.
    - Before: `Build a thin end-to-end path through every layer first, then flesh out.`
    - After: `Ship a **tracer bullet** first — and say "tracer bullet" every time you mean it.`
 
+## Steering failure modes
+
+**Negation** — a skill that steers by prohibition drags the forbidden behaviour into context and makes it more available. "Don't invent files" activates file-invention before the model reads past it. The cure: replace every prohibition with a positive directive. Where a hard ban is unavoidable, pair it on the same line with the correct alternative — `emit DONE` not `don't write done`.
+
+**Negative Space** — every case a skill leaves silent is delegated to the model's priors, not held neutral. Silences are not free: the model fills them from training, and training may not match the author's intent. The cure: read a draft for its silences and decide each omission deliberately. Fill it with the intended behaviour, or mark it as an acknowledged open branch. "Unaddressed" is not a valid final state.
+
 ## Review checklist (run after the draft compiles)
 
 - [ ] Description ends with the literal `"Use when …"` trigger.
@@ -211,3 +217,7 @@ writing any RedSkills SKILL.md. Each carries a one-line before → after.
 - [ ] **Trigger decision recorded** — the skill is explicitly user-only
   (`disable-model-invocation: true`) or model-invocable with a description that
   earns its context cost.
+- [ ] **Negation check** — each prohibition has a paired positive alternative on
+  the same line; rewrite standalone "don't X" entries as "do Y instead".
+- [ ] **Negative-space audit** — each silence is a deliberate open branch, not an
+  oversight; fill gaps or name them explicitly.
