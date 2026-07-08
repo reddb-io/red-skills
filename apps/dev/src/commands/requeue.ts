@@ -22,7 +22,7 @@ import { execTool, type ExecFn } from "../runtime/exec.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
-import { LABEL_SENSITIVE_PATH } from "../core/triage-labels.js";
+import { LABEL_READY, LABEL_SENSITIVE_PATH } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
@@ -429,29 +429,66 @@ export async function requeueCommand(
     return 0;
   }
 
+  // #1307: during an `--adopt-branch` gate the Ticket must never be claimable. The
+  // fleet's candidate query AND its pre-claim state-validity recheck both key on
+  // `ready-for-agent`, so applying it before the minutes-long gate opens a window
+  // where a concurrent worker claims and re-runs the same branch on the same base
+  // (double-land risk). We therefore WITHHOLD the queue label for the whole gate
+  // and restore it only when the gate neither lands nor parks the Ticket (skip /
+  // interruption) — leaving a recoverable, still-queued state. A bare requeue is
+  // unchanged: it applies `ready-for-agent` immediately.
+  const withholdReady = adoptBranch !== undefined;
+  // Whether a `ready-for-agent` we withheld must be restorable on a skip/throw.
+  let readyWithheld = false;
+
   // Apply the requeue transition when the issue is parked and requeueable.
   if (plan.requeueable) {
     await sweepRequeueClaims(gh, issue);
     if (plan.bodyChanged) await gh.editBody(issue, plan.body);
     await gh.comment(issue, directiveComment(plan, guidance));
-    await gh.editLabels(issue, plan.removeLabels, plan.addLabels);
+    // Under `--adopt-branch`, drop `ready-for-agent` from the add set (it is the
+    // requeue's target) and also remove any pre-existing one, so the Ticket carries
+    // no queue label for the gate. The withheld label is restored on skip/throw.
+    const addLabels = withholdReady ? plan.addLabels.filter((l) => l !== LABEL_READY) : plan.addLabels;
+    const removeLabels =
+      withholdReady && issueState.labels.includes(LABEL_READY)
+        ? [...plan.removeLabels, LABEL_READY]
+        : plan.removeLabels;
+    await gh.editLabels(issue, removeLabels, addLabels);
+    if (withholdReady) readyWithheld = true;
     stdout.write(
       json
         ? `${JSON.stringify({ issue, plan, applied: true }, null, 2)}\n`
-        : `Requeue #${issue}: cleared blocker=${plan.bodyChanged}, removed [${plan.removeLabels.join(",")}], added [${plan.addLabels.join(",")}].\n`,
+        : `Requeue #${issue}: cleared blocker=${plan.bodyChanged}, removed [${removeLabels.join(",")}], added [${addLabels.join(",")}].\n`,
     );
-  } else if (!adoptBranch) {
+  } else if (adoptBranch) {
+    // Not parked, but adopting: if the Ticket already carries `ready-for-agent`,
+    // strip it for the gate window so a concurrent worker can't claim it mid-land.
+    if (issueState.labels.includes(LABEL_READY)) {
+      await gh.editLabels(issue, [LABEL_READY], []);
+      readyWithheld = true;
+    }
+  } else {
     stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
     return 0;
   }
 
   // Adopt mode (ADR 0081): route the branch through the no-agent landing lane.
   if (adoptBranch) {
-    // Post-transition labels/body — pass the reconcile guard the state AFTER
-    // the requeue cleared any blocked:* labels + active blocker.
+    // Restore the queue label we withheld (#1307) — used when the gate skips or is
+    // interrupted, so the Ticket returns to a recoverable, still-queued state. On a
+    // land the Ticket is closed and on a park reconcile applies `ready-for-human`,
+    // so neither restores.
+    const restoreQueueLabel = async (): Promise<void> => {
+      if (readyWithheld) await gh.editLabels(issue, [], [LABEL_READY]);
+    };
+
+    // Post-transition labels/body — pass the reconcile guard the state AFTER the
+    // requeue cleared any blocked:* labels + active blocker. `ready-for-agent` is
+    // withheld for the gate (#1307), so it is never part of the reconcile input.
     const postLabels = plan.requeueable
-      ? [...issueState.labels.filter((l) => !plan.removeLabels.includes(l)), ...plan.addLabels]
-      : [...issueState.labels];
+      ? issueState.labels.filter((l) => !plan.removeLabels.includes(l) && l !== LABEL_READY)
+      : issueState.labels.filter((l) => l !== LABEL_READY);
     const postBody = plan.requeueable ? plan.body : issueState.body;
     const adoptData: RequeueAdoptData = {
       title: "",
@@ -472,7 +509,16 @@ export async function requeueCommand(
     const runner = adoptRunnerOverride
       ?? ((n, b, d) => runAdoptLanding(n, b, d, cwd, repo, stdout));
 
-    const outcome = await runner(issue, adoptBranch, adoptData);
+    let outcome: "landed" | "parked" | "skipped";
+    try {
+      outcome = await runner(issue, adoptBranch, adoptData);
+    } catch (err) {
+      // Interrupted mid-gate (#1307): never leave the Ticket stranded without a
+      // queue label. The claim window is already closed (the gate is no longer
+      // running), so restoring `ready-for-agent` is safe and keeps it recoverable.
+      await restoreQueueLabel().catch(() => {});
+      throw err;
+    }
 
     if (outcome === "landed") {
       stdout.write(`Requeue #${issue}: \`${adoptBranch}\` validated and landed.\n`);
@@ -483,6 +529,9 @@ export async function requeueCommand(
       return 1;
     }
     // skipped (no-commits, branch-absent, etc.) — not a failure but worth noting.
+    // The gate neither landed nor parked, so restore the withheld queue label
+    // (#1307) to return the Ticket to a recoverable, still-queued state.
+    await restoreQueueLabel();
     stdout.write(`Requeue #${issue}: adopt skipped (branch carries no work vs base or branch absent).\n`);
     return 0;
   }
