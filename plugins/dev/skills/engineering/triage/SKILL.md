@@ -61,6 +61,7 @@ Show counts and one line per issue. Let the maintainer pick what to handle next.
 - ✅ **One category role + one state role per issue.** If state roles conflict on an existing issue, stop and ask the maintainer before doing anything else — proceeding with conflicting roles corrupts the triage state machine.
 - ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`; invented labels fragment the queue and break AFK claim queries. If a mapping is missing, ask the maintainer to run `/setup-red-skills` and stop.
 - ❌ Do **not** add a `req:N` dependency edge whose target #N carries `type:spec`. Before applying any `req:N` label, check the target with `gh issue view N --json labels`; if it is a Spec, refuse and re-point the edge at the Spec's concrete executable slice(s) (the `spec:N` children — or a named slice created for the dependent when the Spec has none yet). A Spec closes only after a manual bookkeeping step long after its substance ships (#907/#928: 46/46 children closed, Specs still open), so a `req:<Spec>` edge would strand the dependent in `blocked:dependency` forever. See `.red/agents/triage-labels.md` *Dependency Edges*.
+- ❌ Do **not** "clean up" controlled redundancy between native tracker edges and labels/body text. Do not clean up either side: when `/triage` creates or refreshes dependency metadata, create the native sub-issue relationship to the parent Spec when one exists, create the native blocked-by relationship for each blocker, and still keep `req:N` labels because req:N labels remain the machine truth for `/afk`; retain the `## Blocked by` body fallback with one `- [ ] #N` task-list entry per blocker.
 - ❌ Do **not** skip Step 3 (Reproduce) for bug-category issues — an unverified repro leaves the agent brief guessing at the code path.
 - ❌ Do **not** modify or close a parent issue while triaging children — parent state reflects aggregate child state and must be updated only when the child set settles.
 
@@ -120,6 +121,16 @@ An unlabeled issue normally goes to `needs-triage` first. From there:
 The maintainer can override at any time — flag transitions that look unusual and ask before proceeding.
 
 ## Outcome actions (from Flow B step 5)
+
+When the outcome publishes or refreshes a child Ticket under a parent Spec, write both relationship surfaces: add the `spec:N` label and create the native sub-issue relationship. When the outcome parks a Ticket behind open blockers, write all three dependency surfaces: `blocked:dependency` + one `req:N` label per blocker, the native blocked-by relationship for each blocker, and the body fallback section:
+
+```markdown
+## Blocked by
+
+- [ ] #N
+```
+
+ADR 0094 makes this deliberate redundancy. Native sub-issue relationship and native blocked-by relationship edges are the human surface; req:N labels remain the machine truth for `/afk` runtime dependency machinery. Do not clean up either side.
 
 | Final state | Action |
 |---|---|
