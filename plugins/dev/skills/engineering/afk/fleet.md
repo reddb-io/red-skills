@@ -18,9 +18,9 @@ $ /dev:afk fleet 1   # every worker sees both vars
 
 Fleet mode is **runner-portable**: the supervisor is plain process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
-- Claude Code: when `CronCreate`/`CronList` are available, attach the statusline-aware monitor surface from *Auto-Monitor Loop* in [`SKILL.md`](./SKILL.md): if the RedSkills command-backed multi-line statusline is present, skip the passive full-render cron by default; if absent, schedule the historical `/dev:afk monitor` cron. If cron tools are unavailable, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
-- Codex: launch fleet with `RED_AFK_RUNNER=codex`, skip cron, and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the same manual-monitor guidance.
-- Bare terminal / unknown runner: launch fleet, skip cron/native monitor, and print the manual-monitor guidance.
+- Claude Code: launch fleet. For manual monitoring, run `/dev:afk monitor` or tail `.red/tmp/afk-supervisor.log`.
+- Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
+- Bare terminal / unknown runner: launch fleet and print the manual-monitor guidance.
 
 ### `/dev:afk fleet [N]` — launch
 
@@ -39,7 +39,7 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
-   - Claude Code: same flow as *Auto-Monitor Loop* in [`SKILL.md`](./SKILL.md) — detect the RedSkills command-backed statusline first. With the rich statusline present, skip the passive full-render cron by default (or, only when explicitly requested, schedule `rtk env RED_AFK_REACTIVE_CHECK=1 red-skills-dev monitor --reactive-check`). With the rich statusline absent, `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
+   - Claude Code: no automatic monitor cron. Tell the user to run `/dev:afk monitor` manually or tail `.red/tmp/afk-supervisor.log`.
    - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
@@ -50,12 +50,10 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
       <monitor-status-line>
    ```
    Monitor status line choices:
-   - Claude cron scheduled: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
-   - Claude cron already existed: `monitor loop already running (existing cron <id>).`
-   - Claude rich statusline present: `monitor loop skipped — RedSkills statusline already renders live AFK workers.`
-   - Claude reactive check scheduled: `reactive monitor check scheduled (every 10 min) — only reports actionable conditions.`
+   - Claude Code: `monitor: run /dev:afk monitor or tail .red/tmp/afk-supervisor.log`
    - Codex monitor agent spawned: `Codex monitor agent spawned — auto-closes when fleet exits; manual monitor: /dev:afk monitor.`
-   - Native monitor unavailable: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
+   - Codex monitor unavailable: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
+   - Bare/unknown: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
 
 ### `/dev:afk fleet stop` — graceful shutdown
 
@@ -67,7 +65,7 @@ Steps, in order:
    - File present and PID alive → continue to step 2.
 2. **Touch the stop file.** `touch .red/tmp/afk-supervisor.stop`. The supervisor's health-check cycle (default `RED_AFK_POLL_S=15s`) picks it up and runs `cleanup`, which SIGTERMs every worker, removes the PID file, removes the stop file, and exits. Wait up to **30 s** for the PID file to disappear (poll every 1 s, deadline-bounded — never bare `while`). If it's gone, print `🛑 fleet stopped (supervisor pid=<pid> exited).`. If the deadline trips, print one warning line naming the PID and the log path, and continue to step 3 anyway — the stop file is still there and the supervisor will pick it up eventually.
 3. **Tear down runner-specific monitors.**
-   - Claude Code: `CronList` → find every job whose `prompt == "/dev:afk monitor"` or whose prompt contains `red-skills-dev monitor --reactive-check` (there will normally be one, possibly zero, occasionally more if the user manually `/loop`-ed). `CronDelete` each. Print one line: `auto-monitor cron cancelled (<count> entr{y,ies}).` (or `no auto-monitor cron to cancel.` when count is zero). If cron tools are unavailable, print `auto-monitor cron unavailable in this runner; skipped.`
+   - Claude Code: no automatic monitor cron to cancel. Print `no auto-monitor cron (manual monitoring only).`
    - Codex: do not stop workers through the monitor agent. It auto-closes when it observes no supervisor/live workers, and the user may close it manually. Print `Codex monitor agent will self-close when it observes fleet stopped.`
    - Bare/unknown: print `no native monitor teardown for this runner.`
 4. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 1 and the runner-specific teardown no-op in step 3. Exit 0 either way.
@@ -87,5 +85,4 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 ### Refs
 
 - The bundle's `fleet` / `fleet stop` commands — the entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
-- *Auto-Monitor Loop* in [`SKILL.md`](./SKILL.md) — the cron lifecycle Fleet Mode hooks into.
-- *Self-Cancel* in [`monitor.md`](./monitor.md) — the dual teardown path (cron tears itself down when no workers remain; fleet stop tears it down immediately).
+- [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.

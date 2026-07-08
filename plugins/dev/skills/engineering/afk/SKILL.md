@@ -361,32 +361,6 @@ Local liveness = the clean `agent.log.jsonl` lane + the firehose + state-file mt
 
 Every terminal event posts exactly one structured `<details data-attempt-status=…>` comment (the canonical record). Stages are read off the sandcastle stream; the terminal header redraws every 3s; per-attempt state lives in `afk.state.json`. Schemas + the Attempt-Outcome→status mapping: [`docs/ENVELOPE.md`](./docs/ENVELOPE.md).
 
-## Auto-Monitor Loop (Claude Code only — binding)
-
-When `/afk` is invoked **to spawn a worker** (i.e., not the `monitor` subcommand), the agent attaches the cheapest available Claude Code monitor surface. If the repo has the RedSkills command-backed multi-line `statusLine` wired in `.claude/settings.json`, the passive dashboard cron is **off by default** because the footer already renders the live worker header and one row per live worker continuously. Hosts without that rich statusline keep the historical recurring `/dev:afk monitor` dashboard cron. Death of every worker auto-cancels any monitor cron that was scheduled.
-
-**Setup (runs immediately after the `run` worker is launched in the background):**
-
-1. Detect the rich statusline: `.claude/settings.json` has `statusLine.type == "command"` (or omitted type) and `statusLine.command` invokes the RedSkills `statusline` subcommand (the cached-bundle-first form from `/setup-statusline` is the canonical shape).
-2. Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (they are deferred tools).
-3. If the rich statusline is present, do **not** schedule the full-render `/dev:afk monitor` cron by default. Tell the user one line: `monitor loop skipped — RedSkills statusline already renders live AFK workers.`
-4. If the rich statusline is absent: `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip step 5** (don't double-schedule when the user runs a second parallel `/afk` in the same session).
-5. `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. The cron is session-only — it dies when the Claude Code session ends, so no risk of orphans across sessions. Auto-expires after 7 days regardless.
-6. Tell the user **one line**: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
-
-**Optional reactive tick:** if the operator explicitly asks to keep a between-message wakeup while the rich statusline is present, schedule `CronCreate(cron="*/10 * * * *", prompt="rtk env RED_AFK_REACTIVE_CHECK=1 red-skills-dev monitor --reactive-check", recurring=true)` instead of `/dev:afk monitor`. This command runs the bundle directly, does not invoke the `/dev:afk` slash skill, emits nothing when there is no actionable condition, and only surfaces local actionable conditions such as a stale fleet heartbeat or a stalled worker.
-
-The monitor invocation handles its own teardown — see *Self-Cancel* in [`monitor.md`](./monitor.md).
-
-**Skip the auto-loop when:**
-
-- The invocation is `/afk monitor` (not a worker spawn).
-- The invocation is `/afk --once` (single supervised iteration; user is already watching).
-- The rich RedSkills command-backed statusline is present and no explicit reactive tick was requested.
-- `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/workers/*/*/afk.log manually.` and continue.
-
-Under Codex the auto-loop is skipped in favour of a read-only sub-agent presentation layer: spawning a worker under Codex → read the *Codex Monitor Agent* section in [`monitor.md`](./monitor.md).
-
 ## Fleet Mode
 
 Running `afk fleet` → read [`fleet.md`](./fleet.md) for the runner-portable launch/stop/supervisor protocol (stall detector, hard stall reaper, circuit trip sweep, and per-runner monitor attachment).

@@ -2,7 +2,7 @@
 // (#407). The HITL decision (2026-06-08) was: a live-but-quiescent supervisor
 // (alive PID, drain loop wedged, #406 heartbeat gone stale) cannot re-arm
 // itself, so recovery is driven by an ALREADY-ALIVE surface — the fleet-launch
-// pre-check (fleet.ts) and the auto-monitor tick (monitor.ts) — never a new
+// pre-check (fleet.ts) and an opt-in monitor tick (`monitor --watchdog`) — never a new
 // standalone daemon.
 //
 // This module is PURE SEQUENCING over injected IO, mirroring supervisor.ts:
