@@ -13,12 +13,26 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: the auto-monitor loop (CronCreate/CronList wiring) added complexity and noise; the manual `/afk monitor` dashboard and the Codex monitor agent are sufficient.
 - **what changed**: deleted `apps/dev/src/core/auto-monitor.ts` and `apps/dev/tests/auto-monitor.test.ts`; removed the `--reactive-check` handler and its helper functions (`reactiveWorkerAlert`, `reactiveFleetAlert`, `renderReactiveCheck`) from `apps/dev/src/commands/monitor.ts`; deleted the "Auto-Monitor Loop" section from `plugins/dev/skills/engineering/afk/SKILL.md`; removed auto-loop references from `fleet.md`, `monitor.md`.
 
+## relabel-sweep (internal/maintainer)
+
+- **status**: added
+- **upstream**: none
+- **why**: issue #1292 (Spec #1286, ADR 0093) — the big-bang Spec/Ticket vocabulary flip needs a one-shot sweep to migrate open Tickets' historical label families to the new vocabulary; closed Tickets keep their labels (history is not rewritten).
+- **what changed**: added the `dev relabel-sweep` runtime command (`apps/dev/src/commands/relabel-sweep.ts`) plus its pure planner (`apps/dev/src/core/relabel-sweep.ts`). It migrates OPEN Tickets' labels `type:prd → type:spec` and `prd:N → spec:N`, creating the missing target labels on demand, and leaves `req:*` and every other family untouched. `--dry-run` prints the complete per-Ticket plan and writes nothing; the real run applies exactly that plan and is idempotent (a replay finds no old-vocabulary labels and no-ops). The tool ships inert — executing the real sweep against the repo is a separate operator Ticket. Unit-tested planner + injected-gh command control flow; wired into the CLI router.
+
 ## create-plugin (internal/maintainer)
 
 - **status**: added
 - **upstream**: none
 - **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
 - **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
+
+## tdd (engineering) — reference-only reshape + tautological-test anti-pattern (issue #1289)
+
+- **status**: modified
+- **upstream**: `272f99b` (upstream `tdd`)
+- **why**: upstream v1.1.0 adoption — the rigid step workflow (Steps 1–3 requiring user approval gates) prevents AFK agents from consuming the skill directly; dropped the steps, kept the loop rules. Added the tautological-test anti-pattern as a peer of the implementation-coupling one: a test whose assertion is recomputed the way the code computes it passes by construction and proves nothing.
+- **what changed**: removed Steps 1–3 from `<what-to-do>` and replaced them with a seam declaration and the loop rule ("red before green, one slice at a time, tests only at pre-agreed seams"). Added a sixth per-cycle checklist gate ("Expected values come from a literal, worked example, or spec — not recomputed the way the code computes them"). Added "Tautological tests" as a named second bad-test pattern in the Philosophy section of `<supporting-info>`, parallel to the existing "Implementation-coupled tests" entry. Added a BAD/GOOD example pair in `tests.md`. Added `tdd-docs.test.ts` pinning the reference-only shape and all three tautological-test sites.
 
 ## start (engineering) — facts-vs-decisions distinction in hard rules (issue #1288)
 

@@ -59,3 +59,27 @@ test("createUser makes user retrievable", async () => {
   expect(retrieved.name).toBe("Alice");
 });
 ```
+
+## Tautological Tests
+
+**Tautological assertion**: expected value recomputed the way the code computes it — passes by construction and proves nothing.
+
+```typescript
+// BAD: tautological — assertion mirrors the implementation
+test("add returns the sum", () => {
+  const a = 3;
+  const b = 4;
+  expect(add(a, b)).toBe(a + b); // always true regardless of what add does
+});
+
+// GOOD: expected value from an independent source of truth
+test("add returns the sum", () => {
+  expect(add(3, 4)).toBe(7); // 7 is a literal from a worked example
+});
+```
+
+Red flags:
+
+- Expected value is computed using the same operator/function as the implementation
+- Swapping the implementation for any expression that satisfies the same type would still pass
+- The test can never catch an off-by-one or wrong-operator bug
