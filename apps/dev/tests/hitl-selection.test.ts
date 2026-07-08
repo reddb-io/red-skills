@@ -11,9 +11,9 @@ function issue(input: Partial<HitlCandidate> & Pick<HitlCandidate, "number">): H
 }
 
 describe("HITL queue selection", () => {
-  it("selects ready-for-human issues and excludes PRDs", () => {
+  it("selects ready-for-human issues and excludes Specs", () => {
     const queue = selectHitlQueue([
-      issue({ number: 1, labels: ["ready-for-human", "type:prd"] }),
+      issue({ number: 1, labels: ["ready-for-human", "type:spec"] }),
       issue({ number: 2, labels: ["ready-for-agent"] }),
       issue({ number: 3, labels: ["ready-for-human"] }),
     ]);
@@ -59,7 +59,7 @@ describe("HITL queue selection", () => {
     expect(
       selectHitlQueue([
         issue({ number: 1, labels: ["ready-for-agent"] }),
-        issue({ number: 2, labels: ["ready-for-human", "type:prd"] }),
+        issue({ number: 2, labels: ["ready-for-human", "type:spec"] }),
       ]),
     ).toEqual([]);
   });

@@ -40,7 +40,7 @@ describe("label vocabulary docs", () => {
       readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md"),
       readRepoFile("plugins/dev/skills/engineering/hitl/SKILL.md"),
-      readRepoFile("plugins/dev/skills/engineering/to-issues/SKILL.md"),
+      readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md"),
       readRepoFile("README.md"),
     ]);

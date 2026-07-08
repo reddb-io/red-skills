@@ -68,7 +68,7 @@ describe("buildAttemptRecordPayload — identity + status mapping", () => {
   });
 
   it("derives issue type from canonical type labels with an unknown bucket", () => {
-    expect(deriveIssueType(["ready-for-agent", "type:prd"])).toBe("prd");
+    expect(deriveIssueType(["ready-for-agent", "type:spec"])).toBe("spec");
     expect(deriveIssueType(["ready-for-agent"])).toBe("unknown");
   });
 
@@ -81,7 +81,7 @@ describe("buildAttemptRecordPayload — identity + status mapping", () => {
   it("filters outcome records by issue type and model tier", () => {
     const records = [
       buildAttemptRecordPayload({ ...base, attempt: 1, labels: ["type:bug"], modelTier: "simple" }),
-      buildAttemptRecordPayload({ ...base, attempt: 2, labels: ["type:prd"], modelTier: "think" }),
+      buildAttemptRecordPayload({ ...base, attempt: 2, labels: ["type:spec"], modelTier: "think" }),
       buildAttemptRecordPayload({ ...base, attempt: 3, labels: ["type:bug"], modelTier: "complex" }),
     ];
 
@@ -128,7 +128,7 @@ describe("buildAttemptRecordPayload — optional-field omission", () => {
       ...base,
       title: "Wire the memory bridge",
       url: "https://github.com/reddb-io/red-skills/issues/42",
-      body: "## brief\nprd: #7",
+      body: "## brief\nspec: #7",
       workerId: "wABCD",
       branch: "afk/wABCD/42-wire-the-memory-bridge",
       durationS: 12,
@@ -140,7 +140,7 @@ describe("buildAttemptRecordPayload — optional-field omission", () => {
     });
     expect(p.issueTitle).toBe("Wire the memory bridge");
     expect(p.issueUrl).toBe("https://github.com/reddb-io/red-skills/issues/42");
-    expect(p.issueBody).toContain("prd: #7");
+    expect(p.issueBody).toContain("spec: #7");
     expect(p.workerId).toBe("wABCD");
     expect(p.branch).toBe("afk/wABCD/42-wire-the-memory-bridge");
     expect(p.durationMs).toBe(12_000);

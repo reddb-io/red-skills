@@ -45,7 +45,7 @@ export interface AttemptRecordPayload {
   issueTitle?: string;
   /** Issue URL at the time of recording. */
   issueUrl?: string;
-  /** Issue body — the Memory writer scans it for an explicit parent-PRD marker. */
+  /** Issue body — the Memory writer scans it for an explicit parent-Spec marker. */
   issueBody?: string;
   /** AFK worker / runner identifier. */
   workerId?: string;

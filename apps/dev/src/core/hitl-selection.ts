@@ -13,7 +13,7 @@ export interface HitlSelectionOptions {
   skipped?: readonly number[];
 }
 
-import { LABEL_HUMAN, LABEL_PRD, LABEL_URGENT, LABEL_HIGH } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_TYPE_SPEC, LABEL_URGENT, LABEL_HIGH } from "./triage-labels.js";
 
 function hasLabel(candidate: HitlCandidate, label: string): boolean {
   return candidate.labels.includes(label);
@@ -38,12 +38,12 @@ function compareAgeThenNumber(a: HitlCandidate, b: HitlCandidate): number {
   return a.number - b.number;
 }
 
-/** Select the operator-facing HITL queue: open non-PRD ready-for-human Issues,
+/** Select the operator-facing HITL queue: open non-Spec ready-for-human Tickets,
  * sorted by urgency/high priority first and oldest first inside each band. */
 export function selectHitlQueue(candidates: readonly HitlCandidate[]): HitlCandidate[] {
   return candidates
     .filter((candidate) => hasLabel(candidate, LABEL_HUMAN))
-    .filter((candidate) => !hasLabel(candidate, LABEL_PRD))
+    .filter((candidate) => !hasLabel(candidate, LABEL_TYPE_SPEC))
     .sort((a, b) => {
       const prio = priorityRank(a) - priorityRank(b);
       if (prio !== 0) return prio;

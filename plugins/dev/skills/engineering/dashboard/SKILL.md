@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: Shows a RedSkills operational dashboard with issue, PRD, AFK worker, flow, and DORA-proxy metrics from GitHub plus local AFK state. Use when the user invokes `/dashboard`, asks for RedSkills process metrics, workers running, open PRDs/issues, cycle time, or DORA metrics.
+description: Shows a RedSkills operational dashboard with issue, Spec, AFK worker, flow, and DORA-proxy metrics from GitHub plus local AFK state. Use when the user invokes `/dashboard`, asks for RedSkills process metrics, workers running, open Specs/issues, cycle time, or DORA metrics.
 argument-hint: "[--period N|Nd] [--json] [--human]"
 disable-model-invocation: true
 ---
@@ -26,8 +26,8 @@ definitive `warnings[0]:` empty state.
 
 ## Metrics
 
-- Open PRDs.
-- Open non-PRD issues.
+- Open Specs.
+- Open non-Spec issues.
 - Global running workers: open issues labelled `running`.
 - Local workers on this machine: live/stale/total AFK worker state files.
 - Issues created, closed today, and closed in the selected period.

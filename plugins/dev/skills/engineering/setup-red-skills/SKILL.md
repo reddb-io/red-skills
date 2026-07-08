@@ -9,7 +9,7 @@ description: >-
   plugins to enable, creates `.red/`, writes the activation flags, and sets up
   `## Agent skills`/`## Development workflow` blocks in AGENTS.md/CLAUDE.md plus
   `.red/agents/`. Run to turn RedSkills on in a repo, to enable/disable a
-  plugin, before first use of `to-issues`, `to-prd`, `triage`, `diagnose`,
+  plugin, before first use of `to-tickets`, `to-spec`, `triage`, `diagnose`,
   `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/go`, or if those
   skills appear to be missing context.
 disable-model-invocation: true
@@ -67,7 +67,7 @@ Record the choice; it drives the `plugins:` block written in step 4. Disabling a
 
 **Section A — Issue tracker.**
 
-> Explainer: In every reddb.io repo, issues and PRDs **always** live on GitHub Issues. Skills like `to-issues`, `triage`, `to-prd`, and `qa` call `gh issue create` / `gh issue edit` directly. There is no local fallback and no support for other trackers — this is a project-wide policy.
+> Explainer: In every reddb.io repo, issues and Specs **always** live on GitHub Issues. Skills like `to-tickets`, `triage`, `to-spec`, and `qa` call `gh issue create` / `gh issue edit` directly. There is no local fallback and no support for other trackers — this is a project-wide policy.
 
 Confirm that `git remote` points to a GitHub repo, then proceed with the `issue-tracker-github.md` seed. If the repo has no GitHub remote, stop and ask the user to configure one before continuing.
 
@@ -108,7 +108,7 @@ Confirm with the user:
 - Install `red-issues-needs-triage.yml` (verbatim — name unchanged; it is a standalone `red-*` copy-installable, not a reusable caller) into `.github/workflows/`? Default: yes.
 - Does the `needs-triage` label exist in the issue tracker? If not, create it (`gh label create needs-triage --description "Maintainer needs to evaluate"`).
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
-- Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-issues` (`gh label create req:<n>`) like `prd:N`, so they need no upfront provisioning.
+- Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-tickets` (`gh label create req:<n>`) like `spec:N`, so they need no upfront provisioning.
 - Provision the typed **blocked-reason** labels `/afk` applies to describe *why* an iteration stopped (it falls back to creating each on the fly, so this only keeps colour/description consistent): `gh label create blocked:quota`, `blocked:runner-transient`, `blocked:merge-conflict`, `blocked:ci`, `blocked:spec`, `blocked:validation`, `blocked:crashed`, `blocked:policy`, `blocked:stalled`, `blocked:infra` (suggested colour `E99695`, descriptions per the *Blocked Reasons* table in triage-labels). These are descriptive (added alongside the routing label) — see triage-labels.
 - Does the `landing:manual` label exist? If not, create it idempotently (`gh label create landing:manual --color FBCA04 --description "AFK runs the full pipeline + opens the PR, then holds for a human's merge click (no auto-merge)"`). A `ready-for-agent` issue carrying it stays in the autonomous `/afk` lane but parks `ready-for-human` with the open PR instead of auto-merging — so agent-codable slices that must not be auto-merged (e.g. changes to AFK's own landing/claim machinery) no longer have to be hand-dispatched via `/go` (issue #1049). `/triage` may set it at brief-writing time; `/hitl`'s **delegable-manual-landing** disposition routes an issue here.
 

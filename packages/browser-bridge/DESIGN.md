@@ -3,7 +3,7 @@
 Design/scoping output for issue #993 (Track 3D of PRD #907, under the PRD #928
 arch-lock). **No product implementation lands in this slice** — the output is
 this doc plus the proposed implementation slices at the end, ready for
-`/to-issues`.
+`/to-tickets`.
 
 This is the **review-surface half** (the "lavish-half"). Per the human decision
 it is scoped and sequenced **before** the browser-automation half (#992, whose
@@ -165,7 +165,7 @@ resolve: id=a7 status=resolved
 
 ---
 
-## 4. Proposed implementation slices (for `/to-issues`)
+## 4. Proposed implementation slices (for `/to-tickets`)
 
 Tracer-bullet vertical slices, each independently grabbable, **sequenced before
 #992's automation slices** (lavish-half first). Parent: #907 / arch-lock #928.

@@ -45,7 +45,7 @@ describe("parseBlockedBy", () => {
   });
 
   it("ignores refs before the heading", () => {
-    const body = "## Parent\nPRD #500\n## Blocked by\n- [ ] #1\n";
+    const body = "## Parent\nSpec #500\n## Blocked by\n- [ ] #1\n";
     expect(parseBlockedBy(body)).toEqual(["#1"]);
   });
 
@@ -89,7 +89,7 @@ describe("parseReqLabels", () => {
   });
 
   it("ignores non-numeric and non-req labels", () => {
-    expect(parseReqLabels(["req:foo", "prd:5", "ready-for-agent", "req:7"])).toEqual([7]);
+    expect(parseReqLabels(["req:foo", "spec:5", "ready-for-agent", "req:7"])).toEqual([7]);
   });
 
   it("returns [] for an empty / req-free label set", () => {

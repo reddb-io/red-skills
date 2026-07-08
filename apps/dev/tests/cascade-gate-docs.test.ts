@@ -8,10 +8,10 @@ async function readSkill(relPath: string): Promise<string> {
   return readFile(join(ROOT, relPath), "utf8");
 }
 
-describe("cascade gate docs contract — /to-prd", () => {
+describe("cascade gate docs contract — /to-spec", () => {
   it("contains the cascade-gate directive with origin-first comparison", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-prd/SKILL.md"
+      "plugins/dev/skills/engineering/to-spec/SKILL.md"
     );
 
     expect(skill).toContain("Cascade gate");
@@ -23,7 +23,7 @@ describe("cascade gate docs contract — /to-prd", () => {
 
   it("references the doc-landing procedure and ADR 0092 instead of restating the git sequence", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-prd/SKILL.md"
+      "plugins/dev/skills/engineering/to-spec/SKILL.md"
     );
 
     expect(skill).toContain("doc-landing procedure");
@@ -33,7 +33,7 @@ describe("cascade gate docs contract — /to-prd", () => {
 
   it("aborts loudly when landing is impossible and never publishes while docs are unlanded", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-prd/SKILL.md"
+      "plugins/dev/skills/engineering/to-spec/SKILL.md"
     );
 
     expect(skill).toContain("abort");
@@ -42,7 +42,7 @@ describe("cascade gate docs contract — /to-prd", () => {
 
   it("places the cascade gate before the publish step", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-prd/SKILL.md"
+      "plugins/dev/skills/engineering/to-spec/SKILL.md"
     );
 
     const gateIndex = skill.indexOf("Cascade gate");
@@ -53,10 +53,10 @@ describe("cascade gate docs contract — /to-prd", () => {
   });
 });
 
-describe("cascade gate docs contract — /to-issues", () => {
+describe("cascade gate docs contract — /to-tickets", () => {
   it("contains the cascade-gate directive with origin-first comparison", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-issues/SKILL.md"
+      "plugins/dev/skills/engineering/to-tickets/SKILL.md"
     );
 
     expect(skill).toContain("Cascade gate");
@@ -68,7 +68,7 @@ describe("cascade gate docs contract — /to-issues", () => {
 
   it("references the doc-landing procedure and ADR 0092 instead of restating the git sequence", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-issues/SKILL.md"
+      "plugins/dev/skills/engineering/to-tickets/SKILL.md"
     );
 
     expect(skill).toContain("doc-landing procedure");
@@ -78,7 +78,7 @@ describe("cascade gate docs contract — /to-issues", () => {
 
   it("aborts loudly when landing is impossible and never publishes while docs are unlanded", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-issues/SKILL.md"
+      "plugins/dev/skills/engineering/to-tickets/SKILL.md"
     );
 
     expect(skill).toContain("abort");
@@ -87,7 +87,7 @@ describe("cascade gate docs contract — /to-issues", () => {
 
   it("places the cascade gate before the publish step", async () => {
     const skill = await readSkill(
-      "plugins/dev/skills/engineering/to-issues/SKILL.md"
+      "plugins/dev/skills/engineering/to-tickets/SKILL.md"
     );
 
     const gateIndex = skill.indexOf("Cascade gate");

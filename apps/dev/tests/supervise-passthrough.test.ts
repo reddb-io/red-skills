@@ -102,8 +102,8 @@ describe("buildSlotEnv (per-slot RED_AFK_SLOT injection)", () => {
 });
 
 describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
-  it("forwards a --prd filter to each slot", () => {
-    expect(slotFilterArgs(["--prd", "42"])).toEqual(["--prd", "42"]);
+  it("forwards a --spec filter to each slot", () => {
+    expect(slotFilterArgs(["--spec", "42"])).toEqual(["--spec", "42"]);
   });
 
   it("forwards a --issues filter", () => {
@@ -121,8 +121,8 @@ describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
   });
 
   it("accepts the --flag=value form", () => {
-    expect(slotFilterArgs(["--prd=42", "--request=do it"])).toEqual([
-      "--prd",
+    expect(slotFilterArgs(["--spec=42", "--request=do it"])).toEqual([
+      "--spec",
       "42",
       "--request",
       "do it",
@@ -130,8 +130,8 @@ describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
   });
 
   it("forwards a full combined filter + policy in order", () => {
-    expect(slotFilterArgs(["--prd", "7", "--fallback-runner", "--request", "x"])).toEqual([
-      "--prd",
+    expect(slotFilterArgs(["--spec", "7", "--fallback-runner", "--request", "x"])).toEqual([
+      "--spec",
       "7",
       "--fallback-runner",
       "--request",

@@ -44,7 +44,7 @@ export interface SpawnSupervisorOptions {
   root: string;
   target: number;
   runner: string;
-  /** Filter/policy argv (--prd/--issues/--alternate/--fallback-runner) threaded
+  /** Filter/policy argv (--spec/--issues/--alternate/--fallback-runner) threaded
    * into each slot's `run --once`. */
   passthrough?: readonly string[];
   /** Optional fleet request, forwarded as RED_AFK_REQUEST + `--request`. */

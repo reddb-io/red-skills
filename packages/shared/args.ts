@@ -31,7 +31,7 @@ export interface BooleanFlagSpec {
   aliases?: string[];
 }
 
-/** A flag that consumes a value, e.g. `--prd 42` / `--prd=42`. */
+/** A flag that consumes a value, e.g. `--spec 42` / `--spec=42`. */
 export interface ValueFlagSpec<T> {
   kind: "value";
   /** Alternate spellings (long or short), without leading dashes. */
@@ -225,7 +225,7 @@ export interface RouterSchema<C extends string> {
   /**
    * When true, a leading token that is a non-flag positional (does not start
    * with `-`) and matches no command throws {@link UnknownCommandError} instead
-   * of falling through to `default`. Flag-led (`--prd …`) and empty invocations
+   * of falling through to `default`. Flag-led (`--spec …`) and empty invocations
    * still reach the default command — only a typo'd subcommand errors. Off by
    * default to preserve the permissive fall-through.
    */

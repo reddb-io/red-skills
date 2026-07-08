@@ -8,11 +8,11 @@ argument-hint: "[--issue N | --skip N,N]"
 
 **Drain the human-in-the-loop decision queue — one ready-for-human issue at a time.**
 
-The **HITL queue** is open, non-PRD Issues labelled `ready-for-human`. PRDs (`type:prd`) are planning artifacts and are never selected by this workflow. For when to reach for `/requeue` instead, see **`/hitl` vs `/requeue`** in `<supporting-info>`.
+The **HITL queue** is open, non-Spec Issues labelled `ready-for-human`. Specs (`type:spec`) are planning artifacts and are never selected by this workflow. For when to reach for `/requeue` instead, see **`/hitl` vs `/requeue`** in `<supporting-info>`.
 
 <what-to-do>
 
-**Step 1 — Select.** Pick the highest-priority open `ready-for-human` issue that is not a PRD.
+**Step 1 — Select.** Pick the highest-priority open `ready-for-human` issue that is not a Spec.
 
 List open candidates:
 
@@ -22,8 +22,8 @@ gh issue list --label ready-for-human --state open --limit 200 --json number,tit
 
 Filter and order:
 
-1. Drop any Issue carrying `type:prd`.
-2. If `--issue N` was passed, use that Issue only after verifying it is open, `ready-for-human`, and not `type:prd`.
+1. Drop any Issue carrying `type:spec`.
+2. If `--issue N` was passed, use that Issue only after verifying it is open, `ready-for-human`, and not `type:spec`.
 3. Otherwise sort by priority band, then age:
    - `priority:urgent`
    - `priority:high`
@@ -129,7 +129,7 @@ If non-delegable:
 
 ## Hard rules
 
-- Do not select `type:prd` Issues.
+- Do not select `type:spec` Issues.
 - Do not use historical slice-routing labels; HITL queue membership is `ready-for-human`.
 - Do not do manual implementation as the default path. The goal is decision resolution and delegation — when the resolution spawns one-off concrete work that needs no queue, dispatch it with `/go "<demand>"` instead of hand-rolling a worktree.
 - Do not update labels or body before showing the mutation plan and receiving explicit approval.

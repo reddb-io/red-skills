@@ -15,7 +15,7 @@ The canonical body layout for an AFK-ready issue is:
 {this section, written/replaced by /triage}
 
 ## Blocked by
-{managed by /to-issues — keep last so the unblock sweep's `## Blocked by` extractor stops cleanly at EOF or at the next `## ` heading}
+{managed by /to-tickets — keep last so the unblock sweep's `## Blocked by` extractor stops cleanly at EOF or at the next `## ` heading}
 ```
 
 `## Blocked by` may also appear *before* `## Agent brief` — the unblock sweep tolerates either order. The brief and the blockers section never nest inside each other.

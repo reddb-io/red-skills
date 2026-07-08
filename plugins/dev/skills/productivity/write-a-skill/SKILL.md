@@ -141,8 +141,8 @@ artifact goal is visible in the same skill**, split the phase into its own skill
 so the future step is hidden. With the payoff out of sight, the agent can't skip
 ahead to it — the gather phase runs to completion on its own terms.
 
-In-repo exemplars: `/start` (grill and sharpen the plan) hands off to `/to-prd`
-(publish the PRD) instead of doing both, so the grilling isn't cut short by the
+In-repo exemplars: `/start` (grill and sharpen the plan) hands off to `/to-spec`
+(publish the Spec) instead of doing both, so the grilling isn't cut short by the
 pull toward shipping; and `writing-fragments` is separate from `writing-shape` /
 `writing-beats` so the raw-material gather isn't rushed toward the finished piece.
 

@@ -52,7 +52,10 @@ export const LABEL_WONTFIX = "wontfix";
 export const LABEL_TRIAGE_SUMMON = "triage:summon";
 
 // Priority / type labels
-export const LABEL_PRD = "type:prd";
+// The parent-document type marker (ADR 0093 renamed `type:prd` → `type:spec`).
+// The symbol is LABEL_TYPE_SPEC, not LABEL_SPEC — the latter is already the
+// `blocked:spec` reason label below.
+export const LABEL_TYPE_SPEC = "type:spec";
 export const LABEL_URGENT = "priority:urgent";
 export const LABEL_HIGH = "priority:high";
 export const LABEL_BUG = "bug";

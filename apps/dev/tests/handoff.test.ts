@@ -404,7 +404,7 @@ describe("buildHandoff", () => {
     expect(out).toContain("please retry when you can");
   });
 
-  it("header carries source/runner/started/attempt, and prd line when given", () => {
+  it("header carries source/runner/started/attempt, and spec line when given", () => {
     const out = buildHandoff({
       issue: 9,
       title: "Hdr",
@@ -414,18 +414,18 @@ describe("buildHandoff", () => {
       attempt: 3,
       url: "https://gh/i/9",
       comments: [],
-      prdRef: "244",
+      specRef: "244",
     });
     expect(out).toContain("# Issue #9 — Hdr [AFK]");
     expect(out).toContain("source: https://gh/i/9");
-    expect(out).toContain("prd: #244");
+    expect(out).toContain("spec: #244");
     expect(out).toContain("runner: codex");
     expect(out).toContain("started: 2026-05-30T01:02:03Z");
     expect(out).toContain("attempt: 3");
   });
 
-  it("omits the prd line when no prdRef", () => {
-    expect(base({})).not.toContain("prd:");
+  it("omits the spec line when no specRef", () => {
+    expect(base({})).not.toContain("spec:");
   });
 });
 

@@ -1,16 +1,16 @@
 // pin-reader — read the branch a work item is pinned to (ADR 0008).
 //
-// A PRD or issue body may carry a canonical `branch:` line declaring the branch
+// A Spec or Ticket body may carry a canonical `branch:` line declaring the branch
 // `/afk` should base its worktree on and merge back into. The inheritance chain
 // is small:
 //
-//   1. the issue's own `branch:` line wins;
-//   2. else the parent PRD's `branch:` line (the issue inherits it);
+//   1. the Ticket's own `branch:` line wins;
+//   2. else the parent Spec's `branch:` line (the Ticket inherits it);
 //   3. else `main` (no pin anywhere).
 //
 // The parsing functions are pure text predicates: no gh, no git, no network.
 // `resolvePin` is an orchestration function that takes injected lookups
-// (fetchIssueBody / resolveParentPrd) so the inheritance precedence stays
+// (fetchIssueBody / resolveParentSpec) so the inheritance precedence stays
 // unit-testable against fixed strings.
 
 // A canonical `branch:` line: optional leading whitespace, an optional markdown
@@ -19,9 +19,9 @@
 // "this branch: foo" never matches because the key must start the line.
 const BRANCH_LINE = /^[ \t]*(?:[-*][ \t]+)?branch:[ \t]+(\S+)/;
 
-// The first `PRD #<n>` reference (the `## Parent` convention from /to-issues).
+// The first `Spec #<n>` reference (the `## Parent` convention from /to-tickets).
 // Not anchored — it matches anywhere on a line and tolerates spaces around `#`.
-const PARENT_PRD = /PRD[ \t]*#[ \t]*(\d+)/;
+const PARENT_SPEC = /Spec[ \t]*#[ \t]*(\d+)/;
 
 export const DEFAULT_BRANCH = "main";
 
@@ -52,16 +52,16 @@ export function parseBranchPin(body: string): string | undefined {
 }
 
 /**
- * Extract the number from the first `PRD #<n>` reference in `body`, or
+ * Extract the number from the first `Spec #<n>` reference in `body`, or
  * `undefined` when no reference is present.
  */
-export function parseParentPrd(body: string): number | undefined {
-  const match = PARENT_PRD.exec(body);
+export function parseParentSpec(body: string): number | undefined {
+  const match = PARENT_SPEC.exec(body);
   return match ? Number(match[1]) : undefined;
 }
 
 export interface ResolvePinDeps {
-  /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
+  /** Fetch the raw body for Ticket/Spec number `n`, or `undefined` if missing. */
   fetchIssueBody: (n: number) => Promise<string | undefined>;
   /**
    * The branch a pinless item collapses to — the configured Trunk
@@ -78,21 +78,21 @@ export interface ResolvePinInput {
 
 /**
  * Apply the inheritance chain and always resolve to a branch:
- *   the issue's own pin, else its parent PRD's pin, else the Trunk
+ *   the Ticket's own pin, else its parent Spec's pin, else the Trunk
  *   (`deps.defaultBranch`, falling back to `main` when unset — ADR 0083).
  *
- * The parent PRD body is fetched lazily via the injected `fetchIssueBody`,
- * keyed off the issue body's `PRD #<n>` reference.
+ * The parent Spec body is fetched lazily via the injected `fetchIssueBody`,
+ * keyed off the Ticket body's `Spec #<n>` reference.
  */
 export async function resolvePin(input: ResolvePinInput, deps: ResolvePinDeps): Promise<string> {
   const own = parseBranchPin(input.issueBody);
   if (own) return own;
 
-  const parent = parseParentPrd(input.issueBody);
+  const parent = parseParentSpec(input.issueBody);
   if (parent !== undefined) {
-    const prdBody = await deps.fetchIssueBody(parent);
-    if (prdBody !== undefined) {
-      const inherited = parseBranchPin(prdBody);
+    const specBody = await deps.fetchIssueBody(parent);
+    if (specBody !== undefined) {
+      const inherited = parseBranchPin(specBody);
       if (inherited) return inherited;
     }
   }

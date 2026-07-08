@@ -258,12 +258,12 @@ function coerceIssuesFilter(raw: string): SelectionFilter {
 /**
  * Flag schema for the `run` command, expressed against the shared CLI layer
  * (`packages/shared/args.ts`, built over `cli-args-parser`). The coercions here
- * reproduce the exact semantics the dev suite asserts: `--prd`/`-n` map through
+ * reproduce the exact semantics the dev suite asserts: `--spec`/`-n` map through
  * `Number`, `--issues` trims and filters to finite numbers, booleans are
  * present-or-absent, and `--request` accepts the `-r` short alias.
  */
 const RUN_FLAG_SCHEMA = {
-  prd: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "prd", prd: Number(raw) }) },
+  spec: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "spec", spec: Number(raw) }) },
   issues: { kind: "value", coerce: coerceIssuesFilter },
   n: { kind: "value", coerce: (raw: string): number => Number(raw) },
   once: { kind: "boolean" },
@@ -286,18 +286,18 @@ const RUN_FLAG_SCHEMA = {
   force: { kind: "boolean" },
 } satisfies FlagSchema;
 
-/** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
+/** Parse the `run` flags: --spec N / --issues a,b,c / -n N / --once / --request / --runner. */
 export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
   const { values } = parseFlags(args, RUN_FLAG_SCHEMA);
 
-  // --prd and --issues both feed `filter`; the last of the two in argv wins,
+  // --spec and --issues both feed `filter`; the last of the two in argv wins,
   // matching the original single-pass scan. Resolve order from the raw argv.
   let filter: SelectionFilter = { kind: "all" };
   let lastFilterPos = -1;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if ((arg === "--prd" || arg.startsWith("--prd=")) && values.prd !== undefined && i > lastFilterPos) {
-      filter = values.prd as SelectionFilter;
+    if ((arg === "--spec" || arg.startsWith("--spec=")) && values.spec !== undefined && i > lastFilterPos) {
+      filter = values.spec as SelectionFilter;
       lastFilterPos = i;
     } else if ((arg === "--issues" || arg.startsWith("--issues=")) && values.issues !== undefined && i > lastFilterPos) {
       filter = values.issues as SelectionFilter;
@@ -1346,8 +1346,8 @@ export function buildProcessDeps(
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
     recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
-    // PRD cascade rebase (issue #1007): after a successful DONE landing, rebase
-    // every open sibling branch (same prd:N, not held by a live worker) onto the
+    // Spec cascade rebase (issue #1007): after a successful DONE landing, rebase
+    // every open sibling branch (same spec:N, not held by a live worker) onto the
     // new base HEAD. Best-effort — failures log a warning, never fail the close.
     // Gated by `afk.landing.cascade_rebase` (default "true", checked in core).
     cascadeRebase: {

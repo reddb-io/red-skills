@@ -1,4 +1,4 @@
-import { LABEL_PRD, LABEL_VALIDATION, LABEL_RUNNING } from "./triage-labels.js";
+import { LABEL_TYPE_SPEC, LABEL_VALIDATION, LABEL_RUNNING } from "./triage-labels.js";
 import { encodeToon, type ToonValue } from "./toon.js";
 
 export interface DashboardIssue {
@@ -47,7 +47,7 @@ export interface DashboardReport {
   generated_at: string;
   period_days: number;
   operations: {
-    open_prds: number;
+    open_specs: number;
     open_issues: number;
     global_running_workers: number;
     local_workers: DashboardLocalWorkers;
@@ -115,10 +115,10 @@ function hasLabel(issue: DashboardIssue, predicate: (label: string) => boolean):
   return issue.labels.some((label) => predicate(label.toLowerCase()));
 }
 
-function isPrd(issue: DashboardIssue): boolean {
+function isSpec(issue: DashboardIssue): boolean {
   return (
-    hasLabel(issue, (label) => label === LABEL_PRD || label === "prd") ||
-    /^prd\b/i.test(issue.title.trim())
+    hasLabel(issue, (label) => label === LABEL_TYPE_SPEC || label === "spec") ||
+    /^spec\b/i.test(issue.title.trim())
   );
 }
 
@@ -148,8 +148,8 @@ export function buildDashboardReport(input: DashboardInput): DashboardReport {
   const today = startOfDay(now);
   const periodStart = new Date(now.getTime() - input.periodDays * DAY_MS);
   const openIssues = input.issues.filter((issue) => isOpen(issue.state));
-  const openNonPrdIssues = openIssues.filter((issue) => !isPrd(issue));
-  const openPrds = openIssues.filter(isPrd);
+  const openNonSpecIssues = openIssues.filter((issue) => !isSpec(issue));
+  const openSpecs = openIssues.filter(isSpec);
   const closedInPeriod = input.issues.filter((issue) => inRange(parseDate(issue.closedAt), periodStart, now));
   const createdInPeriod = input.issues.filter((issue) => inRange(parseDate(issue.createdAt), periodStart, now));
   const failureLikeClosed = closedInPeriod.filter(isFailureLike);
@@ -202,8 +202,8 @@ export function buildDashboardReport(input: DashboardInput): DashboardReport {
     generated_at: now.toISOString(),
     period_days: input.periodDays,
     operations: {
-      open_prds: openPrds.length,
-      open_issues: openNonPrdIssues.length,
+      open_specs: openSpecs.length,
+      open_issues: openNonSpecIssues.length,
       global_running_workers: openIssues.filter((issue) => issue.labels.includes(LABEL_RUNNING)).length,
       local_workers: input.localWorkers,
       issues_created_in_period: createdInPeriod.length,
@@ -245,7 +245,7 @@ export function renderDashboardReport(report: DashboardReport): string {
     `generated: ${report.generated_at}`,
     "",
     "Operations",
-    `  open PRDs: ${report.operations.open_prds}`,
+    `  open Specs: ${report.operations.open_specs}`,
     `  open issues: ${report.operations.open_issues}`,
     `  global running workers: ${report.operations.global_running_workers}`,
     `  local workers: ${report.operations.local_workers.live} live / ${report.operations.local_workers.stale} stale / ${report.operations.local_workers.total} total`,

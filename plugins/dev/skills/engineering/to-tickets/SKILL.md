@@ -1,9 +1,9 @@
 ---
-name: to-issues
-description: Break a plan, spec, or PRD into independently-grabbable issues on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into issues, create implementation tickets, or break down work into issues.
+name: to-tickets
+description: Break a plan or Spec into independently-grabbable Tickets on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into Tickets, create implementation Tickets, or break down work into Tickets.
 ---
 
-# To Issues
+# To Tickets
 
 **Break a plan into independently-grabbable vertical slices and publish them to the issue tracker.**
 
@@ -65,9 +65,9 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
 - Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`).
 - If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human), keeping the strict `## Blocked by` task list in the body as the human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/setup-red-skills` triage-labels *Dependency Edges*.
-  - **`req:N` targets must be executable slices, never a PRD** (authoritative statement + rationale in Hard rules below). Before creating each `req:N` label, check the target with `gh issue view N --json labels`: if #N carries `type:prd`, **refuse the edge** and re-point it at the PRD's concrete executable slice(s) instead (the child issues carrying `prd:N`); when the PRD has no slices yet, first create the concrete slice the dependent actually waits on, then point `req:N` at that slice.
+  - **`req:N` targets must be executable slices, never a Spec** (authoritative statement + rationale in Hard rules below). Before creating each `req:N` label, check the target with `gh issue view N --json labels`: if #N carries `type:spec`, **refuse the edge** and re-point it at the Spec's concrete executable slice(s) instead (the child issues carrying `spec:N`); when the Spec has no slices yet, first create the concrete slice the dependent actually waits on, then point `req:N` at that slice.
 - If a slice is HITL, publish it as `ready-for-human`. Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use `## Current blocker` / `## Human decision needed` for gates, measurements, and decisions where closing a referenced issue is not enough to make the slice delegable.
-- If the parent is a PRD (carries `type:prd` + `needs-slicing`), tag every child with `prd:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent PRD. Never remove `type:prd` — it is a permanent type marker. Never apply `ready-for-agent` to the parent PRD itself.
+- If the parent is a Spec (carries `type:spec` + `needs-slicing`), tag every child with `spec:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent Spec. Never remove `type:spec` — it is a permanent type marker. Never apply `ready-for-agent` to the parent Spec itself.
 
 ### Hard rules — do not break these
 
@@ -75,7 +75,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - ❌ Do **not** modify or close any parent issue
 - ❌ Do **not** create horizontal-slice issues ("the schema layer", "the API layer", "the UI layer")
 - ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`
-- ❌ Do **not** create a `req:N` edge whose target #N is a `type:prd` — dependency edges must point at executable slices. A PRD closes only after a manual bookkeeping step long after its substance ships (#907/#928: 46/46 children closed, PRDs still open), so a `req:<PRD>` edge strands the dependent in `blocked:dependency` forever. Re-point at the PRD's `prd:N` children, or, when the PRD has no slices yet, first create the concrete slice the dependent waits on and point `req:N` at that.
+- ❌ Do **not** create a `req:N` edge whose target #N is a `type:spec` — dependency edges must point at executable slices. A Spec closes only after a manual bookkeeping step long after its substance ships (#907/#928: 46/46 children closed, Specs still open), so a `req:<Spec>` edge strands the dependent in `blocked:dependency` forever. Re-point at the Spec's `spec:N` children, or, when the Spec has no slices yet, first create the concrete slice the dependent waits on and point `req:N` at that.
 - ❌ Do **not** inline file paths or code snippets in issue bodies — they go stale. The one exception is in `<supporting-info>` (decision-rich prototype output)
 - ✅ **Do** publish in dependency order so "Blocked by" fields point at real issue IDs
 - ✅ **Do** prefer many thin slices over few thick ones
@@ -99,7 +99,7 @@ A horizontal slice ("build the schema for all tables") cannot be demoed and cann
 <issue-template>
 ## Parent
 
-A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section).
+A reference to the parent Spec on the issue tracker, written as a literal `Spec #N` line (if the source was an existing Spec, otherwise omit this section). The `/afk` pin-reader parses this exact `Spec #N` form to inherit the parent's `branch:` pin — keep the word `Spec` and the `#N` reference literal.
 
 ## What to build
 
@@ -137,5 +137,15 @@ next: Human must decide whether to stop, redesign, or continue anyway.
 ```
 
 </issue-template>
+
+## Wide refactors — expand → migrate → contract
+
+**When a change is blast-radius-wide** (a rename, signature change, or API move touching dozens of call sites), a single vertical slice cannot both stay small and stay mergeable. Slice it as an **expand–contract** chain instead — three (or more) Tickets that each merge green on their own:
+
+1. **Expand.** Introduce the new form *alongside* the old one — new function/flag/label/type added, old one untouched and still authoritative. Nothing calls the new form yet. This Ticket merges without changing any behaviour.
+2. **Migrate.** Move call sites onto the new form, in one Ticket per independently-verifiable batch (by package, by layer, or by directory). Each batch merges green because the old form still exists as a fallback. Many thin migration Tickets beat one giant one — a failed batch never blocks the others.
+3. **Contract.** Once every call site is migrated, remove the old form in a final Ticket. This is the only Ticket that deletes the old vocabulary, and it is `blocked:dependency` on all the migration Tickets (one `req:N` per batch).
+
+**Big-bang exception.** Some flips must NOT expand–contract — when the two forms cannot coexist (a single atomic label/flag rename with no transition window, e.g. ADR 0093's vocabulary flip), slice it as one Ticket that changes definition + call sites + tests together, and say so explicitly in the Ticket body so a reviewer does not expect a fallback. Prefer expand–contract; reach for big-bang only when coexistence is genuinely impossible or the maintainer decided against a transition window.
 
 </supporting-info>
