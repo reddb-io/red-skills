@@ -20,6 +20,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 - **why**: issue #1196 - new repository plugins should be born compliant with the RedSkills marketplace contract instead of being retrofitted after creation.
 - **what changed**: added the internal `create-plugin` maintainer skill and scaffolder. Generated plugins include Claude and Codex manifests, a two-section seed SKILL.md, README, CHANGES stub, structural smoke script, root README entry, and entries in both marketplace manifests. Added an acceptance test that scaffolds a fixture plugin and runs marketplace validation, skill frontmatter audit, and the generated smoke script with zero manual edits.
 
+## tdd (engineering) — reference-only reshape + tautological-test anti-pattern (issue #1289)
+
+- **status**: modified
+- **upstream**: `272f99b` (upstream `tdd`)
+- **why**: upstream v1.1.0 adoption — the rigid step workflow (Steps 1–3 requiring user approval gates) prevents AFK agents from consuming the skill directly; dropped the steps, kept the loop rules. Added the tautological-test anti-pattern as a peer of the implementation-coupling one: a test whose assertion is recomputed the way the code computes it passes by construction and proves nothing.
+- **what changed**: removed Steps 1–3 from `<what-to-do>` and replaced them with a seam declaration and the loop rule ("red before green, one slice at a time, tests only at pre-agreed seams"). Added a sixth per-cycle checklist gate ("Expected values come from a literal, worked example, or spec — not recomputed the way the code computes them"). Added "Tautological tests" as a named second bad-test pattern in the Philosophy section of `<supporting-info>`, parallel to the existing "Implementation-coupled tests" entry. Added a BAD/GOOD example pair in `tests.md`. Added `tdd-docs.test.ts` pinning the reference-only shape and all three tautological-test sites.
+
 ## start (engineering) — facts-vs-decisions distinction in hard rules (issue #1288)
 
 - **status**: modified
