@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## afk (engineering) — remove auto-monitor loop (issue #1309)
+
+- **status**: modified
+- **upstream**: —
+- **why**: the auto-monitor loop (CronCreate/CronList wiring) added complexity and noise; the manual `/afk monitor` dashboard and the Codex monitor agent are sufficient.
+- **what changed**: deleted `apps/dev/src/core/auto-monitor.ts` and `apps/dev/tests/auto-monitor.test.ts`; removed the `--reactive-check` handler and its helper functions (`reactiveWorkerAlert`, `reactiveFleetAlert`, `renderReactiveCheck`) from `apps/dev/src/commands/monitor.ts`; deleted the "Auto-Monitor Loop" section from `plugins/dev/skills/engineering/afk/SKILL.md`; removed auto-loop references from `fleet.md`, `monitor.md`.
+
 ## create-plugin (internal/maintainer)
 
 - **status**: added
