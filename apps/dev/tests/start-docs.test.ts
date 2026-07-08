@@ -35,4 +35,15 @@ describe("start docs contract", () => {
     expect(skill).toContain("never stash");
     expect(skill).toContain("never reset");
   });
+
+  it("carries the facts-vs-decisions distinction in the hard rules", async () => {
+    const skill = await readStartSkill();
+
+    // answering decisions yourself is prohibited
+    expect(skill).toContain("broken the interview");
+    // positive: look facts up via codebase exploration
+    expect(skill).toContain("look up facts in the codebase");
+    // positive: put decisions to the human
+    expect(skill).toContain("decisions belong to the human");
+  });
 });
