@@ -68,7 +68,9 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 - ❌ Do **not** propose a final plan, design doc, or PRD. This skill ends in shared understanding, not artefacts.
 - ❌ Do **not** ask more than one question per turn.
 - ❌ Do **not** fetch URLs the user only **mentions** in passing. A ref becomes a fetch only when the user explicitly asks ("look at this", "ingest X") or the next question requires its content.
-- ✅ **Do** explore the codebase when a question can be answered by reading code instead of asking.
+- ❌ Do **not** answer a decision yourself — an agent that answers its own questions has broken the interview.
+- ✅ **Do** look up facts in the codebase (what the code does, what names exist, how something is wired) instead of asking the human for information that is already readable in the code.
+- ✅ **Do** put every decision to the human and wait for the answer. Facts can be looked up; decisions belong to the human.
 - ✅ **Do** challenge contradictions immediately — between user statements, between user and code, between user and `.red/CONTEXT.md`.
 - ✅ **Do** update `.red/CONTEXT.md` inline the moment a term is resolved (one term → one edit → next question). This is a side effect of the interview, not a separate phase.
 - ✅ **Do** offer an ADR only when the three-condition test in `<supporting-info>` passes.
