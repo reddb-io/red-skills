@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## prototype (engineering) — model-invoked flip with leading-word description (issue #1291)
+
+- **status**: modified
+- **upstream**: —
+- **why**: upstream v1.1.0 adoption — /prototype should be reachable by the model (and skills like /wayfinder) autonomously when a design question is open; the previous description led with an imperative verb phrase and bundled all triggers into one clause, making the signal weak for model invocation.
+- **what changed**: Rewrote the frontmatter `description` to lead with the skill name ("Prototype") as the leading word, followed by a single-line gloss ("throwaway code that answers one design question"), then a "Use when" clause with one trigger per branch (state/logic → interactive terminal explorer; appearance → multi-variation UI route). No `disable-model-invocation` flag was added or removed (skill was already model-invocable).
+
+---
+
 ## write-a-skill (productivity) — adopt Negation + Negative Space steering failure modes (issue #1290)
 
 - **status**: modified
