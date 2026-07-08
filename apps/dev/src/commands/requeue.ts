@@ -16,7 +16,9 @@
 // re-run. The real adopt runner is built here; `RequeueAdoptRunner` is injectable
 // for tests (mirrors how `RequeueGh` is injected).
 
-import { join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
@@ -24,7 +26,14 @@ import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../
 import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { LABEL_READY, LABEL_SENSITIVE_PATH } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
+import {
+  REQUEUE_ORIGIN,
+  withAdoptPresence,
+  type AdoptPresenceIo,
+} from "../core/adopt-presence.js";
+import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
+import { pathExists, removeDir } from "../runtime/fs.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
@@ -212,6 +221,90 @@ async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   return r.code === 0 ? r.stdout.trim() : "";
 }
 
+/** Append one liveness-lane record so the (un-poisonable) liveness evaluator
+ * reads the adopt-landing presence row as fresh/`alive` for the idle window
+ * (#1306). Synchronous + best-effort — it mirrors the JSONL shape red-castle's
+ * `LivenessLane` writes, so `parseLivenessRecords` reads it back unchanged. */
+function appendAdoptLivenessRecord(attemptDir: string): void {
+  try {
+    mkdirSync(attemptDir, { recursive: true });
+    appendFileSync(
+      join(attemptDir, LIVENESS_LANE_FILENAME),
+      `${JSON.stringify({ at: Date.now(), kind: "iteration-start" })}\n`,
+    );
+  } catch {
+    // best-effort: the presence row still renders on pid liveness alone.
+  }
+}
+
+/**
+ * The real presence IO for the adopt-landing lane (#1306): seeds a live
+ * `origin="requeue"` worker-presence state file under the canonical workers
+ * root via the SAME `initStateSync`/`writeIdentitySync` helpers the AFK worker
+ * uses, advances its stage as reconcile progresses, and marks it not-live
+ * (`pid: 0`) + removes the attempt dir in the teardown. Every write is
+ * best-effort — presence must never block or fail the adopt landing.
+ */
+export function makeAdoptPresenceIo(runner: Runner): AdoptPresenceIo {
+  return {
+    seed(input) {
+      try {
+        const startedAt = new Date().toISOString();
+        initStateSync(input.statePath, {
+          worker_id: input.worker,
+          pid: process.pid,
+          pid_start_time: readPidStartTime(process.pid) ?? "",
+          runner,
+          // Spawn-time provenance (#1306): the origin-agnostic reader renders
+          // this as the row's per-source count, distinct from afk/go.
+          origin: REQUEUE_ORIGIN,
+          log: join(input.attemptDir, "afk.log"),
+          started_at: startedAt,
+          "current.number": input.issue,
+          "current.title": input.title,
+          "current.started_at": startedAt,
+          "current.runner": runner,
+          "current.stage": input.stage,
+          "current.phase": "validating",
+        });
+        writeIdentitySync(input.attemptDir, {
+          worker_id: input.worker,
+          runner,
+          origin: REQUEUE_ORIGIN,
+          number: input.issue,
+          started_at: startedAt,
+        });
+        appendAdoptLivenessRecord(input.attemptDir);
+      } catch {
+        // best-effort — a failed seed must never block the adopt landing.
+      }
+    },
+    async setStage(statePath, stage) {
+      try {
+        await updateState(statePath, {
+          "current.stage": stage,
+          "current.phase": stage === "landing" ? "merging" : "validating",
+        });
+        appendAdoptLivenessRecord(dirname(statePath));
+      } catch {
+        // best-effort — stage is cosmetic; never fail the reconcile on it.
+      }
+    },
+    async teardown(statePath, attemptDir) {
+      // Mark not-live first (so a mid-teardown reader never sees a live ghost),
+      // then remove the short-lived attempt dir so no residue is left behind.
+      try {
+        if (await pathExists(statePath)) {
+          await updateState(statePath, { pid: 0 }, { allowPidReset: true });
+        }
+      } catch {
+        // best-effort
+      }
+      await removeDir(attemptDir).catch(() => {});
+    },
+  };
+}
+
 /**
  * Build the real adopt runner: wires ReconcileDeps and calls reconcile() (ADR
  * 0055) for a hand-done branch. Mirrors makeBootReconcileRunner in commands/run.ts
@@ -233,6 +326,10 @@ async function runAdoptLanding(
   const lockPath = branchLockPath(cwd);
   const feedbackDir = join(paths.tmpDir, "adopt-landing", String(issue));
   const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {});
+
+  // Bound to the live worker-presence row's stage inside withAdoptPresence
+  // below; reconcile's `markStage` calls through it (#1306).
+  let presenceStage: ((stage: "validating" | "landing") => Promise<void>) | undefined;
 
   try {
     const base = await resolveBase(
@@ -319,6 +416,10 @@ async function runAdoptLanding(
       },
       nowEpoch: () => Math.floor(Date.now() / 1000),
       appendIterLog: (line) => { stdout.write(`${line}\n`); },
+      // Presence stage seam (#1306): wired to the live worker-presence row's
+      // stage inside the withAdoptPresence body below. Best-effort no-op until
+      // the presence handle is bound.
+      markStage: (stage) => (presenceStage ? presenceStage(stage) : Promise.resolve()),
       recoveryEnv: process.env,
     };
 
@@ -346,8 +447,18 @@ async function runAdoptLanding(
       sensitivePathApproved: issueData.sensitivePathApproved === true,
     };
 
-    const result = await reconcile(reconcileDeps, reconcileInput);
-    return result.outcome;
+    // Seed a short-lived `origin="requeue"` worker-presence row so the
+    // adopt-landing run is visible on the statusline / `/afk monitor` while its
+    // gate runs, marked not-live + torn down on EVERY exit path (#1306).
+    return await withAdoptPresence(
+      makeAdoptPresenceIo(reconcileInput.runner),
+      { tmpDir: paths.tmpDir, issue, title, runner: reconcileInput.runner },
+      async (handle) => {
+        presenceStage = handle.markStage;
+        const result = await reconcile(reconcileDeps, reconcileInput);
+        return result.outcome;
+      },
+    );
   } finally {
     await feedback.cleanup();
   }
