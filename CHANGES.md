@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## write-a-skill (productivity) — adopt Negation + Negative Space steering failure modes (issue #1290)
+
+- **status**: modified
+- **upstream**: —
+- **why**: upstream v1.1.0 adoption — the skill taught nine sentence-level techniques and a review checklist but had no named failure modes for the Steering dimension; Negation and Negative Space are the two recurring patterns that survive the writing phase yet undermine the skill at inference time.
+- **what changed**: Added a new `## Steering failure modes` section between the writing-style techniques and the review checklist, with two named entries — **Negation** (prohibition amplifies the forbidden behaviour; cure: positive directive + paired alternative) and **Negative Space** (silence is delegated to priors; cure: deliberate fill-or-branch for every omission). Added two matching review-checklist items: `Negation check` and `Negative-space audit`.
+
+---
+
 ## afk (engineering) — remove auto-monitor loop (issue #1309)
 
 - **status**: modified
