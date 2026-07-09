@@ -21,8 +21,10 @@ import {
   parseGitHubRepoSlugFromRemoteUrl,
   inferGitHubRepoSlug,
   resolveStatuslineCacheTtl,
+  resolveAttemptHead,
 } from "../src/runtime/wire.js";
 import { runBoot } from "../src/core/boot.js";
+import type { ExecOutput } from "../src/runtime/exec.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-wire-"));
@@ -86,6 +88,57 @@ describe("resolveAttemptGuardArming (issue #405)", () => {
       guardArmed: true,
       laneArmed: false,
     });
+  });
+});
+
+describe("resolveAttemptHead (#1390)", () => {
+  const ok = (stdout = ""): ExecOutput => ({ code: 0, stdout, stderr: "" });
+  const fail = (code = 1): ExecOutput => ({ code, stdout: "", stderr: "" });
+
+  it("prefers the live worker worktree HEAD over a stale branch ref", async () => {
+    const calls: string[][] = [];
+    const exec = async (cmd: string, args: readonly string[]): Promise<ExecOutput> => {
+      calls.push([cmd, ...args]);
+      const joined = args.join(" ");
+      if (joined === "worktree list --porcelain") {
+        return ok(
+          [
+            "worktree /repo",
+            "HEAD base",
+            "branch refs/heads/main",
+            "",
+            "worktree /repo/.red/tmp/workers/w1/1390-a1/.sandcastle/worktrees/afk-w1-1390",
+            "HEAD moved-head",
+            "branch refs/heads/afk/w1/1390-loc",
+            "",
+          ].join("\n"),
+        );
+      }
+      if (joined === "rev-parse --verify --quiet HEAD") return ok("moved-head\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/afk/w1/1390-loc") return ok("boot-base\n");
+      return fail();
+    };
+
+    await expect(
+      resolveAttemptHead(
+        { cwd: "/repo/.red/tmp/workers/w1/1390-a1", exec },
+        "afk/w1/1390-loc",
+      ),
+    ).resolves.toBe("moved-head");
+    expect(calls).toContainEqual(["git", "rev-parse", "--verify", "--quiet", "HEAD"]);
+  });
+
+  it("falls back to the branch ref when no registered worker worktree exists yet", async () => {
+    const exec = async (_cmd: string, args: readonly string[]): Promise<ExecOutput> => {
+      const joined = args.join(" ");
+      if (joined === "worktree list --porcelain") return ok("worktree /repo\nbranch refs/heads/main\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/afk/w1/1390-loc") return ok("branch-head\n");
+      return fail();
+    };
+
+    await expect(resolveAttemptHead({ cwd: "/repo/.red/tmp/workers/w1/1390-a1", exec }, "afk/w1/1390-loc")).resolves.toBe(
+      "branch-head",
+    );
   });
 });
 
