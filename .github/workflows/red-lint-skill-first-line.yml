@@ -8,7 +8,9 @@ name: red-lint-skill-first-line
 #      skills, <what-to-do> on bodies over ~100 lines, and orphaned bundled
 #      markdown files (cross-skill references allowed via a plugin-wide search).
 #      The test step exercises both fixture trees before the repo sweep runs.
-#   3. marketplace frontmatter audit: blocking check that name matches the skill
+#   3. local markdown link audit: blocking check that relative links under
+#      plugins/ resolve from the file that contains them.
+#   4. marketplace frontmatter audit: blocking check that name matches the skill
 #      directory, description is non-empty, and tool grants are not bare
 #      wildcards.
 
@@ -35,6 +37,12 @@ jobs:
 
       - name: Report skill-body hygiene (description budget, house tags, orphans)
         run: bash scripts/lint-skill-body.sh
+
+      - name: Test local markdown link audit against fixtures
+        run: bash scripts/test-lint-local-markdown-links.sh
+
+      - name: Audit local markdown links
+        run: node scripts/lint-local-markdown-links.mjs
 
       - name: Test marketplace skill frontmatter audit against fixtures
         run: bash scripts/test-lint-skill-frontmatter.sh
