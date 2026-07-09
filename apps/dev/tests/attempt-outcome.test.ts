@@ -27,6 +27,10 @@ const TABLE: Row[] = [
   { outcome: "exhausted", label: "blocked:quota", recovery: "quota" },
   { outcome: "runner-transient", label: "blocked:runner-transient", recovery: "runner-transient" },
   { outcome: "no-sentinel", label: "blocked:crashed", recovery: "crashed" },
+  // #1308: signal-killed is a distinct crash class (OS signal, SIGKILL/SIGTERM).
+  // Same `crashed` recovery policy as no-sentinel; the label is distinct so the
+  // kill cause is visible in the observability layer.
+  { outcome: "signal-killed", label: "blocked:signal-killed", recovery: "crashed" },
   { outcome: "hook-aborted", label: "blocked:policy", recovery: "policy" },
   { outcome: "merge-conflict", label: "blocked:merge-conflict", recovery: "merge-conflict" },
   // #812: a completed, MERGEABLE PR the admin-merge could not land because the
@@ -68,6 +72,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "done",
       "blocked",
       "no-sentinel",
+      "signal-killed",
       "merge-conflict",
       "ci-failed",
       "ci-pending",
@@ -115,6 +120,10 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
   const STATUS_TABLE: Array<{ outcome: AttemptOutcome; status: AttemptStatus }> = [
     { outcome: "done", status: "done" },
     { outcome: "no-sentinel", status: "no-sentinel" },
+    // #1308: signal-killed is still a death without a completion signal — it
+    // emits the same `no-sentinel` envelope so the crash sections appear; the
+    // signal name is visible in the notes/log section.
+    { outcome: "signal-killed", status: "no-sentinel" },
     { outcome: "merge-conflict", status: "merge-conflict" },
     // #812: ci-failed / ci-pending describe a MERGEABLE PR blocked by CI, never a
     // git conflict — they MUST NOT emit a `merge-conflict` envelope. They fold
@@ -149,6 +158,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "done",
       "blocked",
       "no-sentinel",
+      "signal-killed",
       "merge-conflict",
       "ci-failed",
       "ci-pending",
