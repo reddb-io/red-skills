@@ -190,6 +190,11 @@ export const CONFIG_DEFAULTS = {
   // and never rolls back the primary landing. Set "false" to opt out.
   "afk.landing.cascade_rebase": "true",
   "dev.lock.primary-branch": "false",
+  // External-PR request surface for `/triage` (issue #1298). Off by default:
+  // when unset/false, triage discovery and routing are issue-only. Enabling the
+  // surface only lets `/triage` inspect external PR metadata/diffs as untrusted
+  // request data; execution-shaped work stays behind the normal trust gate.
+  "dev.triage.external_pr_surface.enabled": "false",
   // The Trunk (ADR 0083): the repo's configured focal branch — the default
   // base every AFK worktree forks from and the default target a landing
   // integrates into, when neither a branch lock nor a pin names one
