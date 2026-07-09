@@ -434,6 +434,7 @@ export interface RunAgentResult {
   branch: string;
   commits: readonly { sha: string }[];
   completionSignal?: string;
+  timeoutReason?: AttemptTimeoutReason;
   /**
    * The validated structured completion (ADR 0082) when the agent emitted a
    * well-formed `<agent-output>` block. Carries `summary`, `key_changes_made`,
@@ -1043,6 +1044,9 @@ export interface AttemptBudgetUsage {
   waiting: number;
 }
 
+export type AttemptTimeoutReason = "stalled" | "edit-loop-stall" | "hard-cap";
+type AttemptGuardAbortReason = AttemptTimeoutReason | "goal-moot" | "budget";
+
 /**
  * Pure budget predicate: is any configured ceiling reached? Returns the breached
  * ceiling's name (for the abort message / observability) or `undefined`. Unset
@@ -1067,11 +1071,11 @@ export function startAttemptGuard(opts: {
   headProbe: () => Promise<string | undefined>;
   now: () => number;
   schedule: (fn: () => void, ms: number) => () => void;
-  /** `reason` distinguishes the soft commit/edit deadline ("stalled") from the
-   * commit-anchored hard cap ("hard-cap", issue #637) and the goal predicate
-   * ("goal-moot", ADR 0057 — the claimed issue is already CLOSED). Callbacks that
-   * ignore the argument keep the prior behaviour. */
-  abort: (reason: "stalled" | "hard-cap" | "goal-moot" | "budget") => void;
+  /** `reason` distinguishes the soft commit/edit deadline ("stalled"), edit-loop
+   * churn without diff growth ("edit-loop-stall"), the commit-anchored hard cap
+   * ("hard-cap", issue #637), and the non-timeout guards. Callbacks that ignore
+   * the argument keep the prior behaviour. */
+  abort: (reason: AttemptGuardAbortReason) => void;
   /**
    * Per-attempt resource budget (#908). When both `budget` and `budgetUsage` are
    * supplied, the guard reads the cumulative usage each poll and aborts with
@@ -1109,6 +1113,8 @@ export function startAttemptGuard(opts: {
   let lastCommit = opts.now();
   let lastHead: string | undefined;
   let lastVolume: number | undefined;
+  let diffHighWater: number | undefined;
+  let sawNonGrowingEditSinceProgress = false;
   let fired = false;
   let goalMoot = false;
   let budgetFired = false;
@@ -1161,8 +1167,10 @@ export function startAttemptGuard(opts: {
         headOk = false;
       }
       if (fired) return;
-      // Edit signal (optional). A new commit OR a change in the worktree's
-      // line-volume since the last poll is real progress → reset the deadline.
+      // Edit signal (optional). Only NEW diff high-water growth is real progress.
+      // Plain motion (shrinking/oscillating volume) proves the agent is active,
+      // but it does not advance the branch diff vs base and must not keep the
+      // soft deadline open until the hard cap.
       let volume: number | undefined;
       if (opts.progressProbe) {
         try {
@@ -1173,24 +1181,33 @@ export function startAttemptGuard(opts: {
       }
       if (fired) return;
       const committed = headOk && head !== undefined && head !== lastHead;
-      const edited = volume !== undefined && lastVolume !== undefined && volume !== lastVolume;
+      const volumeChanged = volume !== undefined && lastVolume !== undefined && volume !== lastVolume;
+      const grewDiff = volume !== undefined && diffHighWater !== undefined && volume > diffHighWater;
+      const nonGrowingEdit = volumeChanged && !grewDiff;
       if (committed) {
         lastProgress = opts.now();
         lastCommit = opts.now();
-      } else if (edited) {
+        sawNonGrowingEditSinceProgress = false;
+      } else if (grewDiff) {
         lastProgress = opts.now();
+        sawNonGrowingEditSinceProgress = false;
+      } else if (nonGrowingEdit) {
+        sawNonGrowingEditSinceProgress = true;
       }
-      // The soft deadline resets on commit OR edit; the hard cap resets on
+      // The soft deadline resets on commit OR diff growth; the hard cap resets on
       // commit ONLY, so periodic edits cannot keep an uncommitting agent alive
       // past it (issue #637 — the 5h+ re-validation loop).
-      const softExpired = !committed && !edited && opts.now() - lastProgress >= opts.capMs;
+      const softExpired = !committed && !grewDiff && opts.now() - lastProgress >= opts.capMs;
       const hardExpired = !committed && opts.hardCapMs !== undefined && opts.now() - lastCommit >= opts.hardCapMs;
       if (softExpired || hardExpired) {
         fired = true;
-        opts.abort(hardExpired && !softExpired ? "hard-cap" : "stalled");
+        opts.abort(hardExpired && !softExpired ? "hard-cap" : sawNonGrowingEditSinceProgress ? "edit-loop-stall" : "stalled");
       }
       if (headOk && head !== undefined) lastHead = head;
-      if (volume !== undefined) lastVolume = volume;
+      if (volume !== undefined) {
+        lastVolume = volume;
+        diffHighWater = diffHighWater === undefined ? volume : Math.max(diffHighWater, volume);
+      }
       opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
     })();
   }, opts.intervalMs);
@@ -1252,6 +1269,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   let guard:
     | { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean; firedBudget: () => boolean }
     | undefined;
+  let timeoutReason: AttemptTimeoutReason | undefined;
   let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
   if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
@@ -1269,7 +1287,8 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       schedule,
       ...(input.goalProbe ? { goalProbe: input.goalProbe } : {}),
       ...(input.budget && input.budgetUsage ? { budget: input.budget, budgetUsage: input.budgetUsage } : {}),
-      abort: (reason) =>
+      abort: (reason) => {
+        if (reason === "stalled" || reason === "edit-loop-stall" || reason === "hard-cap") timeoutReason = reason;
         controller?.abort(
           new Error(
             reason === "goal-moot"
@@ -1278,9 +1297,12 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
                 ? "afk: attempt aborted — per-attempt resource budget exceeded (#908)"
                 : reason === "hard-cap"
                   ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
-                  : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
+                  : reason === "edit-loop-stall"
+                    ? `afk: attempt aborted — worktree diff kept changing without new high-water progress within ${cap}s (edit-loop-stall)`
+                    : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
           ),
-        ),
+        );
+      },
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
       // heartbeat sink (firehose record + state.last_progress_at + on_heartbeat
       // hook). execution.ts stays ignorant of what it does.
@@ -1375,7 +1397,13 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         outcome: "timeout",
         branch: input.branch,
         commits: [],
-        stdout: `afk: attempt aborted — no new commit within ${input.attemptTimeoutSeconds}s (stalled)`,
+        timeoutReason: timeoutReason ?? "stalled",
+        stdout:
+          timeoutReason === "edit-loop-stall"
+            ? `afk: attempt aborted — worktree diff kept changing without new high-water progress within ${input.attemptTimeoutSeconds}s (edit-loop-stall)`
+            : timeoutReason === "hard-cap"
+              ? `afk: attempt aborted — no new commit within ${input.attemptHardCapSeconds}s despite worktree edits (hard cap, stalled)`
+              : `afk: attempt aborted — no new commit within ${input.attemptTimeoutSeconds}s (stalled)`,
       };
     }
     if (isExhaustionError(error)) {
