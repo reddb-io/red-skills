@@ -138,7 +138,7 @@ the plugin namespace; use that form when it appears in the skills list:
 $dev:setup-red-skills
 $dev:triage
 $dev:afk --once
-$dev:ship
+$dev:retake #123
 $memory:init
 $memory:recall cache TTL
 $brain:capture Save this project note...
@@ -236,7 +236,7 @@ marketplace registration in a temporary home, and manual skill-link installs.
 
 **Issue to PR is the product.** RedSkills treats GitHub Issues as the work
 queue, not a side note. `/triage`, `/to-spec`, `/to-tickets`, `/afk`, `/go`,
-`/hitl`, and `/requeue` all speak the same issue-state vocabulary.
+`/hitl`, and `/retake` all speak the same issue-state vocabulary.
 
 **Agents work in disposable worktrees.** AFK execution and interactive landing
 keep the primary checkout under human branch control. Work is prepared,
@@ -268,7 +268,7 @@ The issue lifecycle is intentionally boring:
 needs-triage -> /triage -> ready-for-agent -> /afk -> PR/merge -> closed
                                 |
                                 +---- blocked/spec/validation/etc.
-                                      -> ready-for-human -> /hitl or /requeue
+                                      -> ready-for-human -> /hitl or /retake
 ```
 
 Important states:
@@ -342,8 +342,8 @@ Shortcuts:
 - Already have a delegable issue? Use `/afk --issues N`.
 - Already have a spec? Use `/to-tickets` or `/triage`.
 - Hit a bug? Use `/report-bug`, then `/triage`.
-- Something is urgent? Use `/urgent`; it creates a `priority:urgent`
-  `ready-for-agent` issue that jumps the queue.
+- Something is urgent? Label the issue `priority:urgent`; the `/afk` queue
+  promotes it ahead of every `--spec` / `--issues` filter.
 
 ### 3. Use Memory And Brain Deliberately
 
@@ -381,8 +381,8 @@ Core responsibilities:
 - Bootstrap RedSkills with [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md).
 - Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), and [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md).
 - Execute delegable work with [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), or dispatch one concrete demand with [`go`](./plugins/dev/skills/engineering/go/SKILL.md).
-- Land a hand-worked branch with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md) (the retired `ship` migrated there — ADR 0081).
-- Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md).
+- Land a hand-worked branch with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md) (the retired `ship` migrated there — ADR 0081).
+- Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md).
 
 Dev guard rails:
 
@@ -503,7 +503,7 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
 | [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
 | [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
-| [`apps/dev`](./apps/dev) | AFK, ship, dashboard, triage, runner, release/channel, and workflow runtime code. |
+| [`apps/dev`](./apps/dev) | AFK, landing, dashboard, triage, runner, release/channel, and workflow runtime code. |
 | [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
 | [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
 | [`apps/code-nav`](./apps/code-nav) | LSP-backed MCP server used by the `dev` plugin. |
@@ -599,11 +599,11 @@ This is a map, not a replacement for the skill files. Open the linked
 
 | Area | Skills |
 | --- | --- |
-| Dev setup and issue flow | [`ask-red`](./plugins/dev/skills/engineering/ask-red/SKILL.md), [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md), [`doctor`](./plugins/dev/skills/engineering/doctor/SKILL.md), [`start`](./plugins/dev/skills/engineering/start/SKILL.md), [`wayfinder`](./plugins/dev/skills/engineering/wayfinder/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md), [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md), [`urgent`](./plugins/dev/skills/engineering/urgent/SKILL.md) |
-| Dev execution and landing | [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), [`go`](./plugins/dev/skills/engineering/go/SKILL.md), [`ship`](./plugins/dev/skills/engineering/ship/SKILL.md), [`implement`](./plugins/dev/skills/engineering/implement/SKILL.md), [`tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`verify`](./plugins/dev/skills/engineering/verify/SKILL.md), [`ground-truth`](./plugins/dev/skills/engineering/ground-truth/SKILL.md), [`diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md), [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md), [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md), [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md), [`resolving-merge-conflicts`](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md) |
-| Dev operations and understanding | [`dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md), [`audit-skills`](./plugins/dev/skills/engineering/audit-skills/SKILL.md), [`daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md), [`context`](./plugins/dev/skills/engineering/context/SKILL.md), [`zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md), [`review-adrs`](./plugins/dev/skills/engineering/review-adrs/SKILL.md), [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md), [`setup-statusline`](./plugins/dev/skills/engineering/setup-statusline/SKILL.md), [`prototype`](./plugins/dev/skills/engineering/prototype/SKILL.md), [`review`](./plugins/dev/skills/engineering/review/SKILL.md), [`code-review`](./plugins/dev/skills/engineering/code-review/SKILL.md), [`curate`](./plugins/dev/skills/engineering/curate/SKILL.md) |
-| Dev knowledge, productivity, and utilities | [`wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md), [`wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md), [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`write-a-skill`](./plugins/dev/skills/productivity/write-a-skill/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |
-| Memory | [`init`](./plugins/memory/skills/core/init/SKILL.md), [`store`](./plugins/memory/skills/core/store/SKILL.md), [`recall`](./plugins/memory/skills/core/recall/SKILL.md), [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md), [`extract`](./plugins/memory/skills/core/extract/SKILL.md), [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md), [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md), [`health`](./plugins/memory/skills/core/health/SKILL.md), [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md), [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md), [`export`](./plugins/memory/skills/core/export/SKILL.md), [`view`](./plugins/memory/skills/core/view/SKILL.md) |
+| Dev setup and issue flow | [`ask-red`](./plugins/dev/skills/engineering/ask-red/SKILL.md), [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md), [`doctor`](./plugins/dev/skills/engineering/doctor/SKILL.md), [`start`](./plugins/dev/skills/engineering/start/SKILL.md), [`wayfinder`](./plugins/dev/skills/engineering/wayfinder/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md), [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md) |
+| Dev execution and landing | [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), [`go`](./plugins/dev/skills/engineering/go/SKILL.md), [`implement`](./plugins/dev/skills/engineering/implement/SKILL.md), [`tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`verify`](./plugins/dev/skills/engineering/verify/SKILL.md), [`ground-truth`](./plugins/dev/skills/engineering/ground-truth/SKILL.md), [`diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md), [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md), [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md), [`resolving-merge-conflicts`](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md) |
+| Dev operations and understanding | [`dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md), [`audit-skills`](./plugins/dev/skills/engineering/audit-skills/SKILL.md), [`daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md), [`context`](./plugins/dev/skills/engineering/context/SKILL.md), [`zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md), [`review-adrs`](./plugins/dev/skills/engineering/review-adrs/SKILL.md), [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md), [`setup-statusline`](./plugins/dev/skills/engineering/setup-statusline/SKILL.md), [`prototype`](./plugins/dev/skills/engineering/prototype/SKILL.md), [`code-review`](./plugins/dev/skills/engineering/code-review/SKILL.md), [`curate`](./plugins/dev/skills/engineering/curate/SKILL.md) |
+| Dev knowledge, productivity, and utilities | [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`write-a-skill`](./plugins/dev/skills/productivity/write-a-skill/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |
+| Memory | [`init`](./plugins/memory/skills/core/init/SKILL.md), [`store`](./plugins/memory/skills/core/store/SKILL.md), [`recall`](./plugins/memory/skills/core/recall/SKILL.md), [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md), [`extract`](./plugins/memory/skills/core/extract/SKILL.md), [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md), [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md), [`health`](./plugins/memory/skills/core/health/SKILL.md), [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md), [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md), [`export`](./plugins/memory/skills/core/export/SKILL.md), [`view`](./plugins/memory/skills/core/view/SKILL.md), [`wiki-init`](./plugins/memory/skills/core/wiki-init/SKILL.md), [`wiki`](./plugins/memory/skills/core/wiki/SKILL.md) |
 | Brain | [`capture`](./plugins/brain/skills/core/capture/SKILL.md), [`search`](./plugins/brain/skills/core/search/SKILL.md), [`think`](./plugins/brain/skills/core/think/SKILL.md), [`status`](./plugins/brain/skills/core/status/SKILL.md), [`view`](./plugins/brain/skills/core/view/SKILL.md) |
 | MCP servers | [`code-nav`](./apps/code-nav/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
 
