@@ -3,6 +3,7 @@
 Skills I use daily for code work.
 
 - **[afk](./afk/SKILL.md)** — Autonomous loop that drains the `ready-for-agent` queue. Claims an issue, runs it in an isolated worktree via claude/codex, merges back to main, closes. Filters by Spec or explicit issue list; pins caller identity with `RED_AFK_RUNNER`; swaps runners only when explicitly requested; heartbeat + monitor + live progress.
+- **[ask-red](./ask-red/SKILL.md)** — Router over RedSkills flows. Answers "what do I do now?" by mapping situations to `/afk`, `/go`, the idea path, HITL/requeue, diagnosis, reporting, and maintenance routes.
 - **[go](./go/SKILL.md)** — Semi-structured front door between `/goal` and `/afk`. Mints a disposable tracking issue in the isolated `lane:go` lane (out of `ready-for-agent`, so a running fleet cannot claim it), spins a dedicated namespaced worker under `.red/tmp/go-workers/`, reuses the whole AFK engine with `origin=go` and the interactive gate, and brings back a PR that auto-closes the issue on merge. Works with or without a fleet running.
 - **[wayfinder](./wayfinder/SKILL.md)** — Planning on-ramp for work too large for one agent session. Creates one tracker map (`wayfinder:map`) with destination, in-scope fog, and out-of-scope boundaries, then publishes one-session research/grilling/prototype/task children into the standard AFK/HITL queues.
 - **[dashboard](./dashboard/SKILL.md)** — RedSkills process dashboard: open Specs/issues, global and local AFK workers, flow metrics, and DORA proxies.
