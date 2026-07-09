@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   parseSkill,
   firstContentLine,
@@ -17,7 +20,7 @@ import {
   type MechanicalCheck,
 } from "../src/core/skill-audit.js";
 import { buildSkillAuditPrompt, makeExtractSkillAudit } from "../src/core/skill-audit-extract.js";
-import { runAudit, type AuditDeps } from "../src/commands/audit-skills.js";
+import { enumerateSkills, runAudit, type AuditDeps } from "../src/commands/audit-skills.js";
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -105,6 +108,20 @@ describe("runMechanicalChecks", () => {
     expect(findCheck(checks, "what-to-do-tag").status).toBe("fail");
   });
 
+  it("ignores <what-to-do> inside fenced code blocks", () => {
+    const longBody = [
+      "**b**",
+      "```md",
+      "<what-to-do>",
+      "template text",
+      "</what-to-do>",
+      "```",
+      ...Array.from({ length: 120 }, (_, i) => `line ${i}`),
+    ].join("\n");
+    const checks = runMechanicalChecks({ path: "p/SKILL.md", content: skill("name: a\ndescription: d. Use when e.", longBody) });
+    expect(findCheck(checks, "what-to-do-tag").status).toBe("fail");
+  });
+
   it("warns when the first content line is not bold", () => {
     const checks = runMechanicalChecks({ path: "p/SKILL.md", content: skill("name: a\ndescription: d. Use when e.", "not bold at all") });
     expect(findCheck(checks, "bold-first-line").status).toBe("warn");
@@ -119,6 +136,28 @@ describe("runMechanicalChecks", () => {
     const checks = runMechanicalChecks({ path: "p/SKILL.md", content: GOOD }, { orphanedFiles: ["template.md"] });
     expect(findCheck(checks, "orphaned-files").status).toBe("fail");
     expect(mechanicalScore(checks)).toBeLessThan(100);
+  });
+});
+
+describe("enumerateSkills", () => {
+  it("counts sibling reference docs when checking orphaned bundled files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-skill-audit-"));
+    try {
+      const skillDir = join(root, "plugins/dev/skills/engineering/producer");
+      const consumerDir = join(root, "plugins/dev/skills/engineering/consumer");
+      await mkdir(skillDir, { recursive: true });
+      await mkdir(consumerDir, { recursive: true });
+      await writeFile(join(skillDir, "SKILL.md"), skill("name: producer\ndescription: d. Use when e.", "See [REFERENCE.md](REFERENCE.md).\n"));
+      await writeFile(join(skillDir, "REFERENCE.md"), "Uses sibling [runner-opencode.md](../consumer/runner-opencode.md).\n");
+      await writeFile(join(consumerDir, "SKILL.md"), skill("name: consumer\ndescription: d. Use when e.", "**Run** — no direct reference here.\n"));
+      await writeFile(join(consumerDir, "runner-opencode.md"), "Runner notes.\n");
+
+      const docs = await enumerateSkills(root);
+      const consumer = docs.find((d) => d.doc.path.endsWith("/consumer/SKILL.md"));
+      expect(consumer?.orphanedFiles).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
