@@ -116,6 +116,8 @@ interface Opts {
   mainRedRepairIssue?: boolean;
   /** Issue labels used to derive the landing-created conventional merge title. */
   labels?: string[];
+  /** Changed files used for fallback conventional-title classification (#1373). */
+  changedFiles?: string[];
   /** Force the admin PR path to create a PR instead of reusing an open one. */
   createPr?: boolean;
   /**
@@ -268,13 +270,14 @@ function harness(opts: Opts = {}): Harness {
           removedRebaseWorktrees.push(dir);
         }
       : undefined,
-    // #1102: only wired when the test opts in (opt-in — absent → guard skipped).
-    getDiffPaths: opts.sensitivePaths
+    // #1102/#1373: only wired when the test opts in (opt-in — absent → guard skipped).
+    getDiffPaths: opts.sensitivePaths || opts.changedFiles
       ? async () => ({
           changedFiles:
-            opts.sensitivePaths === "hit"
+            opts.changedFiles ??
+            (opts.sensitivePaths === "hit"
               ? [".github/workflows/ci.yml", "src/index.ts"]
-              : ["src/index.ts", "apps/dev/src/core/landing.ts"],
+              : ["src/index.ts", "apps/dev/src/core/landing.ts"]),
           packageJsonDiff: "",
         })
       : undefined,
@@ -449,8 +452,11 @@ describe("doLanding — conventional landing titles (#1267)", () => {
     { labels: ["type:feature"], title: "feat: #9 Fix the thing" },
     { labels: ["enhancement"], title: "feat: #9 Fix the thing" },
     { labels: ["type:task"], title: "chore: #9 Fix the thing" },
-  ])("direct/no-agent landing maps $labels to $title", async ({ labels, title }) => {
-    const h = harness({ locked: true, labels });
+    { labels: ["lane:go"], changedFiles: ["apps/dev/src/core/go.ts"], title: "fix: #9 Fix the thing" },
+    { labels: ["lane:go"], changedFiles: ["docs/OPERATIONS.md"], title: "docs: #9 Fix the thing" },
+    { labels: ["lane:go"], changedFiles: ["scripts/test-red-release-bump-kind.sh"], title: "chore: #9 Fix the thing" },
+  ])("direct/no-agent landing maps $labels to $title", async ({ labels, changedFiles, title }) => {
+    const h = harness({ locked: true, labels, changedFiles });
     const r = await doLanding(h.deps, h.input, h.hooks);
 
     expect(r.ok).toBe(true);
