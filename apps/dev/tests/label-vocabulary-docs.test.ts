@@ -204,8 +204,10 @@ describe("wayfinder docs", () => {
     const labels = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md");
 
     expect(skill).toContain("## Destination");
+    expect(skill).toContain("## Decisions so far");
     expect(skill).toContain("## Not yet specified");
     expect(skill).toContain("## Out of scope");
+    expect(skill).toContain("## Notes");
     expect(skill).toContain("wayfinder:map");
     expect(skill).toContain("wayfinder:research");
     expect(skill).toContain("wayfinder:grilling");
@@ -228,5 +230,31 @@ describe("wayfinder docs", () => {
     ]) {
       expect(labels).toContain(label);
     }
+  });
+
+  it("pins the fidelity-restoration directives from upstream v1.1.0", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+
+    // Decisions so far is load-bearing: step 5 records gists there
+    expect(skill).toContain("## Decisions so far");
+    expect(skill).toContain("into `## Decisions so far`");
+
+    // Notes carries standing preferences and skills to consult
+    expect(skill).toContain("## Notes");
+    expect(skill).toContain("Standing preferences");
+
+    // Refer-by-name rule: title with embedded link, never bare #N
+    expect(skill).toContain("Refer by name");
+    expect(skill).toContain("never a bare `#N`");
+
+    // One-ticket-per-session discipline for HITL children and charting
+    expect(skill).toContain("One-ticket-per-session discipline");
+    expect(skill).toContain("resolves exactly one HITL child and stops");
+    expect(skill).toContain("Charting the map is itself one session");
+
+    // Zoom-as-needed loading
+    expect(skill).toContain("Zoom-as-needed loading");
+    expect(skill).toContain("low resolution");
+    expect(skill).toContain("fetch the full body of a specific child only when");
   });
 });
