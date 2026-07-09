@@ -6,6 +6,24 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## setup-statusline (engineering) - progressive-disclosure host recipe extraction (issue #1362)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `setup-statusline/SKILL.md` carried shared statusline architecture and full per-host adapter recipes in the hot path instead of keeping the host-routing loop lean.
+- **what changed**: Leaned `plugins/dev/skills/engineering/setup-statusline/SKILL.md` into a host-selection and action procedure with `<what-to-do>` / `<supporting-info>` tags, moved the shared architecture, Claude Code command-backed adapter, Codex footer adapter, OpenCode no-install note, and host rationale into `HOST-NOTES.md` behind resolving links, and re-checked `ask-red` coverage. No router change was needed because this was not a skill add, rename, removal, or flow change.
+
+---
+
+## wiki-init (knowledge) - progressive-disclosure template reference extraction (issue #1362)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `wiki-init/SKILL.md` mixed the bootstrap interview/write loop with reference-only bundled template inventory.
+- **what changed**: Added `<what-to-do>` / `<supporting-info>` tags, kept the wiki initialization loop and required seed-template instructions hot, moved the bundled template/example inventory into `TEMPLATE-REFERENCE.md`, and verified the external `../wiki/REFERENCES.md` link remains the resolving LLM Wiki reference.
+
+---
+
 ## setup-red-skills (engineering) - progressive-disclosure split (issue #1360)
 
 - **status**: modified
