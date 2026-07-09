@@ -23,6 +23,21 @@ const DIFF = [
 
 const PR: PrContext = { number: 742, title: "Add a", body: "Closes #1", diff: DIFF };
 
+const EXPECTED_FOWLER_SMELLS = [
+  ["Mysterious Name", "Rename to describe exactly what it does"],
+  ["Duplicated Code", "Extract the shared logic once"],
+  ["Feature Envy", "Move the method closer to the data it uses"],
+  ["Data Clumps", "Bundle the recurring group into an object"],
+  ["Primitive Obsession", "Replace bare strings/numbers with typed objects"],
+  ["Repeated Switches", "Replace with polymorphism or a dispatch table"],
+  ["Shotgun Surgery", "Consolidate the scattered change points into one place"],
+  ["Divergent Change", "Split the class by its distinct responsibilities"],
+  ["Speculative Generality", "Delete the unused abstraction"],
+  ["Message Chains", "Introduce a method that hides the chain"],
+  ["Middle Man", "Remove the delegator and call the real object directly"],
+  ["Refused Bequest", "Push down the unused inheritance to the subclass that needs it"],
+] as const;
+
 interface GhCall {
   op: string;
   args: unknown;
@@ -211,7 +226,8 @@ describe("buildReviewPrompt — source-trust and payload framing (#1109)", () =>
 
     expect(prompt).toContain("Apply this always-on Fowler refactoring-smell axis.");
     expect(prompt).toContain("Treat smell findings as intent-class review findings, never mechanical auto-applies");
-    for (const [name, fix] of FOWLER_REFACTORING_SMELLS) {
+    expect(FOWLER_REFACTORING_SMELLS).toEqual(EXPECTED_FOWLER_SMELLS);
+    for (const [name, fix] of EXPECTED_FOWLER_SMELLS) {
       expect(prompt).toContain(`- ${name} — ${fix}.`);
     }
 
