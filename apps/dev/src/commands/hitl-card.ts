@@ -14,6 +14,7 @@
 
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
+import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
 import { loadConfig } from "../core/config.js";
@@ -170,11 +171,11 @@ async function upsertCardComment(exec: Exec, repo: string, issueNumber: number, 
       "gh", "api",
       `repos/{owner}/{repo}/issues/comments/${existing.databaseId}`,
       "--method", "PATCH",
-      "--field", `body=${card}`,
+      "--field", `body=${scrubOutbound(card)}`,
       ...repoArgs(repo),
     ]);
   } else {
-    await exec(["gh", "issue", "comment", String(issueNumber), ...repoArgs(repo), "--body", card]);
+    await exec(["gh", "issue", "comment", String(issueNumber), ...repoArgs(repo), "--body", scrubOutbound(card)]);
   }
 }
 
@@ -294,7 +295,7 @@ async function executeReject(exec: Exec, repo: string, issue: IssueData, prNumbe
   const closeResult = await exec([
     "gh", "pr", "close", String(prNumber),
     ...repoArgs(repo),
-    "--comment", reason ? `Rejected: ${reason}` : "Rejected by maintainer.",
+    "--comment", scrubOutbound(reason ? `Rejected: ${reason}` : "Rejected by maintainer."),
   ]);
   if (closeResult.code !== 0) {
     return `PR close failed: ${closeResult.stderr.trim()}`;
@@ -317,7 +318,7 @@ async function executeRequeue(exec: Exec, repo: string, issue: IssueData, guidan
 
   // Apply the requeue transition.
   if (plan.bodyChanged) {
-    await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--body", plan.body]);
+    await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--body", scrubOutbound(plan.body)]);
   }
   const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
   for (const l of plan.removeLabels) editArgs.push("--remove-label", l);
@@ -345,7 +346,7 @@ async function cmdAct(
     await exec([
       "gh", "issue", "comment", String(issueNumber),
       ...repoArgs(repo),
-      "--body", `⛔ Action denied: ${trust.reason ?? "you are not a trusted maintainer"}.`,
+      "--body", scrubOutbound(`⛔ Action denied: ${trust.reason ?? "you are not a trusted maintainer"}.`),
     ]);
     process.stderr.write(`[afk] hitl-card act #${issueNumber}: trust refused — ${trust.reason}\n`);
     return 1;
@@ -359,7 +360,7 @@ async function cmdAct(
       "gh", "issue", "comment", String(issueNumber),
       ...repoArgs(repo),
       "--body",
-      "🤖 I couldn't identify your intent. Use `/approve`, `/approve-ci`, `/reject [reason]`, or `/requeue <guidance>`.",
+      scrubOutbound("🤖 I couldn't identify your intent. Use `/approve`, `/approve-ci`, `/reject [reason]`, or `/requeue <guidance>`."),
     ]);
     stdout.write(`hitl-card act #${issueNumber}: unrecognised command (NL classification returned nothing).\n`);
     return 0;
@@ -375,7 +376,7 @@ async function cmdAct(
       "gh", "issue", "comment", String(issueNumber),
       ...repoArgs(repo),
       "--body",
-      `⚠️ Could not find a linked PR for #${issueNumber}. Post the PR number explicitly or use \`/requeue\` to send back to the agent.`,
+      scrubOutbound(`⚠️ Could not find a linked PR for #${issueNumber}. Post the PR number explicitly or use \`/requeue\` to send back to the agent.`),
     ]);
     return 1;
   }
@@ -396,12 +397,12 @@ async function cmdAct(
   await exec([
     "gh", "issue", "comment", String(issueNumber),
     ...repoArgs(repo),
-    "--body", directiveComment(command),
+    "--body", scrubOutbound(directiveComment(command)),
   ]);
   await exec([
     "gh", "issue", "comment", String(issueNumber),
     ...repoArgs(repo),
-    "--body", `🤖 **${command.action}**: ${resultMessage}`,
+    "--body", scrubOutbound(`🤖 **${command.action}**: ${resultMessage}`),
   ]);
 
   stdout.write(`hitl-card act #${issueNumber}: executed /${command.action} — ${resultMessage}\n`);

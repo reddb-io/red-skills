@@ -15,6 +15,8 @@
 //                branch, open or reuse the PR, `gh pr merge --merge`), then
 //                fast-forward local <target> to the merge commit.
 
+import { scrubOutbound } from "../runtime/outbound-redaction.js";
+
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
   code: number;
@@ -750,9 +752,9 @@ async function ensurePr(
       "--head",
       branch,
       "--title",
-      prTitle,
+      scrubOutbound(prTitle),
       "--body",
-      `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`,
+      scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`),
     ]);
     if (create.code !== 0) return undefined;
     prNumber = await listOpenPr(exec, repo, branch, target);

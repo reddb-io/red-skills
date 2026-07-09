@@ -28,6 +28,7 @@ import {
   MAIN_RED_REPAIR_TITLE,
   type MainRedRepairIssue,
 } from "../core/main-red-repair.js";
+import { scrubOutbound } from "./outbound-redaction.js";
 
 export interface GhContext {
   /** owner/repo slug for `gh ... --repo`. */
@@ -282,7 +283,7 @@ export async function editLabels(
 
 /** `gh issue comment --body …` (best-effort). */
 export async function comment(ctx: GhContext, issue: number, body: string): Promise<void> {
-  await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
+  await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
 }
 
 // ---------- atomic GitHub-native claim (ADR 0066) ----------
@@ -306,7 +307,7 @@ export async function postClaimComment(ctx: GhContext, issue: number, body: stri
     "POST",
     apiPath(ctx, `issues/${issue}/comments`),
     "-f",
-    `body=${body}`,
+    `body=${scrubOutbound(body)}`,
     "--jq",
     ".id",
   ]);
@@ -350,7 +351,7 @@ export async function listClaimComments(
 
 /** `gh issue edit --body …`. */
 export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
-  const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", body]);
+  const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
   return r.code === 0;
 }
 
@@ -369,9 +370,9 @@ export async function createIssue(
     "create",
     ...repoArgs(ctx),
     "--title",
-    spec.title,
+    scrubOutbound(spec.title),
     "--body",
-    spec.body,
+    scrubOutbound(spec.body),
     ...labelArgs,
   ]);
   const match = (r.stdout ?? "").match(/\/issues\/(\d+)\b/);
@@ -441,9 +442,9 @@ export async function updateMainRedRepairIssue(
     String(issue),
     ...repoArgs(ctx),
     "--title",
-    spec.title,
+    scrubOutbound(spec.title),
     "--body",
-    spec.body,
+    scrubOutbound(spec.body),
   ];
   for (const label of spec.labels) args.push("--add-label", label);
   await runGh(ctx, args);

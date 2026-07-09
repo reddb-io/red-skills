@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
+import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
@@ -109,7 +110,7 @@ function ghFor(cwd: string, repo: string): RequeueGh {
       };
     },
     async editBody(issue, body) {
-      const out = await run(["issue", "edit", String(issue), ...repoArgs, "--body", body]);
+      const out = await run(["issue", "edit", String(issue), ...repoArgs, "--body", scrubOutbound(body)]);
       if (out.code !== 0) throw new Error(`edit body #${issue} failed: ${out.stderr.trim() || out.stdout.trim()}`);
     },
     async editLabels(issue, remove, add) {
@@ -129,7 +130,7 @@ function ghFor(cwd: string, repo: string): RequeueGh {
       if (!ok) throw new Error(`edit labels #${issue} failed`);
     },
     async comment(issue, body) {
-      await run(["issue", "comment", String(issue), ...repoArgs, "--body", body]);
+      await run(["issue", "comment", String(issue), ...repoArgs, "--body", scrubOutbound(body)]);
     },
     listClaims: (issue) => ghx.listClaimComments({ cwd, repo }, issue),
     postClaim: async (issue, body) => {
