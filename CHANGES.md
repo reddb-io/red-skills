@@ -6,6 +6,24 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## wayfinder (engineering) - upstream voice pass: fog, frontier, and route language (issue #1350)
+
+- **status**: modified
+- **upstream**: `d574778` (v1.1.0)
+- **why**: RedSkills had restored the upstream /wayfinder mechanics but its prose had flattened the upstream leading-word vocabulary around fog of war, frontier, charting, and the route becoming clear.
+- **what changed**: Rewrote `plugins/dev/skills/engineering/wayfinder/SKILL.md` to carry the upstream wayfinding voice while preserving the RedSkills AFK/HITL routing contract, map sections, no-fog early exit, refer-by-name rule, one-ticket-per-session discipline, zoom-as-needed loading, and `index, not a store` invariant.
+
+---
+
+## write-a-skill (productivity) - Steering glossary import: leading word, completion criterion, premature completion (issue #1350)
+
+- **status**: modified
+- **upstream**: `d574778` (v1.1.0)
+- **why**: The RedSkills writing-style framework had adopted sentence-level techniques but had not yet woven in the remaining upstream Steering glossary concepts that explain how those techniques steer runtime behavior.
+- **what changed**: Integrated Leading Word, Completion Criterion, and Premature Completion into the existing ninth writing-style technique in `plugins/dev/skills/productivity/write-a-skill/SKILL.md`, keeping the guidance as part of the nine-technique framework instead of appending a loose glossary dump. Added a docs-contract assertion pinning the imported terms.
+
+---
+
 ## afk (engineering) - upstream Steering taxonomy pass (issue #1343)
 
 - **status**: modified
