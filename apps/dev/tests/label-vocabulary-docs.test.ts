@@ -183,3 +183,36 @@ describe("setup-red-skills docs", () => {
     expect(skill).toContain("authorized to create `.red/`");
   });
 });
+
+describe("wayfinder docs", () => {
+  it("pins the map shape, routing classes, and no-fog exit", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+    const labels = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md");
+
+    expect(skill).toContain("## Destination");
+    expect(skill).toContain("## Not yet specified");
+    expect(skill).toContain("## Out of scope");
+    expect(skill).toContain("wayfinder:map");
+    expect(skill).toContain("wayfinder:research");
+    expect(skill).toContain("wayfinder:grilling");
+    expect(skill).toContain("wayfinder:prototype");
+    expect(skill).toContain("wayfinder:task");
+    expect(skill).toContain("index, not a store");
+    expect(skill).toContain("AFK-typed");
+    expect(skill).toContain("ready-for-agent");
+    expect(skill).toContain("HITL-typed");
+    expect(skill).toContain("/start");
+    expect(skill).toContain("/prototype");
+    expect(skill).toContain("no-fog early exit");
+
+    for (const label of [
+      "wayfinder:map",
+      "wayfinder:research",
+      "wayfinder:grilling",
+      "wayfinder:prototype",
+      "wayfinder:task",
+    ]) {
+      expect(labels).toContain(label);
+    }
+  });
+});
