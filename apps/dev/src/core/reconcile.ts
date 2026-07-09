@@ -45,7 +45,7 @@ import {
 } from "./remote-branch.js";
 import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
-import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
+import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import type { TerminalReceipt } from "./exit-barrier.js";
 import { type RecoveryEnv } from "./recovery.js";
@@ -100,6 +100,8 @@ export interface ReconcileGh {
   listByLabel(label: string): Promise<{ number: number; labels: string[] }[]>;
   /** Resolve whether issue `n` is CLOSED (a transient failure resolves to false). */
   issueClosed(n: number): Promise<boolean>;
+  /** Optional human-facing metadata lookup for rendered dependency refs. */
+  issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
 }
 
 /** git reads/cleanup reconcile needs beyond the merge/remote primitives. */
@@ -894,7 +896,8 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
 
     for (const p of planCloseCascade(closedIssue, dependents)) {
       await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
-      await deps.gh.comment(p.number, p.comment);
+      const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
+      await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }
   } catch (err) {
     deps.appendIterLog(
