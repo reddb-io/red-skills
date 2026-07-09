@@ -187,10 +187,13 @@ export async function runSharedGate(
  */
 export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   /^\.github\/workflows\//,     // CI workflow files
+  /^\.github\/actions\//,       // composite actions executed by CI workflows
   /(?:^|\/)\.git\/hooks\//,    // git hooks directory
   /^\.husky\//,                // Husky hooks
   /^\.githooks\//,             // alternative git hooks directory
   /^\.red\//,                  // .red/ trust/gate config and gate's own config
+  /^plugins\/[^/]+\/hooks\//,  // agent plugin hooks — execute on every agent action
+  /^plugins\/[^/]+\/scripts\//, // agent plugin launcher scripts invoked by hooks
 ];
 
 /**
@@ -272,9 +275,12 @@ export function checkSensitivePaths(
 
 function sensitivePathReason(filePath: string): string {
   if (/^\.github\/workflows\//.test(filePath)) return "CI workflow file";
+  if (/^\.github\/actions\//.test(filePath)) return "CI composite action";
   if (/(?:^|\/)\.git\/hooks\//.test(filePath) || /^\.husky\//.test(filePath) || /^\.githooks\//.test(filePath))
     return "git hook";
   if (/^\.red\//.test(filePath)) return "trust/gate configuration";
+  if (/^plugins\/[^/]+\/hooks\//.test(filePath)) return "agent plugin hook";
+  if (/^plugins\/[^/]+\/scripts\//.test(filePath)) return "agent plugin launcher script";
   return "sensitive path";
 }
 

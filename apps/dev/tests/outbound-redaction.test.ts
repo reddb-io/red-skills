@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { comment, createIssue, editBody, postClaimComment, updateMainRedRepairIssue, type GhContext } from "../src/runtime/gh.js";
 import { buildReviewGh } from "../src/runtime/review-gh.js";
@@ -13,7 +14,10 @@ const LEAK_TEXT = [
   `literal ${LEAK_ENV_VALUE}`,
   "OPENAI_API_KEY=sk-test-123456789",
   '{"github_token":"ghp_1234567890abcdef"}',
-  "/home/cyber/.config/red-skills",
+  // The REAL current home so [REDACTED_HOME] asserts hold on any machine/CI,
+  // plus a foreign home for the generic /home/<user> rule.
+  `${homedir()}/.config/red-skills`,
+  "/home/leakuser/data",
 ].join("\n");
 
 function withSyntheticEnv(): void {
@@ -29,10 +33,12 @@ function expectScrubbed(value: string): void {
   expect(value).not.toContain(LEAK_ENV_VALUE);
   expect(value).not.toContain("sk-test-123456789");
   expect(value).not.toContain("ghp_1234567890abcdef");
-  expect(value).not.toContain("/home/cyber");
+  expect(value).not.toContain(homedir());
+  expect(value).not.toContain("/home/leakuser");
   expect(value).toContain("[REDACTED_CLAUDE_SESSION]");
   expect(value).toContain("[REDACTED_SECRET]");
   expect(value).toContain("[REDACTED_HOME]");
+  expect(value).toContain("/home/[REDACTED_USER]/data");
 }
 
 describe("scrubOutbound", () => {
@@ -77,6 +83,20 @@ describe("scrubOutbound", () => {
   it("never throws on non-string and binary-ish input", () => {
     expect(typeof scrubOutbound(Buffer.from([0, 1, 2, 255]))).toBe("string");
     expect(scrubOutbound(null)).toBe("");
+  });
+
+  it("does NOT bare-mask common-word usernames (GitHub Actions runs as `runner`)", () => {
+    const marker = "<!-- afk:claim v1 worker=w kind=claim runner=codex -->";
+    // `runner` as OS username must not mangle `runner=codex` in machine markers.
+    expect(scrubOutbound(marker, { username: "runner", hostname: "host-x" })).toBe(marker);
+    // Path-context masking still protects a common-word user's home path.
+    expect(
+      scrubOutbound("/home/runner/work/x", { username: "runner", hostname: "host-x", homeDir: "/root/none" }),
+    ).toBe("/home/[REDACTED_USER]/work/x");
+    // Distinctive usernames are still bare-masked at token boundaries.
+    expect(scrubOutbound("built by alicezilla today", { username: "alicezilla", hostname: "host-x" })).toBe(
+      "built by [REDACTED_USER] today",
+    );
   });
 });
 

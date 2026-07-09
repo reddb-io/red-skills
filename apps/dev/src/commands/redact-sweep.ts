@@ -30,11 +30,11 @@ interface RepoReport {
   edited: string[];
 }
 
-const LEGACY_HOST_PATTERN = "cyber-XPS";
-
 function parseOptions(args: readonly string[]): RedactSweepOptions {
   const repos: string[] = [];
-  const hostPatterns: string[] = [hostname(), LEGACY_HOST_PATTERN].filter(Boolean);
+  // Current hostname by default; historical/legacy host prefixes come in via
+  // --host-pattern so no machine identity is ever hardcoded in public source.
+  const hostPatterns: string[] = [hostname()].filter(Boolean);
   let apply = false;
   let json = false;
 
