@@ -10,7 +10,7 @@ import { redactSweepCommand, type RedactSweepGitHub } from "../src/commands/reda
 import { parseCli } from "../src/cli.js";
 
 const CONFIG = {
-  hostPatterns: ["cyber-XPS", "build-host"],
+  hostPatterns: ["leakhost-XPS", "build-host"],
 };
 
 function target(body: string, author = "alice"): RedactTarget {
@@ -49,8 +49,8 @@ describe("redact-sweep detection and redaction", () => {
   it("detects claude session links, configured host patterns, and /home paths", () => {
     const text = [
       "session https://claude.ai/code/session_01ABCxyz",
-      "host cyber-XPS-9560 and build-host",
-      "path /home/cyber/Work/reddb.io/red-skills/file.ts",
+      "host leakhost-XPS-9560 and build-host",
+      "path /home/leakuser/Work/reddb.io/red-skills/file.ts",
     ].join("\n");
 
     expect(findRedactionHits(text, CONFIG).map((hit) => hit.class)).toEqual([
@@ -62,14 +62,14 @@ describe("redact-sweep detection and redaction", () => {
   });
 
   it("redacts each leak class with stable placeholders", () => {
-    const text = "https://claude.ai/code/session_secret on cyber-XPS-13 in /home/cyber/project";
+    const text = "https://claude.ai/code/session_secret on leakhost-XPS-13 in /home/leakuser/project";
     expect(redactText(text, CONFIG).text).toBe(
       "[REDACTED_CLAUDE_SESSION] on [REDACTED_HOST] in /home/[REDACTED_USER]/project",
     );
   });
 
   it("is idempotent after redaction", () => {
-    const first = redactText("https://claude.ai/code/session_secret /home/cyber/project cyber-XPS-13", CONFIG);
+    const first = redactText("https://claude.ai/code/session_secret /home/leakuser/project leakhost-XPS-13", CONFIG);
     expect(findRedactionHits(first.text, CONFIG)).toEqual([]);
     expect(redactText(first.text, CONFIG).text).toBe(first.text);
   });
@@ -103,7 +103,7 @@ describe("redact-sweep detection and redaction", () => {
   });
 
   it("defaults to dry-run and writes nothing", async () => {
-    const gh = fakeGh([target("https://claude.ai/code/session_secret from /home/cyber/project")]);
+    const gh = fakeGh([target("https://claude.ai/code/session_secret from /home/leakuser/project")]);
     const out = collect();
     const code = await redactSweepCommand(["--repo", "reddb-io/red-skills"], "/repo", out.stream, gh);
 
@@ -115,8 +115,8 @@ describe("redact-sweep detection and redaction", () => {
 
   it("--apply edits only authenticated-user targets and is replay-idempotent", async () => {
     const gh = fakeGh([
-      target("https://claude.ai/code/session_secret from /home/cyber/project"),
-      target("cyber-XPS-13 from /home/bob/project", "bob"),
+      target("https://claude.ai/code/session_secret from /home/leakuser/project"),
+      target("leakhost-XPS-13 from /home/bob/project", "bob"),
     ]);
     const first = collect();
     expect(await redactSweepCommand(["--repo", "reddb-io/red-skills", "--apply"], "/repo", first.stream, gh)).toBe(0);

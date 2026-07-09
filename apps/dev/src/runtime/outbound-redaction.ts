@@ -5,6 +5,22 @@ const CLAUDE_SESSION_RE = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9_-]+/g;
 const SECRET_KEY_RE = /(?:TOKEN|SECRET|KEY|PASSWORD|PASS|AUTH|BEARER|COOKIE|SESSION|ANTHROPIC|OPENAI|MINIMAX|OPENROUTER|AWS_|GOOGLE_|SLACK_|NPM_|GH_|GITHUB_)/i;
 const FALSEY_SECRET_VALUES = new Set(["true", "false", "null", "0", "1"]);
 
+/**
+ * OS usernames that are also ordinary prose/protocol words. Bare token-boundary
+ * masking of these would mangle unrelated text — `runner=codex` in a claim
+ * marker becomes `[REDACTED_USER]=codex` when the process runs as the GitHub
+ * Actions `runner` user. Path-context masking (`/home/<user>/`) still applies.
+ */
+const COMMON_USERNAMES = new Set([
+  "runner", "root", "user", "admin", "ubuntu", "debian", "node",
+  "dev", "ci", "build", "agent", "worker", "actions", "git",
+]);
+
+function maskableUsername(username: string | undefined): username is string {
+  if (!username || username.length < 4) return false;
+  return !COMMON_USERNAMES.has(username.toLowerCase());
+}
+
 export interface ScrubOutboundOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
@@ -66,10 +82,9 @@ function scrubKeyValueSecrets(input: string): string {
 function scrubHomeIdentity(input: string, options: ScrubOutboundOptions): string {
   let out = input;
   const home = options.homeDir || homedir();
-  out = replaceLiteral(out, "/home/cyber", "[REDACTED_HOME]");
   if (home) out = replaceLiteral(out, home, "[REDACTED_HOME]");
-  out = out.replace(/\/home\/([A-Za-z0-9._-]+)\//g, "/home/[REDACTED_USER]/");
-  out = out.replace(/\/Users\/([A-Za-z0-9._-]+)\//g, "/Users/[REDACTED_USER]/");
+  out = out.replace(/\/home\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/home/[REDACTED_USER]");
+  out = out.replace(/\/Users\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/Users/[REDACTED_USER]");
   return out;
 }
 
@@ -93,7 +108,7 @@ export function scrubOutbound(value: unknown, options: ScrubOutboundOptions = {}
         username = undefined;
       }
     }
-    if (username) out = replaceTokenBoundary(out, username, "[REDACTED_USER]");
+    if (maskableUsername(username)) out = replaceTokenBoundary(out, username, "[REDACTED_USER]");
     return out;
   } catch {
     return typeof value === "string" ? value : String(value ?? "");
