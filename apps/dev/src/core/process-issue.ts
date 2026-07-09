@@ -808,6 +808,21 @@ function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown> {
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
 }
 
+function timeoutReasonForEnvelope(reason: RunAgentResult["timeoutReason"] | undefined): string {
+  return reason ?? "stalled";
+}
+
+function timeoutNotes(reason: RunAgentResult["timeoutReason"] | undefined): string {
+  const typedReason = timeoutReasonForEnvelope(reason);
+  if (typedReason === "edit-loop-stall") {
+    return "_(attempt aborted by attempt guard: edit-loop-stall — worktree diff volume changed without reaching a new high-water mark)_";
+  }
+  if (typedReason === "hard-cap") {
+    return "_(attempt aborted by attempt guard: hard-cap — worktree edits continued without a fresh commit)_";
+  }
+  return "_(attempt aborted by attempt guard: stalled — no new commit or diff growth within the wall-clock guard)_";
+}
+
 function markTerminalState(deps: ProcessIssueDeps, outcome: ProcessOutcome): void {
   deps.markState?.(stateExitPatch(outcome));
 }
@@ -1896,7 +1911,7 @@ export async function processIssue(
           workspace: branch,
           runner: activeRunner,
           attempt_n: attemptN,
-          reason: "timeout",
+          reason: timeoutReasonForEnvelope(run.timeoutReason),
         }),
       );
       // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt
@@ -1963,7 +1978,7 @@ export async function processIssue(
       // ("stalled") = null → always escalate).
       await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
       return await terminalFailure(common, "stalled", "stalled", {
-        notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
+        notes: timeoutNotes(run.timeoutReason),
         log: run.stdout || "(attempt progress guard fired)",
       });
     } else {

@@ -78,6 +78,7 @@ interface HarnessOptions {
    * the verdict for the test (self worker is "h:w"). */
   claim?: { winner: "self" | "other" };
   outcome?: RunAgentResult["outcome"];
+  timeoutReason?: RunAgentResult["timeoutReason"];
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
   feedbackOk?: boolean;
@@ -476,6 +477,7 @@ function harness(opts: HarnessOptions = {}): {
             : thisOutcome === "blocked"
               ? "<promise>BLOCKED</promise>"
               : undefined,
+        timeoutReason: thisOutcome === "timeout" ? opts.timeoutReason : undefined,
         stdout: thisOutcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
       };
     },
@@ -3061,6 +3063,20 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
       "on_reconcile",
       "on_attempt_error",
     ]);
+  });
+
+  it("records edit-loop-stall distinctly in the blocked envelope when oscillating edits trip the guard", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "timeout",
+      timeoutReason: "edit-loop-stall",
+      changedFiles: [],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("stalled");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.envelopeBodies.at(-1)).toContain("edit-loop-stall");
+    expect(result.hooksFired).toContain("on_attempt_timeout");
   });
 
   it("reconcile lands the stalled-but-green branch WITHOUT re-running the agent (no escalation)", async () => {
