@@ -19,6 +19,12 @@ plugins:
   #                               # (Section H of /setup-red-skills sets this)
   #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
   #                               # the runtime /branch-lock overrides it per session
+  #   triage:
+  #     external_pr_surface:
+  #       enabled: false          # default OFF. When true, /triage may list/read
+  #                               # external PRs as request data. It still treats
+  #                               # PR bodies/diffs as untrusted and never checks
+  #                               # out, builds, tests, or executes PR code.
   # memory:
   #   enabled: true               # then run /memory:init to pick a storage mode
   # brain:
