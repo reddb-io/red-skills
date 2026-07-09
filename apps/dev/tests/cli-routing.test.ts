@@ -15,10 +15,6 @@ describe("cli routing — native commands", () => {
     });
   });
 
-  it("routes ship as an interactive landing command", () => {
-    expect(parseCli(["ship", "--issue", "395"])).toEqual({ command: "ship", args: ["--issue", "395"] });
-  });
-
   it("routes retake as an issue resumption command", () => {
     expect(parseCli(["retake", "#395", "--json"])).toEqual({ command: "retake", args: ["#395", "--json"] });
   });

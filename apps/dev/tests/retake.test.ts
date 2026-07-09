@@ -102,13 +102,13 @@ describe("recommendRetake", () => {
     })).toMatchObject({ kind: "continue-worktree" });
   });
 
-  it("recommends shipping a clean open PR", () => {
+  it("recommends adopting a clean open PR through the no-agent lane", () => {
     expect(recommendRetake({
       issue,
       pullRequests: [{ number: 10, title: "ship: #123", state: "OPEN", headRefName: "codex/123-retake", checksState: "green" }],
       branches: [],
       worktrees: [{ path: "/repo/.red/tmp/work-ship-123", branch: "codex/123-retake", dirty: false }],
-    })).toMatchObject({ kind: "ship-pr", command: "cd /repo/.red/tmp/work-ship-123 && /ship --issue 123" });
+    })).toMatchObject({ kind: "ship-pr", command: "cd /repo/.red/tmp/work-ship-123 && red-skills-dev requeue 123 --adopt-branch codex/123-retake --guidance 'Hand-done work adopted via /retake; run the gate.'" });
   });
 
   it("recommends creating a fresh branch when no local state exists", () => {
@@ -158,7 +158,7 @@ describe("recommendRetake", () => {
         { cmd: "git", args: ["fetch", "origin", "codex/123-retake:codex/123-retake"] },
         { cmd: "git", args: ["worktree", "add", ".red/tmp/work-ship-123", "codex/123-retake"] },
       ],
-      nextCommand: "cd .red/tmp/work-ship-123 && /ship --issue 123",
+      nextCommand: "cd .red/tmp/work-ship-123 && red-skills-dev requeue 123 --adopt-branch codex/123-retake --guidance 'Hand-done work adopted via /retake; run the gate.'",
     });
   });
 

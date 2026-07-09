@@ -6,6 +6,51 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## wiki, wiki-init (knowledge → memory) — relocated to the memory plugin (issue #1387)
+
+- **status**: modified
+- **upstream**: —
+- **why**: The LLM Wiki is a knowledge surface, not an engineering one; it belongs next to the other memory skills rather than inside `dev`.
+- **what changed**: Moved `plugins/dev/skills/knowledge/{wiki,wiki-init}` to `plugins/memory/skills/core/`, re-registered them in the memory manifest, and repointed every cross-reference (root README, bucket READMEs, CLAUDE.md/AGENTS.md schema-template path, `/start`, `/ask-red`). The `knowledge/` bucket keeps `/research`.
+
+---
+
+## review (engineering) — removed (issue #1387)
+
+- **status**: removed
+- **upstream**: —
+- **why**: The HTML-artifact annotation-bridge review skill was unused; `/code-review` is the one review verb for diffs and the browser-review draft stays in `in-progress/`.
+- **what changed**: Deleted `plugins/dev/skills/engineering/review/`, its manifest entry, and its README listings.
+
+---
+
+## ship (engineering) — removed (issue #1387)
+
+- **status**: removed
+- **upstream**: —
+- **why**: `/ship` was retired by ADR 0081 and had survived only as a deprecation stub plus a `dev ship` CLI redirect. The rollout is over.
+- **what changed**: Deleted the stub skill and its manifest entry, dropped the `dev ship` alias from the CLI, removed `/ship` from the dev plugin description, and repointed the live mentions (retake's printed next-action, config template, command-guard comment, monitor prompt) at the requeue landing lane. ADR and CHANGES history left untouched.
+
+---
+
+## urgent (engineering) — removed (issue #1387)
+
+- **status**: removed
+- **upstream**: —
+- **why**: The issue-minting front door added a command for what a single label already does.
+- **what changed**: Deleted `plugins/dev/skills/engineering/urgent/`, its manifest entry, and its README listings. The `priority:urgent` queue mechanics in red-castle/AFK are untouched: a manually-labelled urgent Ticket still jumps ahead of every `--spec` / `--issues` filter.
+
+---
+
+## retake (engineering) — merged with requeue; diagnose-then-act (issue #1387)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `/retake` diagnosed an issue's state and `/requeue` acted on it; splitting diagnosis from action let operators fire a requeue at an issue whose work already sat finished in a dirty worktree.
+- **what changed**: Rewrote `/retake` as one diagnose-then-act skill — reconstruct the state (PRs, branches, worktrees, uncommitted/unpushed work, HITL state, blocker), report a verdict, then execute exactly one transition (plain requeue, `--adopt-branch` landing, or handoff to `/hitl`). Removed the `/requeue` skill with no deprecation stub; the `requeue` bundle CLI command (ADR 0055) is unchanged and is what the merged skill invokes.
+
+---
+
 ## afk (engineering) - no-leak contract and guard layers (issue #1366)
 
 - **status**: modified

@@ -35,7 +35,7 @@ export const GO_GATE_CONTEXT = "interactive" as const;
  * reused engine finishes the run:
  *
  * - `no-mistakes` — route the run through the HARDENED pre-PR pipeline (#920 /
- *   the `/ship` slice): review → validate → escalate intent findings before the
+ *   the retired `/ship` slice): review → validate → escalate intent findings before the
  *   PR is opened. Slowest, safest.
  * - `direct-PR` — the STANDARD path: run the gate and bring back a PR. Default.
  * - `local-only` — an APPROVED local fast-forward merge with NO PR opened; for
@@ -55,7 +55,7 @@ export const DEFAULT_GO_MODE: GoMode = "direct-PR";
  * unmoded `/go` produces exactly the base argv.
  *
  * - `no-mistakes` → `--pre-pr` routes the run through the hardened pre-PR
- *   pipeline (core/pre-pr-pipeline.ts + the `/ship` gate).
+ *   pipeline (core/pre-pr-pipeline.ts + the pre-PR ship gate).
  * - `local-only` → `--local-merge` lands the branch by an approved local
  *   fast-forward instead of opening a PR.
  */

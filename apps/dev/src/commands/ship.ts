@@ -1,19 +1,17 @@
-// commands/ship.ts — DEPRECATED per ADR 0081.
+// commands/ship.ts — PR-facts collection for the landing gate.
 //
-// `/ship` is retired. Manual adoption of a hand-done branch now routes through
-// `requeue --adopt-branch BRANCH` into the no-agent landing lane (ADR 0055).
-// `collectShipFacts` is kept (tested by ship-facts.test.ts; may be reused by
-// future callers). `shipCommand` is the backwards-compat alias.
+// The `/ship` command and its backwards-compat `dev ship` alias are gone.
+// Manual adoption of a hand-done branch routes through `/retake` and its
+// `requeue --adopt-branch BRANCH` action into the no-agent landing lane
+// (ADR 0055). `collectShipFacts` survives as the PR-facts reader.
 
 import { execTool, type ExecOutput } from "../runtime/exec.js";
 import {
   advisoryReviewPending,
-  issueNumberFromBranch,
   normalizeRollupEntry,
   shipChecksAreGreen,
   type ShipCheck,
 } from "../core/ship.js";
-import { requeueCommand } from "./requeue.js";
 
 async function run(cmd: string, args: readonly string[], cwd: string): Promise<ExecOutput> {
   return execTool(cmd, args, { cwd });
@@ -92,57 +90,4 @@ export async function collectShipFacts(cwd: string, repo: string, pr: number, re
   const branchProtectionSatisfied = reviewDecision !== "REVIEW_REQUIRED";
 
   return { branchProtectionSatisfied, changesRequested, checksGreen, advisoryReviewPending: reviewPending, reviewDecision, checkSummary };
-}
-
-/** Scan argv for a `--issue N` or `-i N` value (the only ship flag the alias needs). */
-function parseIssueFlag(args: readonly string[]): number | undefined {
-  for (let i = 0; i < args.length; i += 1) {
-    if ((args[i] === "--issue" || args[i] === "-i") && i + 1 < args.length) {
-      const n = Number(args[i + 1]);
-      return Number.isFinite(n) && n > 0 ? n : undefined;
-    }
-  }
-  return undefined;
-}
-
-/**
- * DEPRECATED per ADR 0081. `/ship` is retired; manual branch adoption routes
- * through `requeue --adopt-branch BRANCH`. This alias prints the deprecation
- * notice, infers issue + branch from the current context, and delegates to
- * requeueCommand so callers are redirected rather than broken.
- */
-export async function shipCommand(
-  args: string[],
-  cwd = process.cwd(),
-  stdout: NodeJS.WritableStream = process.stdout,
-): Promise<number> {
-  process.stderr.write(
-    "[afk] /ship is deprecated (ADR 0081). Manual adoption routes through requeue:\n" +
-    "  red-skills-dev requeue #ISSUE --adopt-branch BRANCH --guidance 'reason'\n\n",
-  );
-
-  // Resolve current branch (best-effort).
-  let branch: string | undefined;
-  try {
-    const r = await execTool("git", ["branch", "--show-current"], { cwd });
-    branch = r.code === 0 ? r.stdout.trim() || undefined : undefined;
-  } catch { /* best-effort */ }
-
-  const issue = parseIssueFlag(args) ?? (branch ? issueNumberFromBranch(branch) : undefined);
-
-  if (!issue || !branch) {
-    process.stderr.write(
-      "[afk] /ship alias: could not infer issue or branch.\n" +
-      "  Run manually: red-skills-dev requeue #ISSUE --adopt-branch BRANCH --guidance 'reason'\n",
-    );
-    return 1;
-  }
-
-  process.stderr.write(`[afk] /ship alias: routing to requeue #${issue} --adopt-branch ${branch}\n`);
-
-  return requeueCommand(
-    [String(issue), "--adopt-branch", branch, "--guidance", "Adopted via deprecated /ship alias (ADR 0081). Update guidance if needed."],
-    cwd,
-    stdout,
-  );
 }

@@ -6,8 +6,9 @@
 // re-parks the issue before any work starts, so a maintainer who only edits
 // labels creates a silent no-op retry loop. A requeue is only complete when the
 // active blocker is cleared from the BODY in the same transition that flips the
-// labels. This module is the pure planner for that transition; `/requeue` (the
-// command) and `/hitl` (the interactive decision path) are its IO callers.
+// labels. This module is the pure planner for that transition; the `requeue`
+// command (reached from `/retake`) and `/hitl` (the interactive decision path)
+// are its IO callers.
 //
 // #860 narrows the scope: only `blocked:validation` and `blocked:spec` issues
 // are accepted. Mixed `blocked:*` states and label/body kind mismatches are

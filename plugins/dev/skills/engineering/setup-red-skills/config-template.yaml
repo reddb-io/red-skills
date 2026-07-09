@@ -8,7 +8,7 @@
 # without `enabled: true` is OFF.
 plugins:
   dev:
-    enabled: true                 # the engineering stack (/afk, /triage, /ship, …)
+    enabled: true                 # the engineering stack (/afk, /triage, /retake, …)
   #   trunk: main                 # the Trunk (ADR 0083): the focal branch agent work
   #                               # bases on and lands to when no lock/pin names one
   #                               # (precedence lock > pin > trunk). Always consumed
@@ -46,7 +46,7 @@ plugins:
 #   main:                         # primary interactive session scope, not branch name
 #     - "git rebase"
 #     - "git checkout -b"
-#   worktree:                     # /afk and /ship worktrees under .red/tmp/
+#   worktree:                     # /afk and /go worktrees under .red/tmp/
 #     - "git clean"
 
 # afk:

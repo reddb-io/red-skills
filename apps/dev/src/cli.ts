@@ -19,7 +19,6 @@ import { reviewCommand } from "./commands/review.js";
 import { stopCommand } from "./commands/stop.js";
 import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
-import { shipCommand } from "./commands/ship.js";
 import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { triageCommand } from "./commands/triage.js";
@@ -44,7 +43,6 @@ export type CliCommand =
   | "review"
   | "respond"
   | "hitl-card"
-  | "ship"
   | "triage"
   | "codex-monitor-agent"
   | "codex-statusline"
@@ -88,7 +86,6 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     review: {},
     respond: {},
     "hitl-card": {},
-    ship: {},
     triage: {},
     "codex-monitor-agent": {},
     "codex-statusline": {},
@@ -141,7 +138,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "review") return reviewCommand(parsed.args);
   if (parsed.command === "respond") return respondCommand(parsed.args);
   if (parsed.command === "hitl-card") return hitlCardCommand(parsed.args);
-  if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "triage") return triageCommand(parsed.args);
   if (parsed.command === "codex-monitor-agent") return codexMonitorAgentCommand(parsed.args);
   if (parsed.command === "codex-statusline") return codexStatuslineCommand(parsed.args);

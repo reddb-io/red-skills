@@ -99,8 +99,8 @@ export async function classifyIssue(
 }
 
 /**
- * Policy for the AFK / `/ship` PR review gate (ADR 0064 §10, issue #749). When
- * AFK or `/ship` opens a PR for a completed attempt, the change's classified task
+ * Policy for the AFK PR review gate (ADR 0064 §10, issue #749). When
+ * AFK opens a PR for a completed attempt, the change's classified task
  * tier decides whether it is "mechanical" (trivial / well-scoped, keeps the
  * existing fast-merge path) or "non-mechanical" (risky / architectural, earns a
  * fresh-agent review hop). Non-mechanical changes get `ready-for-review` applied
@@ -113,7 +113,7 @@ export async function classifyIssue(
 export interface ReviewGateConfig {
   /**
    * Master on/off. Off (the default) → the gate never requests review and AFK /
-   * `/ship` keep today's fast-merge behaviour for every tier.
+   * the landing lane keeps today's fast-merge behaviour for every tier.
    */
   enabled: boolean;
   /**
@@ -153,7 +153,7 @@ export function shouldRequestReview(taskClass: TaskClass, config: ReviewGateConf
  * undefined when the gate is off (the default), so callers treat "no gate" and
  * "disabled gate" identically and keep the fast-merge path. An out-of-vocab
  * `threshold` falls back to {@link DEFAULT_REVIEW_GATE_THRESHOLD}. Shared by the
- * AFK run wiring and `/ship` so both read the gate the same way.
+ * AFK run wiring and the landing lane so both read the gate the same way.
  */
 export function resolveReviewGate(values: ConfigValues): ReviewGateConfig | undefined {
   if (getConfig(values, "afk.review_gate.enabled") !== "true") return undefined;

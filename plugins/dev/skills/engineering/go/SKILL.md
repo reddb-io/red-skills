@@ -124,8 +124,8 @@ The validation gate splits findings two ways:
 - **An issue that is or should be a tracked GitHub issue → `/afk`.** This is the hard boundary: `/go` is **only** for untracked ad-hoc demands, never for issue-form work or when work should live on the backlog.
 - A directive you're steering conversationally, no artifact wanted → `/goal`.
 - A batch of related work → author a Spec with `/to-spec`, then `/afk`.
-- A fire that must jump the queue → `/urgent`.
-- Hand-done work on your own branch that needs only validation + landing → `/requeue` (the no-agent landing lane, ADR 0055).
+- A fire that must jump the queue → file the Ticket with the `priority:urgent` label; `/afk` promotes it ahead of every filter.
+- Hand-done work on your own branch that needs only validation + landing → `/retake` (the no-agent landing lane, ADR 0055).
 
 ## Name choice: `/go` not `/run`
 

@@ -56,7 +56,7 @@ describe("development workflow rules block", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain('One-off concrete work goes through `/go "<demand>"`');
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/go-workers/`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("Route the structured backlog through `/afk`");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/requeue`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/retake`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).not.toContain("/ship");
   });
 

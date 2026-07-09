@@ -141,6 +141,18 @@ function worktreeCommandForBranch(issue: number, branch: RetakeBranch): string {
   return `git worktree add .red/tmp/work-ship-${issue} -b ${normalizeBranchName(branch.name)} ${branch.name}`;
 }
 
+/**
+ * The tail command for a finished branch: adopt it through the ADR-0055
+ * no-agent landing lane. `/ship` is retired, so retake never suggests it.
+ */
+function adoptCommand(issue: number, pr: RetakePullRequest): string {
+  const guidance = "Hand-done work adopted via /retake; run the gate.";
+  if (pr.headRefName === undefined || pr.headRefName.trim() === "") {
+    return `red-skills-dev requeue ${issue} --guidance '${guidance}'`;
+  }
+  return `red-skills-dev requeue ${issue} --adopt-branch ${normalizeBranchName(pr.headRefName)} --guidance '${guidance}'`;
+}
+
 function worktreeCommandForPr(issue: number, pr: RetakePullRequest): string {
   if (pr.headRefName === undefined || pr.headRefName.trim() === "") {
     return `gh pr checkout ${pr.number}`;
@@ -217,10 +229,10 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
     const worktree = matchingWorktreeForPr(facts.worktrees, facts.issue.number, shippablePr);
     return {
       kind: "ship-pr",
-      summary: `PR #${shippablePr.number} is open; hand it to /ship once the branch worktree is clean.`,
+      summary: `PR #${shippablePr.number} is open; adopt its branch through the no-agent landing lane once the worktree is clean.`,
       command: worktree !== undefined
-        ? `cd ${worktree.path} && /ship --issue ${facts.issue.number}`
-        : `${worktreeCommandForPr(facts.issue.number, shippablePr)} && cd .red/tmp/work-ship-${facts.issue.number} && /ship --issue ${facts.issue.number}`,
+        ? `cd ${worktree.path} && ${adoptCommand(facts.issue.number, shippablePr)}`
+        : `${worktreeCommandForPr(facts.issue.number, shippablePr)} && cd .red/tmp/work-ship-${facts.issue.number} && ${adoptCommand(facts.issue.number, shippablePr)}`,
     };
   }
 
@@ -304,7 +316,7 @@ export function planRetakeApply(facts: RetakeFacts): RetakeApplyPlan {
         summary: `Matching worktree already exists for PR #${pr.number}.`,
         operations: [],
         nextCommand: recommendation.kind === "ship-pr"
-          ? `cd ${worktree.path} && /ship --issue ${issue}`
+          ? `cd ${worktree.path} && ${adoptCommand(issue, pr)}`
           : `cd ${worktree.path}`,
       };
     }
@@ -319,7 +331,7 @@ export function planRetakeApply(facts: RetakeFacts): RetakeApplyPlan {
         { cmd: "git", args: ["worktree", "add", worktreePath, branch], label: "create ship worktree for PR" },
       ],
       nextCommand: recommendation.kind === "ship-pr"
-        ? `cd ${worktreePath} && /ship --issue ${issue}`
+        ? `cd ${worktreePath} && ${adoptCommand(issue, pr)}`
         : `cd ${worktreePath}`,
     };
   }

@@ -120,7 +120,7 @@ interface ParsedRunFlags {
    */
   reconcileIssue?: number;
   /** --origin <label>: spawn-time provenance stamped on the worker state
-   * (`"afk"` | `"go"` | `"urgent"` | …). Set by each entry point so the
+   * (`"afk"` | `"go"` | …). Set by each entry point so the
    * monitor/statusline can render per-source counts. */
   origin?: string;
   /** --lane <label>: the candidate-listing label the session drains. Defaults
@@ -2032,7 +2032,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           pid_start_time: pidStartTime,
           runner: c.runner,
           // Spawn-time provenance (issue #930): stamped once here, never mutated.
-          // The entry point (`/afk`, `/go`, `/urgent`) passes `--origin <label>`.
+          // The entry point (`/afk`, `/go`) passes `--origin <label>`.
           origin: flags.origin ?? "",
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,

@@ -181,11 +181,11 @@ describe("setup-red-skills docs", () => {
       writeFakeRuntime(join(home, ".codex", "plugins", "cache", "red-skills", "dev", "99.0.0"), "cache99");
       execFileSync("bash", [script], { env: { ...process.env, XDG_BIN_HOME: bin }, encoding: "utf8" });
 
-      const envOutput = execFileSync(join(bin, "red-skills-dev"), ["ship", "--issue", "123"], {
+      const envOutput = execFileSync(join(bin, "red-skills-dev"), ["retake", "--issue", "123"], {
         env: shimEnv(home, { RED_SKILLS_DEV_PLUGIN_ROOT: envRoot }),
         encoding: "utf8",
       }).trim();
-      expect(JSON.parse(envOutput)).toEqual({ label: "env", args: ["ship", "--issue", "123"] });
+      expect(JSON.parse(envOutput)).toEqual({ label: "env", args: ["retake", "--issue", "123"] });
 
       rmSync(home, { recursive: true, force: true });
       writeFakeRuntime(join(home, ".codex", "plugins", "cache", "red-skills", "dev", "1.0.0"), "codex1");

@@ -21,7 +21,7 @@ operandi.
 
 **Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
 does not already belong on the tracker. If the work is already tracked, keep it
-in `/afk`; if it is parked, use `/requeue` or `/hitl`.
+in `/afk`; if it is parked, use `/retake` or `/hitl`.
 
 **Ideas become Specs before execution.** For a fuzzy idea that fits in one
 conversation, run `/start`, then `/to-spec`, then `/to-tickets`, then `/afk`.
@@ -35,9 +35,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **A bug you can reproduce or diagnose now** -> `/diagnose`; if the user is
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
-  Ticket only needs queue promotion, use `/requeue`.
+  Ticket only needs queue promotion, use `/retake`.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
-  loop and `/code-review` before handing the branch to `/requeue`.
+  loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
   pair it with `/ground-truth`.
 - **Operations state** -> `/dashboard`, `/daily-review`, `/audit-skills`, or
@@ -69,14 +69,16 @@ Next handoff: <what must be true before the next command>
 The router must mention every published dev skill so `/doctor` can flag drift:
 `/afk`, `/ask-red`, `/go`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
-`/ground-truth`, `/doctor`, `/review-adrs`, `/ship`, `/start`, `/triage`,
-`/hitl`, `/report-bug`, `/retake`, `/requeue`, `/urgent`,
-`/improve-codebase-architecture`, `/setup-red-skills`, `/setup-statusline`,
-`/implement`, `/tdd`, `/to-tickets`, `/to-spec`, `/zoom-out`, `/prototype`,
-`/verify`, `/review`, `/code-review`, `/resolving-merge-conflicts`,
-`/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`,
-`/setup-pre-commit`, `/wiki-init`, `/wiki`, `/research`, `/ff`, `/reflect`,
+`/ground-truth`, `/doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
+`/report-bug`, `/retake`, `/improve-codebase-architecture`,
+`/setup-red-skills`, `/setup-statusline`, `/implement`, `/tdd`, `/to-tickets`,
+`/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
+`/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
+`/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
 `/handoff`, `/write-a-skill`.
+
+The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
+`/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 ## Standalone And Maintenance Routes
 
@@ -84,20 +86,19 @@ The router must mention every published dev skill so `/doctor` can flag drift:
   covers the registered skill set.
 - `/setup-red-skills` and `/setup-statusline` are setup/adoption routes, not
   feature-work routes.
-- `/urgent` creates an urgent tracked Ticket, then the work still flows through
-  `/afk`.
-- `/retake` reconstructs state for one Ticket before choosing `/afk`, `/hitl`,
-  or `/requeue`.
+- `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,
+  uncommitted work, blocker — then acts on it: requeue into `ready-for-agent`,
+  adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
+- An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
+  promotes it ahead of every `--spec` / `--issues` filter.
 - `/review-adrs` audits the decision record and usually feeds `/to-spec`.
 - `/model-tier-policy` answers runner/model tier choices.
-- `/zoom-out`, `/research`, `/wiki`, `/wiki-init`, `/handoff`, `/ff`, and
-  `/reflect` are understanding or productivity routes that feed the main flow.
+- `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
+  or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and
   `/setup-pre-commit` are targeted utility routes.
-- `/ship` is retained for compatibility only; live hand-worked landing routes
-  through `/requeue`.
-- `/review` is for HTML artifact annotation review; `/code-review` is for code
-  diff review.
+- `/code-review` is the two-axis diff review; hand-worked landing routes through
+  `/retake`.
 - `/curate` is the interactive skill archive route.
 
 </supporting-info>
