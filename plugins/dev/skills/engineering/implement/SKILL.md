@@ -17,7 +17,7 @@ disable-model-invocation: true
 | **Driver** | You — interactive, step-by-step | Autonomous fleet, no human in the loop |
 | **Scope** | One Spec / issue set, right now | Drains the full `ready-for-agent` queue |
 | **Worktree** | Dedicated `.red/tmp/work-*` worktree | Isolated worktree per issue, sandcastle |
-| **Finish** | You run `/requeue` when satisfied | Agent merges, closes, claims next issue |
+| **Finish** | You run `/retake` when satisfied | Agent merges, closes, claims next issue |
 
 Use `/implement` when you want to implement a Spec or issues yourself — with test-first discipline and review — but need the agent to guide each step. Use `/afk` when you want the fleet to work unsupervised.
 
@@ -33,11 +33,11 @@ Use `/implement` when you want to implement a Spec or issues yourself — with t
 
 5. **Review with `/code-review`.** When the full suite is green, invoke `/code-review` to review the work. Address every finding before committing.
 
-6. **Finish with `/requeue`.** Commit the work in the worktree (never on the primary branch), push, and run `/requeue` to adopt the branch into the reconcile lane — it validates through the shared gate and lands. Close the linked issues when done. (For a brand-new one-off demand that doesn't need this interactive loop, dispatch `/go "<demand>"` instead — it handles worktree, gate, and PR end-to-end.)
+6. **Finish with `/retake`.** Commit the work in the worktree (never on the primary branch), push, and run `/retake` to adopt the branch into the reconcile lane — it validates through the shared gate and lands. Close the linked issues when done. (For a brand-new one-off demand that doesn't need this interactive loop, dispatch `/go "<demand>"` instead — it handles worktree, gate, and PR end-to-end.)
 
 ### Hard rules
 
-- ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/requeue`.
+- ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/retake`.
 - ❌ Do **not** skip `/tdd`; writing code before a failing test is undefined behaviour for this skill.
 - ❌ Do **not** run `/code-review` while any test is red.
 - ✅ **Do** let `/to-tickets` decompose large Specs before starting — smaller seams mean smaller merge risk.
@@ -55,7 +55,7 @@ All implementation work lives in a dedicated worktree under `.red/tmp/`, never o
 git worktree add .red/tmp/work-<slug> -b feat/<slug>
 ```
 
-`/requeue` expects the worktree to be under `.red/tmp/work-*/`. After the adopted branch lands, the worktree is pruned automatically.
+`/retake` expects the worktree to be under `.red/tmp/work-*/`. After the adopted branch lands, the worktree is pruned automatically.
 
 ## Spec / issue model
 

@@ -83,7 +83,7 @@ HITL-typed children (`wayfinder:grilling`, `wayfinder:prototype`) route to human
 
 **One-ticket-per-session discipline.** A grilling or prototype session resolves exactly one HITL child and stops. Charting the map is itself one session's work. Do not collapse multiple HITL children into a single session; the route becomes clear by advancing one frontier edge at a time.
 
-When a HITL child becomes delegable, `/hitl` or `/requeue` moves it into `ready-for-agent`; do not create a parallel queue.
+When a HITL child becomes delegable, `/hitl` or `/retake` moves it into `ready-for-agent`; do not create a parallel queue.
 
 ## 5. Advance The Frontier
 

@@ -22,7 +22,7 @@
 # and branch-moving commands are blocked in the primary checkout. Missing/empty
 # deny rules still allow every other command. `global` rules apply in every
 # scope, `main` rules apply outside RedSkills runtime worktrees, and `worktree`
-# rules apply inside `/afk` and `/ship` worktrees. Deny rules accept explicit
+# rules apply inside `/afk` and `/go` worktrees. Deny rules accept explicit
 # modes: `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
 # `exact:<literal>`, and `glob:<pattern>`. Bare rules with glob metacharacters
 # are treated as globs; every other bare rule matches the exact command, a

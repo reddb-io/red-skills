@@ -158,6 +158,6 @@ supervisor under Codex:
 
 Hard boundaries for the monitor agent are non-negotiable: it must never edit
 files, claim issues, change labels, comment, stop workers, run validation, push,
-merge, `/requeue`, `/go`, `/hitl`, `/triage`, `/afk run`, `/afk fleet`, `/afk fleet stop`,
+merge, `/retake`, `/go`, `/hitl`, `/triage`, `/afk run`, `/afk fleet`, `/afk fleet stop`,
 `/afk reap`, or `/afk requeue`. Closing it manually must not affect the AFK
 worker.

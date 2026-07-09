@@ -30,7 +30,7 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 3. **Confirm before writing.** Show the draft agent-skills block, generated agent docs, development-workflow changes, and any accepted command-guard policy before editing. See [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#confirm-and-edit).
 4. **Write under the no-clobber contract.** Never overwrite, rewrite, or reorder existing user-owned content except for the explicit surgical merges named in [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#write). Use the existing-file selection rules, seed docs, workflow copy rules, plugin-activation merge, development-workflow injector, statusline wiring, and hook-script registration exactly as documented there.
 5. **Sweep existing issues only after setup.** If open issues exist, group label backfill candidates and ask for one batch approval before editing labels. See [ISSUE-SWEEP.md](./ISSUE-SWEEP.md).
-6. **Finish with the setup recap.** Tell the user which plugins are enabled here, remind them that other directories stay inert until setup runs there too, point memory/brain users at their next init step, and route one-off concrete work through `/go`, backlog work through `/afk`, and parked issues through `/requeue`.
+6. **Finish with the setup recap.** Tell the user which plugins are enabled here, remind them that other directories stay inert until setup runs there too, point memory/brain users at their next init step, and route one-off concrete work through `/go`, backlog work through `/afk`, and parked issues through `/retake`.
 
 ## Hard Rules
 
