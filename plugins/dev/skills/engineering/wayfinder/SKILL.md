@@ -6,28 +6,28 @@ argument-hint: "[destination or issue/URL/path to map]"
 
 # Wayfinder
 
-**Chart one shared map for work too large for one agent session, then route each frontier child through the normal RedSkills queues.** The map fixes destination and fog; child Tickets do the work.
+**Chart one shared map for work too large for one agent session, then route each frontier child through the normal RedSkills queues.** The destination names where the expedition is headed; the map marks the fog of war; child Tickets advance the frontier until the route is clear.
 
 <what-to-do>
 
 ## 1. Check For Real Fog
 
-Start breadth-first. Read the current conversation and any referenced issue, URL, or path. Ask or answer only the first few scope questions needed to decide whether the work has unresolved in-scope fog.
+Start breadth-first. Read the current conversation and any referenced issue, URL, or path. Do not charge down the first trail; fan out just far enough to see whether unresolved in-scope fog still hides the way.
 
 **Zoom-as-needed loading.** Load the map at low resolution — read only the map's section headings first; fetch the full body of a specific child only when the session's work touches it.
 
-Use the **no-fog early exit**: if the opening breadth-first grilling surfaces no fog, stop and ask the user to continue with `/start`, `/to-spec`, `/to-tickets`, `/go`, or `/afk` instead of creating a map nobody needs. A map is warranted only when there is named destination plus multiple unknowns that cannot be cleared in one session.
+Use the **no-fog early exit**: if the opening breadth-first grilling surfaces no fog, stop and ask the user to continue with `/start`, `/to-spec`, `/to-tickets`, `/go`, or `/afk` instead of creating a map nobody needs. A map is warranted only when there is a named destination plus multiple unknowns that cannot be cleared in one session.
 
 ## 2. Create The Map Ticket
 
-Create exactly one map Ticket and label it `wayfinder:map`. Name the destination first; it fixes scope.
+Create exactly one map Ticket and label it `wayfinder:map`. Name the destination first; it fixes the horizon, the scope, and which fog belongs on this map.
 
 The map body must carry these headings:
 
 ```markdown
 ## Destination
 
-The named end state. Keep this concrete enough that later child Tickets can decide whether new fog is in scope.
+The named end state. Keep this concrete enough that later child Tickets can decide whether new fog is on the route or beyond it.
 
 ## Decisions so far
 
@@ -35,11 +35,11 @@ One line per closed child: a short gist of the decision or result followed by a 
 
 ## Not yet specified
 
-In-scope fog. Each entry is a frontier question or unresolved branch that can graduate into a child Ticket.
+In-scope fog. Each entry is a frontier question or unresolved branch that can graduate into a child Ticket once the way ahead sharpens.
 
 ## Out of scope
 
-Ruled beyond the destination. These entries never graduate into child Tickets unless the destination is explicitly renamed.
+Ruled beyond the destination. These entries sit past the edge of this map and never graduate into child Tickets unless the destination is explicitly renamed.
 
 ## Notes
 
@@ -48,7 +48,7 @@ Standing preferences for this effort and which skills every session should consu
 
 The map is an **index, not a store**. Keep durable decisions, evidence, prototypes, and implementation notes in the child Tickets that produced them; the map only gists and links to those Tickets via `## Decisions so far`.
 
-**Refer by name.** Every reference to a map or child Ticket uses its *title* with the link embedded in the name — never a bare `#N`. Bare-number narration is illegible to anyone reading the trail.
+**Refer by name.** Every reference to a map or child Ticket uses its *title* with the link embedded in the name — never a bare `#N`. Bare-number narration turns the trail into coordinates without landmarks; names keep the route readable.
 
 ## 3. Publish Child Tickets
 
@@ -59,7 +59,7 @@ Children are native sub-issues of the `wayfinder:map` Ticket. Give each child ex
 - `wayfinder:prototype` - HITL-typed. Use for design/logic uncertainty that must route to a `/prototype` session and be claimed by assignment.
 - `wayfinder:task` - AFK-typed. Use for implementation or docs work that is already scoped to one agent session.
 
-Each child must be scoped to one session. If a child still contains multiple frontier questions, split it before publishing.
+Each child must be scoped to one session. If a child still contains multiple frontier questions, split it before publishing; a child Ticket should take one clear step across the frontier.
 
 Use native tracker edges plus RedSkills labels:
 
@@ -81,7 +81,7 @@ HITL-typed children (`wayfinder:grilling`, `wayfinder:prototype`) route to human
 - Assign the human or role expected to run the `/start` or `/prototype` session.
 - Use `## Current blocker` / `## Human decision needed` for the pending decision or prototype question, not `## Blocked by`, unless closing concrete dependency Tickets is enough to make the child delegable.
 
-**One-ticket-per-session discipline.** A grilling or prototype session resolves exactly one HITL child and stops. Charting the map is itself one session's work. Do not collapse multiple HITL children into a single session.
+**One-ticket-per-session discipline.** A grilling or prototype session resolves exactly one HITL child and stops. Charting the map is itself one session's work. Do not collapse multiple HITL children into a single session; the route becomes clear by advancing one frontier edge at a time.
 
 When a HITL child becomes delegable, `/hitl` or `/requeue` moves it into `ready-for-agent`; do not create a parallel queue.
 
@@ -94,7 +94,7 @@ After a child resolves, update the map only as an index:
 - Move newly discovered in-scope fog into `## Not yet specified`.
 - Move rejected branches into `## Out of scope`.
 
-Never copy full decisions, research logs, prototype output, or implementation notes into the map. Those live in the child Tickets.
+Never copy full decisions, research logs, prototype output, or implementation notes into the map. Those live in the child Tickets; the map stays the shared chart, not the expedition journal.
 
 </what-to-do>
 
