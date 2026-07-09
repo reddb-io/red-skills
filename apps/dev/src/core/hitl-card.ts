@@ -8,6 +8,8 @@
 // comment body. The issue body and PR diff are NEVER parsed for commands — they
 // appear in the card render only as display data, not as instruction input.
 
+import { renderIssueReference } from "./issue-reference.js";
+
 export const CARD_OPEN = "<!-- red:hitl-card v1 -->";
 export const CARD_CLOSE = "<!-- /red:hitl-card -->";
 export const CARD_STATUS_OPEN = "<!-- red:hitl-card:status -->";
@@ -40,6 +42,8 @@ export interface PrStatus {
 /** Options for rendering the full decision card. */
 export interface RenderCardOpts {
   issueNumber: number;
+  issueTitle?: string;
+  issueUrl?: string;
   pendingDecision: string;
   prStatus: PrStatus;
   /** ISO-8601 or human-readable refresh timestamp shown in the status section. */
@@ -80,10 +84,11 @@ function renderStatusSection(prStatus: PrStatus, updatedAt: string): string {
 
 /** Render the full decision card markdown for posting as an issue comment. */
 export function renderCard(opts: RenderCardOpts): string {
-  const { issueNumber, pendingDecision, prStatus, updatedAt } = opts;
+  const { issueNumber, issueTitle, issueUrl, pendingDecision, prStatus, updatedAt } = opts;
+  const issueRef = renderIssueReference({ number: issueNumber, title: issueTitle, url: issueUrl });
   return [
     CARD_OPEN,
-    `## Decision card — #${issueNumber}`,
+    `## Decision card — ${issueRef}`,
     "",
     `> **Pending decision:** ${pendingDecision}`,
     "",
