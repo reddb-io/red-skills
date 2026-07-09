@@ -14,6 +14,7 @@ import {
   type GateFinding,
   type SharedGateDeps,
 } from "../src/core/shared-gate.js";
+import { FOWLER_REFACTORING_SMELLS } from "../src/core/review-extract.js";
 
 // shared-gate — closed mechanical allowlist + context-aware escalation (#931).
 //
@@ -63,6 +64,12 @@ describe("classifyFinding — closed allowlist", () => {
   it("is case-sensitive — Formatter is not formatter", () => {
     expect(classifyFinding(finding("Formatter"))).toBe("intent");
     expect(classifyFinding(finding("LINT-FIX"))).toBe("intent");
+  });
+
+  it("classifies Fowler smell findings as intent, never mechanical auto-applies", () => {
+    for (const [smell] of FOWLER_REFACTORING_SMELLS) {
+      expect(classifyFinding(finding(smell))).toBe("intent");
+    }
   });
 });
 
