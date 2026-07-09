@@ -24,12 +24,12 @@ describe("end-to-end against the real source tree", () => {
     expect(plugins).toContain("brain");
   });
 
-  it("plans the dev plugin's skills (afk, ship, triage all present)", () => {
+  it("plans the dev plugin's skills (afk, retake, triage all present)", () => {
     const result = planPluginSkills(PLUGINS_ROOT, "dev");
     const names = result.plans.map((p) => p.name);
-    // afk, ship, triage are the most-used dev skills and ship as
+    // afk, retake, triage are the most-used dev skills, all in the
     // engineering bucket
-    for (const expected of ["afk", "ship", "triage"]) {
+    for (const expected of ["afk", "retake", "triage"]) {
       expect(names).toContain(expected);
     }
     // in-progress skills are skipped (writing-beats, writing-fragments,
