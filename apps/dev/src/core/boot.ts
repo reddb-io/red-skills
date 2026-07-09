@@ -143,6 +143,8 @@ export interface BootFs {
   writeWorkerPid(pidFile: string, pid: number): Promise<void>;
   /** rm -rf an orphaned attempt dir. */
   removeDir(path: string): Promise<void>;
+  /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
+  reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
 }
 
 /** gh side effects: label edits and audit/recovery comments. Best-effort. */
@@ -608,6 +610,8 @@ async function runOrphanCleanup(
     await deps.fs.removeDir(claim.path);
     claimsReleased.push(claim.path);
   }
+
+  await deps.fs.reapDeadEmptyWorkerShells?.(options.bootstrap.tmpDir).catch(() => undefined);
 
   return { removed, restored, kept, legacyWiped, claimsReleased };
 }
