@@ -201,6 +201,21 @@ export function renderHeaderLine(
 
 // ---------- line 2..N: one line per live worker ----------
 
+/**
+ * The worker's progress cell: pipeline `phase` joined to the momentary
+ * `activity` as `phase·activity` (`coding·impl`, `validating·typecheck`).
+ *
+ * Both halves are load-bearing and neither subsumes the other. `phase` answers
+ * "where in the pipeline is this worker?" and moves only at hard boundaries;
+ * `activity` answers "what is it doing right now?" and is derived per stream
+ * event. A no-agent gate row carries no phase but a very informative activity
+ * (`typecheck`, `lint`); a worker between stream events carries a phase but no
+ * activity. Either half alone therefore renders bare, without a dangling `·`.
+ */
+function progressCell(phase: string, activity: string): string {
+  return [phase, activity].filter(Boolean).join("·");
+}
+
 function workerCells(worker: CompactWorker, now: number): WorkerCells {
   const f = workerFields(worker, now);
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
@@ -212,7 +227,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     run: `run=${runVal}`,
     org: `org=${f.origin || "afk"}`,
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
-    phase: f.issue === null ? "" : f.phase,
+    phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
     loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
     tks: noAgent ? "" : `tks=${tokenDisplay(f)}`,
@@ -280,10 +295,12 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // worker, so default the display to afk.
   parts.push(kv("org", f.origin || "afk"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
-  // <phase> follows bare and the legacy standalone #<n> token is dropped.
+  // <phase·activity> cell follows bare and the legacy standalone #<n> token is
+  // dropped.
   if (f.issue !== null) {
     parts.push(kv("iss", String(f.issue)));
-    if (f.phase) parts.push(f.phase);
+    const progress = progressCell(f.phase, f.activity);
+    if (progress) parts.push(progress);
   }
   parts.push(f.elapsed);
   if (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin)) {

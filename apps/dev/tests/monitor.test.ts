@@ -312,10 +312,13 @@ describe("monitor — compact dashboard", () => {
       expect(out).toContain("diff_added: 10");
       expect(out).toContain("diff_removed: 3");
       // The worker table names columns once, then one bare CSV row per worker.
+      // `activity` and `phase` stay separate columns here: the TOON board is
+      // agent-facing, so it keeps the two dimensions addressable rather than
+      // collapsing them into the statusline's `phase·activity` cell.
       expect(out).toContain(
-        "workers[1]{id,state,runner,issue,stage,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tls,rsn,txt,wait,log}:",
+        "workers[1]{id,state,runner,issue,activity,phase,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tls,rsn,txt,wait,log}:",
       );
-      expect(out).toContain('wAAAA,live,claude,42,impl,1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
+      expect(out).toContain('wAAAA,live,claude,42,impl,"",1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
     });
 
     it("preserves the per-source origin counts from #930 as a sources table", () => {

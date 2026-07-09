@@ -428,6 +428,36 @@ describe("statusline style — full themed assembly", () => {
     expect(agent).toContain("tls=3");
   });
 
+  it("joins phase and activity as `phase·activity`, and renders either half bare when the other is absent", () => {
+    const rowFor = (current: Record<string, unknown>) => {
+      const out = styleStatusline(input, {
+        now: NOW,
+        workers: [
+          worker({
+            state: {
+              ...worker().state,
+              worker_id: "wP",
+              origin: "afk",
+              current: { ...worker().state.current, ...current },
+            },
+          }),
+        ],
+      });
+      return stripAnsi(out).split("\n")[1];
+    };
+
+    // Both present → joined. This is the everyday agent row.
+    expect(rowFor({ number: 17, phase: "coding", activity: "impl" })).toContain("coding·impl");
+    // Phase only (a worker between stream events) → bare, no dangling separator.
+    const phaseOnly = rowFor({ number: 17, phase: "validating", activity: "" });
+    expect(phaseOnly).toContain("validating");
+    expect(phaseOnly).not.toContain("·");
+    // Activity only (a no-agent gate row carries no phase) → the informative half survives.
+    const activityOnly = rowFor({ number: 17, phase: "", activity: "typecheck" });
+    expect(activityOnly).toContain("typecheck");
+    expect(activityOnly).not.toContain("·");
+  });
+
   it("defaults to the header row alone when no workers/now are supplied", () => {
     const out = styleStatusline(input);
     expect(out).not.toContain("\n");
