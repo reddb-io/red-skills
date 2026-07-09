@@ -35,6 +35,35 @@ describe("state", () => {
     expect(await readFile(path, "utf8")).toContain('"version":1');
   });
 
+  it("round-trips resolved base provenance fields through state updates", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+    await initState(path, { worker_id: "wAAAA", pid: 123, "current.stage": "setup" });
+
+    await updateState(path, {
+      "current.base": "main",
+      "current.base_ref": "origin/main",
+      "current.base_sha": "feedface",
+      "current.base_source": "remote",
+      "current.base_remote_reachable": true,
+      "current.base_local_sha": "badc0de",
+      "current.base_local_ahead": 0,
+      "current.base_local_behind": 4,
+    });
+
+    const state = await readState(path);
+    expect(state.current).toMatchObject({
+      base: "main",
+      base_ref: "origin/main",
+      base_sha: "feedface",
+      base_source: "remote",
+      base_remote_reachable: true,
+      base_local_sha: "badc0de",
+      base_local_ahead: 0,
+      base_local_behind: 4,
+    });
+  });
+
   it("initStateSync seeds identity synchronously so a later updateState preserves it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const path = join(dir, "afk.state.json");

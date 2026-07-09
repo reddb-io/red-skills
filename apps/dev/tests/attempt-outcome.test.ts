@@ -51,6 +51,7 @@ const TABLE: Row[] = [
   // #908: a budget abort carries the typed `blocked:budget` label and is NOT
   // auto-recoverable (escalate — a runaway is not a transient flake).
   { outcome: "budget-exceeded", label: "blocked:budget", recovery: null },
+  { outcome: "base-stale", label: "blocked:base-stale", recovery: null },
   { outcome: "infra", label: "blocked:infra", recovery: null },
   // no typed label, no recovery (success / abandoned)
   { outcome: "done", label: null, recovery: null },
@@ -84,6 +85,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "runner-transient",
       "stalled",
       "budget-exceeded",
+      "base-stale",
       "infra",
     ];
     const covered = TABLE.map((r) => r.outcome).sort();
@@ -144,6 +146,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     { outcome: "claim-lost", status: "blocked" },
     { outcome: "stalled", status: "blocked" },
     { outcome: "budget-exceeded", status: "blocked" },
+    { outcome: "base-stale", status: "blocked" },
     { outcome: "infra", status: "blocked" },
   ];
 
@@ -170,6 +173,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "runner-transient",
       "stalled",
       "budget-exceeded",
+      "base-stale",
       "infra",
     ];
     const covered = STATUS_TABLE.map((r) => r.outcome).sort();

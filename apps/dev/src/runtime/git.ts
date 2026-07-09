@@ -114,6 +114,120 @@ export async function fetchBranch(ctx: GitContext, branch: string): Promise<void
   await runGit(ctx, ["fetch", "origin", branch]);
 }
 
+export interface ResolveFreshBaseInput {
+  base: string;
+  remote?: string;
+}
+
+export interface FreshBaseResolution {
+  ok: boolean;
+  base: string;
+  baseRef: string;
+  sha: string;
+  source: "remote" | "local";
+  remoteReachable: boolean;
+  localSha?: string;
+  localAhead?: number;
+  localBehind?: number;
+  reason?: "base-stale";
+  message?: string;
+}
+
+async function revParse(ctx: GitContext, ref: string): Promise<string | undefined> {
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", ref]);
+  const sha = r.stdout.trim();
+  return r.code === 0 && sha !== "" ? sha : undefined;
+}
+
+async function localAheadBehind(
+  ctx: GitContext,
+  localRef: string,
+  remoteRef: string,
+): Promise<{ ahead: number; behind: number } | undefined> {
+  const r = await runGit(ctx, ["rev-list", "--left-right", "--count", `${localRef}...${remoteRef}`]);
+  if (r.code !== 0) return undefined;
+  const [aheadRaw, behindRaw] = r.stdout.trim().split(/\s+/);
+  const ahead = Number(aheadRaw);
+  const behind = Number(behindRaw);
+  if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return undefined;
+  return { ahead, behind };
+}
+
+/**
+ * Resolve the concrete commit a new AFK worker should branch from.
+ *
+ * Online: fetch `<remote> <base>` and use the freshly-fetched
+ * `<remote>/<base>` ref, never the local branch. Offline: fall back to the local
+ * branch only when it is not behind the last-known remote-tracking tip; a stale
+ * local branch returns a typed `base-stale` park decision instead of silently
+ * forking from rotten history.
+ */
+export async function resolveFreshBase(
+  ctx: GitContext,
+  input: ResolveFreshBaseInput,
+): Promise<FreshBaseResolution> {
+  const base = input.base.trim();
+  const remote = input.remote?.trim() || "origin";
+  const remoteRef = `${remote}/${base}`;
+  const localRef = `refs/heads/${base}`;
+  const fetch = base ? await runGit(ctx, ["fetch", remote, base]) : failOutput("empty base");
+  const remoteSha = base ? await revParse(ctx, remoteRef) : undefined;
+  const localSha = base ? await revParse(ctx, localRef) : undefined;
+  const counts =
+    localSha && remoteSha ? await localAheadBehind(ctx, localRef, remoteRef) : undefined;
+  const localAhead = counts?.ahead;
+  const localBehind = counts?.behind;
+
+  if (fetch.code === 0 && remoteSha) {
+    return {
+      ok: true,
+      base,
+      baseRef: remoteRef,
+      sha: remoteSha,
+      source: "remote",
+      remoteReachable: true,
+      localSha,
+      localAhead,
+      localBehind,
+    };
+  }
+
+  if (localSha && (localBehind ?? 0) === 0) {
+    return {
+      ok: true,
+      base,
+      baseRef: base,
+      sha: localSha,
+      source: "local",
+      remoteReachable: false,
+      localSha,
+      localAhead,
+      localBehind,
+    };
+  }
+
+  return {
+    ok: false,
+    base,
+    baseRef: remoteRef,
+    sha: remoteSha ?? localSha ?? "",
+    source: "local",
+    remoteReachable: false,
+    localSha,
+    localAhead,
+    localBehind,
+    reason: "base-stale",
+    message:
+      localSha && remoteSha
+        ? `local ${base} is ${localBehind ?? "unknown"} commit(s) behind last-known ${remoteRef}`
+        : `could not resolve a fresh or non-stale local base for ${base}`,
+  };
+}
+
+function failOutput(stderr: string): ExecOutput {
+  return { code: 1, stdout: "", stderr };
+}
+
 export interface FreshWorkerBranchInput {
   branch: string;
   baseRef: string;

@@ -103,6 +103,8 @@ export interface SectionBodies {
   log?: string;
   /** Package-aware feedback report (done). */
   validation?: string;
+  /** Resolved worker base ref/sha evidence (issue #1380). */
+  base?: string;
   /** One `<lifecycle> <command> exit=<rc>` line per user-declared hook that ran
    * (issue #215). Empty/undefined skips the section. Excluded on `discarded`. */
   hooks?: string;
@@ -140,17 +142,21 @@ export function buildSections(
 
   if (status === "done") {
     if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
+    if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   } else if (status === "blocked") {
     out.push({ name: "notes", body: sections.notes ?? "" });
     if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
     out.push({ name: "diff", body: diffBody() });
+    if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   } else if (status === "no-sentinel") {
     out.push({ name: "notes", body: sections.notes ?? "" });
     out.push({ name: "diff", body: diffBody() });
     out.push({ name: "log", body: sections.log ?? "", fenced: true });
+    if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   } else if (status === "merge-conflict") {
     out.push({ name: "diff", body: diffBody() });
     out.push({ name: "log", body: sections.log ?? "", fenced: true });
+    if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   }
 
   // Hooks block sits last across every status except discarded; skipped when

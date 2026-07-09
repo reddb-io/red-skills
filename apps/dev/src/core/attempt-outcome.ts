@@ -39,6 +39,7 @@ import {
   LABEL_TRUNK_DIVERGED,
   LABEL_SENSITIVE_PATH,
   LABEL_MAIN_RED_UNTRACKED,
+  LABEL_BASE_STALE,
 } from "./triage-labels.js";
 
 /**
@@ -113,6 +114,10 @@ export type AttemptOutcome =
   // while the auto-filed main-red repair issue is open. If the repair issue is
   // absent, landing refuses so the red baseline stays visible and tracked.
   | "main-red-untracked"
+  // Base freshness guard (#1380): remote fetch failed and the local base branch is
+  // behind the last-known remote-tracking tip. The worker never starts from that
+  // rotten local base; the issue parks for a human/network recovery.
+  | "base-stale"
   | "infra";
 
 /**
@@ -175,6 +180,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_SENSITIVE_PATH;
     case "main-red-untracked":
       return LABEL_MAIN_RED_UNTRACKED;
+    case "base-stale":
+      return LABEL_BASE_STALE;
     case "infra":
       return LABEL_INFRA;
     case "done":
@@ -248,6 +255,9 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     // branch passed its gate, but main is red without the auto-filed repair
     // issue that keeps continued delivery visible and tracked.
     case "main-red-untracked":
+    // base-stale (#1380) folds into the generic `blocked` bucket — no worker ran;
+    // the local base is too stale to trust while the remote is unreachable.
+    case "base-stale":
     case "infra":
     // review-requested is a handoff, not a failure: the per-issue lifecycle
     // emits no terminal failure envelope for it (it parks the issue + opens the
@@ -325,6 +335,9 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     // repair issue exists; rerunning the agent would re-hit the same visibility
     // gate.
     case "main-red-untracked":
+    // base-stale (#1380) is NON-recoverable in-process: a bounded agent retry
+    // cannot make the remote reachable or refresh the local base safely.
+    case "base-stale":
     case "infra":
     case "done":
     case "claim-lost":

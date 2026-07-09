@@ -54,6 +54,17 @@ export const AfkCurrentSchema = z.object({
    * first heartbeat so the monitor/statusline fallback diffstat uses the correct
    * ref instead of hardcoding origin/main. */
   base: z.string().default(""),
+  /** Concrete resolved base ref/tip evidence for this attempt (#1380). The
+   * attempt-start path writes these before the inner agent runs so monitor and
+   * envelopes can distinguish a freshly fetched `origin/<base>` worker from an
+   * offline local-base fallback or a typed stale-base park. */
+  base_ref: z.string().default(""),
+  base_sha: z.string().default(""),
+  base_source: z.string().default(""),
+  base_remote_reachable: z.boolean().default(false),
+  base_local_sha: z.string().default(""),
+  base_local_ahead: z.number().default(0),
+  base_local_behind: z.number().default(0),
   /** Per-attempt stream-activity counters (the WorkerVitals activity + progress
    * groups, ADR 0065), mirrored from the proof-of-life heartbeat's `statePatch`
    * (core/heartbeat.ts → buildProgressHeartbeat) each ~60s poll. These MUST be
