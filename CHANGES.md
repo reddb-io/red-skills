@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## wayfinder (engineering) — fidelity restoration: Decisions so far, Notes, refer-by-name, one-ticket-per-session, zoom-as-needed (issue #1342)
+
+- **status**: modified
+- **upstream**: `d574778` (v1.1.0)
+- **why**: Side-by-side audit found four gaps between our adopted /wayfinder and the upstream v1.1.0 design: missing map sections (`## Decisions so far`, `## Notes`), no refer-by-name rule, no one-ticket-per-session discipline for HITL children, and no zoom-as-needed loading directive.
+- **what changed**:
+  - Map body template (step 2 and Map Ticket template) now carries all five sections: Destination, Decisions so far, Not yet specified, Out of scope, Notes — with descriptions for each.
+  - Step 5 explicitly records gists into `## Decisions so far` (was: generic "add a short gist").
+  - "Refer by name" directive added to step 2: titles with embedded links, never bare `#N`.
+  - "One-ticket-per-session discipline" added to step 4 HITL section: one HITL child per session; charting is one session's work.
+  - "Zoom-as-needed loading" directive added to step 1: load map at low resolution, fetch child bodies on demand.
+  - Docs-contract test (`label-vocabulary-docs.test.ts`) extended with a second `it` block pinning all four restored directives.
+
+---
+
 ## to-tickets (engineering) — file-disjunction rule: serialize overlapping slices (issue #1336)
 
 - **status**: modified
