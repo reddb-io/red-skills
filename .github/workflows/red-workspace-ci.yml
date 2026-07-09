@@ -96,3 +96,6 @@ jobs:
 
       - name: Test apps/opencode-host
         run: pnpm -C apps/opencode-host test
+
+      - name: Test apps/afk-container
+        run: pnpm -C apps/afk-container test

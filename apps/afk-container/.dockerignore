@@ -1,0 +1,6 @@
+# The image ships only src/ — the engine itself comes from npm.
+node_modules
+tests
+vitest.config.mjs
+package.json
+README.md
