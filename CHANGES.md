@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## wayfinder (engineering) - adopted planning on-ramp for RedSkills queue (issue #1297)
+
+- **status**: added
+- **upstream**: `272f99b` (upstream `wayfinder`)
+- **why**: upstream v1.1.0 adoption now needs a RedSkills-native planning on-ramp for work too large for one agent session, without bypassing the existing GitHub Issue, AFK, HITL, native sub-issue, and `req:N` dependency machinery.
+- **what changed**: Added `/wayfinder` as an engineering skill. It creates one `wayfinder:map` Ticket with `## Destination`, `## Not yet specified`, and `## Out of scope`; keeps the map as an index, not a store; publishes one-session child Tickets typed `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, or `wayfinder:task`; routes AFK-typed children through normal `ready-for-agent` / `blocked:dependency` handling unchanged; routes HITL-typed children to `/start` or `/prototype` sessions via `ready-for-human` and assignment; and preserves the no-fog early exit. Registered the skill in the dev manifest, bucket README, root README, setup label provisioning notes, label vocabulary, and docs-contract test.
+
+---
+
 ## doctor (engineering) — native dependency edge divergence guard (issue #1296)
 
 - **status**: modified

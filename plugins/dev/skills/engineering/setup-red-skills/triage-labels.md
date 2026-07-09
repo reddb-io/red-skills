@@ -133,6 +133,11 @@ These exist for filtering and don't drive lifecycle transitions:
 | `priority:high` | Urgent / high-impact — `/afk` drains these first | `/triage` or maintainer        |
 | `priority:low`  | Everything else                                  | `/triage` or maintainer        |
 | `spec:{N}`      | Issue belongs to Spec #N                         | `/to-tickets` when splitting a Spec |
+| `wayfinder:map` | Planning map Ticket for work too large for one agent session. Carries `## Destination`, `## Not yet specified`, and `## Out of scope`; the map is an index, not a store. | `/wayfinder` |
+| `wayfinder:research` | Wayfinder child type for AFK-typed research scoped to one session. Unblocked children use `ready-for-agent`; blocked children use `blocked:dependency` plus `req:N`. | `/wayfinder` |
+| `wayfinder:grilling` | Wayfinder child type for HITL-typed decision work routed to a `/start` session and claimed by assignment. | `/wayfinder` |
+| `wayfinder:prototype` | Wayfinder child type for HITL-typed design or logic exploration routed to a `/prototype` session and claimed by assignment. | `/wayfinder` |
+| `wayfinder:task` | Wayfinder child type for AFK-typed implementation/docs work scoped to one session. Unblocked children use `ready-for-agent`; blocked children use `blocked:dependency` plus `req:N`. | `/wayfinder` |
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 | `landing:manual` | Per-issue **manual-landing** mode (#1049): on a `ready-for-agent` issue, `/afk` runs the full pipeline + opens the PR, then **holds for a human's merge click** (parks `ready-for-human`, never auto-merges, never re-runs the agent). The issue auto-closes on PR merge via `Closes #N`. Lets agent-codable slices that must not be auto-merged stay in the autonomous lane instead of being hand-dispatched via `/go`. | `/triage` at brief time, or `/hitl`'s **delegable-manual-landing** disposition |
 
