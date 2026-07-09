@@ -76,9 +76,9 @@ export function buildWorkerAttemptPath(
 export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | null {
   if (!path) return null;
   const normalized = path.replace(/\/$/, "");
-  // Accept both the fleet (`workers`) and `/go` (`go-workers`) segments so a
-  // parked-attempt path reverses regardless of which lane minted it.
-  const match = normalized.match(/(?:^|\/)(?:go-)?workers\/([^/]+)\/([1-9][0-9]*)-a([1-9][0-9]*)$/);
+  // Accept every worker-lane segment so a parked-attempt path reverses
+  // regardless of which lane minted it.
+  const match = normalized.match(/(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)-a([1-9][0-9]*)$/);
   if (!match) return null;
   const [, worker, issue, attempt] = match;
   if (!isValidWorkerId(worker)) return null;

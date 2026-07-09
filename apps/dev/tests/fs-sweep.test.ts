@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -8,6 +8,7 @@ import {
   listLegacyWorkDirs,
   tryAcquireClaimDir,
   listOrphanDirs,
+  reapDeadEmptyWorkerShells,
 } from "../src/runtime/fs.js";
 
 function scratch(): string {
@@ -298,6 +299,75 @@ describe("listOrphanDirs (#444 — skip live siblings)", () => {
       writeFileSync(join(root, "wDEAD", "worker.pid"), DEAD_PID);
       const orphans = await listOrphanDirs(root, Math.floor(Date.now() / 1000));
       expect(orphans.map((o) => o.path)).toEqual([dead]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("reapDeadEmptyWorkerShells (#1355)", () => {
+  it("removes dead empty worker shells across every worker namespace", async () => {
+    const root = scratch();
+    try {
+      for (const ns of ["workers", "go-workers", "scout-workers"]) {
+        const worker = join(root, ns, `w-${ns}`);
+        mkdirSync(worker, { recursive: true });
+        writeFileSync(join(worker, "worker.pid"), DEAD_PID);
+      }
+
+      const result = await reapDeadEmptyWorkerShells(root);
+
+      expect(result.workerDirs.sort()).toEqual([
+        join(root, "go-workers", "w-go-workers"),
+        join(root, "scout-workers", "w-scout-workers"),
+        join(root, "workers", "w-workers"),
+      ].sort());
+      expect(existsSync(join(root, "workers", "w-workers"))).toBe(false);
+      expect(existsSync(join(root, "go-workers", "w-go-workers"))).toBe(false);
+      expect(existsSync(join(root, "scout-workers", "w-scout-workers"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("spares a live worker shell", async () => {
+    const root = scratch();
+    try {
+      const worker = join(root, "workers", "wLIVE");
+      mkdirSync(worker, { recursive: true });
+      writeFileSync(join(worker, "worker.pid"), ALIVE_PID);
+
+      expect(await reapDeadEmptyWorkerShells(root)).toEqual({
+        workerDirs: [],
+        workerPidFiles: [],
+        emptyAttemptDirs: [],
+      });
+      expect(readFileSync(join(worker, "worker.pid"), "utf8")).toBe(ALIVE_PID);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes only empty attempt dirs and preserves non-empty attempt evidence", async () => {
+    const root = scratch();
+    try {
+      const emptyWorker = join(root, "go-workers", "wEMPTYATT");
+      mkdirSync(join(emptyWorker, "12-a1"), { recursive: true });
+      writeFileSync(join(emptyWorker, "worker.pid"), "corrupt");
+
+      const preservedWorker = join(root, "scout-workers", "wPRESERVE");
+      const preservedAttempt = join(preservedWorker, "13-a1");
+      mkdirSync(preservedAttempt, { recursive: true });
+      writeFileSync(join(preservedAttempt, "agent.log.jsonl"), "blocked evidence");
+      writeFileSync(join(preservedWorker, "worker.pid"), DEAD_PID);
+
+      const result = await reapDeadEmptyWorkerShells(root);
+
+      expect(result.workerDirs).toEqual([emptyWorker]);
+      expect(result.emptyAttemptDirs).toEqual([join(emptyWorker, "12-a1")]);
+      expect(existsSync(emptyWorker)).toBe(false);
+      expect(readdirSync(preservedAttempt)).toEqual(["agent.log.jsonl"]);
+      expect(readFileSync(join(preservedWorker, "worker.pid"), "utf8")).toBe(DEAD_PID);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

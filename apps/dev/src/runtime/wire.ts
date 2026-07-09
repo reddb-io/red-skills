@@ -678,6 +678,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   // here never blocks the render. Live-worker dirs and blocked/ready-for-human
   // post-mortem artifacts are preserved (planLivenessReclaim).
   await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
+  await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
   const currentRecords = currentRenderableWorkerRecords(records);
   const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
@@ -1418,13 +1419,13 @@ import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } 
 import type { AttemptDir } from "../core/reclaim.js";
 import type { IssueStateRow } from "./gh.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
-import { parseWorkerAttemptPath } from "../core/worker-paths.js";
+import { allWorkersRoots, parseWorkerAttemptPath } from "../core/worker-paths.js";
 import { parseClaimRecords } from "../core/claim.js";
 
 /**
  * Discover every per-step input boot's sweeps consume, replacing the empty
  * placeholders the native cutover shipped with:
- *   - orphans: every attempt dir under the workers root with its age + issue.
+ *   - orphans: every attempt dir under every worker namespace with its age + issue.
  *   - attemptCap: those same dirs grouped by issue, each stat'd for mtime +
  *     liveness (live attempts are excluded from the cap).
  *   - branches: the three afk/* / afk-attempts/* ref namespaces (snapshot
@@ -1444,7 +1445,7 @@ export async function collectBootOptions(
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
 
   // Orphan dirs + the same dirs grouped by issue for the cap pass.
-  const orphans = await fsx.listOrphanDirs(paths.workersRoot, nowS);
+  const orphans = (await Promise.all(allWorkersRoots(paths.tmpDir).map((root) => fsx.listOrphanDirs(root, nowS)))).flat();
   const byIssue = new Map<number, AttemptDir[]>();
   for (const o of orphans) {
     const parsed = parseWorkerAttemptPath(o.path);
@@ -1584,6 +1585,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       ensureGitignoreLine: fsx.ensureGitignoreLine,
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
+      reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
     },
     gh: {
       editLabels: async (issue, remove, add) => {

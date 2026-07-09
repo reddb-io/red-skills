@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   allWorkersRoots,
   buildWorkerAttemptPath,
@@ -13,6 +13,14 @@ import {
 } from "../src/core/worker-paths.js";
 
 describe("worker paths", () => {
+  beforeEach(() => {
+    delete process.env.RED_AFK_WORKERS_NAMESPACE;
+  });
+
+  afterEach(() => {
+    delete process.env.RED_AFK_WORKERS_NAMESPACE;
+  });
+
   it("round-trips the nested worker/issue/attempt layout", () => {
     const path = buildWorkerAttemptPath(".red/tmp/", "wZ2R4", 142, 3);
     expect(path).toBe(".red/tmp/workers/wZ2R4/142-a3");
@@ -35,6 +43,10 @@ describe("worker paths", () => {
 });
 
 describe("worker paths — /go namespace", () => {
+  beforeEach(() => {
+    delete process.env.RED_AFK_WORKERS_NAMESPACE;
+  });
+
   afterEach(() => {
     delete process.env.RED_AFK_WORKERS_NAMESPACE;
   });
@@ -67,6 +79,11 @@ describe("worker paths — /go namespace", () => {
       "/repo/.red/tmp/go-workers",
       "/repo/.red/tmp/scout-workers",
     ]);
+    expect(parseWorkerAttemptPath("/repo/.red/tmp/scout-workers/wSCOUT/15-a2")).toEqual({
+      worker: "wSCOUT",
+      issue: 15,
+      attempt: 2,
+    });
   });
 
   it("allWorkersRoots is namespace-blind (ignores RED_AFK_WORKERS_NAMESPACE)", () => {

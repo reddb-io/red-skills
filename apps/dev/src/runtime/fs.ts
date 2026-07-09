@@ -14,6 +14,7 @@ import {
   readFile,
   rename,
   rm,
+  rmdir,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -21,6 +22,7 @@ import { dirname, join } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
 import { updateState } from "../core/state.js";
+import { allWorkersRoots } from "../core/worker-paths.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -265,6 +267,133 @@ export async function listOrphanDirs(workersRoot: string, nowS: number): Promise
     }
   }
   return out;
+}
+
+export interface DeadEmptyWorkerShellReapResult {
+  workerDirs: string[];
+  workerPidFiles: string[];
+  emptyAttemptDirs: string[];
+}
+
+/** Remove dead worker shells under every worker namespace. A shell is removable
+ * only when its worker.pid is absent/corrupt/dead and the worker dir contains
+ * no non-empty attempt evidence. */
+export async function reapDeadEmptyWorkerShells(tmpDir: string): Promise<DeadEmptyWorkerShellReapResult> {
+  const result: DeadEmptyWorkerShellReapResult = {
+    workerDirs: [],
+    workerPidFiles: [],
+    emptyAttemptDirs: [],
+  };
+
+  for (const workersRoot of allWorkersRoots(tmpDir)) {
+    const partial = await reapDeadEmptyWorkerShellsInRoot(workersRoot);
+    result.workerDirs.push(...partial.workerDirs);
+    result.workerPidFiles.push(...partial.workerPidFiles);
+    result.emptyAttemptDirs.push(...partial.emptyAttemptDirs);
+  }
+
+  return result;
+}
+
+async function reapDeadEmptyWorkerShellsInRoot(workersRoot: string): Promise<DeadEmptyWorkerShellReapResult> {
+  const result: DeadEmptyWorkerShellReapResult = {
+    workerDirs: [],
+    workerPidFiles: [],
+    emptyAttemptDirs: [],
+  };
+  let workers: string[];
+  try {
+    workers = await readdir(workersRoot);
+  } catch {
+    return result;
+  }
+
+  for (const worker of workers) {
+    const workerPath = join(workersRoot, worker);
+    try {
+      const st = await stat(workerPath);
+      if (!st.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const pidPath = join(workerPath, "worker.pid");
+    if (pidAlive(await readText(pidPath))) continue;
+
+    let entries: string[];
+    try {
+      entries = await readdir(workerPath);
+    } catch {
+      continue;
+    }
+
+    const emptyAttemptDirs: string[] = [];
+    let removable = true;
+    for (const entry of entries) {
+      const path = join(workerPath, entry);
+      if (entry === "worker.pid") {
+        try {
+          const st = await stat(path);
+          if (!st.isFile()) removable = false;
+        } catch {
+          // Raced away or missing: still an empty shell candidate.
+        }
+        if (!removable) break;
+        continue;
+      }
+
+      if (!/^[1-9][0-9]*-a[1-9][0-9]*$/.test(entry)) {
+        removable = false;
+        break;
+      }
+
+      try {
+        const st = await stat(path);
+        if (!st.isDirectory()) {
+          removable = false;
+          break;
+        }
+        if ((await readdir(path)).length > 0) {
+          removable = false;
+          break;
+        }
+      } catch {
+        removable = false;
+        break;
+      }
+      emptyAttemptDirs.push(path);
+    }
+    if (!removable) continue;
+
+    const removedEmptyAttemptDirs: string[] = [];
+    for (const dir of emptyAttemptDirs) {
+      try {
+        await rmdir(dir);
+        removedEmptyAttemptDirs.push(dir);
+      } catch {
+        removable = false;
+        break;
+      }
+    }
+    if (!removable) continue;
+
+    let removedPidFile = false;
+    try {
+      if (await pathExists(pidPath)) {
+        await rm(pidPath, { force: true });
+        removedPidFile = true;
+      }
+      await rmdir(workerPath);
+    } catch {
+      continue;
+    }
+
+    result.workerDirs.push(workerPath);
+    if (removedPidFile) result.workerPidFiles.push(pidPath);
+    result.emptyAttemptDirs.push(...removedEmptyAttemptDirs);
+  }
+
+  return result;
 }
 
 /** Liveness probe (kill -0) for a recorded pid string. A blank/non-numeric pid
