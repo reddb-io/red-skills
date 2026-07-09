@@ -364,6 +364,15 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("Do NOT re-run an unbounded full repository suite");
   });
 
+  it("EXIT_PROTOCOL makes the gate command canonical and names the mirage rule (#1334)", () => {
+    expect(EXIT_PROTOCOL).toContain("VALIDATION AUTHORITY");
+    expect(EXIT_PROTOCOL).toContain("the gate command is canonical");
+    expect(EXIT_PROTOCOL).toContain("never add stricter flags");
+    expect(EXIT_PROTOCOL).toContain("--all-targets");
+    expect(EXIT_PROTOCOL).toContain("MIRAGE");
+    expect(EXIT_PROTOCOL).toContain("never report `main` as red");
+  });
+
   it("exitProtocolFor: schema-enabled runner gets the AgentOutput clause spliced in (ADR 0090, #932)", () => {
     const p = exitProtocolFor({ structuredOutput: true });
     expect(p).toContain("<agent-output>");
@@ -553,6 +562,12 @@ describe("buildMergeGate", () => {
     // explains it is the binding gate enforced after DONE
     expect(out).toContain("binding merge gate");
     expect(out).toContain("blocked:validation");
+  });
+
+  it("instructs the agent to run the commands exactly, without stricter flags (#1334)", () => {
+    const out = buildMergeGate(["cargo clippy --workspace"]);
+    expect(out).toContain("EXACTLY as written");
+    expect(out).toContain("never add stricter flags or extra lints");
   });
 
   it("drops blank entries but keeps the real ones", () => {
