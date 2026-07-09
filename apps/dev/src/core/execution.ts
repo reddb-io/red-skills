@@ -64,6 +64,11 @@ export type AgentOutcome =
   | "done"
   | "blocked"
   | "no-sentinel"
+  // External-signal kill (#1308): the inner process was terminated by an OS
+  // signal (SIGKILL/SIGTERM). Carries the signal name in stdout. Routed to
+  // `signal-killed` in AttemptOutcome so the kill cause is recorded distinctly
+  // from a generic crash — same recovery policy as `no-sentinel`.
+  | "signal-killed"
   | "exhausted"
   | "runner-transient"
   | "timeout"
@@ -74,6 +79,33 @@ export type AgentOutcome =
 export const DONE_SIGNAL = "<promise>DONE</promise>";
 export const BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
 export const COMPLETION_SIGNALS: readonly string[] = [DONE_SIGNAL, BLOCKED_SIGNAL];
+
+/** Unix signal exit-code convention: exit code = 128 + signal number. */
+const SIGNAL_EXIT_NAMES: Record<number, string> = {
+  1: "SIGHUP",
+  2: "SIGINT",
+  3: "SIGQUIT",
+  9: "SIGKILL",
+  11: "SIGSEGV",
+  13: "SIGPIPE",
+  15: "SIGTERM",
+};
+
+/**
+ * Returns the signal name and raw exit code if the error message matches the
+ * Orchestrator's "exited with code N" pattern and N is in the signal range
+ * (128–192, i.e. 128 + signal 0–64). Returns null for any other error (#1308).
+ */
+export function extractSignalKill(error: unknown): { signal: string; exitCode: number } | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /exited with code (\d+)/.exec(message);
+  if (!match) return null;
+  const exitCode = parseInt(match[1], 10);
+  if (exitCode < 128 || exitCode > 192) return null;
+  const signalNum = exitCode - 128;
+  const signal = SIGNAL_EXIT_NAMES[signalNum] ?? `SIG${signalNum}`;
+  return { signal, exitCode };
+}
 
 export const DEFAULT_IDLE_TIMEOUT_S = 600;
 
@@ -1298,6 +1330,21 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         branch: input.branch,
         commits: [],
         stdout: error instanceof Error ? error.message : String(error),
+      };
+    }
+    // External-signal kill (#1308): the Orchestrator sets the message to
+    // "${provider.name} exited with code N" when the inner process exits
+    // non-zero. When N is in the 128–192 range (Unix convention: 128 +
+    // signal_number), the process was killed by an OS signal — record the
+    // signal name so the terminal record is actionable, distinct from a plain
+    // crash. Same bounded recovery policy as `no-sentinel` (`crashed` cap).
+    const signalKill = extractSignalKill(error);
+    if (signalKill) {
+      return {
+        outcome: "signal-killed",
+        branch: input.branch,
+        commits: [],
+        stdout: `afk: inner agent killed by ${signalKill.signal} (exit code ${signalKill.exitCode})`,
       };
     }
     // Any OTHER thrown runner error (an error class we don't yet recognize):
