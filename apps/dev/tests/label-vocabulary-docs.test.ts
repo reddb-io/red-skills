@@ -16,6 +16,17 @@ async function readRepoFile(path: string): Promise<string> {
   return readFile(join(ROOT, path), "utf8");
 }
 
+async function readSetupRedSkillsDocs(): Promise<string> {
+  const docs = await Promise.all([
+    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md"),
+    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/REFERENCE.md"),
+    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/INTERVIEW.md"),
+    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/WRITE-CONTRACT.md"),
+    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/ISSUE-SWEEP.md"),
+  ]);
+  return docs.join("\n");
+}
+
 function writeFakeRuntime(root: string, label: string): void {
   const bin = join(root, "skills", "engineering", "afk", "bin");
   mkdirSync(bin, { recursive: true });
@@ -103,7 +114,7 @@ describe("label vocabulary docs", () => {
 
 describe("setup-red-skills docs", () => {
   it("documents Section H as the development-workflow activation on-ramp", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const skill = await readSetupRedSkillsDocs();
     const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
 
     expect(skill).toContain("**Section H — Development workflow.**");
@@ -119,7 +130,7 @@ describe("setup-red-skills docs", () => {
   });
 
   it("documents command guards as repo-owned proxy policy", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const skill = await readSetupRedSkillsDocs();
     const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
     const readme = await readRepoFile("README.md");
 
@@ -143,7 +154,7 @@ describe("setup-red-skills docs", () => {
   });
 
   it("documents the cross-cli runtime shim instead of global plugin-root env vars", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const skill = await readSetupRedSkillsDocs();
     const script = await readRepoFile(
       "plugins/dev/skills/engineering/setup-red-skills/scripts/install-runtime-shim.sh",
     );
@@ -191,7 +202,7 @@ describe("setup-red-skills docs", () => {
   });
 
   it("documents Section A0 plugin activation as the per-directory gate", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const skill = await readSetupRedSkillsDocs();
     expect(skill).toContain("**Section A0 — Plugin activation");
     expect(skill).toContain("plugins.<name>.enabled: true");
     expect(skill).toContain("authorized to create `.red/`");
