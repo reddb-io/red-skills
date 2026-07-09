@@ -12,6 +12,7 @@
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { Output } from "@reddb-io/red-castle";
 import { execTool } from "../runtime/exec.js";
+import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";
@@ -91,7 +92,7 @@ export async function respondCommand(
     async reply(target, replyBody) {
       const flag = isPr ? "pr" : "issue";
       const repoArgs = repo ? ["--repo", repo] : [];
-      await execTool("gh", [flag, "comment", String(target), ...repoArgs, "--body", replyBody], { cwd: root });
+      await execTool("gh", [flag, "comment", String(target), ...repoArgs, "--body", scrubOutbound(replyBody)], { cwd: root });
     },
   };
 
