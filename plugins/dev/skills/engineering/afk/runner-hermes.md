@@ -9,7 +9,7 @@ How `/afk` treats an inner agent that is neither Claude Code nor Codex CLI.
 - The detected runner identity is something other than `claude` or `codex` (i.e. a custom backend the operator pinned via `RED_AFK_RUNNER=<name>`), OR
 - The operator explicitly forces it with `RED_AFK_RUN_MODE=fallback`.
 
-It is the runner-neutral floor described in [`.red/contracts/afk-task.md`](../../../../.red/contracts/afk-task.md): the cross-runner contract assumes nothing about the executor beyond reading the handoff file, executing the work, and emitting the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinel.
+It is the runner-neutral floor described in [`AGENT-PROMPT.md`](./AGENT-PROMPT.md): the cross-runner contract assumes nothing about the executor beyond reading the handoff file, executing the work, and emitting the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinel.
 
 ## What Hermes Does Not Provide
 
