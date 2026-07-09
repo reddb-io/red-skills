@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## setup-red-skills (engineering) - progressive-disclosure split (issue #1360)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `setup-red-skills/SKILL.md` was the densest remaining engineering skill entrypoint, with the whole interview and implementation manual in the hot path instead of a real progressive-disclosure split.
+- **what changed**: Leaned `plugins/dev/skills/engineering/setup-red-skills/SKILL.md` into a hot-path controller with `<what-to-do>` / `<supporting-info>` tags, moved the full setup scope, interview, write contract, and issue-sweep mechanics into co-located reference docs behind resolving links, and re-checked `ask-red` routing coverage. No router change was needed because this was a documentation extraction, not a skill add, rename, removal, or flow change.
+
+---
+
 ## write-a-skill (productivity) - progressive-disclosure split and structural-tag lint hardening (issue #1358)
 
 - **status**: modified
