@@ -129,6 +129,19 @@ export interface LandingDeps {
    * direct path (no PR) → never called.
    */
   onPrResolved?: (prNumber: number) => Promise<void>;
+  /**
+   * Opt-in post-merge-integration gate (#1335). When present, the landing re-runs
+   * the package-scoped feedback gate against the INTEGRATED tree (the worker branch
+   * merged with current origin/<base>) BEFORE pushing to the remote base. A failure
+   * aborts the landing and routes through the existing recovery instead of merging
+   * an unvalidated or stale-main-broken result. Absent (the default) → skipped,
+   * so existing callers that have not yet wired the dep are unchanged.
+   *
+   * Called with the path of the already-integrated worktree:
+   *   - direct path: the detached landing worktree after `integrateOrigin`
+   *   - PR path: the isolated rebase worktree after `preMergeRebase`
+   */
+  postMergeGate?: (mergedTreeDir: string) => Promise<{ ok: boolean }>;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -260,7 +273,13 @@ export type LandingResult =
         // Sensitive-path guard (issue #1102): the branch diff touches a CI
         // workflow file, a package.json lifecycle script, a git hook, or `.red/`
         // trust/gate configuration. Never auto-lands; pages a human.
-        | "sensitive-paths";
+        | "sensitive-paths"
+        // Post-merge-integration gate (#1335): the feedback gate failed on the
+        // integrated (worker branch merged with current origin/<base>) tree. The
+        // landing aborted BEFORE pushing anything to the remote base. The caller
+        // routes this through the existing merge-conflict/validation recovery so
+        // an unvalidated or stale-main-broken result is never merged.
+        | "post-merge-gate";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -538,9 +557,19 @@ async function preMergeRebaseInWorktree(
       branch: input.branch,
       resolveMechanical: deps.resolveMechanicalConflict,
     });
-    if (rebased.ok) return undefined;
-    // Real conflict / exhausted force-with-lease retries → park merge-conflict.
-    return { ok: false, reason: "pr-conflict", locked: input.locked };
+    if (!rebased.ok) {
+      // Real conflict / exhausted force-with-lease retries → park merge-conflict.
+      return { ok: false, reason: "pr-conflict", locked: input.locked };
+    }
+    // Post-merge-integration gate (#1335): re-run the feedback gate on the
+    // rebased worktree (worker branch rebased onto current origin/<base>)
+    // before the admin-merge. A failure aborts here so a stale-main-broken
+    // result is never merged.
+    if (deps.postMergeGate) {
+      const gateResult = await deps.postMergeGate(dir);
+      if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
+    }
+    return undefined;
   } finally {
     await deps.removeRebaseWorktree?.(dir);
   }
@@ -572,6 +601,15 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       inSync: false,
     });
     if (!integrated.ok) return { ok: false, reason: "integrate-failed", locked: input.locked };
+
+    // Post-merge-integration gate (#1335): re-run the feedback gate on the
+    // already-integrated worktree (worker branch merged with current
+    // origin/<base>) before pushing anything to the remote. A failure aborts
+    // here so a stale-main-broken result is never merged.
+    if (deps.postMergeGate) {
+      const gateResult = await deps.postMergeGate(landDir);
+      if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
+    }
 
     const branchTip = input.validatedBranchTip ?? (await resolveRemoteBranchTip(deps.mergeExec, {
       repo: landDir,
