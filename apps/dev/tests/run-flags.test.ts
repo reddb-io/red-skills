@@ -11,8 +11,19 @@ describe("deriveStage (native-path monitor stage detection)", () => {
     timestamp: new Date(0),
   });
 
+  const reasoning = (message = "Thinking through the next change"): AgentStreamEvent => ({
+    type: "reasoning",
+    message,
+    iteration: 1,
+    timestamp: new Date(0),
+  });
+
   it("returns undefined for text chunks (no stage signal)", () => {
     expect(deriveStage({ type: "text", message: "thinking…", iteration: 1, timestamp: new Date(0) })).toBeUndefined();
+  });
+
+  it("maps reasoning without a tool call to plan", () => {
+    expect(deriveStage(reasoning())).toBe("plan");
   });
 
   it("maps Edit/Write tools to impl", () => {
@@ -27,6 +38,28 @@ describe("deriveStage (native-path monitor stage detection)", () => {
   it("maps a vitest / pnpm test run to tests", () => {
     expect(deriveStage(tool("Bash", "pnpm -C pkg test"))).toBe("tests");
     expect(deriveStage(tool("Bash", "./node_modules/.bin/vitest run"))).toBe("tests");
+    expect(deriveStage(tool("Bash", "cargo test --all"))).toBe("tests");
+  });
+
+  it("maps typecheck commands across JS/TS and Rust", () => {
+    expect(deriveStage(tool("Bash", "pnpm typecheck"))).toBe("typecheck");
+    expect(deriveStage(tool("Bash", "cargo check --workspace"))).toBe("typecheck");
+  });
+
+  it("maps lint commands across JS/TS and Rust", () => {
+    expect(deriveStage(tool("Bash", "eslint ."))).toBe("lint");
+    expect(deriveStage(tool("Bash", "cargo clippy --all-targets"))).toBe("lint");
+  });
+
+  it("maps build commands across JS/TS and Rust", () => {
+    expect(deriveStage(tool("Bash", "pnpm build"))).toBe("build");
+    expect(deriveStage(tool("Bash", "cargo build --release"))).toBe("build");
+  });
+
+  it("maps push and review commands", () => {
+    expect(deriveStage(tool("Bash", "git push origin HEAD"))).toBe("push");
+    expect(deriveStage(tool("Bash", "git diff --stat"))).toBe("review");
+    expect(deriveStage(tool("Bash", "git log --oneline -5"))).toBe("review");
   });
 
   it("maps Read/Grep and git ls-files/find to explore", () => {
