@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## afk (engineering) - upstream Steering taxonomy pass (issue #1343)
+
+- **status**: modified
+- **upstream**: —
+- **why**: The AFK skill had become the densest entrypoint in the repo and violated the upstream Steering guidance around Progressive Disclosure. Operators need the load-bearing route and safety rules first, with reference-only runtime detail available on demand.
+- **what changed**: Leaned `plugins/dev/skills/engineering/afk/SKILL.md` into a progressive-disclosure entrypoint, kept the validation-authority and core operating directives in the hot path, and extracted the full operational reference text into `plugins/dev/skills/engineering/afk/docs/OPERATIONS.md` behind pointer links. Re-checked `ask-red` routing coverage; no route inventory change was needed because this was not a skill add, rename, removal, or flow change.
+
+---
+
 ## wayfinder (engineering) — fidelity restoration: Decisions so far, Notes, refer-by-name, one-ticket-per-session, zoom-as-needed (issue #1342)
 
 - **status**: modified

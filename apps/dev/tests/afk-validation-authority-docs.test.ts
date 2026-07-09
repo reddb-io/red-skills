@@ -13,6 +13,10 @@ async function readAfkSkill(): Promise<string> {
   return readFile(join(ROOT, AFK, "SKILL.md"), "utf8");
 }
 
+async function readAfkOperations(): Promise<string> {
+  return readFile(join(ROOT, AFK, "docs", "OPERATIONS.md"), "utf8");
+}
+
 describe("afk validation-authority docs contract (#1334)", () => {
   it("AGENT-PROMPT carries a binding Validation Authority section", async () => {
     const prompt = await readAgentPrompt();
@@ -49,5 +53,13 @@ describe("afk validation-authority docs contract (#1334)", () => {
 
     expect(skill).toContain("The gate command is canonical");
     expect(skill).toContain("never self-impose stricter flags");
+  });
+
+  it("AFK operations reference carries migrated lifecycle and flow-bug guardrails", async () => {
+    const operations = await readAfkOperations();
+
+    expect(operations).toContain("## Issue Lifecycle (the `/afk` slice)");
+    expect(operations).toContain("Empty queue + non-empty backlog = flow bug");
+    expect(operations).toContain("gate census");
   });
 });
