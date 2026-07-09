@@ -258,3 +258,13 @@ describe("wayfinder docs", () => {
     expect(skill).toContain("fetch the full body of a specific child only when");
   });
 });
+
+describe("write-a-skill docs", () => {
+  it("incorporates the upstream Steering glossary concepts into the writing-style framework", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/SKILL.md");
+
+    expect(skill).toContain("Leading Word");
+    expect(skill).toContain("Premature Completion");
+    expect(skill).toContain("Completion Criterion");
+  });
+});
