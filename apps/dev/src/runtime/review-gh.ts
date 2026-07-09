@@ -15,6 +15,7 @@ import type { GhContext } from "./gh.js";
 import type { InlineComment, PrContext, ReviewGh } from "../core/review.js";
 import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../core/source-trust.js";
 import type { ActorTrustVerdict } from "../core/trust-gate.js";
+import { scrubOutbound } from "./outbound-redaction.js";
 
 function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
   const opts: ExecOptions = { cwd: ctx.cwd };
@@ -78,12 +79,12 @@ export function buildReviewGh(ctx: GhContext, resolveTrust?: PrTrustResolver): R
       // goes through a temp JSON file consumed by `gh api --input`.
       const reviewBody = {
         event: "COMMENT" as const,
-        body: payload.summary,
+        body: scrubOutbound(payload.summary),
         comments: payload.comments.map((c: InlineComment) => ({
           path: c.path,
           line: c.line,
           side: "RIGHT" as const,
-          body: c.body,
+          body: scrubOutbound(c.body),
         })),
       };
       const dir = mkdtempSync(join(tmpdir(), "red-review-"));
@@ -98,7 +99,7 @@ export function buildReviewGh(ctx: GhContext, resolveTrust?: PrTrustResolver): R
     },
 
     async comment(pr, body) {
-      await runGh(ctx, ["pr", "comment", String(pr), ...repoArgs(ctx), "--body", body]);
+      await runGh(ctx, ["pr", "comment", String(pr), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
     },
 
     async ensureLabel(name) {
