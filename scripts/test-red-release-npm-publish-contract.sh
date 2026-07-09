@@ -68,6 +68,13 @@ else
   fail "registry smoke must run the real client via npx from the npm registry"
 fi
 
+if grep -qF 'package/dist/code-nav.bundle.min.mjs' "$WORKFLOW" &&
+   grep -qF 'npm tarball missing $expected' "$WORKFLOW"; then
+  pass "pack contract checks the code-nav bundle is in the npm tarball"
+else
+  fail "pack contract must fail when code-nav is missing from the npm tarball"
+fi
+
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
    grep -qF 'dev ${version} ' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"

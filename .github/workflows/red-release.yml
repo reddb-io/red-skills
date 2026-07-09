@@ -466,6 +466,16 @@ jobs:
           pnpm pack --pack-destination .
           tarball="$(ls reddb-io-red-skills-*.tgz | head -n1)"
           echo "packed $tarball"
+          for expected in \
+            package/dist/dev.bundle.min.mjs \
+            package/dist/code-nav.bundle.min.mjs \
+            package/dist/memory.bundle.min.mjs \
+            package/dist/brain.bundle.min.mjs; do
+            if ! tar -tzf "$tarball" | grep -qx "$expected"; then
+              echo "::error::npm tarball missing $expected"
+              exit 1
+            fi
+          done
           # Contract check: install the packed tarball into a throwaway prefix and
           # run the REAL packaged client (the bin the launcher execs) — proves the
           # tarball resolves and runs before we publish it.
