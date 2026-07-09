@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 Sets up the [LLM Wiki](../wiki/REFERENCES.md) pattern. After this runs, the agent has a persistent, incrementally-maintained knowledge base inside `.red/wiki/` and a schema in `.red/agents/wiki.md` that teaches future sessions how to ingest sources, query, and lint.
 
+<what-to-do>
+
 ## Process
 
 Light grilling — three questions, then preview, then write. Don't dump all three at once; ask one, get the answer, move on.
@@ -77,6 +79,7 @@ Use the seed templates bundled with this skill:
 - [schema-template.md](./schema-template.md) → `.red/agents/wiki.md` (substituting placeholders `{{domain}}`, `{{source-types}}`, `{{voice}}`)
 - [index-template.md](./index-template.md) → `.red/wiki/index.md`
 - `log.md` starts with the heading `# Log` and nothing else.
+- For the full bundled template inventory, see [TEMPLATE-REFERENCE.md](./TEMPLATE-REFERENCE.md).
 
 **Append to `.gitignore`:**
 
@@ -112,15 +115,13 @@ Tell the user:
 - Next step: run `/wiki ingest <first source>`.
 - That the schema is living — they can edit `.red/agents/wiki.md` directly, or ask the agent to update it as conventions emerge.
 
-## Bundled templates
+</what-to-do>
 
-- [schema-template.md](./schema-template.md)
-- [index-template.md](./index-template.md)
-- [page-template-entity.md](./page-template-entity.md)
-- [page-template-concept.md](./page-template-concept.md)
-- [page-template-source.md](./page-template-source.md)
-- [page-template-synthesis.md](./page-template-synthesis.md)
-- [examples/research.md](./examples/research.md)
-- [examples/book-reading.md](./examples/book-reading.md)
+<supporting-info>
 
-External references: see [REFERENCES.md](../wiki/REFERENCES.md) in the `wiki` skill.
+## References
+
+- Bundled templates and examples: [TEMPLATE-REFERENCE.md](./TEMPLATE-REFERENCE.md).
+- External LLM Wiki pattern reference: [REFERENCES.md](../wiki/REFERENCES.md) in the `wiki` skill.
+
+</supporting-info>
