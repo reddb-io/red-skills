@@ -782,6 +782,13 @@ function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown> {
       "current.failure_kind": "crash",
     };
   }
+  if (outcome === "signal-killed") {
+    return {
+      ...base,
+      "current.last_exit_code": CRASH_EXIT_CODE,
+      "current.failure_kind": "signal-killed",
+    };
+  }
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
 }
 
