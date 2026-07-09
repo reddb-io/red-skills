@@ -82,6 +82,16 @@ The `runner-error` label is created idempotently by `/setup-red-skills` (see [tr
 
 Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervisor lifetime. Across restarts a new trip yields fresh worker IDs and fresh attempt dirs, so re-tripping never re-touches the previously swept issues. A trip that finds no claimed issues (all workers exited before claiming) parks the slot but posts no envelopes — the attempt-dir sweep is a no-op.
 
+## Fleet Width by Disjunction
+
+The safe fleet width for a given queue is the **degree of disjunction** — the maximum number of concurrently `ready-for-agent` slices that touch non-overlapping file sets.
+
+- **Disjoint queue** (each slice writes to files no other ready slice touches): run the full fleet. `fleet 4` is safe when the queue has four independent file cones.
+- **Partially entangled queue**: lower the fleet width to the number of disjoint groups. If two groups of two slices each are independent between groups but internally serialized via `req:N`, `fleet 2` drains both chains in parallel without risk.
+- **Fully entangled refactor** (every slice touches shared files, serialized via `req:N`): run `fleet 1` or bare `/afk`. Parallel workers share no ready-for-agent work at any moment — extra slots sit idle and raise the risk of a spurious merge conflict should a `req:N` edge be missing.
+
+**Rule: fleet width = degree of disjunction.** Raise it when the queue is disjoint; lower it to `fleet 1` when slices are entangled. The `/to-tickets` slicing skill is responsible for expressing file-level dependencies as `req:N` edges before the queue is published, so a correctly-sliced backlog never produces a file-overlap merge conflict from concurrent workers.
+
 ### Refs
 
 - The bundle's `fleet` / `fleet stop` commands — the entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
