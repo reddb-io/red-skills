@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "2.21.1",
+  "version": "2.21.2",
   "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, interactive /ship finalizer, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
   "author": {
     "name": "reddb.io",
