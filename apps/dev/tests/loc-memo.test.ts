@@ -131,6 +131,46 @@ describe("resolveAttemptLoc — commit-anchored LOC memo (#1210)", () => {
     expect(uncommittedCalls).toBe(2);
   });
 
+  it("recomputes committed LOC exactly once per distinct HEAD while uncommitted stays per tick", async () => {
+    let headSha = "boot-base";
+    let stored: LocMemo | null = null;
+    let uncommitted = { added: 3, removed: 0 };
+    const committedCalls: string[] = [];
+    let uncommittedCalls = 0;
+    const committedByHead = new Map([
+      ["boot-base", { added: 0, removed: 0 }],
+      ["moved-head", { added: 1222, removed: 48 }],
+    ]);
+    const deps = () => ({
+      headSha,
+      compute: async () => {
+        committedCalls.push(headSha);
+        return committedByHead.get(headSha) ?? { added: 0, removed: 0 };
+      },
+      computeUncommitted: async () => {
+        uncommittedCalls += 1;
+        return uncommitted;
+      },
+      readMemo: () => stored,
+      writeMemo: (m: LocMemo) => {
+        stored = m;
+      },
+    });
+
+    await expect(resolveAttemptLoc(deps())).resolves.toEqual({ added: 3, removed: 0 });
+    uncommitted = { added: 5, removed: 1 };
+    await expect(resolveAttemptLoc(deps())).resolves.toEqual({ added: 5, removed: 1 });
+
+    headSha = "moved-head";
+    uncommitted = { added: 0, removed: 0 };
+    await expect(resolveAttemptLoc(deps())).resolves.toEqual({ added: 1222, removed: 48 });
+    await expect(resolveAttemptLoc(deps())).resolves.toEqual({ added: 1222, removed: 48 });
+
+    expect(committedCalls).toEqual(["boot-base", "moved-head"]);
+    expect(uncommittedCalls).toBe(4);
+    expect(stored).toEqual({ sha: "moved-head", added: 1222, removed: 48 });
+  });
+
   it("keeps the claude incremental-commit path correct: committed memo + uncommitted delta sum", async () => {
     // A claude worker commits incrementally. After a commit the committed delta is
     // sha-memoized; any not-yet-committed edits add on top of it.
