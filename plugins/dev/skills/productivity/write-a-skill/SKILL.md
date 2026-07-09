@@ -191,11 +191,17 @@ writing any RedSkills SKILL.md. Each carries a one-line before → after.
    - Before: `## Review` followed by `(Only do this after the draft is complete.)`
    - After: `## Review (after the draft compiles and runs)`
 
-9. **Leading words (prior-triggering domain terms)** — compress the core behavior
-   into one consistent term, repeat that exact term throughout the skill, and
-   confirm it took by watching for it in the agent's reasoning traces.
+9. **Leading Word + Completion Criterion** — compress the core behavior into one
+   pretrained domain term, then bind each step to a checkable completion bar.
+   The Leading Word recruits the right prior every time it appears; the
+   Completion Criterion tells the agent when that unit is actually done.
    - Before: `Build a thin end-to-end path through every layer first, then flesh out.`
-   - After: `Ship a **tracer bullet** first — and say "tracer bullet" every time you mean it.`
+   - After: `Ship a **tracer bullet** first — done only when one request crosses every layer and returns a visible result.`
+
+Use the nine techniques to resist **Premature Completion**: if a step is vague,
+the agent will feel the pull of the later steps and leave early. Sharpen the
+Completion Criterion first; split the phase only when the criterion is
+irreducibly fuzzy and the visible later work keeps causing the rush.
 
 ## Steering failure modes
 
