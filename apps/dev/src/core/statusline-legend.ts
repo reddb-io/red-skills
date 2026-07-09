@@ -9,6 +9,7 @@ export const STATUSLINE_LEGEND_ROWS: readonly TokenLegendRow[] = [
   { token: "5h", name: "five_hour_usage", gloss: "Claude Pro/Max rolling five-hour usage percentage." },
   { token: "7d", name: "seven_day_usage", gloss: "Claude Pro/Max rolling weekly usage percentage." },
   { token: "prs", name: "open_pull_requests", gloss: "Repository open pull-request count." },
+  { token: "cpr", name: "created_pull_requests_today", gloss: "Pull requests created on the local calendar day." },
   { token: "iss", name: "issue_number_or_count", gloss: "Header issue count; worker current issue number." },
   { token: "loc", name: "lines_changed", gloss: "Added and removed line delta as +A -R." },
   { token: "#", name: "issue", gloss: "Plain monitor current issue marker." },

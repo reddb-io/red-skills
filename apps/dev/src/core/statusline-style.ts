@@ -142,9 +142,10 @@ function usageKvs(claude: ClaudeInput | undefined): string[] {
   return parts;
 }
 
-/** `prs=<n> iss=<n>` repo-global counts, each only when > 0. When the cache
- * was served TTL-stale and refresh failed, the first rendered count carries a
- * soft age suffix so day-old counts are never silently shown as current. */
+/** `prs=<n> cpr=<n> iss=<n>` repo-global counts, each only when > 0. When the
+ * cache was served TTL-stale and refresh failed, the first rendered count
+ * carries a soft age suffix so day-old counts are never silently shown as
+ * current. */
 function repoCountsKv(repo: RepoInput | undefined): string[] {
   if (!repo) return [];
   const parts: string[] = [];
@@ -152,9 +153,17 @@ function repoCountsKv(repo: RepoInput | undefined): string[] {
   if (repo.openPrs && repo.openPrs > 0) {
     parts.push(kv("prs", String(repo.openPrs)) + ageStr);
   }
+  if (repo.todayPrs && repo.todayPrs > 0) {
+    // put age on cpr= only when prs= didn't already carry it
+    const cprAge = ageStr && (!repo.openPrs || repo.openPrs === 0) ? ageStr : "";
+    parts.push(kv("cpr", String(repo.todayPrs)) + cprAge);
+  }
   if (repo.openIssues && repo.openIssues > 0) {
-    // put age on iss= only when prs= didn't already carry it
-    const issAge = ageStr && (!repo.openPrs || repo.openPrs === 0) ? ageStr : "";
+    // put age on iss= only when neither prs= nor cpr= already carried it
+    const issAge =
+      ageStr && (!repo.openPrs || repo.openPrs === 0) && (!repo.todayPrs || repo.todayPrs === 0)
+        ? ageStr
+        : "";
     parts.push(kv("iss", String(repo.openIssues)) + issAge);
   }
   return parts;

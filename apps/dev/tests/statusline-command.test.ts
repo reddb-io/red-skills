@@ -75,11 +75,20 @@ async function seedFreshCache(root: string, queue: number, human: number): Promi
 }
 
 /** Pre-seed a FRESH repo-stats cache so collectStatuslineRepo never calls gh. */
-async function seedFreshRepoCache(root: string, openPrs: number, openIssues: number): Promise<void> {
+async function seedFreshRepoCache(
+  root: string,
+  openPrs: number,
+  openIssues: number,
+  todayPrs = 0,
+): Promise<void> {
   const dir = join(root, ".red", "tmp");
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
-  await writeFile(join(dir, "statusline-repo-cache.json"), JSON.stringify({ openPrs, openIssues, ts }), "utf8");
+  await writeFile(
+    join(dir, "statusline-repo-cache.json"),
+    JSON.stringify({ openPrs, todayPrs, openIssues, ts }),
+    "utf8",
+  );
 }
 
 const PAYLOAD = JSON.stringify({
