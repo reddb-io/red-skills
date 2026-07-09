@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { hostname } from "node:os";
+import { hostFingerprintPrefix } from "../core/host-identity.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
@@ -1640,7 +1640,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       // A per-issue read failure drops that issue from the sweep (best-effort).
       claimedIssues: async () => {
         const claimed = [];
-        const hostPrefix = `${hostname()}:`;
+        const hostPrefix = hostFingerprintPrefix();
         for (const [issue, row] of issueStates) {
           if (row.state !== "OPEN") continue;
           if (!row.labels.includes(LABEL_RUNNING)) continue;

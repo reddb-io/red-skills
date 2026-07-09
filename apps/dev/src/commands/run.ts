@@ -80,7 +80,7 @@ import {
   deathCauseForRecoveredWorker,
 } from "../core/process-safety.js";
 import { join } from "node:path";
-import { hostname } from "node:os";
+import { hostFingerprintPrefix, workerIdentity } from "../core/host-identity.js";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
@@ -822,7 +822,7 @@ export function buildProcessDeps(
     // audit comment. The self identity only needs the host for the same-host
     // gate (a cross-host predecessor's log isn't on this filesystem).
     recoveredWorkerDeathCause: (recoveredWorker) =>
-      deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, `${hostname()}:`),
+      deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
       // so two simultaneous boots cannot both claim the same issue. The prior
@@ -1968,8 +1968,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
         runner: c.runner,
         workerId: c.workerId,
         // ADR 0066 claimant identity: `host:worker_id`, unique per worker process
-        // per host so the GitHub-native claim never collides across machines.
-        claimant: `${hostname()}:${c.workerId}`,
+        // per host so the GitHub-native claim never collides across machines. The
+        // host half is a fingerprint, never the raw name — it lands in public
+        // issue comments (#1327).
+        claimant: workerIdentity(c.workerId),
         tmpDir: c.issueTemplate.tmpDir,
         attempt,
         attemptDir,
