@@ -8,6 +8,7 @@ import { teardownWedgedSupervisor } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
+import { reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 
 export interface FleetLaunchResult {
   status: "launched";
@@ -22,16 +23,6 @@ export interface FleetStopResult {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function readPid(path: string): Promise<number | null> {
-  try {
-    const raw = (await readFile(path, "utf8")).trim();
-    if (!/^\d+$/.test(raw)) return null;
-    return Number(raw);
-  } catch {
-    return null;
-  }
-}
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -106,15 +97,15 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
   const tmp = join(root, ".red", "tmp");
   const pidFile = join(tmp, "afk-supervisor.pid");
   const stopFile = join(tmp, "afk-supervisor.stop");
-  const pid = await readPid(pidFile);
+  const supervisor = await reapStaleSupervisorState(tmp, isLivePid);
+  if (supervisor.status === "stale") {
+    stdout.write(`no fleet running (stale supervisor files under .red/tmp — cleaned).\n`);
+    return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
+  }
+  const pid = supervisor.pid;
   if (!pid) {
     stdout.write("no fleet running.\n");
     return { status: "none" };
-  }
-  if (!isLivePid(pid)) {
-    await rm(pidFile, { force: true });
-    stdout.write(`no fleet running (stale pid file at .red/tmp/afk-supervisor.pid — cleaning).\n`);
-    return { status: "stale", pid };
   }
   await writeFile(stopFile, "", "utf8");
   const deadline = Date.now() + 30_000;
@@ -154,8 +145,12 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   await mkdir(tmp, { recursive: true });
   const pidFile = join(tmp, "afk-supervisor.pid");
   const logFile = join(tmp, "afk-supervisor.log");
-  const existing = await readPid(pidFile);
-  if (existing && isLivePid(existing)) {
+  const supervisor = await reapStaleSupervisorState(tmp, isLivePid);
+  if (supervisor.status === "stale") {
+    stdout.write(`cleaned stale supervisor files under .red/tmp before fleet launch.\n`);
+  }
+  const existing = supervisor.status === "live" ? supervisor.pid : null;
+  if (existing) {
     // A live PID is not necessarily a healthy fleet (#407): a supervisor whose
     // #406 heartbeat has gone stale past RED_AFK_SUPERVISOR_STALE_S is hard-hung
     // (drain loop wedged) and cannot re-arm itself. This launch is an
