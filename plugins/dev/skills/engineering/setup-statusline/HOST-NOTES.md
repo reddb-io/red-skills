@@ -1,9 +1,71 @@
-# Host notes — why each host branch is shaped the way it is
+# Host Notes
 
-Reference material for the three host branches in `SKILL.md`. Read the section for
-the branch you are wiring; each is rationale, not an extra step.
+Reference material for the host branches in `SKILL.md`. Read only the section for
+the branch you are wiring; these notes preserve the recipes, line-shape rules,
+and rationale outside the hot path.
 
-## Claude Code — why the statusLine command is shaped this way
+## Shared Architecture And Line Shapes
+
+Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and live AFK state. **The two hosts get two shapes (per-runner split, ADR 0003):**
+
+- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%` — **then one line per live AFK worker**. The worker line is a **terse, colored `k=v` form** that reads as a visual sibling of the header — every token follows the header's `key=value` colour convention:
+
+  ```
+  w82UX  run=claude opus high  iss=1173  tests  00:04:41  loc=+10 -11  tks=34k  tls=11 rsn=13 txt=0
+  ```
+
+  Every `k=v` key on this line is **exactly 3 letters** (house rule). The `wID` is **bold + red**; then `run=<runner> <model> <effort>` (model shortened, e.g. `claude-opus-4-8` → `opus`; the effort word is omitted when unavailable), `iss=<issue-number>` (the bare ISSUE NUMBER from the worker's `current.number`, populated for BOTH `/afk` and `/go` lanes — not a `done/total` counter), the bare `<stage>` word (no `stage:` prefix, no standalone `#<n>` token), the required `HH:MM:SS` elapsed, `loc=+A -R`, `tks=<humanized>` (SI k/M/B token total), and the vitals as INDIVIDUAL 3-letter `k=v` pairs `tls=<t> rsn=<r> txt=<x>` (never a nested `stats=…:…` blob). The `/afk monitor` dashboard uses the same vitals vocabulary (`tls`/`rsn`/`txt`) while keeping its fuller row shape. The truncated issue TITLE, the `[live]`/`[quiet]` badge, `wait`, and `log` are **dropped** here — that verbosity stays on the fuller `/afk monitor` line. The two surfaces share only the per-worker FIELD DATA (`workerFields`), never a renderer, so the terse statusline form never bleeds into the monitor. Zero live workers → only the header line.
+
+  The **`/afk monitor` dashboard keeps its fuller per-worker row** (title, `[live]`/`[quiet]`, `wait`, `log`) — it is a full dashboard, not a compact statusline — but its vitals tokens are the same `tls`/`rsn`/`txt` vocabulary as the statusline.
+
+  For an on-demand decode table, run `red-skills-dev statusline --legend` or `red-skills-dev monitor --legend`. The legend prints `token / name / gloss` rows and exits without rendering the live statusline or monitor surface.
+- **Codex — single line.** The `tui.status_line` footer is single-line only, so the plain producer stays ONE aggregate line (project · model · context · usage · repo counts · the AFK block). The multi-line layout is Claude-Code-only.
+
+The AFK rows are quiet when no worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
+
+**Host capabilities differ; the product architecture should not.** Treat the RedSkills statusline as:
+
+1. A shared producer: the dev bundle's `statusline` subcommand.
+2. Host adapters: Claude Code's command-backed `statusLine`; Codex's global `tui.status_line` list and plugin `SessionStart` hook.
+3. Fallback visibility: `/afk monitor`, which works when a host has no command-backed footer.
+
+This mirrors how Codex itself organizes customization: skills define reusable workflows, plugins distribute skills plus hooks/MCP/apps, `config.toml` stores host settings, and hooks attach lifecycle behavior next to the active plugin/config layer. Keep RedSkills logic in the bundle and keep host-specific wiring in the host sections below.
+
+## Claude Code Adapter Recipe
+
+1. Inspect the repo: `.red/config.yaml`, `.claude/settings.json`, and whether `jq` is available.
+
+2. **Early exit — opt-out:** if `.red/config.yaml` has top-level `statusline: false` or nested `afk.statusline: false`, stop and tell the user it is disabled. Do not proceed.
+
+3. **Early exit — already configured:** if `.claude/settings.json` already has `statusLine`, do not overwrite it unless the user explicitly asked to replace it (then replace only `statusLine`, preserving all other keys).
+
+4. Write the RedSkills statusline:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "sh -c 'b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
+    "refreshInterval": 5
+  }
+}
+```
+
+**Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
+
+Use `jq` to merge when `.claude/settings.json` already exists; create `.claude/`
+and a fresh file when it is missing. Keep unrelated settings intact.
+
+5. Verify: confirm `.claude/settings.json` is valid JSON and has `.statusLine.command`. Unlike the old `$CLAUDE_PLUGIN_ROOT` form, you **can** prove this one renders by piping a minimal session JSON into the **same `sh -c '…'` command from step 4** (no need to re-type it):
+
+```bash
+printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PWD" \
+  | <the step-4 statusLine command>
+```
+
+It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`); when AFK workers are live it prints one additional row per worker below it. Under `NO_COLOR` the same command collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
+
+## Claude Code Rationale
 
 **Why this shape, not `$CLAUDE_PLUGIN_ROOT`.** Claude Code does **not** export
 `CLAUDE_PLUGIN_ROOT` (nor `CLAUDE_PROJECT_DIR`) to a `statusLine` command — those
@@ -34,7 +96,60 @@ intact.
 This respects ADR 0084: the documented command stays cached-bundle-first and
 never fetches synchronously in a render path.
 
-## Codex — surviving config resets
+## Codex Adapter Recipe
+
+Codex configures its footer through the `tui.status_line` key in `config.toml`
+— an ordered list of **built-in** item identifiers (`project`, `git-branch`,
+`model-with-reasoning`, `context-remaining`, `task-progress`, `current-dir`,
+…). When unset, Codex currently uses `["model-with-reasoning",
+"context-remaining", "current-dir"]`; set it to `[]` to hide the footer.
+This skill offers the **global** `~/.codex/config.toml` path because the footer
+is a personal host preference, not repo state. There is no command hook, so the
+shared RedSkills `statusline` producer cannot be injected into the footer yet.
+
+Codex has a native `/statusline` command for picking and reordering these
+footer items and persisting them to `config.toml`. The dev bundle also exposes
+an explicit inspector/fixer:
+
+```bash
+red-skills-dev codex-statusline
+red-skills-dev codex-statusline --fix
+```
+
+The inspector reports the active `tui.status_line`, flags a missing
+`task-progress` widget, prints the recommended order, and reminds the operator
+that rich AFK worker state still lives in `/afk monitor`. `--fix` is explicit:
+it appends `task-progress` to an existing visible footer or installs the
+recommended footer when `status_line` is absent. If the user already has a
+custom `tui.status_line`, preserve it unless they explicitly ask for `--fix`;
+that custom value is the operator's host preference, not repo state.
+
+Offer to set a useful footer (note: this is **global** Codex config, not
+per-repo like the Claude path):
+
+```toml
+[tui]
+status_line = ["project", "git-branch", "model-with-reasoning", "context-remaining", "task-progress"]
+```
+
+**Surviving Codex config resets.** A global `tui.status_line` gets dropped when Codex rewrites `~/.codex/config.toml`, but the dev plugin's Codex `SessionStart` hook re-asserts it so a reset self-heals on the next session start — why and how (the additive, atomic, absent-only re-write) is described below.
+
+This is intentionally host-global and plugin-gated. Codex stores footer
+preferences in `~/.codex/config.toml`, while RedSkills gates global hook side
+effects on the repo's `.red/config.yaml` `plugins.dev.enabled: true` flag. That
+keeps the installed plugin available everywhere but inert outside opted-in
+repos, matching the rest of the RedSkills hook model.
+
+For live AFK visibility under Codex, `/afk monitor` remains the canonical
+dashboard. Normal `/afk run` launches and `/afk fleet` launches also try to
+attach one read-only Codex monitor agent when the host exposes a sub-agent
+primitive; the prompt comes from `afk codex-monitor-agent --mode run|fleet`.
+When the primitive is unavailable, Codex falls back to the monitor dashboard.
+When Codex ships a command-backed statusline (openai/codex#17827 / #20244), this
+skill can add a `{ type = "command", command = … }` entry pointing at the same
+AFK bundle so the line matches Claude Code's.
+
+## Codex Rationale
 
 That global `tui.status_line` gets dropped whenever Codex rewrites
 `~/.codex/config.toml` (e.g. re-syncing plugin `[hooks.state]` on update),
@@ -45,3 +160,7 @@ when absent** (never clobbers an operator's own value) via an **atomic** write
 the file). So a reset self-heals on the next session start. The hook is additive
 and idempotent; disable it by removing the second `SessionStart` entry in
 `hooks/codex.hooks.json`.
+
+## OpenCode Adapter
+
+Nothing to install: OpenCode is an AFK API-auth runner lane (`--runner opencode`), not an interactive host UI, so it has no footer/statusline adapter — observe it through `/afk monitor`, `/afk dashboard`, and Actions output like any other runner.
