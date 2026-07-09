@@ -72,6 +72,10 @@ export const LABEL_VALIDATION = "blocked:validation";
 export const LABEL_VALIDATION_INFRA = "blocked:validation-infra";
 export const LABEL_STALLED = "blocked:stalled";
 export const LABEL_CRASHED = "blocked:crashed";
+// External-signal kill (#1308): the inner process was terminated by an OS
+// signal (SIGKILL/SIGTERM from the harness or kernel). Distinct from a plain
+// `blocked:crashed` (no-sentinel) so the kill cause is actionable.
+export const LABEL_SIGNAL_KILLED = "blocked:signal-killed";
 export const LABEL_DEPENDENCY = "blocked:dependency";
 export const LABEL_SPEC = "blocked:spec";
 export const LABEL_QUOTA = "blocked:quota";
