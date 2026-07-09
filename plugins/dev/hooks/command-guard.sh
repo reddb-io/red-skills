@@ -423,6 +423,51 @@ EOF
 
 enforce_dev_worktree_policy
 
+is_gh_write_command() {
+  local upper
+  upper="$(printf '%s' "$COMMAND" | tr '[:lower:]' '[:upper:]')"
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+ISSUE[[:space:]]+(COMMENT|CREATE|EDIT)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+PR[[:space:]]+(COMMENT|CREATE|EDIT|REVIEW)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+RELEASE[[:space:]]+(CREATE|EDIT)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+GIST[[:space:]]+CREATE([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])RTK[[:space:]]+PROXY[[:space:]]+GH[[:space:]]+ISSUE[[:space:]]+(COMMENT|CREATE|EDIT)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])RTK[[:space:]]+PROXY[[:space:]]+GH[[:space:]]+PR[[:space:]]+(COMMENT|CREATE|EDIT|REVIEW)([[:space:]]|$) ]] && return 0
+  return 1
+}
+
+has_gh_body_home_path() {
+  [[ "$COMMAND" =~ (^|[[:space:]])(--body|-b)(=|[[:space:]]+).*(/home/[^[:space:]\'\"]+|/Users/[^[:space:]\'\"]+) ]]
+}
+
+has_sensitive_assignment() {
+  local upper
+  upper="$(printf '%s' "$COMMAND" | tr '[:lower:]' '[:upper:]')"
+  [[ "$upper" =~ [A-Z0-9_]*(TOKEN|SECRET|PASSWORD|APIKEY|API_KEY|API-KEY)[A-Z0-9_-]*=[^[:space:]\'\"]+ ]]
+}
+
+enforce_no_leak_gh_write_policy() {
+  is_gh_write_command || return 0
+  local reason=""
+  if [[ "$COMMAND" == *"claude.ai/code/session_"* ]]; then
+    reason="Claude session link"
+  elif has_gh_body_home_path; then
+    reason="absolute home path in gh body text"
+  elif has_sensitive_assignment; then
+    reason="sensitive KEY=value assignment"
+  fi
+
+  [[ -n "$reason" ]] || return 0
+  deny "$(cat <<EOF
+BLOCKED by RedSkills no-leak command guard.
+The gh write command contains a public-output leak pattern: $reason.
+
+Redact and retry. Use placeholders such as [REDACTED_HOME], [REDACTED_SECRET], or [REDACTED_CLAUDE_SESSION] when the reference is unavoidable.
+EOF
+  )"
+}
+
+enforce_no_leak_gh_write_policy
+
 guard_scope_for_path() {
   local path="$1"
   case "$path" in
