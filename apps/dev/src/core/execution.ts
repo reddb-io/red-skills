@@ -14,6 +14,8 @@
 
 import type { AgentStreamEvent, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import { extractAgentOutput } from "@reddb-io/red-castle";
+import { buildLineRedactor } from "../runtime/outbound-redaction.js";
+import { resolveHostEnvAllowlist } from "./host-env-allowlist.js";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "./runner-spec.js";
@@ -870,6 +872,13 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     ? {
         type: "file",
         path: input.logPath,
+        // Capture-time leak masking (issue #1368): every textual stream event
+        // (raw line, text/reasoning message, result, tool-call args) passes
+        // through the precomputed line redactor BEFORE the event sink and the
+        // verbose file sink, so secrets/session links/host identity never
+        // reach the firehose, heartbeat vitals, or log tails that envelopes
+        // later relay. Defense-in-depth under the outbound scrubOutbound seam.
+        redactLine: buildLineRedactor(),
         ...(input.onAgentEvent ? { onAgentStreamEvent: input.onAgentEvent } : {}),
       }
     : undefined;
@@ -1517,7 +1526,15 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     const mounts = opts?.mountPath ? [{ hostPath: opts.mountPath, sandboxPath: opts.mountPath }] : undefined;
     if (mode === "docker") return dockerMod.docker(mounts ? { mounts } : undefined);
     if (mode === "podman") return podmanMod.podman(mounts ? { mounts } : undefined);
-    return noSandboxMod.noSandbox();
+    // Host-env minimization (issue #1368): the agent process inherits only the
+    // allowlisted host env (shell basics, ssh/git/gh, agent auth, RED_*, the
+    // language toolchains) — never the full process.env with unrelated host
+    // secrets. RED_AFK_HOST_ENV_ALLOW extends the list; the literal `*`
+    // disables minimization (pre-#1368 behavior). Per-attempt env delivered by
+    // mutating process.env (the FIX J lane) stays visible because those keys
+    // (CARGO*, RED_*) are allowlisted.
+    const hostEnvAllowlist = resolveHostEnvAllowlist(process.env);
+    return noSandboxMod.noSandbox(hostEnvAllowlist ? { hostEnvAllowlist } : undefined);
   };
   return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor, warn };
 }

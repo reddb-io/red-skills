@@ -114,3 +114,43 @@ export function scrubOutbound(value: unknown, options: ScrubOutboundOptions = {}
     return typeof value === "string" ? value : String(value ?? "");
   }
 }
+
+/**
+ * Build a fast per-line redactor for hot paths (the red-castle stream
+ * `redactLine` hook runs on EVERY agent output line). Unlike
+ * {@link scrubOutbound}, the expensive inputs — env secret values, home dir,
+ * hostname, its fingerprint replacement — are resolved ONCE at build time and
+ * captured in the closure; each call is then pure string work. Same redaction
+ * classes as scrubOutbound minus bare-username masking (see the common-word
+ * username lesson on the COMMON_USERNAMES doc).
+ */
+export function buildLineRedactor(options: ScrubOutboundOptions = {}): (text: string) => string {
+  let secrets: string[] = [];
+  let home = "";
+  let host = "";
+  let hostReplacement = "[REDACTED_HOST]";
+  try {
+    secrets = envSecretValues(options.env ?? process.env);
+    home = options.homeDir || homedir();
+    host = options.hostname ?? osHostname();
+    hostReplacement = options.hostReplacement ?? defaultHostReplacement();
+  } catch {
+    // Partial initialization is fine — each captured input degrades independently.
+  }
+  return (text: string): string => {
+    try {
+      let out = text.replace(CLAUDE_SESSION_RE, "[REDACTED_CLAUDE_SESSION]");
+      for (const secret of secrets) {
+        out = replaceLiteral(out, secret, "[REDACTED_SECRET]");
+      }
+      out = scrubKeyValueSecrets(out);
+      if (home) out = replaceLiteral(out, home, "[REDACTED_HOME]");
+      out = out.replace(/\/home\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/home/[REDACTED_USER]");
+      out = out.replace(/\/Users\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._-])/g, "/Users/[REDACTED_USER]");
+      if (host) out = replaceTokenBoundary(out, host, hostReplacement);
+      return out;
+    } catch {
+      return text;
+    }
+  };
+}

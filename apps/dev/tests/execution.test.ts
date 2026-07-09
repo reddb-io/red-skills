@@ -397,7 +397,22 @@ describe("buildRunOptions", () => {
       makeDeps(async () => fakeResult()),
       { ...baseInput, logPath: "/abs/attempt/dir/sandcastle.log" },
     );
-    expect(opts.logging).toEqual({ type: "file", path: "/abs/attempt/dir/sandcastle.log" });
+    expect(opts.logging).toMatchObject({ type: "file", path: "/abs/attempt/dir/sandcastle.log" });
+  });
+
+  it("wires a capture-time redactLine into file logging (#1368 leak masking)", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, logPath: "/abs/attempt/dir/sandcastle.log" },
+    );
+    const redact = (opts.logging as { redactLine?: (t: string) => string }).redactLine;
+    expect(redact).toBeTypeOf("function");
+    expect(redact!("see https://claude.ai/code/session_abc123 now")).toBe(
+      "see [REDACTED_CLAUDE_SESSION] now",
+    );
+    // Non-leaking machine markers pass through byte-identical.
+    const marker = "<!-- afk:claim v1 worker=w kind=claim runner=codex -->";
+    expect(redact!(marker)).toBe(marker);
   });
 
   it("wires onAgentEvent into logging.onAgentStreamEvent for native-path liveness", () => {
