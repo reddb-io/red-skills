@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
   buildContinuousPushHook,
+  buildNoLeakCommitMsgHook,
   interpretOutcome,
   interpretCompletion,
   enforceStructuredOutput,
@@ -313,13 +318,12 @@ describe("buildRunOptions", () => {
     expect(seen).toEqual([{ mode: "podman", mountPath: undefined }]);
   });
 
-  it("injects ONLY the submodule-ensure host hook when continuous push is not requested (#1224 Part B)", () => {
+  it("injects submodule-ensure + no-leak commit-msg host hooks when continuous push is not requested (#1224 Part B, #1366)", () => {
     // The submodule safety net is ALWAYS present so a fresh worker worktree can
-    // run local vitest even if the ADR 0071 post-checkout hook was missed. With
-    // continuous push off, it is the sole onWorktreeReady hook.
+    // run local vitest even if the ADR 0071 post-checkout hook was missed.
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     const hooks = opts.hooks?.host?.onWorktreeReady;
-    expect(hooks).toHaveLength(1);
+    expect(hooks).toHaveLength(2);
     const command = hooks?.[0]?.command ?? "";
     expect(command.startsWith("sh -c ")).toBe(true);
     // It self-heals the red-castle submodule idempotently (only when absent).
@@ -327,18 +331,28 @@ describe("buildRunOptions", () => {
     expect(command).toContain("git submodule update --init packages/red-castle");
     // It must NOT carry the continuous-push behaviour when push is off.
     expect(command).not.toContain("--force-with-lease");
+
+    const guardCommand = hooks?.[1]?.command ?? "";
+    expect(guardCommand.startsWith("sh -c ")).toBe(true);
+    expect(guardCommand).toContain('hd="$gd/afk-hooks"');
+    expect(guardCommand).toContain('"$hd/commit-msg"');
+    expect(guardCommand).toContain("claude.ai/code/session_");
+    expect(guardCommand).toContain("sensitive environment variable value");
+    expect(guardCommand).toContain('git config --worktree core.hooksPath "$hd"');
   });
 
-  it("injects the submodule net + an onWorktreeReady host hook with the initial push + post-commit install when continuousPush is on", () => {
+  it("injects the submodule net + no-leak hook + continuous-push hook when continuousPush is on", () => {
     const opts = buildRunOptions(
       makeDeps(async () => fakeResult()),
       { ...baseInput, continuousPush: true },
     );
     const hooks = opts.hooks?.host?.onWorktreeReady;
-    // Two host hooks now: [0] submodule safety net, [1] continuous push (#1224).
-    expect(hooks).toHaveLength(2);
+    // Three host hooks now: [0] submodule safety net, [1] no-leak commit-msg,
+    // [2] continuous push (#1224).
+    expect(hooks).toHaveLength(3);
     expect(hooks?.[0]?.command ?? "").toContain("git submodule update --init packages/red-castle");
-    const command = hooks?.[1]?.command ?? "";
+    expect(hooks?.[1]?.command ?? "").toContain('"$hd/commit-msg"');
+    const command = hooks?.[2]?.command ?? "";
     // It is a single portable `sh -c '...'` host command.
     expect(command.startsWith("sh -c ")).toBe(true);
     // (a) initial force-with-lease push of the worker branch up-front.
@@ -418,9 +432,9 @@ describe("buildRunOptions", () => {
       makeDeps(async () => fakeResult()),
       { ...baseInput, continuousPush: true, remote: "backup" },
     );
-    // Index [1]: the continuous-push hook rides behind the always-on submodule
-    // safety net at [0] (#1224 Part B).
-    const command = opts.hooks?.host?.onWorktreeReady?.[1]?.command ?? "";
+    // Index [2]: the continuous-push hook rides behind the always-on submodule
+    // safety net at [0] and no-leak commit-msg hook at [1].
+    const command = opts.hooks?.host?.onWorktreeReady?.[2]?.command ?? "";
     expect(command).toContain("git push backup -u");
     expect(command).toContain("git push backup HEAD --force-with-lease");
   });
@@ -455,6 +469,35 @@ describe("buildContinuousPushHook (issue #191)", () => {
     expect(typeof hook.command).toBe("string");
     // Host hooks accept only { command, timeoutMs? } — no sudo on the host lane.
     expect(Object.keys(hook)).toEqual(["command"]);
+  });
+});
+
+describe("buildNoLeakCommitMsgHook (issue #1366)", () => {
+  it("installs a commit-msg hook that rejects Claude session links and sensitive env values", () => {
+    const repo = mkdtempSync(join(tmpdir(), "afk-no-leak-hook-"));
+    try {
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("sh", ["-c", buildNoLeakCommitMsgHook().command], { cwd: repo, stdio: "ignore" });
+
+      const hook = join(repo, ".git", "afk-hooks", "commit-msg");
+      expect(existsSync(hook)).toBe(true);
+
+      const clean = join(repo, "clean-msg");
+      writeFileSync(clean, "Add public summary\n\nRefs #1366\n", "utf8");
+      execFileSync(hook, [clean], { cwd: repo, env: { ...process.env, TEST_TOKEN: "dummysecretvalue" } });
+
+      const sessionLeak = join(repo, "session-leak-msg");
+      writeFileSync(sessionLeak, "Add summary\n\nclaude.ai/code/session_abc123\n", "utf8");
+      expect(() => execFileSync(hook, [sessionLeak], { cwd: repo })).toThrow();
+
+      const secretLeak = join(repo, "secret-leak-msg");
+      writeFileSync(secretLeak, "Add summary\n\ndummysecretvalue\n", "utf8");
+      expect(() =>
+        execFileSync(hook, [secretLeak], { cwd: repo, env: { ...process.env, TEST_TOKEN: "dummysecretvalue" } }),
+      ).toThrow();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 
