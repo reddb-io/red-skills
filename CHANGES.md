@@ -6,6 +6,24 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## afk (engineering) - post-extraction relative-link repair and link guard (issue #1354)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `plugins/dev/skills/engineering/afk/docs/OPERATIONS.md` moved one directory deeper during the progressive-disclosure extraction, but several links still resolved from the old `afk/` directory.
+- **what changed**: Repaired the extracted operations reference links to sibling docs, parent AFK docs, runner docs, and setup-red-skills/model-tier references. Added a repo-wide local markdown link audit for `plugins/` plus fixture coverage so broken relative links fail the lint surface.
+
+---
+
+## wiki-init (knowledge) - REFERENCES link repair (issue #1354)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `wiki-init/SKILL.md` pointed at `./REFERENCES.md`, but the references file belongs to the sibling `wiki` skill.
+- **what changed**: Retargeted the LLM Wiki reference link to `../wiki/REFERENCES.md`; the new local markdown link audit covers this class of cross-skill reference.
+
+---
+
 ## wayfinder (engineering) - upstream voice pass: fog, frontier, and route language (issue #1350)
 
 - **status**: modified

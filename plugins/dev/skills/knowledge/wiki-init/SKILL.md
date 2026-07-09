@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 **Bootstrap the LLM Wiki with a short interview, then write the layout and agent schema.**
 
-Sets up the [LLM Wiki](./REFERENCES.md) pattern. After this runs, the agent has a persistent, incrementally-maintained knowledge base inside `.red/wiki/` and a schema in `.red/agents/wiki.md` that teaches future sessions how to ingest sources, query, and lint.
+Sets up the [LLM Wiki](../wiki/REFERENCES.md) pattern. After this runs, the agent has a persistent, incrementally-maintained knowledge base inside `.red/wiki/` and a schema in `.red/agents/wiki.md` that teaches future sessions how to ingest sources, query, and lint.
 
 ## Process
 
