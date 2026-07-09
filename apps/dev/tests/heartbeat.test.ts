@@ -39,14 +39,14 @@ describe("heartbeat elapsed formatting", () => {
 describe("heartbeat vitals line", () => {
   it("byte-matches the issue #194 spec example", () => {
     const line = formatVitalsLine({
-      stage: "tests",
+      activity: "tests",
       elapsedSeconds: 842,
       lastStreamLine: "running pnpm test",
       cpu: 12,
       rss: 420,
     });
     expect(line).toBe(
-      '[heartbeat] stage:tests t+00:14:02 last_stream_line="running pnpm test" cpu=12% rss=420M',
+      '[heartbeat] activity:tests t+00:14:02 last_stream_line="running pnpm test" cpu=12% rss=420M',
     );
   });
 
@@ -54,7 +54,7 @@ describe("heartbeat vitals line", () => {
     expect(escapeStreamLine('he said "ok"')).toBe('he said \\"ok\\"');
     expect(escapeStreamLine("a\nb")).toBe("a b");
     const line = formatVitalsLine({
-      stage: "impl",
+      activity: "impl",
       elapsedSeconds: 0,
       lastStreamLine: 'he said "ok"',
       cpu: 0,
@@ -64,8 +64,8 @@ describe("heartbeat vitals line", () => {
   });
 
   it("renders an empty stage as ? like the bash default", () => {
-    const line = formatVitalsLine({ stage: "", elapsedSeconds: 0, lastStreamLine: "", cpu: 0, rss: 0 });
-    expect(line).toBe('[heartbeat] stage:? t+00:00:00 last_stream_line="" cpu=0% rss=0M');
+    const line = formatVitalsLine({ activity: "", elapsedSeconds: 0, lastStreamLine: "", cpu: 0, rss: 0 });
+    expect(line).toBe('[heartbeat] activity:? t+00:00:00 last_stream_line="" cpu=0% rss=0M');
   });
 });
 
@@ -99,15 +99,15 @@ describe("heartbeat interval resolution", () => {
 
 describe("heartbeat firehose record", () => {
   it("is a type=heartbeat envelope carrying identity + vitals", () => {
-    const state: HeartbeatState = { stage: "tests", lastStreamLine: "running pnpm test" };
+    const state: HeartbeatState = { activity: "tests", lastStreamLine: "running pnpm test" };
     const vitals: HeartbeatVitals = { cpu: 12, rss: 420 };
     const record = buildHeartbeatRecord(state, 130, vitals, TS, { worker: "wHB", issue: 250, attempt: 1 });
     expect(record.type).toBe("heartbeat");
-    expect(record.msg).toBe("stage:tests t+00:02:10");
+    expect(record.msg).toBe("activity:tests t+00:02:10");
     expect(record.worker).toBe("wHB");
     expect(record.issue).toBe(250);
     expect(record.attempt).toBe(1);
-    expect(record.stage).toBe("tests");
+    expect(record.activity).toBe("tests");
     expect(record.elapsed).toBe("00:02:10");
     expect(record.cpu).toBe("12");
     expect(record.rss).toBe("420");
@@ -124,7 +124,7 @@ describe("heartbeat tick emit", () => {
     const iterLog: string[] = [];
     const firehose: JsonlLogRecord[] = [];
     const io: HeartbeatTickIO = {
-      readState: () => ({ stage: "tests", lastStreamLine: "running pnpm test" }),
+      readState: () => ({ activity: "tests", lastStreamLine: "running pnpm test" }),
       readVitals: () => ({ cpu: 12, rss: 420 }),
       nowEpoch: () => 1000 + 842,
       appendIterLog: (line) => iterLog.push(line),
@@ -139,27 +139,27 @@ describe("heartbeat tick emit", () => {
     const { io, iterLog, firehose } = makeIO();
     emitHeartbeatTick(io, { startedEpoch: 1000, identity: { worker: "wHB", issue: 250, attempt: 1 } });
     expect(iterLog).toEqual([
-      '[heartbeat] stage:tests t+00:14:02 last_stream_line="running pnpm test" cpu=12% rss=420M',
+      '[heartbeat] activity:tests t+00:14:02 last_stream_line="running pnpm test" cpu=12% rss=420M',
     ]);
     expect(firehose).toHaveLength(1);
     expect(firehose[0]!.type).toBe("heartbeat");
-    expect(firehose[0]!.msg).toBe("stage:tests t+00:14:02");
+    expect(firehose[0]!.msg).toBe("activity:tests t+00:14:02");
   });
 
-  it("re-reads state each tick so a mid-iteration stage flip shows up", () => {
-    let stage = "impl";
-    const { io, iterLog } = makeIO({ readState: () => ({ stage, lastStreamLine: "writing test" }) });
+  it("re-reads state each tick so a mid-iteration activity flip shows up", () => {
+    let activity = "impl";
+    const { io, iterLog } = makeIO({ readState: () => ({ activity, lastStreamLine: "writing test" }) });
     emitHeartbeatTick(io, { startedEpoch: 1000 });
-    stage = "tests";
+    activity = "tests";
     emitHeartbeatTick(io, { startedEpoch: 1000 });
-    expect(iterLog[0]).toContain("stage:impl ");
-    expect(iterLog[1]).toContain("stage:tests ");
+    expect(iterLog[0]).toContain("activity:impl ");
+    expect(iterLog[1]).toContain("activity:tests ");
   });
 
   it("writes the plain line only when no firehose sink is configured", () => {
     const iterLog: string[] = [];
     const io: HeartbeatTickIO = {
-      readState: () => ({ stage: "tests", lastStreamLine: "x" }),
+      readState: () => ({ activity: "tests", lastStreamLine: "x" }),
       readVitals: () => ({ cpu: 0, rss: 0 }),
       nowEpoch: () => 1130,
       appendIterLog: (line) => iterLog.push(line),

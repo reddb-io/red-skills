@@ -26,7 +26,7 @@ export interface HeartbeatVitals {
 
 /** Per-tick state re-read from afk.state.json. */
 export interface HeartbeatState {
-  stage: string;
+  activity: string;
   lastStreamLine: string;
 }
 
@@ -58,7 +58,7 @@ export function escapeStreamLine(stream: string): string {
 }
 
 export interface VitalsLineInput {
-  stage: string;
+  activity: string;
   elapsedSeconds: number;
   lastStreamLine: string;
   cpu: number;
@@ -66,15 +66,14 @@ export interface VitalsLineInput {
 }
 
 /**
- * The exact periodic vitals line appended to afk.log, byte-matching the bash
- * `printf '[heartbeat] stage:%s t+%s last_stream_line="%s" cpu=%s%% rss=%sM\n'`.
+ * The periodic vitals line appended to afk.log.
  * Returned without the trailing newline; the IO layer adds it.
  */
 export function formatVitalsLine(input: VitalsLineInput): string {
-  const stage = input.stage === "" ? "?" : input.stage;
+  const activity = input.activity === "" ? "?" : input.activity;
   const elapsedFmt = formatElapsed(input.elapsedSeconds);
   const stream = escapeStreamLine(input.lastStreamLine);
-  return `[heartbeat] stage:${stage} t+${elapsedFmt} last_stream_line="${stream}" cpu=${input.cpu}% rss=${input.rss}M`;
+  return `[heartbeat] activity:${activity} t+${elapsedFmt} last_stream_line="${stream}" cpu=${input.cpu}% rss=${input.rss}M`;
 }
 
 /**
@@ -252,8 +251,8 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
 /**
  * Build the `type=heartbeat` firehose envelope, composing jsonl-log's
  * {@link buildRecord}. Mirrors the bash `jsonl_log_append_shared` call: the
- * `msg` is `stage:<stage> t+<elapsed>` and the extras carry the same vitals —
- * stage, elapsed (HH:MM:SS), cpu/rss as integer strings, and the escaped
+ * `msg` is `activity:<activity> t+<elapsed>` and the extras carry the same vitals —
+ * activity, elapsed (HH:MM:SS), cpu/rss as integer strings, and the escaped
  * last_stream_line. Identity (worker/issue/attempt) rides the standard
  * envelope fields. The heartbeat never writes the clean agent lane (#243), so
  * this record is only ever appended to the firehose.
@@ -265,15 +264,15 @@ export function buildHeartbeatRecord(
   ts: string,
   identity: FirehoseIdentity = {},
 ): JsonlLogRecord {
-  const stage = state.stage === "" ? "?" : state.stage;
+  const activity = state.activity === "" ? "?" : state.activity;
   const elapsedFmt = formatElapsed(elapsedSeconds);
   const stream = escapeStreamLine(state.lastStreamLine);
-  return buildRecord("heartbeat", `stage:${stage} t+${elapsedFmt}`, ts, {
+  return buildRecord("heartbeat", `activity:${activity} t+${elapsedFmt}`, ts, {
     worker: identity.worker ?? "",
     issue: identity.issue ?? 0,
     attempt: identity.attempt ?? 0,
     extra: {
-      stage,
+      activity,
       elapsed: elapsedFmt,
       cpu: String(vitals.cpu),
       rss: String(vitals.rss),
@@ -284,7 +283,7 @@ export function buildHeartbeatRecord(
 
 /** Injected per-tick IO: re-read state, read process vitals, get a clock. */
 export interface HeartbeatTickIO {
-  /** Re-read `current.stage` / `current.last_stream_line` from afk.state.json. */
+  /** Re-read `current.activity` / `current.last_stream_line` from afk.state.json. */
   readState: () => HeartbeatState;
   /** Best-effort cpu/rss from `ps` against the orchestrator pid. */
   readVitals: () => HeartbeatVitals;
@@ -317,7 +316,7 @@ export function emitHeartbeatTick(io: HeartbeatTickIO, options: HeartbeatTickOpt
 
   io.appendIterLog(
     formatVitalsLine({
-      stage: state.stage,
+      activity: state.activity,
       elapsedSeconds,
       lastStreamLine: state.lastStreamLine,
       cpu: vitals.cpu,

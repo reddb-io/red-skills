@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseRunFlags, RunFlagError, deriveStage } from "../src/commands/run.js";
+import { parseRunFlags, RunFlagError, deriveActivity } from "../src/commands/run.js";
 import type { AgentStreamEvent } from "../src/core/execution.js";
 
-describe("deriveStage (native-path monitor stage detection)", () => {
+describe("deriveActivity (native-path monitor stage detection)", () => {
   const tool = (name: string, formattedArgs: string): AgentStreamEvent => ({
     type: "toolCall",
     name,
@@ -19,17 +19,17 @@ describe("deriveStage (native-path monitor stage detection)", () => {
   });
 
   it("returns undefined for text chunks (no stage signal)", () => {
-    expect(deriveStage({ type: "text", message: "thinking…", iteration: 1, timestamp: new Date(0) })).toBeUndefined();
+    expect(deriveActivity({ type: "text", message: "thinking…", iteration: 1, timestamp: new Date(0) })).toBeUndefined();
   });
 
   it("returns undefined for reasoning events (never overwrites a concrete stage)", () => {
-    expect(deriveStage(reasoning())).toBeUndefined();
+    expect(deriveActivity(reasoning())).toBeUndefined();
   });
 
   it("reasoning after a concrete tool call does not clobber the concrete stage (#1389)", () => {
     // Simulate: reasoning → toolCall(Edit) → reasoning
     // The derived stage after the sequence must end at "impl", not "plan".
-    const stages = [reasoning(), tool("Edit", "src/foo.ts"), reasoning()].map(deriveStage);
+    const stages = [reasoning(), tool("Edit", "src/foo.ts"), reasoning()].map(deriveActivity);
     expect(stages).toEqual([undefined, "impl", undefined]);
     // The last non-undefined stage in the stream is "impl", not "plan".
     const lastConcrete = stages.filter(Boolean).at(-1);
@@ -37,60 +37,60 @@ describe("deriveStage (native-path monitor stage detection)", () => {
   });
 
   it("maps Edit/Write tools to impl", () => {
-    expect(deriveStage(tool("Edit", "src/foo.ts"))).toBe("impl");
-    expect(deriveStage(tool("Write", "src/bar.ts"))).toBe("impl");
+    expect(deriveActivity(tool("Edit", "src/foo.ts"))).toBe("impl");
+    expect(deriveActivity(tool("Write", "src/bar.ts"))).toBe("impl");
   });
 
   it("maps a git commit to commit (before the generic test/explore checks)", () => {
-    expect(deriveStage(tool("Bash", "git commit -m 'feat: x'"))).toBe("commit");
+    expect(deriveActivity(tool("Bash", "git commit -m 'feat: x'"))).toBe("commit");
   });
 
   it("maps a vitest / pnpm test run to tests", () => {
-    expect(deriveStage(tool("Bash", "pnpm -C pkg test"))).toBe("tests");
-    expect(deriveStage(tool("Bash", "./node_modules/.bin/vitest run"))).toBe("tests");
-    expect(deriveStage(tool("Bash", "cargo test --all"))).toBe("tests");
+    expect(deriveActivity(tool("Bash", "pnpm -C pkg test"))).toBe("tests");
+    expect(deriveActivity(tool("Bash", "./node_modules/.bin/vitest run"))).toBe("tests");
+    expect(deriveActivity(tool("Bash", "cargo test --all"))).toBe("tests");
   });
 
   it("maps typecheck commands across JS/TS and Rust", () => {
-    expect(deriveStage(tool("Bash", "pnpm typecheck"))).toBe("typecheck");
-    expect(deriveStage(tool("Bash", "cargo check --workspace"))).toBe("typecheck");
+    expect(deriveActivity(tool("Bash", "pnpm typecheck"))).toBe("typecheck");
+    expect(deriveActivity(tool("Bash", "cargo check --workspace"))).toBe("typecheck");
   });
 
   it("maps lint commands across JS/TS and Rust", () => {
-    expect(deriveStage(tool("Bash", "eslint ."))).toBe("lint");
-    expect(deriveStage(tool("Bash", "cargo clippy --all-targets"))).toBe("lint");
+    expect(deriveActivity(tool("Bash", "eslint ."))).toBe("lint");
+    expect(deriveActivity(tool("Bash", "cargo clippy --all-targets"))).toBe("lint");
   });
 
   it("maps build commands across JS/TS and Rust", () => {
-    expect(deriveStage(tool("Bash", "pnpm build"))).toBe("build");
-    expect(deriveStage(tool("Bash", "cargo build --release"))).toBe("build");
+    expect(deriveActivity(tool("Bash", "pnpm build"))).toBe("build");
+    expect(deriveActivity(tool("Bash", "cargo build --release"))).toBe("build");
   });
 
   it("maps push and review commands", () => {
-    expect(deriveStage(tool("Bash", "git push origin HEAD"))).toBe("push");
-    expect(deriveStage(tool("Bash", "git diff --stat"))).toBe("review");
-    expect(deriveStage(tool("Bash", "git log --oneline -5"))).toBe("review");
+    expect(deriveActivity(tool("Bash", "git push origin HEAD"))).toBe("push");
+    expect(deriveActivity(tool("Bash", "git diff --stat"))).toBe("review");
+    expect(deriveActivity(tool("Bash", "git log --oneline -5"))).toBe("review");
   });
 
   it("maps Read/Grep and git ls-files/find to explore", () => {
-    expect(deriveStage(tool("Read", "src/foo.ts"))).toBe("explore");
-    expect(deriveStage(tool("Grep", "needle"))).toBe("explore");
-    expect(deriveStage(tool("Bash", "git ls-files"))).toBe("explore");
-    expect(deriveStage(tool("Bash", "find . -name '*.ts'"))).toBe("explore");
+    expect(deriveActivity(tool("Read", "src/foo.ts"))).toBe("explore");
+    expect(deriveActivity(tool("Grep", "needle"))).toBe("explore");
+    expect(deriveActivity(tool("Bash", "git ls-files"))).toBe("explore");
+    expect(deriveActivity(tool("Bash", "find . -name '*.ts'"))).toBe("explore");
   });
 
   it("does not mislabel an explore/read of a 'test'-containing path as tests (#589)", () => {
-    expect(deriveStage(tool("Read", "src/components/test-utils.ts"))).toBe("explore");
-    expect(deriveStage(tool("Read", "src/foo.test.ts"))).toBe("explore");
-    expect(deriveStage(tool("Glob", "**/*.test.ts"))).toBe("explore");
+    expect(deriveActivity(tool("Read", "src/components/test-utils.ts"))).toBe("explore");
+    expect(deriveActivity(tool("Read", "src/foo.test.ts"))).toBe("explore");
+    expect(deriveActivity(tool("Glob", "**/*.test.ts"))).toBe("explore");
     // Editing a test file is implementation work, not a test run.
-    expect(deriveStage(tool("Edit", "src/foo.test.ts"))).toBe("impl");
+    expect(deriveActivity(tool("Edit", "src/foo.test.ts"))).toBe("impl");
     // A real test-runner invocation is still tests.
-    expect(deriveStage(tool("Bash", "pnpm test src/foo.test.ts"))).toBe("tests");
+    expect(deriveActivity(tool("Bash", "pnpm test src/foo.test.ts"))).toBe("tests");
   });
 
   it("returns undefined for an unrecognised tool with no stage signal", () => {
-    expect(deriveStage(tool("WebFetch", "https://example.com"))).toBeUndefined();
+    expect(deriveActivity(tool("WebFetch", "https://example.com"))).toBeUndefined();
   });
 });
 

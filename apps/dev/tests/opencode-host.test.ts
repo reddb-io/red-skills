@@ -11,10 +11,10 @@ function running(
   worker_id: string,
   issue: number,
   title: string,
-  stage: string,
+  activity: string,
   phase = "coding",
 ): WorkerRecord {
-  return { worker_id, issue, title, slug: title, stage, phase, started_at: "x", status: "running" };
+  return { worker_id, issue, title, slug: title, activity, phase, started_at: "x", status: "running" };
 }
 
 /** In-memory fake of the minimum OpenCode server interactions (no live process). */
@@ -59,7 +59,7 @@ describe("opencode host sink (#888)", () => {
   });
 
   it("reconciles against the tracked tasks the server already holds", async () => {
-    const tracked: TrackedTask[] = [{ key: "wAAAA:22", stage: "impl", phase: "coding" }];
+    const tracked: TrackedTask[] = [{ key: "wAAAA:22", activity: "impl", phase: "coding" }];
     const client = fakeClient({ available: true, tracked });
     const result = await openCodeHostSinkPlan(workers, client, "sess-1");
     // Already in steady state on the server → no writes, nothing published.

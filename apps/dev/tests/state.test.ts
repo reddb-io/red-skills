@@ -19,17 +19,17 @@ describe("state", () => {
     const missing = await readState(join(dir, "missing.json"));
     expect(missing.version).toBe(1);
     expect(missing.envelope.posted).toBe(false);
-    expect(missing.current.stage).toBe("");
+    expect(missing.current.activity).toBe("");
   });
 
   it("writes atomically and supports dotted updates", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const path = join(dir, "afk.state.json");
-    await initState(path, { worker_id: "wAAAA", pid: 123, "current.stage": "impl" });
-    await updateState(path, { "current.stage": "tests", "envelope.posted": true, queue: [2, 3] });
+    await initState(path, { worker_id: "wAAAA", pid: 123, "current.activity": "impl" });
+    await updateState(path, { "current.activity": "tests", "envelope.posted": true, queue: [2, 3] });
     const state = await readState(path);
     expect(state.worker_id).toBe("wAAAA");
-    expect(state.current.stage).toBe("tests");
+    expect(state.current.activity).toBe("tests");
     expect(state.envelope.posted).toBe(true);
     expect(state.queue).toEqual([2, 3]);
     expect(await readFile(path, "utf8")).toContain('"version":1');
@@ -38,7 +38,7 @@ describe("state", () => {
   it("round-trips resolved base provenance fields through state updates", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const path = join(dir, "afk.state.json");
-    await initState(path, { worker_id: "wAAAA", pid: 123, "current.stage": "setup" });
+    await initState(path, { worker_id: "wAAAA", pid: 123, "current.activity": "setup" });
 
     await updateState(path, {
       "current.base": "main",
@@ -74,7 +74,7 @@ describe("state", () => {
       worker_id: "wL30L",
       pid: 4242,
       "current.number": 583,
-      "current.stage": "setup",
+      "current.activity": "setup",
     });
     expect(seeded.pid).toBe(4242);
     const onDisk = JSON.parse(await readFile(path, "utf8"));
@@ -83,12 +83,12 @@ describe("state", () => {
 
     // A subsequent vitals patch must NOT clobber the identity (the bug was the
     // sink seeding from DEFAULT and stranding the worker with no pid/number).
-    const after = await updateState(path, { "current.cost_usd": 4.01, "current.stage": "tests" });
+    const after = await updateState(path, { "current.cost_usd": 4.01, "current.activity": "tests" });
     expect(after.pid).toBe(4242);
     expect(after.worker_id).toBe("wL30L");
     expect(after.current.number).toBe(583);
     expect(after.current.cost_usd).toBe(4.01);
-    expect(after.current.stage).toBe("tests");
+    expect(after.current.activity).toBe("tests");
   });
 
   it("preserves stamped identity, vitals, and loc when a stage writer carries default identity fields", async () => {
@@ -106,7 +106,7 @@ describe("state", () => {
       "current.runner": "codex",
       "current.model": "gpt-5",
       "current.effort": "high",
-      "current.stage": "setup",
+      "current.activity": "setup",
       "current.phase": "setup",
       "current.tools_called_count": 9,
       "current.loc_added": 22,
@@ -126,7 +126,7 @@ describe("state", () => {
         runner: "",
         model: "",
         effort: "",
-        stage: "impl",
+        activity: "impl",
       },
     });
 
@@ -140,7 +140,7 @@ describe("state", () => {
     expect(after.current.runner).toBe("codex");
     expect(after.current.model).toBe("gpt-5");
     expect(after.current.effort).toBe("high");
-    expect(after.current.stage).toBe("impl");
+    expect(after.current.activity).toBe("impl");
     expect(after.current.tools_called_count).toBe(9);
     expect(after.current.loc_added).toBe(22);
     expect(after.current.loc_removed).toBe(3);
@@ -159,7 +159,7 @@ describe("state", () => {
       "current.runner": "codex",
       "current.model": "gpt-5",
       "current.effort": "high",
-      "current.stage": "tests",
+      "current.activity": "tests",
       "current.phase": "coding",
     });
 
@@ -182,7 +182,7 @@ describe("state", () => {
       runner: "codex",
       model: "gpt-5",
       effort: "high",
-      stage: "tests",
+      activity: "tests",
       phase: "validating",
     });
   });

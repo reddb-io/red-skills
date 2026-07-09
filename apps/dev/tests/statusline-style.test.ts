@@ -41,7 +41,7 @@ function worker(over: Partial<CompactWorker> = {}): CompactWorker {
       current: {
         number: 17,
         title: "redesign statusline",
-        stage: "impl",
+        activity: "impl",
         model: "claude-opus-4-8",
         effort: "high",
         started_at: new Date((NOW - 300) * 1000).toISOString(),
@@ -157,7 +157,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).toContain("w1"); // bare wID (no [live]/[quiet] badge)
     expect(t).toContain("run=claude opus high"); // runner + shortened model + effort
     expect(t).toContain("iss=17"); // the ISSUE NUMBER (current.number), not a done/total counter
-    expect(t).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
+    expect(t).toContain("impl"); // bare stage (no activity: prefix, no #<n>)
     expect(t).toContain("00:05:00"); // elapsed REQUIRED
     expect(t).toContain("loc=+12 -3"); // diff as loc= k=v
     expect(t).toContain("tks=—"); // claude has no live usage stream yet
@@ -171,7 +171,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).not.toContain("[live]");
     expect(t).not.toContain("[quiet]");
     expect(t).not.toContain("redesign statusline"); // no title
-    expect(t).not.toContain("stage:"); // no stage: prefix
+    expect(t).not.toContain("activity:"); // no activity: prefix
     expect(t).not.toContain("wait"); // no wait token
     expect(t).not.toMatch(/\blog:/); // no log token
     expect(t).not.toContain("stats="); // vitals are not a nested blob
@@ -282,7 +282,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
         current: {
           ...worker().state.current,
           number: 1293,
-          stage: "typecheck",
+          activity: "typecheck",
           input_tokens: 0,
           output_tokens: 0,
           tools_called_count: 0,
@@ -345,7 +345,7 @@ describe("statusline style — full themed assembly", () => {
               number: 1243,
               model: "gpt-5.5",
               effort: "high",
-              stage: "validation",
+              activity: "validation",
               input_tokens: 32000,
               output_tokens: 2000,
               tools_called_count: 38,
@@ -364,7 +364,7 @@ describe("statusline style — full themed assembly", () => {
               number: 9,
               model: undefined,
               effort: undefined,
-              stage: "impl",
+              activity: "impl",
               tools_called_count: 8,
             },
           },
@@ -398,7 +398,7 @@ describe("statusline style — full themed assembly", () => {
             ...worker().state,
             worker_id: "requeue-adopt",
             origin: "requeue",
-            current: { ...worker().state.current, number: 1293, stage: "lint" },
+            current: { ...worker().state.current, number: 1293, activity: "lint" },
           },
           diffAdded: 0,
           diffRemoved: 0,
@@ -408,7 +408,7 @@ describe("statusline style — full themed assembly", () => {
             ...worker().state,
             worker_id: "wA",
             origin: "afk",
-            current: { ...worker().state.current, number: 17, stage: "impl", tools_called_count: 3 },
+            current: { ...worker().state.current, number: 17, activity: "impl", tools_called_count: 3 },
           },
           diffAdded: 12,
           diffRemoved: 3,
@@ -426,6 +426,36 @@ describe("statusline style — full themed assembly", () => {
     expect(agent).toContain("org=afk");
     expect(agent).toContain("loc=+12 -3");
     expect(agent).toContain("tls=3");
+  });
+
+  it("joins phase and activity as `phase·activity`, and renders either half bare when the other is absent", () => {
+    const rowFor = (current: Record<string, unknown>) => {
+      const out = styleStatusline(input, {
+        now: NOW,
+        workers: [
+          worker({
+            state: {
+              ...worker().state,
+              worker_id: "wP",
+              origin: "afk",
+              current: { ...worker().state.current, ...current },
+            },
+          }),
+        ],
+      });
+      return stripAnsi(out).split("\n")[1];
+    };
+
+    // Both present → joined. This is the everyday agent row.
+    expect(rowFor({ number: 17, phase: "coding", activity: "impl" })).toContain("coding·impl");
+    // Phase only (a worker between stream events) → bare, no dangling separator.
+    const phaseOnly = rowFor({ number: 17, phase: "validating", activity: "" });
+    expect(phaseOnly).toContain("validating");
+    expect(phaseOnly).not.toContain("·");
+    // Activity only (a no-agent gate row carries no phase) → the informative half survives.
+    const activityOnly = rowFor({ number: 17, phase: "", activity: "typecheck" });
+    expect(activityOnly).toContain("typecheck");
+    expect(activityOnly).not.toContain("·");
   });
 
   it("defaults to the header row alone when no workers/now are supplied", () => {

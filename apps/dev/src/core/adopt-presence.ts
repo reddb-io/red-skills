@@ -63,7 +63,7 @@ export interface AdoptPresenceIo {
   /** Seed the presence state file LIVE (pid + `origin` + identity + a first
    * liveness-lane record) so the reader renders the row immediately. */
   seed(input: AdoptPresenceSeed): void;
-  /** Advance `current.stage` (and refresh liveness) as the run progresses.
+  /** Advance `current.activity` (and refresh liveness) as the run progresses.
    * Best-effort: a failed update must never fail the adopt landing. */
   setStage(statePath: string, stage: AdoptPresenceStage): Promise<void>;
   /** Mark the presence row not-live (`pid: 0`) and remove its attempt dir — the

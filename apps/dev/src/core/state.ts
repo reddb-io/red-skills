@@ -88,6 +88,7 @@ function migrateLegacyCurrentKeys(data: unknown): unknown {
   const alias = (canon: string, legacy: string): void => {
     if (c[canon] === undefined && c[legacy] !== undefined) c[canon] = c[legacy];
   };
+  alias("activity", "stage");
   alias("loc_added", "diff_added");
   alias("loc_removed", "diff_removed");
   alias("reasoning_events", "thinking_called_count");

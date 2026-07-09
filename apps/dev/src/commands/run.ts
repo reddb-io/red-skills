@@ -614,18 +614,18 @@ async function runReconcileWorker(
  * prior behaviour. Nothing else about the assembly changes.
  */
 /**
- * Map a sandcastle agent stream event to an AFK pipeline stage, or `undefined`
- * when the event carries no stage signal (a text chunk, reasoning event, or an
- * unrecognised tool). Mirrors the shell *Stage Detection* table against tool
+ * Map a sandcastle agent stream event to an AFK activity, or `undefined`
+ * when the event carries no activity signal (a text chunk, reasoning event, or an
+ * unrecognised tool). Mirrors the shell activity-detection table against tool
  * calls: Edit/Write → `impl`, Read/Grep/`git ls-files`/`find` → `explore`,
- * runner commands → their matching command stage. Reasoning events return
+ * runner commands → their matching command activity. Reasoning events return
  * `undefined` — they interleave every tool call on thinking-heavy runners
- * (Opus effort=high) and carry no exclusive stage signal; returning `undefined`
- * prevents them from clobbering a concrete stage already set by the preceding
- * tool call. Used by `recordAgentEvent` to advance `current.stage` in
+ * (Opus effort=high) and carry no exclusive activity signal; returning `undefined`
+ * prevents them from clobbering a concrete activity already set by the preceding
+ * tool call. Used by `recordAgentEvent` to advance `current.activity` in
  * afk.state.json so the monitor reflects progress.
  */
-type DerivedStage =
+type DerivedActivity =
   | "explore"
   | "impl"
   | "tests"
@@ -636,75 +636,75 @@ type DerivedStage =
   | "push"
   | "review";
 
-type StagePattern = {
-  readonly stage: DerivedStage;
+type ActivityPattern = {
+  readonly activity: DerivedActivity;
   readonly pattern: RegExp;
 };
 
-const TOOL_NAME_STAGE_PATTERNS: readonly StagePattern[] = [
-  { stage: "impl", pattern: /^(edit|write|multiedit|notebookedit)$/ },
-  { stage: "explore", pattern: /^(read|grep|glob)$/ },
+const TOOL_NAME_ACTIVITY_PATTERNS: readonly ActivityPattern[] = [
+  { activity: "impl", pattern: /^(edit|write|multiedit|notebookedit)$/ },
+  { activity: "explore", pattern: /^(read|grep|glob)$/ },
 ];
 
-const COMMAND_STAGE_PATTERNS: readonly StagePattern[] = [
-  { stage: "commit", pattern: /\bgit\s+commit(?:\s|$)/ },
-  { stage: "push", pattern: /\bgit\s+push(?:\s|$)/ },
-  { stage: "review", pattern: /\bgit\s+(?:diff|log|show)(?:\s|$)/ },
+const COMMAND_ACTIVITY_PATTERNS: readonly ActivityPattern[] = [
+  { activity: "commit", pattern: /\bgit\s+commit(?:\s|$)/ },
+  { activity: "push", pattern: /\bgit\s+push(?:\s|$)/ },
+  { activity: "review", pattern: /\bgit\s+(?:diff|log|show)(?:\s|$)/ },
 
-  { stage: "build", pattern: /\btsc\s+--build\b/ },
-  { stage: "build", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\bbuild\b/ },
-  { stage: "build", pattern: /\bvite\s+build\b/ },
-  { stage: "build", pattern: /\bcargo\s+build\b/ },
-  { stage: "build", pattern: /\bgo\s+build\b/ },
-  { stage: "build", pattern: /\bmake\b/ },
-  { stage: "build", pattern: /\bgradle(?:(?![;&|]).)*\bbuild\b/ },
-  { stage: "build", pattern: /\bmvn(?:(?![;&|]).)*\bpackage\b/ },
-  { stage: "build", pattern: /\bdotnet\s+build\b/ },
-  { stage: "build", pattern: /\bcmake\b/ },
-  { stage: "build", pattern: /\bbazel\s+build\b/ },
-  { stage: "build", pattern: /\bzig\s+build\b/ },
-  { stage: "build", pattern: /\bdart\s+compile\b/ },
+  { activity: "build", pattern: /\btsc\s+--build\b/ },
+  { activity: "build", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\bbuild\b/ },
+  { activity: "build", pattern: /\bvite\s+build\b/ },
+  { activity: "build", pattern: /\bcargo\s+build\b/ },
+  { activity: "build", pattern: /\bgo\s+build\b/ },
+  { activity: "build", pattern: /\bmake\b/ },
+  { activity: "build", pattern: /\bgradle(?:(?![;&|]).)*\bbuild\b/ },
+  { activity: "build", pattern: /\bmvn(?:(?![;&|]).)*\bpackage\b/ },
+  { activity: "build", pattern: /\bdotnet\s+build\b/ },
+  { activity: "build", pattern: /\bcmake\b/ },
+  { activity: "build", pattern: /\bbazel\s+build\b/ },
+  { activity: "build", pattern: /\bzig\s+build\b/ },
+  { activity: "build", pattern: /\bdart\s+compile\b/ },
 
-  { stage: "typecheck", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btypecheck\b/ },
-  { stage: "typecheck", pattern: /\btsc\b(?!\s+--build\b)/ },
-  { stage: "typecheck", pattern: /\b(?:mypy|pyright)\b/ },
-  { stage: "typecheck", pattern: /\bcargo\s+check\b/ },
-  { stage: "typecheck", pattern: /\bdart\s+analyze\b/ },
+  { activity: "typecheck", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btypecheck\b/ },
+  { activity: "typecheck", pattern: /\btsc\b(?!\s+--build\b)/ },
+  { activity: "typecheck", pattern: /\b(?:mypy|pyright)\b/ },
+  { activity: "typecheck", pattern: /\bcargo\s+check\b/ },
+  { activity: "typecheck", pattern: /\bdart\s+analyze\b/ },
 
-  { stage: "lint", pattern: /\b(?:eslint|biome)\b/ },
-  { stage: "lint", pattern: /\bprettier\b(?:(?![;&|]).)*\b--check\b/ },
-  { stage: "lint", pattern: /\bcargo\s+clippy\b/ },
-  { stage: "lint", pattern: /\b(?:ruff|flake8|pylint)\b/ },
-  { stage: "lint", pattern: /\bblack\b(?:(?![;&|]).)*\b--check\b/ },
-  { stage: "lint", pattern: /\brubocop\b/ },
-  { stage: "lint", pattern: /\bgolangci-lint\b/ },
-  { stage: "lint", pattern: /\bgo\s+vet\b/ },
-  { stage: "lint", pattern: /\bgofmt\b/ },
-  { stage: "lint", pattern: /\b(?:ktlint|checkstyle)\b/ },
-  { stage: "lint", pattern: /\bclang-tidy\b/ },
-  { stage: "lint", pattern: /\bdotnet\s+format\b/ },
-  { stage: "lint", pattern: /\bdart\s+analyze\b/ },
+  { activity: "lint", pattern: /\b(?:eslint|biome)\b/ },
+  { activity: "lint", pattern: /\bprettier\b(?:(?![;&|]).)*\b--check\b/ },
+  { activity: "lint", pattern: /\bcargo\s+clippy\b/ },
+  { activity: "lint", pattern: /\b(?:ruff|flake8|pylint)\b/ },
+  { activity: "lint", pattern: /\bblack\b(?:(?![;&|]).)*\b--check\b/ },
+  { activity: "lint", pattern: /\brubocop\b/ },
+  { activity: "lint", pattern: /\bgolangci-lint\b/ },
+  { activity: "lint", pattern: /\bgo\s+vet\b/ },
+  { activity: "lint", pattern: /\bgofmt\b/ },
+  { activity: "lint", pattern: /\b(?:ktlint|checkstyle)\b/ },
+  { activity: "lint", pattern: /\bclang-tidy\b/ },
+  { activity: "lint", pattern: /\bdotnet\s+format\b/ },
+  { activity: "lint", pattern: /\bdart\s+analyze\b/ },
 
-  { stage: "tests", pattern: /\b(?:vitest|jest|mocha)\b/ },
-  { stage: "tests", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btest\b/ },
-  { stage: "tests", pattern: /\bcargo\s+test\b/ },
-  { stage: "tests", pattern: /\bgo\s+test\b/ },
-  { stage: "tests", pattern: /\bpytest\b/ },
-  { stage: "tests", pattern: /\bpython(?:\d+(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)\b/ },
-  { stage: "tests", pattern: /\bunittest\b/ },
-  { stage: "tests", pattern: /\bphpunit\b/ },
-  { stage: "tests", pattern: /\bgradle(?:(?![;&|]).)*\btest\b/ },
-  { stage: "tests", pattern: /\bmvn(?:(?![;&|]).)*\btest\b/ },
-  { stage: "tests", pattern: /\bdotnet\s+test\b/ },
-  { stage: "tests", pattern: /\bctest\b/ },
-  { stage: "tests", pattern: /\bdart\s+test\b/ },
-  { stage: "tests", pattern: /\bzig\s+test\b/ },
+  { activity: "tests", pattern: /\b(?:vitest|jest|mocha)\b/ },
+  { activity: "tests", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btest\b/ },
+  { activity: "tests", pattern: /\bcargo\s+test\b/ },
+  { activity: "tests", pattern: /\bgo\s+test\b/ },
+  { activity: "tests", pattern: /\bpytest\b/ },
+  { activity: "tests", pattern: /\bpython(?:\d+(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)\b/ },
+  { activity: "tests", pattern: /\bunittest\b/ },
+  { activity: "tests", pattern: /\bphpunit\b/ },
+  { activity: "tests", pattern: /\bgradle(?:(?![;&|]).)*\btest\b/ },
+  { activity: "tests", pattern: /\bmvn(?:(?![;&|]).)*\btest\b/ },
+  { activity: "tests", pattern: /\bdotnet\s+test\b/ },
+  { activity: "tests", pattern: /\bctest\b/ },
+  { activity: "tests", pattern: /\bdart\s+test\b/ },
+  { activity: "tests", pattern: /\bzig\s+test\b/ },
 
-  { stage: "explore", pattern: /\bgit\s+ls-files(?:\s|$)/ },
-  { stage: "explore", pattern: /\bfind\b/ },
+  { activity: "explore", pattern: /\bgit\s+ls-files(?:\s|$)/ },
+  { activity: "explore", pattern: /\bfind\b/ },
 ];
 
-export function deriveStage(event: AgentStreamEvent): string | undefined {
+export function deriveActivity(event: AgentStreamEvent): string | undefined {
   if (event.type !== "toolCall") return undefined;
   const name = event.name.toLowerCase();
   const args = event.formattedArgs.toLowerCase();
@@ -712,11 +712,11 @@ export function deriveStage(event: AgentStreamEvent): string | undefined {
   // match (#589): reading/grepping/editing a path that merely CONTAINS "test"
   // (e.g. `src/test-utils.ts`) is explore/impl, not a test run. The `\btest\b`
   // args check below is for command tools running an actual test runner.
-  for (const rule of TOOL_NAME_STAGE_PATTERNS) {
-    if (rule.pattern.test(name)) return rule.stage;
+  for (const rule of TOOL_NAME_ACTIVITY_PATTERNS) {
+    if (rule.pattern.test(name)) return rule.activity;
   }
-  for (const rule of COMMAND_STAGE_PATTERNS) {
-    if (rule.pattern.test(args)) return rule.stage;
+  for (const rule of COMMAND_ACTIVITY_PATTERNS) {
+    if (rule.pattern.test(args)) return rule.activity;
   }
   return undefined;
 }
@@ -1263,11 +1263,11 @@ export function buildProcessDeps(
       // + the firehose above, where the rich reasoning/usage glyphs live.
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
-      // stall-detector's liveness signal; this is the dashboard's stage/last).
+      // stall-detector's liveness signal; this is the dashboard's activity/last).
       // `last_event_at` (the honest liveness clock, ADR 0065) is stamped on every
       // DISCRETE event — tool/reasoning/usage/result, not per-text-chunk — so it advances
       // every few seconds for an active worker even between commits.
-      const stage = deriveStage(event);
+      const activity = deriveActivity(event);
       const discrete =
         event.type === "toolCall" ||
         event.type === "reasoning" ||
@@ -1289,11 +1289,11 @@ export function buildProcessDeps(
               "current.cost_usd": activityMeter.peek().costUsd,
             }
           : {};
-      if (stage || discrete) {
+      if (activity || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
-          ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
+          ...(activity ? { "current.activity": activity, "current.last_stream_line": msg.slice(0, 200) } : {}),
           // Any inner-agent stream activity means we are in the macro `coding`
-          // phase (collapses explore/impl/tests/commit — the fine stage lives in
+          // phase (collapses explore/impl/tests/commit — the fine activity lives in
           // the description, so the title never flickers, issue #811). Idempotent:
           // re-stamping `coding` each event is a no-op write.
           "current.phase": "coding",
@@ -2010,9 +2010,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // initialised afk.state.json here; the TS port's ensureAttemptDir is
       // mkdir-only, so every live native worker was invisible to `monitor` /
       // `statusline` and the fleet stall-detector (which key off this file's
-      // pid + current.{number,stage} and its mtime). Restore it: write the
+      // pid + current.{number,activity} and its mtime). Restore it: write the
       // initial state with the live orchestrator pid so the worker shows up;
-      // recordAgentEvent advances current.stage, and the processIssue wrapper
+      // recordAgentEvent advances current.activity, and the processIssue wrapper
       // marks it not-live (pid:0) on terminal.
       //
       // SYNCHRONOUS on purpose: the agent-event sink + heartbeat fire async
@@ -2044,7 +2044,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           "current.runner": c.runner,
           "current.model": c.issueTemplate.model ?? "",
           "current.effort": settings.effort ?? "",
-          "current.stage": "setup",
+          "current.activity": "setup",
           // Macro-lifecycle phase seed (issue #811): the calm signal the
           // task-mirror title surfaces. `coding` is stamped on the first inner-
           // agent stream event; `validating`/`merging` by the orchestrator at the

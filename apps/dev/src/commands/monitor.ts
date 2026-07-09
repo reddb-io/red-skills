@@ -31,7 +31,7 @@ import {
  * Map the dashboard's live worker inputs onto the desired WorkerRecord set the
  * mirror reconciler consumes. This is the same normalization `readWorkers`
  * performs, applied to the compact dashboard's CompactWorker shape so the mirror
- * sees exactly the same live/dead/stage the dashboard renders: a worker between
+ * sees exactly the same live/dead/activity the dashboard renders: a worker between
  * issues (no current number) owns no task and is omitted; live → running,
  * not-live → gone (surfaced terminal).
  */
@@ -53,7 +53,7 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
       issue,
       title: w.state.current.title,
       slug: w.state.current.slug || w.state.current.title,
-      stage: w.state.current.stage,
+      activity: w.state.current.activity,
       phase,
       started_at: w.state.current.started_at || w.state.started_at,
       // Terminal completion requires the pid to be gone. `w.live` is the
@@ -81,11 +81,12 @@ export function parseTrackedJsonl(text: string): TrackedTask[] {
       continue;
     }
     if (parsed === null || typeof parsed !== "object") continue;
-    const rec = parsed as { key?: unknown; stage?: unknown; phase?: unknown };
+    const rec = parsed as { key?: unknown; activity?: unknown; stage?: unknown; phase?: unknown };
     if (typeof rec.key !== "string") continue;
     out.push({
       key: rec.key,
-      stage: typeof rec.stage === "string" ? rec.stage : "",
+      activity:
+        typeof rec.activity === "string" ? rec.activity : typeof rec.stage === "string" ? rec.stage : "",
       phase: typeof rec.phase === "string" ? rec.phase : "",
     });
   }

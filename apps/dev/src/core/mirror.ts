@@ -58,7 +58,7 @@ export interface WorkerRecord {
   title: string;
   /** Short branch-slug for the title (`current.slug`, falling back to title). */
   slug: string;
-  stage: string;
+  activity: string;
   /** Macro-lifecycle phase (drives the title's `n/5` prefix, issue #811). */
   phase: string;
   started_at: string;
@@ -68,7 +68,7 @@ export interface WorkerRecord {
 /** A currently-tracked task. `key` is "worker_id:issue". */
 export interface TrackedTask {
   key: string;
-  stage: string;
+  activity: string;
   /** Last-seen macro phase, parsed back from the task title (issue #811). A
    * tracked task missing it (older sessions) compares as "" and re-titles on the
    * next observed phase. */
@@ -83,7 +83,7 @@ export interface MirrorOp {
   issue?: number;
   title?: string;
   slug?: string;
-  stage?: string;
+  activity?: string;
   phase?: string;
   status?: "running";
   result?: "completed" | "failed";
@@ -127,7 +127,7 @@ export function readWorkers(reads: readonly WorkerStateRead[]): WorkerRecord[] {
       issue,
       title: state.current.title,
       slug: state.current.slug || state.current.title,
-      stage: state.current.stage,
+      activity: state.current.activity,
       phase,
       started_at: state.current.started_at || state.started_at,
       // A dead worker whose last macro phase is the terminal `blocked` is a
@@ -144,8 +144,8 @@ export function readWorkers(reads: readonly WorkerStateRead[]): WorkerRecord[] {
  * ops first (in desired order), then tracked keys with no desired worker.
  *
  *   running, key absent       → create
- *   running, key tracked, stage moved → update
- *   running, key tracked, same stage  → no-op
+ *   running, key tracked, activity moved → update
+ *   running, key tracked, same activity  → no-op
  *   terminal (gone/blocked), key tracked → complete (failed if blocked, else completed)
  *   terminal, key untracked   → ignored
  *   tracked key, no desired worker → complete (result completed)
@@ -172,12 +172,12 @@ export function mirrorReconcile(
           issue: w.issue,
           title: w.title,
           slug: w.slug,
-          stage: w.stage,
+          activity: w.activity,
           phase: w.phase,
           status: "running",
         });
-      } else if (cur.stage !== w.stage || (cur.phase ?? "") !== w.phase) {
-        // The title tracks the macro PHASE, the description the micro STAGE — a
+      } else if (cur.activity !== w.activity || (cur.phase ?? "") !== w.phase) {
+        // The title tracks the macro PHASE, the description the micro ACTIVITY — a
         // change to either re-emits an update (the sink rewrites whichever moved).
         ops.push({
           op: "update",
@@ -186,7 +186,7 @@ export function mirrorReconcile(
           issue: w.issue,
           title: w.title,
           slug: w.slug,
-          stage: w.stage,
+          activity: w.activity,
           phase: w.phase,
           status: "running",
         });
@@ -220,7 +220,7 @@ export function mirrorReconcile(
  * an empty desired/tracked diff yields an empty plan.
  *
  *   create   → TaskCreate (in_progress), title "w<id> [<n>/5 <phase>] #<issue> <slug>"
- *   update   → TaskUpdate (in_progress) re-titling the macro phase + refreshing "stage: <x>"
+ *   update   → TaskUpdate (in_progress) re-titling the macro phase + refreshing "activity: <x>"
  *   complete → TaskUpdate with state completed | failed (failed re-titles to [blocked])
  */
 export function mirrorPlan(
@@ -234,18 +234,18 @@ export function mirrorPlan(
         call: "TaskCreate",
         key: op.key,
         title: mirrorTitle(op.worker_id!, op.issue!, op.phase ?? "", op.slug ?? ""),
-        description: `stage: ${op.stage}`,
+        description: `activity: ${op.activity}`,
         state: "in_progress",
       });
     } else if (op.op === "update") {
-      // Rewrite the title (macro phase) AND refresh the description (micro stage)
+      // Rewrite the title (macro phase) AND refresh the description (micro activity)
       // — idempotent when only one moved, since the unchanged side re-renders to
       // the same string.
       calls.push({
         call: "TaskUpdate",
         key: op.key,
         title: mirrorTitle(op.worker_id!, op.issue!, op.phase ?? "", op.slug ?? ""),
-        description: `stage: ${op.stage}`,
+        description: `activity: ${op.activity}`,
         state: "in_progress",
       });
     } else if (op.result === "failed" && op.worker_id !== undefined) {

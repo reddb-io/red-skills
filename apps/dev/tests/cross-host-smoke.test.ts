@@ -35,13 +35,13 @@ function snapshot(
   number: number,
   title: string,
   slug: string,
-  stage: string,
+  activity: string,
   phase: string,
 ) {
   return AfkStateSchema.parse({
     worker_id,
     started_at: "2026-06-24T00:00:00Z",
-    current: { number, title, slug, stage, phase },
+    current: { number, title, slug, activity, phase },
   });
 }
 
@@ -103,12 +103,12 @@ describe("Claude Code host (native-task surface)", () => {
     const a = plan.find((c) => c.key === "wAAAA:889")!;
     expect(a.call).toBe("TaskCreate");
     expect(a.title).toBe("wAAAA [2/5 coding] #889 cross-host-mirror");
-    expect(a.description).toBe("stage: impl");
+    expect(a.description).toBe("activity: impl");
     expect(a.state).toBe("in_progress");
 
     const b = plan.find((c) => c.key === "wBBBB:887")!;
     expect(b.title).toBe("wBBBB [4/5 merging] #887 codex-fallback");
-    expect(b.description).toBe("stage: commit");
+    expect(b.description).toBe("activity: commit");
   });
 
   it("steady-state: once tracked at the current stage+phase, no ops emitted", () => {
@@ -117,14 +117,14 @@ describe("Claude Code host (native-task surface)", () => {
       .filter((c) => c.call === "TaskCreate")
       .map((c) => ({
         key: c.key,
-        stage: c.description!.replace(/^stage: /, ""),
+        activity: c.description!.replace(/^activity: /, ""),
         phase: c.title!.match(/\[(?:\d+\/5 )?([a-z]+)\]/)![1]!,
       }));
     expect(mirrorPlan(WORKERS, tracked)).toEqual([]);
   });
 
   it("tracked blocked worker maps to a failed TaskUpdate re-titled [blocked]", () => {
-    const plan = mirrorPlan(WORKERS, [{ key: "wCCCC:885", stage: "impl", phase: "coding" }]);
+    const plan = mirrorPlan(WORKERS, [{ key: "wCCCC:885", activity: "impl", phase: "coding" }]);
     const fail = plan.find((c) => c.key === "wCCCC:885")!;
     expect(fail.call).toBe("TaskUpdate");
     expect(fail.state).toBe("failed");
@@ -134,7 +134,7 @@ describe("Claude Code host (native-task surface)", () => {
   it("tracked worker absent from the live set maps to a completed TaskUpdate", () => {
     const plan = mirrorPlan(
       [WORKERS.find((w) => w.worker_id === "wAAAA")!],
-      [{ key: "wBBBB:887", stage: "commit", phase: "merging" }],
+      [{ key: "wBBBB:887", activity: "commit", phase: "merging" }],
     );
     const done = plan.find((c) => c.key === "wBBBB:887")!;
     expect(done.call).toBe("TaskUpdate");
