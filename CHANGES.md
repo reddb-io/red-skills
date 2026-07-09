@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## afk (engineering) — validation-authority guard: the gate command is canonical (issue #1334)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Spec #1333 root cause 3 — reddb codex workers self-imposed `cargo clippy --all-targets` (the designed gate deliberately runs clippy *without* it), surfaced ~2300 mirage diagnostics, and falsely condemned a green `main`. Nothing in the inner-agent contract said the configured gate is the only definition of green.
+- **what changed**: added a binding *Validation Authority* section to `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md` — the gate command is canonical, no stricter flags / extra lints / widened target sets, plus the three-step mirage-reconciliation rule (find the gate's real command → re-run it unmodified → if green, drop the finding) and an explicit ban on reporting a red `main` from a check the gate does not run. Mirrored the rule into the `EXIT_PROTOCOL` system prompt and the `<merge-gate>` body (`apps/dev/src/core/handoff.ts`), and into the Feedback-loops step of `afk/SKILL.md`. Pinned all of it with a new docs-contract test (`apps/dev/tests/afk-validation-authority-docs.test.ts`) plus `handoff.test.ts` assertions.
+
+---
+
 ## research (knowledge) - upstream v1.1.0 delta reviewed; no-op (issue #1300)
 
 - **status**: reviewed, no change
