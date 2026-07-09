@@ -9,6 +9,7 @@ import {
   fetchBranch,
   changedFiles,
   prepareFreshWorkerBranch,
+  resolveFreshBase,
   worktreePathForBranch,
   worktreePathUnder,
   salvageUncommitted,
@@ -79,6 +80,73 @@ describe("fetchBranch (FIX E recovery)", () => {
     const ctx: GitContext = { cwd: "/repo", exec };
     await fetchBranch(ctx, "");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("resolveFreshBase (worker base freshness)", () => {
+  it("fetches the base and uses the remote-tracking tip when local is behind", async () => {
+    const { exec, calls } = recordingExec((_cmd, args) => {
+      const joined = args.join(" ");
+      if (joined === "fetch origin main") return ok("");
+      if (joined === "rev-parse --verify --quiet origin/main") return ok("remote-tip\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("local-tip\n");
+      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t3\n");
+      return fail();
+    });
+
+    await expect(resolveFreshBase({ cwd: "/repo", exec }, { base: "main", remote: "origin" })).resolves.toMatchObject({
+      ok: true,
+      baseRef: "origin/main",
+      sha: "remote-tip",
+      source: "remote",
+      remoteReachable: true,
+      localSha: "local-tip",
+      localAhead: 0,
+      localBehind: 3,
+    });
+    expect(calls[0]).toEqual(["git", "fetch", "origin", "main"]);
+  });
+
+  it("allows offline local fallback when local is not behind the last-known origin tip", async () => {
+    const { exec } = recordingExec((_cmd, args) => {
+      const joined = args.join(" ");
+      if (joined === "fetch origin main") return fail();
+      if (joined === "rev-parse --verify --quiet origin/main") return ok("same-tip\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("same-tip\n");
+      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t0\n");
+      return fail();
+    });
+
+    await expect(resolveFreshBase({ cwd: "/repo", exec }, { base: "main", remote: "origin" })).resolves.toMatchObject({
+      ok: true,
+      baseRef: "main",
+      sha: "same-tip",
+      source: "local",
+      remoteReachable: false,
+      localBehind: 0,
+    });
+  });
+
+  it("parks typed when offline local fallback is behind the last-known origin tip", async () => {
+    const { exec } = recordingExec((_cmd, args) => {
+      const joined = args.join(" ");
+      if (joined === "fetch origin main") return fail();
+      if (joined === "rev-parse --verify --quiet origin/main") return ok("remote-tip\n");
+      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("local-tip\n");
+      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t4\n");
+      return fail();
+    });
+
+    await expect(resolveFreshBase({ cwd: "/repo", exec }, { base: "main", remote: "origin" })).resolves.toMatchObject({
+      ok: false,
+      reason: "base-stale",
+      baseRef: "origin/main",
+      sha: "remote-tip",
+      source: "local",
+      remoteReachable: false,
+      localSha: "local-tip",
+      localBehind: 4,
+    });
   });
 });
 
