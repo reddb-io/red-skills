@@ -40,12 +40,12 @@ describe("makeAdoptPresenceIo — real state file, read through the shipped read
         expect(seeded).not.toBeNull();
         expect(seeded!.state.origin).toBe("requeue");
         expect(seeded!.state.current.number).toBe(42);
-        expect(seeded!.state.current.stage).toBe("validating");
+        expect(seeded!.state.current.activity).toBe("validating");
         expect(seeded!.renderableLive).toBe(true);
 
         await handle.markStage("landing");
         const landing = readWorkerState(statePath);
-        expect(landing!.state.current.stage).toBe("landing");
+        expect(landing!.state.current.activity).toBe("landing");
         expect(landing!.renderableLive).toBe(true);
 
         return "landed" as const;

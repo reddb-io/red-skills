@@ -38,7 +38,7 @@ describe("worker-state-reader", () => {
     const path = await writeState(base, {
       worker_id: "wLIVE",
       pid: 4242,
-      current: { number: 824, stage: "impl", last_event_at: fresh },
+      current: { number: 824, activity: "impl", last_event_at: fresh },
     });
     // Fresh lane → evaluator: "alive", laneFresh: true → "active".
     const rec = readWorkerState(path, { nowMs: NOW, laneRecencyMs: LANE_FRESH_MS });
@@ -331,7 +331,7 @@ describe("worker-state-reader", () => {
     const path = await writeState(base, {
       worker_id: "wNORMAL",
       pid: 4242,
-      current: { number: 999, stage: "impl", last_event_at: fresh },
+      current: { number: 999, activity: "impl", last_event_at: fresh },
     });
     // Fresh liveness lane → evaluator "alive", laneFresh=true → "active".
     const rec = readWorkerState(path, { nowMs: NOW, laneRecencyMs: LANE_FRESH_MS });

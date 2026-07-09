@@ -28,7 +28,7 @@ function makeWorker(origin: string, id: string): CompactWorker {
       current: {
         number: 42,
         title: "some issue",
-        stage: "impl",
+        activity: "impl",
         started_at: "2026-06-30T00:00:00Z",
       },
     },

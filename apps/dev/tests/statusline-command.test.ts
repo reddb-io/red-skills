@@ -201,7 +201,7 @@ describe("statusline command — rendered line", () => {
       // the agent lane during a long test/build still renders on its own row.
       current: {
         number: 17,
-        stage: "impl",
+        activity: "impl",
         diff_added: 12,
         diff_removed: 3,
         started_at: new Date().toISOString(),
@@ -239,13 +239,13 @@ describe("statusline command — rendered line", () => {
     expect(rows[1]).toContain("wA"); // worker id (no [live]/[quiet] badge)
     expect(rows[1]).toContain("run=claude"); // runner as a k=v token
     expect(rows[1]).toContain("iss=17"); // the issue NUMBER (current.number), not a counter
-    expect(rows[1]).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
+    expect(rows[1]).toContain("impl"); // bare stage (no activity: prefix, no #<n>)
     expect(rows[1]).toContain("tls="); // shared 3-letter vitals vocabulary
     expect(rows[1]).toContain("loc=+12 -3"); // per-worker diff as loc= k=v
     expect(rows[1]).not.toContain("iss=7/10"); // the old done/total counter is gone
     expect(rows[1]).not.toContain("#17"); // standalone #<n> token dropped
     expect(rows[1]).not.toContain("[live]"); // liveness badge dropped
-    expect(rows[1]).not.toContain("stage:impl"); // no stage: prefix
+    expect(rows[1]).not.toContain("activity:impl"); // no activity: prefix
 
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
@@ -260,7 +260,7 @@ describe("statusline command — rendered line", () => {
       worker_id: "wELLN",
       pid: 0, // finished attempt: completion sweep stamped pid 0
       runner: "claude",
-      current: { number: 1766, stage: "done", started_at: new Date().toISOString() },
+      current: { number: 1766, activity: "done", started_at: new Date().toISOString() },
     });
     // Fresh lane in the finished dir: without the pid filter this alone makes the
     // evaluator read #1766 as lane-fresh "alive" → the phantom second line.
@@ -268,7 +268,7 @@ describe("statusline command — rendered line", () => {
     await writeWorkerState(root, "wELLN", "1767-a1", {
       worker_id: "wELLN",
       runner: "claude",
-      current: { number: 1767, stage: "impl", started_at: new Date().toISOString() },
+      current: { number: 1767, activity: "impl", started_at: new Date().toISOString() },
     });
     await seedFreshCache(root, 0, 0);
     await seedFreshRepoCache(root, 0, 0);
@@ -301,14 +301,14 @@ describe("statusline command — rendered line", () => {
       pid: 0,
       runner: "claude",
       origin: "go",
-      current: { number: 2001, stage: "done", started_at: new Date().toISOString() },
+      current: { number: 2001, activity: "done", started_at: new Date().toISOString() },
     }, "go-workers");
     await writeFreshLivenessLane(root, "gW", "2001-a1", "go-workers");
     await writeWorkerState(root, "gW", "2002-a1", {
       worker_id: "gW",
       runner: "claude",
       origin: "go",
-      current: { number: 2002, stage: "impl", started_at: new Date().toISOString() },
+      current: { number: 2002, activity: "impl", started_at: new Date().toISOString() },
     }, "go-workers");
     await seedFreshCache(root, 0, 0);
     await seedFreshRepoCache(root, 0, 0);
@@ -341,7 +341,7 @@ describe("statusline command — rendered line", () => {
       origin: "requeue",
       current: {
         number: 1293,
-        stage: "typecheck",
+        activity: "typecheck",
         diff_added: 0,
         diff_removed: 0,
         started_at: new Date().toISOString(),

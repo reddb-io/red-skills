@@ -716,7 +716,8 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
         current: {
           number: state.current.number,
           title: state.current.title,
-          stage: state.current.stage,
+          activity: state.current.activity,
+          phase: state.current.phase,
           started_at: state.current.started_at,
           input_tokens: state.current.input_tokens,
           output_tokens: state.current.output_tokens,
@@ -1053,7 +1054,7 @@ export async function collectStatuslineAfk(
   let effort = "";
   let resolved = 0;
   const issues: Array<number | string> = [];
-  const stages: Array<string | undefined> = [];
+  const phases: Array<string | undefined> = [];
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
@@ -1108,8 +1109,8 @@ export async function collectStatuslineAfk(
     const number = state.current.number;
     if (number !== "" && number !== undefined && number !== null) {
       issues.push(number);
-      // Aligned by index with `issues`: stage + alive time suffix each `#N` token.
-      stages.push(state.current.stage || undefined);
+      // Aligned by index with `issues`: phase + alive time suffix each `#N` token.
+      phases.push(state.current.phase || undefined);
       aliveMsList.push(workerAliveMs);
     }
   }
@@ -1164,7 +1165,7 @@ export async function collectStatuslineAfk(
     workers, queue, human, blocked, added, removed,
     locIsPeak: locIsPeak || undefined,
     waiting, tokens, costUsd,
-    runner, resolved, issues, stages,
+    runner, resolved, issues, phases,
     aliveMs: aliveMsList.length > 0 ? aliveMsList : undefined,
     model: model || undefined,
     effort: effort || undefined,
@@ -1214,7 +1215,8 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
         current: {
           number: state.current.number,
           title: state.current.title,
-          stage: state.current.stage,
+          activity: state.current.activity,
+          phase: state.current.phase,
           started_at: state.current.started_at,
           model: state.current.model,
           effort: state.current.effort,

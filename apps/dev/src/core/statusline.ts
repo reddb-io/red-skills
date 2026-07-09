@@ -98,16 +98,15 @@ export interface AfkInput {
    * seen this attempt). The `loc=` token renders with a `~` prefix on its value
    * (`loc=~+50 -3`) to signal "last known, not current." */
   locIsPeak?: boolean;
-  /** Per-issue `current.stage` aligned by index with {@link issues}. When a
-   * stage is present and non-empty it renders as a `·stage` suffix on the
-   * matching `#N` token (`#629·impl`), so the block shows WHAT each live worker
-   * is doing, not just that it exists. Absent/short arrays fall back to bare
-   * `#N`, preserving the pre-stage render. */
-  stages?: ReadonlyArray<string | undefined>;
+  /** Per-issue `current.phase` aligned by index with {@link issues}. When a
+   * phase is present and non-empty it renders as a `·phase` suffix on the
+   * matching `#N` token (`#629·coding`), so the block shows WHERE each live
+   * worker is in the pipeline. Absent/short arrays fall back to bare `#N`. */
+  phases?: ReadonlyArray<string | undefined>;
   /** Per-issue worker alive time in milliseconds, aligned by index with
    * {@link issues}. Derived from the worker's top-level `started_at` timestamp.
    * When present and > 0, rendered as a human-friendly elapsed suffix after the
-   * stage on each `#N` token (`#629·impl·5m`, `#817·setup·1h22m`). */
+   * phase on each `#N` token (`#629·coding·5m`, `#817·setup·1h22m`). */
   aliveMs?: ReadonlyArray<number>;
   /** First non-empty model identifier across live workers (e.g. `claude-opus-4-8`).
    * Compact form rendered alongside `runner` on themed line 2 as `claude opus-max`.
@@ -280,7 +279,7 @@ export function renderContextBlock(claude: ClaudeInput | undefined): string | nu
  * One AFK token, split so the styling slice can paint the numeric VALUE
  * independently of its label. `label` is the leading two-letter mnemonic (`wk`,
  * `rq`, …) or sigil (`#`, `$`); `value` is the number/humanized count the chip
- * highlights; `suffix` is any trailing non-numeric text (the `·stage` on an
+ * highlights; `suffix` is any trailing non-numeric text (the `·phase` on an
  * issue token). Plain render = `label + value + suffix`; styled render chips
  * only `value`. See {@link renderAfkBlock} (plain) and the style module.
  */
@@ -295,7 +294,7 @@ export interface AfkToken {
  * count is > 0, in the fixed order workers `wk`, queue `rq`, human `rh`, blocked
  * `bk`, added `ad`, removed `rm`, waiting `wt`, tokens `tk`, cost `$`, followed
  * by the `#N` issue tokens (always emitted, in order, each carrying an optional
- * `·stage` suffix). Empty when there are no live workers. Two-letter mnemonics
+ * `·phase` suffix). Empty when there are no live workers. Two-letter mnemonics
  * replace the legacy emojis (🤖📋🆘🚧+−💤🪙💵) so the line is emoji-free and the
  * style slice can chip each numeric value.
  */
@@ -328,9 +327,9 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   if (afk.tokens !== undefined && afk.tokens > 0) kpi("tok=", humanizeTokens(afk.tokens));
   if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("usd=", afk.costUsd.toFixed(2));
   afk.issues.forEach((issue, i) => {
-    const stage = afk.stages?.[i];
+    const phase = afk.phases?.[i];
     const alive = afk.aliveMs?.[i];
-    let suffix = stage ? `·${stage}` : "";
+    let suffix = phase ? `·${phase}` : "";
     if (alive !== undefined && alive > 0) suffix += `·${humanizeAlive(alive)}`;
     tokens.push({ label: "#", value: String(issue), suffix });
   });

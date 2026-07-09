@@ -730,7 +730,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
           pid: process.pid, // alive
           current: {
             number: 55,
-            stage: "tests",
+            activity: "tests",
             started_at: stale,
             last_event_at: stale,
             last_commit_at: stale,
@@ -772,7 +772,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
           pid: process.pid,
           current: {
             number: 77,
-            stage: "impl",
+            activity: "impl",
             started_at: new Date().toISOString(),
             loc_added: 0,
             loc_removed: 0,
@@ -1107,7 +1107,7 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
           runner: "claude",
           total: 1,
           done: 0,
-          current: { number: 99, title: "test issue", stage: "impl", started_at: new Date().toISOString(), loc_added: 5 },
+          current: { number: 99, title: "test issue", activity: "impl", started_at: new Date().toISOString(), loc_added: 5 },
         }),
       );
       const { workers } = await collectMonitorInputs(root);

@@ -37,7 +37,7 @@ const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
     current: {
       number: 42,
       title: "do the thing",
-      stage: "impl",
+      activity: "impl",
       started_at: "2026-05-30T11:00:00Z",
     },
   },
@@ -65,7 +65,7 @@ describe("monitor — compact line", () => {
     // started 2026-05-30T11:00:00Z = 1780138800; now +1800s (30 min)
     const line = renderWorkerCompactLine(baseWorker(), 1780140600);
     expect(line).toBe(
-      "wAAAA [live] claude org=afk  issues 1/4  #42 do the thing  stage:impl  00:30:00  +10 -3",
+      "wAAAA [live] claude org=afk  issues 1/4  #42 do the thing  activity:impl  00:30:00  +10 -3",
     );
   });
 
@@ -184,7 +184,7 @@ describe("monitor — compact line", () => {
         current: {
           number: 1,
           title: "t",
-          stage: "tests",
+          activity: "tests",
           started_at: "2026-05-30T10:00:00Z",
         },
       },
@@ -223,7 +223,7 @@ describe("monitor — compact line", () => {
     const w = baseWorker({
       state: {
         ...baseWorker().state,
-        current: { number: "", title: "", stage: "", started_at: "" },
+        current: { number: "", title: "", activity: "", started_at: "" },
       },
       diffAdded: 18,
       diffRemoved: 2,
@@ -278,7 +278,7 @@ describe("monitor — compact dashboard", () => {
         current: {
           number: 7,
           title: "later one",
-          stage: "review",
+          activity: "review",
           started_at: "2026-05-30T12:00:00Z",
         },
       },
@@ -443,7 +443,7 @@ describe("monitor — mirror plan", () => {
     worker_id: string,
     number: number,
     title: string,
-    stage: string,
+    activity: string,
     live = true,
     phase = "coding",
   ): CompactWorker =>
@@ -451,7 +451,7 @@ describe("monitor — mirror plan", () => {
       state: {
         ...baseWorker().state,
         worker_id,
-        current: { number, title, slug: title, stage, phase, started_at: "2026-05-30T11:00:00Z" },
+        current: { number, title, slug: title, activity, phase, started_at: "2026-05-30T11:00:00Z" },
       },
       live,
     });
@@ -470,27 +470,27 @@ describe("monitor — mirror plan", () => {
       call: "TaskCreate",
       key: "wAAAA:42",
       title: "wAAAA [2/5 coding] #42 do thing",
-      description: "stage: impl",
+      description: "activity: impl",
       state: "in_progress",
     });
   });
 
   it("stage change emits a TaskUpdate carrying the new stage", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "tests")], tracked);
     const calls = parse(out);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       call: "TaskUpdate",
       key: "wAAAA:42",
-      description: "stage: tests",
+      description: "activity: tests",
       title: "wAAAA [2/5 coding] #42 t",
       state: "in_progress",
     });
   });
 
   it("phase change emits a TaskUpdate that re-titles the macro phase", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl", true, "validating")], tracked);
     const calls = parse(out);
     expect(calls).toHaveLength(1);
@@ -503,7 +503,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("terminal (non-live) tracked worker completes", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan(
       [liveWorker("wAAAA", 42, "t", "impl", false)],
       tracked,
@@ -518,7 +518,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("quiet but pid-live tracked worker stays in progress instead of completing", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "tests", phase: "validating" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "tests", phase: "validating" });
     const out = runMirrorPlan(
       [
         baseWorker({
@@ -529,7 +529,7 @@ describe("monitor — mirror plan", () => {
               number: 42,
               title: "t",
               slug: "t",
-              stage: "tests",
+              activity: "tests",
               phase: "validating",
               started_at: "2026-05-30T11:00:00Z",
             },
@@ -544,7 +544,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("terminal (non-live) blocked worker fails with a [blocked] title", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan(
       [liveWorker("wAAAA", 42, "t", "impl", false, "blocked")],
       tracked,
@@ -560,7 +560,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("tracked worker absent from desired completes", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan([], tracked);
     const calls = parse(out);
     expect(calls).toHaveLength(1);
@@ -568,7 +568,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("no change emits no output (idempotent)", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", activity: "impl", phase: "coding" });
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], tracked);
     expect(out).toBe("");
   });
@@ -619,7 +619,7 @@ describe("monitor — mirror plan", () => {
         state: {
           ...baseWorker().state,
           worker_id: "wIDLE",
-          current: { number: "", title: "", stage: "", started_at: "" },
+          current: { number: "", title: "", activity: "", started_at: "" },
         },
       }),
       liveWorker("wDEAD", 7, "t", "impl", false),
@@ -627,7 +627,7 @@ describe("monitor — mirror plan", () => {
         state: {
           ...baseWorker().state,
           worker_id: "wQUIET",
-          current: { number: 8, title: "q", stage: "tests", started_at: "2026-05-30T11:00:00Z" },
+          current: { number: 8, title: "q", activity: "tests", started_at: "2026-05-30T11:00:00Z" },
         },
         live: false,
         pidLive: true,
@@ -643,8 +643,8 @@ describe("monitor — mirror plan", () => {
     const text =
       '\n{"key":"a:1","stage":"impl","phase":"coding"}\nnot json\n{"stage":"x"}\n{"key":"b:2"}\n';
     expect(parseTrackedJsonl(text)).toEqual([
-      { key: "a:1", stage: "impl", phase: "coding" },
-      { key: "b:2", stage: "", phase: "" },
+      { key: "a:1", activity: "impl", phase: "coding" },
+      { key: "b:2", activity: "", phase: "" },
     ]);
   });
 });

@@ -32,9 +32,9 @@ export interface CompactCurrent {
   /** Issue number; "" / "-" / "null" all mean "no issue in progress". */
   number: number | string;
   title: string;
-  stage: string;
+  activity: string;
   /** Macro-lifecycle phase (issue #811) — the calm task-mirror title signal,
-   * distinct from the micro `stage`. Optional so fixtures stay terse; absent
+   * distinct from the micro `activity`. Optional so fixtures stay terse; absent
    * reads as "" (no `n/5` bracket). */
   phase?: string;
   /** Short branch-slug for the title; absent falls back to `title`. */
@@ -210,7 +210,7 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * which is the real "is there work" signal.
  *
  * <flags> is ` blk:N` / ` fail:N` (each present only when > 0) and <cur> is
- * `  #<n> <title>  stage:<x>  HH:MM:SS` when an issue is in progress, or `  idle`
+ * `  #<n> <title>  activity:<x>  HH:MM:SS` when an issue is in progress, or `  idle`
  * otherwise. The `  +A -R` diff suffix is **always** appended (even idle, even
  * `+0 -0`) so the diff volume is never hidden. `now` is an epoch in seconds.
  */
@@ -265,8 +265,10 @@ export interface WorkerFields {
   total: number;
   /** Issue number in progress, or null when the worker is idle (no issue). */
   issue: number | string | null;
-  /** Bare lifecycle stage word (`impl`, `tests`), or "" when idle/absent. */
-  stage: string;
+  /** Bare current activity word (`impl`, `tests`), or "" when idle/absent. */
+  activity: string;
+  /** Macro pipeline phase (`setup`, `coding`, `validating`, ...), or "". */
+  phase: string;
   /** Zero-padded HH:MM:SS the worker has been running. */
   elapsed: string;
   added: number;
@@ -291,7 +293,8 @@ export function workerFields(worker: CompactWorker, now: number): WorkerFields {
     done: state.done,
     total: state.total,
     issue: noIssue ? null : state.current.number,
-    stage: noIssue ? "" : state.current.stage,
+    activity: noIssue ? "" : state.current.activity,
+    phase: noIssue ? "" : state.current.phase ?? "",
     elapsed: formatElapsed(elapsedSeconds(state, now)),
     added: worker.diffAdded ?? 0,
     removed: worker.diffRemoved ?? 0,
@@ -342,7 +345,7 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
+    cur = `  #${state.current.number} ${title}  activity:${state.current.activity}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
   } else {
     cur = `  idle${diff}${logFrag}`;
   }
@@ -473,7 +476,8 @@ function toonWorkerRow(worker: CompactWorker, now: number): Record<string, ToonV
     state: compactWorkerTag(worker),
     runner: state.runner || "-",
     issue: noIssue ? "-" : state.current.number,
-    stage: noIssue ? "idle" : state.current.stage,
+    activity: noIssue ? "idle" : state.current.activity,
+    phase: noIssue ? "-" : state.current.phase ?? "",
     done: state.done,
     total: state.total,
     blocked: state.blocked,

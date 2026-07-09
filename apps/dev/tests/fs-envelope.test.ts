@@ -18,7 +18,7 @@ describe("envelope posted state persistence", () => {
         runner: "codex",
         model: "gpt-5",
         effort: "high",
-        stage: "impl",
+        activity: "impl",
         loc_added: 12,
         loc_removed: 4,
       },
@@ -36,7 +36,7 @@ describe("envelope posted state persistence", () => {
       runner: "codex",
       model: "gpt-5",
       effort: "high",
-      stage: "impl",
+      activity: "impl",
       loc_added: 12,
       loc_removed: 4,
     });

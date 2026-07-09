@@ -49,7 +49,7 @@ const NOBG = "\x1b[49m"; // drop background → terminal default (the transparen
 const WHITE = "\x1b[38;2;255;255;255m"; // identity-zone text
 const KEY = "\x1b[38;2;255;214;214m"; // transparent-zone KEY: very light red ≈ white, high contrast
 const VAL = "\x1b[39m"; // transparent-zone VALUE: terminal default foreground
-const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a lighter red (runner, +/-/# sigils, ·stage)
+const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a lighter red (runner, +/-/# sigils, ·phase)
 const DIM = "\x1b[38;2;201;150;158m"; // identity-zone branch/version
 const GOLD = "\x1b[38;2;240;200;120m"; // » accent
 const BOLD = "\x1b[1m";
@@ -59,13 +59,13 @@ const RESET = "\x1b[0m";
 const BRANCH_MAX = 28;
 const WORKER_GUTTER = "  ";
 
-type WorkerColumn = "workerId" | "run" | "org" | "iss" | "stage" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
+type WorkerColumn = "workerId" | "run" | "org" | "iss" | "phase" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
 const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "workerId",
   "run",
   "org",
   "iss",
-  "stage",
+  "phase",
   "elapsed",
   "loc",
   "tks",
@@ -212,7 +212,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     run: `run=${runVal}`,
     org: `org=${f.origin || "afk"}`,
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
-    stage: f.issue === null ? "" : f.stage,
+    phase: f.issue === null ? "" : f.phase,
     elapsed: f.elapsed,
     loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
     tks: noAgent ? "" : `tks=${tokenDisplay(f)}`,
@@ -250,7 +250,7 @@ function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): 
 
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
- *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <stage>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
+ *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <phase>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
@@ -261,7 +261,7 @@ function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): 
  * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
  * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
  * queue counter (meaningless for a single-issue /go run) — and the standalone
- * `#<n>` token is dropped, the `<stage>` stays bare. The truncated issue TITLE,
+ * `#<n>` token is dropped, the `<phase>` stays bare. The truncated issue TITLE,
  * the live/quiet badge, `wait`, and `log` are DROPPED here; the fuller monitor
  * line (`renderWorkerCompactLine`) keeps them. The two share only the field data
  * ({@link workerFields}), never a renderer, so the terse form cannot bleed into
@@ -280,10 +280,10 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // worker, so default the display to afk.
   parts.push(kv("org", f.origin || "afk"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
-  // <stage> follows bare and the legacy standalone #<n> token is dropped.
+  // <phase> follows bare and the legacy standalone #<n> token is dropped.
   if (f.issue !== null) {
     parts.push(kv("iss", String(f.issue)));
-    if (f.stage) parts.push(f.stage);
+    if (f.phase) parts.push(f.phase);
   }
   parts.push(f.elapsed);
   if (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin)) {

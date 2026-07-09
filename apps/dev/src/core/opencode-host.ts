@@ -18,7 +18,7 @@
  * The mapping itself is not reinvented: the desired Worker set is reconciled
  * against the tasks the server already holds via the shared {@link mirrorPlan},
  * so host mirroring speaks the exact same macro phase (`[n/5 <phase>]`) and micro
- * stage (`stage: <x>`) vocabulary as the native Claude Task mirror. The OpenCode
+ * activity (`activity: <x>`) vocabulary as the native Claude Task mirror. The OpenCode
  * server interactions are funnelled through {@link OpenCodeHostClient}, a small
  * fakeable seam so every branch is testable without a live OpenCode process.
  */

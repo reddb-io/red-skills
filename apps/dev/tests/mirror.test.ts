@@ -14,10 +14,10 @@ function running(
   worker_id: string,
   issue: number,
   title: string,
-  stage: string,
+  activity: string,
   phase = "coding",
 ): WorkerRecord {
-  return { worker_id, issue, title, slug: title, stage, phase, started_at: "x", status: "running" };
+  return { worker_id, issue, title, slug: title, activity, phase, started_at: "x", status: "running" };
 }
 
 describe("mirror reconcile", () => {
@@ -33,24 +33,24 @@ describe("mirror reconcile", () => {
 
   it("steady state: tracked at the same stage AND phase emits no ops", () => {
     const desired: WorkerRecord[] = [running("wAAAA", 22, "t", "impl", "coding")];
-    const tracked: TrackedTask[] = [{ key: "wAAAA:22", stage: "impl", phase: "coding" }];
+    const tracked: TrackedTask[] = [{ key: "wAAAA:22", activity: "impl", phase: "coding" }];
     expect(mirrorReconcile(desired, tracked)).toEqual([]);
   });
 
   it("stage advance produces an update carrying the new stage", () => {
     const ops = mirrorReconcile(
       [running("wAAAA", 22, "t", "tests", "coding")],
-      [{ key: "wAAAA:22", stage: "impl", phase: "coding" }],
+      [{ key: "wAAAA:22", activity: "impl", phase: "coding" }],
     );
     expect(ops).toHaveLength(1);
     expect(ops[0]!.op).toBe("update");
-    expect(ops[0]!.stage).toBe("tests");
+    expect(ops[0]!.activity).toBe("tests");
   });
 
   it("phase advance at the same stage still produces an update (re-titles)", () => {
     const ops = mirrorReconcile(
       [running("wAAAA", 22, "t", "commit", "validating")],
-      [{ key: "wAAAA:22", stage: "commit", phase: "coding" }],
+      [{ key: "wAAAA:22", activity: "commit", phase: "coding" }],
     );
     expect(ops).toHaveLength(1);
     expect(ops[0]!.op).toBe("update");
@@ -59,8 +59,8 @@ describe("mirror reconcile", () => {
 
   it("terminal gone for a tracked worker completes it", () => {
     const ops = mirrorReconcile(
-      [{ worker_id: "wAAAA", issue: 22, title: "t", slug: "t", stage: "impl", phase: "merging", started_at: "x", status: "gone" }],
-      [{ key: "wAAAA:22", stage: "impl", phase: "coding" }],
+      [{ worker_id: "wAAAA", issue: 22, title: "t", slug: "t", activity: "impl", phase: "merging", started_at: "x", status: "gone" }],
+      [{ key: "wAAAA:22", activity: "impl", phase: "coding" }],
     );
     expect(ops[0]!.op).toBe("complete");
     expect(ops[0]!.result).toBe("completed");
@@ -68,8 +68,8 @@ describe("mirror reconcile", () => {
 
   it("blocked terminal completes with failed", () => {
     const ops = mirrorReconcile(
-      [{ worker_id: "wAAAA", issue: 22, title: "t", slug: "t", stage: "impl", phase: "blocked", started_at: "x", status: "blocked" }],
-      [{ key: "wAAAA:22", stage: "impl", phase: "coding" }],
+      [{ worker_id: "wAAAA", issue: 22, title: "t", slug: "t", activity: "impl", phase: "blocked", started_at: "x", status: "blocked" }],
+      [{ key: "wAAAA:22", activity: "impl", phase: "coding" }],
     );
     expect(ops[0]!.result).toBe("failed");
     expect(ops[0]!.phase).toBe("blocked");
@@ -78,7 +78,7 @@ describe("mirror reconcile", () => {
   it("tracked worker absent from desired is dropped/completed", () => {
     const ops = mirrorReconcile(
       [running("wBBBB", 30, "u", "tests")],
-      [{ key: "wAAAA:22", stage: "impl", phase: "coding" }],
+      [{ key: "wAAAA:22", activity: "impl", phase: "coding" }],
     );
     const sorted = ops.map((o) => `${o.op} ${o.key}`).sort();
     expect(sorted).toEqual(["complete wAAAA:22", "create wBBBB:30"]);
@@ -86,7 +86,7 @@ describe("mirror reconcile", () => {
 
   it("terminal status for an untracked worker is ignored", () => {
     const ops = mirrorReconcile(
-      [{ worker_id: "wZZZZ", issue: 99, title: "z", slug: "z", stage: "impl", phase: "merging", started_at: "x", status: "gone" }],
+      [{ worker_id: "wZZZZ", issue: 99, title: "z", slug: "z", activity: "impl", phase: "merging", started_at: "x", status: "gone" }],
       [],
     );
     expect(ops).toEqual([]);
@@ -125,7 +125,7 @@ describe("mirror plan", () => {
   const readWorkers = (): WorkerRecord[] => [
     running("wAAAA", 22, "extract state.sh", "impl", "coding"),
     running("wBBBB", 30, "second worker", "tests", "coding"),
-    { worker_id: "wCCCC", issue: 31, title: "crashed", slug: "crashed", stage: "impl", phase: "coding", started_at: "x", status: "gone" },
+    { worker_id: "wCCCC", issue: 31, title: "crashed", slug: "crashed", activity: "impl", phase: "coding", started_at: "x", status: "gone" },
   ];
 
   it("cold plan creates one task per live worker (untracked gone ignored)", () => {
@@ -134,7 +134,7 @@ describe("mirror plan", () => {
     const a = plan.find((c) => c.key === "wAAAA:22")!;
     expect(a.call).toBe("TaskCreate");
     expect(a.title).toBe("wAAAA [2/5 coding] #22 extract state.sh");
-    expect(a.description).toBe("stage: impl");
+    expect(a.description).toBe("activity: impl");
     expect(a.state).toBe("in_progress");
   });
 
@@ -146,9 +146,9 @@ describe("mirror plan", () => {
 
   it("tracked gone worker maps to a completed TaskUpdate; unchanged emit nothing", () => {
     const tracked: TrackedTask[] = [
-      { key: "wAAAA:22", stage: "impl", phase: "coding" },
-      { key: "wBBBB:30", stage: "tests", phase: "coding" },
-      { key: "wCCCC:31", stage: "impl", phase: "coding" },
+      { key: "wAAAA:22", activity: "impl", phase: "coding" },
+      { key: "wBBBB:30", activity: "tests", phase: "coding" },
+      { key: "wCCCC:31", activity: "impl", phase: "coding" },
     ];
     const plan = mirrorPlan(readWorkers(), tracked);
     const c = plan.find((p) => p.key === "wCCCC:31")!;
@@ -161,9 +161,9 @@ describe("mirror plan", () => {
 
   it("terminal blocked maps to a failed TaskUpdate that re-titles to [blocked]", () => {
     const blocked: WorkerRecord = {
-      worker_id: "wAAAA", issue: 22, title: "t", slug: "t", stage: "impl", phase: "blocked", started_at: "x", status: "blocked",
+      worker_id: "wAAAA", issue: 22, title: "t", slug: "t", activity: "impl", phase: "blocked", started_at: "x", status: "blocked",
     };
-    const plan = mirrorPlan([blocked], [{ key: "wAAAA:22", stage: "impl", phase: "coding" }]);
+    const plan = mirrorPlan([blocked], [{ key: "wAAAA:22", activity: "impl", phase: "coding" }]);
     expect(plan).toHaveLength(1);
     expect(plan[0]!.call).toBe("TaskUpdate");
     expect(plan[0]!.state).toBe("failed");
@@ -173,11 +173,11 @@ describe("mirror plan", () => {
   it("stage advance maps to a stage-refreshing, phase-titled TaskUpdate", () => {
     const plan = mirrorPlan(
       [running("wAAAA", 22, "t", "review", "coding")],
-      [{ key: "wAAAA:22", stage: "impl", phase: "coding" }],
+      [{ key: "wAAAA:22", activity: "impl", phase: "coding" }],
     );
     expect(plan).toHaveLength(1);
     expect(plan[0]!.call).toBe("TaskUpdate");
-    expect(plan[0]!.description).toBe("stage: review");
+    expect(plan[0]!.description).toBe("activity: review");
     expect(plan[0]!.title).toBe("wAAAA [2/5 coding] #22 t");
     expect(plan[0]!.state).toBe("in_progress");
   });
@@ -185,7 +185,7 @@ describe("mirror plan", () => {
   it("phase advance re-titles the task to the new macro phase", () => {
     const plan = mirrorPlan(
       [running("wAAAA", 22, "t", "commit", "merging")],
-      [{ key: "wAAAA:22", stage: "commit", phase: "validating" }],
+      [{ key: "wAAAA:22", activity: "commit", phase: "validating" }],
     );
     expect(plan).toHaveLength(1);
     expect(plan[0]!.call).toBe("TaskUpdate");
@@ -204,7 +204,7 @@ describe("mirror plan", () => {
       .filter((c) => c.call === "TaskCreate")
       .map((c) => ({
         key: c.key,
-        stage: c.description!.replace(/^stage: /, ""),
+        activity: c.description!.replace(/^activity: /, ""),
         phase: c.title!.match(/\[(?:\d+\/5 )?([a-z]+)\]/)![1]!,
       }));
     expect(mirrorPlan(readWorkers(), tracked)).toEqual([]);

@@ -347,7 +347,7 @@ describe("statusline — AFK block", () => {
 
   it("suffixes each issue with its stage when present, aligned by index", () => {
     const out = renderAfkBlock(
-      baseAfk({ workers: 2, issues: [17, 20], stages: ["impl", "tests"] }),
+      baseAfk({ workers: 2, issues: [17, 20], phases: ["impl", "tests"] }),
     );
     expect(out).toContain("#17·impl");
     expect(out).toContain("#20·tests");
@@ -355,7 +355,7 @@ describe("statusline — AFK block", () => {
 
   it("falls back to a bare #N when the stage is empty or the arrays misalign", () => {
     const out = renderAfkBlock(
-      baseAfk({ workers: 2, issues: [17, 20], stages: ["impl"] }),
+      baseAfk({ workers: 2, issues: [17, 20], phases: ["impl"] }),
     );
     expect(out).toContain("#17·impl");
     expect(out).toContain("#20");
@@ -384,7 +384,7 @@ describe("statusline — AFK block", () => {
 
   it("appends alive time after stage when both are present", () => {
     const out = renderAfkBlock(
-      baseAfk({ issues: [17], stages: ["impl"], aliveMs: [5 * 60 * 1000] }),
+      baseAfk({ issues: [17], phases: ["impl"], aliveMs: [5 * 60 * 1000] }),
     );
     expect(out).toContain("#17·impl·5m");
   });
@@ -401,7 +401,7 @@ describe("statusline — AFK block", () => {
       baseAfk({
         workers: 2,
         issues: [17, 20],
-        stages: ["impl", "tests"],
+        phases: ["impl", "tests"],
         aliveMs: [5 * 60 * 1000, 30 * 1000],
       }),
     );

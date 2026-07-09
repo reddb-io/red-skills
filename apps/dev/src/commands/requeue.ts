@@ -265,7 +265,7 @@ export function makeAdoptPresenceIo(runner: Runner): AdoptPresenceIo {
           "current.title": input.title,
           "current.started_at": startedAt,
           "current.runner": runner,
-          "current.stage": input.stage,
+          "current.activity": input.stage,
           "current.phase": "validating",
         });
         writeIdentitySync(input.attemptDir, {
@@ -283,7 +283,7 @@ export function makeAdoptPresenceIo(runner: Runner): AdoptPresenceIo {
     async setStage(statePath, stage) {
       try {
         await updateState(statePath, {
-          "current.stage": stage,
+          "current.activity": stage,
           "current.phase": stage === "landing" ? "merging" : "validating",
         });
         appendAdoptLivenessRecord(dirname(statePath));
