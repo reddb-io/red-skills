@@ -430,6 +430,7 @@ function makeBootReconcileRunner(
         close: (issue) => ghx.closeIssue(ghCtx, issue),
         listByLabel: (label) => ghx.listByLabel(ghCtx, label),
         issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+        issueReference: (n) => ghx.issueReference(ghCtx, n),
       },
       git: {
         headShortSha: () => gitx.headShortSha(gitCtx),
@@ -488,6 +489,7 @@ function makeBootReconcileRunner(
         // observability hooks that are silently skipped in this context.
         writeMarkers: async () => {},
         writePosted: async () => {},
+        issueReference: (issue) => ghx.issueReference(ghCtx, issue),
       },
       nowEpoch: () => Math.floor(Date.now() / 1000),
       appendIterLog: () => {},
@@ -863,6 +865,7 @@ export function buildProcessDeps(
       close: (issue) => ghx.closeIssue(ghCtx, issue),
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+      issueReference: (n) => ghx.issueReference(ghCtx, n),
       // Trust-gate provenance (#621): author + ready-for-agent label actor, read
       // from the issue timeline. Consulted at claim time only when an allowlist
       // is configured (plugins.dev.afk.trust-gate.allowlist) or the repo fails
@@ -1141,6 +1144,7 @@ export function buildProcessDeps(
       // buildProcessInput before each processIssue call.
       writeMarkers: (markers) => fsx.writeFailureMarkers(current.attemptDir, markers),
       writePosted: (posted) => fsx.writeEnvelopePosted(current.attemptDir, posted),
+      issueReference: (issue) => ghx.issueReference(ghCtx, issue),
     },
     nowEpoch: () => Math.floor(Date.now() / 1000),
     nowIso: () => new Date().toISOString(),

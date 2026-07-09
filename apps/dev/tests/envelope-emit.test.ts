@@ -245,6 +245,33 @@ describe("emitEnvelope — per-status summary + sections", () => {
     expect(res.body.indexOf('data-section="validation"')).toBeLessThan(res.body.indexOf('data-section="diff"'));
   });
 
+  it("enriches issue refs in notes while leaving log text literal", async () => {
+    const { deps } = makeDeps();
+    deps.issueReference = async (issue) =>
+      issue === 42
+        ? { number: 42, title: "Wayfinder fidelity restoration", url: "https://github.com/reddb-io/red-skills/issues/42" }
+        : undefined;
+    const res = await emitEnvelope(deps, {
+      status: "no-sentinel",
+      issue: 12,
+      worker: "wTEST",
+      durationS: 30,
+      branch: "afk/wTEST/12-foo",
+      attempt: 1,
+      diff: "+0 -0",
+      remoteName: "afk-attempts/wTEST/12-foo",
+      repo: "reddb-io/red-skills",
+      repoDir: "/tmp/x",
+      worktreeRel: ".w",
+      diffstat: "+0 -0 files=0",
+      sections: { notes: "blocked behind #42 and #404", log: "grep saw #42" },
+    });
+
+    expect(res.body).toContain("[Wayfinder fidelity restoration (#42)](https://github.com/reddb-io/red-skills/issues/42)");
+    expect(res.body).toContain("#404");
+    expect(res.body).toContain("grep saw #42");
+  });
+
   it("no-sentinel: notes < diff < log, log fenced", async () => {
     const { deps } = makeDeps();
     const res = await emitEnvelope(deps, {

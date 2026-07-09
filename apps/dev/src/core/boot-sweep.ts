@@ -27,6 +27,11 @@
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
 import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
+import {
+  renderIssueReferenceList,
+  resolveIssueReferences,
+  type IssueReferenceLookup,
+} from "./issue-reference.js";
 
 const BLOCKED_BY_HEADING_RE = /^## Blocked by[ \t]*$/;
 /** Any `## ` heading — the awk `/^## /` that closes the Blocked-by section. */
@@ -120,6 +125,14 @@ export function auditComment(refs: readonly string[]): string {
  * e.g. `🤖 /afk unblocked: all dependencies closed (#101, #102).` */
 export function cascadeAuditComment(reqs: readonly number[]): string {
   return `🤖 /afk unblocked: all dependencies closed (${reqs.map((n) => `#${n}`).join(", ")}).`;
+}
+
+export async function cascadeAuditCommentFor(
+  reqs: readonly number[],
+  lookup?: IssueReferenceLookup,
+): Promise<string> {
+  const refs = await resolveIssueReferences(reqs, lookup);
+  return `🤖 /afk unblocked: all dependencies closed (${renderIssueReferenceList(reqs.map((n) => refs.get(n) ?? { number: n }))}).`;
 }
 
 /** A dependent issue (carrying `req:*` labels) re-evaluated by the close
@@ -259,6 +272,8 @@ export interface UnblockSweepGh {
   /** Rotate labels — REMOVE first, ADD second (BootDeps.gh order). */
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   comment(issue: number, body: string): Promise<void>;
+  /** Optional human-facing metadata lookup for rendered dependency refs. */
+  issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
 }
 
 /**
@@ -289,7 +304,11 @@ export async function executeUnblockSweep(
     const held = labelsByIssue.get(p.number) ?? [];
     const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
     await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
-    await gh.comment(p.number, p.comment);
+    const reqs = p.refs.map(refToNumber).filter((n): n is number => n !== null);
+    const comment = p.reqLabels.length > 0 && reqs.length > 0
+      ? await cascadeAuditCommentFor(reqs, gh.issueReference)
+      : p.comment;
+    await gh.comment(p.number, comment);
     promoted.push(p.number);
   }
   return promoted;

@@ -23,6 +23,7 @@
 import { buildEnvelope, type AttemptStatus, type EnvelopeSection } from "./envelope.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { historyAppend, type HistoryAppendFields, type HistoryClock, type HistoryEvent, type HistoryIO } from "./history.js";
+import { enrichIssueReferences, type IssueReferenceLookup } from "./issue-reference.js";
 
 /** Render N seconds as `<m>m<s>s`. Mirrors envelope_fmt_duration. */
 export function fmtDuration(seconds: number): string {
@@ -182,6 +183,8 @@ export interface EmitEnvelopeDeps {
   historyAppend?: typeof historyAppend;
   /** Injected history IO (filesystem swap for tests). */
   historyIO?: HistoryIO;
+  /** Optional human-facing metadata lookup for refs in envelope notes. */
+  issueReference?: IssueReferenceLookup;
 }
 
 export interface EmitEnvelopeInput {
@@ -291,9 +294,13 @@ export async function emitEnvelope(
   }
 
   // --- compose body (steps 3) ---
+  const sections = { ...(input.sections ?? {}) };
+  if (sections.notes !== undefined) {
+    sections.notes = await enrichIssueReferences(sections.notes, deps.issueReference);
+  }
   const sectionList = buildSections(
     input.status,
-    input.sections ?? {},
+    sections,
     {
       repo: input.repo ?? "",
       worktreeRel: input.worktreeRel ?? "",

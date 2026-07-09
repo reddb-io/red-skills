@@ -317,7 +317,7 @@ describe("executeUnblockSweep", () => {
 
   // Records the gh mutations the sweep applies, so a test can assert the exact
   // label rotation + audit comment per promoted issue.
-  function recordingGh() {
+  function recordingGh(issueReference?: (issue: number) => Promise<{ number: number; title?: string; url?: string } | undefined>) {
     const edits: Array<{ issue: number; remove: string[]; add: string[] }> = [];
     const comments: Array<{ issue: number; body: string }> = [];
     return {
@@ -330,6 +330,7 @@ describe("executeUnblockSweep", () => {
         comment: async (issue: number, body: string) => {
           comments.push({ issue, body });
         },
+        issueReference,
       },
     };
   }
@@ -347,6 +348,25 @@ describe("executeUnblockSweep", () => {
     ]);
     expect(rec.comments).toEqual([
       { issue: 7, body: "🤖 /afk unblocked: all dependencies closed (#101, #102)." },
+    ]);
+  });
+
+  it("renders dependency refs as title+number links when metadata resolves", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
+    ];
+    const rec = recordingGh(async (issue) =>
+      issue === 101
+        ? { number: 101, title: "Wayfinder fidelity restoration", url: "https://github.com/reddb-io/red-skills/issues/101" }
+        : undefined,
+    );
+    await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "CLOSED" }), rec.gh);
+
+    expect(rec.comments).toEqual([
+      {
+        issue: 7,
+        body: "🤖 /afk unblocked: all dependencies closed ([Wayfinder fidelity restoration (#101)](https://github.com/reddb-io/red-skills/issues/101), #102).",
+      },
     ]);
   });
 

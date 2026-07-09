@@ -31,6 +31,7 @@ import {
   type PrStatus,
   type CardCommand,
 } from "../core/hitl-card.js";
+import { enrichIssueReferences as enrichTicketRefs } from "../core/issue-reference.js";
 
 const FLAG_SCHEMA = {
   issue: { kind: "value", coerce: (raw: string): number => Number(raw) },
@@ -61,6 +62,7 @@ function repoArgs(repo: string): string[] {
 interface IssueData {
   number: number;
   title: string;
+  url: string;
   body: string;
   labels: string[];
   comments: Array<{ id: number; body: string; databaseId?: number }>;
@@ -70,12 +72,13 @@ async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<Issu
   const r = await exec([
     "gh", "issue", "view", String(issue),
     ...repoArgs(repo),
-    "--json", "number,title,body,labels,comments",
+    "--json", "number,title,url,body,labels,comments",
   ]);
   if (r.code !== 0) throw new Error(`fetch issue #${issue} failed: ${r.stderr.trim()}`);
   const raw = JSON.parse(r.stdout) as {
     number?: number;
     title?: string;
+    url?: string;
     body?: string;
     labels?: Array<{ name?: string }>;
     comments?: Array<{ id?: number; body?: string; databaseId?: number }>;
@@ -83,6 +86,7 @@ async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<Issu
   return {
     number: Number(raw.number ?? issue),
     title: String(raw.title ?? ""),
+    url: String(raw.url ?? ""),
     body: String(raw.body ?? ""),
     labels: (raw.labels ?? []).map((l) => String(l.name ?? "")).filter(Boolean),
     comments: (raw.comments ?? []).map((c) => ({
@@ -91,6 +95,21 @@ async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<Issu
       body: String(c.body ?? ""),
     })),
   };
+}
+
+async function fetchIssueReference(exec: Exec, repo: string, issue: number): Promise<{ number: number; title?: string; url?: string } | undefined> {
+  const r = await exec([
+    "gh", "issue", "view", String(issue),
+    ...repoArgs(repo),
+    "--json", "number,title,url",
+  ]);
+  if (r.code !== 0) return undefined;
+  try {
+    const raw = JSON.parse(r.stdout) as { number?: number; title?: string; url?: string };
+    return { number: Number(raw.number ?? issue), title: String(raw.title ?? ""), url: String(raw.url ?? "") };
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchPrStatus(exec: Exec, repo: string, prNumber: number): Promise<PrStatus> {
@@ -173,7 +192,8 @@ async function cmdRender(
 ): Promise<number> {
   const issue = await fetchIssue(exec, repo, issueNumber);
   const blocker = parseCurrentBlocker(issue.body);
-  const pendingDecision = blocker?.next ?? blocker?.summary ?? "Human guidance required.";
+  const pendingDecisionRaw = blocker?.next ?? blocker?.summary ?? "Human guidance required.";
+  const pendingDecision = await enrichTicketRefs(pendingDecisionRaw, (n) => fetchIssueReference(exec, repo, n));
 
   const prNumber = await findLinkedPr(exec, repo, issueNumber, blocker?.ref);
   const prStatus: PrStatus = prNumber
@@ -181,7 +201,7 @@ async function cmdRender(
     : { ci: "none", ciPassed: 0, ciTotal: 0, mergeability: "UNKNOWN" };
 
   const updatedAt = nowUtc();
-  const card = renderCard({ issueNumber, pendingDecision, prStatus, updatedAt });
+  const card = renderCard({ issueNumber, issueTitle: issue.title, issueUrl: issue.url, pendingDecision, prStatus, updatedAt });
   const existing = findCardComment(issue.comments);
   await upsertCardComment(exec, repo, issueNumber, card, existing);
 

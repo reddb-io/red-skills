@@ -153,6 +153,8 @@ export interface BootGh {
   comment(issue: number, body: string): Promise<void>;
   /** gh issue view --json labels → flat name list. */
   viewLabels(issue: number): Promise<string[]>;
+  /** Optional human-facing metadata lookup for rendered issue refs. */
+  issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
 }
 
 /** git side effects: delete a remote or local branch ref. Best-effort. The

@@ -551,6 +551,25 @@ export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
   }
 }
 
+/** `gh issue view --json number,title,url` for human-facing issue references. */
+export async function issueReference(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ number: number; title?: string; url?: string } | undefined> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "number,title,url"]);
+  if (r.code !== 0) return undefined;
+  try {
+    const parsed = JSON.parse(r.stdout) as { number?: number; title?: string; url?: string };
+    return {
+      number: Number(parsed.number ?? issue),
+      title: String(parsed.title ?? ""),
+      url: String(parsed.url ?? ""),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /** A `resolveActorTrust`-bound lookup the projection consults for an author whose
  * association alone does not confer trust (issue #1100). Injected so gh.ts stays
  * the only IO seam and the source-trust decision stays pure. */

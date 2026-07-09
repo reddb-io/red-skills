@@ -30,6 +30,25 @@ describe("renderCard", () => {
     expect(card).toContain("Approve merge of PR #42");
   });
 
+  it("renders the card issue as title+number link when metadata is present", () => {
+    const card = renderCard({
+      issueNumber: 10,
+      issueTitle: "Wayfinder fidelity restoration",
+      issueUrl: "https://github.com/reddb-io/red-skills/issues/10",
+      pendingDecision: "test",
+      prStatus: GREEN_PR,
+      updatedAt: "2026-01-01 12:00 UTC",
+    });
+    expect(card).toContain(
+      "## Decision card — [Wayfinder fidelity restoration (#10)](https://github.com/reddb-io/red-skills/issues/10)",
+    );
+  });
+
+  it("falls back to the bare issue number when card metadata is missing", () => {
+    const card = renderCard({ issueNumber: 10, pendingDecision: "test", prStatus: GREEN_PR, updatedAt: "2026-01-01 12:00 UTC" });
+    expect(card).toContain("## Decision card — #10");
+  });
+
   it("includes status section markers", () => {
     const card = renderCard({ issueNumber: 10, pendingDecision: "test", prStatus: GREEN_PR, updatedAt: "2026-01-01 12:00 UTC" });
     expect(card).toContain(CARD_STATUS_OPEN);

@@ -527,6 +527,7 @@ function buildSupervisorDeps(
             comment: async (issue, body) => {
               await ghx.comment(ghCtx, issue, body);
             },
+            issueReference: (issue) => ghx.issueReference(ghCtx, issue),
           },
         );
       } catch {
