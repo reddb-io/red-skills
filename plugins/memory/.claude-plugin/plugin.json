@@ -19,6 +19,8 @@
     "./skills/core/health",
     "./skills/core/doctor",
     "./skills/core/export",
-    "./skills/core/view"
+    "./skills/core/view",
+    "./skills/core/wiki-init",
+    "./skills/core/wiki"
   ]
 }

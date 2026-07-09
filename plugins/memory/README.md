@@ -1027,6 +1027,8 @@ RED_MEMORY_URI=file:///abs/graph.rdb \
 | **[context-status](./skills/core/context-status/SKILL.md)** | Report context stack readiness across agent rules, domain docs, ADRs, Memory graph/freshness/telemetry, Wiki, score, and recommendations. |
 | **[doctor](./skills/core/doctor/SKILL.md)** | Flag stale nodes and prune them after confirmation (graph mode). |
 | **[export](./skills/core/export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
+| **[wiki-init](./skills/core/wiki-init/SKILL.md)** | Bootstrap the LLM Wiki in a repo: scaffold `.red/wiki/`, `.red/agents/wiki.md`, gitignore artefacts, register under `## Agent skills` in CLAUDE.md. |
+| **[wiki](./skills/core/wiki/SKILL.md)** | Wiki operations: `ingest` (URL or file drop), `query` (md/tables/Mermaid, optionally file-back), and `lint` (contradictions, orphans, stale, gaps). |
 
 ## Build
 

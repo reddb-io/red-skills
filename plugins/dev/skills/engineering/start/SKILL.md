@@ -98,7 +98,7 @@ Number every question `Q01`, `Q02`, … `Q10`, … zero-padded to 2 digits. Coun
 
 External references (URL, PDF, md/txt) flow through the `/wiki` skill so every fetched source is cached at `.red/wiki/raw/<slug>.md` and reusable across sessions and other skills (`/diagnose`, `/afk`, `/tdd`).
 
-Behaviour summary (full contract in [`../../knowledge/wiki/SKILL.md`](../../knowledge/wiki/SKILL.md)):
+Behaviour summary (full contract in [`/wiki`](../../../../memory/skills/core/wiki/SKILL.md)):
 
 - URL → `WebFetch` → `.red/wiki/raw/<slug>.md` with YAML header (`url`, `fetched`, `title`).
 - Local PDF → `pdftotext` → `.red/wiki/raw/<slug>.txt`, original kept alongside.

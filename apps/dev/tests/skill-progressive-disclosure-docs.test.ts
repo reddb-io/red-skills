@@ -26,8 +26,8 @@ describe("skill progressive-disclosure docs", () => {
   });
 
   it("keeps wiki-init init loop hot while moving the bundled template inventory behind a link", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/knowledge/wiki-init/SKILL.md");
-    const templates = await readRepoFile("plugins/dev/skills/knowledge/wiki-init/TEMPLATE-REFERENCE.md");
+    const skill = await readRepoFile("plugins/memory/skills/core/wiki-init/SKILL.md");
+    const templates = await readRepoFile("plugins/memory/skills/core/wiki-init/TEMPLATE-REFERENCE.md");
 
     expect(skill).toContain("<what-to-do>");
     expect(skill).toContain("<supporting-info>");
