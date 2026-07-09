@@ -68,6 +68,13 @@ export async function headShortSha(ctx: GitContext): Promise<string> {
   return r.code === 0 ? r.stdout.trim() : "";
 }
 
+/** `git -C cwd rev-parse --verify --quiet HEAD`, full sha. */
+export async function headSha(ctx: GitContext): Promise<string | undefined> {
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const sha = r.stdout.trim();
+  return r.code === 0 && sha !== "" ? sha : undefined;
+}
+
 /** Delete a local branch (git branch -D). Best-effort. */
 export async function deleteLocalBranch(ctx: GitContext, branch: string): Promise<void> {
   if (!branch) return;
