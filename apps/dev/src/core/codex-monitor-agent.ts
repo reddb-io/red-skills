@@ -71,7 +71,7 @@ export function renderCodexMonitorAgentPrompt(options: CodexMonitorAgentPromptOp
     "",
     "Hard read-only rules:",
     "- Do not edit files.",
-    "- Do not run /dev:afk run, /dev:afk fleet, /dev:afk fleet stop, /dev:afk reap, /dev:afk requeue, /ship, /hitl, or /triage.",
+    "- Do not run /dev:afk run, /dev:afk fleet, /dev:afk fleet stop, /dev:afk reap, /dev:afk requeue, /retake, /hitl, or /triage.",
     "- Do not claim issues, edit labels, comment on issues, open PRs, merge, push, run validation suites, or stop workers.",
     "- Do not repair state. Only observe and report.",
     "",
