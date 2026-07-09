@@ -8,6 +8,7 @@ import {
   enforceStructuredOutput,
   isExhaustionError,
   isTransientRunnerError,
+  extractSignalKill,
   runAgent,
   effortForProvider,
   buildAgent,
@@ -88,6 +89,45 @@ describe("interpretOutcome", () => {
   it("maps an absent / unknown signal to no-sentinel", () => {
     expect(interpretOutcome(undefined)).toBe("no-sentinel");
     expect(interpretOutcome("something else")).toBe("no-sentinel");
+  });
+});
+
+describe("extractSignalKill (#1308 — signal-killed detection)", () => {
+  it("detects SIGKILL (exit code 137) from an Orchestrator-style message", () => {
+    const err = new Error("claude-code exited with code 137:\nstderr output");
+    expect(extractSignalKill(err)).toEqual({ signal: "SIGKILL", exitCode: 137 });
+  });
+
+  it("detects SIGTERM (exit code 143)", () => {
+    const err = new Error("claude-code exited with code 143:\n");
+    expect(extractSignalKill(err)).toEqual({ signal: "SIGTERM", exitCode: 143 });
+  });
+
+  it("detects SIGINT (exit code 130)", () => {
+    expect(extractSignalKill(new Error("agent exited with code 130:"))).toEqual({
+      signal: "SIGINT",
+      exitCode: 130,
+    });
+  });
+
+  it("returns a generic SIG<N> name for an unmapped signal number", () => {
+    const err = new Error("agent exited with code 160:");
+    const result = extractSignalKill(err);
+    expect(result).toEqual({ signal: "SIG32", exitCode: 160 });
+  });
+
+  it("returns null for a regular non-zero exit code (< 128)", () => {
+    expect(extractSignalKill(new Error("agent exited with code 1:\nerr"))).toBeNull();
+    expect(extractSignalKill(new Error("agent exited with code 127:\nerr"))).toBeNull();
+  });
+
+  it("returns null when the message contains no exit code pattern", () => {
+    expect(extractSignalKill(new Error("some other error"))).toBeNull();
+    expect(extractSignalKill("plain string")).toBeNull();
+  });
+
+  it("returns null for exit codes above 192", () => {
+    expect(extractSignalKill(new Error("agent exited with code 200:\nerr"))).toBeNull();
   });
 });
 
@@ -457,6 +497,39 @@ describe("runAgent", () => {
       makeDeps(async () =>
         fakeResult({ completionSignal: undefined, stdout: "no signal, no structured output" }),
       ),
+      baseInput,
+    );
+    expect(r.outcome).toBe("no-sentinel");
+  });
+
+  it("maps a signal-kill AgentError (exit code 137) to signal-killed outcome (#1308)", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 137:\nkilled by OOM");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("signal-killed");
+    expect(r.stdout).toMatch(/SIGKILL/);
+    expect(r.stdout).toMatch(/137/);
+  });
+
+  it("maps a SIGTERM AgentError (exit code 143) to signal-killed outcome (#1308)", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 143:\nharness watchdog");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("signal-killed");
+    expect(r.stdout).toMatch(/SIGTERM/);
+  });
+
+  it("still maps a regular non-zero exit (exit code 1) to no-sentinel (#1308)", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 1:\ngeneral error");
+      }),
       baseInput,
     );
     expect(r.outcome).toBe("no-sentinel");
