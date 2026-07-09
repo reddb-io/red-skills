@@ -336,6 +336,27 @@ describe("isSensitivePath — path pattern matching", () => {
     expect(isSensitivePath(".red/adr/0001-init.md")).toBe(true);
   });
 
+  it("flags .github/actions/* composite actions as sensitive", () => {
+    expect(isSensitivePath(".github/actions/afk-attempt/action.yml")).toBe(true);
+    expect(isSensitivePath(".github/actions/install-red-binary/action.yml")).toBe(true);
+  });
+
+  it("flags agent plugin hooks as sensitive (any plugin)", () => {
+    expect(isSensitivePath("plugins/dev/hooks/command-guard.sh")).toBe(true);
+    expect(isSensitivePath("plugins/dev/hooks/claude.hooks.json")).toBe(true);
+    expect(isSensitivePath("plugins/memory/hooks/precompact.sh")).toBe(true);
+  });
+
+  it("flags agent plugin launcher scripts as sensitive (any plugin)", () => {
+    expect(isSensitivePath("plugins/dev/scripts/memory-bridge.sh")).toBe(true);
+    expect(isSensitivePath("plugins/brain/scripts/bootstrap.mjs")).toBe(true);
+  });
+
+  it("does NOT flag plugin skills or docs as sensitive", () => {
+    expect(isSensitivePath("plugins/dev/skills/engineering/afk/SKILL.md")).toBe(false);
+    expect(isSensitivePath("plugins/dev/.claude-plugin/plugin.json")).toBe(false);
+  });
+
   it("does NOT flag ordinary source files", () => {
     expect(isSensitivePath("src/index.ts")).toBe(false);
     expect(isSensitivePath("apps/dev/src/core/landing.ts")).toBe(false);
