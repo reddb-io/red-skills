@@ -16,17 +16,17 @@
 #
 #   2. House tags. A SKILL.md whose body (everything after the frontmatter)
 #      exceeds SKILL_BODY_LINE_THRESHOLD lines (default 100) must carry a
-#      `<what-to-do>` tag. Short skills may omit the tags — the threshold
-#      encodes that allowance.
+#      standalone structural `<what-to-do>` tag outside fenced code blocks.
+#      Short skills may omit the tags — the threshold encodes that allowance.
 #
 #   3. Orphaned bundled files. Every non-README markdown file inside a skill
-#      folder should be referenced (by basename) from a SKILL.md. Cross-skill
-#      consumers are legitimate (e.g. one skill's bundled templates consumed
-#      by a sibling skill), so the reference search is WIDENED to every
-#      SKILL.md in the same plugin (the `plugins/<name>/` ancestor). A file
-#      referenced by any SKILL.md in its plugin is not flagged. This is the
-#      chosen escape mechanism (plugin-wide search rather than an explicit
-#      allowlist): it needs no per-file annotation and keeps the wiki
+#      folder should be referenced (by basename) from shipped markdown in the
+#      same plugin. Cross-skill consumers and extracted sibling reference docs
+#      are legitimate, so the reference search is WIDENED to every shipped
+#      markdown file in the same plugin (the `plugins/<name>/` ancestor). A
+#      file referenced by any other markdown file in its plugin is not flagged.
+#      This is the chosen escape mechanism (plugin-wide search rather than an
+#      explicit allowlist): it needs no per-file annotation and keeps the wiki
 #      templates — consumed by the wiki/wiki-init skills — out of the report.
 #
 # Config (environment variables):
@@ -77,6 +77,31 @@ plugin_root() {
       printf ''
       ;;
   esac
+}
+
+# has_structural_tag FILE TAG — true when TAG appears as a standalone markdown
+# structural line outside fenced code blocks.
+has_structural_tag() {
+  local file="$1" tag="$2"
+  awk -v tag="$tag" '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    $0 ~ "^[[:space:]]*" tag "[[:space:]]*$" { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$file"
+}
+
+# referenced_in_plugin_markdown FILE PROOT BASENAME — true when BASENAME appears
+# in any shipped markdown file in PROOT other than FILE itself.
+referenced_in_plugin_markdown() {
+  local file="$1" proot="$2" base="$3"
+  while IFS= read -r ref; do
+    [ "$ref" = "$file" ] && continue
+    if grep -qF "$base" "$ref"; then
+      return 0
+    fi
+  done < <(find "$proot" -name '*.md' -not -path '*/in-progress/*' | sort)
+  return 1
 }
 
 desc_findings=0
@@ -135,7 +160,7 @@ while IFS= read -r file; do
   ' "$file")"
 
   if [ "$body_lines" -gt "$BODY_LINE_THRESHOLD" ]; then
-    if ! grep -q '<what-to-do>' "$file"; then
+    if ! has_structural_tag "$file" '<what-to-do>'; then
       printf 'FAIL  %s\n      > %s-line body has no <what-to-do> tag\n' "$file" "$body_lines"
       tag_findings=$((tag_findings + 1))
     fi
@@ -144,18 +169,18 @@ done < <(find plugins -name SKILL.md -not -path '*/in-progress/*' | sort)
 
 echo ""
 echo "== Check 3: orphaned bundled markdown files =="
-echo "   (reference search widened to every SKILL.md in the same plugin)"
+echo "   (reference search widened to every shipped markdown file in the same plugin)"
 while IFS= read -r file; do
   base="$(basename "$file")"
   proot="$(plugin_root "$file")"
   [ -z "$proot" ] && continue
 
-  # Referenced if any SKILL.md in the plugin mentions the basename.
-  if grep -rqF "$base" --include=SKILL.md "$proot"; then
+  # Referenced if any other shipped markdown file in the plugin mentions the basename.
+  if referenced_in_plugin_markdown "$file" "$proot" "$base"; then
     continue
   fi
 
-  printf 'FAIL  %s\n      > not referenced by any SKILL.md in %s\n' "$file" "$proot"
+  printf 'FAIL  %s\n      > not referenced by any shipped markdown file in %s\n' "$file" "$proot"
   orphan_findings=$((orphan_findings + 1))
 done < <(find plugins -path '*/skills/*' -name '*.md' -not -name SKILL.md -not -name 'README.md' -not -path '*/in-progress/*' | sort)
 

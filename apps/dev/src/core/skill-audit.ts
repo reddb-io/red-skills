@@ -9,8 +9,9 @@
 //   1. MECHANICAL — objective, pure facts ported from the report-only lint
 //      (scripts/lint-skill-body.sh + lint-skill-first-line.sh): description
 //      budget, the 1024-char hard cap, literal "Use when", <what-to-do> on long
-//      bodies, bold-imperative first line, name: frontmatter, English-only,
-//      orphaned bundled files. Each is a pass/warn/fail FACT, never a gate.
+//      bodies (standalone and outside fenced code), bold-imperative first line,
+//      name: frontmatter, English-only, orphaned bundled files. Each is a
+//      pass/warn/fail FACT, never a gate.
 //   2. SEMANTIC — the LLM judge scores the nine sentence-level techniques from
 //      write-a-skill plus trigger clarity, deletion-test bloat, and
 //      <what-to-do>/<supporting-info> placement. Its shape + validator live
@@ -168,6 +169,20 @@ const NON_ENGLISH_MARKERS = [
   "não é",
 ];
 
+/** True when `tag` appears as a standalone structural line outside code fences. */
+export function hasStructuralTag(body: string, tag: string): boolean {
+  let fenced = false;
+  for (const line of body.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    if (line.trim() === tag) return true;
+  }
+  return false;
+}
+
 export interface MechanicalContext {
   /** Bundled non-README markdown files under this skill folder not referenced
    * by any SKILL.md in the plugin (computed by the fs enumeration layer). */
@@ -228,8 +243,9 @@ export function runMechanicalChecks(doc: SkillDoc, ctx: MechanicalContext = {}):
     }
   }
 
-  // 3. House tags: bodies over the threshold need <what-to-do>.
-  if (parsed.bodyLineCount > BODY_LINE_THRESHOLD && !parsed.body.includes("<what-to-do>")) {
+  // 3. House tags: bodies over the threshold need a structural <what-to-do>.
+  const hasWhatToDo = hasStructuralTag(parsed.body, "<what-to-do>");
+  if (parsed.bodyLineCount > BODY_LINE_THRESHOLD && !hasWhatToDo) {
     checks.push({
       id: "what-to-do-tag",
       status: "fail",

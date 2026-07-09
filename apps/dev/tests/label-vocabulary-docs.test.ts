@@ -260,11 +260,13 @@ describe("wayfinder docs", () => {
 });
 
 describe("write-a-skill docs", () => {
-  it("incorporates the upstream Steering glossary concepts into the writing-style framework", async () => {
+  it("keeps Steering glossary concepts in the extracted writing-style reference", async () => {
     const skill = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/SKILL.md");
+    const style = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md");
 
-    expect(skill).toContain("Leading Word");
-    expect(skill).toContain("Premature Completion");
-    expect(skill).toContain("Completion Criterion");
+    expect(skill).toContain("[WRITING-STYLE.md](WRITING-STYLE.md)");
+    expect(style).toContain("Leading Word");
+    expect(style).toContain("Premature Completion");
+    expect(style).toContain("Completion Criterion");
   });
 });

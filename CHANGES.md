@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## write-a-skill (productivity) - progressive-disclosure split and structural-tag lint hardening (issue #1358)
+
+- **status**: modified
+- **upstream**: `d574778` (v1.1.0)
+- **why**: `write-a-skill/SKILL.md` carried the full sentence-level technique catalog and Steering failure-mode material in the hot path, and the body-tag linters accepted `<what-to-do>` inside fenced examples as if it were a real structural split.
+- **what changed**: Moved the nine writing-style techniques plus Negation and Negative Space Steering failure modes into `plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md` behind a hot-path pointer, added real structural tags to `SKILL.md`, retargeted the CLAUDE.md style pointer, hardened the shell and TypeScript linters to count only standalone tags outside fenced code blocks, widened orphan-reference checks to sibling markdown reference docs, and linked AFK's fallback `runner-hermes.md` from the AFK runner reference list so the widened sweep has no runner-doc orphan.
+
+---
+
 ## afk (engineering) - post-extraction relative-link repair and link guard (issue #1354)
 
 - **status**: modified

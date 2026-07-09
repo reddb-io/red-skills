@@ -93,8 +93,9 @@ function pluginRoot(rel: string): string {
 /**
  * Enumerate shipped skills + compute per-skill orphaned bundled files. Mirrors
  * the lint glob (find plugins -name SKILL.md, excluding any in-progress/ path),
- * minus the self-exempt meta-skill. Orphan detection widens the reference search to
- * every SKILL.md in the same plugin (as the lint does).
+ * minus the self-exempt meta-skill. Orphan detection widens the reference
+ * search to every shipped markdown file in the same plugin (as the lint does),
+ * so extracted sibling reference docs can own links too.
  */
 export async function enumerateSkills(
   root: string,
@@ -117,9 +118,14 @@ export async function enumerateSkills(
     bundled,
   );
 
-  // Cache each SKILL.md's content once (used for both audit + reference search).
+  // Cache each SKILL.md's content once for audit.
   const contents = new Map<string, string>();
   for (const p of skillPaths) contents.set(p, await readFile(path.join(root, p), "utf8"));
+
+  // Cache every shipped plugin markdown file once for reference search.
+  const referencePaths = [...new Set([...skillPaths, ...bundled])].sort();
+  const referenceContents = new Map<string, string>();
+  for (const p of referencePaths) referenceContents.set(p, await readFile(path.join(root, p), "utf8"));
 
   const result: Array<{ doc: SkillDoc; orphanedFiles: string[] }> = [];
   for (const p of skillPaths) {
@@ -131,9 +137,9 @@ export async function enumerateSkills(
       .filter((b) => path.posix.dirname(b) === skillDir)
       .filter((b) => {
         const base = path.posix.basename(b);
-        // Referenced if any SKILL.md in the plugin mentions the basename.
-        for (const [sp, content] of contents) {
-          if (sp.startsWith(`${proot}/`) && content.includes(base)) return false;
+        // Referenced if any other shipped markdown file in the plugin mentions the basename.
+        for (const [rp, content] of referenceContents) {
+          if (rp !== b && rp.startsWith(`${proot}/`) && content.includes(base)) return false;
         }
         return true;
       })

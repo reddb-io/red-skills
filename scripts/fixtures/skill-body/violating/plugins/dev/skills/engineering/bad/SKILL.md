@@ -9,6 +9,12 @@ This body deliberately exceeds one hundred lines and never declares the
 house directive tag, so it trips the house-tag check. It also bundles an
 unreferenced companion file it deliberately never names.
 
+```md
+<what-to-do>
+This template tag is fenced example text, not the skill's structural split.
+</what-to-do>
+```
+
 Filler line 1 to push the body past the threshold.
 Filler line 2 to push the body past the threshold.
 Filler line 3 to push the body past the threshold.
