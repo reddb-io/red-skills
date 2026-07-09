@@ -147,6 +147,8 @@ interface HarnessOptions {
   /** Close-cascade fixture: issues resolved as CLOSED by gh.issueClosed. The
    * just-closed issue is treated as closed without consulting this set. */
   closedIssues?: number[];
+  /** Close-cascade fixture: metadata for human-facing dependency references. */
+  issueRefs?: Record<number, { title: string; url: string }>;
   /** Attempt number (1-based) the issue runs under — drives the BOUNDED
    * auto-recovery cap (recovery.ts). Defaults to 1. */
   attempt?: number;
@@ -277,6 +279,10 @@ function harness(opts: HarnessOptions = {}): {
       },
       async issueClosed(n) {
         return (opts.closedIssues ?? []).includes(n);
+      },
+      async issueReference(n) {
+        const ref = opts.issueRefs?.[n];
+        return ref ? { number: n, ...ref } : undefined;
       },
       // Trust-gate provenance port (#621): registered only when the test opts in,
       // so legacy-shaped tests omit it and the gate never fires (permissive).
@@ -2779,6 +2785,27 @@ describe("close cascade (event-driven auto-unblock)", () => {
       issue: 30,
       remove: ["blocked:dependency", "req:8", "req:9"],
       add: ["ready-for-agent"],
+    });
+  });
+
+  it("renders close-cascade dependency refs as title+number links when metadata resolves", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      dependentsByLabel: {
+        "req:9": [{ number: 20, labels: ["blocked:dependency", "req:9"] }],
+      },
+      issueRefs: {
+        9: {
+          title: "Wayfinder fidelity restoration",
+          url: "https://github.com/reddb-io/red-skills/issues/9",
+        },
+      },
+    });
+    await processIssue(deps, input);
+    expect(trace.comments).toContainEqual({
+      issue: 20,
+      body: "🤖 /afk unblocked: all dependencies closed ([Wayfinder fidelity restoration (#9)](https://github.com/reddb-io/red-skills/issues/9)).",
     });
   });
 
