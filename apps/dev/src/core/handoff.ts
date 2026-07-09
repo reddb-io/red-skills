@@ -263,6 +263,10 @@ export function buildThreadDiscussion(comments: HandoffComment[]): string {
  * than a narrower touched-package confidence check. Blank/whitespace entries are
  * dropped. Returns "" when no command is declared — caller suppresses the
  * wrapper, keeping the first-attempt handoff byte-for-byte unchanged.
+ *
+ * A closing line carries the validation-authority guard (issue #1334): the listed
+ * commands are canonical, run verbatim — a worker that hardens them with flags the
+ * gate does not use (`--all-targets`) manufactures a mirage failure.
  */
 export function buildMergeGate(commands: readonly string[] | undefined): string {
   const cmds = (commands ?? []).map((c) => c.trim()).filter((c) => c.length > 0);
@@ -275,6 +279,11 @@ export function buildMergeGate(commands: readonly string[] | undefined): string 
     "touched-package confidence checks:",
   ];
   for (const cmd of cmds) lines.push(`- ${cmd}`);
+  lines.push(
+    "Run each command EXACTLY as written: never add stricter flags or extra lints. A" +
+      " failure that only reproduces under flags this gate does not use is a mirage — re-run" +
+      " the exact command above before you believe it."
+  );
   return lines.join("\n");
 }
 
@@ -392,6 +401,7 @@ export const EXIT_PROTOCOL = [
   "1. ALREADY-DONE SHORT-CIRCUIT (check first, every time). Before exploring or planning, check whether the current branch ALREADY satisfies the acceptance criteria — a prior attempt may have finished it. Run `git log --oneline origin/main..HEAD` and inspect the tip against the criteria. If the work is already present and correct, do NOT re-explore, re-plan, or re-run a full-suite sanity pass: emit `<promise>DONE</promise>` as your final line immediately. This is the single most common way an attempt wastes its whole budget.",
   "2. Otherwise implement the slice: failing test first, minimal code, one commit per file (`git add -- <path>` then commit; never `git add -A`), `Refs #N` in each message. Before DONE, run `git status --short`; if it is not clean, commit the remaining changed paths instead of emitting DONE.",
   "3. Two kinds of check, do not confuse them: (a) touched-package CONFIDENCE checks — the test/typecheck/lint/build for the package you changed — run these while developing to gain confidence; (b) the BINDING merge gate the orchestrator enforces AFTER you emit DONE. If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (broader than your touched package): run them and make them pass before DONE. When your work is committed and both are green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing. Do NOT re-run an unbounded full repository suite after your final commit; the listed gate commands are the contract.",
+  "   VALIDATION AUTHORITY: the gate command is canonical. Run it EXACTLY as the repo defines it — never add stricter flags (`--all-targets`), extra lint restrictions, or a harder contract than the gate. An error class that appears only under flags the gate does not use is a MIRAGE: reconcile against the gate's real command (`<merge-gate>`, `afk.backpressure`, package scripts, `clippy.toml`) and re-run it unmodified before you believe the failure. If that command is green, drop the finding — never report `main` as red on the strength of a check the gate does not run.",
   "4. Your FINAL line MUST be exactly `<promise>DONE</promise>` (work complete) or `<promise>BLOCKED</promise>` (genuinely impossible/contradictory — explain in `<agent-notes>` first). A prose \"done\" is NOT a sentinel: an exit without the literal tag is read as a CRASH and re-invokes you, burning iterations. One of the two tags is always your last line.",
   "</exit-protocol>",
 ].join("\n");

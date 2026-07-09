@@ -195,6 +195,20 @@ Touch only the files the issue requires. Do not:
 
 Surgical precision. If you find an unrelated bug, mention it in Notes — don't fix it.
 
+## Validation Authority (binding)
+
+**The gate command is canonical.** The repo's configured gate — the `<merge-gate>` commands in your handoff, the package scripts, the lint config checked into the tree — *is* the contract you must satisfy, and the only definition of green you are allowed to hold. Run it exactly as written. Never add stricter flags (`cargo clippy --all-targets` where the gate runs plain `cargo clippy`), never add extra lint restrictions (a `-D warnings` the gate does not pass), never widen the target or workspace set. A gate that omits a flag omits it **by policy, not by oversight** — you do not have the standing to overrule that policy from inside an attempt.
+
+**A new error class that appears only under flags the gate does not use is a mirage.** Before you believe it — and long before you report it — reconcile against the real gate:
+
+1. **Find the gate's actual command.** `<merge-gate>` in the handoff, `afk.backpressure` in `.red/config.yaml`, the package script (`package.json`, `Makefile`, `justfile`), the lint config (`clippy.toml`, `eslint.config.*`, `ruff.toml`).
+2. **Re-run that exact command, unmodified.**
+3. **If it is green, the error class does not exist for this repo.** Drop it, record the mirage in one line inside `<agent-notes>`, and carry on with your slice.
+
+**Never report `main` as red on the strength of a check the gate does not run.** A worker once took it upon itself to run `cargo clippy --all-targets`, surfaced ~2300 diagnostics the designed gate never sees, and condemned a green `main` — burning its whole attempt on a failure that did not exist. Mirage failures are worse than no signal, because they wear the costume of diligence.
+
+Finding that the gate itself is too weak is a legitimate observation — but it is a **separate issue**, raised in `<agent-notes>`, never a unilateral escalation of your own attempt's contract.
+
 ## Background Tasks and Polling (binding)
 
 **The cardinal rule: run every command you need a result from in the FOREGROUND, wait for it to return, and read its actual output.** If you cannot read what a command actually printed, you do not know what happened — and you will commit broken work on the false belief that it passed. Backgrounding a command and then polling a log for it (`run_in_background` + `tail -f` / `until grep "..." log`) is the single biggest source of *misunderstood* failures: the compile error, the panic, the OOM, the stderr message, the partial output all land in a stream you never actually read, so you proceed as if it succeeded. Do not infer a result from a log you are watching from the outside — **get the result.**
@@ -225,7 +239,7 @@ Foreground, hard cap, no polling. The exit code is meaningful (0 success, 124 ti
 
 **The orchestrator owns the merge gate.** It re-runs `test` / `typecheck` / `lint` / `build` itself in the Feedback-loops step *after* you commit (*Workflow* step 4); that run, not yours, is the merge authority. You still run gates in the foreground while iterating to know where you stand — just never background them.
 
-**If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (issue #849).** They come from the repo's `afk.backpressure` config and the orchestrator runs them against your branch after you emit `DONE`; any non-zero exit parks the issue as `blocked:validation`. They are typically broader than your touched package — `cargo fmt --all -- --check`, a workspace-wide clippy, an integration smoke. Run those exact commands and make them pass *before* `DONE`. Distinguish them from the touched-package **confidence checks** you run while developing: confidence checks tell you where you stand; the `<merge-gate>` commands are the contract you must satisfy. Do **not** invent a broader full-repo suite of your own — the listed commands are the contract.
+**If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (issue #849).** They come from the repo's `afk.backpressure` config and the orchestrator runs them against your branch after you emit `DONE`; any non-zero exit parks the issue as `blocked:validation`. They are typically broader than your touched package — `cargo fmt --all -- --check`, a workspace-wide clippy, an integration smoke. Run those exact commands and make them pass *before* `DONE`. Distinguish them from the touched-package **confidence checks** you run while developing: confidence checks tell you where you stand; the `<merge-gate>` commands are the contract you must satisfy. Do **not** invent a broader full-repo suite of your own, and do **not** harden the listed commands with flags they do not carry — the listed commands are the contract (see *Validation Authority* above).
 
 **If you genuinely must background a long-lived process** — a dev server that must stay *up* while you do other work, not a command whose result you are waiting on — then every wait loop must satisfy both:
 
