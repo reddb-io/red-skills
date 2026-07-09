@@ -71,6 +71,7 @@ import {
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "./merge.js";
+import type { LandLock } from "./land-lock.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
 import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "./exit-barrier.js";
@@ -450,6 +451,19 @@ export interface ProcessIssueDeps {
    * base now, not the mode. Undefined (tests) is treated as `true` (the default).
    */
   worktreeLaunchesPr?: boolean;
+  /**
+   * Global AFK land-lock (#1337). Threaded into {@link doLanding} so only one
+   * worker at a time enters the landing critical section (integrate/rebase →
+   * revalidate → merge → push) and no two near-simultaneous attempts race on a
+   * non-fast-forward push to the same base. Absent (tests) → unserialized.
+   */
+  landLock?: LandLock;
+  /**
+   * `<base>` has the forge's native merge queue configured (#1337). True → the PR
+   * landing enqueues and skips the local lock, because the queue already serializes
+   * entries and rebases + revalidates each onto the current tip. Default false.
+   */
+  nativeMergeQueue?: boolean;
   /**
    * Provision/tear down an isolated detached worktree at `<base>` for the DIRECT
    * (non-PR) landing (issue #572). The direct merge/push/rollback runs there so a
@@ -2250,6 +2264,9 @@ export async function processIssue(
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
+      // Serialized landing (#1337): only one worker at a time integrates + pushes
+      // into the base, so concurrent lands queue instead of racing.
+      landLock: deps.landLock,
       // Non-blocking backpressure evidence review (#1279): fired by the PR-landing
       // path the moment the PR number is resolved (before the merge), so the
       // aggregated COMMENT ledger lands on the open PR. Best-effort + fully
@@ -2288,6 +2305,7 @@ export async function processIssue(
       title: input.title,
       labels,
       mainRed,
+      nativeMergeQueue: deps.nativeMergeQueue,
     },
     {
       preMerge: () =>
