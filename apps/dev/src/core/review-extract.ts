@@ -23,6 +23,21 @@ import type { AgentRunner, AgentEffort } from "./execution.js";
 /** The XML tag the agent must emit its JSON review payload inside. */
 export const REVIEW_OUTPUT_TAG = "output";
 
+export const FOWLER_REFACTORING_SMELLS = [
+  ["Mysterious Name", "Rename to describe exactly what it does"],
+  ["Duplicated Code", "Extract the shared logic once"],
+  ["Feature Envy", "Move the method closer to the data it uses"],
+  ["Data Clumps", "Bundle the recurring group into an object"],
+  ["Primitive Obsession", "Replace bare strings/numbers with typed objects"],
+  ["Repeated Switches", "Replace with polymorphism or a dispatch table"],
+  ["Shotgun Surgery", "Consolidate the scattered change points into one place"],
+  ["Divergent Change", "Split the class by its distinct responsibilities"],
+  ["Speculative Generality", "Delete the unused abstraction"],
+  ["Message Chains", "Introduce a method that hides the chain"],
+  ["Middle Man", "Remove the delegator and call the real object directly"],
+  ["Refused Bequest", "Push down the unused inheritance to the subclass that needs it"],
+] as const;
+
 /**
  * The sandcastle surface the extraction needs, injected so the heavy package
  * import (and a live agent run) is confined to the production wiring. `run` is
@@ -72,7 +87,9 @@ export function buildReviewPrompt(context: PrContext): string {
     "</pr-diff>",
     "</pr-context>",
     "",
-    "Review the diff for correctness bugs and concrete, actionable problems.",
+    "Review the diff for correctness bugs, implementation intent, project-standard violations, and concrete, actionable maintainability problems.",
+    "Apply this always-on Fowler refactoring-smell axis. When a smell is present, name it with the leading words below and suggest a one-line fix. Treat smell findings as intent-class review findings, never mechanical auto-applies:",
+    ...FOWLER_REFACTORING_SMELLS.map(([name, fix]) => `- ${name} — ${fix}.`),
     "Do not push code or suggest unrelated rewrites. Be concise.",
     "",
     `Emit ONLY your structured result inside a single <${REVIEW_OUTPUT_TAG}> XML tag as JSON:`,
