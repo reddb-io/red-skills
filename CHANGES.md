@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## ask-red (engineering) - RedSkills flow router (issue #1299)
+
+- **status**: renamed-from-ask-matt
+- **upstream**: `d574778`
+- **why**: Upstream v1.1.0 added a flow router; RedSkills needs the same orientation layer but with `/afk` as the tracked-work default and `/go` as the ad-hoc exception.
+- **what changed**: Added the RedSkills router skill, registered it in the dev plugin and public skill maps, documented the maintenance rule, and added the `/doctor` router-coverage sync seam.
+
+---
+
 ## triage and setup-red-skills (engineering) - external-PR request surface, default off (issue #1298)
 
 - **status**: modified
