@@ -131,6 +131,31 @@ expect_eq "primary checkout guard: blocks gh pr checkout" "0" "$(sed -n '1p' <<<
 result="$(run_hook "$repo" "$(payload "$repo" "git checkout -- README.md")")"
 expect_eq "primary checkout guard: allows file checkout" "0" "$(sed -n '1p' <<<"$result")"
 
+result="$(run_hook "$repo" "$(payload "$repo" "gh issue comment 1 --body 'see https://claude.ai/code/session_abc123'")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "no-leak guard: blocks Claude session link in gh write" "0" "$rc"
+expect_contains "no-leak guard: names redaction retry" "Redact and retry" "$stderr"
+expect_contains "no-leak guard: names Claude placeholder" "[REDACTED_CLAUDE_SESSION]" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "gh pr create --title t --body 'log at /home/alice/proj/out.txt'")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "no-leak guard: blocks /home path in gh body" "0" "$rc"
+expect_contains "no-leak guard: names home placeholder" "[REDACTED_HOME]" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "gh issue edit 1 -b 'log at /Users/alice/proj/out.txt'")")"
+expect_eq "no-leak guard: blocks /Users path in gh short body" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "gh issue comment 1 --body 'BOT_TOKEN=abc123secret'")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "no-leak guard: blocks token assignment in gh write" "0" "$rc"
+expect_contains "no-leak guard: names secret placeholder" "[REDACTED_SECRET]" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "gh issue comment 1 --body 'clean public summary'")")"
+expect_eq "no-leak guard: allows clean gh write" "0" "$(sed -n '1p' <<<"$result")"
+
 dev_worktree="$repo/.red/tmp/work-manual"
 mkdir -p "$dev_worktree"
 result="$(run_hook "$dev_worktree" "$(payload "$dev_worktree" "git switch feature/foo")")"

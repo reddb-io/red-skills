@@ -734,6 +734,61 @@ export function buildContinuousPushHook(branch: string, remote: string): HostHoo
   return { command: `sh -c ${shSingleQuote(script)}` };
 }
 
+/**
+ * Install the AFK-owned `commit-msg` hook that fail-closes public-output leaks
+ * before an inner agent can put them in git history (#1366).
+ *
+ * AFK redirects `core.hooksPath` to the worktree-private `afk-hooks` directory
+ * for the same reason as continuous push: consumer hooks are bypassed, but AFK
+ * still owns the hooks it needs in its isolated worktree.
+ */
+export function buildNoLeakCommitMsgHook(): HostHookCommand {
+  const hookBody = [
+    "#!/usr/bin/env sh",
+    "# AFK no-leak commit-msg hook (issue #1366)",
+    "msg=${1:-}",
+    'if [ -n "$msg" ] && grep -F "claude.ai/code/session_" "$msg" >/dev/null 2>&1; then',
+    '  echo "[afk] blocked commit message: redact Claude session links as [REDACTED_CLAUDE_SESSION]" >&2',
+    "  exit 1",
+    "fi",
+    'if [ -n "$msg" ]; then',
+    "  env | while IFS='=' read -r name value; do",
+    '    [ -n "$value" ] || continue',
+    "    [ ${#value} -ge 8 ] || continue",
+    '    upper=$(printf "%s" "$name" | tr "[:lower:]" "[:upper:]")',
+    '    case "$upper" in',
+    "      *TOKEN*|*SECRET*|*PASSWORD*|*APIKEY*|*API_KEY*|*API-KEY*) ;;",
+    "      *) continue ;;",
+    "    esac",
+    '    if grep -F -- "$value" "$msg" >/dev/null 2>&1; then',
+    "      exit 42",
+    "    fi",
+    "  done",
+    "  rc=$?",
+    '  if [ "$rc" -eq 42 ]; then',
+    '    echo "[afk] blocked commit message: redact sensitive environment variable value as [REDACTED_SECRET]" >&2',
+    "    exit 1",
+    "  fi",
+    "fi",
+    "exit 0",
+    "",
+  ].join("\n");
+  const installHook = [
+    'gd=$(git rev-parse --absolute-git-dir 2>/dev/null) || gd=""',
+    'if [ -n "$gd" ]; then',
+    '  hd="$gd/afk-hooks"',
+    '  mkdir -p "$hd" 2>/dev/null || true',
+    `  printf '%s' "$HOOK_BODY" > "$hd/commit-msg" 2>/dev/null && chmod 0755 "$hd/commit-msg" 2>/dev/null || echo "[afk] warn: could not install commit-msg no-leak hook" >&2`,
+    '  git config extensions.worktreeConfig true 2>/dev/null || true',
+    '  git config --worktree core.hooksPath "$hd" 2>/dev/null || echo "[afk] warn: could not redirect core.hooksPath — AFK commit-msg guard may not fire" >&2',
+    "else",
+    '  echo "[afk] warn: could not resolve .git dir — commit-msg no-leak hook not installed" >&2',
+    "fi",
+  ].join("\n");
+  const script = [`HOOK_BODY=${shSingleQuote(hookBody)}`, "export HOOK_BODY", installHook, "exit 0"].join("\n");
+  return { command: `sh -c ${shSingleQuote(script)}` };
+}
+
 /** POSIX single-quote escaping: wrap in single quotes, replacing each embedded
  * single quote with the `'\''` idiom. Keeps the embedded git push / hook body
  * intact through the `sh -c '<script>'` layer. */
@@ -791,12 +846,14 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   //      packages/red-castle submodule so a missed ADR 0071 post-checkout hook can
   //      never leave the worktree unable to run local vitest. Idempotent + best-
   //      effort (it never aborts the run).
-  //   2. Continuous-push guarantee (issue #191) — injected only when enabled:
+  //   2. No-leak commit-msg guard (#1366) — ALWAYS injected: reject public
+  //      output leaks before they enter history.
+  //   3. Continuous-push guarantee (issue #191) — injected only when enabled:
   //      push the branch up-front and install the post-commit push hook.
   // sandcastle only runs these for host-visible worktrees (noSandbox / bind-mount
   // worktree mode); for fully-isolated providers the agent works in a synced copy
   // the hooks can't see (final sync only).
-  const worktreeReady: HostHookCommand[] = [buildSubmoduleEnsureHook()];
+  const worktreeReady: HostHookCommand[] = [buildSubmoduleEnsureHook(), buildNoLeakCommitMsgHook()];
   if (input.continuousPush) {
     worktreeReady.push(buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE));
   }

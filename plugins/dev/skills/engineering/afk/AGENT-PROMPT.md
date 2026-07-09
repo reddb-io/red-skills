@@ -28,6 +28,14 @@ The handoff is rebuilt **fresh on every attempt** from the live issue. It is str
 3. `<previous-attempts>` and `<prior-attempt-context>` (history, never direction)
 4. `<thread-discussion>`
 
+**NO-LEAK CONTRACT (binding):** never include hostnames, OS usernames, absolute
+home paths, environment variable values, tokens/keys, or Claude session links
+(`claude.ai/code/session_*`) in ANY public-facing output: issue comments,
+agent-notes, markdown reports, PR bodies, review text, or COMMIT MESSAGES. Do
+not add Claude-Session trailers. When a reference is unavoidable, replace it
+with placeholders such as `[REDACTED_HOME]`, `[REDACTED_SECRET]`, or
+`[REDACTED_CLAUDE_SESSION]`.
+
 **Precedence when sources conflict:**
 
 - The **most recent** `<human-guidance>` element **overrides** anything in `<issue-body>` it contradicts (a HITL decision, a relaxed acceptance criterion, a frozen expected output, a "skip step 3", etc.). Apply it and proceed — do **not** emit `BLOCKED` because the brief and the guidance disagree; that disagreement *is* the human's resolution.

@@ -697,4 +697,20 @@ describe("injection safety", () => {
     expect(EXIT_PROTOCOL).toContain("issue-body");
     expect(EXIT_PROTOCOL).toContain("thread-discussion");
   });
+
+  it("EXIT_PROTOCOL and SCOUT_EXIT_PROTOCOL carry the public-output no-leak rule (#1366)", () => {
+    for (const protocol of [EXIT_PROTOCOL, SCOUT_EXIT_PROTOCOL]) {
+      expect(protocol).toContain("NO-LEAK CONTRACT");
+      expect(protocol).toContain("hostnames");
+      expect(protocol).toContain("OS usernames");
+      expect(protocol).toContain("absolute home paths");
+      expect(protocol).toContain("environment variable values");
+      expect(protocol).toContain("tokens/keys");
+      expect(protocol).toContain("claude.ai/code/session_");
+      expect(protocol).toContain("COMMIT MESSAGES");
+      expect(protocol).toContain("[REDACTED_HOME]");
+      expect(protocol).toContain("[REDACTED_SECRET]");
+      expect(protocol).toContain("[REDACTED_CLAUDE_SESSION]");
+    }
+  });
 });
