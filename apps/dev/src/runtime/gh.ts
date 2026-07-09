@@ -907,6 +907,42 @@ export async function countOpenPrs(ctx: GhContext): Promise<number> {
   }
 }
 
+/** Count pull requests created on the given local calendar day (YYYY-MM-DD).
+ * Uses `--search created:<day>` as a server-side filter then re-filters by
+ * local date in JS to absorb UTC/local-timezone boundary drift. Returns 0 on
+ * any gh/auth/parse failure so the statusline stays fail-open. The `localDay`
+ * parameter defaults to today's local date and is exposed for testing. */
+export async function countPrsCreatedToday(
+  ctx: GhContext,
+  localDay = new Date().toLocaleDateString("en-CA"),
+): Promise<number> {
+  const r = await runGh(ctx, [
+    "pr",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "all",
+    "--limit",
+    "100",
+    "--json",
+    "createdAt",
+    "--search",
+    `created:${localDay}`,
+  ]);
+  if (r.code !== 0) return 0;
+  try {
+    const parsed = JSON.parse(r.stdout) as Array<{ createdAt: string }>;
+    if (!Array.isArray(parsed)) return 0;
+    return parsed.filter(
+      (pr) =>
+        typeof pr.createdAt === "string" &&
+        new Date(pr.createdAt).toLocaleDateString("en-CA") === localDay,
+    ).length;
+  } catch {
+    return 0;
+  }
+}
+
 /** Count `needs-info` straggler issues. */
 export function countNeedsInfo(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-info"]);
