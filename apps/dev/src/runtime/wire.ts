@@ -1245,6 +1245,7 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
 
 interface RepoStatsCache {
   openPrs: number;
+  todayPrs: number;
   openIssues: number;
   localAdded: number;
   localRemoved: number;
@@ -1256,6 +1257,7 @@ function readRepoStatsCache(path: string): RepoStatsCache | null {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
     return {
       openPrs: Number(parsed.openPrs ?? 0),
+      todayPrs: Number(parsed.todayPrs ?? 0),
       openIssues: Number(parsed.openIssues ?? 0),
       localAdded: Number(parsed.localAdded ?? 0),
       localRemoved: Number(parsed.localRemoved ?? 0),
@@ -1296,6 +1298,7 @@ export async function collectStatuslineRepo(
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readRepoStatsCache(cachePath);
   let openPrs = cached?.openPrs ?? 0;
+  let todayPrs = cached?.todayPrs ?? 0;
   let openIssues = cached?.openIssues ?? 0;
   let localAdded = cached?.localAdded ?? 0;
   let localRemoved = cached?.localRemoved ?? 0;
@@ -1308,18 +1311,21 @@ export async function collectStatuslineRepo(
     // merge-base, so this counts every commit on the branch plus the dirty
     // worktree. It is a git subprocess and therefore cacheable: no per-render
     // git diff.
-    const [p, i, diff] = await Promise.all([
+    const [p, t, i, diff] = await Promise.all([
       ghx.countOpenPrs(ghCtx),
+      ghx.countPrsCreatedToday(ghCtx),
       ghx.countOpenIssues(ghCtx),
       gitx.diffstatShortstat({ cwd: ctx.root }, "origin/main"),
     ]);
     openPrs = p;
+    todayPrs = t;
     openIssues = i;
     localAdded = diff.added;
     localRemoved = diff.removed;
     repoRefreshSucceeded = true;
     writeRepoStatsCacheAtomic(cachePath, {
       openPrs: p,
+      todayPrs: t,
       openIssues: i,
       localAdded: diff.added,
       localRemoved: diff.removed,
@@ -1338,7 +1344,7 @@ export async function collectStatuslineRepo(
     if (!repoRefreshSucceeded) repoCacheAgeS = staleAgeS;
   }
 
-  return { openPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };
+  return { openPrs, todayPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };
 }
 
 // ---------- reap inputs ----------
