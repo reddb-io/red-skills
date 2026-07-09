@@ -160,7 +160,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).toContain("impl"); // bare stage (no stage: prefix, no #<n>)
     expect(t).toContain("00:05:00"); // elapsed REQUIRED
     expect(t).toContain("loc=+12 -3"); // diff as loc= k=v
-    expect(t).toContain("tks=0"); // humanized tokens (none yet)
+    expect(t).toContain("tks=—"); // claude has no live usage stream yet
     expect(t).toContain("tls=0 rsn=0 txt=0"); // vitals as individual 3-letter k=v pairs
     // The DROPPED verbosity must be gone.
     expect(t).not.toContain("iss=7/10"); // the old done/total counter is gone
@@ -236,6 +236,24 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
     expect(stripAnsi(renderWorkerLine(w, NOW))).toContain("tks=34k");
+  });
+
+  it("keeps genuine zero-token codex/opencode workers numeric on the tks= token", () => {
+    const codex = worker({
+      state: {
+        ...worker().state,
+        runner: "codex",
+      },
+    });
+    const opencode = worker({
+      state: {
+        ...worker().state,
+        runner: "opencode",
+      },
+    });
+
+    expect(stripAnsi(renderWorkerLine(codex, NOW))).toContain("tks=0");
+    expect(stripAnsi(renderWorkerLine(opencode, NOW))).toContain("tks=0");
   });
 
   it("carries the individual vitals as k=v pairs, never a stats= blob", () => {

@@ -100,6 +100,10 @@ function signedDiff(added: number | undefined, removed: number | undefined): str
   return parts.length ? parts.join(" ") : null;
 }
 
+function tokenDisplay(f: ReturnType<typeof workerFields>): string {
+  return f.runner === "claude" && f.tokens === 0 ? "—" : humanizeCount(f.tokens);
+}
+
 // ---------- identity zone (wine background) ----------
 
 /** `» bold-project dim-(branch) dim-vX`. Branch truncated like the plain renderer. */
@@ -211,7 +215,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     stage: f.issue === null ? "" : f.stage,
     elapsed: f.elapsed,
     loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
-    tks: noAgent ? "" : `tks=${humanizeCount(f.tokens)}`,
+    tks: noAgent ? "" : `tks=${tokenDisplay(f)}`,
     tls: noAgent ? "" : `tls=${String(f.tools)}`,
     rsn: noAgent ? "" : `rsn=${String(f.reasoning)}`,
     txt: noAgent ? "" : `txt=${String(f.text)}`,
@@ -286,7 +290,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }
   parts.push(kv("loc", formatDiff(f.added, f.removed)));
-  parts.push(kv("tks", humanizeCount(f.tokens)));
+  parts.push(kv("tks", tokenDisplay(f)));
   // The vitals as INDIVIDUAL 3-letter k=v pairs (single-spaced group), same
   // convention and vocabulary as the monitor dashboard.
   parts.push(`${kv("tls", String(f.tools))} ${kv("rsn", String(f.reasoning))} ${kv("txt", String(f.text))}`);
