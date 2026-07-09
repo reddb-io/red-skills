@@ -2,7 +2,43 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see `.upstream`).
+Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.1.0 tag commit; see `.upstream`).
+
+---
+
+## research (knowledge) - upstream v1.1.0 delta reviewed; no-op (issue #1300)
+
+- **status**: reviewed, no change
+- **upstream**: `d574778` (upstream v1.1.0)
+- **why**: RedSkills already predates the upstream research delta with a repo-native official-source research workflow and report location.
+- **what changed**: nothing - existing `/research` convention remains the adopted RedSkills surface.
+
+---
+
+## to-spec (engineering) - upstream template delta rejected (issue #1300)
+
+- **status**: reviewed, no change
+- **upstream**: `d574778` (upstream v1.1.0)
+- **why**: RedSkills keeps the richer `Human Decisions` section because Spec children need to distinguish maintainer calls from agent inference.
+- **what changed**: nothing - the richer RedSkills template retained by #1293 remains canonical.
+
+---
+
+## teach (upstream) - not carried (issue #1300)
+
+- **status**: skipped
+- **upstream**: `d574778` (upstream v1.1.0)
+- **why**: RedSkills is an engineering-automation suite and does not carry upstream teaching skills.
+- **what changed**: nothing - no `teach` skill is registered.
+
+---
+
+## ask-matt (upstream) - superseded by ask-red (issue #1300)
+
+- **status**: superseded
+- **upstream**: `d574778` (upstream v1.1.0 `ask-matt`)
+- **why**: The router concept was adopted as `ask-red`, with RedSkills-specific `/afk`, `/go`, HITL, Wayfinder, and doctor-sync routing.
+- **what changed**: nothing beyond the #1299 `ask-red` adoption already recorded below.
 
 ---
 
