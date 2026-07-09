@@ -96,4 +96,22 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("`--fix` cannot auto-fix operator intent");
     expect(skill).toContain("`/setup-red-skills`");
   });
+
+  it("audits native blocked-by vs req:N divergence read-only with triage as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Native blocked-by vs `req:N` divergence audit");
+    expect(skill).toContain("ADR 0094 deliberately keeps two dependency surfaces");
+    expect(skill).toContain("exclude parent Specs carrying `type:spec`");
+    expect(skill).toContain("native blocked-by edge without the matching `req:N` label");
+    expect(skill).toContain("`req:N` label without the matching native blocked-by edge");
+    expect(skill).toContain("apps/dev/src/core/dependency-edge-doctor.ts");
+    expect(skill).toContain("never add/remove labels and never create/delete native edges");
+    expect(skill).toContain("native blocked-by vs `req:N` divergence (check 15)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Native blocked-by vs `req:N` divergence (check 15)");
+    expect(apply).toContain("do not guess the canonical side");
+    expect(apply).toContain("delegate to `/triage`");
+  });
 });
