@@ -248,6 +248,20 @@ describe("statusline — repo block", () => {
     ).toBe("prs=3 iss=24 loc=+142 -36");
   });
 
+  it("renders cpr= for pull requests created today alongside prs= and iss=", () => {
+    expect(
+      renderRepoBlock({ openPrs: 3, todayPrs: 2, openIssues: 24, localAdded: 142, localRemoved: 36 }),
+    ).toBe("prs=3 cpr=2 iss=24 loc=+142 -36");
+  });
+
+  it("renders cpr= alone when openPrs is 0", () => {
+    expect(renderRepoBlock({ openPrs: 0, todayPrs: 5, openIssues: 10 })).toBe("cpr=5 iss=10");
+  });
+
+  it("drops cpr= when todayPrs is 0", () => {
+    expect(renderRepoBlock({ openPrs: 3, todayPrs: 0, openIssues: 24 })).toBe("prs=3 iss=24");
+  });
+
   it("drops each zero-valued count and a clean branch", () => {
     expect(
       renderRepoBlock({ openPrs: 0, openIssues: 0, localAdded: 0, localRemoved: 0 }),
@@ -266,7 +280,19 @@ describe("statusline — repo block", () => {
     ).toBe("prs=3 (12m) iss=24");
   });
 
-  it("moves the age suffix to iss= when openPrs is 0", () => {
+  it("carries age suffix on prs= even when cpr= is present", () => {
+    expect(
+      renderRepoBlock({ openPrs: 3, todayPrs: 2, openIssues: 24, cacheAgeS: 720 }),
+    ).toBe("prs=3 (12m) cpr=2 iss=24");
+  });
+
+  it("moves the age suffix to cpr= when openPrs is 0 but todayPrs > 0", () => {
+    expect(
+      renderRepoBlock({ openPrs: 0, todayPrs: 2, openIssues: 24, cacheAgeS: 720 }),
+    ).toBe("cpr=2 (12m) iss=24");
+  });
+
+  it("moves the age suffix to iss= when openPrs is 0 and todayPrs is 0", () => {
     expect(renderRepoBlock({ openPrs: 0, openIssues: 24, cacheAgeS: 720 })).toBe("iss=24 (12m)");
   });
 });
