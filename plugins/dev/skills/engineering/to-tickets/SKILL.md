@@ -32,6 +32,8 @@ Mark each slice with its routing class:
 
 Prefer AFK over HITL wherever possible.
 
+**File disjunction check — serialize entangled slices.** After assigning routing classes, inspect every pair of parallel slices (those with no `req:N` edge between them) for file-set overlap. Two slices are *entangled* when they both write to the same file(s). Entangled concurrent slices produce a merge conflict that no runtime resolves — the conflict is inherent, not recoverable. Serialize them: add a `req:N` dependency edge from the later slice to the earlier one so only one is `ready-for-agent` at a time. Parallel slots belong exclusively to *file-disjoint* slices that touch non-overlapping file sets. This is the canonical serialization mechanism; the AFK fleet width is calibrated from the resulting disjunction structure (see `/afk fleet` docs).
+
 ### Step 4 — Quiz the user (mandatory — do not skip)
 
 Present the proposed breakdown as a numbered list. For each slice show:
@@ -71,6 +73,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 
 ### Hard rules — do not break these
 
+- ❌ Do **not** mark two slices as parallelizable when they write to the same file(s) — that is a file-entanglement merge conflict waiting to happen at landing. Add `req:N` edges to serialize them instead; file-disjoint slices run in parallel, entangled ones run serial.
 - ❌ Do **not** publish until the user explicitly approved the breakdown in Step 4
 - ❌ Do **not** modify or close any parent issue
 - ❌ Do **not** create horizontal-slice issues ("the schema layer", "the API layer", "the UI layer")
@@ -91,6 +94,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
 - A completed slice is demoable or verifiable on its own
 - Prefer many thin slices over few thick ones
+- Parallel slices must be file-disjoint; file-overlapping slices get `req:N` serialization edges so they run serial, not concurrent
 </vertical-slice-rules>
 
 A horizontal slice ("build the schema for all tables") cannot be demoed and cannot be merged independently — it produces issues that block each other unnecessarily and tests imagined behaviour.
