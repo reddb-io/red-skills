@@ -63,6 +63,24 @@ describe("selectIssues", () => {
     expect(out.map((c) => c.number)).toEqual([30, 10, 20]);
   });
 
+  it("--issues can explicitly select an urgent ready-for-agent issue", () => {
+    const list = [
+      cand(1378, ["ready-for-agent", "priority:urgent"]),
+      cand(20, ["ready-for-agent"]),
+    ];
+    const out = selectIssues(list, { kind: "issues", numbers: [1378] });
+    expect(out.map((c) => c.number)).toEqual([1378]);
+  });
+
+  it("--issues preserves urgent-first ordering when an urgent issue is requested after a normal issue", () => {
+    const list = [
+      cand(1378, ["ready-for-agent", "priority:urgent"]),
+      cand(20, ["ready-for-agent"]),
+    ];
+    const out = selectIssues(list, { kind: "issues", numbers: [20, 1378] });
+    expect(out.map((c) => c.number)).toEqual([1378, 20]);
+  });
+
   it("--issues throws when a requested number is missing from the ready-for-agent pool", () => {
     const list = [cand(10), cand(20)];
     try {

@@ -196,10 +196,10 @@ The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/se
 
 Pull: `gh issue list --label ready-for-agent --state open --json number,title,labels,body --limit 100`. Drop every `type:spec` issue before any filter (log `/to-tickets N` warning for each). Prepend `priority:urgent` issues before any filter, oldest first.
 
-Filters for the **non-urgent remainder**:
-1. `--issues N…`: keep those numbers in argument order; error if missing or not `ready-for-agent`; Specs rejected.
-2. `--spec N`: keep issues with `spec: #N` in body, parent link, or `spec:N` label; Spec itself excluded.
-3. Default: all remaining `ready-for-agent`, `priority:high` first, then ascending by number.
+Filters:
+1. `--issues N…`: match requested numbers against the full post-Spec `ready-for-agent` set, urgent included; keep those numbers in argument order; error if missing or not `ready-for-agent`; Specs rejected.
+2. `--spec N`: keep non-urgent issues with `spec: #N` in body, parent link, or `spec:N` label; Spec itself excluded.
+3. Default: all remaining non-urgent `ready-for-agent`, `priority:high` first, then ascending by number.
 
 Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE TASKS</promise>`, exit 0.
 

@@ -120,14 +120,17 @@ export class IssueSelectionError extends Error {
  *   1. Spec exclusion (hard): drop every `type:spec` candidate before any filter.
  *   2. Urgent prepend (hard, ahead of filters): split out `priority:urgent`;
  *      they jump the head sorted by number ascending (oldest fires first).
- *   3. Filter the non-urgent remainder:
+ *   3. Filter the queue:
  *        - issues: keep the requested numbers in ARGUMENT order; throw an
  *          IssueSelectionError if any requested number is missing from the pool
  *          or (present but) not labelled ready-for-agent. type:spec numbers were
  *          already dropped in step 1, so an explicit Spec reads as "missing".
+ *          Lookup uses the full post-spec pool so urgent issues are explicitly
+ *          addressable, then final queue assembly keeps urgents first.
  *        - spec: keep candidates with a spec:#N body ref / spec:N label.
  *        - all: keep the whole remainder.
- *      The filtered remainder is sorted priority:high→rest, then number asc.
+ *      The spec/all filtered remainder is sorted priority:high→rest, then
+ *      number asc.
  *   4. Concat `[urgent…] + [filtered…]`, deduped by number keeping the urgent
  *      slot at the front.
  */
@@ -139,11 +142,11 @@ export function selectIssues(candidates: readonly IssueCandidate[], filter: Sele
   const urgent = pool.filter((c) => hasLabel(c, LABEL_URGENT)).sort((a, b) => a.number - b.number);
   const rest = pool.filter((c) => !hasLabel(c, LABEL_URGENT));
 
-  // 3. Filter the non-urgent remainder.
+  // 3. Filter the queue.
   let filtered: IssueCandidate[];
   switch (filter.kind) {
     case "issues": {
-      const byNumber = new Map(rest.map((c) => [c.number, c] as const));
+      const byNumber = new Map(pool.map((c) => [c.number, c] as const));
       // A requested number is "unselectable" when it is absent from the
       // ready-for-agent pool entirely. (The pool is the ready-for-agent list,
       // so absence covers both missing and not-labelled-ready-for-agent.)
