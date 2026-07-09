@@ -491,6 +491,10 @@ jobs:
           npm install "./$tarball" --prefix "$smoke" --no-audit --no-fund --ignore-scripts --loglevel=error
           pkg="$smoke/node_modules/@reddb-io/red-skills"
           node "$pkg/bin/red-skills-dev.mjs" --version
+          # code-nav launches via an npm-shim bin (#1396) that resolves the packaged
+          # code-nav bundle; smoke both the shim and the bundle it resolves.
+          test -x "$smoke/node_modules/.bin/red-skills-code-nav"
+          test -f "$smoke/node_modules/@reddb-io/red-skills/dist/code-nav.bundle.min.mjs"
           # rsp needs a provisioned RedDB store (the `red` binary is not present under
           # --ignore-scripts), so it cannot reach exit 0 here. What we DO smoke is that
           # the packaged rsp bin resolves its bundle: a bin-without-bundle makes the

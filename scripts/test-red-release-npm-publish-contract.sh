@@ -75,6 +75,13 @@ else
   fail "pack contract must fail when code-nav is missing from the npm tarball"
 fi
 
+if grep -qF 'test -x "$smoke/node_modules/.bin/red-skills-code-nav"' "$WORKFLOW" &&
+   grep -qF 'test -f "$smoke/node_modules/@reddb-io/red-skills/dist/code-nav.bundle.min.mjs"' "$WORKFLOW"; then
+  pass "pack contract checks the code-nav npm bin and packaged bundle"
+else
+  fail "pack contract must verify the code-nav npm bin and packaged bundle"
+fi
+
 if grep -qF 'registry smoke returned' "$WORKFLOW" &&
    grep -qF 'dev ${version} ' "$WORKFLOW"; then
   pass "registry smoke verifies the reported release version"
