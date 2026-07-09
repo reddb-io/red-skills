@@ -71,7 +71,7 @@ check "violating/exit-0" "$([ "$?" -eq 0 ] && echo 1 || echo 0)"
 assert_grep "violating/desc-usewhen"   /tmp/.skill-body-violating 'missing "Use when"'
 assert_grep "violating/desc-overbudget" /tmp/.skill-body-violating "over budget (548 > 500)"
 assert_grep "violating/house-tag"      /tmp/.skill-body-violating "has no <what-to-do> tag"
-assert_grep "violating/orphan"         /tmp/.skill-body-violating "not referenced by any SKILL.md"
+assert_grep "violating/orphan"         /tmp/.skill-body-violating "not referenced by any shipped markdown file"
 assert_grep "violating/desc-count"     /tmp/.skill-body-violating "description discipline: 1 finding(s)"
 assert_grep "violating/tags-count"     /tmp/.skill-body-violating "house tags:             1 finding(s)"
 assert_grep "violating/orphan-count"   /tmp/.skill-body-violating "orphaned bundled files: 1 finding(s)"
