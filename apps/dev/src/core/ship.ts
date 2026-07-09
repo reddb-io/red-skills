@@ -38,9 +38,9 @@ export interface ShipCheck {
 /**
  * True when the named advisory review check (e.g. `CodeRabbit`) is registered
  * on the PR but has not yet reached a terminal state. Mirrors the AFK landing
- * path's `waitForReviewCheck` (core/merge.ts): `/ship` is the interactive
- * sibling of that landing and must likewise hold until an advisory bot review
- * concludes, rather than approving/merging out from under an in-flight reviewer.
+ * path's `waitForReviewCheck` (core/merge.ts). The gate must hold until an
+ * advisory bot review concludes, rather than approving/merging out from under
+ * an in-flight reviewer.
  *
  * Fail-open by name: a check that never registers is NOT pending — an absent or
  * misconfigured reviewer cannot wedge the finalizer. A blank `reviewCheck`

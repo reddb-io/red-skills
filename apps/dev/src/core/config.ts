@@ -128,7 +128,7 @@ export const CONFIG_DEFAULTS = {
   // Resolved from the namespaced `plugins.dev.afk.*` block with the legacy bare
   // `afk.*` fallback (ADR 0042), like every other accessor here.
   "afk.worktree_launches_pull_request": "true",
-  // PR review gate (ADR 0064 §10, #749). When AFK / `/ship` open a PR for a
+  // PR review gate (ADR 0064 §10, #749). When AFK opens a PR for a
   // completed attempt, the issue-classifier tier decides mechanical vs
   // non-mechanical: non-mechanical changes get `ready-for-review` (firing the
   // advisory review) and hold the merge; mechanical/trivial work keeps the

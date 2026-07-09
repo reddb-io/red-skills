@@ -55,7 +55,7 @@ export const DEFAULT_GO_MODE: GoMode = "direct-PR";
  * unmoded `/go` produces exactly the base argv.
  *
  * - `no-mistakes` → `--pre-pr` routes the run through the hardened pre-PR
- *   pipeline (core/pre-pr-pipeline.ts + the `/ship` gate).
+ *   pipeline (core/pre-pr-pipeline.ts + the pre-PR ship gate).
  * - `local-only` → `--local-merge` lands the branch by an approved local
  *   fast-forward instead of opening a PR.
  */
