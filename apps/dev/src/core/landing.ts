@@ -38,6 +38,7 @@ import {
   type Exec as MergeExec,
   type WaitForReviewInput,
 } from "./merge.js";
+import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { decideMainRedAdminMerge, type MainRedRepairIssue } from "./main-red-repair.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
@@ -142,6 +143,17 @@ export interface LandingDeps {
    *   - PR path: the isolated rebase worktree after `preMergeRebase`
    */
   postMergeGate?: (mergedTreeDir: string) => Promise<{ ok: boolean }>;
+  /**
+   * Global AFK land-lock (#1337). Present → the landing critical section
+   * (integrate/rebase → revalidate → merge → push) runs under mutual exclusion, so
+   * only one worker at a time lands into `<base>` and each one rebases onto a tip
+   * no concurrent worker can move underneath it. A wait timeout aborts the landing
+   * as `infra` rather than pushing unserialized. Ignored when `<base>` has a native
+   * merge queue ({@link LandingInput.nativeMergeQueue}) — the forge serializes
+   * better than we can. Absent (the default) → lands unserialized, the pre-#1337
+   * behaviour, so callers that have not wired the dep are unchanged.
+   */
+  landLock?: LandLock;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -213,6 +225,14 @@ export interface LandingInput {
    * unaffected.
    */
   mainRed?: boolean;
+  /**
+   * `<base>` has the forge's native merge queue configured (#1337). True → the PR
+   * landing ENQUEUES (`gh pr merge --auto`) and takes NO local land-lock: the queue
+   * already serializes entries and rebases + revalidates each onto the current tip.
+   * Only meaningful on the PR path — a direct merge never opens a PR, so a queued
+   * base falls back to the land-lock there. Defaults false/undefined.
+   */
+  nativeMergeQueue?: boolean;
 }
 
 export function landingMergeTitle(input: { issue: number; title: string; labels?: readonly string[] }): string {
@@ -305,6 +325,10 @@ export type LandingResult =
  *   1. pushAttempt — make the worker branch's origin state certain so
  *      landMerge/landPr have a ref to merge.
  *   2. fireHook("pre_merge") — abort → { ok:false, reason:"pre_merge-abort" }.
+ *   3. SERIALIZE the land (#1337) — native merge queue when `<base>` has one, else
+ *      the global land-lock when wired, so no two workers integrate-and-push into
+ *      the same base concurrently. Everything after this point is the critical
+ *      section; the lock is always released, on success and on failure alike.
  *
  *   openPr=true → {@link landAdminPr}. The PR is admin-merged REMOTELY into
  *   `<base>`, so there is nothing to integrate locally first; the prior pre-merge
@@ -442,7 +466,44 @@ export async function doLanding(
     return { ok: false, reason: "pre_merge-abort", locked };
   }
 
-  const landed = input.openPr ? await landAdminPr(deps, input) : await landDirectInWorktree(deps, input);
+  // 3. Serialize the land (#1337). Everything below — integrate/rebase onto the
+  // fresh base, revalidate the integrated tree, merge, push — is the critical
+  // section two near-simultaneous workers used to race in: A pushes, B's push is
+  // rejected non-fast-forward, B re-integrates, and overlapping diffs conflict.
+  //
+  //   native-merge-queue → the forge serializes; take no local lock.
+  //   land-lock          → only one worker at a time enters, so each rebases onto
+  //                        a tip no concurrent land can move underneath it.
+  //   unserialized       → no lock wired (pre-#1337 default): land as before.
+  //
+  // A wait timeout ABORTS the landing as `infra` — pushing unserialized after
+  // failing to serialize would reintroduce exactly the race the lock exists for.
+  const serialization = resolveLandSerialization({
+    // The native queue is a PR-path mechanism: a direct merge never opens a PR, so
+    // a queued base still needs the local lock there.
+    nativeMergeQueue: input.openPr && input.nativeMergeQueue === true,
+    hasLandLock: deps.landLock !== undefined,
+  });
+
+  let release: (() => Promise<void>) | null = null;
+  if (serialization === "land-lock") {
+    release = (await deps.landLock?.acquire()) ?? null;
+    if (!release) {
+      return {
+        ok: false,
+        reason: "infra",
+        infraReason: "another worker held the AFK land-lock past the wait timeout",
+        locked,
+      };
+    }
+  }
+
+  let landed: LandingResult;
+  try {
+    landed = input.openPr ? await landAdminPr(deps, input) : await landDirectInWorktree(deps, input);
+  } finally {
+    await release?.();
+  }
   if (!landed.ok) return landed;
 
   // post_merge hook (best-effort; an abort here does not unwind the landing,
@@ -495,6 +556,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     // Non-blocking backpressure evidence review (#1279): threaded through so
     // landPr can attach the ledger the moment it resolves the PR number.
     onPrResolved: deps.onPrResolved,
+    // Native merge queue (#1337): enqueue rather than merge on the spot, letting
+    // the forge serialize + rebase + revalidate every entry onto the current tip.
+    mergeQueue: input.nativeMergeQueue === true,
     // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
     // its step-4 local fast-forward, so the integration reaches the maintainer
     // only via `origin/<locked-branch>` (they promote by pulling). The lock only
