@@ -236,6 +236,17 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
     const values = loadConfig("/x/.red/config.yaml", { read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
   });
+
+  it("defaults the external-PR triage request surface off and reads the namespaced toggle", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "dev.triage.external_pr_surface.enabled")).toBe("false");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    triage:\n      external_pr_surface:\n        enabled: true\n",
+    });
+    expect(getConfig(values, "dev.triage.external_pr_surface.enabled")).toBe("true");
+  });
 });
 
 describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {

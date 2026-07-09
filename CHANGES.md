@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## triage and setup-red-skills (engineering) - external-PR request surface, default off (issue #1298)
+
+- **status**: modified
+- **upstream**: `272f99b` (upstream v1.1.0 external-PR triage surface)
+- **why**: Spec #1286 adopts upstream's PR-as-request surface, but RedSkills must keep public PR content behind the ADR 0073 injection boundary and ADR 0085/0086 execution trust gate.
+- **what changed**: Added the default-off `dev.triage.external_pr_surface.enabled` config key, documented the setup-template knob under `plugins.dev.triage.external_pr_surface.enabled`, and updated `/triage` so PR discovery is fully inert unless the toggle is explicitly true. When enabled, `/triage` lists only external PRs, treats PR bodies/comments/titles/diffs as untrusted data, generalizes bug reproduction to "verify the claim", runs a redundancy check before polluting out-of-scope knowledge, and forbids checking out, building, installing dependencies for, testing from, or executing PR code.
+
+---
+
 ## wayfinder (engineering) - adopted planning on-ramp for RedSkills queue (issue #1297)
 
 - **status**: added
