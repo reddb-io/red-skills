@@ -78,6 +78,7 @@ manifest is generated from it. Any runtime code for a plugin lives under
    in `.red/contexts/{dev,memory,brain}/CONTEXT.md`, in the context that owns
    the term.
 7. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
+8. **ask-red maintenance rule.** any skill add, rename, removal, or flow change must re-check `plugins/dev/skills/engineering/ask-red/SKILL.md`, update its Coverage Inventory and routes, and keep the `/doctor` router sync check green.
 
 ## Plugin activation (ADR 0067)
 
