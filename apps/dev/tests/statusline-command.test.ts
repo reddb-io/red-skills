@@ -325,6 +325,51 @@ describe("statusline command — rendered line", () => {
     expect(rows[1]).not.toContain("iss=2001");
   });
 
+  it("renders a requeue-origin no-agent row with gate stage and elapsed, not zero agent metrics", async () => {
+    await writeWorkerState(root, "requeue-adopt", "1293-a1", {
+      worker_id: "requeue-adopt",
+      runner: "claude",
+      origin: "requeue",
+      current: {
+        number: 1293,
+        stage: "typecheck",
+        diff_added: 0,
+        diff_removed: 0,
+        started_at: new Date().toISOString(),
+      },
+    });
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+
+    const out = sink();
+    const oldColumns = process.env.COLUMNS;
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.COLUMNS = "200";
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+    } finally {
+      if (oldColumns === undefined) delete process.env.COLUMNS;
+      else process.env.COLUMNS = oldColumns;
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    const rows = stripAnsi(out.text()).trimEnd().split("\n");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain("requeue-adopt");
+    expect(rows[1]).toContain("org=requeue");
+    expect(rows[1]).toContain("iss=1293");
+    expect(rows[1]).toContain("typecheck");
+    expect(rows[1]).toMatch(/\b\d{2}:\d{2}:\d{2}\b/);
+    expect(rows[1]).not.toContain("loc=+0 -0");
+    expect(rows[1]).not.toContain("tks=0");
+    expect(rows[1]).not.toContain("tls=0");
+    expect(rows[1]).not.toContain("rsn=0");
+    expect(rows[1]).not.toContain("txt=0");
+  });
+
   it("renders the 5h/7d rate-limit windows on the header when the payload exposes them", async () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 0, 0);
