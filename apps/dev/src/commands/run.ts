@@ -70,6 +70,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
+import { createLandLock } from "../runtime/land-lock.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
@@ -819,6 +820,22 @@ export function buildProcessDeps(
   // base (ADR 0031). Honours the namespaced + legacy fallback via loadConfig.
   const worktreeLaunchesPr = getConfig(config, "afk.worktree_launches_pull_request") !== "false";
 
+  // Serialized landing (#1337, Spec #1333 root cause 2). Two workers finishing in
+  // the same window used to both integrate-and-push into the base: the second push
+  // was rejected non-fast-forward, and re-integrating an overlapping diff conflicted.
+  //
+  //   afk.merge.native_queue: true → `<base>` has the forge's merge queue; the PR is
+  //     ENQUEUED and no local lock is taken (the queue rebases + revalidates each
+  //     entry onto the current tip itself).
+  //   otherwise → a global land-lock at `.red/tmp/afk-land.lock`, scoping mutual
+  //     exclusion to every AFK worker landing into this repo on this host. Default
+  //     ON; `afk.merge.land_lock: false` opts out into the pre-#1337 unserialized land.
+  const nativeMergeQueue = getConfig(config, "afk.merge.native_queue") === "true";
+  const landLock =
+    nativeMergeQueue || getConfig(config, "afk.merge.land_lock") === "false"
+      ? undefined
+      : createLandLock(paths.tmpDir, `pid-${process.pid}`);
+
   // Intra-attempt notes-loop (Track C, #924). Default OFF → exactly one agent
   // call. When enabled, processIssue wraps the inner invocation in a bounded
   // outer loop carrying an accumulated `notes.md` between iterations.
@@ -1018,6 +1035,8 @@ export function buildProcessDeps(
     waitForReview,
     ciAwait,
     worktreeLaunchesPr,
+    landLock,
+    nativeMergeQueue,
     reviewGate,
     reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { doLanding, type LandingDeps, type LandingInput, type LandingHookContexts } from "../src/core/landing.js";
+import { createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs } from "../src/core/land-lock.js";
 import type { ExecResult } from "../src/core/merge.js";
 
 // doLanding owns the flag-toggled landing (ADR 0030 amended by #842 / 0031):
@@ -125,6 +126,14 @@ interface Opts {
   postMergeGate?: boolean;
   /** When true AND `postMergeGate` is wired, the gate returns `{ ok: false }`. */
   postMergeGateFails?: boolean;
+  /**
+   * Global land-lock (#1337). Present → wire `deps.landLock` with this port, so a
+   * test can observe when the landing entered and left the critical section.
+   * Absent → the dep is unwired and the land runs unserialized (pre-#1337).
+   */
+  landLock?: LandLock;
+  /** Native merge queue (#1337): set `input.nativeMergeQueue`. */
+  nativeMergeQueue?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -283,6 +292,8 @@ function harness(opts: Opts = {}): Harness {
           return { ok: !opts.postMergeGateFails };
         }
       : undefined,
+    // Global land-lock (#1337): only wired when the test opts in.
+    landLock: opts.landLock,
   };
 
   const input: LandingInput = {
@@ -307,6 +318,7 @@ function harness(opts: Opts = {}): Harness {
     // armed for every existing landing assertion.
     sensitivePathApproved: opts.sensitivePathApproved,
     mainRed: opts.mainRed,
+    nativeMergeQueue: opts.nativeMergeQueue,
   };
 
   const hooks: LandingHookContexts = {
@@ -1187,5 +1199,189 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.postMergeGateDirs).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Serialized landing (#1337). Two near-simultaneous workers used to race on the
+// land: A pushes, B's push is rejected as a non-fast-forward, B re-integrates,
+// and overlapping diffs conflict. The land is now a critical section — entered
+// under the forge's native merge queue when `<base>` has one, else under the
+// global land-lock. These tests drive the REAL createFileLandLock over an
+// in-memory lock file, so what is asserted is the integration, not a mock.
+// ---------------------------------------------------------------------------
+
+/** In-memory `LandLockFs` with O_EXCL semantics, shared by both concurrent lands. */
+function memLockFs(): LandLockFs & { files: Map<string, string> } {
+  const files = new Map<string, string>();
+  return {
+    files,
+    async createExclusive(path, contents) {
+      if (files.has(path)) return false;
+      files.set(path, contents);
+      return true;
+    },
+    async read(path) {
+      return files.get(path) ?? null;
+    },
+    async remove(path) {
+      files.delete(path);
+    },
+  };
+}
+
+/** A land-lock that always times out — models an incumbent holding it past the wait. */
+const timedOutLock: LandLock = { acquire: async () => null };
+
+/** A land-lock that records every enter/exit into a shared trace. */
+function tracingLock(trace: string[], name: string, inner: LandLock): LandLock {
+  return {
+    async acquire() {
+      const release = await inner.acquire();
+      if (!release) return null;
+      trace.push(`enter:${name}`);
+      return async () => {
+        trace.push(`exit:${name}`);
+        await release();
+      };
+    },
+  };
+}
+
+/** Wrap a harness's mergeExec so every push to the remote base lands in `trace`. */
+function traceBasePushes(h: Harness, trace: string[], name: string): void {
+  const inner = h.deps.mergeExec;
+  h.deps.mergeExec = async (args: string[]) => {
+    if (args.join(" ").includes("push origin HEAD:refs/heads/main")) trace.push(`push:${name}`);
+    return inner(args);
+  };
+}
+
+describe("doLanding — serialized landing (#1337)", () => {
+  it("two concurrent direct lands serialize: the second never pushes before the first releases", async () => {
+    const fs = memLockFs();
+    const clock = { t: 0 };
+    const deps: LandLockDeps = {
+      fs,
+      clock: {
+        now: () => clock.t,
+        // Advance the fake clock, but yield the microtask queue so the OTHER land
+        // actually makes progress while this one polls — real concurrency, not a stub.
+        sleep: async (ms) => {
+          clock.t += ms;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        },
+      },
+      isHolderAlive: () => true,
+    };
+    const trace: string[] = [];
+    const lockFor = (name: string, pid: number) =>
+      tracingLock(trace, name, createFileLandLock(deps, { path: "/afk-land.lock", holder: name, pid, pollMs: 5 }));
+
+    const a = harness({ locked: true, openPr: false, landLock: lockFor("A", 100) });
+    const b = harness({ locked: true, openPr: false, landLock: lockFor("B", 200) });
+    traceBasePushes(a, trace, "A");
+    traceBasePushes(b, trace, "B");
+
+    const [ra, rb] = await Promise.all([doLanding(a.deps, a.input, a.hooks), doLanding(b.deps, b.input, b.hooks)]);
+
+    expect(ra.ok).toBe(true);
+    expect(rb.ok).toBe(true);
+    // The whole point: no `push:B` between `enter:A` and `exit:A`.
+    expect(trace).toEqual(["enter:A", "push:A", "exit:A", "enter:B", "push:B", "exit:B"]);
+    // …and B got that order by WAITING on a contended lock, not by luck of
+    // scheduling: an uncontended acquire never polls, so the clock never advances.
+    expect(clock.t).toBeGreaterThan(0);
+    // The lock file is left clean for the next worker.
+    expect(fs.files.size).toBe(0);
+  });
+
+  it("land-lock wait timeout → infra failure, nothing pushed to the remote base", async () => {
+    const h = harness({ locked: true, openPr: false, landLock: timedOutLock });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      infraReason: "another worker held the AFK land-lock past the wait timeout",
+      locked: true,
+    });
+    // Refusing to serialize means refusing to land — never an unserialized push.
+    expect(joined(h.mergeCalls).some((c) => c.includes("push origin HEAD:refs/heads/main"))).toBe(false);
+    // No landing worktree was even provisioned.
+    expect(h.removedWorktrees).toEqual([]);
+  });
+
+  it("releases the land-lock when the landing fails inside the critical section", async () => {
+    const fs = memLockFs();
+    const deps: LandLockDeps = {
+      fs,
+      clock: { now: () => 0, sleep: async () => {} },
+      isHolderAlive: () => true,
+    };
+    const lock = createFileLandLock(deps, { path: "/afk-land.lock", holder: "A", pid: 100 });
+    const h = harness({ locked: true, openPr: false, landLock: lock, integrateCode: 1 });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: false, reason: "integrate-failed", locked: true });
+    // A failed land must not leave the lock held — the next worker would deadlock.
+    expect(fs.files.size).toBe(0);
+  });
+
+  it("native merge queue → no land-lock is taken and the PR is enqueued with --auto", async () => {
+    let acquires = 0;
+    const countingLock: LandLock = {
+      acquire: async () => {
+        acquires += 1;
+        return async () => {};
+      },
+    };
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, landLock: countingLock });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    // The forge serializes; double-serializing would only add latency.
+    expect(acquires).toBe(0);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge --auto"))).toBe(true);
+  });
+
+  it("native merge queue on the DIRECT path still takes the land-lock (no PR to enqueue)", async () => {
+    let acquires = 0;
+    const countingLock: LandLock = {
+      acquire: async () => {
+        acquires += 1;
+        return async () => {};
+      },
+    };
+    const h = harness({ locked: true, openPr: false, nativeMergeQueue: true, landLock: countingLock });
+
+    expect((await doLanding(h.deps, h.input, h.hooks)).ok).toBe(true);
+    expect(acquires).toBe(1);
+  });
+
+  it("no land-lock wired → lands unserialized, exactly as before #1337", async () => {
+    const h = harness({ locked: true, openPr: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    expect(joined(h.mergeCalls).some((c) => c.includes("push origin HEAD:refs/heads/main"))).toBe(true);
+  });
+
+  it("PR path without a native queue is serialized by the land-lock", async () => {
+    let acquires = 0;
+    const countingLock: LandLock = {
+      acquire: async () => {
+        acquires += 1;
+        return async () => {};
+      },
+    };
+    const h = harness({ locked: false, openPr: true, landLock: countingLock });
+
+    expect((await doLanding(h.deps, h.input, h.hooks)).ok).toBe(true);
+    expect(acquires).toBe(1);
+    // Plain admin-merge, never enqueued.
+    expect(joined(h.mergeCalls).some((c) => c.includes("--auto"))).toBe(false);
   });
 });

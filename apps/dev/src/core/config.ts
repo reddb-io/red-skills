@@ -106,6 +106,18 @@ export const CONFIG_DEFAULTS = {
   // once it settles, routing a failed check (`blocked:ci`) / still-pending checks
   // distinctly. The wait budget is `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s).
   "afk.merge.ci_aware": "false",
+  // Serialized landing (#1337). Two workers finishing in the same window used to
+  // both integrate-and-push into the base: the second push was rejected
+  // non-fast-forward, and re-integrating an overlapping diff conflicted. Set
+  // `afk.merge.native_queue: true` when `<base>` has the forge's merge queue — the
+  // PR is then ENQUEUED (`gh pr merge --auto`) and no local lock is taken, because
+  // the queue rebases + revalidates each entry onto the current tip itself.
+  "afk.merge.native_queue": "false",
+  // Otherwise every land takes a global land-lock at `.red/tmp/afk-land.lock`, so
+  // exactly one worker per host+repo is inside the integrate → revalidate → merge →
+  // push critical section. ON by default; set false only to restore the pre-#1337
+  // unserialized land (single-worker fleets, where nothing can race).
+  "afk.merge.land_lock": "true",
   // Landing-mode flag, decoupled from the branch-lock (ADR 0030 amended, #842).
   // The branch-lock now ONLY resolves the target base (lock > pin > main, ADR
   // 0031); this flag — independently — decides whether the attempt lands via an
