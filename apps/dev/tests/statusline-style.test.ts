@@ -254,6 +254,40 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).toContain("tls=11 rsn=13 txt=0");
     expect(t).not.toContain("stats=");
   });
+
+  it("renders requeue no-agent rows around gate stage and elapsed without zero activity metrics", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        worker_id: "requeue-adopt",
+        origin: "requeue",
+        current: {
+          ...worker().state.current,
+          number: 1293,
+          stage: "typecheck",
+          input_tokens: 0,
+          output_tokens: 0,
+          tools_called_count: 0,
+          reasoning_events: 0,
+          text_chunk_count: 0,
+        },
+      },
+      diffAdded: 0,
+      diffRemoved: 0,
+    });
+    const t = stripAnsi(renderWorkerLine(w, NOW));
+    expect(t).toContain("requeue-adopt");
+    expect(t).toContain("run=claude opus high");
+    expect(t).toContain("org=requeue");
+    expect(t).toContain("iss=1293");
+    expect(t).toContain("typecheck");
+    expect(t).toContain("00:05:00");
+    expect(t).not.toContain("loc=+0 -0");
+    expect(t).not.toContain("tks=0");
+    expect(t).not.toContain("tls=0");
+    expect(t).not.toContain("rsn=0");
+    expect(t).not.toContain("txt=0");
+  });
 });
 
 describe("statusline style — full themed assembly", () => {
@@ -335,6 +369,45 @@ describe("statusline style — full themed assembly", () => {
     expect(secondRaw).toContain(KEY);
     expect(firstRaw).toContain(BOLD);
     expect(secondRaw).toContain(BOLD);
+  });
+
+  it("keeps agent metrics on agent rows while omitting them from requeue no-agent rows", () => {
+    const out = styleStatusline(input, {
+      now: NOW,
+      workers: [
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "requeue-adopt",
+            origin: "requeue",
+            current: { ...worker().state.current, number: 1293, stage: "lint" },
+          },
+          diffAdded: 0,
+          diffRemoved: 0,
+        }),
+        worker({
+          state: {
+            ...worker().state,
+            worker_id: "wA",
+            origin: "afk",
+            current: { ...worker().state.current, number: 17, stage: "impl", tools_called_count: 3 },
+          },
+          diffAdded: 12,
+          diffRemoved: 3,
+        }),
+      ],
+    });
+    const [, requeueRaw, agentRaw] = out.split("\n");
+    const requeue = stripAnsi(requeueRaw);
+    const agent = stripAnsi(agentRaw);
+    expect(requeue).toContain("org=requeue");
+    expect(requeue).toContain("lint");
+    expect(requeue).not.toContain("loc=");
+    expect(requeue).not.toContain("tks=");
+    expect(requeue).not.toContain("tls=");
+    expect(agent).toContain("org=afk");
+    expect(agent).toContain("loc=+12 -3");
+    expect(agent).toContain("tls=3");
   });
 
   it("defaults to the header row alone when no workers/now are supplied", () => {
