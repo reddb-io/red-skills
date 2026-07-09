@@ -90,7 +90,7 @@ import {
 } from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
-import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
+import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "./attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "./claim.js";
@@ -146,6 +146,8 @@ export interface ProcessGh {
   /** Resolve whether issue `n` is CLOSED. Resolves the cascade's per-dependency
    * `req:*` closed-states. A 404 / transient failure resolves to false. */
   issueClosed(n: number): Promise<boolean>;
+  /** Optional human-facing metadata lookup for rendered dependency refs. */
+  issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
   /**
    * Trust-gate provenance (#621, ADR 0085): the issue author + the actor who
    * applied `ready-for-agent`, read from the issue TIMELINE — never inferred from
@@ -3374,7 +3376,8 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
       await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
-      await deps.gh.comment(p.number, p.comment);
+      const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
+      await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }
   } catch (err) {
     deps.appendIterLog(
