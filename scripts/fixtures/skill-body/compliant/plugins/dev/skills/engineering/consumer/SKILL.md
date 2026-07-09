@@ -5,6 +5,6 @@ description: A sibling skill that owns a shared template. Use when checking that
 
 # consumer
 
-This skill folder bundles a template file that is referenced by the sibling
-`good` skill rather than here — its own SKILL.md deliberately never names the
-file. The plugin-wide reference search keeps it out of the orphaned-file report.
+This skill folder bundles a template file consumed by an extracted sibling
+reference doc rather than by any SKILL.md. The plugin-wide reference search
+must include bundled reference docs to keep it out of the orphaned-file report.
