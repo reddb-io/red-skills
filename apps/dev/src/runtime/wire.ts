@@ -1596,6 +1596,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
+      issueReference: (issue) => ghx.issueReference(ghCtx, issue),
     },
     git: {
       deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
