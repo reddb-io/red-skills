@@ -238,6 +238,13 @@ export interface ProcessGit {
    */
   fetchBase?(base: string): Promise<void>;
   /**
+   * Resolve the exact base commit a new worker branch should fork from. Preferred
+   * over `fetchBase`: online it fetches and returns `origin/<base>`; offline it
+   * permits the local branch only when it is not behind the last-known origin tip,
+   * else returns `ok:false, reason:"base-stale"` so the attempt parks typed.
+   */
+  resolveFreshBase?(input: { base: string; remote: string }): Promise<WorkerBaseResolution>;
+  /**
    * Adapter-side guard for sandcastle's named-branch reuse path. After
    * `fetchBase()` refreshes `origin/<base>`, remove stale local worker state
    * before `runAgent()` so red-castle must recreate the worker branch from
@@ -247,6 +254,20 @@ export interface ProcessGit {
    * implementation, preserving same-run reuse when the branch is already current.
    */
   prepareFreshWorkerBranch?(input: { branch: string; baseRef: string; force: boolean }): Promise<boolean | void>;
+}
+
+export interface WorkerBaseResolution {
+  ok: boolean;
+  base: string;
+  baseRef: string;
+  sha: string;
+  source: "remote" | "local";
+  remoteReachable: boolean;
+  localSha?: string;
+  localAhead?: number;
+  localBehind?: number;
+  reason?: "base-stale";
+  message?: string;
 }
 
 /** Injected lookups the composed deciders need (issue body for the pin, the
@@ -293,6 +314,34 @@ function remoteTrackingBaseRef(remote: string, base: string): string {
     return base;
   }
   return `${remote}/${base}`;
+}
+
+function baseResolutionStatePatch(resolution: WorkerBaseResolution): Record<string, unknown> {
+  return {
+    "current.base": resolution.base,
+    "current.base_ref": resolution.baseRef,
+    "current.base_sha": resolution.sha,
+    "current.base_source": resolution.source,
+    "current.base_remote_reachable": resolution.remoteReachable,
+    ...(resolution.localSha ? { "current.base_local_sha": resolution.localSha } : {}),
+    ...(resolution.localAhead !== undefined ? { "current.base_local_ahead": resolution.localAhead } : {}),
+    ...(resolution.localBehind !== undefined ? { "current.base_local_behind": resolution.localBehind } : {}),
+  };
+}
+
+function formatBaseResolution(resolution: WorkerBaseResolution): string {
+  return [
+    `base: ${resolution.base}`,
+    `ref: ${resolution.baseRef}`,
+    `sha: ${resolution.sha || "(unresolved)"}`,
+    `source: ${resolution.source}`,
+    `remote_reachable: ${String(resolution.remoteReachable)}`,
+    resolution.localSha ? `local_sha: ${resolution.localSha}` : undefined,
+    resolution.localAhead !== undefined ? `local_ahead: ${resolution.localAhead}` : undefined,
+    resolution.localBehind !== undefined ? `local_behind: ${resolution.localBehind}` : undefined,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function isMergeConflictRetry(priorAttemptContext: string | undefined): boolean {
@@ -1450,12 +1499,47 @@ export async function processIssue(
   // prompt, detects the DONE/BLOCKED completion signal, and commits on `branch`.
   // Make the resolved base ref current so sandcastle forks the worker branch off
   // it (ADR 0031): the pinned/locked base becomes the branch's parent, not HEAD.
-  // fetchBase runs `git fetch origin <base>` which updates the remote-tracking
-  // ref (origin/main) but NOT the local branch. We therefore pass the
-  // remote-tracking ref to runAgent so sandcastle's baseBranch start point
-  // uses the freshly-fetched ref, not the potentially-stale local branch.
-  if (deps.git.fetchBase) await deps.git.fetchBase(base);
-  const baseRef = remoteTrackingBaseRef(input.remote, base);
+  // The preferred resolver fetches `origin/<base>` and returns that concrete tip;
+  // if the remote is unreachable it permits the local branch only when it is not
+  // behind the last-known origin tip. A stale local base parks typed instead of
+  // silently forking a branch that can revert already-landed sibling work (#1380).
+  let baseResolution: WorkerBaseResolution;
+  if (deps.git.resolveFreshBase) {
+    baseResolution = await deps.git.resolveFreshBase({ base, remote: input.remote });
+  } else {
+    if (deps.git.fetchBase) await deps.git.fetchBase(base);
+    baseResolution = {
+      ok: true,
+      base,
+      baseRef: remoteTrackingBaseRef(input.remote, base),
+      sha: "",
+      source: "remote",
+      remoteReachable: true,
+    };
+  }
+  deps.markState?.(baseResolutionStatePatch(baseResolution));
+  if (!baseResolution.ok) {
+    const staleCommon: StageCommon = {
+      deps,
+      input,
+      branch,
+      base,
+      slug,
+      hooksFired,
+      startedEpoch,
+      issueType: deriveIssueType(labels),
+      modelTier: taskClass,
+      model: deps.model,
+      effort: deps.effort,
+      resolvedBase: baseResolution,
+    };
+    const message = baseResolution.message ?? "Base is stale; remote is unreachable and local ref is behind.";
+    return await terminalFailure(staleCommon, "base-stale", "base-stale", {
+      notes: message,
+      log: message,
+    });
+  }
+  const baseRef = baseResolution.baseRef;
   await deps.git.prepareFreshWorkerBranch?.({
     branch,
     baseRef,
@@ -1489,6 +1573,7 @@ export async function processIssue(
     modelTier: activeTaskClass,
     model: deps.model,
     effort: deps.effort,
+    resolvedBase: baseResolution,
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
@@ -2581,6 +2666,8 @@ interface StageCommon {
   modelTier: AfkModelTier;
   model?: string;
   effort?: AgentEffort;
+  /** Resolved base commit/ref evidence for state and envelope observability. */
+  resolvedBase?: WorkerBaseResolution;
   /**
    * Backpressure checks that ran on the DONE path (issue #1279), captured so the
    * downstream landing/handoff paths can render the non-blocking evidence ledger
@@ -2636,7 +2723,7 @@ async function emitFailure(
     repoDir: input.repoDir,
     worktreeRel: input.attemptDir,
     diffstat: "",
-    sections,
+    sections: { ...sections, ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}) },
     historyPath: deps.historyPath,
     historyClock: deps.historyClock,
     historyFields: { runner: input.runner },
@@ -2730,6 +2817,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         kind: "main-red-untracked",
         summary: oneLine(sections.log, "Admin-merge refused because main is red without an open main-red repair issue."),
         next: "Restore or create the auto-filed main-red repair issue, then requeue.",
+      };
+    case "base-stale":
+      return {
+        status: "blocked",
+        kind: "base-stale",
+        summary: oneLine(sections.log, "Remote base was unreachable and the local base is stale."),
+        next: "Refresh the local base from origin, or restore remote access, then requeue.",
       };
     case "infra":
       return {
@@ -2921,7 +3015,10 @@ async function emitDone(
     attempt: input.attempt,
     mergeSha,
     diff: "merged",
-    sections: { validation: `${scopeHeader}${validationSidecar.join("\n")}` },
+    sections: {
+      validation: `${scopeHeader}${validationSidecar.join("\n")}`,
+      ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}),
+    },
     historyPath: deps.historyPath,
     historyClock: deps.historyClock,
     historyFields: { runner: input.runner, merge_sha: mergeSha },
