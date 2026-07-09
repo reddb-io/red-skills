@@ -114,6 +114,8 @@ describe("npm spec + registry URL builders", () => {
   it("names the packaged bundle path inside the tarball", () => {
     expect(packagedBundleName("memory")).toBe("memory.bundle.min.mjs");
     expect(packagedBundleRelPath("memory")).toBe("dist/memory.bundle.min.mjs");
+    expect(packagedBundleName("code-nav")).toBe("code-nav.bundle.min.mjs");
+    expect(packagedBundleRelPath("code-nav")).toBe("dist/code-nav.bundle.min.mjs");
   });
 });
 

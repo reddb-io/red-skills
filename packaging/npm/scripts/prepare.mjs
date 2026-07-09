@@ -19,7 +19,12 @@ const repoRoot = join(pkgRoot, "..", "..");
 const srcDist = join(repoRoot, "dist");
 const destDist = join(pkgRoot, "dist");
 
-const BUNDLES = ["dev.bundle.min.mjs", "memory.bundle.min.mjs", "brain.bundle.min.mjs"];
+const BUNDLES = [
+  "dev.bundle.min.mjs",
+  "code-nav.bundle.min.mjs",
+  "memory.bundle.min.mjs",
+  "brain.bundle.min.mjs",
+];
 
 mkdirSync(destDist, { recursive: true });
 let staged = 0;
