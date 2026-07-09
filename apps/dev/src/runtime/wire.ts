@@ -326,6 +326,15 @@ export function resolveAttemptGuardArming(opts: {
   return { guardArmed, laneArmed };
 }
 
+export async function resolveAttemptHead(ctx: gitx.GitContext, branch: string): Promise<string | undefined> {
+  const worktree = await gitx.worktreePathForBranch(ctx, branch);
+  if (worktree) {
+    const head = await gitx.headSha({ ...ctx, cwd: worktree });
+    if (head) return head;
+  }
+  return gitx.branchHead(ctx, branch);
+}
+
 // ---------- lazy sandcastle runAgent binding ----------
 
 /**
@@ -408,7 +417,7 @@ export function makeRunAgent(
         ? {
             attemptTimeoutSeconds: attemptTimeout,
             attemptHardCapSeconds: attemptHardCap,
-            headProbe: () => gitx.branchHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
+            headProbe: () => resolveAttemptHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
             // Edit signal (ADR 0051): the changed-line volume of the agent's real
             // worktree (committed + uncommitted). A change between polls resets
             // the deadline, so a runner that edits without committing (codex) is
