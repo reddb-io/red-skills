@@ -6,6 +6,24 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## to-tickets (engineering) — file-disjunction rule: serialize overlapping slices (issue #1336)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Spec #1333 root cause 1 — file-overlapping concurrent slices produce inherent merge conflicts at landing that no runtime can recover. The slicing skill lacked a rule directing the slicer to express file-level dependencies as `req:N` edges, leaving parallelism decisions to the slicer's judgment with no safety net.
+- **what changed**: Step 3 of `plugins/dev/skills/engineering/to-tickets/SKILL.md` now carries a "File disjunction check" paragraph directing the slicer to inspect parallel slices for file-set overlap and serialize entangled pairs with `req:N` edges. Added a matching Hard Rule (`❌ Do not mark two slices as parallelizable when they write to the same file(s)`). Extended the vertical-slice-rules in `<supporting-info>` with the parallel-implies-disjoint invariant.
+
+---
+
+## afk/fleet.md — fleet-width-by-disjunction guidance (issue #1336)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Spec #1333 root cause 1 — operators had no documented guidance on choosing a safe fleet width. Running `fleet 2` on a fully entangled refactor serialized by `req:N` is wasteful at best and risks spurious conflicts if a dependency edge is missing.
+- **what changed**: added a "## Fleet Width by Disjunction" section to `plugins/dev/skills/engineering/afk/fleet.md` stating the rule: fleet width = degree of disjunction. Covers the disjoint-queue (full fleet safe), partially-entangled-queue (lower width to disjoint-group count), and fully-entangled-refactor (`fleet 1`) cases. Cross-references `/to-tickets` as the skill responsible for expressing file-level dependencies as `req:N` edges before queue publication.
+
+---
+
 ## afk (engineering) — validation-authority guard: the gate command is canonical (issue #1334)
 
 - **status**: modified
