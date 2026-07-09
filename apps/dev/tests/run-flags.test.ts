@@ -22,8 +22,18 @@ describe("deriveStage (native-path monitor stage detection)", () => {
     expect(deriveStage({ type: "text", message: "thinking…", iteration: 1, timestamp: new Date(0) })).toBeUndefined();
   });
 
-  it("maps reasoning without a tool call to plan", () => {
-    expect(deriveStage(reasoning())).toBe("plan");
+  it("returns undefined for reasoning events (never overwrites a concrete stage)", () => {
+    expect(deriveStage(reasoning())).toBeUndefined();
+  });
+
+  it("reasoning after a concrete tool call does not clobber the concrete stage (#1389)", () => {
+    // Simulate: reasoning → toolCall(Edit) → reasoning
+    // The derived stage after the sequence must end at "impl", not "plan".
+    const stages = [reasoning(), tool("Edit", "src/foo.ts"), reasoning()].map(deriveStage);
+    expect(stages).toEqual([undefined, "impl", undefined]);
+    // The last non-undefined stage in the stream is "impl", not "plan".
+    const lastConcrete = stages.filter(Boolean).at(-1);
+    expect(lastConcrete).toBe("impl");
   });
 
   it("maps Edit/Write tools to impl", () => {
