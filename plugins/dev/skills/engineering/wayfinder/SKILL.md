@@ -14,6 +14,8 @@ argument-hint: "[destination or issue/URL/path to map]"
 
 Start breadth-first. Read the current conversation and any referenced issue, URL, or path. Ask or answer only the first few scope questions needed to decide whether the work has unresolved in-scope fog.
 
+**Zoom-as-needed loading.** Load the map at low resolution — read only the map's section headings first; fetch the full body of a specific child only when the session's work touches it.
+
 Use the **no-fog early exit**: if the opening breadth-first grilling surfaces no fog, stop and ask the user to continue with `/start`, `/to-spec`, `/to-tickets`, `/go`, or `/afk` instead of creating a map nobody needs. A map is warranted only when there is named destination plus multiple unknowns that cannot be cleared in one session.
 
 ## 2. Create The Map Ticket
@@ -27,6 +29,10 @@ The map body must carry these headings:
 
 The named end state. Keep this concrete enough that later child Tickets can decide whether new fog is in scope.
 
+## Decisions so far
+
+One line per closed child: a short gist of the decision or result followed by a link to the child Ticket. Built up by step 5 as children resolve.
+
 ## Not yet specified
 
 In-scope fog. Each entry is a frontier question or unresolved branch that can graduate into a child Ticket.
@@ -34,9 +40,15 @@ In-scope fog. Each entry is a frontier question or unresolved branch that can gr
 ## Out of scope
 
 Ruled beyond the destination. These entries never graduate into child Tickets unless the destination is explicitly renamed.
+
+## Notes
+
+Standing preferences for this effort and which skills every session should consult.
 ```
 
-The map is an **index, not a store**. Keep durable decisions, evidence, prototypes, and implementation notes in the child Tickets that produced them; the map only gists and links to those Tickets.
+The map is an **index, not a store**. Keep durable decisions, evidence, prototypes, and implementation notes in the child Tickets that produced them; the map only gists and links to those Tickets via `## Decisions so far`.
+
+**Refer by name.** Every reference to a map or child Ticket uses its *title* with the link embedded in the name — never a bare `#N`. Bare-number narration is illegible to anyone reading the trail.
 
 ## 3. Publish Child Tickets
 
@@ -69,6 +81,8 @@ HITL-typed children (`wayfinder:grilling`, `wayfinder:prototype`) route to human
 - Assign the human or role expected to run the `/start` or `/prototype` session.
 - Use `## Current blocker` / `## Human decision needed` for the pending decision or prototype question, not `## Blocked by`, unless closing concrete dependency Tickets is enough to make the child delegable.
 
+**One-ticket-per-session discipline.** A grilling or prototype session resolves exactly one HITL child and stops. Charting the map is itself one session's work. Do not collapse multiple HITL children into a single session.
+
 When a HITL child becomes delegable, `/hitl` or `/requeue` moves it into `ready-for-agent`; do not create a parallel queue.
 
 ## 5. Advance The Frontier
@@ -76,7 +90,7 @@ When a HITL child becomes delegable, `/hitl` or `/requeue` moves it into `ready-
 After a child resolves, update the map only as an index:
 
 - Link the child under the relevant `## Not yet specified` entry or remove the fog entry if the child answered it.
-- Add a short gist of the decision or result with a link to the child Ticket.
+- Add a short gist of the decision or result with a link to the child Ticket into `## Decisions so far`.
 - Move newly discovered in-scope fog into `## Not yet specified`.
 - Move rejected branches into `## Out of scope`.
 
@@ -95,6 +109,10 @@ Never copy full decisions, research logs, prototype output, or implementation no
 
 <named end state>
 
+## Decisions so far
+
+<!-- populated by step 5 as children resolve — one line per closed child -->
+
 ## Not yet specified
 
 - <in-scope fog item>
@@ -102,6 +120,10 @@ Never copy full decisions, research logs, prototype output, or implementation no
 ## Out of scope
 
 - <ruled-out branch>
+
+## Notes
+
+- <standing preference or skill every session should consult>
 ```
 
 Labels: `wayfinder:map`.
