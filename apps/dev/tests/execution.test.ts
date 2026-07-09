@@ -1704,7 +1704,7 @@ describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-st
     expect(g.firedTimeout()).toBe(true);
   });
 
-  it("treats a volume change in EITHER direction as progress (edits then a partial revert)", async () => {
+  it("does not reset the deadline for shrinking diff volume, but stays alive while still within the cap", async () => {
     let clock = 0;
     let volume = 100;
     const sched = manualScheduler();
@@ -1722,11 +1722,45 @@ describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-st
     });
     await sched.tick(); // anchor (100)
     clock = 80;
-    volume = 60; // a revert is still activity
+    volume = 60; // shrink is activity, but not diff growth
     await sched.tick();
-    clock = 160;
-    await sched.tick(); // only 80ms since the last change → alive
+    clock = 90;
+    await sched.tick(); // only 90ms since anchor → alive even though shrink did not reset
     expect(aborted).toBe(false);
+  });
+
+  it("aborts an edit-loop whose diff volume oscillates without a new high-water mark", async () => {
+    let clock = 0;
+    let volume = 10;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    const g = startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 1000,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // anchor at volume=10
+    clock = 50;
+    volume = 20;
+    await sched.tick(); // new high-water mark → real progress
+    expect(reason).toBeUndefined();
+    clock = 100;
+    volume = 10;
+    await sched.tick(); // shrink: activity, no progress reset
+    expect(reason).toBeUndefined();
+    clock = 150;
+    volume = 20;
+    await sched.tick(); // oscillates back to the old high-water mark → abort before hard cap
+    expect(reason).toBe("edit-loop-stall");
+    expect(g.firedTimeout()).toBe(true);
+    g.stop();
   });
 
   it("degrades to commit-anchored when progressProbe rejects (never the cause of a false reset)", async () => {
@@ -1845,7 +1879,7 @@ describe("startAttemptGuard — commit-anchored hard cap (issue #637, busy-but-u
     expect(reason).toBe("stalled");
   });
 
-  it("without hardCapMs, continuous edits extend indefinitely (ADR 0051 behaviour unchanged)", async () => {
+  it("without hardCapMs, continuous diff growth extends indefinitely (ADR 0051 behaviour unchanged)", async () => {
     let clock = 0;
     let volume = 10;
     const sched = manualScheduler();
@@ -1877,6 +1911,45 @@ describe("startAttemptGuard — commit-anchored hard cap (issue #637, busy-but-u
 });
 
 describe("runAgent — hard cap wiring (issue #637)", () => {
+  it("returns timeout with edit-loop-stall when oscillating edits do not grow the diff", async () => {
+    let clock = 0;
+    let volume = 10;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      attemptTimeoutSeconds: 1,
+      attemptHardCapSeconds: 90,
+      headProbe: async () => "static",
+      progressProbe: async () => volume,
+    });
+    await sched.tick(); // anchor
+    clock = 500;
+    volume = 20;
+    await sched.tick(); // growth → alive
+    clock = 1000;
+    volume = 10;
+    await sched.tick(); // shrink → no reset
+    clock = 1500;
+    volume = 20;
+    await sched.tick(); // no new high-water mark → soft abort, well before 90s hard cap
+    const res = await p;
+    expect(res.outcome).toBe("timeout");
+    expect(res.timeoutReason).toBe("edit-loop-stall");
+    expect(String((controller.signal.reason as Error).message)).toContain("edit-loop-stall");
+  });
+
   it("returns the 'timeout' outcome when the hard cap aborts an editing-but-never-committing run", async () => {
     let clock = 0;
     let volume = 0;
