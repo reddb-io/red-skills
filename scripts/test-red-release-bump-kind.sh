@@ -21,6 +21,7 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 commits="$tmpdir/commits.json"
+non_releasable_commits="$tmpdir/non-releasable-commits.json"
 workflow=".github/workflows/red-release.yml"
 cat > "$commits" <<'JSON'
 [
@@ -36,10 +37,32 @@ cat > "$commits" <<'JSON'
   }
 ]
 JSON
+cat > "$non_releasable_commits" <<'JSON'
+[
+  {
+    "hash": "cccccccccccccccccccccccccccccccccccccccc",
+    "subject": "docs: refresh AFK guide",
+    "body": ""
+  },
+  {
+    "hash": "dddddddddddddddddddddddddddddddddddddddd",
+    "subject": "chore: #1364 preserve security cleanup",
+    "body": ""
+  }
+]
+JSON
 
 run_decider() {
   local allow_major="$1" stdout_file="$2" output_file="$3"
   RED_RELEASE_COMMIT_FIXTURE="$commits" \
+    RED_RELEASE_ALLOW_MAJOR="$allow_major" \
+    GITHUB_OUTPUT="$output_file" \
+    node scripts/decide-release-bump-kind.mjs > "$stdout_file"
+}
+
+run_decider_with_fixture() {
+  local fixture="$1" allow_major="$2" stdout_file="$3" output_file="$4"
+  RED_RELEASE_COMMIT_FIXTURE="$fixture" \
     RED_RELEASE_ALLOW_MAJOR="$allow_major" \
     GITHUB_OUTPUT="$output_file" \
     node scripts/decide-release-bump-kind.mjs > "$stdout_file"
@@ -87,6 +110,26 @@ if run_decider "true" "$stdout" "$outputs"; then
   fi
 else
   fail "decider failed with opt-in"
+fi
+
+stdout="$tmpdir/non-releasable.stdout"
+outputs="$tmpdir/non-releasable.outputs"
+if run_decider_with_fixture "$non_releasable_commits" "" "$stdout" "$outputs"; then
+  if grep -q '^kind=none$' "$outputs"; then
+    pass "non-releasable commits still skip the version bump"
+  else
+    fail "non-releasable commits must output kind=none"
+  fi
+
+  if grep -q '^::warning::red-release skipped 2 non-releasable commit(s)' "$stdout" &&
+     grep -q 'cccccccc docs: refresh AFK guide' "$stdout" &&
+     grep -q 'dddddddd chore: #1364 preserve security cleanup' "$stdout"; then
+    pass "skip warning names commits with non-releasable types"
+  else
+    fail "kind=none must emit a visible warning naming skipped commits"
+  fi
+else
+  fail "decider failed for non-releasable commits"
 fi
 
 if grep -qF 'run: scripts/test-red-release-bump-kind.sh' "$workflow"; then

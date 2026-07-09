@@ -205,6 +205,8 @@ export interface LandingInput {
   title: string;
   /** Issue labels used to derive the landing-created conventional merge title. */
   labels?: readonly string[];
+  /** Changed files in the worker branch, used to classify fallback landing titles. */
+  changedFiles?: readonly string[];
   /**
    * Sensitive-path guard bypass (issue #1171). Defaults false/undefined. When
    * true, the step-0a sensitive-path guard scan is SKIPPED so a branch whose diff
@@ -235,10 +237,46 @@ export interface LandingInput {
   nativeMergeQueue?: boolean;
 }
 
-export function landingMergeTitle(input: { issue: number; title: string; labels?: readonly string[] }): string {
+function isDocsOnlyPath(path: string): boolean {
+  const normalized = path.trim().toLowerCase();
+  return normalized !== "" && (
+    normalized.startsWith("docs/") ||
+    normalized.startsWith(".github/issue_template/") ||
+    normalized.endsWith(".md") ||
+    normalized.endsWith(".mdx") ||
+    normalized.endsWith(".txt") ||
+    normalized.endsWith(".adoc") ||
+    normalized.endsWith(".rst")
+  );
+}
+
+function isRuntimePath(path: string): boolean {
+  const normalized = path.trim().toLowerCase();
+  if (normalized === "" || isDocsOnlyPath(normalized)) return false;
+  if (normalized.startsWith("apps/") || normalized.startsWith("packages/") || normalized.startsWith("plugins/")) {
+    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
+  }
+  if (normalized.startsWith("src/")) {
+    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
+  }
+  if (normalized.startsWith("scripts/") && !normalized.startsWith("scripts/test-")) {
+    return /\.(cjs|cts|js|jsx|mjs|mts|sh|ts|tsx)$/.test(normalized);
+  }
+  return false;
+}
+
+export function landingMergeTitle(input: {
+  issue: number;
+  title: string;
+  labels?: readonly string[];
+  changedFiles?: readonly string[];
+}): string {
   const labels = new Set((input.labels ?? []).map((label) => label.trim().toLowerCase()));
   let prefix = "chore";
-  if (labels.has("type:bug") || labels.has("bug")) {
+  const changedFiles = input.changedFiles ?? [];
+  if (changedFiles.length > 0 && changedFiles.every(isDocsOnlyPath)) {
+    prefix = "docs";
+  } else if (labels.has("type:bug") || labels.has("bug") || labels.has("type:fix") || labels.has("fix")) {
     prefix = "fix";
   } else if (
     labels.has("type:feature") ||
@@ -247,6 +285,8 @@ export function landingMergeTitle(input: { issue: number; title: string; labels?
     labels.has("enhancement")
   ) {
     prefix = "feat";
+  } else if (changedFiles.some(isRuntimePath)) {
+    prefix = "fix";
   }
   return `${prefix}: #${input.issue} ${input.title}`;
 }
@@ -421,8 +461,11 @@ export async function doLanding(
   // `/requeue --adopt-branch` no-agent lane, so the guard is skipped ONLY here.
   // The flag defaults false; no autonomous attempt path sets it, so the guard
   // keeps firing on every normal AFK/go landing.
-  if (deps.getDiffPaths && input.sensitivePathApproved !== true) {
-    const { changedFiles, packageJsonDiff } = await deps.getDiffPaths();
+  const diffPaths = deps.getDiffPaths ? await deps.getDiffPaths() : undefined;
+  const landingInput = diffPaths ? { ...input, changedFiles: diffPaths.changedFiles } : input;
+
+  if (diffPaths && input.sensitivePathApproved !== true) {
+    const { changedFiles, packageJsonDiff } = diffPaths;
     const hits = checkSensitivePaths(changedFiles, packageJsonDiff);
     if (hits.length > 0) {
       return { ok: false, reason: "sensitive-paths", locked, sensitivePaths: hits };
@@ -500,7 +543,7 @@ export async function doLanding(
 
   let landed: LandingResult;
   try {
-    landed = input.openPr ? await landAdminPr(deps, input) : await landDirectInWorktree(deps, input);
+    landed = landingInput.openPr ? await landAdminPr(deps, landingInput) : await landDirectInWorktree(deps, landingInput);
   } finally {
     await release?.();
   }

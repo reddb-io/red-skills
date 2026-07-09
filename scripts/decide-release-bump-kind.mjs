@@ -110,7 +110,13 @@ function decideBumpKind(commits, allowMajor) {
     return { kind: "patch", consumeMajorOptIn: false, warning: "" };
   }
 
-  return { kind: "none", consumeMajorOptIn: false, warning: "" };
+  return {
+    kind: "none",
+    consumeMajorOptIn: false,
+    warning: commits.length > 0
+      ? `::warning::red-release skipped ${commits.length} non-releasable commit(s) with no feat/fix conventional type: ${commits.map(commitLabel).join("; ")}`
+      : "",
+  };
 }
 
 function writeOutput(name, value) {
