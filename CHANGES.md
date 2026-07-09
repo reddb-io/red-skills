@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## afk (engineering) - no-leak contract and guard layers (issue #1366)
+
+- **status**: modified
+- **upstream**: —
+- **why**: AFK handoffs and prompt text did not explicitly bind inner agents to redact host paths, secrets, and Claude session links from public output and commit history.
+- **what changed**: Added the no-leak contract to `AGENT-PROMPT.md` and the generated exit protocols, added command-guard deny rules for leaked `gh` writes, and installed an AFK-owned `commit-msg` hook that rejects Claude session links and sensitive environment variable values before they enter history.
+
+---
+
 ## setup-statusline (engineering) - progressive-disclosure host recipe extraction (issue #1362)
 
 - **status**: modified
