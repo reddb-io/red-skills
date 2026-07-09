@@ -31,6 +31,7 @@ import {
   LABEL_VALIDATION,
   LABEL_VALIDATION_INFRA,
   LABEL_CRASHED,
+  LABEL_SIGNAL_KILLED,
   LABEL_POLICY,
   LABEL_STALLED,
   LABEL_INFRA,
@@ -63,6 +64,12 @@ export type AttemptOutcome =
   | "manual-landing"
   | "blocked"
   | "no-sentinel"
+  // External-signal kill (#1308): the inner process was terminated by an OS
+  // signal (SIGKILL/SIGTERM from the harness or kernel OOM reaper). Carries
+  // the signal name in the envelope notes for actionable crash records.
+  // Same bounded recovery policy as `no-sentinel` (`crashed` cap) — an OOM
+  // or watchdog kill may self-heal on a fresh attempt.
+  | "signal-killed"
   | "merge-conflict"
   // AFK runner improvement (#812): an UNLOCKED admin-merge could not land a
   // completed, MERGEABLE PR because the `enforce_admins` base's required checks
@@ -154,6 +161,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_VALIDATION_INFRA;
     case "no-sentinel":
       return LABEL_CRASHED;
+    case "signal-killed":
+      return LABEL_SIGNAL_KILLED;
     case "hook-aborted":
       return LABEL_POLICY;
     case "stalled":
@@ -206,6 +215,10 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "done":
       return "done";
     case "no-sentinel":
+    // signal-killed is still a death without a completion signal — emit the
+    // same `no-sentinel` envelope status so the crash sections appear; the
+    // signal name is visible in the notes/log section.
+    case "signal-killed":
       return "no-sentinel";
     case "merge-conflict":
       return "merge-conflict";
@@ -278,6 +291,9 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     case "runner-transient":
       return "runner-transient";
     case "no-sentinel":
+    // signal-killed shares the `crashed` recovery policy: an OOM or watchdog
+    // kill may be transient, so a bounded fresh attempt is warranted.
+    case "signal-killed":
       return "crashed";
     case "hook-aborted":
       return "policy";
