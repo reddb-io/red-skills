@@ -109,6 +109,11 @@ export const LABEL_SENSITIVE_PATH = "blocked:sensitive-path";
 // visibility issue is absent, landing refuses with this human-only label instead
 // of silently delivering onto untracked red.
 export const LABEL_MAIN_RED_UNTRACKED = "blocked:main-red-untracked";
+// Attempt base resolution guard (#1380): the remote base could not be fetched and
+// the local base branch is behind the last-known remote-tracking tip. A worker
+// must never branch from that stale local base because it can revert already
+// landed sibling work.
+export const LABEL_BASE_STALE = "blocked:base-stale";
 // AFK runner improvement (#908): the per-attempt resource budget guard aborted
 // the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
 // it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;
