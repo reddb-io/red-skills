@@ -75,6 +75,7 @@ const WORKER_COLUMNS: readonly WorkerColumn[] = [
 ];
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
+const NO_AGENT_ORIGINS = new Set(["requeue"]);
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -192,6 +193,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
     .filter((x): x is string => Boolean(x))
     .join(" ");
+  const noAgent = f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin);
   return {
     workerId: f.workerId,
     run: `run=${runVal}`,
@@ -199,11 +201,11 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
     stage: f.issue === null ? "" : f.stage,
     elapsed: f.elapsed,
-    loc: `loc=${formatDiff(f.added, f.removed)}`,
-    tks: `tks=${humanizeCount(f.tokens)}`,
-    tls: `tls=${String(f.tools)}`,
-    rsn: `rsn=${String(f.reasoning)}`,
-    txt: `txt=${String(f.text)}`,
+    loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
+    tks: noAgent ? "" : `tks=${humanizeCount(f.tokens)}`,
+    tls: noAgent ? "" : `tls=${String(f.tools)}`,
+    rsn: noAgent ? "" : `rsn=${String(f.reasoning)}`,
+    txt: noAgent ? "" : `txt=${String(f.text)}`,
   };
 }
 
@@ -271,6 +273,9 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
     if (f.stage) parts.push(f.stage);
   }
   parts.push(f.elapsed);
+  if (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin)) {
+    return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
+  }
   parts.push(kv("loc", formatDiff(f.added, f.removed)));
   parts.push(kv("tks", humanizeCount(f.tokens)));
   // The vitals as INDIVIDUAL 3-letter k=v pairs (single-spaced group), same
