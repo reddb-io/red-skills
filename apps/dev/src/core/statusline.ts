@@ -135,6 +135,8 @@ export interface AfkInput {
 export interface RepoInput {
   /** `pr` — open pull-request count (repo-global, GitHub-derived). */
   openPrs?: number;
+  /** `cpr` — pull requests created on the local calendar day (GitHub-derived). */
+  todayPrs?: number;
   /** `is` — open issue count (repo-global, GitHub-derived). */
   openIssues?: number;
   /** `+N` — LOCAL branch insertions (committed + uncommitted vs origin/main). */
@@ -366,9 +368,17 @@ export function renderRepoBlock(repo: RepoInput | undefined): string | null {
   const parts: string[] = [];
   const ageSuffix = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
   if (repo.openPrs && repo.openPrs > 0) parts.push(`prs=${repo.openPrs}${ageSuffix}`);
+  if (repo.todayPrs && repo.todayPrs > 0) {
+    // cpr= carries the age suffix only when prs= didn't already carry it.
+    const cprAge = ageSuffix && (!repo.openPrs || repo.openPrs === 0) ? ageSuffix : "";
+    parts.push(`cpr=${repo.todayPrs}${cprAge}`);
+  }
   if (repo.openIssues && repo.openIssues > 0) {
-    // Age marker falls to iss= only when prs= didn't already carry it.
-    const issAge = ageSuffix && (!repo.openPrs || repo.openPrs === 0) ? ageSuffix : "";
+    // Age marker falls to iss= only when neither prs= nor cpr= already carried it.
+    const issAge =
+      ageSuffix && (!repo.openPrs || repo.openPrs === 0) && (!repo.todayPrs || repo.todayPrs === 0)
+        ? ageSuffix
+        : "";
     parts.push(`iss=${repo.openIssues}${issAge}`);
   }
   const diff: string[] = [];
