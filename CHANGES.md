@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see
 
 ---
 
+## doctor (engineering) — native dependency edge divergence guard (issue #1296)
+
+- **status**: modified
+- **upstream**: `272f99b`
+- **why**: ADR 0094 keeps native blocked-by edges and `req:N` labels deliberately redundant; the doctor needs to surface drift before humans trust one surface while AFK reads the other.
+- **what changed**: Added the read-only dependency-edge doctor seam that compares each open Ticket's native blocked-by ids with its `req:N` labels, reports both missing-label and missing-native-edge directions per Ticket, skips parent Specs carrying `type:spec`, renders a compact TOON scorecard, and delegates repair to `/triage` instead of mutating labels or native edges.
+
 ## to-tickets and triage (engineering) — native dependency edges alongside req labels (issue #1295)
 
 - **status**: modified
