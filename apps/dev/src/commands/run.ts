@@ -615,16 +615,17 @@ async function runReconcileWorker(
  */
 /**
  * Map a sandcastle agent stream event to an AFK pipeline stage, or `undefined`
- * when the event carries no stage signal (a text chunk, or an unrecognised
- * tool). Mirrors the shell *Stage Detection* table against tool calls and the
- * reasoning stream: reasoning → `plan`, Edit/Write → `impl`,
- * Read/Grep/`git ls-files`/`find` → `explore`, runner commands → their matching
- * command stage. Used by `recordAgentEvent` to advance `current.stage` in
- * afk.state.json so the monitor reflects progress; keyed off tool calls plus
- * the reasoning case to bound the state-write rate.
+ * when the event carries no stage signal (a text chunk, reasoning event, or an
+ * unrecognised tool). Mirrors the shell *Stage Detection* table against tool
+ * calls: Edit/Write → `impl`, Read/Grep/`git ls-files`/`find` → `explore`,
+ * runner commands → their matching command stage. Reasoning events return
+ * `undefined` — they interleave every tool call on thinking-heavy runners
+ * (Opus effort=high) and carry no exclusive stage signal; returning `undefined`
+ * prevents them from clobbering a concrete stage already set by the preceding
+ * tool call. Used by `recordAgentEvent` to advance `current.stage` in
+ * afk.state.json so the monitor reflects progress.
  */
 type DerivedStage =
-  | "plan"
   | "explore"
   | "impl"
   | "tests"
@@ -704,7 +705,6 @@ const COMMAND_STAGE_PATTERNS: readonly StagePattern[] = [
 ];
 
 export function deriveStage(event: AgentStreamEvent): string | undefined {
-  if (event.type === "reasoning") return "plan";
   if (event.type !== "toolCall") return undefined;
   const name = event.name.toLowerCase();
   const args = event.formattedArgs.toLowerCase();
