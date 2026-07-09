@@ -613,25 +613,108 @@ async function runReconcileWorker(
 /**
  * Map a sandcastle agent stream event to an AFK pipeline stage, or `undefined`
  * when the event carries no stage signal (a text chunk, or an unrecognised
- * tool). Mirrors the shell *Stage Detection* table against tool calls: a git
- * commit → `commit`, a vitest/`pnpm test` run → `tests`, an Edit/Write → `impl`,
- * a Read/Grep/`git ls-files`/`find` → `explore`. Used by `recordAgentEvent` to
- * advance `current.stage` in afk.state.json so the monitor reflects progress;
- * keyed off tool calls (not every text chunk) to bound the state-write rate.
+ * tool). Mirrors the shell *Stage Detection* table against tool calls and the
+ * reasoning stream: reasoning → `plan`, Edit/Write → `impl`,
+ * Read/Grep/`git ls-files`/`find` → `explore`, runner commands → their matching
+ * command stage. Used by `recordAgentEvent` to advance `current.stage` in
+ * afk.state.json so the monitor reflects progress; keyed off tool calls plus
+ * the reasoning case to bound the state-write rate.
  */
+type DerivedStage =
+  | "plan"
+  | "explore"
+  | "impl"
+  | "tests"
+  | "commit"
+  | "typecheck"
+  | "lint"
+  | "build"
+  | "push"
+  | "review";
+
+type StagePattern = {
+  readonly stage: DerivedStage;
+  readonly pattern: RegExp;
+};
+
+const TOOL_NAME_STAGE_PATTERNS: readonly StagePattern[] = [
+  { stage: "impl", pattern: /^(edit|write|multiedit|notebookedit)$/ },
+  { stage: "explore", pattern: /^(read|grep|glob)$/ },
+];
+
+const COMMAND_STAGE_PATTERNS: readonly StagePattern[] = [
+  { stage: "commit", pattern: /\bgit\s+commit(?:\s|$)/ },
+  { stage: "push", pattern: /\bgit\s+push(?:\s|$)/ },
+  { stage: "review", pattern: /\bgit\s+(?:diff|log|show)(?:\s|$)/ },
+
+  { stage: "build", pattern: /\btsc\s+--build\b/ },
+  { stage: "build", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\bbuild\b/ },
+  { stage: "build", pattern: /\bvite\s+build\b/ },
+  { stage: "build", pattern: /\bcargo\s+build\b/ },
+  { stage: "build", pattern: /\bgo\s+build\b/ },
+  { stage: "build", pattern: /\bmake\b/ },
+  { stage: "build", pattern: /\bgradle(?:(?![;&|]).)*\bbuild\b/ },
+  { stage: "build", pattern: /\bmvn(?:(?![;&|]).)*\bpackage\b/ },
+  { stage: "build", pattern: /\bdotnet\s+build\b/ },
+  { stage: "build", pattern: /\bcmake\b/ },
+  { stage: "build", pattern: /\bbazel\s+build\b/ },
+  { stage: "build", pattern: /\bzig\s+build\b/ },
+  { stage: "build", pattern: /\bdart\s+compile\b/ },
+
+  { stage: "typecheck", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btypecheck\b/ },
+  { stage: "typecheck", pattern: /\btsc\b(?!\s+--build\b)/ },
+  { stage: "typecheck", pattern: /\b(?:mypy|pyright)\b/ },
+  { stage: "typecheck", pattern: /\bcargo\s+check\b/ },
+  { stage: "typecheck", pattern: /\bdart\s+analyze\b/ },
+
+  { stage: "lint", pattern: /\b(?:eslint|biome)\b/ },
+  { stage: "lint", pattern: /\bprettier\b(?:(?![;&|]).)*\b--check\b/ },
+  { stage: "lint", pattern: /\bcargo\s+clippy\b/ },
+  { stage: "lint", pattern: /\b(?:ruff|flake8|pylint)\b/ },
+  { stage: "lint", pattern: /\bblack\b(?:(?![;&|]).)*\b--check\b/ },
+  { stage: "lint", pattern: /\brubocop\b/ },
+  { stage: "lint", pattern: /\bgolangci-lint\b/ },
+  { stage: "lint", pattern: /\bgo\s+vet\b/ },
+  { stage: "lint", pattern: /\bgofmt\b/ },
+  { stage: "lint", pattern: /\b(?:ktlint|checkstyle)\b/ },
+  { stage: "lint", pattern: /\bclang-tidy\b/ },
+  { stage: "lint", pattern: /\bdotnet\s+format\b/ },
+  { stage: "lint", pattern: /\bdart\s+analyze\b/ },
+
+  { stage: "tests", pattern: /\b(?:vitest|jest|mocha)\b/ },
+  { stage: "tests", pattern: /\b(?:npm|pnpm|yarn|bun)(?:(?![;&|]).)*\btest\b/ },
+  { stage: "tests", pattern: /\bcargo\s+test\b/ },
+  { stage: "tests", pattern: /\bgo\s+test\b/ },
+  { stage: "tests", pattern: /\bpytest\b/ },
+  { stage: "tests", pattern: /\bpython(?:\d+(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)\b/ },
+  { stage: "tests", pattern: /\bunittest\b/ },
+  { stage: "tests", pattern: /\bphpunit\b/ },
+  { stage: "tests", pattern: /\bgradle(?:(?![;&|]).)*\btest\b/ },
+  { stage: "tests", pattern: /\bmvn(?:(?![;&|]).)*\btest\b/ },
+  { stage: "tests", pattern: /\bdotnet\s+test\b/ },
+  { stage: "tests", pattern: /\bctest\b/ },
+  { stage: "tests", pattern: /\bdart\s+test\b/ },
+  { stage: "tests", pattern: /\bzig\s+test\b/ },
+
+  { stage: "explore", pattern: /\bgit\s+ls-files(?:\s|$)/ },
+  { stage: "explore", pattern: /\bfind\b/ },
+];
+
 export function deriveStage(event: AgentStreamEvent): string | undefined {
+  if (event.type === "reasoning") return "plan";
   if (event.type !== "toolCall") return undefined;
   const name = event.name.toLowerCase();
   const args = event.formattedArgs.toLowerCase();
-  if (/\bgit\s+commit\b/.test(args)) return "commit";
   // Tool-name classification wins for file tools BEFORE the loose args `test`
   // match (#589): reading/grepping/editing a path that merely CONTAINS "test"
   // (e.g. `src/test-utils.ts`) is explore/impl, not a test run. The `\btest\b`
   // args check below is for command tools running an actual test runner.
-  if (/^(edit|write|multiedit|notebookedit)$/.test(name)) return "impl";
-  if (/^(read|grep|glob)$/.test(name)) return "explore";
-  if (/\b(vitest|jest|pnpm[^|]*\btest\b|\btest\b)\b/.test(args)) return "tests";
-  if (/\bgit\s+ls-files\b|\bfind\b/.test(args)) return "explore";
+  for (const rule of TOOL_NAME_STAGE_PATTERNS) {
+    if (rule.pattern.test(name)) return rule.stage;
+  }
+  for (const rule of COMMAND_STAGE_PATTERNS) {
+    if (rule.pattern.test(args)) return rule.stage;
+  }
   return undefined;
 }
 
