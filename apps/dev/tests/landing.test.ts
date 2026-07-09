@@ -37,6 +37,8 @@ interface Harness {
   mainRedRepairLookups: number;
   /** cwds the conflict resolver was dispatched in. */
   resolverCwds: string[];
+  /** dirs the post-merge gate was invoked with (#1335). */
+  postMergeGateDirs: string[];
 }
 
 interface Opts {
@@ -115,6 +117,14 @@ interface Opts {
   labels?: string[];
   /** Force the admin PR path to create a PR instead of reusing an open one. */
   createPr?: boolean;
+  /**
+   * Post-merge-integration gate (#1335). When true, wire `deps.postMergeGate`
+   * so the test can assert which dirs the gate was called with. When false or
+   * absent, `postMergeGate` is absent → the gate is skipped (backwards-compat).
+   */
+  postMergeGate?: boolean;
+  /** When true AND `postMergeGate` is wired, the gate returns `{ ok: false }`. */
+  postMergeGateFails?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -125,6 +135,7 @@ function harness(opts: Opts = {}): Harness {
   const removedRebaseWorktrees: string[] = [];
   let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
+  const postMergeGateDirs: string[] = [];
   let mergeResolved = false;
   let prCreated = false;
 
@@ -265,6 +276,13 @@ function harness(opts: Opts = {}): Harness {
             mainRedRepairLookups += 1;
             return opts.mainRedRepairIssue ? { number: 123 } : null;
           },
+    // Post-merge-integration gate (#1335): only wired when the test opts in.
+    postMergeGate: opts.postMergeGate
+      ? async (dir) => {
+          postMergeGateDirs.push(dir);
+          return { ok: !opts.postMergeGateFails };
+        }
+      : undefined,
   };
 
   const input: LandingInput = {
@@ -309,6 +327,7 @@ function harness(opts: Opts = {}): Harness {
       return mainRedRepairLookups;
     },
     resolverCwds,
+    postMergeGateDirs,
   };
 }
 
@@ -1078,5 +1097,95 @@ describe("doLanding — primary promotion is a guarded fast-forward only (ADR 00
     expect(r).toEqual({ ok: true, locked: false });
     // The unlocked path keeps its best-effort local fast-forward of <target>=main.
     expect(joined(h.mergeCalls).some((c) => c.includes("git -C /repo merge --ff-only origin/main"))).toBe(true);
+  });
+});
+
+// --- post-merge-integration gate (#1335) ---
+// Validate the merged tree (origin/<base> integrated into the worker branch)
+// BEFORE pushing to the remote, so a stale-main-broken result is never merged.
+describe("doLanding — post-merge-integration gate (#1335)", () => {
+  it("direct path: gate absent → proceeds unchanged (backwards-compat)", async () => {
+    const h = harness({ locked: true, openPr: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    expect(h.postMergeGateDirs).toEqual([]);
+  });
+
+  it("PR path: gate absent → proceeds unchanged (backwards-compat)", async () => {
+    const h = harness({ locked: false, openPr: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.postMergeGateDirs).toEqual([]);
+  });
+
+  it("direct path: gate wired + passes → lands successfully, gate called with the landing worktree", async () => {
+    const h = harness({ locked: true, openPr: false, postMergeGate: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    // Gate was called exactly once with the landing worktree (WT), not the primary.
+    expect(h.postMergeGateDirs).toEqual([WT]);
+    // The merge still happened (gate passed, not a no-merge).
+    expect(joined(h.mergeCalls).some((c) => c.includes("merge"))).toBe(true);
+  });
+
+  it("PR path: gate wired + passes → lands successfully, gate called with the rebase worktree", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    // Gate was called exactly once with the rebase worktree (RWT), not the primary.
+    expect(h.postMergeGateDirs).toEqual([RWT]);
+    // The admin-merge still happened.
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(true);
+  });
+
+  it("direct path: gate wired + fails → returns post-merge-gate, nothing pushed to remote", async () => {
+    const h = harness({ locked: true, openPr: false, postMergeGate: true, postMergeGateFails: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: true });
+    // Gate was called with the landing worktree.
+    expect(h.postMergeGateDirs).toEqual([WT]);
+    // Nothing was pushed to the remote base (origin/<base>).
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c.includes(`push origin HEAD:refs/heads/`))).toBe(false);
+    // No --no-ff landing merge was created (integrateOrigin's ff-only is allowed).
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+  });
+
+  it("PR path: gate wired + fails → returns post-merge-gate, no admin-merge attempted", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true, postMergeGateFails: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: false });
+    // Gate was called with the rebase worktree.
+    expect(h.postMergeGateDirs).toEqual([RWT]);
+    // No admin-merge was attempted.
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
+  it("direct path: gate failure aborts before the merge but worktree is still torn down", async () => {
+    const h = harness({ locked: true, openPr: false, postMergeGate: true, postMergeGateFails: true });
+    await doLanding(h.deps, h.input, h.hooks);
+    // The landing worktree is always cleaned up even on gate failure.
+    expect(h.removedWorktrees).toEqual([WT]);
+  });
+
+  it("PR path: gate failure aborts before admin-merge but rebase worktree is still torn down", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true, postMergeGateFails: true });
+    await doLanding(h.deps, h.input, h.hooks);
+    // The rebase worktree is always cleaned up even on gate failure.
+    expect(h.removedRebaseWorktrees).toEqual([RWT]);
+  });
+
+  it("direct path: integrate-failed → gate is never called (gate only runs on success)", async () => {
+    const h = harness({ locked: true, openPr: false, postMergeGate: true, integrateCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "integrate-failed", locked: true });
+    expect(h.postMergeGateDirs).toEqual([]);
+  });
+
+  it("PR rebase conflict → gate is never called (gate only runs on successful rebase)", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true, rebaseCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    expect(h.postMergeGateDirs).toEqual([]);
   });
 });
