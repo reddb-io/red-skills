@@ -74,6 +74,10 @@ Read the focused reference before touching that concern:
 - Handoff wrappers and inner-agent prompt materialisation:
   [`docs/HANDOFF.md`](./docs/HANDOFF.md) and
   [`AGENT-PROMPT.md`](./AGENT-PROMPT.md).
+- Runner-specific behavior: [`runner-claude.md`](./runner-claude.md),
+  [`runner-codex.md`](./runner-codex.md),
+  [`runner-opencode.md`](./runner-opencode.md), and fallback
+  [`runner-hermes.md`](./runner-hermes.md).
 - Liveness, stall protection, and lane-idle rules:
   [`docs/LIVENESS.md`](./docs/LIVENESS.md).
 - Config, env overrides, lifecycle hooks, sandbox/runner/model settings, and
