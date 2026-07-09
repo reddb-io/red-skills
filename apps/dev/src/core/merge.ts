@@ -551,6 +551,17 @@ export interface LandPrInput {
    * Absent (the default) → never called.
    */
   onPrResolved?: (prNumber: number) => Promise<void>;
+  /**
+   * Native merge queue (#1337). True when `<target>` has the forge's merge queue
+   * configured, so the merge is ENQUEUED (`gh pr merge --auto`) instead of merged
+   * on the spot. The queue then serializes every entry, rebasing and revalidating
+   * each onto the current tip before it lands — the same guarantee the local
+   * land-lock provides, enforced by the forge and therefore preferred over it.
+   * The merge completes ASYNCHRONOUSLY once the queue drains; the PR body's
+   * `Closes #N` still closes the issue when it does. Absent (the default) → merge
+   * immediately, the pre-#1337 behaviour.
+   */
+  mergeQueue?: boolean;
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -635,7 +646,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // `locked` (LandPrInput) is no longer read here: step 4 promotes the primary
   // for both lock states via the hardened fastForwardLocalTarget, which is a
   // guaranteed no-op on any primary it must not touch.
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -688,11 +699,20 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
   }
 
-  // 3. Merge: branch protection is honored rather than bypassed (#1103).
+  // 3. Merge: branch protection is honored rather than bypassed (#1103). With a
+  // native merge queue on `<target>` (#1337), `--auto` ENQUEUES instead: the forge
+  // serializes the entries and rebases + revalidates each onto the current tip, so
+  // two workers landing at once can never race on a non-fast-forward push.
   const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
+  if (mergeQueue) mergeArgs.push("--auto");
   if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
   const merge = await exec(mergeArgs);
   if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
+
+  // An ENQUEUED PR has not merged yet — the queue lands it asynchronously once it
+  // drains, so there is no merge commit on `origin/<target>` to promote to. Skip
+  // the local fast-forward rather than pulling a tip that does not carry this work.
+  if (mergeQueue) return { ok: true, prNumber };
 
   // 4. Promote the primary's local <target> to the freshly merged origin tip —
   // for BOTH lock states now (ADR 0083 §2 amended). Hardened so it can never
