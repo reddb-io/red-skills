@@ -40,9 +40,9 @@
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
       "Use $afk when this workspace needs it.",
+      "Use $ask-red when this workspace needs it.",
       "Use $go when this workspace needs it.",
-      "Use $wayfinder when this workspace needs it.",
-      "Use $model-tier-policy when this workspace needs it."
+      "Use $wayfinder when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }

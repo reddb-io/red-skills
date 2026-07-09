@@ -114,4 +114,21 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("do not guess the canonical side");
     expect(apply).toContain("delegate to `/triage`");
   });
+
+  it("audits ask-red router coverage read-only with the maintenance rule as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("ask-red router coverage sync");
+    expect(skill).toContain("registered dev skill names from the plugin manifest");
+    expect(skill).toContain("registered skill missing from the router");
+    expect(skill).toContain("stale router entry");
+    expect(skill).toContain("apps/dev/src/core/ask-red-router-doctor.ts");
+    expect(skill).toContain("never edit manifests and never rewrite `ask-red`");
+    expect(skill).toContain("ask-red router coverage sync (check 16)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("ask-red router coverage sync (check 16)");
+    expect(apply).toContain("do not patch the router blindly");
+    expect(apply).toContain("apply the ask-red maintenance rule");
+  });
 });
