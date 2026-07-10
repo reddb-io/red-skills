@@ -41,7 +41,7 @@ import {
 } from "./slot-circuit.js";
 import type { FleetHookContext, FleetHookDispatchResult } from "./fleet-hook-dispatcher.js";
 import type { FleetHookName } from "./fleet-hook-config.js";
-import { encodeToon } from "./toon.js";
+import { encode as encodeToon } from "@reddb-io/toon";
 
 // ---------- tunables ----------
 
