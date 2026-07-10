@@ -16,7 +16,9 @@ export interface CommunitySummary {
   count: number;
   total_degree: number;
   avg_centrality: number;
+  internal_edge_weight: number;
   external_edge_weight: number;
+  cohesion_score: number;
   labels: string[];
   titles: string[];
 }
@@ -38,6 +40,34 @@ export interface InterCommunityEdge {
   edge_count: number;
 }
 
+export interface BridgeNode {
+  rid: number;
+  label: string;
+  title: string;
+  node_type: string;
+  community_id: string;
+  connected_community_count: number;
+  connected_community_ids: string[];
+  cross_community_edge_count: number;
+  cross_community_weight: number;
+}
+
+export interface BridgeEdge {
+  from_rid: number;
+  to_rid: number;
+  from_label: string;
+  to_label: string;
+  from_community_id: string;
+  to_community_id: string;
+  label: string;
+  weight: number;
+}
+
+export interface CommunityAnalyticsSummary {
+  status: "empty" | "ready";
+  next: string;
+}
+
 export interface CommunityAnalyticsReport {
   schema_version: "memory.communities.v1";
   read_only: true;
@@ -49,15 +79,27 @@ export interface CommunityAnalyticsReport {
   assignments: CommunityAssignment[];
   node_analytics: CommunityNodeAnalytics[];
   inter_community_edges: InterCommunityEdge[];
+  bridge_nodes: BridgeNode[];
+  bridge_edges: BridgeEdge[];
+  summary: CommunityAnalyticsSummary;
 }
 
 interface CachedCommunityAnalytics {
-  schema_version: "memory.communities.cache.v2";
+  schema_version: "memory.communities.cache.v3";
   graph_hash: string;
   assignments: Array<{ rid: number; community_id: string }>;
   node_analytics: CommunityNodeAnalytics[];
   inter_community_edges: InterCommunityEdge[];
+  bridge_nodes: BridgeNode[];
+  bridge_edges: BridgeEdge[];
+  community_edge_weights: CommunityEdgeWeights[];
   generated_at: string;
+}
+
+interface CommunityEdgeWeights {
+  community_id: string;
+  internal_edge_weight: number;
+  external_edge_weight: number;
 }
 
 interface BuildCommunityAnalyticsOptions {
@@ -72,7 +114,7 @@ export async function buildCommunityAnalytics(
   const cacheMode = opts.cache ?? "read-write";
   const [nodes, edges] = await Promise.all([store.listNodes(), store.listEdges()]);
   const graphHash = graphStateHash(nodes, edges);
-  const cacheKey = `cache:communities:v2:${graphHash}`;
+  const cacheKey = `cache:communities:v3:${graphHash}`;
   const cached =
     cacheMode === "off"
       ? null
@@ -81,15 +123,18 @@ export async function buildCommunityAnalytics(
   const cacheHit = cached?.graph_hash === graphHash;
   const communityPairs = cacheHit ? cached.assignments : mapToPairs(await store.communities());
   const analytics = cacheHit
-    ? {
-        node_analytics: cached.node_analytics,
-        inter_community_edges: cached.inter_community_edges,
-      }
-    : buildNavigationAnalytics(communityPairs, edges);
+      ? {
+          node_analytics: cached.node_analytics,
+          inter_community_edges: cached.inter_community_edges,
+          bridge_nodes: cached.bridge_nodes,
+          bridge_edges: cached.bridge_edges,
+          community_edge_weights: cached.community_edge_weights,
+        }
+      : buildNavigationAnalytics(communityPairs, nodes, edges);
 
   if (cacheMode === "read-write" && !cacheHit) {
     await store.kvPut(cacheKey, {
-      schema_version: "memory.communities.cache.v2",
+      schema_version: "memory.communities.cache.v3",
       graph_hash: graphHash,
       assignments: communityPairs,
       ...analytics,
@@ -98,6 +143,12 @@ export async function buildCommunityAnalytics(
   }
 
   const assignments = decorateAssignments(nodes, communityPairs);
+  const communities = summarizeCommunities(
+    assignments,
+    analytics.node_analytics,
+    analytics.inter_community_edges,
+    analytics.community_edge_weights,
+  );
   return {
     schema_version: "memory.communities.v1",
     read_only: true,
@@ -105,10 +156,13 @@ export async function buildCommunityAnalytics(
     cache_key: cacheKey,
     cached: cacheHit,
     generated_at: cacheHit ? cached.generated_at : generatedAt,
-    communities: summarizeCommunities(assignments, analytics.node_analytics, analytics.inter_community_edges),
+    communities,
     assignments,
     node_analytics: analytics.node_analytics,
     inter_community_edges: analytics.inter_community_edges,
+    bridge_nodes: analytics.bridge_nodes,
+    bridge_edges: analytics.bridge_edges,
+    summary: summarizeReport(communities, analytics.bridge_nodes, analytics.bridge_edges),
   };
 }
 
@@ -127,11 +181,14 @@ function isCachedCommunityAnalytics(value: unknown): value is CachedCommunityAna
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<CachedCommunityAnalytics>;
   return (
-    item.schema_version === "memory.communities.cache.v2" &&
+    item.schema_version === "memory.communities.cache.v3" &&
     typeof item.graph_hash === "string" &&
     Array.isArray(item.assignments) &&
     Array.isArray(item.node_analytics) &&
     Array.isArray(item.inter_community_edges) &&
+    Array.isArray(item.bridge_nodes) &&
+    Array.isArray(item.bridge_edges) &&
+    Array.isArray(item.community_edge_weights) &&
     typeof item.generated_at === "string"
   );
 }
@@ -167,6 +224,7 @@ function summarizeCommunities(
   assignments: CommunityAssignment[],
   nodeAnalytics: CommunityNodeAnalytics[],
   interCommunityEdges: InterCommunityEdge[],
+  communityEdgeWeights: CommunityEdgeWeights[],
 ): CommunitySummary[] {
   const groups = new Map<string, CommunityAssignment[]>();
   for (const assignment of assignments) {
@@ -181,6 +239,7 @@ function summarizeCommunities(
     analyticsByCommunity.set(item.community_id, group);
   }
   const externalWeight = new Map<string, number>();
+  const weightsByCommunity = new Map(communityEdgeWeights.map((item) => [item.community_id, item]));
   for (const edge of interCommunityEdges) {
     externalWeight.set(
       edge.from_community_id,
@@ -205,7 +264,9 @@ function summarizeCommunities(
         count: group.length,
         total_degree: totalDegree,
         avg_centrality: avgCentrality,
+        internal_edge_weight: round6(weightsByCommunity.get(id)?.internal_edge_weight ?? 0),
         external_edge_weight: round6(externalWeight.get(id) ?? 0),
+        cohesion_score: cohesionScore(weightsByCommunity.get(id)),
         labels: sorted.slice(0, 5).map((item) => item.label),
         titles: sorted.slice(0, 5).map((item) => item.title),
       };
@@ -215,24 +276,40 @@ function summarizeCommunities(
 
 function buildNavigationAnalytics(
   assignments: Array<{ rid: number; community_id: string }>,
+  nodes: StoredNode[],
   edges: Record<string, unknown>[],
 ): {
   node_analytics: CommunityNodeAnalytics[];
   inter_community_edges: InterCommunityEdge[];
+  bridge_nodes: BridgeNode[];
+  bridge_edges: BridgeEdge[];
+  community_edge_weights: CommunityEdgeWeights[];
 } {
   const communityByRid = new Map(assignments.map((assignment) => [assignment.rid, assignment.community_id]));
+  const nodeByRid = new Map(nodes.map((node) => [node.rid, node]));
   const degree = new Map<number, number>();
   const inDegree = new Map<number, number>();
   const outDegree = new Map<number, number>();
   const weightedDegree = new Map<number, number>();
+  const internalWeight = new Map<string, number>();
+  const externalByCommunity = new Map<string, number>();
+  const bridgeCommunities = new Map<number, Set<string>>();
+  const bridgeEdgeCount = new Map<number, number>();
+  const bridgeWeight = new Map<number, number>();
   for (const rid of communityByRid.keys()) {
     degree.set(rid, 0);
     inDegree.set(rid, 0);
     outDegree.set(rid, 0);
     weightedDegree.set(rid, 0);
+    const communityId = communityByRid.get(rid);
+    if (communityId) {
+      internalWeight.set(communityId, internalWeight.get(communityId) ?? 0);
+      externalByCommunity.set(communityId, externalByCommunity.get(communityId) ?? 0);
+    }
   }
 
   const interCommunity = new Map<string, InterCommunityEdge>();
+  const bridgeEdges: BridgeEdge[] = [];
   for (const edge of edges) {
     const from = edgeEndpoint(edge, "from");
     const to = edgeEndpoint(edge, "to");
@@ -247,7 +324,31 @@ function buildNavigationAnalytics(
 
     const fromCommunity = communityByRid.get(from);
     const toCommunity = communityByRid.get(to);
-    if (!fromCommunity || !toCommunity || fromCommunity === toCommunity) continue;
+    if (!fromCommunity || !toCommunity) continue;
+    if (fromCommunity === toCommunity) {
+      internalWeight.set(fromCommunity, round6((internalWeight.get(fromCommunity) ?? 0) + weight));
+      continue;
+    }
+    externalByCommunity.set(fromCommunity, round6((externalByCommunity.get(fromCommunity) ?? 0) + weight));
+    externalByCommunity.set(toCommunity, round6((externalByCommunity.get(toCommunity) ?? 0) + weight));
+    addBridgeCommunity(bridgeCommunities, from, fromCommunity, toCommunity);
+    addBridgeCommunity(bridgeCommunities, to, toCommunity, fromCommunity);
+    bridgeEdgeCount.set(from, (bridgeEdgeCount.get(from) ?? 0) + 1);
+    bridgeEdgeCount.set(to, (bridgeEdgeCount.get(to) ?? 0) + 1);
+    bridgeWeight.set(from, round6((bridgeWeight.get(from) ?? 0) + weight));
+    bridgeWeight.set(to, round6((bridgeWeight.get(to) ?? 0) + weight));
+    const fromNode = nodeByRid.get(from);
+    const toNode = nodeByRid.get(to);
+    bridgeEdges.push({
+      from_rid: from,
+      to_rid: to,
+      from_label: fromNode?.label ?? String(from),
+      to_label: toNode?.label ?? String(to),
+      from_community_id: fromCommunity,
+      to_community_id: toCommunity,
+      label: String(edge.label ?? edge.LABEL ?? ""),
+      weight,
+    });
     const key = `${fromCommunity}\u0000${toCommunity}`;
     const current = interCommunity.get(key) ?? {
       from_community_id: fromCommunity,
@@ -261,6 +362,29 @@ function buildNavigationAnalytics(
   }
 
   const maxDegree = Math.max(1, ...degree.values());
+  const bridgeNodes = [...bridgeCommunities.entries()]
+    .map(([rid, communities]) => {
+      const node = nodeByRid.get(rid);
+      const connected = [...communities].sort();
+      return {
+        rid,
+        label: node?.label ?? String(rid),
+        title: node?.properties.title ?? node?.label ?? String(rid),
+        node_type: String(node?.node_type ?? ""),
+        community_id: communityByRid.get(rid) ?? "",
+        connected_community_count: connected.length,
+        connected_community_ids: connected,
+        cross_community_edge_count: bridgeEdgeCount.get(rid) ?? 0,
+        cross_community_weight: round6(bridgeWeight.get(rid) ?? 0),
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.connected_community_count - a.connected_community_count ||
+        b.cross_community_weight - a.cross_community_weight ||
+        b.cross_community_edge_count - a.cross_community_edge_count ||
+        a.label.localeCompare(b.label),
+    );
   return {
     node_analytics: [...communityByRid.entries()]
       .map(([rid, community_id]) => ({
@@ -280,7 +404,35 @@ function buildNavigationAnalytics(
         a.from_community_id.localeCompare(b.from_community_id) ||
         a.to_community_id.localeCompare(b.to_community_id),
     ),
+    bridge_nodes: bridgeNodes,
+    bridge_edges: bridgeEdges.sort(
+      (a, b) =>
+        b.weight - a.weight ||
+        a.from_community_id.localeCompare(b.from_community_id) ||
+        a.to_community_id.localeCompare(b.to_community_id) ||
+        a.from_label.localeCompare(b.from_label) ||
+        a.to_label.localeCompare(b.to_label),
+    ),
+    community_edge_weights: [...new Set([...internalWeight.keys(), ...externalByCommunity.keys()])]
+      .map((community_id) => ({
+        community_id,
+        internal_edge_weight: round6(internalWeight.get(community_id) ?? 0),
+        external_edge_weight: round6(externalByCommunity.get(community_id) ?? 0),
+      }))
+      .sort((a, b) => a.community_id.localeCompare(b.community_id)),
   };
+}
+
+function addBridgeCommunity(
+  bridgeCommunities: Map<number, Set<string>>,
+  rid: number,
+  ownCommunity: string,
+  otherCommunity: string,
+): void {
+  const set = bridgeCommunities.get(rid) ?? new Set<string>();
+  set.add(ownCommunity);
+  set.add(otherCommunity);
+  bridgeCommunities.set(rid, set);
 }
 
 function edgeEndpoint(edge: Record<string, unknown>, side: "from" | "to"): number {
@@ -298,6 +450,36 @@ function edgeWeight(edge: Record<string, unknown>): number {
 
 function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function cohesionScore(weights: CommunityEdgeWeights | undefined): number {
+  const internal = weights?.internal_edge_weight ?? 0;
+  const external = weights?.external_edge_weight ?? 0;
+  const total = internal + external;
+  return total === 0 ? 0 : round6(internal / total);
+}
+
+function summarizeReport(
+  communities: CommunitySummary[],
+  bridgeNodes: BridgeNode[],
+  bridgeEdges: BridgeEdge[],
+): CommunityAnalyticsSummary {
+  if (communities.length === 0) {
+    return {
+      status: "empty",
+      next: "ingest graph evidence, then run memory communities again",
+    };
+  }
+  if (bridgeNodes.length === 0 && bridgeEdges.length === 0) {
+    return {
+      status: "ready",
+      next: "no cross-community bridges found; inspect low-cohesion communities if cohesion_score is below 0.5",
+    };
+  }
+  return {
+    status: "ready",
+    next: "inspect bridge_nodes and low-cohesion communities before treating clusters as independent",
+  };
 }
 
 export function graphStateHash(nodes: StoredNode[], edges: Record<string, unknown>[]): string {
