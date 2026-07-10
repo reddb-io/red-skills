@@ -78,6 +78,7 @@ const WORKER_COLUMNS: readonly WorkerColumn[] = [
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
+const LANDING_PHASES = new Set(["gate", "push-pr", "merge", "cascade"]);
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -233,11 +234,12 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
     .filter((x): x is string => Boolean(x))
     .join(" ");
-  const noAgent = f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin);
+  const landing = LANDING_PHASES.has(f.phase);
+  const noAgent = landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin));
   return {
     workerId: f.workerId,
     run: `run=${runVal}`,
-    org: `org=${f.origin || "afk"}`,
+    org: `org=${landing ? "landing" : f.origin || "afk"}`,
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
     phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
@@ -305,7 +307,8 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
   // org=<afk|go> — spawn-time provenance (issue #1219). 3-letter key (house
   // rule), same kv colour convention. An unstamped worker is an afk-fleet
   // worker, so default the display to afk.
-  parts.push(kv("org", f.origin || "afk"));
+  const landing = LANDING_PHASES.has(f.phase);
+  parts.push(kv("org", landing ? "landing" : f.origin || "afk"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
   // <phase·activity> cell follows bare and the legacy standalone #<n> token is
   // dropped.
@@ -315,7 +318,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number): string {
     if (progress) parts.push(progress);
   }
   parts.push(f.elapsed);
-  if (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin)) {
+  if (landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin))) {
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }
   parts.push(kv("loc", formatDiff(f.added, f.removed)));

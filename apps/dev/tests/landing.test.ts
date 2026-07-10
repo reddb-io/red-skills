@@ -40,6 +40,8 @@ interface Harness {
   resolverCwds: string[];
   /** dirs the post-merge gate was invoked with (#1335). */
   postMergeGateDirs: string[];
+  /** landing visibility phase transitions published for statusline (#1427). */
+  landingPhases: string[];
 }
 
 interface Opts {
@@ -147,6 +149,7 @@ function harness(opts: Opts = {}): Harness {
   let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   const postMergeGateDirs: string[] = [];
+  const landingPhases: string[] = [];
   let mergeResolved = false;
   let prCreated = false;
 
@@ -297,6 +300,9 @@ function harness(opts: Opts = {}): Harness {
       : undefined,
     // Global land-lock (#1337): only wired when the test opts in.
     landLock: opts.landLock,
+    landingPhase: async (phase) => {
+      landingPhases.push(phase);
+    },
   };
 
   const input: LandingInput = {
@@ -343,6 +349,7 @@ function harness(opts: Opts = {}): Harness {
     },
     resolverCwds,
     postMergeGateDirs,
+    landingPhases,
   };
 }
 
@@ -362,6 +369,7 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // unlocked never merges the attempt branch locally.
     expect(j.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+    expect(h.landingPhases).toEqual(["gate", "push-pr", "cascade"]);
   });
 
   it("unlocked + wait_for_review → polls the review check before the admin-merge", async () => {
@@ -1144,6 +1152,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.postMergeGateDirs).toEqual([WT]);
     // The merge still happened (gate passed, not a no-merge).
     expect(joined(h.mergeCalls).some((c) => c.includes("merge"))).toBe(true);
+    expect(h.landingPhases).toEqual(["gate", "gate", "merge", "cascade"]);
   });
 
   it("PR path: gate wired + passes → lands successfully, gate called with the rebase worktree", async () => {
@@ -1154,6 +1163,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.postMergeGateDirs).toEqual([RWT]);
     // The admin-merge still happened.
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(true);
+    expect(h.landingPhases).toEqual(["gate", "gate", "push-pr", "cascade"]);
   });
 
   it("direct path: gate wired + fails → returns post-merge-gate, nothing pushed to remote", async () => {
