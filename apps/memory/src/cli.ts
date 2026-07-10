@@ -32,6 +32,7 @@ import { buildMemoryReferenceRadar } from "./references-radar.js";
 import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
 import type { CommunityDigestReport } from "./community-digest.js";
+import type { HubReport, HubRankBy, HubReportRow } from "./hub-report.js";
 import type { MemoryGlobalSearchReport } from "./global-search.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
@@ -7192,6 +7193,75 @@ async function runCommunityDigest(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runHubReport(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const rankBy = parseHubRankBy(stringFlag(args.flags, "rank-by") ?? stringFlag(args.flags, "rank_by"));
+    const report = (await executeReadOnlyMemoryOperation("memory.hub-report", { store }, {
+      limit: intFlag(args.flags, "limit"),
+      rank_by: rankBy,
+    })) as HubReport;
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderHubReportToon(report, { wide: args.flags.wide === true }));
+  } finally {
+    await store.close();
+  }
+}
+
+function parseHubRankBy(value: string | undefined): HubRankBy {
+  if (value == null) return "total";
+  if (value === "total" || value === "in" || value === "out") return value;
+  throw new Error('--rank-by must be "total", "in", or "out"');
+}
+
+function renderHubReportToon(report: HubReport, opts: { wide: boolean }): string {
+  const fields: readonly (keyof HubReportRow & string)[] = opts.wide
+    ? [
+        "rid",
+        "label",
+        "title",
+        "node_type",
+        "community_id",
+        "total_degree",
+        "in_degree",
+        "out_degree",
+        "seal_mix",
+        "seal_count",
+        "seals",
+      ]
+    : ["label", "title", "community_id", "total_degree", "in_degree", "out_degree", "seal_mix"];
+  const rows = report.hubs.map((hub) => ({ ...hub }));
+  return renderToonOutput({
+    rowsKey: "hubs",
+    rows,
+    fields,
+    summary: report.summary.empty
+      ? {
+          state: "empty_graph",
+          message: "No graph nodes found.",
+          nodes: report.summary.nodes,
+          edges: report.summary.edges,
+          next: report.next,
+        }
+      : {
+          rank_by: report.rank_by,
+          reported: report.summary.reported,
+          nodes: report.summary.nodes,
+          edges: report.summary.edges,
+          max_total_degree: report.summary.max_total_degree,
+          communities: report.summary.communities,
+          next: report.next,
+        },
+    extra: {
+      schema_version: report.schema_version,
+      graph_hash: report.graph_hash,
+    },
+  });
+}
+
 function parseRid(value: string, name: string): number {
   const rid = Number(value);
   if (!Number.isInteger(rid) || rid <= 0) throw new Error(`${name} must be a positive integer`);
@@ -8452,6 +8522,8 @@ async function main(): Promise<void> {
       return runCommunitiesViewer(args);
     case "community-digest":
       return runCommunityDigest(args);
+    case "hub-report":
+      return runHubReport(args);
     case "global-search":
       return runGlobalSearch(args);
     case "structural-impact":
