@@ -1,0 +1,23 @@
+{
+  "name": "pr-list-default",
+  "command": ["gh", "pr", "list"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for PR list: number,title,state,isDraft; wider metadata stays opt-in.",
+  "recorded": {
+    "stdout": "[{\"number\":42,\"title\":\"Add rsp gh wrapper\",\"state\":\"OPEN\",\"isDraft\":false},{\"number\":41,\"title\":\"Draft docs\",\"state\":\"OPEN\",\"isDraft\":true}]",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "gh pr list",
+    "prs": [
+      { "number": 42, "title": "Add rsp gh wrapper", "state": "open", "draft": false },
+      { "number": 41, "title": "Draft docs", "state": "open", "draft": true }
+    ],
+    "summary": "2 open PRs"
+  },
+  "assertions": [
+    { "question": "how many fields are in a default PR row?", "path": "prs.0.length", "expected": 4 },
+    { "question": "which PR is first?", "path": "prs.0.number", "expected": 42 }
+  ]
+}
