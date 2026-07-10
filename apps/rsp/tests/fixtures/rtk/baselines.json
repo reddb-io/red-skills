@@ -1,0 +1,76 @@
+{
+  "version": "rtk 0.14.0",
+  "captured_at": "2026-07-10T00:00:00.000Z",
+  "fixtures": [
+    {
+      "name": "cargo-compile-error",
+      "stdout": "rtk cargo test\nerror[E0425]: cannot find value `missing_symbol` in this scope\nsrc/lib.rs:7:9\nerror: could not compile test crate due to 1 previous error\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "cargo-green",
+      "stdout": "rtk cargo test\nrunning 2 tests\ntest math::adds ... ok\ntest math::multiplies ... ok\ntest result: ok. 2 passed; 0 failed; finished in 0.12s\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "cargo-red",
+      "stdout": "rtk cargo test\nfailures:\nmath::divides_by_zero panicked at src/math.rs:14: expected 0 got inf\ntest result: FAILED. 1 failed; 3 passed\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "commit-created",
+      "stdout": "rtk git commit\n[feature/rsp 1234567] Refs #1412 add wrapper\n2 files changed, 40 insertions(+), 1 deletion(-)\nbranch=feature/rsp hash=1234567 files=2 insertions=40 deletions=1\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "diff-numstat",
+      "stdout": "rtk git diff --numstat\napps/rsp/src/cli.ts +3 -1\nold.txt +0 -12\nassets/logo.bin binary\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "log-contract",
+      "stdout": "rtk git log\n1111111 Ada 2026-07-10 Add rsp wrapper\n2222222 Ben 2026-07-09 Scaffold elision store\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "push-porcelain",
+      "stdout": "rtk git push --porcelain\nrefs/heads/main up to date\nrefs/heads/feature/rsp 1111111..2222222\nsummary: pushed feature/rsp +1 commits\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "push-rejected",
+      "stdout": "rtk git push --porcelain\nrejected refs/heads/feature/rsp non-fast-forward\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "status-clean",
+      "stdout": "rtk git status --porcelain=v2 -z\ngit empty\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "status-working-tree",
+      "stdout": "rtk git status --porcelain=v2 -z\nbranch feature/rsp\nmodified apps/rsp/src/cli.ts\nadded apps/rsp/src/git-wrapper.ts\ndeleted old.txt\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-fault-green-nonzero",
+      "stdout": "rtk vitest run --reporter=json\nnon-zero exit with green reporter payload; passthrough required\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-green",
+      "stdout": "rtk vitest run --reporter=json\n2 tests passed in apps/rsp/tests/math.test.ts\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-long-failure",
+      "stdout": "rtk vitest run --reporter=json\nsnapshot matches large diff failed with 40 received lines; excerpt retained in recorded RTK fixture\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-mixed",
+      "stdout": "rtk vitest run --reporter=json\n4 tests: 3 passed, 1 failed\nmath divides by zero: expected Infinity to equal 0\n",
+      "fidelity_assertions_passed": true
+    }
+  ]
+}
