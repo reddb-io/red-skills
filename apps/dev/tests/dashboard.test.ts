@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   buildDashboardReport,
   parseDueDate,
@@ -136,13 +137,13 @@ describe("dashboard report", () => {
       releases: [],
     });
     const toon = renderDashboardReportToon(report);
+    const decoded = decode(toon) as unknown as typeof report & { summary: string };
     // Indentation key:value tree with nested groups and a definitive empty state.
     expect(toon).toContain("schema_version: red.dev.dashboard.v1");
-    expect(toon).toContain("operations:");
-    expect(toon).toContain("  open_specs: 0");
-    expect(toon).toContain("local_workers:");
-    expect(toon).toContain("    live: 2");
-    expect(toon).toMatch(/warnings\[\d+\]:/);
+    expect(decoded.operations.open_specs).toBe(0);
+    expect(decoded.operations.local_workers).toEqual({ live: 2, stale: 1, total: 3 });
+    expect(decoded.warnings).toEqual(report.warnings);
+    expect(decoded.summary).toBe("0 open issues · 0 open specs · 0 open PRs · 0 deployments");
     // No field name is repeated per element the way pretty JSON repeats keys.
     expect(toon.length).toBeLessThan(JSON.stringify(report, null, 2).length);
   });

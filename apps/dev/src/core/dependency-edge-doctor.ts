@@ -1,6 +1,6 @@
 import { parseReqLabels } from "./boot-sweep.js";
 import { LABEL_TYPE_SPEC } from "./triage-labels.js";
-import { encodeToon } from "./toon.js";
+import { encode as encodeToon } from "@reddb-io/toon";
 
 /**
  * dependency-edge-doctor.ts — the ADR 0094 consistency guard for the adoption

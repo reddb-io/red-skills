@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ import {
   type MechanicalCheck,
 } from "../src/core/skill-audit.js";
 import { buildSkillAuditPrompt, makeExtractSkillAudit } from "../src/core/skill-audit-extract.js";
-import { enumerateSkills, runAudit, type AuditDeps } from "../src/commands/audit-skills.js";
+import { enumerateSkills, renderAuditToon, runAudit, type AuditDeps } from "../src/commands/audit-skills.js";
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -216,6 +217,19 @@ describe("rankSkills", () => {
     // clean=70 raw, but flagged frequently-failing (-20) → effective 50, below dirty=55.
     const ranked = rankSkills([mk("dirty", 55), mk("clean", 70, "frequently-failing")]);
     expect(ranked[0]!.name).toBe("clean");
+  });
+
+  it("renders the audit scorecard as shared-package-decodable TOON", () => {
+    const ranked = rankSkills([mk("dirty", 55), mk("clean", 70, "frequently-failing")]);
+    const toon = renderAuditToon(ranked);
+    const decoded = decode(toon) as {
+      audited: number;
+      skills: Array<{ skill: string; score: number; telemetry: string; top_finding: string }>;
+      recommendations: string[];
+    };
+    expect(decoded.audited).toBe(2);
+    expect(decoded.skills.map((row) => row.skill)).toEqual(["clean", "dirty"]);
+    expect(decoded.recommendations).toEqual(["dirty (73): fix it"]);
   });
 });
 

@@ -12,8 +12,8 @@
 // the plain tags to colour downstream, and the TTY refresh loop belongs to the
 // orchestration-loop slice.
 
+import { appendSummaryField, type JsonObject, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { buildSparkline, type HistoryRecord } from "./history.js";
-import { encodeToon, type ToonValue } from "./toon.js";
 import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 /** GitHub-derived queue/human counts exposed by the monitor with freshness metadata.
@@ -513,13 +513,16 @@ export function renderCompactDashboardToon(
 ): string {
   let added = 0;
   let removed = 0;
+  let active = 0;
   for (const w of workers) {
     added += w.diffAdded ?? 0;
     removed += w.diffRemoved ?? 0;
+    if (compactWorkerTag(w) === "live") active += 1;
   }
+  const sparkline = buildSparkline(events, now);
 
-  const root: Record<string, ToonValue> = {
-    sparkline: buildSparkline(events, now).line,
+  const root: JsonObject = {
+    sparkline: sparkline.line,
     diff_added: added,
     diff_removed: removed,
     sources: sourceCountRows(workers),
@@ -572,5 +575,8 @@ export function renderCompactDashboardToon(
   );
   root.workers = sorted.map((w) => toonWorkerRow(w, now));
 
-  return encodeToon(root);
+  return appendSummaryField(
+    root,
+    `${workers.length} workers · ${active} active · ${sparkline.total} closed · ${formatDiff(added, removed)}`,
+  );
 }

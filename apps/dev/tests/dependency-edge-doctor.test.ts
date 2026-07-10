@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   auditDependencyEdges,
   renderDependencyEdgeReportToon,
@@ -75,10 +76,15 @@ describe("renderDependencyEdgeReportToon", () => {
     const toon = renderDependencyEdgeReportToon(
       auditDependencyEdges([ticket({ number: 43, labels: ["req:9"], nativeBlockedBy: [] })]),
     );
+    const decoded = decode(toon) as {
+      tickets: Array<{ ticket: number; reqLabels: string; nativeBlockedBy: string; verdict: string }>;
+      findings: Array<{ ticket: number; blocker: number; kind: string; verdict: string }>;
+    };
 
     expect(toon).toContain("tickets[1]{ticket,reqLabels,nativeBlockedBy,verdict}");
     expect(toon).toContain("findings[1]{ticket,blocker,kind,verdict}");
-    expect(toon).toContain("43,\"9\",\"\",warn");
+    expect(decoded.tickets).toEqual([{ ticket: 43, reqLabels: "9", nativeBlockedBy: "", verdict: "warn" }]);
+    expect(decoded.findings).toEqual([{ ticket: 43, blocker: 9, kind: "req-label-without-native", verdict: "warn" }]);
     expect(toon).not.toContain("{\n");
   });
 });

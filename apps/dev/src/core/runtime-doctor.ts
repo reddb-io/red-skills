@@ -1,4 +1,4 @@
-import { encodeToon } from "./toon.js";
+import { encode as encodeToon } from "@reddb-io/toon";
 
 /**
  * runtime-doctor.ts — the per-plugin runtime-distribution audit half of the

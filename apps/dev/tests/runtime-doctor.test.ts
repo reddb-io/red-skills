@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   auditPluginRuntime,
   auditRuntimes,
@@ -169,9 +170,15 @@ describe("renderRuntimeReportToon — TOON output (repo mandate)", () => {
       facts({ plugin: "brain", enabled: false, cache: { kind: "absent" } }),
     ]);
     const toon = renderRuntimeReportToon(report);
+    const decoded = decode(toon) as {
+      plugins: Array<{ plugin: string; enabled: boolean; state: string; verdict: string }>;
+      findings: Array<{ plugin: string; kind: string; verdict: string }>;
+    };
     // TOON tabular header for the uniform scorecard rows — never a JSON brace.
     expect(toon).toContain("plugins[3]{plugin,enabled,state,verdict}");
     expect(toon).toContain("findings[1]{plugin,kind,verdict}");
+    expect(decoded.plugins.map((row) => row.plugin)).toEqual(["dev", "memory", "brain"]);
+    expect(decoded.findings).toEqual([{ plugin: "dev", kind: "runtime-missing", verdict: "error" }]);
     expect(toon).not.toContain("{\n");
     expect(toon).not.toContain('": "');
   });

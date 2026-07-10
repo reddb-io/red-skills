@@ -14,6 +14,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { Output } from "@reddb-io/red-castle";
+import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { defaultSandcastleDeps, type AgentRunner } from "../core/execution.js";
@@ -27,7 +28,6 @@ import {
   type TelemetryTag,
 } from "../core/skill-audit.js";
 import { makeExtractSkillAudit, skillAuditSchema } from "../core/skill-audit-extract.js";
-import { encodeToon, type ToonValue } from "../core/toon.js";
 
 /** The meta-skill is self-exempt from its own rules — never audit it. */
 const SELF_EXEMPT = new Set(["write-a-skill"]);

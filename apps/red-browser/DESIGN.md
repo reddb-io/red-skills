@@ -120,11 +120,9 @@ open CDP or a bridge themselves.
 | **stale-ref validation** | **new (cross-cutting)** | a `ref` from a superseded `snapshotId` yields a typed `stale-ref` TOON result, never a silent mis-click |
 | `annotate` | exists → **retarget output to TOON** | unchanged behavior; JSON → TOON |
 
-**Shared TOON encoder.** The deterministic encoder lives at
-`apps/dev/src/core/toon.ts` and is **not** a shared package today. red-browser
-cannot import across app boundaries cleanly, so the first mechanical step is to
-relocate/expose that encoder as a shared package (e.g. under `packages/`) both
-apps consume — otherwise each app forks its own encoder and they drift.
+**Shared TOON encoder.** TOON serialization lives in the shared
+`@reddb-io/toon` package. red-browser should import that package directly so it
+does not fork its own encoder and drift from the dev surfaces.
 
 **Boundaries / non-goals.**
 - No screenshot/pixel diffing — a11y tree + layout-audit is the ground truth.
@@ -139,9 +137,8 @@ apps consume — otherwise each app forks its own encoder and they drift.
 Tracer-bullet vertical slices, each independently grabbable, ordered so each
 unblocks the next. Parent: #907 / arch-lock #928.
 
-1. **Share the TOON encoder as a package.** Relocate `apps/dev/src/core/toon.ts`
-   into a shared package both `dev` and `red-browser` import; keep the existing
-   `dev` call sites green. *Mechanical, unblocks every output slice.*
+1. **Use the shared TOON package.** Import `@reddb-io/toon` in both `dev` and
+   `red-browser` output paths. *Mechanical, unblocks every output slice.*
 2. **`snapshot` emits TOON.** Convert the `snapshot` command output from JSON to
    TOON using the shared encoder. Update the `/verify` SKILL.md "Output schema"
    and assertion examples from JSON to TOON. *Biggest token win, small blast

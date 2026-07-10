@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   renderCompactDashboard,
   renderCompactDashboardToon,
@@ -308,9 +309,16 @@ describe("monitor — compact dashboard", () => {
   describe("TOON (default agent-facing render)", () => {
     it("renders one worker as a tabular row, preserving aggregates and sparkline", () => {
       const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600);
+      const decoded = decode(out) as {
+        sparkline: string;
+        diff_added: number;
+        diff_removed: number;
+        workers: Array<Record<string, unknown>>;
+        summary: string;
+      };
       expect(out).toContain("sparkline:");
-      expect(out).toContain("diff_added: 10");
-      expect(out).toContain("diff_removed: 3");
+      expect(decoded.diff_added).toBe(10);
+      expect(decoded.diff_removed).toBe(3);
       // The worker table names columns once, then one bare CSV row per worker.
       // `activity` and `phase` stay separate columns here: the TOON board is
       // agent-facing, so it keeps the two dimensions addressable rather than
@@ -318,7 +326,22 @@ describe("monitor — compact dashboard", () => {
       expect(out).toContain(
         "workers[1]{id,state,runner,issue,activity,phase,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tls,rsn,txt,wait,log}:",
       );
-      expect(out).toContain('wAAAA,live,claude,42,impl,"",1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
+      expect(decoded.workers[0]).toMatchObject({
+        id: "wAAAA",
+        state: "live",
+        runner: "claude",
+        issue: 42,
+        activity: "impl",
+        phase: "",
+        done: 1,
+        total: 4,
+        blocked: 0,
+        failed: 0,
+        elapsed: "00:30:00",
+        added: 10,
+        removed: 3,
+      });
+      expect(decoded.summary).toBe("1 workers · 1 active · 2 closed · +10 -3");
     });
 
     it("preserves the per-source origin counts from #930 as a sources table", () => {
@@ -326,22 +349,24 @@ describe("monitor — compact dashboard", () => {
       const b = baseWorker({ state: { ...baseWorker().state, worker_id: "wB", origin: "go" } });
       const c = baseWorker({ state: { ...baseWorker().state, worker_id: "wC", origin: "afk" } });
       const out = renderCompactDashboardToon([a, b, c], fixtureEvents, 1780140600);
+      const decoded = decode(out) as { sources: Array<{ origin: string; count: number }> };
       expect(out).toContain("sources[2]{origin,count}:");
-      expect(out).toContain("  afk,2");
-      expect(out).toContain("  go,1");
+      expect(decoded.sources).toEqual([{ origin: "afk", count: 2 }, { origin: "go", count: 1 }]);
     });
 
     it("emits a definitive empty state for an empty fleet", () => {
       const out = renderCompactDashboardToon([], fixtureEvents, 1780140600);
-      expect(out).toContain("workers[0]:");
-      expect(out).toContain("sources[0]:");
+      const decoded = decode(out) as { workers: unknown[]; sources: unknown[]; summary: string };
+      expect(decoded.workers).toEqual([]);
+      expect(decoded.sources).toEqual([]);
+      expect(decoded.summary).toBe("0 workers · 0 active · 2 closed · +0 -0");
     });
 
     it("includes the fleet status block when a fleet state is present", () => {
       const out = renderCompactDashboardToon([], fixtureEvents, 1780138815, baseFleet());
-      expect(out).toContain("fleet:");
-      expect(out).toContain("  status: idle");
-      expect(out).toContain("  ready: 0");
+      const decoded = decode(out) as { fleet: { status: string; ready: number } };
+      expect(decoded.fleet.status).toBe("idle");
+      expect(decoded.fleet.ready).toBe(0);
     });
 
     it("is materially cheaper than JSON for a typical multi-worker board (#995)", () => {
@@ -748,8 +773,7 @@ const NOW_ISO = "2026-05-30T11:30:00.000Z";
 describe("monitor — tick_at (standing wall-clock rule)", () => {
   it("TOON output includes tick_at with the ISO wall-clock time", () => {
     const out = renderCompactDashboardToon([], fixtureEvents, 1780140600);
-    // TOON quotes strings that contain ':' — the ISO date is wrapped in quotes.
-    expect(out).toContain(`tick_at: "${NOW_ISO}"`);
+    expect((decode(out) as { tick_at: string }).tick_at).toBe(NOW_ISO);
   });
 
   it("plain output includes tick at line with ISO wall-clock time", () => {

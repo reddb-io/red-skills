@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   auditAskRedRouterCoverage,
   renderAskRedRouterCoverageToon,
@@ -43,11 +44,16 @@ describe("auditAskRedRouterCoverage", () => {
         routerSkills: ["afk", "ghost-flow"],
       }),
     );
+    const decoded = decode(toon) as {
+      skills: Array<{ skill: string; inRegisteredSet: boolean; inRouter: boolean; verdict: string }>;
+      findings: Array<{ skill: string; kind: string; verdict: string }>;
+    };
 
     expect(toon).toContain("skills[3]{skill,inRegisteredSet,inRouter,verdict}");
     expect(toon).toContain("findings[2]{skill,kind,verdict}");
-    expect(toon).toContain("go,true,false,warn");
-    expect(toon).toContain("ghost-flow,false,true,warn");
+    expect(decoded.skills).toContainEqual({ skill: "go", inRegisteredSet: true, inRouter: false, verdict: "warn" });
+    expect(decoded.skills).toContainEqual({ skill: "ghost-flow", inRegisteredSet: false, inRouter: true, verdict: "warn" });
+    expect(decoded.findings).toHaveLength(2);
     expect(toon).not.toContain("{\n");
   });
 });

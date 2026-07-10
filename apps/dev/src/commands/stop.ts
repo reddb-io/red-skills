@@ -1,11 +1,11 @@
 import { Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
+import { encode as encodeToon } from "@reddb-io/toon";
 import { isValidWorkerId, workerPidFile } from "../core/worker-paths.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import { listStaleClaimDirs, removeDir } from "../runtime/fs.js";
 import { afkPaths } from "../runtime/wire.js";
 import { stopFleet, type FleetStopResult } from "./fleet.js";
-import { encodeToon } from "../core/toon.js";
 
 async function readWorkerPid(pidFile: string): Promise<number | null> {
   try {
