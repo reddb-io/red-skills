@@ -113,7 +113,11 @@ import {
   type EvidenceCitation,
   type EvidenceProposalApplyState,
 } from "./evidence-card.js";
-import { graphRecallResult, renderSignalProvenance } from "./graph-recall.js";
+import {
+  graphRecallResult,
+  renderSignalProvenance,
+  type GraphRecallHit,
+} from "./graph-recall.js";
 import {
   buildMemoryGovernanceReport,
   type MemoryGovernanceReport,
@@ -304,6 +308,7 @@ import type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "./s
 import { slugify, storeNote } from "./store.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseLooseArgs, type LooseParsedArgs } from "@reddb-io/shared/args.js";
+import { renderToonOutput } from "./toon-output.js";
 
 const USAGE = `memory — governed operational memory for code agents
 
@@ -1371,35 +1376,32 @@ async function runRecall(args: ParsedArgs): Promise<void> {
         ranking: config.recallRanking,
       });
       const hits = layerFiltersOut ? [] : rawHits;
-      if (hits.length === 0) {
-        console.log(`memory: no matches for "${query}"`);
-        console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
+      if (args.flags.json === true) {
+        printLegacyGraphRecall(query, hits, diagnostics);
         return;
       }
-      console.log(`memory: ${hits.length} match(es) for "${query}"`);
-      console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
-      for (const hit of hits) {
-        console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
-        console.log(`        ${hit.excerpt}`);
-        for (const line of renderSignalProvenance(hit.signal_provenance)) {
-          console.log(`        ${line}`);
-        }
-        if (hit.hooks && hit.hooks.length > 0) {
-          const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
-          console.log(`        hooks: ${parts.join(", ")}`);
-        }
-        if (hit.superseded_by != null) {
-          const window = [
-            hit.valid_from != null ? `valid_from=${hit.valid_from}` : "",
-            hit.valid_until != null ? `valid_until=${hit.valid_until}` : "",
-          ]
-            .filter(Boolean)
-            .join(" ");
-          console.log(
-            `        lineage: superseded_by=memory_nodes:${hit.superseded_by}${window ? ` ${window}` : ""}`,
-          );
-        }
+      if (hits.length === 0) {
+        printRecallToon({
+          items: [],
+          query,
+          store: "graph",
+          ranking: "hybrid-rrf",
+          vector: diagnostics.vector,
+        });
+        return;
       }
+      printRecallToon({
+        items: hits.map((hit) => ({
+          id: hit.id,
+          score: hit.score,
+          kind: hit.node_type,
+          content: `${hit.label} ${hit.excerpt}`.trim(),
+        })),
+        query,
+        store: "graph",
+        ranking: "hybrid-rrf",
+        vector: diagnostics.vector,
+      });
     } finally {
       await store.close();
     }
@@ -1409,6 +1411,75 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   const hits = layerFiltersOut
     ? []
     : await recall(resolveNotesDir(rootDir, config), query, limit);
+  if (args.flags.json === true) {
+    printLegacyMarkdownRecall(query, hits);
+    return;
+  }
+  if (hits.length === 0) {
+    printRecallToon({
+      items: [],
+      query,
+      store: "markdown",
+      ranking: "term-count",
+    });
+    return;
+  }
+  printRecallToon({
+    items: hits.map((hit) => ({
+      id: hit.id,
+      score: hit.score,
+      kind: "note",
+      content: hit.excerpt,
+    })),
+    query,
+    store: "markdown",
+    ranking: "term-count",
+  });
+}
+
+type RecallToonItem = {
+  id: string;
+  score: number;
+  kind: string;
+  content: string;
+};
+
+function printRecallToon(opts: {
+  items: RecallToonItem[];
+  query: string;
+  store: "markdown" | "graph";
+  ranking: string;
+  vector?: {
+    status: "unavailable" | "available" | "contributed";
+    candidates: number;
+    contributed: number;
+    reason?: string;
+  };
+}): void {
+  const zero = opts.items.length === 0;
+  console.log(
+    renderToonOutput({
+      rowsKey: "items",
+      rows: opts.items,
+      fields: ["id", "score", "kind", "content"],
+      summary: {
+        status: zero ? "0 results" : `${opts.items.length} results`,
+        results: opts.items.length,
+        query: opts.query,
+        store: opts.store,
+        ranking: opts.ranking,
+        ...(opts.vector ? { vector: opts.vector } : {}),
+      },
+      extra: zero
+        ? {
+            next: 'try `memory store "..."` to add governed context, then rerun recall',
+          }
+        : {},
+    }),
+  );
+}
+
+function printLegacyMarkdownRecall(query: string, hits: Array<{ id: string; score: number; excerpt: string }>): void {
   if (hits.length === 0) {
     console.log(`memory: no matches for "${query}"`);
     return;
@@ -1417,6 +1488,42 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   for (const hit of hits) {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
+  }
+}
+
+function printLegacyGraphRecall(
+  query: string,
+  hits: GraphRecallHit[],
+  diagnostics: { vector: Parameters<typeof formatVectorRecallDiagnostic>[0] },
+): void {
+  if (hits.length === 0) {
+    console.log(`memory: no matches for "${query}"`);
+    console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
+    return;
+  }
+  console.log(`memory: ${hits.length} match(es) for "${query}"`);
+  console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
+  for (const hit of hits) {
+    console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
+    console.log(`        ${hit.excerpt}`);
+    for (const line of renderSignalProvenance(hit.signal_provenance)) {
+      console.log(`        ${line}`);
+    }
+    if (hit.hooks && hit.hooks.length > 0) {
+      const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
+      console.log(`        hooks: ${parts.join(", ")}`);
+    }
+    if (hit.superseded_by != null) {
+      const window = [
+        hit.valid_from != null ? `valid_from=${hit.valid_from}` : "",
+        hit.valid_until != null ? `valid_until=${hit.valid_until}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      console.log(
+        `        lineage: superseded_by=memory_nodes:${hit.superseded_by}${window ? ` ${window}` : ""}`,
+      );
+    }
   }
 }
 
