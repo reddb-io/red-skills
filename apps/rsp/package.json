@@ -20,8 +20,10 @@
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
+    "@reddb-io/toon": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/sdk": "1.7.0"
+    "@reddb-io/sdk": "1.7.0",
+    "js-tiktoken": "^1.0.21"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

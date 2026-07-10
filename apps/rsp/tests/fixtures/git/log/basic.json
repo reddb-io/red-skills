@@ -1,0 +1,21 @@
+{
+  "name": "log-contract",
+  "command": ["git", "log"],
+  "recorded": {
+    "stdout": "\u001e1111111111111111111111111111111111111111\u001f1111111\u001fAda\u001f2026-07-10T10:00:00+00:00\u001fAdd rsp wrapper\u0000\u001e2222222222222222222222222222222222222222\u001f2222222\u001fBen\u001f2026-07-09T10:00:00+00:00\u001fScaffold elision store\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git log",
+    "commits": [
+      { "hash": "1111111111111111111111111111111111111111", "short": "1111111", "author": "Ada", "date": "2026-07-10T10:00:00+00:00", "subject": "Add rsp wrapper" },
+      { "hash": "2222222222222222222222222222222222222222", "short": "2222222", "author": "Ben", "date": "2026-07-09T10:00:00+00:00", "subject": "Scaffold elision store" }
+    ],
+    "summary": "2 commits"
+  },
+  "assertions": [
+    { "question": "what is the newest short hash?", "path": "commits.0.short", "expected": "1111111" }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "status-working-tree",
+  "command": ["git", "status"],
+  "recorded": {
+    "stdout": "# branch.oid abc123\u0000# branch.head feature/rsp\u00001 .M N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa apps/rsp/src/cli.ts\u00001 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb apps/rsp/src/git-wrapper.ts\u00001 D. N... 100644 000000 000000 cccccccccccccccccccccccccccccccccccccccc 0000000000000000000000000000000000000000 old.txt\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git status",
+    "branch": "feature/rsp",
+    "rows": [
+      { "path": "apps/rsp/src/cli.ts", "index": ".", "worktree": "M", "state": "modified" },
+      { "path": "apps/rsp/src/git-wrapper.ts", "index": "A", "worktree": ".", "state": "added" },
+      { "path": "old.txt", "index": "D", "worktree": ".", "state": "deleted" }
+    ],
+    "summary": "3 changes: 1 added, 1 modified, 1 deleted"
+  },
+  "assertions": [
+    { "question": "which branch is checked out?", "path": "branch", "expected": "feature/rsp" },
+    { "question": "how many files changed?", "path": "rows.length", "expected": 3 }
+  ]
+}
