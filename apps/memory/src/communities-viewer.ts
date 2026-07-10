@@ -3,7 +3,6 @@ import type {
   CommunityAnalyticsReport,
   CommunityAssignment,
   CommunitySummary,
-  InterCommunityEdge,
 } from "./communities.js";
 
 export interface CommunitiesViewerArtifact {
@@ -138,23 +137,28 @@ function renderCommunitiesViewer(report: CommunityAnalyticsReport): string {
       ${metric("Communities", report.communities.length)}
       ${metric("Assigned Nodes", report.assignments.length)}
       ${metric("Inter-community Edges", report.inter_community_edges.length)}
-      ${metric("Largest", report.communities[0]?.count ?? 0)}
+      ${metric("Bridge Nodes", report.bridge_nodes.length)}
     </div>
     <div class="layout">
       <div class="stack">
         <section>
           <h2>Communities</h2>
-          ${report.communities.length === 0 ? `<p class="empty">No community assignments available.</p>` : `<ul>${report.communities.map((community) => communityItem(community, assignmentsByCommunity.get(community.id) ?? [])).join("")}</ul>`}
+          ${report.communities.length === 0 ? `<p class="empty">No community assignments available. Ingest graph evidence, then refresh communities.</p>` : `<ul>${report.communities.map((community) => communityItem(community, assignmentsByCommunity.get(community.id) ?? [])).join("")}</ul>`}
         </section>
         <section>
-          <h2>Community Links</h2>
-          ${report.inter_community_edges.length === 0 ? `<p class="empty">No inter-community relationships.</p>` : `<ul>${report.inter_community_edges.slice(0, 40).map(interCommunityEdgeItem).join("")}</ul>`}
+          <h2>Bridge Nodes</h2>
+          ${report.bridge_nodes.length === 0 ? `<p class="empty">No cross-community bridge nodes detected.</p>` : `<ul>${report.bridge_nodes.slice(0, 40).map(bridgeNodeItem).join("")}</ul>`}
         </section>
       </div>
       <div class="stack">
         <section>
+          <h2>Bridge Edges</h2>
+          ${report.bridge_edges.length === 0 ? `<p class="empty">No cross-community bridge edges detected.</p>` : `<ul>${report.bridge_edges.slice(0, 40).map(bridgeEdgeItem).join("")}</ul>`}
+        </section>
+        <section>
           <h2>Cache</h2>
           <p class="meta"><code>${escapeHtml(report.cache_key)}</code></p>
+          <p class="meta">${escapeHtml(report.summary.next)}</p>
           <p class="meta">Communities are analytics over graph shape; they are not written back as durable Memory evidence.</p>
         </section>
         <section>
@@ -179,9 +183,31 @@ function communityItem(
       <h3>${escapeHtml(community.id)}</h3>
       <p class="meta">${escapeHtml(community.titles.join(", ") || "No titles")}</p>
       <p class="meta">${escapeHtml(nodeTypes.join(", ") || "unknown node types")}</p>
-      <p class="meta">degree ${community.total_degree} - centrality ${community.avg_centrality} - external weight ${community.external_edge_weight}</p>
+      <p class="meta">cohesion ${community.cohesion_score} - internal weight ${community.internal_edge_weight} - external weight ${community.external_edge_weight}</p>
+      <p class="meta">degree ${community.total_degree} - centrality ${community.avg_centrality}</p>
     </div>
     <span class="pill">${community.count} node(s)</span>
+  </li>`;
+}
+
+function bridgeNodeItem(node: CommunityAnalyticsReport["bridge_nodes"][number]): string {
+  return `<li>
+    <div>
+      <h3>${escapeHtml(node.title)}</h3>
+      <p class="meta"><code>memory_nodes:${node.rid}</code> - ${escapeHtml(node.label)} - ${escapeHtml(node.node_type)}</p>
+      <p class="meta">communities ${escapeHtml(node.connected_community_ids.join(", "))} - ${node.cross_community_edge_count} edge(s), weight ${node.cross_community_weight}</p>
+    </div>
+    <span class="pill">${node.connected_community_count} communities</span>
+  </li>`;
+}
+
+function bridgeEdgeItem(edge: CommunityAnalyticsReport["bridge_edges"][number]): string {
+  return `<li>
+    <div>
+      <h3>${escapeHtml(edge.from_label)} -> ${escapeHtml(edge.to_label)}</h3>
+      <p class="meta">${escapeHtml(edge.from_community_id)} -> ${escapeHtml(edge.to_community_id)} - ${escapeHtml(edge.label || "edge")}</p>
+    </div>
+    <span class="pill">${edge.weight}</span>
   </li>`;
 }
 
@@ -192,15 +218,5 @@ function assignmentItem(assignment: CommunityAssignment): string {
       <p class="meta"><code>memory_nodes:${assignment.rid}</code> - ${escapeHtml(assignment.label)} - ${escapeHtml(assignment.node_type)}</p>
     </div>
     <span class="pill">${escapeHtml(assignment.community_id)}</span>
-  </li>`;
-}
-
-function interCommunityEdgeItem(edge: InterCommunityEdge): string {
-  return `<li>
-    <div>
-      <h3>${escapeHtml(edge.from_community_id)} -> ${escapeHtml(edge.to_community_id)}</h3>
-      <p class="meta">${edge.edge_count} edge(s), weight ${edge.weight}</p>
-    </div>
-    <span class="pill">${edge.weight}</span>
   </li>`;
 }

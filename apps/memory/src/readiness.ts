@@ -344,6 +344,12 @@ async function communitySummary(
       assignments: [],
       node_analytics: [],
       inter_community_edges: [],
+      bridge_nodes: [],
+      bridge_edges: [],
+      summary: {
+        status: "empty",
+        next: "ingest graph evidence, then run memory communities again",
+      },
       error: err instanceof Error ? err.message : String(err),
     };
   }

@@ -768,7 +768,9 @@ const CommunitySummarySchema = z.object({
   count: z.number(),
   total_degree: z.number(),
   avg_centrality: z.number(),
+  internal_edge_weight: z.number(),
   external_edge_weight: z.number(),
+  cohesion_score: z.number(),
   labels: z.array(z.string()),
   titles: z.array(z.string()),
 });
@@ -798,6 +800,29 @@ const InterCommunityEdgeSchema = z.object({
   edge_count: z.number(),
 });
 
+const BridgeNodeSchema = z.object({
+  rid: z.number(),
+  label: z.string(),
+  title: z.string(),
+  node_type: z.string(),
+  community_id: z.string(),
+  connected_community_count: z.number(),
+  connected_community_ids: z.array(z.string()),
+  cross_community_edge_count: z.number(),
+  cross_community_weight: z.number(),
+});
+
+const BridgeEdgeSchema = z.object({
+  from_rid: z.number(),
+  to_rid: z.number(),
+  from_label: z.string(),
+  to_label: z.string(),
+  from_community_id: z.string(),
+  to_community_id: z.string(),
+  label: z.string(),
+  weight: z.number(),
+});
+
 const CommunitiesOutputSchema = z.object({
   schema_version: z.literal("memory.communities.v1"),
   read_only: z.literal(true),
@@ -809,6 +834,12 @@ const CommunitiesOutputSchema = z.object({
   assignments: z.array(CommunityAssignmentSchema),
   node_analytics: z.array(CommunityNodeAnalyticsSchema),
   inter_community_edges: z.array(InterCommunityEdgeSchema),
+  bridge_nodes: z.array(BridgeNodeSchema),
+  bridge_edges: z.array(BridgeEdgeSchema),
+  summary: z.object({
+    status: z.enum(["empty", "ready"]),
+    next: z.string(),
+  }),
 }) satisfies z.ZodType<CommunityAnalyticsReport>;
 const CommunitiesViewerOutputSchema = objectOutputSchema<CommunitiesViewerArtifact>();
 
@@ -2920,7 +2951,7 @@ const COMMUNITIES_OPERATION: MemoryOperationDefinition<CommunitiesInput, Communi
     mcp: {
       toolName: "memory_communities",
       description:
-        "Read-only Memory graph community analytics: native Louvain assignments, node degree/centrality ranking metadata, weighted inter-community edges, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
+        "Read-only Memory graph community analytics: native Louvain assignments, node degree/centrality ranking metadata, weighted inter-community edges, bridge node/edge rankings, per-community cohesion scores, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
     },
   },
   execute: (ctx, input) => buildCommunityAnalytics(ctx.store, { cache: input.cache }),
