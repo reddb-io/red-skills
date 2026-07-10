@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AiProviderConfig } from "./extract-conversation.js";
 import type { RecallRankingConfig } from "./recall-ranking.js";
@@ -174,6 +174,9 @@ export const DEFAULT_NOTES_DIR = ".red/memory/notes";
 /** Default location for the per-project RedDB graph store, under `.red/`. */
 export const DEFAULT_STORE_PATH = ".red/memory/graph.rdb";
 
+/** Shared Repo store provisioned by `/setup-red-skills` for all RedDB-backed plugins. */
+export const REPO_STORE_PATH = ".red/red.rdb";
+
 /**
  * Absolute path to the unified config file for a given repo root (ADR 0042).
  * Memory config lives under the `plugins.memory` block of this file.
@@ -246,6 +249,65 @@ export async function readConfig(rootDir: string): Promise<MemoryConfig | null> 
     return JSON.parse(raw) as MemoryConfig;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+export interface StorePathMigrationResult {
+  configPath: string;
+  fromStorePath: string | null;
+  toStorePath: typeof REPO_STORE_PATH;
+  configChanged: boolean;
+  storeCopied: boolean;
+}
+
+/**
+ * One-time migration from the legacy standalone memory graph store to the shared
+ * Repo store. `/setup-red-skills` and `memory doctor` call this explicitly; the
+ * normal read path stays side-effect free.
+ */
+export async function migrateStorePathToRepoStore(rootDir: string): Promise<StorePathMigrationResult | null> {
+  const config = await readConfig(rootDir);
+  if (!config || config.mode === "markdown-only") return null;
+
+  const current = config.storePath ?? DEFAULT_STORE_PATH;
+  if (current === REPO_STORE_PATH) {
+    return {
+      configPath: configPath(rootDir),
+      fromStorePath: current,
+      toStorePath: REPO_STORE_PATH,
+      configChanged: false,
+      storeCopied: false,
+    };
+  }
+
+  const legacyAbs = isAbsolute(current) ? current : join(resolve(rootDir), current);
+  const targetAbs = join(resolve(rootDir), REPO_STORE_PATH);
+  let storeCopied = false;
+  if (await fileExists(legacyAbs)) {
+    await mkdir(dirname(targetAbs), { recursive: true });
+    if (!(await fileExists(targetAbs))) {
+      await copyFile(legacyAbs, targetAbs);
+      storeCopied = true;
+    }
+  }
+
+  await writeConfig(rootDir, { ...config, storePath: REPO_STORE_PATH });
+  return {
+    configPath: configPath(rootDir),
+    fromStorePath: current,
+    toStorePath: REPO_STORE_PATH,
+    configChanged: true,
+    storeCopied,
+  };
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
 }
