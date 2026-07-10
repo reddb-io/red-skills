@@ -1,6 +1,6 @@
 import type { HistoryRecord } from "./history.js";
 import { LABEL_HUMAN } from "./triage-labels.js";
-import { encodeToon, type ToonValue } from "./toon.js";
+import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 
 export type ActivityReviewKind = "daily" | "weekly";
 
