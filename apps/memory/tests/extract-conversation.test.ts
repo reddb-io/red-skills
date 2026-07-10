@@ -330,7 +330,16 @@ describe("factsToGraph", () => {
   test("relations become label-keyed edges for the indexer to resolve", () => {
     const { edges } = factsToGraph(GOLDEN);
     expect(edges).toEqual([
-      { fromLabel: "warm-pool-in-boot", toLabel: "cold-start-deploy-failure", label: "FIXES" },
+      {
+        fromLabel: "warm-pool-in-boot",
+        toLabel: "cold-start-deploy-failure",
+        label: "FIXES",
+        properties: {
+          confidence: "INFERRED",
+          confidence_band: "medium",
+          source: "conversation",
+        },
+      },
     ]);
   });
 
