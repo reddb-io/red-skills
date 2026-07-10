@@ -9,6 +9,9 @@ catalogs:
     '@modelcontextprotocol/sdk':
       specifier: ^1.0.0
       version: 1.29.0
+    '@toon-format/toon':
+      specifier: ^2.3.0
+      version: 2.3.0
     '@types/node':
       specifier: ^22.0.0
       version: 22.19.19
@@ -385,6 +388,22 @@ importers:
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
+
+  packages/toon:
+    dependencies:
+      '@toon-format/toon':
+        specifier: 'catalog:'
+        version: 2.3.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.19.19)
 
 packages:
 
@@ -1856,6 +1875,9 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@toon-format/toon@2.3.0':
+    resolution: {integrity: sha512-/Ew9etdRQKVMnm9fDaCG0JjyAOK/O7T0M97oum1aW4W+UR8ZhVVPBanIV7oWgHBiGlnVxV9M55PWQCHofDV07w==}
 
   '@turbo/darwin-64@2.9.16':
     resolution: {integrity: sha512-jLjApWTSNd7JZ5JaLYfelW1ytnGQOvB7ivl+2RD1xQvJTbi8I9gBjzcga7tDZVPyaxpl10YTfJt3BrYXR18KDw==}
@@ -5041,6 +5063,8 @@ snapshots:
       tslib: 2.8.1
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@toon-format/toon@2.3.0': {}
 
   '@turbo/darwin-64@2.9.16':
     optional: true
