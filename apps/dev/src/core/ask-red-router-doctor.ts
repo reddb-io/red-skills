@@ -1,4 +1,4 @@
-import { encodeToon } from "./toon.js";
+import { encode as encodeToon } from "@reddb-io/toon";
 
 /**
  * ask-red-router-doctor.ts — the pure sync check between the registered dev
