@@ -7,6 +7,7 @@ import {
   shortModel,
   renderAfkBlock,
   renderContextBlock,
+  renderFleetBlock,
   renderModelBlock,
   renderProjectBlock,
   renderRepoBlock,
@@ -294,6 +295,14 @@ describe("statusline — repo block", () => {
 
   it("moves the age suffix to iss= when openPrs is 0 and todayPrs is 0", () => {
     expect(renderRepoBlock({ openPrs: 0, openIssues: 24, cacheAgeS: 720 })).toBe("iss=24 (12m)");
+  });
+});
+
+describe("statusline — fleet block", () => {
+  it("renders runner, busy/total occupancy, queue depth, and parked slots", () => {
+    expect(renderFleetBlock({ runner: "codex", busy: 1, total: 2, queue: 7, parked: 1 })).toBe(
+      "flt=codex 1/2 busy · q=7 · park=1",
+    );
   });
 });
 
