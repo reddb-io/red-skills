@@ -301,6 +301,12 @@ importers:
       '@reddb-io/sdk':
         specifier: 1.7.0
         version: 1.7.0
+      '@reddb-io/toon':
+        specifier: workspace:*
+        version: link:../../packages/toon
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
