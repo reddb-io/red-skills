@@ -30,6 +30,13 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
+# rsp hook activation and retention (ADR 0095). /setup-red-skills provisions
+# `.red/red.rdb`; the hook remains inert unless this explicit flag is true.
+rsp:
+  enabled: true
+  ttlDays: 7
+  byteBudget: 67108864            # 64 MiB
+
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
 # worktrees must live under .red/tmp/, and branch-changing commands in the
 # primary checkout are blocked. Create task branches with:
