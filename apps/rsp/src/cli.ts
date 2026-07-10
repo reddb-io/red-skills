@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
 import { runGitWrapper } from "./git-wrapper.js";
@@ -14,6 +16,10 @@ interface ParsedArgs {
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
+  if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
+    process.stdout.write("error: rsp repo store is not provisioned - run /setup-red-skills\n");
+    return 1;
+  }
   const store = await RspElisionStore.open({
     uri: config.storeUri,
     ttlDays: config.ttlDays,
