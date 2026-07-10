@@ -1,0 +1,37 @@
+{
+  "entries": [
+    {
+      "rid": 1,
+      "status": "superseded",
+      "activeRid": 2,
+      "nodeType": "decision",
+      "label": "deploy-friday",
+      "title": "deploy-friday",
+      "content": "deploy policy friday"
+    },
+    {
+      "rid": 2,
+      "status": "active",
+      "activeRid": 2,
+      "nodeType": "decision",
+      "label": "deploy-tuesday",
+      "title": "deploy-tuesday",
+      "content": "deploy policy tuesday"
+    }
+  ],
+  "auditLinks": [
+    {
+      "label": "SUPERSEDED_BY",
+      "fromRid": 1,
+      "toRid": 2,
+      "reason": "policy changed"
+    }
+  ],
+  "summary": {
+    "topic": "friday",
+    "entries": 2,
+    "active": 1,
+    "superseded": 1,
+    "auditLinks": 1
+  }
+}
