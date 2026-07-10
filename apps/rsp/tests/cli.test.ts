@@ -1,13 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const packageRoot = join(import.meta.dirname, "..");
+const tsxLoader = createRequire(import.meta.url).resolve("tsx");
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-cli-"));
@@ -20,14 +22,33 @@ afterEach(async () => {
 });
 
 function runRsp(root: string, args: string[], env: Record<string, string>) {
-  return spawnSync(process.execPath, ["--import", "tsx", cli, ...args], {
+  return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
     cwd: packageRoot,
     env: { ...process.env, ...env },
     encoding: "buffer",
   });
 }
 
+function runRspFromCwd(cwd: string, args: string[], env: Record<string, string>) {
+  return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
+    cwd,
+    env: { ...process.env, ...env },
+    encoding: "buffer",
+  });
+}
+
 describe("rsp cli", () => {
+  it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+
+    const res = runRspFromCwd(root, [], {});
+
+    expect(res.status).toBe(1);
+    expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /setup-red-skills\n"));
+    await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("prints store stats instead of help when called without arguments", async () => {
     const root = await tempRoot();
     const storeUri = `file://${join(root, "red.rdb")}`;

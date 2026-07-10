@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
 export interface RspRuntimeConfig {
+  enabled: boolean;
   storeUri: string;
   ttlDays: number;
   byteBudget: number;
@@ -13,17 +13,12 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   const configPath = findUp(cwd, join(".red", "config.yaml"));
   const root = configPath ? dirname(dirname(configPath)) : cwd;
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
+  const enabled = readYamlPath(yaml, "rsp.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
   const byteBudget = positiveNumber(readNumericYamlPath(yaml, "rsp.byteBudget"), DEFAULT_RSP_BYTE_BUDGET);
   const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), ".red", "red.rdb")}`;
 
-  ensureFileUriParent(storeUri);
-  return { storeUri, ttlDays, byteBudget };
-}
-
-function ensureFileUriParent(uri: string): void {
-  if (!uri.startsWith("file://")) return;
-  mkdirSync(dirname(fileURLToPath(uri)), { recursive: true });
+  return { enabled, storeUri, ttlDays, byteBudget };
 }
 
 function findUp(start: string, relativePath: string): string | null {
