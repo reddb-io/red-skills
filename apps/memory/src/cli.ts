@@ -33,7 +33,7 @@ import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
 import type { CommunityDigestReport } from "./community-digest.js";
 import type { MemoryGlobalSearchReport } from "./global-search.js";
-import { buildContextPack } from "./context-pack.js";
+import { buildContextPack, type ContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
 import { buildDocBundle } from "./doc-bundle.js";
@@ -185,6 +185,7 @@ import { buildMemoryMapFreshnessReport } from "./map-freshness.js";
 import {
   buildMemoryOperationalDashboard,
   buildMemoryOperationalDashboardArtifact,
+  type MemoryOperationalDashboard,
 } from "./operational-dashboard.js";
 import { buildConfidenceReport, renderConfidenceMarkdown } from "./confidence.js";
 import { buildPathExplainReport } from "./path-explain.js";
@@ -1820,10 +1821,77 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       console.log(JSON.stringify(pack, null, 2));
       return;
     }
-    process.stdout.write(pack.markdown);
+    printContextPackToon(pack);
   } finally {
     await store.close();
   }
+}
+
+type ContextPackToonEntry = {
+  section: string;
+  title: string;
+  nodeType: string;
+  importance: number;
+  confidence: string;
+  trust: number;
+  citation: string;
+  reason: string;
+  excerpt: string;
+  expandHandle: string;
+};
+
+function printContextPackToon(pack: ContextPack): void {
+  const rows: ContextPackToonEntry[] = pack.entries.map((entry) => ({
+    section: entry.section,
+    title: entry.title,
+    nodeType: entry.nodeType,
+    importance: entry.importance,
+    confidence: entry.confidence,
+    trust: entry.trust,
+    citation: entry.citation.urn,
+    reason: entry.reason,
+    excerpt: entry.excerpt,
+    expandHandle: entry.expandHandle,
+  }));
+  console.log(
+    renderToonOutput({
+      rowsKey: "entries",
+      rows,
+      fields: [
+        "section",
+        "title",
+        "nodeType",
+        "importance",
+        "confidence",
+        "trust",
+        "citation",
+        "reason",
+        "excerpt",
+        "expandHandle",
+      ],
+      summary: {
+        status: pack.status,
+        goal: pack.goal,
+        entries: pack.entries.length,
+        coreContext: pack.coreContext.length,
+        warnings: pack.warnings.length,
+        omittedEntries: pack.omittedEntries,
+        budgetChars: pack.budgetChars,
+        usedChars: pack.usedChars,
+      },
+      extra: {
+        warnings: pack.warnings.map((warning) => ({
+          kind: warning.kind,
+          message: warning.message,
+        })),
+        ...(pack.entries.length === 0
+          ? {
+              next: 'run `memory store "..." --root <root>` or `memory ingest . --root <root>`, then rerun context-pack',
+            }
+          : {}),
+      },
+    }),
+  );
 }
 
 async function runCapsule(args: ParsedArgs): Promise<void> {
@@ -2002,18 +2070,110 @@ async function runDashboard(args: ParsedArgs): Promise<void> {
       console.log(JSON.stringify(dashboard, null, 2));
       return;
     }
-    const outPath = resolve(
-      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/dashboard.html"),
-    );
-    const artifact = buildMemoryOperationalDashboardArtifact(dashboard);
-    await mkdir(dirname(outPath), { recursive: true });
-    await writeFile(outPath, artifact.html, "utf8");
-    console.log(`memory: operational dashboard written ${outPath}`);
-    console.log(`  state: ${dashboard.state}`);
-    console.log(`  contract: ${artifact.contract.consumes}`);
+    const outFlag = stringFlag(args.flags, "out");
+    if (outFlag !== undefined) {
+      const outPath = resolve(outFlag);
+      const artifact = buildMemoryOperationalDashboardArtifact(dashboard);
+      await mkdir(dirname(outPath), { recursive: true });
+      await writeFile(outPath, artifact.html, "utf8");
+      console.log(`memory: operational dashboard written ${outPath}`);
+      console.log(`  state: ${dashboard.state}`);
+      console.log(`  contract: ${artifact.contract.consumes}`);
+      return;
+    }
+    printDashboardToon(dashboard);
   } finally {
     await store.close();
   }
+}
+
+type DashboardToonSection = {
+  area: string;
+  status: string;
+  metric: string;
+  value: number;
+  detail: string;
+};
+
+function printDashboardToon(dashboard: MemoryOperationalDashboard): void {
+  const sections: DashboardToonSection[] = [
+    {
+      area: "stats",
+      status: dashboard.state,
+      metric: "nodes",
+      value: dashboard.stats.nodes,
+      detail: `${dashboard.stats.docs} docs; ${dashboard.stats.edges} edges`,
+    },
+    {
+      area: "vector",
+      status: dashboard.vector.overall,
+      metric: "ready",
+      value: dashboard.vector.ready,
+      detail: `${dashboard.vector.total} total; ${dashboard.vector.unavailable} unavailable; ${dashboard.vector.failed} failed`,
+    },
+    {
+      area: "docs",
+      status: dashboard.docs.ungrounded > 0 ? "attention" : "ready",
+      metric: "grounded",
+      value: dashboard.docs.grounded,
+      detail: `${dashboard.docs.total} total; ${dashboard.docs.warnings} warning(s)`,
+    },
+    {
+      area: "hooks",
+      status: dashboard.hooks.actionable_gaps > 0 ? "attention" : "ready",
+      metric: "wired_events",
+      value: dashboard.hooks.wired_events,
+      detail: `${dashboard.hooks.enabled_events} enabled; ${dashboard.hooks.actionable_gaps} actionable gap(s)`,
+    },
+    {
+      area: "extraction",
+      status: dashboard.extraction.inferred_available ? "ready" : "unavailable",
+      metric: "inferred_facts",
+      value: dashboard.extraction.inferred_facts,
+      detail: dashboard.extraction.egress ?? "no inferred extraction egress",
+    },
+    {
+      area: "stale",
+      status: dashboard.stale.stale_nodes > 0 ? "attention" : "ready",
+      metric: "stale_nodes",
+      value: dashboard.stale.stale_nodes,
+      detail: `${dashboard.stale.total_nodes} total; ${dashboard.stale.stale_days} day policy`,
+    },
+    {
+      area: "decay",
+      status: dashboard.decay.status,
+      metric: "review",
+      value: dashboard.decay.review,
+      detail: `${dashboard.decay.keep} keep; ${dashboard.decay.deprecate} deprecate; ${dashboard.decay.expire} expire`,
+    },
+  ];
+  const empty = dashboard.stats.nodes === 0 && dashboard.stats.docs === 0;
+  console.log(
+    renderToonOutput({
+      rowsKey: "sections",
+      rows: sections,
+      fields: ["area", "status", "metric", "value", "detail"],
+      summary: {
+        status: empty ? "empty" : dashboard.state,
+        state: dashboard.state,
+        nodes: dashboard.stats.nodes,
+        edges: dashboard.stats.edges,
+        docs: dashboard.stats.docs,
+        warnings: dashboard.warnings.length,
+        actions: dashboard.recommended_next_actions.length + (empty ? 1 : 0),
+        schema: dashboard.schema_version,
+      },
+      extra: {
+        warnings: dashboard.warnings.map((message) => ({ message })),
+        next: [
+          ...dashboard.recommended_next_actions.map((action) => ({ action })),
+          ...(empty
+            ? [{ action: "run `memory ingest . --root <root>` to populate dashboard evidence" }]
+            : []),
+        ],
+      },
+    }),
+  );
 }
 
 async function runWorkbench(args: ParsedArgs): Promise<void> {
@@ -6917,7 +7077,7 @@ async function runTimeline(args: ParsedArgs): Promise<void> {
       console.log(JSON.stringify(timeline, null, 2));
       return;
     }
-    printTimeline(timeline, { includeAudit: args.flags["include-audit"] === true });
+    printTimelineToon(timeline, { includeAudit: args.flags["include-audit"] === true });
   } finally {
     await store.close();
   }
@@ -7057,6 +7217,61 @@ function printTimeline(timeline: TopicTimeline, opts: { includeAudit: boolean })
       console.log(`    ${edge.label} ${edge.fromRid} -> ${edge.toRid}${reason}`);
     }
   }
+}
+
+type TimelineToonEntry = {
+  rid: number;
+  status: string;
+  activeRid: number;
+  nodeType: string;
+  label: string;
+  title: string;
+  content: string;
+};
+
+function printTimelineToon(timeline: TopicTimeline, opts: { includeAudit: boolean }): void {
+  const rows: TimelineToonEntry[] = timeline.entries.map((entry) => ({
+    rid: entry.rid,
+    status: entry.status,
+    activeRid: entry.activeRid,
+    nodeType: entry.nodeType,
+    label: entry.label,
+    title: entry.title,
+    content: entry.content,
+  }));
+  const zero = rows.length === 0;
+  console.log(
+    renderToonOutput({
+      rowsKey: "entries",
+      rows,
+      fields: ["rid", "status", "activeRid", "nodeType", "label", "title", "content"],
+      summary: {
+        status: zero ? "0 entries" : `${rows.length} entries`,
+        topic: timeline.topic,
+        entries: rows.length,
+        active: rows.filter((entry) => entry.status === "active").length,
+        superseded: rows.filter((entry) => entry.status === "superseded").length,
+        auditLinks: timeline.auditLinks.length,
+      },
+      extra: {
+        ...(opts.includeAudit
+          ? {
+              auditLinks: timeline.auditLinks.map((edge) => ({
+                label: edge.label,
+                fromRid: edge.fromRid,
+                toRid: edge.toRid,
+                reason: edge.reason,
+              })),
+            }
+          : {}),
+        ...(zero
+          ? {
+              next: "store or ingest topic evidence, then rerun `memory timeline <topic>`",
+            }
+          : {}),
+      },
+    }),
+  );
 }
 
 async function runStructuralImpact(args: ParsedArgs): Promise<void> {
@@ -8035,6 +8250,7 @@ async function main(): Promise<void> {
   if (
     registryOperation &&
     registryOperation.outputKind.kind === "viewer" &&
+    (registryOperation.id !== "memory.dashboard" || stringFlag(args.flags, "out") !== undefined) &&
     args.flags.json !== true
   ) {
     return runRegistryCliOperation(registryOperation, args);
