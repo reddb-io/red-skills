@@ -72,6 +72,31 @@ describe("read-only Memory operations registry", () => {
     });
   });
 
+  test("declares contract metadata for the suggested questions operation", () => {
+    const operation = getReadOnlyMemoryOperation("memory.suggested-questions");
+
+    expect(operation).toMatchObject({
+      id: "memory.suggested-questions",
+      safetyClass: "read-only",
+      sideEffectClass: "none",
+      capabilities: ["graph-store"],
+      renderer: {
+        cli: { command: "suggested-questions", supportsJson: true },
+        mcp: { toolName: "memory_suggested_questions" },
+      },
+      inputBinding: {
+        fields: [
+          {
+            field: "limit",
+            sources: ["flag", "query"],
+            type: "number",
+          },
+        ],
+      },
+      outputKind: { kind: "report", format: "json" },
+    });
+  });
+
   test("declares read-only contracts for agent-native readiness and trust operations", () => {
     const operations = listReadOnlyMemoryOperations();
 
@@ -157,6 +182,7 @@ describe("read-only Memory operations registry", () => {
         "memory.smart-search-viewer",
         "memory.structural-impact",
         "memory.structural-impact-viewer",
+        "memory.suggested-questions",
         "memory.vector-search",
         "memory.vector-status",
         "memory.vector-status-viewer",
@@ -245,6 +271,7 @@ describe("read-only Memory operations registry", () => {
         "memory_smart_search_viewer",
         "memory_structural_impact",
         "memory_structural_impact_viewer",
+        "memory_suggested_questions",
         "memory_vector_search",
         "memory_vector_status",
         "memory_vector_status_viewer",
