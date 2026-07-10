@@ -49,6 +49,12 @@ import {
   type HubReport,
 } from "./hub-report.js";
 import {
+  buildSuggestedQuestions,
+  type SuggestedQuestionReference,
+  type SuggestedQuestionSignalType,
+  type SuggestedQuestionsReport,
+} from "./suggested-questions.js";
+import {
   buildMemoryGlobalSearch,
   type MemoryGlobalSearchReport,
 } from "./global-search.js";
@@ -496,6 +502,11 @@ const HubReportInputSchema = z.object({
 });
 type HubReportInput = z.infer<typeof HubReportInputSchema>;
 
+const SuggestedQuestionsInputSchema = z.object({
+  limit: z.number().int().min(1).max(50).optional(),
+});
+type SuggestedQuestionsInput = z.infer<typeof SuggestedQuestionsInputSchema>;
+
 const DocSearchInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
@@ -888,6 +899,68 @@ const HubReportOutputSchema = z.object({
   next: z.array(z.string()),
   hubs: z.array(HubReportRowSchema),
 }) satisfies z.ZodType<HubReport>;
+
+const SuggestedQuestionReferenceSchema = z.object({
+  kind: z.enum(["node", "edge", "community"]),
+  rid: z.number().optional(),
+  label: z.string().optional(),
+  title: z.string().optional(),
+  from_rid: z.number().optional(),
+  to_rid: z.number().optional(),
+  community_id: z.string().optional(),
+}) satisfies z.ZodType<SuggestedQuestionReference>;
+const SuggestedQuestionSignalTypeSchema = z.enum([
+  "hub",
+  "bridge",
+  "weak_community",
+  "inferred_edge",
+]) satisfies z.ZodType<SuggestedQuestionSignalType>;
+const SuggestedQuestionSignalSchema = z.object({
+  signal_id: z.string(),
+  signal_type: SuggestedQuestionSignalTypeSchema,
+  title: z.string(),
+  rationale: z.string(),
+  score: z.number(),
+  references: z.array(SuggestedQuestionReferenceSchema),
+});
+const SuggestedQuestionSchema = z.object({
+  id: z.string(),
+  signal_id: z.string(),
+  signal_type: SuggestedQuestionSignalTypeSchema,
+  question: z.string(),
+  rationale: z.string(),
+  references: z.array(SuggestedQuestionReferenceSchema),
+});
+const SuggestedQuestionsOutputSchema = z.object({
+  schema_version: z.literal("memory.suggested-questions.v1"),
+  read_only: z.literal(true),
+  graph_hash: z.string(),
+  generated_at: z.string(),
+  provider: z.object({
+    status: z.enum(["available", "unavailable"]),
+    mode: z
+      .union([
+        z.literal("openai-compat"),
+        z.literal("openai-native"),
+        z.literal("anthropic-native"),
+        z.literal("bedrock"),
+        z.null(),
+      ]),
+    model: z.string().nullable(),
+    egress: z.union([z.literal("local"), z.literal("external"), z.null()]),
+    error: z.string().optional(),
+  }),
+  summary: z.object({
+    status: z.enum(["empty_graph", "no_notable_signals", "provider_unavailable", "ready"]),
+    nodes: z.number(),
+    edges: z.number(),
+    signals: z.number(),
+    questions: z.number(),
+    next: z.array(z.string()),
+  }),
+  signals: z.array(SuggestedQuestionSignalSchema),
+  questions: z.array(SuggestedQuestionSchema),
+}) satisfies z.ZodType<SuggestedQuestionsReport>;
 
 const CommunityDigestCountSchema = z.object({
   value: z.string(),
@@ -1408,6 +1481,11 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
       flagField("limit", "number"),
       flagField("rank_by", "string"),
     ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.suggested-questions"],
+    inputBinding([flagField("limit", "number")]),
     JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
@@ -3073,6 +3151,35 @@ const HUB_REPORT_OPERATION: MemoryOperationDefinition<HubReportInput, HubReport>
     buildHubReport(ctx.store, { limit: input.limit, rankBy: input.rank_by as HubRankBy }),
 };
 
+const SUGGESTED_QUESTIONS_OPERATION: MemoryOperationDefinition<
+  SuggestedQuestionsInput,
+  SuggestedQuestionsReport
+> = {
+  id: "memory.suggested-questions",
+  title: "Memory suggested questions",
+  description:
+    "Read-only graph-structure question suggestions grounded in hubs, bridges, weak communities, and inferred edges.",
+  inputSchema: SuggestedQuestionsInputSchema,
+  outputSchema: SuggestedQuestionsOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "suggested-questions", supportsJson: true },
+    mcp: {
+      toolName: "memory_suggested_questions",
+      description:
+        "Read-only Memory graph suggested-question report: deterministic structural signal selection over hubs, cross-community bridges, weak-cohesion communities, and high-confidence INFERRED edges; provider phrasing produces questions that retain graph references.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildSuggestedQuestions(ctx.store, {
+      limit: input.limit,
+      providerConfig: ctx.providerConfig,
+      now: ctx.now ? new Date(ctx.now) : undefined,
+    }),
+};
+
 const GLOBAL_SEARCH_OPERATION: MemoryOperationDefinition<
   GlobalSearchInput,
   MemoryGlobalSearchReport
@@ -3715,6 +3822,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
   HUB_REPORT_OPERATION,
+  SUGGESTED_QUESTIONS_OPERATION,
   GLOBAL_SEARCH_OPERATION,
   RECALL_RANKING_OPERATION,
   REFERENCE_RADAR_OPERATION,
