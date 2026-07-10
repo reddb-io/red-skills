@@ -66,10 +66,52 @@ async function seedTwoCommunities(root: string): Promise<void> {
   await e(y, z);
   await e(z, x);
   await e(c, x);
+  await e(c, y);
+  await e(c, z);
+  await e(b, x);
+  await e(b, y);
   await store.close();
 }
 
 describe("memory communities CLI", () => {
+  test(
+    "reports definitive empty states",
+    async () => {
+      const root = await initRoot();
+
+      const json = runMemory(["communities", "--root", root, "--json"]);
+      expect(json.status).toBe(0);
+      const body = JSON.parse(json.stdout) as {
+        communities: unknown[];
+        bridge_nodes: unknown[];
+        bridge_edges: unknown[];
+        summary: { status: string; next: string };
+      };
+      expect(body.communities).toEqual([]);
+      expect(body.bridge_nodes).toEqual([]);
+      expect(body.bridge_edges).toEqual([]);
+      expect(body.summary).toEqual({
+        status: "empty",
+        next: "ingest graph evidence, then run memory communities again",
+      });
+
+      const toon = runMemory(["communities", "--root", root]);
+      expect(toon.status).toBe(0);
+      expect(toon.stdout).toContain("communities: []");
+      expect(toon.stdout).toContain("status: empty");
+      expect(toon.stdout).toContain("ingest graph evidence");
+
+      const out = join(root, "empty-communities.html");
+      const viewer = runMemory(["communities-viewer", "--root", root, "--out", out]);
+      expect(viewer.status).toBe(0);
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("No community assignments available. Ingest graph evidence, then refresh communities.");
+      expect(html).toContain("No cross-community bridge nodes detected.");
+      expect(html).toContain("No cross-community bridge edges detected.");
+    },
+    TIMEOUT,
+  );
+
   test(
     "reports assignments, counts, readable labels, cache hits, and does not mutate graph evidence",
     async () => {
@@ -101,7 +143,9 @@ describe("memory communities CLI", () => {
           count: number;
           total_degree: number;
           avg_centrality: number;
+          internal_edge_weight: number;
           external_edge_weight: number;
+          cohesion_score: number;
           labels: string[];
           titles: string[];
         }>;
@@ -121,26 +165,56 @@ describe("memory communities CLI", () => {
           weight: number;
           edge_count: number;
         }>;
+        bridge_nodes: Array<{
+          rid: number;
+          label: string;
+          title: string;
+          community_id: string;
+          connected_community_count: number;
+          connected_community_ids: string[];
+          cross_community_edge_count: number;
+          cross_community_weight: number;
+        }>;
+        bridge_edges: Array<{
+          from_label: string;
+          to_label: string;
+          from_community_id: string;
+          to_community_id: string;
+          weight: number;
+        }>;
+        summary: { status: string; next: string };
       };
 
       expect(firstBody.schema_version).toBe("memory.communities.v1");
       expect(firstBody.read_only).toBe(true);
       expect(firstBody.cached).toBe(false);
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
-      expect(firstBody.cache_key).toContain("cache:communities:v2:");
+      expect(firstBody.cache_key).toContain("cache:communities:v3:");
       expect(firstBody.communities).toHaveLength(2);
       expect(firstBody.assignments).toHaveLength(6);
       expect(firstBody.node_analytics).toHaveLength(6);
       expect(firstBody.inter_community_edges).toHaveLength(1);
-      expect(firstBody.inter_community_edges[0]).toMatchObject({ weight: 1, edge_count: 1 });
+      expect(firstBody.inter_community_edges[0]).toMatchObject({ weight: 5, edge_count: 5 });
+      expect(firstBody.bridge_edges).toHaveLength(5);
+      expect(firstBody.bridge_nodes[0]).toMatchObject({
+        label: "auth-session",
+        connected_community_count: 2,
+        cross_community_edge_count: 3,
+        cross_community_weight: 3,
+      });
+      expect(firstBody.bridge_nodes[0].connected_community_ids).toHaveLength(2);
       expect(firstBody.node_analytics[0].centrality).toBeGreaterThan(0);
       expect(firstBody.node_analytics[0].degree).toBeGreaterThan(0);
       expect(firstBody.communities.map((c) => c.count).sort()).toEqual([3, 3]);
       expect(firstBody.communities.every((c) => c.total_degree > 0)).toBe(true);
       expect(firstBody.communities.every((c) => c.avg_centrality > 0)).toBe(true);
-      expect(firstBody.communities.every((c) => c.external_edge_weight === 1)).toBe(true);
+      expect(firstBody.communities.every((c) => c.internal_edge_weight === 3)).toBe(true);
+      expect(firstBody.communities.every((c) => c.external_edge_weight === 5)).toBe(true);
+      expect(firstBody.communities.every((c) => c.cohesion_score === 0.375)).toBe(true);
       expect(firstBody.communities.some((c) => c.labels.includes("auth-login"))).toBe(true);
       expect(firstBody.communities.some((c) => c.titles.includes("cache ttl"))).toBe(true);
+      expect(firstBody.summary).toMatchObject({ status: "ready" });
+      expect(firstBody.summary.next).toContain("bridge_nodes");
 
       const second = runMemory(["communities", "--root", root, "--json"]);
       expect(second.status).toBe(0);
@@ -150,6 +224,14 @@ describe("memory communities CLI", () => {
       expect(secondBody.assignments).toEqual(firstBody.assignments);
       expect(secondBody.node_analytics).toEqual(firstBody.node_analytics);
       expect(secondBody.inter_community_edges).toEqual(firstBody.inter_community_edges);
+      expect(secondBody.bridge_nodes).toEqual(firstBody.bridge_nodes);
+      expect(secondBody.bridge_edges).toEqual(firstBody.bridge_edges);
+
+      const toon = runMemory(["communities", "--root", root, "--no-cache"]);
+      expect(toon.status).toBe(0);
+      expect(toon.stdout).toContain("communities[2]{id,count,cohesion_score");
+      expect(toon.stdout).toContain("bridge_nodes[5]{rid,label");
+      expect(toon.stdout).toContain("summary:");
 
       const out = join(root, "communities.html");
       const viewer = runMemory(["communities-viewer", "--root", root, "--out", out]);
@@ -159,6 +241,8 @@ describe("memory communities CLI", () => {
       const html = await readFile(out, "utf8");
       expect(html).toContain("Graph Communities");
       expect(html).toContain("auth login flow");
+      expect(html).toContain("cohesion 0.375");
+      expect(html).toContain("Bridge Nodes");
       expect(html).toContain('id="communities-data"');
       expect(html).not.toContain("<script src=");
 
