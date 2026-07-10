@@ -2351,8 +2351,19 @@ export async function processIssue(
     return await handoffForReview(common, activeTaskClass, validationSidecar);
   }
 
-  // Macro phase → `merging` (issue #811): the lock-toggled landing is starting.
-  deps.markPhase?.("merging");
+  const markLandingPhase = (phase: "gate" | "push-pr" | "merge" | "cascade"): void => {
+    const startedAt = deps.nowIso();
+    deps.markState?.({
+      "current.activity": "landing",
+      "current.phase": phase,
+      "current.started_at": startedAt,
+    });
+    deps.markPhase?.(phase);
+  };
+
+  // Macro phase → landing gate (issue #1427): the agent loop is done, but the
+  // slot is still busy validating, opening/merging, and cascading dependent work.
+  markLandingPhase("gate");
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
@@ -2393,6 +2404,7 @@ export async function processIssue(
         ]);
         return { changedFiles, packageJsonDiff: diffRes.stdout };
       },
+      landingPhase: markLandingPhase,
     },
     {
       openPr,
@@ -2490,6 +2502,7 @@ export async function processIssue(
   // to the primary HEAD for the unlocked path (which best-effort fast-forwards it).
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
+  markLandingPhase("cascade");
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
