@@ -20,6 +20,7 @@
     "bundle:cli": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
     "bundle:mcp": "node ../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",
     "test": "vitest run",
+    "test:bench-latency": "RED_MEMORY_ASSERT_LATENCY_INVARIANT=1 vitest run tests/bench-latency.test.ts",
     "test:integration": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run --config vitest.integration.config.ts",
     "dev": "node --import tsx src/cli.ts"
   },
