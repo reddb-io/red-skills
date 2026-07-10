@@ -1,5 +1,5 @@
 import { LABEL_TYPE_SPEC, LABEL_VALIDATION, LABEL_RUNNING } from "./triage-labels.js";
-import { encodeToon, type ToonValue } from "./toon.js";
+import { appendSummaryField, type JsonObject, type JsonValue as ToonValue } from "@reddb-io/toon";
 
 export interface DashboardIssue {
   number: number;
@@ -282,5 +282,8 @@ export function renderDashboardReport(report: DashboardReport): string {
  * `warnings[0]:` empty state rather than a silent omission.
  */
 export function renderDashboardReportToon(report: DashboardReport): string {
-  return encodeToon(report as unknown as ToonValue);
+  const summary =
+    `${report.operations.open_issues} open issues · ${report.operations.open_specs} open specs · ` +
+    `${report.flow.open_prs} open PRs · ${report.dora.deployment_frequency_in_period} deployments`;
+  return appendSummaryField(report as unknown as JsonObject, summary);
 }
