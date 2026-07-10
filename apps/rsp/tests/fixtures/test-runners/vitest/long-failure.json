@@ -1,0 +1,26 @@
+{
+  "name": "vitest-long-failure",
+  "command": ["vitest", "run"],
+  "recorded": {
+    "stdout": "{\"numTotalTests\":1,\"numPassedTests\":0,\"numFailedTests\":1,\"startTime\":1783695600000,\"endTime\":1783695604100,\"testResults\":[{\"name\":\"apps/rsp/tests/snapshot.test.ts\",\"assertionResults\":[{\"fullName\":\"snapshot matches large diff\",\"title\":\"matches large diff\",\"status\":\"failed\",\"failureMessages\":[\"Snapshot mismatch\\nreceived: \\\"line-001\\\"\\nreceived: \\\"line-002\\\"\\nreceived: \\\"line-003\\\"\\nreceived: \\\"line-004\\\"\\nreceived: \\\"line-005\\\"\\nreceived: \\\"line-006\\\"\\nreceived: \\\"line-007\\\"\\nreceived: \\\"line-008\\\"\\nreceived: \\\"line-009\\\"\\nreceived: \\\"line-010\\\"\\nreceived: \\\"line-011\\\"\\nreceived: \\\"line-012\\\"\\nreceived: \\\"line-013\\\"\\nreceived: \\\"line-014\\\"\\nreceived: \\\"line-015\\\"\\nreceived: \\\"line-016\\\"\\nreceived: \\\"line-017\\\"\\nreceived: \\\"line-018\\\"\\nreceived: \\\"line-019\\\"\\nreceived: \\\"line-020\\\"\\nreceived: \\\"line-021\\\"\\nreceived: \\\"line-022\\\"\\nreceived: \\\"line-023\\\"\\nreceived: \\\"line-024\\\"\\nreceived: \\\"line-025\\\"\\nreceived: \\\"line-026\\\"\\nreceived: \\\"line-027\\\"\\nreceived: \\\"line-028\\\"\\nreceived: \\\"line-029\\\"\\nreceived: \\\"line-030\\\"\\nreceived: \\\"line-031\\\"\\nreceived: \\\"line-032\\\"\\nreceived: \\\"line-033\\\"\\nreceived: \\\"line-034\\\"\\nreceived: \\\"line-035\\\"\\nreceived: \\\"line-036\\\"\\nreceived: \\\"line-037\\\"\\nreceived: \\\"line-038\\\"\\nreceived: \\\"line-039\\\"\\nreceived: \\\"line-040\\\"\"]}]}]}",
+    "stderr": "",
+    "status": 1,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 1,
+    "summary": "1/1 failed · 1 suites · 4.1s",
+    "failures": [
+      {
+        "suite": "apps/rsp/tests/snapshot.test.ts",
+        "name": "snapshot matches large diff",
+        "excerpt": "truncated"
+      }
+    ]
+  },
+  "assertions": [
+    { "question": "how many failed?", "path": "summary", "expected": "1/1 failed · 1 suites · 4.1s" },
+    { "question": "which test names failed?", "path": "failures.0.name", "expected": "snapshot matches large diff" },
+    { "question": "what was the exit code?", "path": "exit_code", "expected": 1 }
+  ]
+}
