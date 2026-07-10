@@ -52,6 +52,7 @@ import {
   start as sessionStart,
 } from "./session-manager.js";
 import { slugify } from "./store.js";
+import { renderToonDocument } from "./toon-output.js";
 import { listContradictions, supersessionTimeline } from "./supersession.js";
 import {
   appendEvent as workingAppendEvent,
@@ -232,20 +233,18 @@ async function main(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
     const args = req.params.arguments ?? {};
-    const operation = OPERATION_BY_TOOL_NAME.get(name);
-    if (operation) {
-      const output = await executeReadOnlyMemoryOperation(
-        operation.id,
-        { store, rootDir: root, providerConfig: config?.provider, transportSurface: "mcp" },
-        args,
-      );
-      return text(
-        JSON.stringify(output, null, 2),
-        await operationStructuredContent(operation.id, output, store),
-      );
-    }
+    try {
+      const operation = OPERATION_BY_TOOL_NAME.get(name);
+      if (operation) {
+        const output = await executeReadOnlyMemoryOperation(
+          operation.id,
+          { store, rootDir: root, providerConfig: config?.provider, transportSurface: "mcp" },
+          args,
+        );
+        return text(output, await operationStructuredContent(operation.id, output, store));
+      }
 
-    switch (name) {
+      switch (name) {
       case "memory_recall": {
         const input = RecallInput.parse(args);
         const recallStore = input.as_of
@@ -265,21 +264,33 @@ async function main(): Promise<void> {
                 }
               : undefined,
           });
-          return text(result.context_md, {
-            nodes: result.nodes.map((n) => {
-              const hooks = extractMcpHookEntries(n.properties.hooks);
-              return {
-                rid: n.rid,
-                label: n.label,
-                node_type: n.node_type,
-                score: n.score,
-                depth: n.depth,
-                excerpt: n.excerpt,
-                ...(hooks ? { hooks } : {}),
-              };
-            }),
-            diagnostics: result.diagnostics,
+          const nodes = result.nodes.map((n) => {
+            const hooks = extractMcpHookEntries(n.properties.hooks);
+            return {
+              rid: n.rid,
+              label: n.label,
+              node_type: n.node_type,
+              score: n.score,
+              depth: n.depth,
+              excerpt: n.excerpt,
+              ...(hooks ? { hooks } : {}),
+            };
           });
+          return text(
+            {
+              nodes,
+              diagnostics: result.diagnostics,
+              summary: {
+                query: result.query,
+                nodes: nodes.length,
+                format: "toon",
+              },
+            },
+            {
+              nodes,
+              diagnostics: result.diagnostics,
+            },
+          );
         } finally {
           if (input.as_of) await recallStore.close();
         }
@@ -313,7 +324,7 @@ async function main(): Promise<void> {
             }),
           );
         }
-        return text(`stored rid=${rid}, edges=${edges.length}`, { rid, edges });
+        return text({ status: "stored", rid, edges: edges.length }, { rid, edges });
       }
       case "memory_store_evidence": {
         const input = StoreEvidenceInput.parse(args);
@@ -334,15 +345,12 @@ async function main(): Promise<void> {
           },
           { rootDir: root },
         );
-        return text(
-          JSON.stringify(result, null, 2),
-          governedWriteStructuredContent(result),
-        );
+        return text(result, governedWriteStructuredContent(result));
       }
       case "memory_search": {
         const input = SearchInput.parse(args);
         const hits = await search(store, input.query, input.limit);
-        return text(JSON.stringify(hits, null, 2), { count: hits.length });
+        return text({ hits: compactRecalledNodes(hits) }, { count: hits.length });
       }
       case "memory_traverse": {
         const input = TraverseInput.parse(args);
@@ -351,23 +359,23 @@ async function main(): Promise<void> {
           strategy: input.strategy,
           direction: input.direction,
         });
-        return text(JSON.stringify(rows, null, 2), { count: rows.length });
+        return text({ rows: compactRecalledNodes(rows) }, { count: rows.length });
       }
       case "memory_neighbors": {
         const input = NeighborsInput.parse(args);
         const rows = await neighbors(store, input.label, input.depth, input.direction);
-        return text(JSON.stringify(rows, null, 2), { count: rows.length });
+        return text({ rows: compactRecalledNodes(rows) }, { count: rows.length });
       }
       case "memory_path": {
         const input = PathInput.parse(args);
         const result = await path(store, input.from, input.to, input.algorithm);
-        return text(JSON.stringify(result, null, 2), { reachable: result?.reachable ?? false });
+        return text({ result }, { reachable: result?.reachable ?? false });
       }
       case "memory_export": {
         const input = ExportInput.parse(args);
         if (input.out_dir) {
           const result = await exportGraph(store, input.out_dir);
-          return text(JSON.stringify(result, null, 2), {
+          return text(result, {
             nodes: result.nodes,
             edges: result.edges,
           });
@@ -378,31 +386,31 @@ async function main(): Promise<void> {
           store.stats(),
         ]);
         const contract = buildGraphContract({ nodes, edges: edges.map(toEdge) });
-        return text(JSON.stringify({ contract, nodes, edges, stats }, null, 2), stats);
+        return text({ contract, nodes, edges, stats }, stats);
       }
       case "memory_doctor": {
         const input = DoctorInput.parse(args);
         const report = await diagnose(store, { staleDays: input.stale_days });
-        return text(JSON.stringify(report, null, 2), {
+        return text(report, {
           total: report.totalNodes,
           stale: report.stale.length,
         });
       }
       case "memory_stats": {
         const stats = await store.stats();
-        return text(JSON.stringify(stats, null, 2), stats);
+        return text(stats, stats);
       }
       case "memory_conflicts": {
         const input = ConflictsInput.parse(args);
         const conflicts = await listContradictions(store, {
           includeResolved: input.include_resolved,
         });
-        return text(JSON.stringify(conflicts, null, 2), { count: conflicts.length });
+        return text({ conflicts }, { count: conflicts.length });
       }
       case "memory_timeline": {
         const input = TimelineInput.parse(args);
         const timeline = await supersessionTimeline(store, input.topic);
-        return text(JSON.stringify(timeline, null, 2), {
+        return text(timeline, {
           entries: timeline.entries.length,
           audit_links: timeline.auditLinks.length,
         });
@@ -410,7 +418,12 @@ async function main(): Promise<void> {
       case "memory_supersede": {
         const input = SupersedeInput.parse(args);
         const edgeRid = await store.supersede(input.old_rid, input.new_rid, input.reason);
-        return text(`superseded ${input.old_rid} -> ${input.new_rid}`, {
+        return text({
+          status: "superseded",
+          old_rid: input.old_rid,
+          new_rid: input.new_rid,
+          edge_rid: edgeRid,
+        }, {
           edge_rid: edgeRid,
         });
       }
@@ -420,7 +433,7 @@ async function main(): Promise<void> {
           apply: input.apply,
           staleDays: input.stale_days,
         });
-        return text(JSON.stringify(report, null, 2), {
+        return text(report, {
           dry_run: report.dry_run,
           proposed: report.actions_proposed.length,
           applied: report.actions_applied.length,
@@ -432,12 +445,12 @@ async function main(): Promise<void> {
       case "memory_session_start": {
         const input = SessionStartInput.parse(args);
         const id = await sessionStart(root, input.id ? { id: input.id } : {});
-        return text(`session started — ${id}`, { session_id: id });
+        return text({ status: "session_started", session_id: id }, { session_id: id });
       }
       case "memory_session_end": {
         SessionEndInput.parse(args);
         await sessionEnd(root);
-        return text("session ended", { ok: true });
+        return text({ status: "session_ended", ok: true }, { ok: true });
       }
       case "memory_working_get": {
         const input = WorkingGetInput.parse(args);
@@ -447,7 +460,7 @@ async function main(): Promise<void> {
           root,
           input.type ? { type: input.type } : {},
         );
-        return text(JSON.stringify({ events }, null, 2), {
+        return text({ events }, {
           count: events.length,
         });
       }
@@ -458,7 +471,7 @@ async function main(): Promise<void> {
           type: input.type,
           value: input.value,
         });
-        return text(JSON.stringify(event, null, 2), {
+        return text(event, {
           rid: event.rid,
           session_id: event.session_id,
           sequence: event.sequence,
@@ -472,7 +485,7 @@ async function main(): Promise<void> {
           triggeredBy: input.triggered_by,
           sessionId,
         });
-        return text(JSON.stringify(report, null, 2), {
+        return text(report, {
           session_id: report.session_id,
           promoted: report.promoted,
           reinforced: report.reinforced,
@@ -481,6 +494,9 @@ async function main(): Promise<void> {
       }
       default:
         throw new Error(`unknown tool: ${name}`);
+    }
+    } catch (error) {
+      return toolError(name, error);
     }
   });
 
@@ -543,11 +559,44 @@ function applyConfiguredProviderEnv(provider: MemoryConfig["provider"]): void {
   }
 }
 
-function text(body: string, structured?: Record<string, unknown>) {
+function text(body: unknown, structured?: Record<string, unknown>) {
   return {
-    content: [{ type: "text" as const, text: body }],
+    content: [{ type: "text" as const, text: renderToonDocument(body) }],
     ...(structured ? { structuredContent: structured } : {}),
   };
+}
+
+function toolError(tool: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const payload = {
+    error: {
+      tool,
+      message,
+      next: "check the tool arguments and retry with values matching the input schema",
+    },
+  };
+  return {
+    ...text(payload, payload.error),
+    isError: true,
+  };
+}
+
+function compactRecalledNodes(nodes: Array<{
+  rid: number;
+  label: string;
+  node_type: string;
+  score: number;
+  depth?: number;
+  excerpt: string;
+}>) {
+  return nodes.map((node) => ({
+    rid: node.rid,
+    label: node.label,
+    node_type: node.node_type,
+    score: node.score,
+    depth: node.depth,
+    excerpt: node.excerpt,
+  }));
 }
 
 const OPERATION_TOOLS = listReadOnlyMemoryOperations().map((operation) => ({
