@@ -90,9 +90,19 @@ interface DigestBody {
     error?: string;
   };
   community_count: number;
-  digests: Array<{
+    digests: Array<{
     community_id: string;
     size: number;
+    short_label: string | null;
+    label_provenance: {
+      source: "provider" | "deterministic" | "cached";
+      provider: {
+        mode: string | null;
+        model: string | null;
+      };
+      membership_hash: string;
+      generated_at: string;
+    } | null;
     top_label: string;
     top_node_type: string;
     top_engineering_code: string | null;
@@ -101,6 +111,18 @@ interface DigestBody {
     engineering_codes: Array<{ value: string; count: number }>;
     narrative_summary: string | null;
   }>;
+  summary: {
+    labeling: {
+      generated: number;
+      reused: number;
+      token_cost: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+        estimated: boolean;
+      };
+    };
+  };
 }
 
 describe("memory community-digest CLI", () => {
@@ -287,7 +309,8 @@ describe("memory community-digest CLI", () => {
           `^cache:community-digest:${first.graph_hash}:codes:[a-f0-9]{12}:provider:openai-compat:llama3\\.1$`,
         ),
       );
-      expect(calls).toHaveLength(1);
+      expect(calls.filter((call) => JSON.parse(call.user).task === "community-labels")).toHaveLength(1);
+      expect(calls.filter((call) => JSON.parse(call.user).task !== "community-labels")).toHaveLength(1);
       expect(first.digests).toHaveLength(2);
       expect(first.digests.every((digest) => digest.narrative_summary)).toBe(true);
 
@@ -301,7 +324,105 @@ describe("memory community-digest CLI", () => {
       expect(second.graph_hash).toBe(first.graph_hash);
       expect(second.generated_at).toBe(first.generated_at);
       expect(second.digests).toEqual(first.digests);
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(2);
+      await store.close();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "provider labeling persists short labels, reuses unchanged memberships, and regenerates changed communities",
+    async () => {
+      const root = await initRoot();
+      await seedTwoCommunities(root);
+      const calls: ProviderRequest[] = [];
+      const providerClient = {
+        async complete(req: ProviderRequest): Promise<string> {
+          calls.push(req);
+          const body = JSON.parse(req.user) as {
+            task: string;
+            communities: Array<{ community_id: string; top_label: string; members: Array<{ label: string }> }>;
+          };
+          if (body.task === "community-labels") {
+            return JSON.stringify({
+              labels: body.communities.map((community) => ({
+                community_id: community.community_id,
+                label: community.members.some((member) => member.label === "auth-metrics")
+                  ? "Auth Metrics"
+                  : community.top_label.startsWith("auth")
+                    ? "Auth Flow"
+                    : "Cache Ops",
+              })),
+            });
+          }
+          return JSON.stringify({
+            summaries: body.communities.map((community) => ({
+              community_id: community.community_id,
+              summary: `Narrative for ${community.top_label}`,
+            })),
+          });
+        },
+      };
+      const providerConfig = {
+        mode: "openai-compat" as const,
+        model: "llama3.1",
+        baseUrl: "http://localhost:11434/v1",
+      };
+      const store = await openStore(root);
+      const first = await buildCommunityDigest(store, {
+        cache: "off",
+        providerConfig,
+        providerClient,
+        now: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      expect(first.digests.map((digest) => digest.short_label).sort()).toEqual([
+        "Auth Flow",
+        "Cache Ops",
+      ]);
+      expect(first.digests.every((digest) => digest.label_provenance?.source === "provider")).toBe(true);
+      expect(first.summary.labeling).toMatchObject({
+        generated: 2,
+        reused: 0,
+        token_cost: { estimated: true },
+      });
+      expect(first.summary.labeling.token_cost.total_tokens).toBeGreaterThan(0);
+      expect(calls.filter((call) => JSON.parse(call.user).task === "community-labels")).toHaveLength(1);
+
+      const second = await buildCommunityDigest(store, {
+        cache: "off",
+        providerConfig,
+        providerClient,
+        now: new Date("2026-02-02T00:00:00.000Z"),
+      });
+      expect(second.digests.map((digest) => digest.short_label).sort()).toEqual([
+        "Auth Flow",
+        "Cache Ops",
+      ]);
+      expect(second.summary.labeling).toMatchObject({
+        generated: 0,
+        reused: 2,
+      });
+      expect(calls.filter((call) => JSON.parse(call.user).task === "community-labels")).toHaveLength(1);
+
+      const target = (await store.listNodes()).find((node) => node.label === "auth-login");
+      expect(target).toBeDefined();
+      const newRid = await store.upsertNode({
+        label: "auth-metrics",
+        node_type: "concept",
+        properties: { title: "auth metrics", content: "auth metrics" },
+      });
+      await store.upsertEdge({ label: "REFERENCES", from_rid: newRid, to_rid: target!.rid });
+
+      const third = await buildCommunityDigest(store, {
+        cache: "off",
+        providerConfig,
+        providerClient,
+        now: new Date("2026-03-03T00:00:00.000Z"),
+      });
+      expect(third.digests.some((digest) => digest.short_label === "Auth Metrics")).toBe(true);
+      expect(third.summary.labeling.generated).toBeGreaterThanOrEqual(1);
+      expect(third.summary.labeling.reused).toBeGreaterThanOrEqual(1);
+      expect(calls.filter((call) => JSON.parse(call.user).task === "community-labels")).toHaveLength(2);
       await store.close();
     },
     TIMEOUT,
