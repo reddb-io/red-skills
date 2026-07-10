@@ -1,15 +1,36 @@
 import { readFile } from "node:fs/promises";
-import { extname, isAbsolute, resolve } from "node:path";
+import { extname, isAbsolute, relative, resolve } from "node:path";
 import fg from "fast-glob";
+import { getEncoding } from "js-tiktoken";
 import { extractAsset, isAssetFile } from "./extract-asset.js";
 import { extractCode } from "./extract-code.js";
+import {
+  buildExtractionPrompt,
+  factsToGraph,
+  parseExtraction,
+  type ProviderClient,
+  type ProviderRequest,
+} from "./extract-conversation.js";
 import { extractDevArtifact, isDevArtifact } from "./extract-dev-artifact.js";
 import { extractMarkdown } from "./extract-markdown.js";
 import { extractSql } from "./extract-sql.js";
 import { contentHash } from "./hash.js";
 import { readMemoryIgnore } from "./scope.js";
+import { renderToonOutput } from "./toon-output.js";
 import type { MemoryStore } from "./graph-store.js";
 import type { EdgeLabel, MemoryDoc, MemoryEdgeProps, MemoryNode } from "./schema.js";
+
+type IngestToonRow = {
+  files: number;
+  nodes: number;
+  edges: number;
+  docs: number;
+  semantic_nodes: number;
+  semantic_edges: number;
+  semantic_token_input?: number;
+  semantic_token_output?: number;
+  duration_ms: number;
+};
 
 export interface IngestOptions {
   /** Root directory to walk. */
@@ -18,6 +39,7 @@ export interface IngestOptions {
   ignore?: string[];
   /** Hard cap on files indexed in one pass. Protects against huge monorepos. */
   maxFiles?: number;
+  semantic?: SemanticIngestOptions;
 }
 
 export interface IngestReport {
@@ -29,7 +51,26 @@ export interface IngestReport {
   updated: number;
   skipped: number;
   stale: number;
+  semantic: SemanticIngestReport;
   durationMs: number;
+}
+
+export interface SemanticIngestOptions {
+  enabled: boolean;
+  client?: ProviderClient;
+  source?: string;
+}
+
+export interface SemanticTokenCost {
+  input: number;
+  output: number;
+}
+
+export interface SemanticIngestReport {
+  enabled: boolean;
+  nodes: number;
+  edges: number;
+  token_cost: SemanticTokenCost;
 }
 
 const DEFAULT_PATTERNS = [
@@ -83,6 +124,7 @@ export async function ingestProject(
     totals.edges += r.edges;
     totals.docs += r.docs;
   }
+  const semantic = await runSemanticIngest(store, slice, opts);
 
   return {
     files: slice.length,
@@ -91,6 +133,7 @@ export async function ingestProject(
     updated: 0,
     skipped: 0,
     stale: 0,
+    semantic,
     durationMs: Date.now() - start,
   };
 }
@@ -146,6 +189,120 @@ interface FileExtraction {
 export async function indexFile(store: MemoryStore, path: string): Promise<FileIndexReport> {
   const extraction = await extractFile(path);
   return writeExtraction(store, extraction);
+}
+
+async function runSemanticIngest(
+  store: MemoryStore,
+  files: string[],
+  opts: IngestOptions,
+): Promise<SemanticIngestReport> {
+  if (!opts.semantic?.enabled || !opts.semantic.client) return emptySemanticReport(false);
+  const corpus = await buildSemanticCorpus(opts.cwd, files);
+  if (!corpus.trim()) return emptySemanticReport(true);
+  const req = buildExtractionPrompt(corpus);
+  let raw: string;
+  try {
+    raw = await opts.semantic.client.complete(req);
+  } catch {
+    return {
+      ...emptySemanticReport(true),
+      token_cost: { input: countProviderRequestTokens(req), output: 0 },
+    };
+  }
+  const extraction = factsToGraph(parseExtraction(raw), opts.semantic.source ?? "corpus-ingest");
+  const report = await writeExtraction(store, {
+    nodes: extraction.nodes,
+    edges: extraction.edges,
+    elements: graphElements(opts.semantic.source ?? "corpus-ingest", extraction.nodes, false),
+  });
+  return {
+    enabled: true,
+    nodes: report.nodes,
+    edges: report.edges,
+    token_cost: {
+      input: countProviderRequestTokens(req),
+      output: countTokens(raw),
+    },
+  };
+}
+
+async function buildSemanticCorpus(cwd: string, files: string[]): Promise<string> {
+  const chunks: string[] = [];
+  for (const file of files) {
+    if (isAssetFile(file)) continue;
+    try {
+      const body = await readFile(file, "utf8");
+      chunks.push(`File: ${relative(cwd, file)}\n\n${body}`);
+    } catch {
+      /* Binary or unreadable text-like file: structural indexing already handled it. */
+    }
+  }
+  return chunks.join("\n\n---\n\n");
+}
+
+function emptySemanticReport(enabled: boolean): SemanticIngestReport {
+  return { enabled, nodes: 0, edges: 0, token_cost: { input: 0, output: 0 } };
+}
+
+let tokenizer: ReturnType<typeof getEncoding> | null = null;
+
+function countProviderRequestTokens(req: ProviderRequest): number {
+  return countTokens(`${req.system}\n\n${req.user}`);
+}
+
+function countTokens(text: string): number {
+  if (!text) return 0;
+  tokenizer ??= getEncoding("cl100k_base");
+  return tokenizer.encode(text).length;
+}
+
+export function renderIngestReportToon(
+  report: IngestReport,
+  opts: { includeSemanticCost: boolean },
+): string {
+  const semanticCostFields: readonly (keyof IngestToonRow & string)[] = opts.includeSemanticCost
+    ? ["semantic_token_input", "semantic_token_output"]
+    : [];
+  const fields: readonly (keyof IngestToonRow & string)[] = [
+    "files",
+    "nodes",
+    "edges",
+    "docs",
+    "semantic_nodes",
+    "semantic_edges",
+    ...semanticCostFields,
+    "duration_ms",
+  ];
+  const row: IngestToonRow = {
+    files: report.files,
+    nodes: report.nodes,
+    edges: report.edges,
+    docs: report.docs,
+    semantic_nodes: report.semantic.nodes,
+    semantic_edges: report.semantic.edges,
+    ...(opts.includeSemanticCost
+      ? {
+          semantic_token_input: report.semantic.token_cost.input,
+          semantic_token_output: report.semantic.token_cost.output,
+        }
+      : {}),
+    duration_ms: report.durationMs,
+  };
+  return renderToonOutput({
+    rowsKey: "ingest",
+    rows: [row],
+    fields,
+    summary: {
+      files: report.files,
+      semantic_enabled: report.semantic.enabled,
+      ...(opts.includeSemanticCost
+        ? {
+            semantic_token_input: report.semantic.token_cost.input,
+            semantic_token_output: report.semantic.token_cost.output,
+          }
+        : {}),
+    },
+  });
 }
 
 async function extractFile(path: string): Promise<FileExtraction> {
@@ -350,7 +507,7 @@ export async function refreshFiles(
     await writeFileManifestEntry(store, path, { hash, elements: report.elements });
   }
 
-  return { ...totals, durationMs: Date.now() - start };
+  return { ...totals, semantic: emptySemanticReport(false), durationMs: Date.now() - start };
 }
 
 /**
