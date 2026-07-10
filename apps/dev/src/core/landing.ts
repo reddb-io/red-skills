@@ -154,6 +154,14 @@ export interface LandingDeps {
    * behaviour, so callers that have not wired the dep are unchanged.
    */
   landLock?: LandLock;
+  /**
+   * Best-effort landing visibility sink (#1427). The caller wires this to the
+   * attempt's worker-shaped state (`current.phase` + `current.started_at`) so
+   * statusline/monitor readers see the post-agent landing lane after the inner
+   * agent has exited. Uses the normal WorkerVitals `phase` field, not a parallel
+   * state vocabulary.
+   */
+  landingPhase?(phase: "gate" | "push-pr" | "merge" | "cascade"): void | Promise<void>;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -499,6 +507,7 @@ export async function doLanding(
   // attempt produces a false "zero-diff" land-failed (the true cause is a push
   // failure, not a merge conflict). Fail early with the real reason so no work
   // is silently lost and the issue is not mis-labelled blocked:merge-conflict.
+  await deps.landingPhase?.("gate");
   const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
   if (!pushed.ok) {
     return { ok: false, reason: "land-failed", locked };
@@ -551,6 +560,7 @@ export async function doLanding(
 
   // post_merge hook (best-effort; an abort here does not unwind the landing,
   // matching the prior behaviour which never branched on its result).
+  await deps.landingPhase?.("cascade");
   await deps.fireHook("post_merge", hooks.postMerge(landed.mergeSha));
   return landed;
 }
@@ -585,6 +595,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   const rebaseFail = await preMergeRebaseInWorktree(deps, input);
   if (rebaseFail) return rebaseFail;
 
+  await deps.landingPhase?.("push-pr");
   const r = await landPr(deps.mergeExec, {
     repo: input.repo,
     gitRepo: input.repoDir,
@@ -673,6 +684,7 @@ async function preMergeRebaseInWorktree(
     // before the admin-merge. A failure aborts here so a stale-main-broken
     // result is never merged.
     if (deps.postMergeGate) {
+      await deps.landingPhase?.("gate");
       const gateResult = await deps.postMergeGate(dir);
       if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
     }
@@ -714,6 +726,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // origin/<base>) before pushing anything to the remote. A failure aborts
     // here so a stale-main-broken result is never merged.
     if (deps.postMergeGate) {
+      await deps.landingPhase?.("gate");
       const gateResult = await deps.postMergeGate(landDir);
       if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
     }
@@ -747,6 +760,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       "merge-base", "--is-ancestor", `origin/${input.base}`, branchTip,
     ]);
     if (fastForwardable.code === 0) {
+      await deps.landingPhase?.("merge");
       const ff = await deps.mergeExec(["git", "-C", landDir, "merge", "--ff-only", branchTip]);
       if (ff.code !== 0) return { ok: false, reason: "land-failed", locked: input.locked };
       const push = await deps.mergeExec([
@@ -770,6 +784,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
     }
 
+    await deps.landingPhase?.("merge");
     const merged = await landMerge(deps.mergeExec, {
       repo: landDir,
       remote: input.remote,
