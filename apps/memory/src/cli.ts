@@ -33,6 +33,7 @@ import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
 import type { CommunityDigestReport } from "./community-digest.js";
 import type { HubReport, HubRankBy, HubReportRow } from "./hub-report.js";
+import type { SuggestedQuestionsReport } from "./suggested-questions.js";
 import type { MemoryGlobalSearchReport } from "./global-search.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
@@ -476,6 +477,7 @@ Usage:
   memory communities                [--root <dir>] [--no-cache] [--json]
   memory communities-viewer         [--root <dir>] [--no-cache] [--out <file>]
   memory community-digest           [--root <dir>] [--no-cache] [--json]
+  memory suggested-questions        [--root <dir>] [--limit N] [--json]
   memory global-search <query...>   [--root <dir>] [--limit N] [--no-cache] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory structural-impact-viewer   [--root <dir>] [--file <path>] [--symbol <name>] [--out <file>]
@@ -7250,6 +7252,26 @@ async function runHubReport(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runSuggestedQuestions(args: ParsedArgs): Promise<void> {
+  const { store, config } = await openGraphStore(args);
+  try {
+    const report = (await executeReadOnlyMemoryOperation(
+      "memory.suggested-questions",
+      { store, providerConfig: config.provider },
+      {
+        limit: intFlag(args.flags, "limit"),
+      },
+    )) as SuggestedQuestionsReport;
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderSuggestedQuestionsToon(report));
+  } finally {
+    await store.close();
+  }
+}
+
 function parseHubRankBy(value: string | undefined): HubRankBy {
   if (value == null) return "total";
   if (value === "total" || value === "in" || value === "out") return value;
@@ -7298,6 +7320,48 @@ function renderHubReportToon(report: HubReport, opts: { wide: boolean }): string
       schema_version: report.schema_version,
       graph_hash: report.graph_hash,
     },
+  });
+}
+
+function renderSuggestedQuestionsToon(report: SuggestedQuestionsReport): string {
+  const rows: Array<Record<string, any>> = report.questions.map((question) => ({
+    id: question.id,
+    signal_type: question.signal_type,
+    question: question.question,
+    rationale: question.rationale,
+    references: question.references.map((ref) => ({ ...ref })),
+  }));
+  return renderToonOutput({
+    rowsKey: "questions",
+    rows,
+    fields: [
+      "id",
+      "signal_type",
+      "question",
+      "rationale",
+      "references",
+    ],
+    summary: {
+      status: report.summary.status,
+      nodes: report.summary.nodes,
+      edges: report.summary.edges,
+      signals: report.summary.signals,
+      questions: report.summary.questions,
+      provider_status: report.provider.status,
+      provider_error: report.provider.error ?? null,
+      next: report.summary.next,
+    },
+    extra: {
+      schema_version: report.schema_version,
+      graph_hash: report.graph_hash,
+      signals: report.signals.map((signal) => ({
+        signal_id: signal.signal_id,
+        signal_type: signal.signal_type,
+        title: signal.title,
+        score: signal.score,
+        references: signal.references.map((ref) => ({ ...ref })),
+      })),
+    } as Record<string, any>,
   });
 }
 
@@ -8563,6 +8627,8 @@ async function main(): Promise<void> {
       return runCommunityDigest(args);
     case "hub-report":
       return runHubReport(args);
+    case "suggested-questions":
+      return runSuggestedQuestions(args);
     case "global-search":
       return runGlobalSearch(args);
     case "structural-impact":
