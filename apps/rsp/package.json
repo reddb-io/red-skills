@@ -1,0 +1,38 @@
+{
+  "name": "@reddb-io/rsp",
+  "version": "2.23.1",
+  "private": true,
+  "description": "RedSkills neutral rsp binary: reversible elision store and retrieval over the repo RedDB store.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "rsp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json && pnpm bundle",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/rsp.bundle.min.mjs --asset rsp.bundle.min.mjs --minify --reddb-from-package",
+    "test": "vitest run",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/sdk": "1.7.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reddb-io/sdk"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
