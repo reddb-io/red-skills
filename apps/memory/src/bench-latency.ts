@@ -463,7 +463,7 @@ export function formatLatencyReport(report: LatencyReport): string {
   lines.push("## Reproducibility");
   lines.push("");
   lines.push(
-    "The workload (session/key access sequence) is byte-deterministic across runs (seeded mulberry32, fixed warmup + iteration counts). Measured wall-clock percentiles vary with host noise; the test suite asserts the architectural invariant (`p99(ams) >= p99(ours)`) rather than absolute numbers. Typical run-to-run drift on a quiet developer laptop is within ±20% at p50 and ±50% at p99.9 — re-run several times when comparing reports.",
+    "The workload (session/key access sequence) is byte-deterministic across runs (seeded mulberry32, fixed warmup + iteration counts). Measured wall-clock percentiles vary with host noise; the default test suite keeps a smoke assertion for the latency code path, while the opt-in bench-latency target asserts the architectural invariant (`p99(ams) >= p99(ours)`). Typical run-to-run drift on a quiet developer laptop is within ±20% at p50 and ±50% at p99.9 — re-run several times when comparing reports.",
   );
   lines.push("");
   return lines.join("\n");
