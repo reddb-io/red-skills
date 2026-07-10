@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json && pnpm bundle",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/rsp.bundle.min.mjs --asset rsp.bundle.min.mjs --minify --reddb-from-package",
+    "bench:two-axis": "node --import tsx src/two-axis-benchmark-cli.ts",
     "test": "vitest run",
     "dev": "node --import tsx src/cli.ts"
   },
