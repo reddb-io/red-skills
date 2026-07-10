@@ -201,7 +201,7 @@ The delivery of a command's output to the agent byte-for-byte, with its exit cod
 _Avoid_: raw mode, bypass, no-op filter
 
 **Normalization**:
-The silent removal of bytes that carry no information for an agent — ANSI colour codes, carriage-return progress bars, trailing whitespace, repeated blank lines. Normalization is a closed allowlist and mints no **Elision handle**, because nothing is lost. Anything outside the allowlist is an **Elision**.
+The silent removal or re-encoding of bytes that carry no information for an agent — ANSI colour codes, carriage-return progress bars, trailing whitespace, repeated blank lines, and the lossless transcode of valid JSON to TOON guarded by an on-the-spot round-trip check (`decode(encode(x)) === x`; any failure → **Passthrough**). Normalization is a closed allowlist and mints no **Elision handle**, because nothing is lost. Anything outside the allowlist is an **Elision**.
 _Avoid_: cleanup, sanitizing, light filtering
 
 **Fidelity assertion**:
