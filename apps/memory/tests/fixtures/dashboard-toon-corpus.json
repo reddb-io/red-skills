@@ -1,0 +1,44 @@
+{
+  "sections": [
+    {
+      "area": "stats",
+      "status": "ready",
+      "metric": "docs",
+      "value": 4,
+      "detail": "4 documents indexed"
+    },
+    {
+      "area": "hooks",
+      "status": "ready",
+      "metric": "wired_events",
+      "value": 7,
+      "detail": "7 hook events wired"
+    },
+    {
+      "area": "decay",
+      "status": "attention",
+      "metric": "review",
+      "value": 2,
+      "detail": "2 nodes need review"
+    }
+  ],
+  "warnings": [
+    {
+      "message": "decay: 2 review, 0 deprecate, 0 expire"
+    }
+  ],
+  "next": [
+    {
+      "action": "review stale Memory nodes with `memory doctor`"
+    }
+  ],
+  "summary": {
+    "state": "attention",
+    "nodes": 12,
+    "edges": 8,
+    "docs": 4,
+    "warnings": 1,
+    "actions": 1,
+    "schema": "memory.operational_dashboard.v1"
+  }
+}
