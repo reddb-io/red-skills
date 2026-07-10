@@ -287,6 +287,31 @@ importers:
         specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
+  apps/rsp:
+    dependencies:
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
+      '@reddb-io/sdk':
+        specifier: 1.7.0
+        version: 1.7.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.24.2
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.19.19)
+
   packages/browser-bridge:
     devDependencies:
       '@types/node':
