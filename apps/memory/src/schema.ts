@@ -88,6 +88,7 @@ export const NODE_TYPES = [
   "session",
   "task",
   "goal",
+  "answer",
   // Engineering semantic graph (PRD #95): AFK execution history.
   "attempt",
   "issue",

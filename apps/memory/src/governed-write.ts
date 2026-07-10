@@ -1,5 +1,5 @@
 import type { MemoryStore } from "./graph-store.js";
-import type { Confidence, MemoryProvenance } from "./schema.js";
+import type { Confidence, MemoryNode, MemoryProvenance } from "./schema.js";
 import { slugify } from "./store.js";
 import { createEvidenceCard, writeEvidenceCard } from "./evidence-card.js";
 
@@ -20,6 +20,24 @@ export interface MemoryStoreEvidenceInput {
   proposalPath?: string;
 }
 
+export interface AnsweredQuerySourceElement {
+  kind: "node" | "edge" | "community";
+  rid?: number;
+  label?: string;
+  title?: string;
+  from_rid?: number;
+  to_rid?: number;
+  community_id?: string;
+}
+
+export interface MemoryStoreAnsweredQueryInput {
+  question?: string;
+  answer?: string;
+  sourceElements?: AnsweredQuerySourceElement[];
+  observer?: string;
+  confidence?: Confidence;
+}
+
 export interface MemoryStoreEvidenceOptions {
   rootDir?: string;
   now?: Date;
@@ -27,7 +45,7 @@ export interface MemoryStoreEvidenceOptions {
 
 export interface GovernedWriteResult {
   schema_version: "memory.governed_write.v1";
-  operation: "memory_store_evidence";
+  operation: "memory_store_evidence" | "memory_store_answered_query";
   outcome: GovernedWriteOutcome;
   reason: string;
   policy: {
@@ -175,12 +193,101 @@ export async function memoryStoreEvidence(
   );
 }
 
+export async function memoryStoreAnsweredQuery(
+  store: MemoryStore,
+  input: MemoryStoreAnsweredQueryInput,
+): Promise<GovernedWriteResult> {
+  const normalized = normalizeAnsweredQueryInput(input);
+  const missing = [
+    ...(!normalized.question ? ["question"] : []),
+    ...(!normalized.answer ? ["answer"] : []),
+    ...(normalized.sourceElements.length === 0 ? ["sourceElements"] : []),
+    ...(!normalized.observer ? ["observer"] : []),
+  ];
+  const resultInput = answeredQueryResultInput(normalized);
+  if (missing.length > 0) {
+    return governedWriteResult(
+      "rejected",
+      `missing_required_fields:${missing.join(",")}`,
+      resultInput,
+      null,
+      { operation: "memory_store_answered_query", sourceKind: "derived" },
+    );
+  }
+
+  const existingRid = await store.findNodeByLabel(normalized.label, "answer");
+  if (existingRid != null) {
+    const existing = await store.getNode(existingRid);
+    if (existing) {
+      await removeOutgoingReferences(store, existingRid);
+      await store.deleteNode(existing);
+    }
+  }
+
+  const node: MemoryNode = {
+    label: normalized.label,
+    node_type: "answer",
+    properties: {
+      title: normalized.question,
+      summary: normalized.answer,
+      content: normalized.answer,
+      question: normalized.question,
+      answer: normalized.answer,
+      confidence: normalized.confidence,
+      seal: normalized.confidence,
+      source: normalized.sourceRef,
+      source_elements: normalized.sourceElements,
+      tags: ["answered-query", "graph-feedback"],
+      tier: "durable",
+      layer: "L3",
+      provenance_tier: "proxy",
+      provenance: {
+        source_kind: "derived",
+        writer: normalized.observer,
+        command: "memory store-answered-query",
+        confidence: normalized.confidence,
+        evidence: normalized.evidence,
+      },
+    },
+  };
+  const rid = await store.upsertNode(node);
+  for (const sourceRid of sourceNodeRids(normalized.sourceElements)) {
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: rid,
+      to_rid: sourceRid,
+      properties: {
+        confidence: normalized.confidence,
+        source: normalized.sourceRef,
+        provenance_tier: "proxy",
+        provenance: {
+          source_kind: "derived",
+          writer: normalized.observer,
+          command: "memory store-answered-query",
+          confidence: normalized.confidence,
+          evidence: normalized.evidence,
+        },
+      },
+    });
+  }
+
+  return governedWriteResult(
+    "stored",
+    existingRid == null ? "answered_query_stored" : "answered_query_updated",
+    resultInput,
+    rid,
+    { operation: "memory_store_answered_query", sourceKind: "derived" },
+  );
+}
+
 function governedWriteResult(
   outcome: GovernedWriteOutcome,
   reason: string,
   input: MemoryStoreEvidenceInput,
   rid: number | null,
   extra: {
+    operation?: GovernedWriteResult["operation"];
+    sourceKind?: MemoryProvenance["source_kind"];
     risk?: GovernedWriteRisk;
     reviewArtifact?: GovernedWriteResult["review_artifact"];
   } = {},
@@ -189,7 +296,7 @@ function governedWriteResult(
   const risk = extra.risk ?? (outcome === "stored" ? "low" : "unknown");
   return {
     schema_version: "memory.governed_write.v1",
-    operation: "memory_store_evidence",
+    operation: extra.operation ?? "memory_store_evidence",
     outcome,
     reason,
     policy: {
@@ -198,7 +305,7 @@ function governedWriteResult(
       mode_required: outcome === "proposed" ? "evidence_review" : "graph",
     },
     provenance: {
-      source_kind: "manual",
+      source_kind: extra.sourceKind ?? "manual",
       writer: normalized.observer || null,
       evidence:
         normalized.sourceRef && normalized.citationExcerpt
@@ -213,6 +320,121 @@ function governedWriteResult(
     },
     review_artifact: extra.reviewArtifact ?? null,
   };
+}
+
+function normalizeAnsweredQueryInput(input: MemoryStoreAnsweredQueryInput): {
+  question: string;
+  answer: string;
+  sourceElements: AnsweredQuerySourceElement[];
+  observer: string;
+  confidence: Exclude<Confidence, "EXTRACTED">;
+  label: string;
+  sourceRef: string;
+  evidence: string[];
+} {
+  const question = input.question?.replace(/\s+/g, " ").trim() ?? "";
+  const answer = input.answer?.replace(/\s+/g, " ").trim() ?? "";
+  const observer = input.observer?.trim() ?? "";
+  const confidence = input.confidence === "AMBIGUOUS" ? "AMBIGUOUS" : "INFERRED";
+  const label = `answered-query:${slugify(question, 80)}`;
+  const sourceRef = label;
+  const sourceElements = (input.sourceElements ?? []).map(normalizeSourceElement).filter((item) => item != null);
+  return {
+    question,
+    answer,
+    sourceElements,
+    observer,
+    confidence,
+    label,
+    sourceRef,
+    evidence: [`question: ${question}`, ...sourceElements.map(sourceElementEvidence)],
+  };
+}
+
+function normalizeSourceElement(
+  element: AnsweredQuerySourceElement,
+): AnsweredQuerySourceElement | null {
+  if (element.kind === "node") {
+    const rid = finitePositive(element.rid);
+    if (rid == null && !element.label) return null;
+    return {
+      kind: "node",
+      ...(rid == null ? {} : { rid }),
+      ...(element.label ? { label: element.label.trim() } : {}),
+      ...(element.title ? { title: element.title.trim() } : {}),
+    };
+  }
+  if (element.kind === "edge") {
+    const from = finitePositive(element.from_rid);
+    const to = finitePositive(element.to_rid);
+    if (from == null && to == null && !element.label) return null;
+    return {
+      kind: "edge",
+      ...(element.label ? { label: element.label.trim() } : {}),
+      ...(from == null ? {} : { from_rid: from }),
+      ...(to == null ? {} : { to_rid: to }),
+    };
+  }
+  if (element.kind === "community") {
+    const communityId = element.community_id?.trim();
+    return communityId ? { kind: "community", community_id: communityId } : null;
+  }
+  return null;
+}
+
+function sourceElementEvidence(element: AnsweredQuerySourceElement): string {
+  if (element.kind === "node") {
+    return `node:${element.rid ?? "unknown"}:${element.label ?? element.title ?? "unknown"}`;
+  }
+  if (element.kind === "edge") {
+    return `edge:${element.from_rid ?? "unknown"}->${element.to_rid ?? "unknown"}:${element.label ?? "unknown"}`;
+  }
+  return `community:${element.community_id ?? "unknown"}`;
+}
+
+function sourceNodeRids(elements: AnsweredQuerySourceElement[]): number[] {
+  const rids = new Set<number>();
+  for (const element of elements) {
+    if (element.kind === "node" && element.rid != null) rids.add(element.rid);
+    if (element.kind === "edge") {
+      if (element.from_rid != null) rids.add(element.from_rid);
+      if (element.to_rid != null) rids.add(element.to_rid);
+    }
+  }
+  return [...rids];
+}
+
+async function removeOutgoingReferences(store: MemoryStore, fromRid: number): Promise<void> {
+  for (const edge of await store.listEdges()) {
+    if (String(edge.label ?? edge.LABEL ?? "") !== "REFERENCES") continue;
+    const from = Number(edge.from ?? edge.from_id ?? edge.from_rid ?? edge.FROM);
+    const to = Number(edge.to ?? edge.to_id ?? edge.to_rid ?? edge.TO);
+    if (from === fromRid && Number.isFinite(to)) {
+      await store.removeEdge(fromRid, to, "REFERENCES");
+    }
+  }
+}
+
+function answeredQueryResultInput(input: {
+  question: string;
+  sourceRef: string;
+  observer: string;
+  evidence: string[];
+  confidence: Confidence;
+}): MemoryStoreEvidenceInput {
+  return {
+    claim: input.question,
+    sourceRef: input.sourceRef,
+    citationExcerpt: input.question,
+    intent: "answered-query-feedback",
+    observer: input.observer,
+    confidence: input.confidence,
+  };
+}
+
+function finitePositive(value: unknown): number | undefined {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
 }
 
 function normalizeInput(input: MemoryStoreEvidenceInput): Required<MemoryStoreEvidenceInput> {

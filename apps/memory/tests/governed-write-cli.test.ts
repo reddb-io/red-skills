@@ -7,7 +7,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { graphRecall } from "../src/graph-recall.js";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
-import { memoryStoreEvidence } from "../src/governed-write.js";
+import { memoryStoreAnsweredQuery, memoryStoreEvidence } from "../src/governed-write.js";
+import { buildSuggestedQuestions } from "../src/suggested-questions.js";
 import { evidenceInboxRoot, parseEvidenceCardYaml } from "../src/evidence-card.js";
 
 const TIMEOUT = 40_000;
@@ -362,6 +363,155 @@ describe("memory_store_evidence governed write", () => {
         reason: "graph_mode_required",
         memory: { id: null },
       });
+    },
+    TIMEOUT,
+  );
+});
+
+describe("memory_store_answered_query governed write", () => {
+  test(
+    "persists an explicitly confirmed graph answer as a sealed node with provenance and source links",
+    async () => {
+      const root = await tempRoot();
+      const { storeUri } = await initGraph(root);
+      const store = await MemoryStore.open({ uri: storeUri, project: "test" });
+      stores.push(store);
+      const authRid = await store.upsertNode({
+        label: "auth-hub",
+        node_type: "concept",
+        properties: { title: "Auth hub", content: "Auth hub" },
+      });
+      const tokenRid = await store.upsertNode({
+        label: "token-rotation",
+        node_type: "concept",
+        properties: { title: "Token rotation", content: "Token rotation" },
+      });
+
+      const result = await memoryStoreAnsweredQuery(store, {
+        question: "How does token rotation connect to auth?",
+        answer: "Token rotation is governed by the auth hub.",
+        sourceElements: [
+          { kind: "node", rid: authRid, label: "auth-hub" },
+          { kind: "node", rid: tokenRid, label: "token-rotation" },
+        ],
+        observer: "unit-test",
+        confidence: "INFERRED",
+      });
+
+      expect(result).toMatchObject({
+        operation: "memory_store_answered_query",
+        outcome: "stored",
+        reason: "answered_query_stored",
+        provenance: {
+          writer: "unit-test",
+          source_ref: "answered-query:how-does-token-rotation-connect-to-auth",
+          citation_excerpt: "How does token rotation connect to auth?",
+        },
+      });
+      expect(result.memory.id).toEqual(expect.any(Number));
+      const node = await store.getNode(result.memory.id!);
+      expect(node).toMatchObject({
+        label: "answered-query:how-does-token-rotation-connect-to-auth",
+        node_type: "answer",
+        properties: {
+          title: "How does token rotation connect to auth?",
+          content: "Token rotation is governed by the auth hub.",
+          confidence: "INFERRED",
+          seal: "INFERRED",
+          question: "How does token rotation connect to auth?",
+          answer: "Token rotation is governed by the auth hub.",
+          source_elements: [
+            { kind: "node", rid: authRid, label: "auth-hub" },
+            { kind: "node", rid: tokenRid, label: "token-rotation" },
+          ],
+          provenance: {
+            source_kind: "derived",
+            writer: "unit-test",
+            command: "memory store-answered-query",
+            confidence: "INFERRED",
+            evidence: [
+              "question: How does token rotation connect to auth?",
+              `node:${authRid}:auth-hub`,
+              `node:${tokenRid}:token-rotation`,
+            ],
+          },
+        },
+      });
+      const edges = await store.listEdges();
+      expect(edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: "REFERENCES", from_rid: result.memory.id, to_rid: authRid }),
+          expect.objectContaining({ label: "REFERENCES", from_rid: result.memory.id, to_rid: tokenRid }),
+        ]),
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "re-answering the same question replaces the answer node instead of duplicating it",
+    async () => {
+      const root = await tempRoot();
+      const { storeUri } = await initGraph(root);
+      const store = await MemoryStore.open({ uri: storeUri, project: "test" });
+      stores.push(store);
+
+      await memoryStoreAnsweredQuery(store, {
+        question: "Which store path writes answered graph queries?",
+        answer: "The first answer is incomplete.",
+        sourceElements: [{ kind: "community", community_id: "community-1" }],
+        observer: "unit-test",
+        confidence: "INFERRED",
+      });
+      const second = await memoryStoreAnsweredQuery(store, {
+        question: "Which store path writes answered graph queries?",
+        answer: "Answered graph queries write through the governed store path.",
+        sourceElements: [{ kind: "community", community_id: "community-1" }],
+        observer: "unit-test",
+        confidence: "AMBIGUOUS",
+      });
+
+      const answers = (await store.listNodes()).filter(
+        (node) => node.label === "answered-query:which-store-path-writes-answered-graph-queries",
+      );
+      expect(answers).toHaveLength(1);
+      expect(answers[0]).toMatchObject({
+        rid: second.memory.id,
+        node_type: "answer",
+        properties: {
+          answer: "Answered graph queries write through the governed store path.",
+          confidence: "AMBIGUOUS",
+          seal: "AMBIGUOUS",
+          provenance: {
+            confidence: "AMBIGUOUS",
+            evidence: [
+              "question: Which store path writes answered graph queries?",
+              "community:community-1",
+            ],
+          },
+        },
+      });
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "plain suggested-question queries leave the temp store untouched",
+    async () => {
+      const root = await tempRoot();
+      const { storeUri } = await initGraph(root);
+      const store = await MemoryStore.open({ uri: storeUri, project: "test" });
+      stores.push(store);
+      await store.upsertNode({
+        label: "auth-hub",
+        node_type: "concept",
+        properties: { title: "Auth hub", content: "Auth hub" },
+      });
+      const before = await store.listNodes();
+
+      await buildSuggestedQuestions(store, { now: new Date("2026-07-10T00:00:00.000Z") });
+
+      expect(await store.listNodes()).toEqual(before);
     },
     TIMEOUT,
   );
