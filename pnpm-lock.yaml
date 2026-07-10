@@ -214,6 +214,9 @@ importers:
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@reddb-io/toon':
+        specifier: workspace:*
+        version: link:../../packages/toon
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
