@@ -140,7 +140,12 @@ import {
   recallObservationFromContextPack,
   renderRecallTelemetryReport,
 } from "./recall-telemetry.js";
-import { collectCandidates, ingestProject, refreshFiles } from "./ingest.js";
+import {
+  collectCandidates,
+  ingestProject,
+  refreshFiles,
+  renderIngestReportToon,
+} from "./ingest.js";
 import {
   defaultIgnorePatterns,
   formatScopeReport,
@@ -425,7 +430,7 @@ Usage:
   memory provenance <rid|label>     [--root <dir>] [--json]
   memory governance                 [--root <dir>] [--stale-progress-days N] [--json]
   memory governance-viewer          [--root <dir>] [--stale-progress-days N] [--out <file>]
-  memory ingest <path>              [--root <dir>] [--max-files N]
+  memory ingest <path>              [--root <dir>] [--max-files N] [--structural-only]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
   memory extract [<transcript-file>] [--root <dir>] [--local]   (reads stdin if no file)
   memory extraction status           [--root <dir>] [--json]
@@ -4068,6 +4073,7 @@ async function runIngest(args: ParsedArgs): Promise<void> {
     typeof args.flags["max-files"] === "string"
       ? Number(args.flags["max-files"])
       : undefined;
+  const structuralOnly = args.flags["structural-only"] === true;
 
   // Pre-ingest scope wizard (#235): pick a preset, report the candidate count
   // before processing, and optionally generate the committed `.memoryignore`.
@@ -4084,12 +4090,24 @@ async function runIngest(args: ParsedArgs): Promise<void> {
   const memoryIgnore = await readMemoryIgnore(cwd);
   console.log(formatScopeReport(planScope(candidateFiles, preset.name, memoryIgnore)));
 
+  const semanticProvider = !structuralOnly && config.provider ? resolveProvider(config.provider) : null;
+  if (semanticProvider && config.provider) applyProviderEnv(semanticProvider, config.provider.apiKeyEnv);
+
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
-    const report = await ingestProject(store, { cwd, maxFiles, ignore: preset.ignore });
-    console.log(`memory: ingested ${cwd}`);
+    const report = await ingestProject(store, {
+      cwd,
+      maxFiles,
+      ignore: preset.ignore,
+      semantic: {
+        enabled: Boolean(semanticProvider),
+        client: semanticProvider && config.provider ? redDbProviderClient(store, config.provider) : undefined,
+      },
+    });
     console.log(
-      `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
+      renderIngestReportToon(report, {
+        includeSemanticCost: Boolean(semanticProvider),
+      }),
     );
     // Audit-marker contract (.red/agents/memory.md): commit-trailer surface.
     // Emit guidance for the commit that lands this ingest rather than writing
