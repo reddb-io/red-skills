@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 import { getReadOnlyMemoryOperation } from "../src/operations.js";
+import { buildCommunityDigest } from "../src/community-digest.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -128,6 +129,36 @@ describe("memory communities CLI", () => {
 
       const before = await openStore(root);
       const beforeStats = await before.stats();
+      await buildCommunityDigest(before, {
+        cache: "off",
+        providerConfig: {
+          mode: "openai-compat",
+          model: "llama3.1",
+          baseUrl: "http://localhost:11434/v1",
+        },
+        providerClient: {
+          async complete(req) {
+            const body = JSON.parse(req.user) as {
+              task?: string;
+              communities: Array<{ community_id: string; top_label: string }>;
+            };
+            if (body.task === "community-labels") {
+              return JSON.stringify({
+                labels: body.communities.map((community) => ({
+                  community_id: community.community_id,
+                  label: community.top_label.startsWith("auth") ? "Auth Flow" : "Cache Ops",
+                })),
+              });
+            }
+            return JSON.stringify({
+              summaries: body.communities.map((community) => ({
+                community_id: community.community_id,
+                summary: `Narrative for ${community.top_label}`,
+              })),
+            });
+          },
+        },
+      });
       await before.close();
 
       const first = runMemory(["communities", "--root", root, "--json"]);
@@ -140,6 +171,7 @@ describe("memory communities CLI", () => {
         cache_key: string;
         communities: Array<{
           id: string;
+          short_label: string | null;
           count: number;
           total_degree: number;
           avg_centrality: number;
@@ -191,6 +223,10 @@ describe("memory communities CLI", () => {
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
       expect(firstBody.cache_key).toContain("cache:communities:v3:");
       expect(firstBody.communities).toHaveLength(2);
+      expect(firstBody.communities.map((c) => c.short_label).sort()).toEqual([
+        "Auth Flow",
+        "Cache Ops",
+      ]);
       expect(firstBody.assignments).toHaveLength(6);
       expect(firstBody.node_analytics).toHaveLength(6);
       expect(firstBody.inter_community_edges).toHaveLength(1);
@@ -229,7 +265,8 @@ describe("memory communities CLI", () => {
 
       const toon = runMemory(["communities", "--root", root, "--no-cache"]);
       expect(toon.status).toBe(0);
-      expect(toon.stdout).toContain("communities[2]{id,count,cohesion_score");
+      expect(toon.stdout).toContain("communities[2]{id,label,count,cohesion_score");
+      expect(toon.stdout).toContain("Auth Flow");
       expect(toon.stdout).toContain("bridge_nodes[5]{rid,label");
       expect(toon.stdout).toContain("summary:");
 
@@ -240,6 +277,7 @@ describe("memory communities CLI", () => {
       expect(viewer.stdout).toContain("contract: memory.communities.v1");
       const html = await readFile(out, "utf8");
       expect(html).toContain("Graph Communities");
+      expect(html).toContain("Auth Flow");
       expect(html).toContain("auth login flow");
       expect(html).toContain("cohesion 0.375");
       expect(html).toContain("Bridge Nodes");

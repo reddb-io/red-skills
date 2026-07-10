@@ -765,6 +765,18 @@ type FederationInput = z.infer<typeof FederationInputSchema>;
 
 const CommunitySummarySchema = z.object({
   id: z.string(),
+  short_label: z.string().nullable(),
+  label_provenance: z
+    .object({
+      source: z.enum(["provider", "deterministic", "cached"]),
+      provider: z.object({
+        mode: z.string().nullable(),
+        model: z.string().nullable(),
+      }),
+      membership_hash: z.string(),
+      generated_at: z.string(),
+    })
+    .nullable(),
   count: z.number(),
   total_degree: z.number(),
   avg_centrality: z.number(),
@@ -884,6 +896,24 @@ const CommunityDigestCountSchema = z.object({
 const CommunityDigestEntrySchema = z.object({
   community_id: z.string(),
   size: z.number(),
+  short_label: z.string().nullable(),
+  label_provenance: z
+    .object({
+      source: z.enum(["provider", "deterministic", "cached"]),
+      provider: z.object({
+        mode: z.union([
+          z.literal("openai-compat"),
+          z.literal("openai-native"),
+          z.literal("anthropic-native"),
+          z.literal("bedrock"),
+          z.null(),
+        ]),
+        model: z.string().nullable(),
+      }),
+      membership_hash: z.string(),
+      generated_at: z.string(),
+    })
+    .nullable(),
   top_label: z.string(),
   top_node_type: z.string(),
   top_engineering_code: z.string().nullable(),
@@ -915,6 +945,18 @@ const CommunityDigestOutputSchema = z.object({
   provider: CommunityDigestProviderSchema,
   community_count: z.number(),
   digests: z.array(CommunityDigestEntrySchema),
+  summary: z.object({
+    labeling: z.object({
+      generated: z.number(),
+      reused: z.number(),
+      token_cost: z.object({
+        prompt_tokens: z.number(),
+        completion_tokens: z.number(),
+        total_tokens: z.number(),
+        estimated: z.literal(true),
+      }),
+    }),
+  }),
 }) satisfies z.ZodType<CommunityDigestReport>;
 const GlobalSearchEvidenceSchema = z.object({
   source: z.literal("community-digest"),
@@ -922,6 +964,7 @@ const GlobalSearchEvidenceSchema = z.object({
   score: z.number(),
   matched_terms: z.array(z.string()),
   size: z.number(),
+  short_label: z.string().nullable(),
   top_label: z.string(),
   top_node_type: z.string(),
   top_engineering_code: z.string().nullable(),

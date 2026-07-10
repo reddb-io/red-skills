@@ -15,6 +15,7 @@ export interface GlobalSearchDigestEvidence {
   score: number;
   matched_terms: string[];
   size: number;
+  short_label: string | null;
   top_label: string;
   top_node_type: string;
   top_engineering_code: string | null;
@@ -147,6 +148,7 @@ function scoreDigest(
     score,
     matched_terms: [...matched].sort(),
     size: digest.size,
+    short_label: digest.short_label,
     top_label: digest.top_label,
     top_node_type: digest.top_node_type,
     top_engineering_code: digest.top_engineering_code,

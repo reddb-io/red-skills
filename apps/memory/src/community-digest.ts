@@ -35,6 +35,27 @@ export interface CommunityDigestProviderStatus {
   error?: string;
 }
 
+export interface CommunityLabelProvenance {
+  source: "provider" | "deterministic" | "cached";
+  provider: {
+    mode: ProviderMode | null;
+    model: string | null;
+  };
+  membership_hash: string;
+  generated_at: string;
+}
+
+export interface CommunityLabelingSummary {
+  generated: number;
+  reused: number;
+  token_cost: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    estimated: true;
+  };
+}
+
 /**
  * The per-community digest entry: a deterministic top-label baseline summary
  * over the RedDB-native community assignment, optionally enriched by a provider
@@ -45,6 +66,10 @@ export interface CommunityDigestProviderStatus {
 export interface CommunityDigest {
   community_id: string;
   size: number;
+  /** Short provider-readable theme label for listings and downstream reports. */
+  short_label: string | null;
+  /** Provenance for the persisted short label, including the membership hash. */
+  label_provenance: CommunityLabelProvenance | null;
   /** Representative label: most frequent node label, ties broken alphabetically. */
   top_label: string;
   /** Dominant node_type: most frequent node_type, ties broken alphabetically. */
@@ -71,6 +96,9 @@ export interface CommunityDigestReport {
   provider: CommunityDigestProviderStatus;
   community_count: number;
   digests: CommunityDigest[];
+  summary: {
+    labeling: CommunityLabelingSummary;
+  };
 }
 
 interface CachedDigest {
@@ -79,6 +107,9 @@ interface CachedDigest {
   generated_at: string;
   community_count: number;
   digests: CommunityDigest[];
+  summary?: {
+    labeling?: CommunityLabelingSummary;
+  };
 }
 
 interface BuildCommunityDigestOptions {
@@ -130,11 +161,28 @@ export async function buildCommunityDigest(
       provider: cached.provider,
       community_count: cached.community_count,
       digests: cached.digests,
+      summary: {
+        labeling: cached.summary?.labeling ?? emptyLabelingSummary(),
+      },
     };
   }
 
   const assignments = await store.communities();
   let digests = computeDigests(nodes, assignments, curation);
+  const labelRun = await labelCommunities({
+    store,
+    digests,
+    nodes,
+    assignments,
+    provider,
+    providerConfig,
+    client:
+      provider.status === "available" && providerConfig
+        ? opts.providerClient ?? redDbProviderClient(store, providerConfig)
+        : undefined,
+    now: opts.now ?? new Date(),
+  });
+  digests = labelRun.digests;
   let finalProvider = provider;
   if (provider.status === "available" && providerConfig) {
     const enriched = await enrichDigestsWithNarratives({
@@ -157,6 +205,9 @@ export async function buildCommunityDigest(
       generated_at: generatedAt,
       community_count: digests.length,
       digests,
+      summary: {
+        labeling: labelRun.summary,
+      },
     } satisfies CachedDigest);
   }
 
@@ -170,6 +221,9 @@ export async function buildCommunityDigest(
     provider: finalProvider,
     community_count: digests.length,
     digests,
+    summary: {
+      labeling: labelRun.summary,
+    },
   };
 }
 
@@ -210,6 +264,8 @@ function computeDigests(
       return {
         community_id: communityId,
         size: members.length,
+        short_label: null,
+        label_provenance: null,
         top_label: labels[0]?.value ?? "",
         top_node_type: nodeTypes[0]?.value ?? "",
         top_engineering_code: engineeringCodes[0]?.value ?? null,
@@ -220,6 +276,269 @@ function computeDigests(
       };
     })
     .sort((a, b) => b.size - a.size || a.community_id.localeCompare(b.community_id));
+}
+
+interface CommunityMembersForPrompt {
+  community_id: string;
+  digest: CommunityDigest;
+  members: StoredNode[];
+  membership_hash: string;
+}
+
+interface StoredCommunityLabel {
+  schema_version: "memory.community-label.v1";
+  community_id: string;
+  short_label: string;
+  provenance: CommunityLabelProvenance;
+}
+
+async function labelCommunities(opts: {
+  store: MemoryStore;
+  digests: CommunityDigest[];
+  nodes: StoredNode[];
+  assignments: Map<number, string>;
+  provider: CommunityDigestProviderStatus;
+  providerConfig?: AiProviderConfig;
+  client?: ProviderClient;
+  now: Date;
+}): Promise<{ digests: CommunityDigest[]; summary: CommunityLabelingSummary }> {
+  if (opts.digests.length === 0) {
+    return { digests: opts.digests, summary: emptyLabelingSummary() };
+  }
+  const contexts = communityMemberContexts(opts.digests, opts.nodes, opts.assignments);
+  const labelByCommunity = new Map<string, StoredCommunityLabel>();
+  const needsProvider: CommunityMembersForPrompt[] = [];
+  let reused = 0;
+  for (const context of contexts) {
+    const cached = parseStoredCommunityLabel(
+      await opts.store.kvGet<StoredCommunityLabel | string>(
+        communityLabelKey(context.membership_hash),
+      ),
+    );
+    if (cached?.provenance.membership_hash === context.membership_hash && cached.short_label) {
+      reused += 1;
+      labelByCommunity.set(context.community_id, cached);
+    } else {
+      needsProvider.push(context);
+    }
+  }
+
+  let generated = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  if (needsProvider.length > 0) {
+    let generatedLabels = new Map<string, string>();
+    if (opts.provider.status === "available" && opts.providerConfig && opts.client) {
+      const request = buildLabelPrompt(needsProvider);
+      promptTokens += estimateTokens(request.system) + estimateTokens(request.user);
+      try {
+        const raw = await opts.client.complete(request);
+        completionTokens += estimateTokens(raw);
+        generatedLabels = parseCommunityLabels(raw);
+      } catch {
+        generatedLabels = new Map();
+      }
+    }
+    const generatedAt = opts.now.toISOString();
+    for (const context of needsProvider) {
+      const shortLabel =
+        sanitizeShortLabel(generatedLabels.get(context.community_id)) ??
+        deterministicShortLabel(context.digest);
+      const source = generatedLabels.has(context.community_id) ? "provider" : "deterministic";
+      const record: StoredCommunityLabel = {
+        schema_version: "memory.community-label.v1",
+        community_id: context.community_id,
+        short_label: shortLabel,
+        provenance: {
+          source,
+          provider: {
+            mode: opts.provider.mode,
+            model: opts.provider.model,
+          },
+          membership_hash: context.membership_hash,
+          generated_at: generatedAt,
+        },
+      };
+      await opts.store.kvPut(communityLabelKey(context.membership_hash), record);
+      labelByCommunity.set(context.community_id, record);
+      generated += 1;
+    }
+  }
+
+  return {
+    digests: opts.digests.map((digest) => {
+      const record = labelByCommunity.get(digest.community_id);
+      return {
+        ...digest,
+        short_label: record?.short_label ?? null,
+        label_provenance: record?.provenance ?? null,
+      };
+    }),
+    summary: {
+      generated,
+      reused,
+      token_cost: {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
+        estimated: true,
+      },
+    },
+  };
+}
+
+function communityMemberContexts(
+  digests: CommunityDigest[],
+  nodes: StoredNode[],
+  assignments: Map<number, string>,
+): CommunityMembersForPrompt[] {
+  const byRid = new Map(nodes.map((node) => [node.rid, node]));
+  const byCommunity = new Map<string, StoredNode[]>();
+  for (const [rid, communityId] of assignments) {
+    const node = byRid.get(rid);
+    if (!node) continue;
+    const group = byCommunity.get(communityId) ?? [];
+    group.push(node);
+    byCommunity.set(communityId, group);
+  }
+  return digests.map((digest) => {
+    const members = (byCommunity.get(digest.community_id) ?? [])
+      .slice()
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return {
+      community_id: digest.community_id,
+      digest,
+      members,
+      membership_hash: membershipHash(members),
+    };
+  });
+}
+
+function buildLabelPrompt(contexts: CommunityMembersForPrompt[]) {
+  return {
+    system: [
+      "You label Memory graph communities for an engineering agent.",
+      "Return ONLY JSON of the form:",
+      '{ "labels": [ { "community_id": string, "label": string } ] }',
+      "Write a short human-readable theme name, two to four words.",
+      "Use the member hubs, labels, titles, content snippets, and cohesion context. Do not invent facts.",
+    ].join("\n"),
+    user: JSON.stringify({
+      task: "community-labels",
+      communities: contexts.map((context) => ({
+        community_id: context.community_id,
+        size: context.digest.size,
+        top_label: context.digest.top_label,
+        top_node_type: context.digest.top_node_type,
+        top_engineering_code: context.digest.top_engineering_code,
+        cohesion: {
+          labels: context.digest.labels.slice(0, 10),
+          node_types: context.digest.node_types,
+          engineering_codes: context.digest.engineering_codes,
+        },
+        members: context.members.slice(0, 12).map((node) => ({
+          label: node.label,
+          node_type: String(node.node_type),
+          title: typeof node.properties.title === "string" ? node.properties.title : undefined,
+          content:
+            typeof node.properties.content === "string"
+              ? node.properties.content.slice(0, 240)
+              : undefined,
+        })),
+      })),
+    }),
+  };
+}
+
+function parseStoredCommunityLabel(raw: StoredCommunityLabel | string | null): StoredCommunityLabel | null {
+  if (raw == null) return null;
+  const parsed = typeof raw === "string" ? parseJson(raw) : raw;
+  if (!parsed || typeof parsed !== "object") return null;
+  const item = parsed as Partial<StoredCommunityLabel>;
+  if (
+    item.schema_version !== "memory.community-label.v1" ||
+    typeof item.community_id !== "string" ||
+    typeof item.short_label !== "string" ||
+    !item.provenance ||
+    typeof item.provenance.membership_hash !== "string"
+  ) {
+    return null;
+  }
+  return item as StoredCommunityLabel;
+}
+
+function parseCommunityLabels(raw: string): Map<string, string> {
+  const parsed = parseJson(unfence(raw));
+  if (!parsed || typeof parsed !== "object") return new Map();
+  const labels = Array.isArray((parsed as { labels?: unknown }).labels)
+    ? (parsed as { labels: unknown[] }).labels
+    : [];
+  const out = new Map<string, string>();
+  for (const item of labels) {
+    if (!item || typeof item !== "object") continue;
+    const communityId = (item as { community_id?: unknown }).community_id;
+    const label = sanitizeShortLabel((item as { label?: unknown }).label);
+    if (typeof communityId === "string" && label) out.set(communityId, label);
+  }
+  return out;
+}
+
+function sanitizeShortLabel(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/\s+/g, " ").trim().replace(/^["']|["']$/g, "");
+  if (!cleaned) return null;
+  return cleaned.split(" ").slice(0, 4).join(" ");
+}
+
+function deterministicShortLabel(digest: CommunityDigest): string {
+  return titleCase(digest.top_engineering_code ?? digest.top_label.replace(/^.*[#:/]/, ""));
+}
+
+function titleCase(value: string): string {
+  const words = value
+    .replace(/[-_./:]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
+  if (words.length === 0) return "Community";
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+function membershipHash(members: StoredNode[]): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        members.map((node) => ({
+          rid: node.rid,
+          label: node.label,
+          node_type: node.node_type,
+          title: node.properties.title,
+          hash: node.properties.hash,
+        })),
+      ),
+    )
+    .digest("hex");
+}
+
+function communityLabelKey(membershipHash: string): string {
+  return `cache:community-label:v1:${membershipHash}`;
+}
+
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function emptyLabelingSummary(): CommunityLabelingSummary {
+  return {
+    generated: 0,
+    reused: 0,
+    token_cost: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      estimated: true,
+    },
+  };
 }
 
 function canonicalEngineeringCode(

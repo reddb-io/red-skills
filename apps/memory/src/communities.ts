@@ -13,6 +13,8 @@ export interface CommunityAssignment {
 
 export interface CommunitySummary {
   id: string;
+  short_label: string | null;
+  label_provenance: CommunityLabelProvenance | null;
   count: number;
   total_degree: number;
   avg_centrality: number;
@@ -21,6 +23,16 @@ export interface CommunitySummary {
   cohesion_score: number;
   labels: string[];
   titles: string[];
+}
+
+export interface CommunityLabelProvenance {
+  source: "provider" | "deterministic" | "cached";
+  provider: {
+    mode: string | null;
+    model: string | null;
+  };
+  membership_hash: string;
+  generated_at: string;
 }
 
 export interface CommunityNodeAnalytics {
@@ -143,11 +155,16 @@ export async function buildCommunityAnalytics(
   }
 
   const assignments = decorateAssignments(nodes, communityPairs);
-  const communities = summarizeCommunities(
+  const communities = await attachStoredLabels(
+    store,
+    summarizeCommunities(
     assignments,
     analytics.node_analytics,
     analytics.inter_community_edges,
     analytics.community_edge_weights,
+    ),
+    assignments,
+    nodes,
   );
   return {
     schema_version: "memory.communities.v1",
@@ -261,6 +278,8 @@ function summarizeCommunities(
           : round6(analytics.reduce((sum, item) => sum + item.centrality, 0) / analytics.length);
       return {
         id,
+        short_label: null,
+        label_provenance: null,
         count: group.length,
         total_degree: totalDegree,
         avg_centrality: avgCentrality,
@@ -272,6 +291,94 @@ function summarizeCommunities(
       };
     })
     .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+}
+
+async function attachStoredLabels(
+  store: MemoryStore,
+  communities: CommunitySummary[],
+  assignments: CommunityAssignment[],
+  nodes: StoredNode[],
+): Promise<CommunitySummary[]> {
+  const membersByCommunity = new Map<string, CommunityAssignment[]>();
+  for (const assignment of assignments) {
+    const group = membersByCommunity.get(assignment.community_id) ?? [];
+    group.push(assignment);
+    membersByCommunity.set(assignment.community_id, group);
+  }
+  const nodesByRid = new Map(nodes.map((node) => [node.rid, node]));
+  return Promise.all(
+    communities.map(async (community) => {
+      const membership_hash = membershipHash(
+        (membersByCommunity.get(community.id) ?? [])
+          .map((assignment) => nodesByRid.get(assignment.rid))
+          .filter((node): node is StoredNode => node != null),
+      );
+      const label = parseStoredCommunityLabel(
+        await store.kvGet<StoredCommunityLabel | string>(communityLabelKey(membership_hash)),
+      );
+      if (!label || label.provenance.membership_hash !== membership_hash) return community;
+      return {
+        ...community,
+        short_label: label.short_label,
+        label_provenance: label.provenance,
+      };
+    }),
+  );
+}
+
+interface StoredCommunityLabel {
+  schema_version: "memory.community-label.v1";
+  community_id: string;
+  short_label: string;
+  provenance: CommunityLabelProvenance;
+}
+
+function parseStoredCommunityLabel(raw: StoredCommunityLabel | string | null): StoredCommunityLabel | null {
+  if (raw == null) return null;
+  const parsed = typeof raw === "string" ? parseJson(raw) : raw;
+  if (!parsed || typeof parsed !== "object") return null;
+  const item = parsed as Partial<StoredCommunityLabel>;
+  if (
+    item.schema_version !== "memory.community-label.v1" ||
+    typeof item.community_id !== "string" ||
+    typeof item.short_label !== "string" ||
+    !item.provenance ||
+    typeof item.provenance.membership_hash !== "string"
+  ) {
+    return null;
+  }
+  return item as StoredCommunityLabel;
+}
+
+function membershipHash(members: StoredNode[]): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        members
+          .slice()
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((node) => ({
+            rid: node.rid,
+            label: node.label,
+            node_type: node.node_type,
+            title: node.properties.title,
+            hash: node.properties.hash,
+          })),
+      ),
+    )
+    .digest("hex");
+}
+
+function communityLabelKey(membershipHash: string): string {
+  return `cache:community-label:v1:${membershipHash}`;
+}
+
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 function buildNavigationAnalytics(
