@@ -92,6 +92,7 @@ describe("Memory capability catalog", () => {
       expect(catalog.capabilities.map((item) => item.id)).toEqual(
         expect.arrayContaining([
           "governed-hybrid-recall",
+          "corpus-knowledge-graph",
           "documents",
           "extraction-status",
           "vectors",
@@ -102,7 +103,7 @@ describe("Memory capability catalog", () => {
           "skill-telemetry",
           "multi-agent-integration",
           "layered-memory-architecture",
-          "competitive-interop",
+          "reference-interop",
         ]),
       );
       expect(catalog.capabilities.find((item) => item.id === "local-ui")?.mcp).toContain(
@@ -125,6 +126,31 @@ describe("Memory capability catalog", () => {
       );
       expect(catalog.capabilities.find((item) => item.id === "governed-hybrid-recall")?.mcp).toContain(
         "memory_context_pack_viewer",
+      );
+      expect(catalog.capabilities.find((item) => item.id === "corpus-knowledge-graph")).toMatchObject({
+        title: "Corpus to knowledge graph",
+        category: "intelligence",
+        red_db_backed: true,
+      });
+      expect(catalog.capabilities.find((item) => item.id === "corpus-knowledge-graph")?.cli).toEqual(
+        expect.arrayContaining([
+          "memory ingest <path>",
+          "memory docs reference-graph",
+          "memory communities",
+          "memory dashboard",
+          "memory capabilities",
+          "memory export [<out-dir>]",
+        ]),
+      );
+      expect(catalog.capabilities.find((item) => item.id === "corpus-knowledge-graph")?.mcp).toEqual(
+        expect.arrayContaining([
+          "memory_asset_inventory",
+          "memory_doc_reference_graph",
+          "memory_communities",
+          "memory_dashboard",
+          "memory_capability_catalog",
+          "memory_export",
+        ]),
       );
       expect(catalog.capabilities.find((item) => item.id === "documents")?.cli).toContain(
         "memory docs search-viewer <query>",

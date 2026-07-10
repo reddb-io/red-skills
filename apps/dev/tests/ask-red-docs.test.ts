@@ -38,6 +38,18 @@ describe("ask-red router docs contract", () => {
     }
   });
 
+  it("routes corpus knowledge-graph requests to Memory surfaces", async () => {
+    const askRedSkill = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
+
+    expect(askRedSkill).toContain("corpus-to-knowledge-graph");
+    expect(askRedSkill).toContain("/memory:ingest");
+    expect(askRedSkill).toContain("/memory:view");
+    expect(askRedSkill).toContain("/memory:export");
+    expect(askRedSkill).toContain("memory communities");
+    expect(askRedSkill).toContain("memory docs reference-graph");
+    expect(askRedSkill).toContain("memory capabilities");
+  });
+
   it("documents the maintenance rule in both repo agent instruction files", async () => {
     const [claude, agents] = await Promise.all([readRepoFile("CLAUDE.md"), readRepoFile("AGENTS.md")]);
 

@@ -45,6 +45,12 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   skill quality, or repository context.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
+- **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
+  knowledge graph of this repo", "query the graph of these docs", or similar,
+  use `/memory:init` in graph mode when needed, then `/memory:ingest` to graph
+  the corpus, `/memory:view` or `memory docs reference-graph` to inspect it,
+  `memory communities` / `memory dashboard` / `memory capabilities` for analysis
+  reports, and `/memory:export` for a self-contained bundle.
 
 ## 3. Answer With The Route
 
@@ -79,6 +85,13 @@ The router must mention every published dev skill so `/doctor` can flag drift:
 
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
+
+Cross-plugin capability route: `corpus-to-knowledge-graph` lives in the
+`memory` plugin. Route by the capability description, not by implementation
+vocabulary: corpus ingest goes through `/memory:ingest`; graph inspection goes
+through `/memory:view`, `memory docs reference-graph`, and
+`memory communities`; analysis surfaces include `memory dashboard` and
+`memory capabilities`; portable snapshots go through `/memory:export`.
 
 ## Standalone And Maintenance Routes
 
