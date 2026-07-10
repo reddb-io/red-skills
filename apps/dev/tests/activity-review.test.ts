@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   activityReviewInterval,
   buildActivityReviewReport,
@@ -168,11 +169,11 @@ describe("activity review", () => {
       tokenSummary: { available: false, total: null, input: null, output: null, sourceRecords: 0 },
     });
     const toon = renderActivityReviewReportToon(report);
+    const decoded = decode(toon) as unknown as typeof report;
     expect(toon).toContain("schema_version: red.dev.activity_review.v1");
-    expect(toon).toContain("big_numbers:");
-    expect(toon).toContain("  commits: 3");
+    expect(decoded.big_numbers.commits).toBe(3);
     // Empty tables render as the definitive empty state, not silent omission.
-    expect(toon).toContain("workers[0]:");
+    expect(decoded.workers).toEqual([]);
     // Cheaper than the JSON baseline it replaces.
     expect(toon.length).toBeLessThan(JSON.stringify(report, null, 2).length);
   });
