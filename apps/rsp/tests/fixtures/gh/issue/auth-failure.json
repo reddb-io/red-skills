@@ -1,0 +1,13 @@
+{
+  "name": "issue-list-auth-failure",
+  "command": ["gh", "issue", "list"],
+  "catalog_prior_art": "official catalog GitHub wrapper leaves gh authentication failures untouched.",
+  "recorded": {
+    "stdout": "",
+    "stderr": "gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.\n",
+    "status": 4,
+    "signal": null
+  },
+  "expected": "",
+  "assertions": []
+}

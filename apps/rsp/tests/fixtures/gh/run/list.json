@@ -1,0 +1,23 @@
+{
+  "name": "run-list-default",
+  "command": ["gh", "run", "list"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for run list: databaseId,name,status,conclusion.",
+  "recorded": {
+    "stdout": "[{\"databaseId\":9001,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"success\"},{\"databaseId\":9002,\"name\":\"Release\",\"status\":\"in_progress\",\"conclusion\":\"\"}]",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "gh run list",
+    "runs": [
+      { "id": 9001, "name": "CI", "status": "completed", "conclusion": "success" },
+      { "id": 9002, "name": "Release", "status": "in_progress", "conclusion": "" }
+    ],
+    "summary": "2 runs"
+  },
+  "assertions": [
+    { "question": "how many fields are in a default run row?", "path": "runs.0.length", "expected": 4 },
+    { "question": "which run is first?", "path": "runs.0.id", "expected": 9001 }
+  ]
+}

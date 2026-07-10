@@ -1,0 +1,16 @@
+{
+  "name": "pr-view-body",
+  "command": ["gh", "pr", "view", "42"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for PR view: number,title,state,body, with body elided unless --full.",
+  "recorded": {
+    "stdout": "{\"number\":42,\"title\":\"Add rsp gh wrapper\",\"state\":\"OPEN\",\"isDraft\":false,\"body\":\"This pull request adds the GitHub wrapper surface. It includes recorded gh json fixtures, default schemas, wider opt-in output, fidelity checks, admission checks, and enough detail to force truncation in the fixture body.\"}",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {},
+  "assertions": [
+    { "question": "which PR was viewed?", "path": "pr.number", "expected": 42 },
+    { "question": "what escape hatch is advertised?", "path": "pr.body.truncated.hint", "expected": "--full" }
+  ]
+}

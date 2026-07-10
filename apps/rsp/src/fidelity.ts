@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { decode } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
 import { renderGitContract, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
+import { renderGhContract } from "./gh-wrapper.js";
 import { renderTestContract } from "./test-wrapper.js";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 
@@ -66,6 +67,7 @@ export async function renderFixture(
   if (fixture.command[0] === "vitest" || fixture.command[0] === "cargo") {
     return await renderTestContract(fixture.command, fixture.recorded, options);
   }
+  if (fixture.command[0] === "gh") return await renderGhContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] !== "git") throw new Error(`unsupported fixture command: ${fixture.command.join(" ")}`);
   return await renderGitContract(fixture.command, fixture.recorded, options);
 }
@@ -73,6 +75,7 @@ export async function renderFixture(
 function readDecodedToon(stdout: Buffer): unknown {
   const text = stdout.toString("utf8");
   if (text === "git empty\n") return "git empty\n";
+  if (text.startsWith("0 ")) return text;
   const toon = text.split("\n").filter((line) => !line.startsWith("… elided ")).join("\n");
   return decode(toon);
 }
@@ -93,6 +96,8 @@ function getPath(value: unknown, path: string): unknown {
   for (const segment of path.split(".")) {
     if (segment === "length" && Array.isArray(cursor)) {
       cursor = cursor.length;
+    } else if (segment === "length" && isRecord(cursor)) {
+      cursor = Object.keys(cursor).length;
     } else if (/^\d+$/.test(segment) && Array.isArray(cursor)) {
       cursor = cursor[Number(segment)];
     } else if (isRecord(cursor)) {
