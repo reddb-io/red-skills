@@ -7123,6 +7123,7 @@ function renderCommunitiesToon(report: CommunityAnalyticsReport): string {
     rowsKey: "communities",
     rows: report.communities.map((community) => ({
       id: community.id,
+      label: community.short_label ?? community.id,
       count: community.count,
       cohesion_score: community.cohesion_score,
       internal_edge_weight: community.internal_edge_weight,
@@ -7131,6 +7132,7 @@ function renderCommunitiesToon(report: CommunityAnalyticsReport): string {
     })),
     fields: [
       "id",
+      "label",
       "count",
       "cohesion_score",
       "internal_edge_weight",
@@ -7211,7 +7213,8 @@ async function runCommunityDigest(args: ParsedArgs): Promise<void> {
       }`,
     );
     for (const digest of report.digests) {
-      console.log(`  ${digest.community_id}: ${digest.size} node(s)`);
+      console.log(`  ${digest.short_label ?? digest.community_id}: ${digest.size} node(s)`);
+      console.log(`        community: ${digest.community_id}`);
       console.log(`        top label: ${digest.top_label}`);
       console.log(`        top type: ${digest.top_node_type}`);
       if (digest.top_engineering_code) {
@@ -7221,6 +7224,9 @@ async function runCommunityDigest(args: ParsedArgs): Promise<void> {
         console.log(`        summary: ${digest.narrative_summary}`);
       }
     }
+    console.log(
+      `  labeling: generated ${report.summary.labeling.generated}, reused ${report.summary.labeling.reused}, estimated tokens ${report.summary.labeling.token_cost.total_tokens}`,
+    );
   } finally {
     await store.close();
   }
