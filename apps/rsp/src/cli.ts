@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
+import { runGitWrapper } from "./git-wrapper.js";
 
 interface ParsedArgs {
   command?: string;
   handle?: string;
   storeUri?: string;
+  level: "lossless" | "brief" | "terse";
+  positional: string[];
 }
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -22,6 +25,17 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       const stats = await store.stats();
       process.stdout.write(renderStats(stats));
       return 0;
+    }
+
+    if (args.command === "git") {
+      const result = await runGitWrapper(args.positional, { level: args.level, store });
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      if (result.signal) {
+        process.kill(process.pid, result.signal);
+        return 128;
+      }
+      return result.status ?? 0;
     }
 
     if (args.command === "show" && args.handle) {
@@ -46,15 +60,18 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
-  const out: ParsedArgs = {};
+  const out: ParsedArgs = { level: "lossless", positional: [] };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--store-uri") out.storeUri = argv[++i];
+    else if (arg === "--brief") out.level = "brief";
+    else if (arg === "--terse") out.level = "terse";
     else positional.push(arg);
   }
   out.command = positional[0];
   out.handle = positional[1];
+  out.positional = positional;
   return out;
 }
 
