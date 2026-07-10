@@ -180,7 +180,8 @@ function communityItem(
   const nodeTypes = [...new Set(assignments.map((assignment) => assignment.node_type))].sort();
   return `<li>
     <div>
-      <h3>${escapeHtml(community.id)}</h3>
+      <h3>${escapeHtml(community.short_label ?? community.id)}</h3>
+      ${community.short_label ? `<p class="meta"><code>${escapeHtml(community.id)}</code></p>` : ""}
       <p class="meta">${escapeHtml(community.titles.join(", ") || "No titles")}</p>
       <p class="meta">${escapeHtml(nodeTypes.join(", ") || "unknown node types")}</p>
       <p class="meta">cohesion ${community.cohesion_score} - internal weight ${community.internal_edge_weight} - external weight ${community.external_edge_weight}</p>
