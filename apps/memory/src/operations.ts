@@ -44,6 +44,11 @@ import {
   type CommunityDigestReport,
 } from "./community-digest.js";
 import {
+  buildHubReport,
+  type HubRankBy,
+  type HubReport,
+} from "./hub-report.js";
+import {
   buildMemoryGlobalSearch,
   type MemoryGlobalSearchReport,
 } from "./global-search.js";
@@ -485,6 +490,12 @@ const MapContractInputSchema = z.object({
 });
 type MapContractInput = z.infer<typeof MapContractInputSchema>;
 
+const HubReportInputSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  rank_by: z.enum(["total", "in", "out"]).default("total"),
+});
+type HubReportInput = z.infer<typeof HubReportInputSchema>;
+
 const DocSearchInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
@@ -800,6 +811,40 @@ const CommunitiesOutputSchema = z.object({
   inter_community_edges: z.array(InterCommunityEdgeSchema),
 }) satisfies z.ZodType<CommunityAnalyticsReport>;
 const CommunitiesViewerOutputSchema = objectOutputSchema<CommunitiesViewerArtifact>();
+
+const HubReportRowSchema = z.object({
+  rid: z.number(),
+  label: z.string(),
+  title: z.string(),
+  node_type: z.string(),
+  community_id: z.string().nullable(),
+  total_degree: z.number(),
+  in_degree: z.number(),
+  out_degree: z.number(),
+  seal_mix: z.string(),
+  seal_count: z.number(),
+  seals: z.array(z.string()),
+});
+const HubReportOutputSchema = z.object({
+  schema_version: z.literal("memory.hub-report.v1"),
+  read_only: z.literal(true),
+  graph_hash: z.string(),
+  generated_at: z.string(),
+  rank_by: z.enum(["total", "in", "out"]),
+  limit: z.number(),
+  summary: z.object({
+    nodes: z.number(),
+    edges: z.number(),
+    reported: z.number(),
+    max_total_degree: z.number(),
+    max_in_degree: z.number(),
+    max_out_degree: z.number(),
+    communities: z.number(),
+    empty: z.boolean(),
+  }),
+  next: z.array(z.string()),
+  hubs: z.array(HubReportRowSchema),
+}) satisfies z.ZodType<HubReport>;
 
 const CommunityDigestCountSchema = z.object({
   value: z.string(),
@@ -1282,6 +1327,14 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
       "memory.communities-viewer": VIEWER_OUTPUT,
       "memory.community-digest": JSON_REPORT_OUTPUT,
     },
+  ),
+  ...operationFacets(
+    ["memory.hub-report"],
+    inputBinding([
+      flagField("limit", "number"),
+      flagField("rank_by", "string"),
+    ]),
+    JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
     ["memory.global-search"],
@@ -2924,6 +2977,28 @@ const COMMUNITY_DIGEST_OPERATION: MemoryOperationDefinition<
     buildCommunityDigest(ctx.store, { cache: input.cache, providerConfig: ctx.providerConfig }),
 };
 
+const HUB_REPORT_OPERATION: MemoryOperationDefinition<HubReportInput, HubReport> = {
+  id: "memory.hub-report",
+  title: "Memory hub report",
+  description:
+    "Read-only high-degree concept report over the stored graph, with community membership and seal mix.",
+  inputSchema: HubReportInputSchema,
+  outputSchema: HubReportOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "hub-report", supportsJson: true },
+    mcp: {
+      toolName: "memory_hub_report",
+      description:
+        "Read-only Memory graph hub report: ranks stored graph nodes by total, inbound, or outbound degree and returns each hub's community id plus edge seal mix. Computes directly from graph nodes/edges without writing analysis state.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildHubReport(ctx.store, { limit: input.limit, rankBy: input.rank_by as HubRankBy }),
+};
+
 const GLOBAL_SEARCH_OPERATION: MemoryOperationDefinition<
   GlobalSearchInput,
   MemoryGlobalSearchReport
@@ -3565,6 +3640,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   COMMUNITIES_OPERATION,
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
+  HUB_REPORT_OPERATION,
   GLOBAL_SEARCH_OPERATION,
   RECALL_RANKING_OPERATION,
   REFERENCE_RADAR_OPERATION,

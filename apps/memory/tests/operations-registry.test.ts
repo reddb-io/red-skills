@@ -42,6 +42,36 @@ describe("read-only Memory operations registry", () => {
     expect(listReadOnlyMemoryOperations().map((op) => op.id)).toContain("memory.communities");
   });
 
+  test("declares contract metadata for the hub report operation", () => {
+    const operation = getReadOnlyMemoryOperation("memory.hub-report");
+
+    expect(operation).toMatchObject({
+      id: "memory.hub-report",
+      safetyClass: "read-only",
+      sideEffectClass: "none",
+      capabilities: ["graph-store"],
+      renderer: {
+        cli: { command: "hub-report", supportsJson: true },
+        mcp: { toolName: "memory_hub_report" },
+      },
+      inputBinding: {
+        fields: [
+          {
+            field: "limit",
+            sources: ["flag", "query"],
+            type: "number",
+          },
+          {
+            field: "rank_by",
+            sources: ["flag", "query"],
+            type: "string",
+          },
+        ],
+      },
+      outputKind: { kind: "report", format: "json" },
+    });
+  });
+
   test("declares read-only contracts for agent-native readiness and trust operations", () => {
     const operations = listReadOnlyMemoryOperations();
 
@@ -94,6 +124,7 @@ describe("read-only Memory operations registry", () => {
         "memory.work-frontier-viewer",
         "memory.hook-coverage",
         "memory.hook-coverage-viewer",
+        "memory.hub-report",
         "memory.learning-debt",
         "memory.learning-debt-viewer",
         "memory.layers",
@@ -181,6 +212,7 @@ describe("read-only Memory operations registry", () => {
         "memory_work_frontier_viewer",
         "memory_hook_coverage",
         "memory_hook_coverage_viewer",
+        "memory_hub_report",
         "memory_learning_debt",
         "memory_learning_debt_viewer",
         "memory_layers",
