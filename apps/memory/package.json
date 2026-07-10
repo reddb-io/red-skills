@@ -28,6 +28,7 @@
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/sdk": "1.7.0",
     "@reddb-io/shared": "workspace:*",
+    "@reddb-io/toon": "workspace:*",
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3",
     "js-tiktoken": "^1.0.21",
