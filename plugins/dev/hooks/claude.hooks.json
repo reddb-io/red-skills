@@ -16,6 +16,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; for f in \"$root/../../dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" hook claude-pre-exec <\"$tmp\"; exit $?; }; done; exit 1'"
+          },
+          {
+            "type": "command",
             "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/skills/misc/branch-lock/scripts/branch-lock-hook.sh\"; if [ -f \"$hook\" ]; then bash \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           },
           {
