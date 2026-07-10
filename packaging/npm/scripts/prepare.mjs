@@ -24,6 +24,7 @@ const BUNDLES = [
   "code-nav.bundle.min.mjs",
   "memory.bundle.min.mjs",
   "brain.bundle.min.mjs",
+  "rsp.bundle.min.mjs",
 ];
 
 mkdirSync(destDist, { recursive: true });
