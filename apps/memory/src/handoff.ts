@@ -114,6 +114,7 @@ function scoreNode(node: StoredNode, terms: string[], now: number): number {
     why_note: 6,
     workflow: 5,
     concept: 4,
+    answer: 5,
     file: 3,
     solution: 5,
     fix: 5,
