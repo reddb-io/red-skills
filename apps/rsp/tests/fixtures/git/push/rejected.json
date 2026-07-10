@@ -1,0 +1,12 @@
+{
+  "name": "push-rejected",
+  "command": ["git", "push"],
+  "recorded": {
+    "stdout": "",
+    "stderr": "fatal: unable to access 'https://example.invalid/repo.git/': denied\n",
+    "status": 1,
+    "signal": null
+  },
+  "expected": "",
+  "assertions": []
+}
