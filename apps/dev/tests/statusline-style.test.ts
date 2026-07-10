@@ -198,6 +198,44 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(stripAnsi(renderWorkerLine(afk, NOW))).toContain("org=afk");
   });
 
+  it.each(["gate", "push-pr", "merge", "cascade"])(
+    "renders landing phase %s as a distinct non-agent row (#1427)",
+    (phase) => {
+      const w = worker({
+        state: {
+          ...worker().state,
+          worker_id: "wLAND",
+          current: {
+            ...worker().state.current,
+            number: 1408,
+            activity: "landing",
+            phase,
+            started_at: new Date((NOW - 432) * 1000).toISOString(),
+          },
+        },
+      });
+      const t = stripAnsi(renderWorkerLine(w, NOW));
+      expect(t).toContain("wLAND");
+      expect(t).toContain("org=landing");
+      expect(t).toContain("iss=1408");
+      expect(t).toContain(phase);
+      expect(t).toContain("00:07:12");
+      expect(t).not.toContain("loc=");
+      expect(t).not.toContain("tks=");
+      expect(t).not.toContain("tls=");
+      expect(t).not.toContain("rsn=");
+      expect(t).not.toContain("txt=");
+    },
+  );
+
+  it("clears the landing row once the slot has no live worker record (#1427)", () => {
+    const out = styleStatusline(input, { workers: [], now: NOW });
+    const rows = out.split("\n");
+    expect(rows).toHaveLength(1);
+    expect(stripAnsi(out)).not.toContain("org=landing");
+    expect(stripAnsi(out)).not.toContain("iss=1408");
+  });
+
   it("populates iss=<number> for a /go-shaped worker state (no queue — total 0/done 0)", () => {
     // A /go run has no queue, so done/total are 0/0 (the old counter was meaningless);
     // current.number still carries the single issue number, set on claim like /afk.
