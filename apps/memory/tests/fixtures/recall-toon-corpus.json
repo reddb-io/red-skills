@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "id": "decision-auth-refresh",
+      "score": 0.92,
+      "kind": "decision",
+      "content": "Auth refresh retries are capped at three attempts before surfacing operator action."
+    },
+    {
+      "id": "root-cause-cache-stampede",
+      "score": 0.87,
+      "kind": "root_cause",
+      "content": "The cache stampede came from a missing singleflight guard around token refresh."
+    },
+    {
+      "id": "validation-refresh-regression",
+      "score": 0.81,
+      "kind": "validation",
+      "content": "Regression coverage runs the refresh worker twice and asserts the second pass is idempotent."
+    },
+    {
+      "id": "fix-refresh-lock",
+      "score": 0.78,
+      "kind": "fix",
+      "content": "Use a per-account lock and persist the lease owner in the retry metadata."
+    },
+    {
+      "id": "doc-refresh-runbook",
+      "score": 0.64,
+      "kind": "doc",
+      "content": "The runbook points operators at memory recall before touching refresh-worker state."
+    }
+  ],
+  "summary": {
+    "status": "5 results",
+    "results": 5,
+    "query": "auth refresh retry",
+    "store": "graph",
+    "ranking": "hybrid-rrf",
+    "vector": {
+      "status": "contributed",
+      "candidates": 9,
+      "contributed": 3
+    }
+  }
+}
