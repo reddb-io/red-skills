@@ -1,8 +1,10 @@
 # AXI + TOON is the doctrine for every agent-facing CLI
 
+> **⚠️ Partially amended by [Amendment 1 (2026-07-09)](#amendment-1-2026-07-09--rtk-retired-toon-scope-widened-to-all-structured-data).** Two points below no longer hold: the "RTK stays the safety net" consequence (RTK is retired by ADR 0095) and Decision 2's tabular-only TOON boundary (TOON now covers all structured data at every depth). The rest of the doctrine stands unchanged.
+
 ## Status
 
-Accepted. Codifies the AXI ("Agent eXperience Interface") design-time principles and the TOON output format as the RedSkills standard for every CLI whose primary reader is an agent. Implements Track 1C/F of PRD #907; the first application slice is #918.
+Accepted, with Amendment 1 (2026-07-09). Codifies the AXI ("Agent eXperience Interface") design-time principles and the TOON output format as the RedSkills standard for every CLI whose primary reader is an agent. Implements Track 1C/F of PRD #907; the first application slice is #918.
 
 ## Context
 
@@ -58,10 +60,10 @@ workers[2]{id,issue,state}:
   wBXI6,943,merged
 ```
 
-**Scope of TOON, stated as a rule so it is not over-applied:**
+**Scope of TOON, stated as a rule so it is not over-applied** *(superseded by Amendment 1 — the boundary is now "all structured data at every depth; prose never serialized")*:
 
 - **Use TOON for** uniform arrays of objects — the roster, issue list, PR list, DORA rows. This is where the win is largest and retrieval accuracy holds.
-- **Do not force TOON onto** a single scalar, a one-off nested config object, or free-form prose. TOON's win is tabular; a lone object gains nothing and reads worse. JSON (or plain text) stays correct there.
+- **Do not force TOON onto** a single scalar, a one-off nested config object, or free-form prose. TOON's win is tabular; a lone object gains nothing and reads worse. JSON (or plain text) stays correct there. *(superseded by Amendment 1)*
 - **Human-facing rendering is unaffected.** A CLI may still render a pretty table for a human; the doctrine governs the *agent-facing* serialization path. A `--json` escape hatch stays available for consumers that need raw JSON.
 
 The [doctrine doc](../contexts/dev/axi-toon-doctrine.md) records the concrete TOON line format (delimiters, summary line, human-readability rules) and a TOON-vs-JSON-vs-prose contrast table.
@@ -91,7 +93,7 @@ The measurement is a first-class deliverable of the rollout, reported per slice,
 
 - **New agent-facing CLIs start AXI-shaped.** The ten principles are the checklist a new surface is designed against, not a retrofit. `/write-a-skill` and CLI authorship reference this ADR and the [doctrine doc](../contexts/dev/axi-toon-doctrine.md).
 - **Existing surfaces converge incrementally.** `monitor` → `dashboard` → `daily-review` → `statusline`, one measured slice at a time (first = #918). No big-bang rewrite; no surface is blocked on the others.
-- **Output shrinks at the source, not only at the proxy.** RTK stays the safety net for output RedSkills does not control (raw `git`, `gh`, `vitest`, `tsc`); AXI removes the need for it on RedSkills' own CLIs. The two do not conflict — a TOON-emitting monitor piped through RTK simply has less left to compress.
+- **Output shrinks at the source, not only at the proxy.** RTK stays the safety net for output RedSkills does not control (raw `git`, `gh`, `vitest`, `tsc`); AXI removes the need for it on RedSkills' own CLIs. The two do not conflict — a TOON-emitting monitor piped through RTK simply has less left to compress. *(superseded by Amendment 1 — RTK is retired by ADR 0095; the `rsp` elision layer covers output RedSkills does not control)*
 - **Fewer round-trips.** Pre-computed aggregates, definitive empty states, and contextual next-step suggestions each remove a follow-up call the agent would otherwise make — a saving larger than the byte-level TOON win on interactive flows.
 - **The 40% claim is verified, not inherited.** The measurement plan (Decision 4) means the doctrine reports real deltas on real payloads; if a surface underperforms the expectation, that is data about the surface, not a reason to abandon TOON.
 - **A `--json` / `--full` escape hatch is preserved everywhere.** Agents or tools that need raw JSON or untruncated content keep it; TOON and minimal schemas are the *default*, not a cage.
@@ -110,3 +112,24 @@ The measurement is a first-class deliverable of the rollout, reported per slice,
 - **Doctrine, not lint.** This ADR sets targets and an adoption order. It deliberately does not add a CI gate that rejects a CLI for missing a principle — that would freeze incremental adoption. Enforcement, if ever added, is a later amendment with its own ADR.
 - **TOON scope is tabular.** The single most common misapplication is TOON-ing a lone scalar or a one-off nested object where it saves nothing and reads worse. Decision 2 states the boundary as a rule so it survives paraphrase.
 - **No source-repo names.** The AXI principle set and the absorbed design philosophy are recorded here as the RedSkills doctrine; their external origin lives in the PRD #907 program history and the grilling session, not in committed naming. TOON is referenced by its public specification (<https://toonformat.dev/>), which is a format standard, not an absorbed source repo.
+
+## Amendment 1 (2026-07-09) — RTK retired; TOON scope widened to all structured data
+
+Two points of the original decision fell to new evidence gathered in the 2026-07-09 grilling session. Everything else above stands.
+
+### 1. RTK is retired — the "safety net" premise no longer holds
+
+The original Consequences kept RTK as the permanent after-the-fact net for output RedSkills does not control ("The two do not conflict"). Local telemetry and the upstream issue tracker broke that premise:
+
+- **The savings are concentrated; the tail is pure cost.** Over 325,137 locally recorded commands, virtually all real saving came from a handful of parsers (`cargo test` 74.5% / 14.3M tokens, `git commit` 91.1%, `ls` 58.3%). The single most-intercepted command — `grep -q`, 91,735 calls — saved 0.0% and produced 91,735 parse failures: it is a silent predicate with no output to compress. 187,095 parse failures were recorded in total; 89 never recovered.
+- **The filter lies by design and by bug.** By design, `git push`/`git diff` collapse to `ok`, destroying the information the agent acts on. By bug (upstream, open): `git log --stat` silently drops ~36% of commits, `vitest` reports green on non-zero exit, `find` returns empty stdout silently, exit codes are mangled into misleading diagnoses. A filter that misleads is worse than no filter, because the agent cannot know.
+
+**Decision:** RTK's zero-gain tail is disarmed immediately via its own `[hooks] exclude_commands` config (keeping only the few measured high-yield parsers), and RTK is uninstalled entirely once the `rsp` elision layer (ADR 0095) reaches **measured** parity on those parsers. The doctrine's upstream/downstream split survives — AXI designs cheap output at the source; `rsp` handles output we do not control — but the downstream half is now honest by construction: fail-closed rewriting, passthrough by default, and an Elision-handle invariant instead of silent loss.
+
+### 2. TOON covers all structured data, at every depth
+
+Decision 2 bounded TOON to uniform arrays ("do not force TOON onto a single scalar, a one-off nested config object"). That boundary was written against the house dialect of the time, which read poorly outside tables. The dialect is retired: RedSkills now conforms to the public TOON spec v3.2 via the `@toon-format/toon` encoder/decoder (the reversibility contract of ADR 0095 requires `decode`, which only spec conformance provides off the shelf). Under the spec, nested objects render as indentation and scalars as `key: value` — both cheaper than JSON and no harder to read.
+
+**Decision:** the boundary becomes binary — **all structured data is TOON, at every depth (tabular, nested, scalar); free-form prose is never serialized** (prose has no structure to encode). This removes the per-surface judgment call of "is this tabular enough?". The house dialect's extra-spec syntax (bare summary lines, bracketed status tokens as syntax) is folded into spec-legal form: the summary becomes a trailing TOON field, status tokens become plain field values. The `--json` and `--full` escape hatches are unchanged.
+
+**Adoption scope extends to the memory plugin:** the memory CLI converts TOON-first per surface (`recall` first — the highest-frequency agent read — then `context-pack`, `timeline`/`dashboard`, the rest opportunistically), with `--json` continuing to answer byte-identically for existing consumers; the `red-memory` MCP tool responses follow the same doctrine through the same shared serializers, since their reader is the same model. Every converted slice still reports its measured token delta (Decision 4 is unchanged).

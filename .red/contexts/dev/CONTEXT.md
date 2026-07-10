@@ -188,6 +188,34 @@ _Avoid_: understand, codebase chat
 The `dev` mutating curator workflow that consumes Memory recommendations and archives approved curatable skills.
 _Avoid_: memory cleaner, silent curator
 
+**Elision**:
+The removal of bytes from a command's output before an agent reads it. An Elision is never a deletion: it always mints an **Elision handle**, so the removed bytes stay retrievable.
+_Avoid_: compression, filtering, trimming, when the bytes are gone for good
+
+**Elision handle**:
+The reference an elided output carries back to its full original in the **Repo store**. Handle and Elision are equivalent: an output carries a handle if and only if bytes were elided from it.
+_Avoid_: tee file, cache key, blob id
+
+**Passthrough**:
+The delivery of a command's output to the agent byte-for-byte, with its exit code and stderr intact. Passthrough is the default; a surface earns the right to elide by measured saving, never by existing.
+_Avoid_: raw mode, bypass, no-op filter
+
+**Normalization**:
+The silent removal of bytes that carry no information for an agent — ANSI colour codes, carriage-return progress bars, trailing whitespace, repeated blank lines. Normalization is a closed allowlist and mints no **Elision handle**, because nothing is lost. Anything outside the allowlist is an **Elision**.
+_Avoid_: cleanup, sanitizing, light filtering
+
+**Fidelity assertion**:
+A question the elided output must still answer, recorded in a filter's fixture beside the raw output it elides. Fidelity gates saving: a filter that saves tokens while failing an assertion has destroyed information, and it fails. Tokens saved is never reported alone.
+_Avoid_: accuracy check, snapshot test, golden file
+
+**Repo store**:
+The single local RedDB file the repo's plugins share, provisioned by `/setup-red-skills`. Plugins separate logically inside it by collection — the governed memory graph and the **Elision** records never mix — not by opening separate files.
+_Avoid_: graph.rdb, the memory database, elision cache
+
+**rsp**:
+The single shared binary that wraps engineering CLIs behind agent-ergonomic subcommands (`rsp git status`, `rsp test`) and carries the interception hook's rewrite table in the same artifact, so the two can never version-skew. It lives in a neutral package consumed by `dev` and `memory`; its hook activates only in a repo whose `.red/config.yaml` opts in (ADR 0067 posture). Wrapper output is TOON per the public spec; every lossy level mints an **Elision handle**.
+_Avoid_: proxy, RTK replacement, compression layer, when naming the whole surface — interception is only one of its three parts
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
