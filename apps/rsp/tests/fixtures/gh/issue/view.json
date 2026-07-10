@@ -1,0 +1,16 @@
+{
+  "name": "issue-view-body",
+  "command": ["gh", "issue", "view", "1414"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for issue view: number,title,state,body, with body elided unless --full.",
+  "recorded": {
+    "stdout": "{\"number\":1414,\"title\":\"rsp gh wrapper\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"ready-for-agent\"}],\"body\":\"Issue body text starts with the concrete request and continues with acceptance criteria, blocked-by metadata, fixture donor notes, passthrough requirements, and enough extra detail to force truncation in the fixture.\"}",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {},
+  "assertions": [
+    { "question": "which issue was viewed?", "path": "issue.number", "expected": 1414 },
+    { "question": "what escape hatch is advertised?", "path": "issue.body.truncated.hint", "expected": "--full" }
+  ]
+}
