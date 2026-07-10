@@ -7112,28 +7112,61 @@ async function runCommunities(args: ParsedArgs): Promise<void> {
       console.log(JSON.stringify(report, null, 2));
       return;
     }
-    console.log(
-      `memory: ${report.communities.length} community(ies), ${report.assignments.length} assigned node(s)`,
-    );
-    console.log(
-      `  navigation: ${report.node_analytics.length} ranked node(s), ${report.inter_community_edges.length} inter-community edge(s)`,
-    );
-    console.log(`  graph hash: ${report.graph_hash}`);
-    console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
-    for (const community of report.communities) {
-      console.log(
-        `  ${community.id}: ${community.count} node(s), degree ${community.total_degree}, centrality ${community.avg_centrality}`,
-      );
-      if (community.titles.length > 0) {
-        console.log(`        top titles: ${community.titles.join(", ")}`);
-      }
-      if (community.labels.length > 0) {
-        console.log(`        labels: ${community.labels.join(", ")}`);
-      }
-    }
+    console.log(renderCommunitiesToon(report));
   } finally {
     await store.close();
   }
+}
+
+function renderCommunitiesToon(report: CommunityAnalyticsReport): string {
+  return renderToonOutput({
+    rowsKey: "communities",
+    rows: report.communities.map((community) => ({
+      id: community.id,
+      count: community.count,
+      cohesion_score: community.cohesion_score,
+      internal_edge_weight: community.internal_edge_weight,
+      external_edge_weight: community.external_edge_weight,
+      labels: community.labels.join(","),
+    })),
+    fields: [
+      "id",
+      "count",
+      "cohesion_score",
+      "internal_edge_weight",
+      "external_edge_weight",
+      "labels",
+    ],
+    extra: {
+      bridge_nodes: report.bridge_nodes.slice(0, 20).map((node) => ({
+        rid: node.rid,
+        label: node.label,
+        community_id: node.community_id,
+        connected_community_count: node.connected_community_count,
+        connected_community_ids: node.connected_community_ids.join(","),
+        cross_community_edge_count: node.cross_community_edge_count,
+        cross_community_weight: node.cross_community_weight,
+      })),
+      bridge_edges: report.bridge_edges.slice(0, 20).map((edge) => ({
+        from_label: edge.from_label,
+        to_label: edge.to_label,
+        from_community_id: edge.from_community_id,
+        to_community_id: edge.to_community_id,
+        weight: edge.weight,
+      })),
+      graph: {
+        hash: report.graph_hash,
+        cache: report.cached ? "hit" : "miss",
+        assignments: report.assignments.length,
+        ranked_nodes: report.node_analytics.length,
+        inter_community_edges: report.inter_community_edges.length,
+      },
+    },
+    summary: {
+      status: report.summary.status,
+      next: report.summary.next,
+    },
+  });
 }
 
 async function runCommunitiesViewer(args: ParsedArgs): Promise<void> {
