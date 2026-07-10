@@ -34,8 +34,10 @@ import {
   humanizeCount,
   humanizeTokens,
   renderStatusline,
+  renderFleetBlock,
   shortModel,
   type ClaudeInput,
+  type FleetInput,
   type ProjectInput,
   type RepoInput,
   type StatuslineInput,
@@ -181,20 +183,30 @@ function localDiffKv(repo: RepoInput | undefined): string[] {
   return value ? [kv("loc", value)] : [];
 }
 
+function fleetKv(fleet: FleetInput | undefined): string[] {
+  const block = renderFleetBlock(fleet);
+  return block ? [block] : [];
+}
+
 /** Line 1 — wine identity zone (project + model) then a transparent KPI tail. */
 export function renderHeaderLine(
   project: ProjectInput,
   claude: ClaudeInput | undefined,
   repo: RepoInput | undefined,
+  fleet?: FleetInput,
 ): string {
   let s = `${WINE2}${WHITE} ${projectContent(project)} `;
   const model = modelContent(claude);
   if (model !== null) s += `${WINE}${WHITE} ${model} `;
   // Drop the background: from here on the line is transparent.
   s += `${NOBG}${SOFT}`;
-  const tail = [ctxKv(claude), ...usageKvs(claude), ...repoCountsKv(repo), ...localDiffKv(repo)].filter(
-    (x): x is string => x !== null,
-  );
+  const tail = [
+    ctxKv(claude),
+    ...usageKvs(claude),
+    ...repoCountsKv(repo),
+    ...localDiffKv(repo),
+    ...fleetKv(fleet),
+  ].filter((x): x is string => x !== null);
   if (tail.length) s += ` ${tail.join("  ")}`;
   return `${s}${RESET}`;
 }
@@ -329,7 +341,7 @@ export interface StyleOptions {
  * (Claude Code renders each `\n`-separated segment as its own row). Zero workers
  * → only the header line. */
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
-  const lines = [renderHeaderLine(input.project, input.claude, input.repo)];
+  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet)];
   const now = opts.now ?? 0;
   lines.push(...renderWorkerLines(opts.workers ?? [], now));
   return lines.join("\n");

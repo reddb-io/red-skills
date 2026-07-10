@@ -91,6 +91,28 @@ async function seedFreshRepoCache(
   );
 }
 
+async function writeFleetSnapshot(
+  root: string,
+  over: Record<string, unknown> = {},
+): Promise<void> {
+  const dir = join(root, ".red", "tmp");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
+  await writeFile(
+    join(dir, "afk-supervisor.state.json"),
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      epoch: Math.floor(Date.now() / 1000),
+      runner: "codex",
+      ready_for_agent: 2,
+      slots: { busy: 1, free: 0, total: 1, parked: 0 },
+      spawns_this_tick: 0,
+      ...over,
+    }),
+    "utf8",
+  );
+}
+
 const PAYLOAD = JSON.stringify({
   model: { display_name: "Opus" },
   effort: { level: "high" },
@@ -433,6 +455,66 @@ describe("statusline command — rendered line", () => {
     expect(rows).toHaveLength(1); // 0 workers → header row alone
     expect(rows[0]).toContain("Opus·high");
     expect(rows[0]).toContain("47k 24%");
+  });
+
+  it("renders a fresh live supervisor fleet segment even when zero worker rows render", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 2, 0);
+    await writeFleetSnapshot(root);
+
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    const rows = stripAnsi(out.text()).trimEnd().split("\n");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("flt=codex 1/1 busy");
+    expect(rows[0]).toContain("q=2");
+    expect(rows[0]).not.toContain("wrk=");
+  });
+
+  it("suppresses the fleet segment when the supervisor pid is dead", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 2, 0);
+    await writeFleetSnapshot(root);
+    await writeFile(join(root, ".red", "tmp", "afk-supervisor.pid"), "999999999\n", "utf8");
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).not.toContain("flt=");
+  });
+
+  it("suppresses the fleet segment when the supervisor snapshot is stale", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 2, 0);
+    await writeFleetSnapshot(root, { epoch: Math.floor(Date.now() / 1000) - 3600 });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).not.toContain("flt=");
+  });
+
+  it("surfaces parked slots in the fleet segment", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 4, 0);
+    await writeFleetSnapshot(root, {
+      ready_for_agent: 4,
+      slots: { busy: 1, free: 0, total: 2, parked: 1 },
+    });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("park=1");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {

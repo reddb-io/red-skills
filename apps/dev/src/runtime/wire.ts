@@ -769,7 +769,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
 
 // ---------- statusline inputs ----------
 
-import type { AfkInput, RepoInput } from "../core/statusline.js";
+import type { AfkInput, FleetInput, RepoInput } from "../core/statusline.js";
 
 /** The DEFAULT TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
  * GitHub-derived queue/human and open-PR/open-issue counts AND the repo-global
@@ -1180,6 +1180,44 @@ export async function collectStatuslineAfk(
     effort: effort || undefined,
     sourceCounts,
     cacheAgeS,
+  };
+}
+
+const STATUSLINE_FLEET_MAX_AGE_S = 120;
+
+function readSupervisorPid(path: string): number | null {
+  try {
+    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Repo-summary fleet segment input. It is intentionally independent of live
+ * worker rows: the supervisor can be landing, validating, merging, or idle
+ * between worker loops while zero worker records are renderable.
+ */
+export async function collectStatuslineFleet(
+  ctx: RepoContext,
+  maxAgeS: number = STATUSLINE_FLEET_MAX_AGE_S,
+  nowS: number = Math.floor(Date.now() / 1000),
+): Promise<FleetInput | undefined> {
+  const paths = afkPaths(ctx.root);
+  const pid = readSupervisorPid(join(paths.tmpDir, "afk-supervisor.pid"));
+  if (pid === null || !isLivePid(pid)) return undefined;
+
+  const state = await readFleetState(paths.fleetStatePath);
+  if (!state) return undefined;
+  if (nowS - state.epoch > maxAgeS) return undefined;
+
+  return {
+    runner: state.runner,
+    busy: state.slotsBusy,
+    total: state.slotsTotal,
+    queue: state.readyForAgent,
+    parked: state.slotsParked,
   };
 }
 

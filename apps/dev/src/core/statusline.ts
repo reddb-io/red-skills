@@ -149,11 +149,26 @@ export interface RepoInput {
   cacheAgeS?: number;
 }
 
+/** Repo-global fleet-supervisor segment, independent of live worker rows. */
+export interface FleetInput {
+  /** Supervisor runner (`codex`, `claude`, `opencode`, ...). */
+  runner: string;
+  /** Busy slots from the supervisor snapshot. */
+  busy: number;
+  /** Total slots from the supervisor snapshot. */
+  total: number;
+  /** Ready-for-agent queue depth from the supervisor snapshot. */
+  queue: number;
+  /** Parked slots from the supervisor snapshot. */
+  parked?: number;
+}
+
 /** All the resolved inputs for one statusline render. */
 export interface StatuslineInput {
   project: ProjectInput;
   claude?: ClaudeInput;
   repo?: RepoInput;
+  fleet?: FleetInput;
   afk?: AfkInput;
 }
 
@@ -387,6 +402,20 @@ export function renderRepoBlock(repo: RepoInput | undefined): string | null {
   return parts.length ? parts.join(" ") : null;
 }
 
+/** Supervisor fleet cell: rendered only after IO proves pid-live and fresh. */
+export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
+  if (!fleet) return null;
+  const runner = fleet.runner || "?";
+  const busy = Math.max(0, Math.floor(fleet.busy));
+  const total = Math.max(0, Math.floor(fleet.total));
+  const queue = Math.max(0, Math.floor(fleet.queue));
+  const parts = [`flt=${runner} ${busy}/${total} busy`, `q=${queue}`];
+  if (fleet.parked !== undefined && fleet.parked > 0) {
+    parts.push(`park=${Math.floor(fleet.parked)}`);
+  }
+  return parts.join(" · ");
+}
+
 /**
  * Block 4: the space-joined AFK token run in plain text. Null when there are no
  * live workers, matching the bash `(( total_workers > 0 ))` gate around the
@@ -434,6 +463,8 @@ export function renderStatusline(input: StatuslineInput): string {
   if (usage !== null) sections.push(usage);
   const repo = renderRepoBlock(input.repo);
   if (repo !== null) sections.push(repo);
+  const fleet = renderFleetBlock(input.fleet);
+  if (fleet !== null) sections.push(fleet);
   const afk = renderAfkBlock(input.afk);
   if (afk !== null) sections.push(afk);
   return sections.join(" · ");
