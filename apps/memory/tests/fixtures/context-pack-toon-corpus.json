@@ -1,0 +1,27 @@
+{
+  "entries": [
+    {
+      "section": "hard_constraints",
+      "title": "JWT docs update required",
+      "nodeType": "decision",
+      "importance": 0.9,
+      "confidence": "high",
+      "trust": 1,
+      "citation": "urn: memory_nodes:1",
+      "reason": "matched the goal term jwt",
+      "excerpt": "JWT token work must update docs/security.md and use signed fixtures.",
+      "expandHandle": "memory:recall 1"
+    }
+  ],
+  "warnings": [],
+  "summary": {
+    "status": "ok",
+    "goal": "jwt token work",
+    "entries": 1,
+    "coreContext": 1,
+    "warnings": 0,
+    "omittedEntries": 0,
+    "budgetChars": 1200,
+    "usedChars": 362
+  }
+}
