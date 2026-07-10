@@ -1,0 +1,138 @@
+benchmark: rsp-two-axis
+corpus:
+  fixture_count: 14
+  filters[7]: "cargo:test","git:commit","git:diff","git:log","git:push","git:status","vitest:run"
+method:
+  tokenizer: "js-tiktoken:gpt-4o"
+  raw_source: recorded-command-output
+  rsp_source: fixture-renderer
+  rtk_source:
+    kind: recorded-fixtures
+    version: rtk 0.14.0
+    captured_at: "2026-07-10T00:00:00.000Z"
+  external_claims[1]{layer,claim,status,measured_locally,note}:
+    external-context-optimization,Host/provider conversation-history optimization and cache-prefix alignment can reduce repeated context spend.,cited_unverified,false,The rsp benchmark measures shell-output fixtures only; external history-layer claims are not reproduced here.
+filters[7]:
+  - filter: "cargo:test"
+    fixture_count: 3
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: 61.9
+      p90_delta_pct: 84.2
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: 67.8
+      p90_delta_pct: 82.4
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "git:commit"
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: -109.1
+      p90_delta_pct: -109.1
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: -78.8
+      p90_delta_pct: -78.8
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "git:diff"
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: -111.5
+      p90_delta_pct: -111.5
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: -23.1
+      p90_delta_pct: -23.1
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "git:log"
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: -30.7
+      p90_delta_pct: -30.7
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: 59.1
+      p90_delta_pct: 59.1
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "git:push"
+    fixture_count: 2
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: -37.1
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: 13.8
+      p90_delta_pct: 27.6
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "git:status"
+    fixture_count: 2
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: 60.5
+      p90_delta_pct: 75
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: 23.7
+      p90_delta_pct: 72.3
+      fidelity_pass_rate_pct: 100
+      source: recorded
+  - filter: "vitest:run"
+    fixture_count: 4
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    rsp:
+      median_delta_pct: 58.8
+      p90_delta_pct: 86.8
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      median_delta_pct: 86.3
+      p90_delta_pct: 92.8
+      fidelity_pass_rate_pct: 100
+      source: recorded
+parity[2]{domain,filter,rsp_median_delta_pct,rtk_median_delta_pct,rsp_fidelity_pass_rate_pct,rtk_fidelity_pass_rate_pct,parity_gate}:
+  cargo-test,"cargo:test",61.9,67.8,100,100,fail
+  git-commit,"git:commit",-109.1,-78.8,100,100,fail
+summary: "14 fixtures, 7 filters; tokens and fidelity reported together"
