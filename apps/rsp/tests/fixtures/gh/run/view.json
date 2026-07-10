@@ -1,0 +1,16 @@
+{
+  "name": "run-view-log",
+  "command": ["gh", "run", "view", "9001"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for run view: databaseId,name,status,conclusion,jobs; job log text is elided unless --full.",
+  "recorded": {
+    "stdout": "{\"databaseId\":9001,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"failure\",\"jobs\":[{\"name\":\"test\",\"status\":\"completed\",\"conclusion\":\"failure\",\"log\":\"vitest failed in apps/rsp/tests/gh-wrapper.test.ts after rendering a long assertion message, stack trace, expected payload, received payload, fixture path, retry hint, and final process summary.\"}]}",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {},
+  "assertions": [
+    { "question": "which run was viewed?", "path": "run.id", "expected": 9001 },
+    { "question": "what escape hatch is advertised?", "path": "run.jobs.0.log.truncated.hint", "expected": "--full" }
+  ]
+}
