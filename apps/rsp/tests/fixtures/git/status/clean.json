@@ -1,0 +1,12 @@
+{
+  "name": "status-clean",
+  "command": ["git", "status"],
+  "recorded": {
+    "stdout": "# branch.oid abc123\u0000# branch.head main\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": "git empty\n",
+  "assertions": []
+}
