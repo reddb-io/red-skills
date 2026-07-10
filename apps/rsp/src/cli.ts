@@ -5,6 +5,7 @@ import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
 import { runGitWrapper } from "./git-wrapper.js";
 import { runGhWrapper } from "./gh-wrapper.js";
+import { runClaudePreExecHook } from "./intercept.js";
 import { runTestWrapper } from "./test-wrapper.js";
 
 interface ParsedArgs {
@@ -17,6 +18,10 @@ interface ParsedArgs {
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
+  if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
+    return await runClaudePreExecHook();
+  }
+
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     process.stdout.write("error: rsp repo store is not provisioned - run /setup-red-skills\n");
