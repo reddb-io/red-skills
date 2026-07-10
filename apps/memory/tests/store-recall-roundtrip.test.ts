@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { decode } from "@reddb-io/toon";
 import { initMarkdownOnly } from "../src/init.js";
 import { resolveNotesDir } from "../src/config.js";
 import { recall } from "../src/recall.js";
@@ -99,7 +100,10 @@ describe("memory recall --layer (issue #175)", () => {
     for (const layer of ["L1", "L2"]) {
       const run = runMemory(["recall", "--root", root, "--layer", layer, "database password rotation"]);
       expect(run.status).toBe(0);
-      expect(run.stdout).toContain("no matches");
+      expect(decode(run.stdout)).toMatchObject({
+        items: [],
+        summary: { status: "0 results", results: 0 },
+      });
     }
   });
 
