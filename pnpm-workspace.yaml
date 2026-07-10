@@ -16,6 +16,7 @@ catalog:
   "@types/node": ^22.0.0
   zod: ^3.23.8
   "@modelcontextprotocol/sdk": ^1.0.0
+  "@toon-format/toon": ^2.3.0
 
 onlyBuiltDependencies:
   - "@reddb-io/sdk"
