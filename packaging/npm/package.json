@@ -15,7 +15,8 @@
   "bin": {
     "red-skills-dev": "bin/red-skills-dev.mjs",
     "red-skills-memory": "bin/red-skills-memory.mjs",
-    "red-skills-brain": "bin/red-skills-brain.mjs"
+    "red-skills-brain": "bin/red-skills-brain.mjs",
+    "rsp": "bin/rsp.mjs"
   },
   "files": [
     "bin/",
