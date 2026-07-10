@@ -1,0 +1,23 @@
+{
+  "name": "issue-list-default",
+  "command": ["gh", "issue", "list"],
+  "catalog_prior_art": "official catalog GitHub wrapper field choice mined for issue list: number,title,state,labels.",
+  "recorded": {
+    "stdout": "[{\"number\":1414,\"title\":\"rsp gh wrapper\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"ready-for-agent\"}]},{\"number\":1412,\"title\":\"rsp git wrapper\",\"state\":\"CLOSED\",\"labels\":[{\"name\":\"type:ticket\"}]}]",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "gh issue list",
+    "issues": [
+      { "number": 1414, "title": "rsp gh wrapper", "state": "open", "labels": ["ready-for-agent"] },
+      { "number": 1412, "title": "rsp git wrapper", "state": "closed", "labels": ["type:ticket"] }
+    ],
+    "summary": "2 returned issues"
+  },
+  "assertions": [
+    { "question": "how many fields are in a default issue row?", "path": "issues.0.length", "expected": 4 },
+    { "question": "which issue is first?", "path": "issues.0.number", "expected": 1414 }
+  ]
+}
