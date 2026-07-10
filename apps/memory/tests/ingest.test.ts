@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { graphRecall } from "../src/graph-recall.js";
 import { MemoryStore } from "../src/graph-store.js";
-import { ingestProject, refreshFiles } from "../src/ingest.js";
+import { ingestProject, refreshFiles, renderIngestReportToon } from "../src/ingest.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
 const TIMEOUT = 30_000;
@@ -54,6 +54,119 @@ describe("ingestProject over a TS+MD fixture repo", () => {
 
       const { nodes } = await store.stats();
       expect(nodes).toBe(report.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "semantic pass writes INFERRED graph facts with confidence bands and token cost",
+    async () => {
+      const store = await openStore();
+      const calls: string[] = [];
+      const report = await ingestProject(store, {
+        cwd: FIXTURE_REPO,
+        semantic: {
+          enabled: true,
+          client: {
+            async complete(req) {
+              calls.push(`${req.system}\n${req.user}`);
+              return JSON.stringify({
+                facts: [
+                  {
+                    label: "fixture-token-rotation",
+                    node_type: "decision",
+                    title: "Fixture token rotation",
+                    summary: "The fixture documents JWT token rotation behavior.",
+                    confidence_band: "high",
+                    relations: [{ label: "REFERENCES", target: "fixture-token-verifier" }],
+                  },
+                  {
+                    label: "fixture-token-verifier",
+                    node_type: "symbol",
+                    title: "Fixture token verifier",
+                    summary: "The code fixture verifies issued tokens.",
+                    confidence_band: "medium",
+                  },
+                ],
+              });
+            },
+          },
+        },
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("src/auth.ts");
+      expect(calls[0]).toContain("docs/guide.md");
+      expect(report.semantic).toMatchObject({
+        enabled: true,
+        nodes: 2,
+        edges: 1,
+      });
+      expect(report.semantic.token_cost.input).toBeGreaterThan(0);
+      expect(report.semantic.token_cost.output).toBeGreaterThan(0);
+
+      const nodes = await store.listNodes();
+      const inferred = nodes.find((node) => node.label === "fixture-token-rotation");
+      expect(inferred).toMatchObject({
+        node_type: "decision",
+        properties: {
+          confidence: "INFERRED",
+          confidence_band: "high",
+          source: "corpus-ingest",
+        },
+      });
+      const target = nodes.find((node) => node.label === "fixture-token-verifier");
+      expect(target?.properties.confidence_band).toBe("medium");
+      const edges = await store.listEdges();
+      const inferredEdge = edges.find(
+        (edge) =>
+          edge.from_rid === inferred?.rid &&
+          edge.to_rid === target?.rid &&
+          edge.label === "REFERENCES",
+      );
+      expect(inferredEdge?.properties ?? inferredEdge?.PROPERTIES).toEqual(
+        expect.objectContaining({
+          confidence: "INFERRED",
+          confidence_band: "medium",
+        }),
+      );
+
+      const toon = renderIngestReportToon(report, { includeSemanticCost: true });
+      expect(toon).toContain("ingest[1]{files,nodes,edges,docs");
+      expect(toon).toContain("semantic_token_input");
+      expect(toon).toContain("semantic_token_output");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "structural-only semantic setting skips provider entirely and omits cost from TOON",
+    async () => {
+      const store = await openStore();
+      let calls = 0;
+      const report = await ingestProject(store, {
+        cwd: FIXTURE_REPO,
+        semantic: {
+          enabled: false,
+          client: {
+            async complete() {
+              calls += 1;
+              throw new Error("provider must not be called");
+            },
+          },
+        },
+      });
+
+      expect(calls).toBe(0);
+      expect(report.semantic).toEqual({
+        enabled: false,
+        nodes: 0,
+        edges: 0,
+        token_cost: { input: 0, output: 0 },
+      });
+      expect(renderIngestReportToon(report, { includeSemanticCost: false })).not.toContain(
+        "semantic_token",
+      );
     },
     TIMEOUT,
   );

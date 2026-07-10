@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { EXTRACTION_PROFILES, STRUCTURAL_TYPES } from "./extraction-schema.js";
 import { contentHash } from "./hash.js";
-import { EDGE_LABELS, NODE_TYPES, type EdgeLabel, type MemoryNode, type NodeType } from "./schema.js";
+import {
+  EDGE_LABELS,
+  NODE_TYPES,
+  type EdgeLabel,
+  type MemoryEdgeProps,
+  type MemoryNode,
+  type NodeType,
+} from "./schema.js";
 
 /**
  * LLM conversation extraction — the `INFERRED` path.
@@ -107,6 +114,7 @@ export interface ExtractedFact {
   node_type: string;
   title: string;
   summary?: string;
+  confidence_band?: "low" | "medium" | "high";
   tags?: string[];
   relations: Array<{ label: EdgeLabel; target: string }>;
 }
@@ -220,6 +228,7 @@ const FactSchema = z.object({
   node_type: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().optional(),
+  confidence_band: z.enum(["low", "medium", "high"]).optional(),
   tags: z.array(z.string()).optional(),
   relations: z.array(RelationSchema).optional(),
 });
@@ -265,6 +274,7 @@ export function parseExtraction(raw: string): ExtractedFact[] {
       summary: f.summary,
       tags: f.tags,
       relations: f.relations ?? [],
+      ...(f.confidence_band ? { confidence_band: f.confidence_band } : {}),
     });
   }
   // Drop relations whose target is not itself an extracted fact.
@@ -385,7 +395,12 @@ const KNOWN_NODE_TYPES: ReadonlySet<string> = new Set<string>([
 /** A graph fragment ready for the ingest indexer: nodes + label-keyed edges. */
 export interface InferredExtraction {
   nodes: MemoryNode[];
-  edges: Array<{ fromLabel: string; toLabel: string; label: EdgeLabel }>;
+  edges: Array<{
+    fromLabel: string;
+    toLabel: string;
+    label: EdgeLabel;
+    properties?: MemoryEdgeProps;
+  }>;
 }
 
 /**
@@ -416,6 +431,7 @@ export function factsToGraph(facts: ExtractedFact[], source = "conversation"): I
         tags: f.tags,
         source,
         confidence: "INFERRED" as const,
+        confidence_band: f.confidence_band ?? "medium",
         provenance_tier: "proxy" as const,
         structural_type: resolution.structuralType,
         engineering_code: resolution.engineeringCode ?? f.node_type,
@@ -427,7 +443,16 @@ export function factsToGraph(facts: ExtractedFact[], source = "conversation"): I
   const edges: InferredExtraction["edges"] = [];
   for (const f of facts) {
     for (const rel of f.relations) {
-      edges.push({ fromLabel: f.label, toLabel: rel.target, label: rel.label });
+      edges.push({
+        fromLabel: f.label,
+        toLabel: rel.target,
+        label: rel.label,
+        properties: {
+          confidence: "INFERRED",
+          confidence_band: "medium",
+          source,
+        },
+      });
     }
   }
   return { nodes, edges };

@@ -16,6 +16,7 @@ function emptyReport(): IngestReport {
     updated: 0,
     skipped: 0,
     stale: 0,
+    semantic: { enabled: false, nodes: 0, edges: 0, token_cost: { input: 0, output: 0 } },
     durationMs: 1,
   };
 }
