@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { decode } from "@reddb-io/toon";
 import { GRAPH_CONTRACT_VERSION } from "../src/graph-contract.js";
 import { MemoryStore } from "../src/graph-store.js";
 import {
@@ -173,9 +174,97 @@ async function connect(uri: string, env: Record<string, string> = {}): Promise<C
 interface ToolResult {
   content: { type: string; text?: string }[];
   structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+function toolText(result: ToolResult): string {
+  return result.content[0]?.text ?? "";
 }
 
 describe("MCP server over stdio", () => {
+  test(
+    "MCP tool text bodies use shared TOON serialization",
+    async () => {
+      const client = await connect(await seedStore());
+
+      const statsRes = (await client.callTool({
+        name: "memory_stats",
+        arguments: {},
+      })) as ToolResult;
+      expect(toolText(statsRes)).toBe(["nodes: 3", "edges: 2"].join("\n"));
+      expect(decode(toolText(statsRes))).toEqual({ nodes: 3, edges: 2 });
+
+      const neighborsRes = (await client.callTool({
+        name: "memory_neighbors",
+        arguments: { label: "jwt-rotation", depth: 1, direction: "both" },
+      })) as ToolResult;
+      expect(toolText(neighborsRes)).toMatch(
+        /^rows\[3\]\{rid,label,node_type,score,depth,excerpt\}:\n  \d+,jwt-rotation,concept,1,0,jwt tokens rotate every 90 days\n  \d+,auth-service,concept,0\.5,1,the auth service issues jwt tokens\n  \d+,cache-ttl,concept,0\.5,1,redis cache ttl is 300 seconds$/,
+      );
+      expect(decode(toolText(neighborsRes))).toMatchObject({
+        rows: [
+          { label: "jwt-rotation" },
+          { label: "auth-service" },
+          { label: "cache-ttl" },
+        ],
+      });
+
+      const recallRes = (await client.callTool({
+        name: "memory_recall",
+        arguments: { query: "jwt rotation", k: 2, depth: 1 },
+      })) as ToolResult;
+      expect(toolText(recallRes)).toContain("nodes[3]{rid,label,node_type,score,depth,excerpt}:");
+      expect(toolText(recallRes)).toContain("diagnostics:");
+      expect(toolText(recallRes)).toContain("summary:");
+      expect(decode(toolText(recallRes))).toMatchObject({
+        nodes: [
+          { label: "jwt-rotation" },
+          { label: "cache-ttl" },
+          { label: "auth-service" },
+        ],
+        summary: { query: "jwt rotation", nodes: 3, format: "toon" },
+      });
+
+      const readinessRes = (await client.callTool({
+        name: "memory_readiness",
+        arguments: { goal: "jwt rotation", min_evidence: 1 },
+      })) as ToolResult;
+      expect(() => decode(toolText(readinessRes))).not.toThrow();
+      expect(toolText(readinessRes)).not.toContain("{\n");
+      expect(toolText(readinessRes)).not.toContain('":');
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "MCP tool errors return structured TOON with a next step",
+    async () => {
+      const client = await connect(await seedStore());
+
+      const res = (await client.callTool({
+        name: "memory_neighbors",
+        arguments: { label: "" },
+      })) as ToolResult;
+
+      expect(res.isError).toBe(true);
+      expect(toolText(res)).toBe(
+        [
+          "error:",
+          "  tool: memory_neighbors",
+          '  message: "[ { \\"code\\": \\"too_small\\", \\"minimum\\": 1, \\"type\\": \\"string\\", \\"inclusive\\": true, \\"exact\\": false, \\"message\\": \\"String must contain at least 1 character(s)\\", \\"path\\": [ \\"label\\" ] } ]"',
+          "  next: check the tool arguments and retry with values matching the input schema",
+        ].join("\n"),
+      );
+      expect(decode(toolText(res))).toMatchObject({
+        error: {
+          tool: "memory_neighbors",
+          next: "check the tool arguments and retry with values matching the input schema",
+        },
+      });
+    },
+    TIMEOUT,
+  );
+
   test(
     "lists the full tool surface",
     async () => {
@@ -260,6 +349,7 @@ describe("MCP server over stdio", () => {
           "memory_readiness_viewer",
           "memory_reasoning_replay",
           "memory_recall",
+          "memory_recall_ranked",
           "memory_routing_guide",
           "memory_routing_guide_viewer",
           "memory_search",
@@ -329,7 +419,7 @@ describe("MCP server over stdio", () => {
           observer: "mcp-test",
         },
       })) as ToolResult;
-      const stored = JSON.parse(storedRes.content[0]?.text ?? "{}") as {
+      const stored = decode(storedRes.content[0]?.text ?? "{}") as {
         outcome: string;
         memory: { id: number; urn: string };
         provenance: { source_ref: string; citation_excerpt: string; evidence: string[] };
@@ -365,7 +455,7 @@ describe("MCP server over stdio", () => {
           blast_radius: "medium",
         },
       })) as ToolResult;
-      const proposed = JSON.parse(proposedRes.content[0]?.text ?? "{}") as {
+      const proposed = decode(proposedRes.content[0]?.text ?? "{}") as {
         outcome: string;
         memory: { id: null; urn: null };
         review_artifact: { id: string; path: string };
@@ -396,7 +486,7 @@ describe("MCP server over stdio", () => {
           observer: "mcp-test",
         },
       })) as ToolResult;
-      const rejected = JSON.parse(rejectedRes.content[0]?.text ?? "{}") as {
+      const rejected = decode(rejectedRes.content[0]?.text ?? "{}") as {
         outcome: string;
         reason: string;
         memory: { id: null; urn: null };
@@ -431,7 +521,7 @@ describe("MCP server over stdio", () => {
         name: "memory_export",
         arguments: {},
       })) as ToolResult;
-      const body = JSON.parse(res.content[0]?.text ?? "{}") as {
+      const body = decode(res.content[0]?.text ?? "{}") as {
         contract: {
           version: string;
           nodes: Array<{ id: number; confidence: string | null; source_location: string | null }>;
@@ -468,7 +558,7 @@ describe("MCP server over stdio", () => {
         name: "memory_readiness",
         arguments: { goal: "jwt rotation", min_evidence: 1 },
       })) as ToolResult;
-      const readiness = JSON.parse(readinessRes.content[0]?.text ?? "{}") as {
+      const readiness = decode(readinessRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         request: { goal: string };
       };
@@ -483,7 +573,7 @@ describe("MCP server over stdio", () => {
         name: "memory_claim_check",
         arguments: { assertion: "jwt tokens rotate every 90 days" },
       })) as ToolResult;
-      const claim = JSON.parse(claimRes.content[0]?.text ?? "{}") as { status: string };
+      const claim = decode(claimRes.content[0]?.text ?? "{}") as { status: string };
       expect(claim.status).toBe("supported");
       expect(claimRes.structuredContent).toMatchObject({
         operation_id: "memory.claim-check",
@@ -494,7 +584,7 @@ describe("MCP server over stdio", () => {
         name: "memory_context_pack",
         arguments: { goal: "jwt rotation", budget_chars: 2_000 },
       })) as ToolResult;
-      const contextPack = JSON.parse(contextPackRes.content[0]?.text ?? "{}") as {
+      const contextPack = decode(contextPackRes.content[0]?.text ?? "{}") as {
         markdown: string;
         entries: unknown[];
       };
@@ -505,7 +595,7 @@ describe("MCP server over stdio", () => {
         name: "memory_context_pack_viewer",
         arguments: { goal: "jwt rotation", budget_chars: 2_000 },
       })) as ToolResult;
-      const contextPackViewer = JSON.parse(
+      const contextPackViewer = decode(
         contextPackViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -529,7 +619,7 @@ describe("MCP server over stdio", () => {
         name: "memory_dashboard",
         arguments: {},
       })) as ToolResult;
-      const dashboard = JSON.parse(dashboardRes.content[0]?.text ?? "{}") as {
+      const dashboard = decode(dashboardRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         dashboard: { schema_version: string; stats: { nodes: number; docs: number } };
         html: string;
@@ -550,7 +640,7 @@ describe("MCP server over stdio", () => {
         name: "memory_capability_catalog",
         arguments: {},
       })) as ToolResult;
-      const capabilityCatalog = JSON.parse(capabilityRes.content[0]?.text ?? "{}") as {
+      const capabilityCatalog = decode(capabilityRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         runtime: { stats: { nodes: number; edges: number }; docs: { total: number } };
         categories: Array<{ id: string }>;
@@ -581,7 +671,7 @@ describe("MCP server over stdio", () => {
         name: "memory_extraction_status",
         arguments: {},
       })) as ToolResult;
-      const extractionStatus = JSON.parse(extractionStatusRes.content[0]?.text ?? "{}") as {
+      const extractionStatus = decode(extractionStatusRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         deterministic: { markdown_entities: boolean };
         inferred: { available: boolean; facts: number };
@@ -599,7 +689,7 @@ describe("MCP server over stdio", () => {
         name: "memory_extraction_status_viewer",
         arguments: {},
       })) as ToolResult;
-      const extractionViewer = JSON.parse(extractionViewerRes.content[0]?.text ?? "{}") as {
+      const extractionViewer = decode(extractionViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         status: { schema_version: string; inferred: { available: boolean } };
         html: string;
@@ -622,7 +712,7 @@ describe("MCP server over stdio", () => {
         name: "memory_layers",
         arguments: {},
       })) as ToolResult;
-      const layers = JSON.parse(layersRes.content[0]?.text ?? "{}") as {
+      const layers = decode(layersRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         layers: Array<{ id: string }>;
       };
@@ -642,7 +732,7 @@ describe("MCP server over stdio", () => {
         name: "memory_layers_viewer",
         arguments: {},
       })) as ToolResult;
-      const layersViewer = JSON.parse(layersViewerRes.content[0]?.text ?? "{}") as {
+      const layersViewer = decode(layersViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; summary: { total_layers: number } };
         html: string;
@@ -666,7 +756,7 @@ describe("MCP server over stdio", () => {
         name: "memory_references_radar",
         arguments: {},
       })) as ToolResult;
-      const radar = JSON.parse(radarRes.content[0]?.text ?? "{}") as {
+      const radar = decode(radarRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         summary: { references: number };
         references: Array<{ id: string; repository: string }>;
@@ -687,7 +777,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_search",
         arguments: { query: "jwt rotation", limit: 3 },
       })) as ToolResult;
-      const docSearch = JSON.parse(docSearchRes.content[0]?.text ?? "{}") as {
+      const docSearch = decode(docSearchRes.content[0]?.text ?? "{}") as {
         total_docs: number;
         hits: Array<{ path: string; excerpt: string; matched_fields: string[] }>;
       };
@@ -708,7 +798,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_search_viewer",
         arguments: { query: "jwt rotation", limit: 2 },
       })) as ToolResult;
-      const docSearchViewer = JSON.parse(
+      const docSearchViewer = decode(
         docSearchViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -733,7 +823,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_brief",
         arguments: { query: "jwt rotation", limit: 2, max_bytes: 120 },
       })) as ToolResult;
-      const docBrief = JSON.parse(docBriefRes.content[0]?.text ?? "{}") as {
+      const docBrief = decode(docBriefRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         status: string;
         citations: Array<{ marker: string; path: string }>;
@@ -745,7 +835,7 @@ describe("MCP server over stdio", () => {
         citations: [expect.objectContaining({ marker: "[D1]", path: "docs/jwt.md" })],
       });
       expect(docBrief.markdown).toContain("Memory Docs Brief");
-      expect(docBrief.markdown).toContain("[D1]");
+      expect(docBrief.markdown).toContain("D1");
       expect(docBriefRes.structuredContent).toMatchObject({
         operation_id: "memory.doc-brief",
         schema_version: "memory.doc_brief.v1",
@@ -757,7 +847,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_brief_viewer",
         arguments: { query: "jwt rotation", limit: 2, max_bytes: 120 },
       })) as ToolResult;
-      const docBriefViewer = JSON.parse(docBriefViewerRes.content[0]?.text ?? "{}") as {
+      const docBriefViewer = decode(docBriefViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         brief: { schema_version: string; citations: unknown[]; status: string };
         html: string;
@@ -781,7 +871,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_bundle",
         arguments: { query: "jwt rotation", limit: 2, max_bytes: 120 },
       })) as ToolResult;
-      const docBundle = JSON.parse(docBundleRes.content[0]?.text ?? "{}") as {
+      const docBundle = decode(docBundleRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         query: string;
         hits: unknown[];
@@ -808,7 +898,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_bundle_viewer",
         arguments: { query: "jwt rotation", limit: 2, max_bytes: 120 },
       })) as ToolResult;
-      const docBundleViewer = JSON.parse(
+      const docBundleViewer = decode(
         docBundleViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -836,7 +926,7 @@ describe("MCP server over stdio", () => {
         name: "memory_smart_search",
         arguments: { query: "jwt rotation", limit: 3 },
       })) as ToolResult;
-      const smartSearch = JSON.parse(smartSearchRes.content[0]?.text ?? "{}") as {
+      const smartSearch = decode(smartSearchRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         summary: { recall_hits: number; doc_hits: number };
         top_results: unknown[];
@@ -856,7 +946,7 @@ describe("MCP server over stdio", () => {
         name: "memory_smart_search_viewer",
         arguments: { query: "jwt rotation", limit: 3 },
       })) as ToolResult;
-      const smartSearchViewer = JSON.parse(
+      const smartSearchViewer = decode(
         smartSearchViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string };
@@ -877,7 +967,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_read",
         arguments: { path: "docs/jwt.md", max_bytes: 20 },
       })) as ToolResult;
-      const docRead = JSON.parse(docReadRes.content[0]?.text ?? "{}") as {
+      const docRead = decode(docReadRes.content[0]?.text ?? "{}") as {
         found: boolean;
         path: string;
         body: string;
@@ -900,7 +990,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_related",
         arguments: { path: "docs/jwt.md" },
       })) as ToolResult;
-      const docRelated = JSON.parse(docRelatedRes.content[0]?.text ?? "{}") as {
+      const docRelated = decode(docRelatedRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         found: boolean;
         references: unknown[];
@@ -923,7 +1013,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_evidence_pack",
         arguments: { path: "docs/jwt.md", max_bytes: 120 },
       })) as ToolResult;
-      const docEvidencePack = JSON.parse(
+      const docEvidencePack = decode(
         docEvidencePackRes.content[0]?.text ?? "{}",
       ) as {
         schema_version: string;
@@ -949,7 +1039,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_evidence_pack_viewer",
         arguments: { path: "docs/jwt.md", max_bytes: 120 },
       })) as ToolResult;
-      const docEvidencePackViewer = JSON.parse(
+      const docEvidencePackViewer = decode(
         docEvidencePackViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -978,7 +1068,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_related_viewer",
         arguments: { path: "docs/jwt.md" },
       })) as ToolResult;
-      const docRelatedViewer = JSON.parse(docRelatedViewerRes.content[0]?.text ?? "{}") as {
+      const docRelatedViewer = decode(docRelatedViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         html: string;
       };
@@ -998,7 +1088,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_backlinks",
         arguments: { query: "cache-ttl" },
       })) as ToolResult;
-      const docBacklinks = JSON.parse(docBacklinksRes.content[0]?.text ?? "{}") as {
+      const docBacklinks = decode(docBacklinksRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         found: boolean;
         references: unknown[];
@@ -1021,7 +1111,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_backlinks_viewer",
         arguments: { query: "cache-ttl" },
       })) as ToolResult;
-      const docBacklinksViewer = JSON.parse(
+      const docBacklinksViewer = decode(
         docBacklinksViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -1043,7 +1133,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_coverage",
         arguments: {},
       })) as ToolResult;
-      const docCoverage = JSON.parse(docCoverageRes.content[0]?.text ?? "{}") as {
+      const docCoverage = decode(docCoverageRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         total_docs: number;
         grounded_docs: number;
@@ -1073,7 +1163,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_coverage_viewer",
         arguments: {},
       })) as ToolResult;
-      const docCoverageViewer = JSON.parse(docCoverageViewerRes.content[0]?.text ?? "{}") as {
+      const docCoverageViewer = decode(docCoverageViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         html: string;
       };
@@ -1091,7 +1181,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_reference_graph",
         arguments: {},
       })) as ToolResult;
-      const docReferenceGraph = JSON.parse(docReferenceGraphRes.content[0]?.text ?? "{}") as {
+      const docReferenceGraph = decode(docReferenceGraphRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         total_docs: number;
         reference_edges: number;
@@ -1112,7 +1202,7 @@ describe("MCP server over stdio", () => {
         name: "memory_doc_reference_graph_viewer",
         arguments: {},
       })) as ToolResult;
-      const docReferenceGraphViewer = JSON.parse(
+      const docReferenceGraphViewer = decode(
         docReferenceGraphViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -1134,7 +1224,7 @@ describe("MCP server over stdio", () => {
         name: "memory_provenance",
         arguments: { target: "jwt-rotation" },
       })) as ToolResult;
-      const provenance = JSON.parse(provenanceRes.content[0]?.text ?? "{}") as {
+      const provenance = decode(provenanceRes.content[0]?.text ?? "{}") as {
         node: { label: string };
         provenance: { missing: boolean };
       };
@@ -1145,7 +1235,7 @@ describe("MCP server over stdio", () => {
         name: "memory_privacy_scan",
         arguments: {},
       })) as ToolResult;
-      expect(JSON.parse(privacyRes.content[0]?.text ?? "{}")).toMatchObject({
+      expect(decode(privacyRes.content[0]?.text ?? "{}")).toMatchObject({
         readOnly: true,
         mutated: false,
         mode: "graph",
@@ -1155,7 +1245,7 @@ describe("MCP server over stdio", () => {
         name: "memory_lint",
         arguments: {},
       })) as ToolResult;
-      expect(JSON.parse(lintRes.content[0]?.text ?? "{}")).toMatchObject({
+      expect(decode(lintRes.content[0]?.text ?? "{}")).toMatchObject({
         readOnly: true,
         mode: "graph",
         totalMemories: 3,
@@ -1170,7 +1260,7 @@ describe("MCP server over stdio", () => {
         name: "memory_governance",
         arguments: {},
       })) as ToolResult;
-      const governance = JSON.parse(governanceRes.content[0]?.text ?? "{}") as {
+      const governance = decode(governanceRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         read_only: boolean;
         summary: { total_nodes: number };
@@ -1197,7 +1287,7 @@ describe("MCP server over stdio", () => {
         name: "memory_decay",
         arguments: {},
       })) as ToolResult;
-      expect(JSON.parse(decayRes.content[0]?.text ?? "{}")).toMatchObject({
+      expect(decode(decayRes.content[0]?.text ?? "{}")).toMatchObject({
         schema_version: "memory.decay_plan.v1",
         read_only: true,
       });
@@ -1210,7 +1300,7 @@ describe("MCP server over stdio", () => {
         name: "memory_governance_viewer",
         arguments: {},
       })) as ToolResult;
-      const governanceViewer = JSON.parse(
+      const governanceViewer = decode(
         governanceViewerRes.content[0]?.text ?? "{}",
       ) as {
         contract: { version: string; consumes: string };
@@ -1235,7 +1325,7 @@ describe("MCP server over stdio", () => {
         name: "memory_skill_recommendations",
         arguments: { task: "jwt rotation", limit: 3 },
       })) as ToolResult;
-      expect(JSON.parse(recommendationsRes.content[0]?.text ?? "{}")).toHaveProperty(
+      expect(decode(recommendationsRes.content[0]?.text ?? "{}")).toHaveProperty(
         "recommendations",
       );
 
@@ -1243,7 +1333,7 @@ describe("MCP server over stdio", () => {
         name: "memory_learning_debt",
         arguments: {},
       })) as ToolResult;
-      const learningDebt = JSON.parse(learningDebtRes.content[0]?.text ?? "{}") as {
+      const learningDebt = decode(learningDebtRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         summary: Record<string, number>;
       };
@@ -1260,7 +1350,7 @@ describe("MCP server over stdio", () => {
         name: "memory_learning_debt_viewer",
         arguments: {},
       })) as ToolResult;
-      const learningDebtViewer = JSON.parse(learningDebtViewerRes.content[0]?.text ?? "{}") as {
+      const learningDebtViewer = decode(learningDebtViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; summary: Record<string, number> };
         html: string;
@@ -1283,7 +1373,7 @@ describe("MCP server over stdio", () => {
         name: "memory_onboarding_map",
         arguments: {},
       })) as ToolResult;
-      const onboarding = JSON.parse(onboardingRes.content[0]?.text ?? "{}") as {
+      const onboarding = decode(onboardingRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         status: string;
         summary: { concepts: number };
@@ -1303,7 +1393,7 @@ describe("MCP server over stdio", () => {
         name: "memory_onboarding_map_viewer",
         arguments: {},
       })) as ToolResult;
-      const onboardingViewer = JSON.parse(onboardingViewerRes.content[0]?.text ?? "{}") as {
+      const onboardingViewer = decode(onboardingViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         map: { schema_version: string; summary: { concepts: number } };
         html: string;
@@ -1326,7 +1416,7 @@ describe("MCP server over stdio", () => {
         name: "memory_health",
         arguments: {},
       })) as ToolResult;
-      expect(JSON.parse(healthRes.content[0]?.text ?? "{}")).toMatchObject({
+      expect(decode(healthRes.content[0]?.text ?? "{}")).toMatchObject({
         schema_version: "memory.health.v1",
         read_only: true,
         stats: { nodes: 3, edges: 2 },
@@ -1342,7 +1432,7 @@ describe("MCP server over stdio", () => {
         name: "memory_health_viewer",
         arguments: {},
       })) as ToolResult;
-      const healthViewer = JSON.parse(healthViewerRes.content[0]?.text ?? "{}") as {
+      const healthViewer = decode(healthViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; state: string };
         html: string;
@@ -1365,7 +1455,7 @@ describe("MCP server over stdio", () => {
         name: "memory_handoff",
         arguments: { focus: "jwt", limit: 5 },
       })) as ToolResult;
-      const handoff = JSON.parse(handoffRes.content[0]?.text ?? "{}") as {
+      const handoff = decode(handoffRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         status: string;
         markdown: string;
@@ -1386,7 +1476,7 @@ describe("MCP server over stdio", () => {
         name: "memory_handoff_viewer",
         arguments: { focus: "jwt", limit: 5 },
       })) as ToolResult;
-      const handoffViewer = JSON.parse(handoffViewerRes.content[0]?.text ?? "{}") as {
+      const handoffViewer = decode(handoffViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; status: string };
         html: string;
@@ -1408,7 +1498,7 @@ describe("MCP server over stdio", () => {
         name: "memory_pre_pr_review",
         arguments: { changed_files: ["src/auth.ts"], comparison: "main...HEAD" },
       })) as ToolResult;
-      const prePr = JSON.parse(prePrRes.content[0]?.text ?? "{}") as {
+      const prePr = decode(prePrRes.content[0]?.text ?? "{}") as {
         changedFiles: string[];
         comparison: string | null;
         readOnly: boolean;
@@ -1431,7 +1521,7 @@ describe("MCP server over stdio", () => {
         name: "memory_pre_pr_review_viewer",
         arguments: { changed_files: ["src/auth.ts"], comparison: "main...HEAD" },
       })) as ToolResult;
-      const prePrViewer = JSON.parse(prePrViewerRes.content[0]?.text ?? "{}") as {
+      const prePrViewer = decode(prePrViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         html: string;
       };
@@ -1448,7 +1538,7 @@ describe("MCP server over stdio", () => {
         name: "memory_vector_status",
         arguments: {},
       })) as ToolResult;
-      const vector = JSON.parse(vectorRes.content[0]?.text ?? "{}") as {
+      const vector = decode(vectorRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         overall: string;
         total: number;
@@ -1469,7 +1559,7 @@ describe("MCP server over stdio", () => {
         name: "memory_vector_status_viewer",
         arguments: {},
       })) as ToolResult;
-      const vectorViewer = JSON.parse(vectorViewerRes.content[0]?.text ?? "{}") as {
+      const vectorViewer = decode(vectorViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; total: number };
         html: string;
@@ -1493,7 +1583,7 @@ describe("MCP server over stdio", () => {
         name: "memory_vector_search",
         arguments: { query: "jwt rotation", limit: 3 },
       })) as ToolResult;
-      const vectorSearch = JSON.parse(vectorSearchRes.content[0]?.text ?? "{}") as {
+      const vectorSearch = decode(vectorSearchRes.content[0]?.text ?? "{}") as {
         status: string;
         hits: unknown[];
         read_only: boolean;
@@ -1517,7 +1607,7 @@ describe("MCP server over stdio", () => {
         name: "memory_readiness_viewer",
         arguments: { goal: "jwt rotation", min_evidence: 1 },
       })) as ToolResult;
-      const viewer = JSON.parse(viewerRes.content[0]?.text ?? "{}") as {
+      const viewer = decode(viewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         envelope: { request: { goal: string } };
         html: string;
@@ -1534,7 +1624,7 @@ describe("MCP server over stdio", () => {
         name: "memory_routing_guide",
         arguments: { agent: "codex" },
       })) as ToolResult;
-      const routing = JSON.parse(routingRes.content[0]?.text ?? "{}") as {
+      const routing = decode(routingRes.content[0]?.text ?? "{}") as {
         schemaVersion: string;
         supportedAgents: string[];
         integration: { transports: string[]; configSnippets: unknown[] };
@@ -1560,7 +1650,7 @@ describe("MCP server over stdio", () => {
         name: "memory_routing_guide_viewer",
         arguments: { agent: "cursor" },
       })) as ToolResult;
-      const routingViewer = JSON.parse(routingViewerRes.content[0]?.text ?? "{}") as {
+      const routingViewer = decode(routingViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         guide: { agent: string };
         html: string;
@@ -1580,7 +1670,7 @@ describe("MCP server over stdio", () => {
         name: "memory_agent_integration_status",
         arguments: { agent: "codex" },
       })) as ToolResult;
-      const integration = JSON.parse(integrationRes.content[0]?.text ?? "{}") as {
+      const integration = decode(integrationRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         summary: { agents: number };
       };
@@ -1596,7 +1686,7 @@ describe("MCP server over stdio", () => {
         name: "memory_path_explain",
         arguments: { from: "auth-service", to: "cache-ttl" },
       })) as ToolResult;
-      const pathExplain = JSON.parse(pathExplainRes.content[0]?.text ?? "{}") as {
+      const pathExplain = decode(pathExplainRes.content[0]?.text ?? "{}") as {
         schema_version: string;
         reachable: boolean;
         hop_count: number;
@@ -1618,7 +1708,7 @@ describe("MCP server over stdio", () => {
         name: "memory_path_explain_viewer",
         arguments: { from: "auth-service", to: "cache-ttl" },
       })) as ToolResult;
-      const pathExplainViewer = JSON.parse(pathExplainViewerRes.content[0]?.text ?? "{}") as {
+      const pathExplainViewer = decode(pathExplainViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         html: string;
       };
@@ -1636,7 +1726,7 @@ describe("MCP server over stdio", () => {
         name: "memory_structural_impact",
         arguments: { file: "missing.ts" },
       })) as ToolResult;
-      expect(JSON.parse(impactRes.content[0]?.text ?? "{}")).toMatchObject({
+      expect(decode(impactRes.content[0]?.text ?? "{}")).toMatchObject({
         imports: [],
         importedBy: [],
         calls: [],
@@ -1659,7 +1749,7 @@ describe("MCP server over stdio", () => {
         name: "memory_structural_impact_viewer",
         arguments: { file: "missing.ts" },
       })) as ToolResult;
-      const impactViewer = JSON.parse(impactViewerRes.content[0]?.text ?? "{}") as {
+      const impactViewer = decode(impactViewerRes.content[0]?.text ?? "{}") as {
         contract: { version: string };
         html: string;
       };
@@ -1694,7 +1784,7 @@ describe("MCP server over stdio", () => {
         arguments: {},
       })) as ToolResult;
 
-      const analytics = JSON.parse(result.content[0]?.text ?? "{}") as {
+      const analytics = decode(result.content[0]?.text ?? "{}") as {
         schema_version: string;
         graph_hash: string;
         communities: Array<{ count: number; labels: string[]; titles: string[] }>;
@@ -1723,7 +1813,7 @@ describe("MCP server over stdio", () => {
         name: "memory_community_digest",
         arguments: {},
       })) as ToolResult;
-      const digest = JSON.parse(digestResult.content[0]?.text ?? "{}") as {
+      const digest = decode(digestResult.content[0]?.text ?? "{}") as {
         schema_version: string;
         provider: { status: string; error?: string };
         digests: Array<{ narrative_summary: string | null }>;
@@ -1747,7 +1837,7 @@ describe("MCP server over stdio", () => {
         name: "memory_global_search",
         arguments: { query: "jwt cache" },
       })) as ToolResult;
-      const globalSearch = JSON.parse(globalSearchResult.content[0]?.text ?? "{}") as {
+      const globalSearch = decode(globalSearchResult.content[0]?.text ?? "{}") as {
         schema_version: string;
         surface: string;
         generated_from: { operation_id: string };
@@ -1768,7 +1858,7 @@ describe("MCP server over stdio", () => {
         name: "memory_communities_viewer",
         arguments: {},
       })) as ToolResult;
-      const viewer = JSON.parse(viewerResult.content[0]?.text ?? "{}") as {
+      const viewer = decode(viewerResult.content[0]?.text ?? "{}") as {
         contract: { version: string; consumes: string };
         report: { schema_version: string; assignments: unknown[] };
         html: string;
@@ -1812,7 +1902,7 @@ describe("MCP server over stdio", () => {
         arguments: {},
       })) as ToolResult;
 
-      const coverage = JSON.parse(result.content[0]?.text ?? "{}") as {
+      const coverage = decode(result.content[0]?.text ?? "{}") as {
         schema_version: string;
         mode: string;
         hooks_enabled: string[];
@@ -1844,7 +1934,7 @@ describe("MCP server over stdio", () => {
         name: "memory_hook_coverage_viewer",
         arguments: {},
       })) as ToolResult;
-      const viewer = JSON.parse(viewerResult.content[0]?.text ?? "{}") as {
+      const viewer = decode(viewerResult.content[0]?.text ?? "{}") as {
         contract: { version: string };
         report: { mode: string; summary: { effective_events: number } };
         html: string;
@@ -1873,8 +1963,8 @@ describe("MCP server over stdio", () => {
       })) as ToolResult;
 
       const md = result.content[0]?.text ?? "";
-      expect(md).toContain("Memory recall");
-      expect(md).toContain("jwt rotation");
+      expect(() => decode(md)).not.toThrow();
+      expect(md).toContain("jwt-rotation");
 
       const nodes = result.structuredContent?.nodes as { label: string; score: number }[];
       expect(nodes.length).toBeGreaterThanOrEqual(1);
@@ -1897,7 +1987,7 @@ describe("MCP server over stdio", () => {
         arguments: { query: "jwt rotation references", depth: 1, context: "reference" },
       })) as ToolResult;
 
-      const slice = JSON.parse(result.content[0]?.text ?? "{}") as {
+      const slice = decode(result.content[0]?.text ?? "{}") as {
         schema_version: string;
         context_md: string;
         nodes: Array<{ label: string; source: string | null }>;
@@ -1931,8 +2021,10 @@ describe("MCP server over stdio", () => {
         name: "memory_traverse",
         arguments: { start: "auth-service", depth: 3, direction: "outgoing" },
       })) as ToolResult;
-      const walked = JSON.parse(traverseRes.content[0]?.text ?? "[]") as { label: string }[];
-      expect(walked.map((n) => n.label)).toEqual([
+      const walked = decode(traverseRes.content[0]?.text ?? "{}") as {
+        rows: Array<{ label: string }>;
+      };
+      expect(walked.rows.map((n) => n.label)).toEqual([
         "auth-service",
         "jwt-rotation",
         "cache-ttl",
@@ -1942,12 +2034,14 @@ describe("MCP server over stdio", () => {
         name: "memory_path",
         arguments: { from: "auth-service", to: "cache-ttl" },
       })) as ToolResult;
-      const path = JSON.parse(pathRes.content[0]?.text ?? "null") as {
-        reachable: boolean;
-        hopCount: number;
+      const path = decode(pathRes.content[0]?.text ?? "{}") as {
+        result: {
+          reachable: boolean;
+          hopCount: number;
+        };
       };
-      expect(path.reachable).toBe(true);
-      expect(path.hopCount).toBe(2);
+      expect(path.result.reachable).toBe(true);
+      expect(path.result.hopCount).toBe(2);
     },
     TIMEOUT,
   );
@@ -1961,20 +2055,22 @@ describe("MCP server over stdio", () => {
         name: "memory_conflicts",
         arguments: {},
       })) as ToolResult;
-      const conflicts = JSON.parse(conflictsRes.content[0]?.text ?? "[]") as Array<{
-        from: { label: string };
-        to: { label: string };
-      }>;
-      expect(conflicts).toHaveLength(1);
-      expect(conflicts[0].from.label).toBe("deploy-friday");
-      expect(conflicts[0].to.label).toBe("deploy-tuesday");
+      const conflicts = decode(conflictsRes.content[0]?.text ?? "{}") as {
+        conflicts: Array<{
+          from: { label: string };
+          to: { label: string };
+        }>;
+      };
+      expect(conflicts.conflicts).toHaveLength(1);
+      expect(conflicts.conflicts[0].from.label).toBe("deploy-friday");
+      expect(conflicts.conflicts[0].to.label).toBe("deploy-tuesday");
       expect(conflictsRes.structuredContent?.count).toBe(1);
 
       const timelineRes = (await client.callTool({
         name: "memory_timeline",
         arguments: { topic: "deploy" },
       })) as ToolResult;
-      const timeline = JSON.parse(timelineRes.content[0]?.text ?? "{}") as {
+      const timeline = decode(timelineRes.content[0]?.text ?? "{}") as {
         entries: Array<{ label: string; status: string }>;
         auditLinks: Array<{ label: string }>;
       };
@@ -1994,7 +2090,7 @@ describe("MCP server over stdio", () => {
         arguments: { question: "how often do jwt tokens rotate?" },
       })) as ToolResult;
 
-      const answer = JSON.parse(result.content[0]?.text ?? "{}") as {
+      const answer = decode(result.content[0]?.text ?? "{}") as {
         status: string;
         citations: unknown[];
         evidence: { active: unknown[] };
@@ -2026,9 +2122,12 @@ describe("MCP server over stdio", () => {
       const client = await connect(uri, { MEMORY_ROOT: root });
 
       // 1. working.get without a session errors with a clear instruction.
-      await expect(
-        client.callTool({ name: "memory_working_get", arguments: {} }),
-      ).rejects.toThrow(/memory_session_start/);
+      const missingSession = (await client.callTool({
+        name: "memory_working_get",
+        arguments: {},
+      })) as ToolResult;
+      expect(missingSession.isError).toBe(true);
+      expect(missingSession.content[0]?.text).toContain("memory_session_start");
 
       // 2. session.start mints + writes the id; subsequent reads see it.
       const startRes = (await client.callTool({
@@ -2058,7 +2157,7 @@ describe("MCP server over stdio", () => {
         name: "memory_working_get",
         arguments: {},
       })) as ToolResult;
-      const got = JSON.parse(getRes.content[0]?.text ?? "{}") as {
+      const got = decode(getRes.content[0]?.text ?? "{}") as {
         events: Array<{ type: string; value: string; sequence: number }>;
       };
       expect(got.events).toHaveLength(1);
@@ -2071,7 +2170,7 @@ describe("MCP server over stdio", () => {
         name: "memory_promote",
         arguments: {},
       })) as ToolResult;
-      const report = JSON.parse(promoteRes.content[0]?.text ?? "{}") as {
+      const report = decode(promoteRes.content[0]?.text ?? "{}") as {
         session_id: string;
         promoted: number;
         reinforced: number;
@@ -2093,9 +2192,12 @@ describe("MCP server over stdio", () => {
       })) as ToolResult;
       expect(endRes.structuredContent).toMatchObject({ ok: true });
 
-      await expect(
-        client.callTool({ name: "memory_working_set", arguments: { type: "x", value: "y" } }),
-      ).rejects.toThrow(/memory_session_start/);
+      const missingSetSession = (await client.callTool({
+        name: "memory_working_set",
+        arguments: { type: "x", value: "y" },
+      })) as ToolResult;
+      expect(missingSetSession.isError).toBe(true);
+      expect(missingSetSession.content[0]?.text).toContain("memory_session_start");
 
       // 6. The read-only surface still works after the lifecycle dance.
       const statsRes = (await client.callTool({
