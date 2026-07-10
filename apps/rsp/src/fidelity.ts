@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { decode } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
 import { renderGitContract, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
+import { renderTestContract } from "./test-wrapper.js";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 
 export interface FidelityAssertion {
@@ -62,6 +63,9 @@ export async function renderFixture(
   fixture: FidelityFixture,
   options: FidelityRunOptions,
 ): Promise<GitRenderResult> {
+  if (fixture.command[0] === "vitest" || fixture.command[0] === "cargo") {
+    return await renderTestContract(fixture.command, fixture.recorded, options);
+  }
   if (fixture.command[0] !== "git") throw new Error(`unsupported fixture command: ${fixture.command.join(" ")}`);
   return await renderGitContract(fixture.command, fixture.recorded, options);
 }

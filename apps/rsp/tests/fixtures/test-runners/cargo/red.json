@@ -1,0 +1,26 @@
+{
+  "name": "cargo-red",
+  "command": ["cargo", "test"],
+  "recorded": {
+    "stdout": "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":3}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"parser::accepts_basic_query\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"parser::accepts_basic_query\",\"exec_time\":0.01,\"stdout\":\"\"}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"replication::rejects_stale_ack\"}\n{\"type\":\"test\",\"event\":\"failed\",\"name\":\"replication::rejects_stale_ack\",\"exec_time\":0.05,\"stdout\":\"thread 'replication::rejects_stale_ack' panicked at src/replication.rs:42:9:\\nassertion failed: left == right\\n  left: 7\\n right: 8\"}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"planner::keeps_join_order\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"planner::keeps_join_order\",\"exec_time\":0.02,\"stdout\":\"\"}\n{\"type\":\"suite\",\"event\":\"failed\",\"passed\":2,\"failed\":1,\"ignored\":0,\"measured\":0,\"filtered_out\":0,\"exec_time\":1.75}\n",
+    "stderr": "",
+    "status": 101,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 101,
+    "summary": "1/3 failed · 1 suites · 1.8s",
+    "failures": [
+      {
+        "suite": "replication",
+        "name": "replication::rejects_stale_ack",
+        "excerpt": "thread 'replication::rejects_stale_ack' panicked at src/replication.rs:42:9:\nassertion failed: left == right\n  left: 7\n right: 8"
+      }
+    ]
+  },
+  "assertions": [
+    { "question": "how many failed?", "path": "summary", "expected": "1/3 failed · 1 suites · 1.8s" },
+    { "question": "which test names failed?", "path": "failures.0.name", "expected": "replication::rejects_stale_ack" },
+    { "question": "what was the exit code?", "path": "exit_code", "expected": 101 }
+  ]
+}

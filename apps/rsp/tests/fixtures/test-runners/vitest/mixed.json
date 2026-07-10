@@ -1,0 +1,26 @@
+{
+  "name": "vitest-mixed",
+  "command": ["vitest", "run"],
+  "recorded": {
+    "stdout": "{\"numTotalTests\":4,\"numPassedTests\":3,\"numFailedTests\":1,\"startTime\":1783695600000,\"endTime\":1783695602500,\"testResults\":[{\"name\":\"apps/rsp/tests/math.test.ts\",\"assertionResults\":[{\"fullName\":\"math adds numbers\",\"title\":\"adds numbers\",\"status\":\"passed\",\"duration\":5},{\"fullName\":\"math divides by zero\",\"title\":\"divides by zero\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: expected Infinity to equal 0\\n- Expected: 0\\n+ Received: Infinity\\n    at math.test.ts:14:12\"],\"duration\":7}]},{\"name\":\"apps/rsp/tests/strings.test.ts\",\"assertionResults\":[{\"fullName\":\"strings trims\",\"title\":\"trims\",\"status\":\"passed\",\"duration\":4},{\"fullName\":\"strings uppercases\",\"title\":\"uppercases\",\"status\":\"passed\",\"duration\":3}]}],\"verboseNoise\":\"All passing assertions and internal timing details remain here in the reporter output, but rsp should emit only the failing row plus the rollup.\"}",
+    "stderr": "",
+    "status": 1,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 1,
+    "summary": "1/4 failed · 2 suites · 2.5s",
+    "failures": [
+      {
+        "suite": "apps/rsp/tests/math.test.ts",
+        "name": "math divides by zero",
+        "excerpt": "AssertionError: expected Infinity to equal 0\n- Expected: 0\n+ Received: Infinity\n    at math.test.ts:14:12"
+      }
+    ]
+  },
+  "assertions": [
+    { "question": "how many failed?", "path": "summary", "expected": "1/4 failed · 2 suites · 2.5s" },
+    { "question": "which test names failed?", "path": "failures.0.name", "expected": "math divides by zero" },
+    { "question": "what was the exit code?", "path": "exit_code", "expected": 1 }
+  ]
+}

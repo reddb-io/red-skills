@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
 import { runGitWrapper } from "./git-wrapper.js";
+import { runTestWrapper } from "./test-wrapper.js";
 
 interface ParsedArgs {
   command?: string;
@@ -35,6 +36,17 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
 
     if (args.command === "git") {
       const result = await runGitWrapper(args.positional, { level: args.level, store });
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      if (result.signal) {
+        process.kill(process.pid, result.signal);
+        return 128;
+      }
+      return result.status ?? 0;
+    }
+
+    if (args.command === "vitest" || args.command === "cargo") {
+      const result = await runTestWrapper(args.positional, { level: args.level, store });
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       if (result.signal) {

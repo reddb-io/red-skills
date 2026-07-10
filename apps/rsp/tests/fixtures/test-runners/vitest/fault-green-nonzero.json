@@ -1,0 +1,15 @@
+{
+  "name": "vitest-fault-green-nonzero",
+  "command": ["vitest", "run"],
+  "recorded": {
+    "stdout": "{\"numTotalTests\":2,\"numPassedTests\":2,\"numFailedTests\":0,\"startTime\":1783695600000,\"endTime\":1783695600100,\"testResults\":[{\"name\":\"apps/rsp/tests/fault.test.ts\",\"assertionResults\":[{\"fullName\":\"fault looks green\",\"title\":\"looks green\",\"status\":\"passed\"},{\"fullName\":\"fault also green\",\"title\":\"also green\",\"status\":\"passed\"}]}]}",
+    "stderr": "worker crashed after reporting JSON\n",
+    "status": 1,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 1,
+    "summary": "fault passthrough"
+  },
+  "assertions": []
+}

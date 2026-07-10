@@ -1,0 +1,18 @@
+{
+  "name": "cargo-green",
+  "command": ["cargo", "test"],
+  "recorded": {
+    "stdout": "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":2}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"parser::accepts_basic_query\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"parser::accepts_basic_query\",\"exec_time\":0.01,\"stdout\":\"\"}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"planner::keeps_join_order\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"planner::keeps_join_order\",\"exec_time\":0.02,\"stdout\":\"\"}\n{\"type\":\"suite\",\"event\":\"ok\",\"passed\":2,\"failed\":0,\"ignored\":0,\"measured\":0,\"filtered_out\":0,\"exec_time\":0.33}\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 0,
+    "summary": "0/2 failed · 1 suites · 0.3s"
+  },
+  "assertions": [
+    { "question": "how many failed?", "path": "summary", "expected": "0/2 failed · 1 suites · 0.3s" },
+    { "question": "what was the exit code?", "path": "exit_code", "expected": 0 }
+  ]
+}

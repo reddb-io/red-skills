@@ -1,0 +1,18 @@
+{
+  "name": "vitest-green",
+  "command": ["vitest", "run"],
+  "recorded": {
+    "stdout": "{\"numTotalTests\":2,\"numPassedTests\":2,\"numFailedTests\":0,\"startTime\":1783695600000,\"endTime\":1783695601200,\"testResults\":[{\"name\":\"apps/rsp/tests/math.test.ts\",\"status\":\"passed\",\"message\":\"\",\"assertionResults\":[{\"fullName\":\"math adds numbers\",\"title\":\"adds numbers\",\"status\":\"passed\",\"duration\":5},{\"fullName\":\"math multiplies numbers\",\"title\":\"multiplies numbers\",\"status\":\"passed\",\"duration\":6}],\"perfStats\":{\"runtime\":1200},\"coverage\":{\"statements\":{\"total\":200,\"covered\":200,\"skipped\":0,\"pct\":100}},\"verboseNoise\":\"This recorded reporter payload intentionally keeps verbose pass metadata so the admission benchmark measures the delta instead of inheriting it. Passing tests should not be itemized by rsp.\"}]}",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 0,
+    "summary": "0/2 failed · 1 suites · 1.2s"
+  },
+  "assertions": [
+    { "question": "how many failed?", "path": "summary", "expected": "0/2 failed · 1 suites · 1.2s" },
+    { "question": "what was the exit code?", "path": "exit_code", "expected": 0 }
+  ]
+}
