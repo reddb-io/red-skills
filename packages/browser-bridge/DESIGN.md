@@ -116,11 +116,9 @@ Every one is **TOON** (emit-only, deterministic encoder). Human-facing status
 (bridge URL, "layout audit passed") stays plain-text stderr — never mixed into
 the machine-read stdout stream.
 
-**Encoder is shared, not forked.** The deterministic TOON encoder lives at
-`apps/dev/src/core/toon.ts` and is not yet a shared package. `browser-bridge`
-must consume it via a shared package (the same relocation #992 depends on) so the
-two surfaces never drift into two encoders. This is a cross-cutting prerequisite,
-called out as a shared slice below.
+**Encoder is shared, not forked.** TOON serialization lives in the shared
+`@reddb-io/toon` package. `browser-bridge` must consume that package so the two
+surfaces never drift into two encoders.
 
 ### 3a. Layout-audit result (step 2)
 
@@ -172,11 +170,10 @@ Tracer-bullet vertical slices, each independently grabbable, **sequenced before
 Slice 1 is the shared prerequisite #992 also depends on — landing it here (first)
 satisfies the ordering constraint and unblocks both halves.
 
-1. **Share the TOON encoder as a package.** Relocate `apps/dev/src/core/toon.ts`
-   into a shared package both `dev` and `red-browser`/`browser-bridge` import;
-   keep the existing `dev` call sites green. *Mechanical; unblocks every output
-   slice in both halves. This is the ordering hinge — it lands before any #992
-   slice.*
+1. **Use the shared TOON package.** Import `@reddb-io/toon` in both `dev` and
+   `red-browser`/`browser-bridge` output paths so every surface shares one
+   encoder/decoder authority. *Mechanical; unblocks every output slice in both
+   halves.*
 2. **Continuous review loop in the consumed surface.** Add a `red-browser review`
    command (or extend `annotate`) that, after a clean gate, **long-polls in a
    loop** — emitting one TOON annotation payload per note and advancing the
