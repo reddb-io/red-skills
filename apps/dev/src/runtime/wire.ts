@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkS
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
+import { resolveBase } from "../core/base-resolver.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
@@ -1550,6 +1551,9 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const { branchLockPath, readLockedBranch } = await import("./lock.js");
   const lockPath = branchLockPath(ctx.root);
+  const config = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
+  const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
+  const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch] =
     await Promise.all([
       ghx.ghInstalled(ghCtx),
@@ -1561,6 +1565,15 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
       readLockedBranch(lockPath),
     ]);
+  const configuredTrunk = await resolveBase(
+    { issueBody: "" },
+    {
+      readLockedBranch: async () => lockedBranch,
+      configLockedBranch,
+      configTrunk,
+      fetchIssueBody: async () => undefined,
+    },
+  );
   const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled,
@@ -1570,6 +1583,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     hasMainBranch: hasMain,
     currentBranch,
     lockedBranch,
+    configuredTrunk,
     pnpmInstalled,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
