@@ -19,10 +19,12 @@
 import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { resolveBase } from "../core/base-resolver.js";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
+import { branchLockPath, readLockedBranch } from "../runtime/lock.js";
 import {
   collectStatuslineAfk,
   collectStatuslineFleet,
@@ -199,12 +201,22 @@ export async function statuslineCommand(
   // config a second time per collector.
   const cfg = loadConfig(join(root, ".red", "config.yaml"), { warn: () => undefined });
   const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(cfg, key));
+  const base = await resolveBase(
+    { issueBody: "" },
+    {
+      readLockedBranch: () => readLockedBranch(branchLockPath(root)),
+      configLockedBranch: getConfig(cfg, "dev.lock.branch"),
+      configTrunk: getConfig(cfg, "dev.trunk"),
+      fetchIssueBody: async () => undefined,
+    },
+  );
+  const repoLocBaseRef = `origin/${base}`;
   // The aggregate AFK block feeds the plain single-line form (NO_COLOR / Codex);
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
   const [repo, afk, fleet, workers] = await Promise.all([
-    collectStatuslineRepo(repoCtx, cacheTtlS),
+    collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
     collectStatuslineFleet(repoCtx),
     collectStatuslineWorkers(repoCtx),
