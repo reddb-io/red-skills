@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   decideMainRedAdminMerge,
@@ -74,5 +76,18 @@ describe("decideMainRedAdminMerge", () => {
     expect(decision.message).toContain("Refusing admin-merge onto red main");
     expect(decision.message).toContain("main-red repair issue");
     expect(decision.message).toContain("syncMainRedRepairIssue");
+  });
+});
+
+describe("root main-red feedback scripts", () => {
+  it("do not pull red-castle back in through Turbo dependency tasks", () => {
+    const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../..", "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+
+    for (const script of ["build", "typecheck"]) {
+      expect(pkg.scripts[script]).toContain("--filter=!@reddb-io/red-castle");
+      expect(pkg.scripts[script]).toContain("--only");
+    }
   });
 });
