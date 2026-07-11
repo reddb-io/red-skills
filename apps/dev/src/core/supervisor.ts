@@ -1058,7 +1058,10 @@ export interface TickResult {
   abandoned: boolean;
 }
 
-function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBusy" | "slotsFree" | "slotsTotal" | "slotsParked"> {
+function fleetSlotCounts(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+): Pick<FleetHeartbeat, "slotsBusy" | "slotsFree" | "slotsTotal" | "slotsParked"> {
   let slotsBusy = 0;
   let slotsFree = 0;
   let slotsParked = 0;
@@ -1066,6 +1069,8 @@ function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBus
     if (slot.parked || slot.idleParked) {
       slotsParked += 1;
     } else if (slot.pid === null) {
+      slotsFree += 1;
+    } else if (!deps.proc.isAlive(slot.pid)) {
       slotsFree += 1;
     } else {
       slotsBusy += 1;
@@ -1118,7 +1123,7 @@ async function emitFleetHeartbeat(
     lastProgressEpoch: state.lastProgressEpoch,
     runner,
     readyForAgent,
-    ...fleetSlotCounts(state),
+    ...fleetSlotCounts(state, deps),
     spawnsThisTick: result.respawned.length,
     ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
     slotDetails: buildSlotDetails(state, config),
@@ -1650,6 +1655,7 @@ export async function handleDeadSlot(
   if (cleanExit) {
     if (queueDepth === 0) {
       // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
+      state.pid = null;
       state.idleParked = true;
       return { parked: true };
     }
@@ -1700,6 +1706,7 @@ export async function handleDeadSlot(
     state.parked = true;
     state.tripEpoch = now;
     await sweepParkedSlot(slot, state, deps, config);
+    state.pid = null;
     return { parked: true };
   }
 
@@ -1933,6 +1940,9 @@ export async function superviseTick(
     if ((slot.parked && !slot.halfOpen) || slot.idleParked || slot.spawning) continue;
     const pid = slot.pid;
     if (pid === null || !deps.proc.isAlive(pid)) {
+      if (pid !== null) {
+        deps.log?.(`dead slot reconciled: slot ${i} pid=${pid}`);
+      }
       // Dispatch on_slot_death before the slot is recycled. Best-effort.
       if (deps.dispatchFleetHook) {
         try {
