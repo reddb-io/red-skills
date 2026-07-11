@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 import type { GitRenderResult, RecordedGitContract } from "./git-wrapper.js";
+import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export interface TestRenderOptions {
   level: RspLossLevel;
@@ -41,7 +42,8 @@ const TERSE_EXCERPT_LIMIT_BYTES = 160;
 const TERSE_TOP_K_FAILURES = 3;
 
 export async function runTestWrapper(argv: readonly string[], options: TestRenderOptions): Promise<GitRenderResult> {
-  const contract = await collectTestContract(argv);
+  const parsed = extractQueryArg(argv);
+  const contract = await collectTestContract(parsed.argv);
   return await renderTestContract(argv, contract, options);
 }
 
@@ -50,13 +52,14 @@ export async function renderTestContract(
   contract: RecordedGitContract,
   options: TestRenderOptions,
 ): Promise<GitRenderResult> {
-  const runner = parseTestRunner(command);
+  const parsedCommand = extractQueryArg(command);
+  const runner = parseTestRunner(parsedCommand.argv);
   const parsed = runner === "vitest" ? parseVitest(contract.stdout) : parseCargoTest(contract.stdout);
   const status = contract.status;
 
   if (!parsed || ((status ?? 0) !== 0 && parsed.failed === 0)) {
     return {
-      stdout: Buffer.from(contract.stdout),
+      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
       stderr: Buffer.from(contract.stderr),
       status: contract.status,
       signal: contract.signal,
@@ -64,31 +67,38 @@ export async function renderTestContract(
   }
 
   const summary = `${parsed.failed}/${parsed.total} failed · ${parsed.suites} suites · ${formatDuration(parsed.durationSeconds)}`;
+  const filteredFailures = filterRows(parsed.failures, parsedCommand.query);
 
   if (options.level === "terse") {
-    return await renderTerse(command, contract, parsed, status, summary, options);
+    return await renderTerse(parsedCommand.argv, contract, { ...parsed, failures: filteredFailures }, status, summary, options, parsedCommand.query);
   }
 
   const failures: TestFailure[] = [];
   let mintedHandle: `el:${string}` | undefined;
   let bytesElided = 0;
 
-  for (const failure of parsed.failures) {
-    const excerpt = await renderExcerpt(failure.excerpt, command.join(" "), options.store);
+  for (const failure of filteredFailures) {
+    const excerpt = await renderExcerpt(failure.excerpt, parsedCommand.argv.join(" "), options.store);
     failures.push({ suite: failure.suite, name: failure.name, excerpt: excerpt.text });
     mintedHandle ??= excerpt.handle;
     bytesElided += excerpt.bytesElided;
   }
 
-  const payload: TestPayload = { exit_code: status, summary };
+  const payload: TestPayload = {
+    exit_code: status,
+    summary: parsedCommand.query ? `${summary} · ${filteredFailures.length}/${parsed.failures.length} failures matched` : summary,
+  };
   if (failures.length > 0) payload.failures = failures;
+  const renderedPayload = parsedCommand.query
+    ? withHelp(payload as unknown as JsonObject, ["rsp show <handle>", "rsp vitest --query <suite-or-test>"]) as unknown as TestPayload
+    : payload;
 
   return {
-    stdout: Buffer.from(encode(payload as unknown as JsonObject)),
+    stdout: Buffer.from(encode(renderedPayload as unknown as JsonObject)),
     stderr: Buffer.from(contract.stderr),
     status: contract.status,
     signal: contract.signal,
-    payload: payload as unknown as JsonObject,
+    payload: renderedPayload as unknown as JsonObject,
     mintedHandle,
     bytesElided: bytesElided > 0 ? bytesElided : undefined,
     rowsElided: failures.length > 0 ? Math.max(0, parsed.total - failures.length) : undefined,
@@ -102,6 +112,7 @@ async function renderTerse(
   status: number | null,
   summary: string,
   options: TestRenderOptions,
+  query?: string,
 ): Promise<GitRenderResult> {
   const inline: TestFailure[] = parsed.failures.slice(0, TERSE_TOP_K_FAILURES).map((failure) => ({
     suite: failure.suite,
@@ -109,9 +120,12 @@ async function renderTerse(
     excerpt: terseExcerpt(failure.excerpt),
   }));
 
-  const tersePayload: TestPayload = { exit_code: status, summary };
+  const tersePayload: TestPayload = { exit_code: status, summary: query ? `${summary} · ${parsed.failures.length} failures matched` : summary };
   if (inline.length > 0) tersePayload.failures = inline;
-  const terseToon = encode(tersePayload as unknown as JsonObject);
+  const renderedTersePayload = query
+    ? withHelp(tersePayload as unknown as JsonObject, ["rsp show <handle>", "rsp vitest --query <suite-or-test>"]) as unknown as TestPayload
+    : tersePayload;
+  const terseToon = encode(renderedTersePayload as unknown as JsonObject);
 
   const elidedFailures = Math.max(0, parsed.failures.length - inline.length);
   const excerptTrimmed = inline.some((row, index) => row.excerpt !== parsed.failures[index].excerpt);
@@ -123,7 +137,7 @@ async function renderTerse(
       stderr: Buffer.from(contract.stderr),
       status: contract.status,
       signal: contract.signal,
-      payload: tersePayload as unknown as JsonObject,
+      payload: renderedTersePayload as unknown as JsonObject,
     };
   }
 
@@ -151,7 +165,7 @@ async function renderTerse(
     stderr: Buffer.from(contract.stderr),
     status: contract.status,
     signal: contract.signal,
-    payload: tersePayload as unknown as JsonObject,
+    payload: renderedTersePayload as unknown as JsonObject,
     mintedHandle: handle,
     bytesElided,
     rowsElided: elidedFailures,
