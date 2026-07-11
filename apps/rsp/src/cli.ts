@@ -46,7 +46,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      const result = await runGitWrapper(args.positional, { level: args.level, store });
+      const result = await runGitWrapper(args.positional, {
+        level: args.level,
+        store,
+        heavyGitByteThreshold: config.heavyGitByteThreshold,
+      });
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       if (result.signal) {
