@@ -1500,6 +1500,31 @@ describe("runSupervisor", () => {
       spawnsThisTick: 0,
     });
   });
+
+  it("does not report a cleanly exited worker pid as busy in the heartbeat", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 0),
+      lastExitCode: vi.fn(() => 0),
+    });
+    const state = initSupervisorState(1);
+    let probes = 0;
+    const stop = () => ++probes >= 2;
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
+
+    expect(io.spawnSlot).toHaveBeenCalledTimes(1);
+    expect(io.killTree).not.toHaveBeenCalled();
+    expect(io.logLines.some((line) => line.includes("dead slot reconciled: slot 0"))).toBe(true);
+    expect(io.emitFleetHeartbeat.mock.calls[0]![0]).toMatchObject({
+      slotsBusy: 0,
+      slotsFree: 0,
+      slotsParked: 1,
+      spawnsThisTick: 0,
+    });
+    expect(state.slots[0]!.pid).toBeNull();
+    expect(state.slots[0]!.idleParked).toBe(true);
+  });
 });
 
 // ---------- envelope builders ----------
@@ -1595,6 +1620,7 @@ describe("idle-drain: exit 0 idle-parks without tripping the circuit breaker", (
     expect(result.respawned).toEqual([]);
     expect(slot.idleParked).toBe(true);
     expect(slot.parked).toBe(false);
+    expect(slot.pid).toBeNull();
     // Death ring untouched — a clean exit is never a fast-death.
     expect(slot.deaths).toEqual([]);
     // No spawn, no discard envelope, no label edits.
