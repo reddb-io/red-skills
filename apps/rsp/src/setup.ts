@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { connect } from "@reddb-io/sdk";
+import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
 export const REPO_STORE_PATH = ".red/red.rdb";
@@ -9,6 +10,7 @@ export const REPO_STORE_PATH = ".red/red.rdb";
 export interface RspProvisionOptions {
   ttlDays?: number;
   byteBudget?: number;
+  heavyGitByteThreshold?: number;
 }
 
 export interface RspProvisionResult {
@@ -36,6 +38,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
     enabled: true,
     ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
     byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
+    heavyGitByteThreshold: opts.heavyGitByteThreshold ?? DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   });
   const configChanged = next !== existing;
   if (configChanged) await writeFile(configPath, next, "utf8");
@@ -53,6 +56,7 @@ export interface RspConfigBlock {
   enabled: boolean;
   ttlDays: number;
   byteBudget: number;
+  heavyGitByteThreshold: number;
 }
 
 export function mergeRspBlock(existingText: string, block: RspConfigBlock): string {
@@ -61,6 +65,7 @@ export function mergeRspBlock(existingText: string, block: RspConfigBlock): stri
     `  enabled: ${block.enabled ? "true" : "false"}`,
     `  ttlDays: ${positiveNumber(block.ttlDays, DEFAULT_RSP_TTL_DAYS)}`,
     `  byteBudget: ${positiveNumber(block.byteBudget, DEFAULT_RSP_BYTE_BUDGET)}`,
+    `  heavyGitByteThreshold: ${positiveNumber(block.heavyGitByteThreshold, DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD)}`,
   ];
   const lines = existingText === "" ? [] : existingText.replace(/\n+$/, "").split("\n");
   const start = findTopLevelBlock(lines, "rsp");
