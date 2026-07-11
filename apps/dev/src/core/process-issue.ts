@@ -888,7 +888,11 @@ import {
   LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "./triage-labels.js";
-import { validateIssueLifecycleTransition, type IssueLifecycleEdge } from "./issue-lifecycle.js";
+import {
+  IllegalIssueLifecycleTransitionError,
+  validateIssueLifecycleTransition,
+  type IssueLifecycleEdge,
+} from "./issue-lifecycle.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -925,6 +929,16 @@ async function editLabelsTagged(
   return deps.gh.editLabels(issue, remove, [...add, typed]);
 }
 
+/**
+ * Apply one lifecycle label transition, validating it against the FSM first. A
+ * malformed (illegal mixed-blocked) start state must NEVER crash the worker (#1481):
+ * when the FSM rejects the transition, RECONCILE it by shedding every stale
+ * `blocked:*` label (except any we are explicitly adding) in the SAME edit —
+ * mirroring the `claim`/`human-delegable` normalisation — then re-validate and
+ * apply. If the reconciled edit is still illegal we log and apply it best-effort
+ * so the issue is at least parked and the worker survives, rather than dying with
+ * an uncaught session-error before it can log.
+ */
 async function editIssueLifecycleLabels(
   deps: ProcessIssueDeps,
   issue: number,
@@ -933,8 +947,23 @@ async function editIssueLifecycleLabels(
   add: string[],
   edge: IssueLifecycleEdge,
 ): Promise<boolean> {
-  validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
-  return deps.gh.editLabels(issue, remove, add);
+  try {
+    validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
+    return await deps.gh.editLabels(issue, remove, add);
+  } catch (err) {
+    if (!(err instanceof IllegalIssueLifecycleTransitionError)) throw err;
+    const shed = blockedLabelsIn([...fromLabels]).filter((l) => !add.includes(l));
+    const reconciledRemove = [...new Set([...remove, ...shed])];
+    try {
+      validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: reconciledRemove, addLabels: add });
+    } catch (reErr) {
+      const reason = reErr instanceof Error ? reErr.message : String(reErr);
+      deps.appendIterLog(
+        `warn: lifecycle transition "${edge}" for #${issue} still malformed after reconcile (${reason}); applying best-effort park.`,
+      );
+    }
+    return await deps.gh.editLabels(issue, reconciledRemove, add);
+  }
 }
 
 /**
