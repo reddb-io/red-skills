@@ -1,6 +1,6 @@
 benchmark: rsp-two-axis
 corpus:
-  fixture_count: 17
+  fixture_count: 18
   filters[7]: "cargo:test","git:commit","git:diff","git:log","git:push","git:status","vitest:run"
   large_output_filters[3]: "git:diff","git:log","vitest:run"
 method:
@@ -28,7 +28,7 @@ filters[7]:
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 61.9
+      median_delta_pct: 57.7
       p90_delta_pct: 84.2
       fidelity_pass_rate_pct: 100
       source: measured
@@ -154,28 +154,28 @@ filters[7]:
       source: recorded
   - filter: "vitest:run"
     mode: active
-    fixture_count: 5
+    fixture_count: 6
     raw:
       median_delta_pct: 0
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
     brief:
-      median_delta_pct: 64.1
+      median_delta_pct: 58.8
       p90_delta_pct: 100
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 64.1
+      median_delta_pct: 70
       p90_delta_pct: 100
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
-      median_delta_pct: 87.4
+      median_delta_pct: 86.3
       p90_delta_pct: 100
       fidelity_pass_rate_pct: 100
       source: recorded
 parity[2]{domain,filter,rsp_median_delta_pct,rtk_median_delta_pct,rsp_fidelity_pass_rate_pct,rtk_fidelity_pass_rate_pct,parity_gate}:
   cargo-test,"cargo:test",61.9,67.8,100,100,fail
   git-commit,"git:commit",0,-78.8,100,100,pass
-summary: "17 fixtures, 7 filters; shipped modes apply admission threshold 60%"
+summary: "18 fixtures, 7 filters; shipped modes apply admission threshold 60%"
