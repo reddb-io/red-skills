@@ -86,11 +86,26 @@ describe("precheck", () => {
     });
   });
 
-  it("fails not-on-main, naming the current branch", () => {
+  it("fails not-on-main, naming the expected default branch", () => {
     expect(precheck(facts({ currentBranch: "feature/x" }))).toEqual({
       ok: false,
       failed: "not-on-main",
-      detail: "feature/x",
+      detail: "main",
+    });
+  });
+
+  it("passes when the current branch matches the configured trunk", () => {
+    expect(precheck(facts({ currentBranch: "develop", configuredTrunk: "develop" }))).toEqual({
+      ok: true,
+      warnings: [],
+    });
+  });
+
+  it("fails not-on-main, naming the configured trunk when the checkout is on main", () => {
+    expect(precheck(facts({ currentBranch: "main", configuredTrunk: "develop" }))).toEqual({
+      ok: false,
+      failed: "not-on-main",
+      detail: "develop",
     });
   });
 
@@ -101,11 +116,26 @@ describe("precheck", () => {
     });
   });
 
+  it("locked: overrides the configured trunk", () => {
+    expect(
+      precheck(
+        facts({
+          currentBranch: "feature-locked",
+          lockedBranch: "feature-locked",
+          configuredTrunk: "develop",
+        }),
+      ),
+    ).toEqual({
+      ok: true,
+      warnings: [],
+    });
+  });
+
   it("locked: fails not-on-main when currentBranch is main instead of the lock value", () => {
     expect(precheck(facts({ currentBranch: "main", lockedBranch: "feature-locked" }))).toEqual({
       ok: false,
       failed: "not-on-main",
-      detail: "main",
+      detail: "feature-locked",
     });
   });
 
@@ -113,7 +143,7 @@ describe("precheck", () => {
     expect(precheck(facts({ currentBranch: "other-branch", lockedBranch: "feature-locked" }))).toEqual({
       ok: false,
       failed: "not-on-main",
-      detail: "other-branch",
+      detail: "feature-locked",
     });
   });
 
