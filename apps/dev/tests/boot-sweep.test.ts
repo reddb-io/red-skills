@@ -7,8 +7,11 @@ import {
   isParkedMechanical,
   issueFromAFKBranch,
   parseBlockedBy,
+  executeMixedBlockedNormalize,
   parseReqLabels,
   planCloseCascade,
+  planMixedBlockedNormalize,
+  type MixedBlockedCandidate,
   planReconcileSweep,
   planUnblockSweep,
   refToNumber,
@@ -564,5 +567,48 @@ describe("planReconcileSweep", () => {
     ];
     const plans = planReconcileSweep(candidates, branches);
     expect(plans.map((p) => p.number)).toEqual([101, 202]);
+  });
+});
+
+describe("planMixedBlockedNormalize", () => {
+  it("heals a queued issue carrying a stale blocked:* label", () => {
+    const candidates: MixedBlockedCandidate[] = [
+      { number: 1, labels: ["ready-for-agent", "blocked:spec"] },
+    ];
+    expect(planMixedBlockedNormalize(candidates)).toEqual([{ number: 1, remove: ["blocked:spec"] }]);
+  });
+
+  it("heals a running issue and sheds every blocked:* label", () => {
+    const candidates: MixedBlockedCandidate[] = [
+      { number: 2, labels: ["running", "blocked:validation", "blocked:spec"] },
+    ];
+    expect(planMixedBlockedNormalize(candidates)).toEqual([
+      { number: 2, remove: ["blocked:spec", "blocked:validation"] },
+    ]);
+  });
+
+  it("leaves legal states untouched", () => {
+    const candidates: MixedBlockedCandidate[] = [
+      { number: 3, labels: ["ready-for-agent"] },        // cleanly queued
+      { number: 4, labels: ["blocked:dependency"] },     // cleanly blocked
+      { number: 5, labels: ["ready-for-human", "blocked:spec"] }, // legal human park
+    ];
+    expect(planMixedBlockedNormalize(candidates)).toEqual([]);
+  });
+
+  it("executes the plan, stripping blocked:* and returning healed numbers", async () => {
+    const edits: { issue: number; remove: string[]; add: string[] }[] = [];
+    const gh = {
+      async editLabels(issue: number, remove: string[], add: string[]) {
+        edits.push({ issue, remove, add });
+      },
+    };
+    const candidates: MixedBlockedCandidate[] = [
+      { number: 11, labels: ["ready-for-agent", "blocked:spec"] },
+      { number: 12, labels: ["ready-for-agent"] }, // clean → no edit
+    ];
+    const healed = await executeMixedBlockedNormalize(candidates, gh);
+    expect(healed).toEqual([11]);
+    expect(edits).toEqual([{ issue: 11, remove: ["blocked:spec"], add: [] }]);
   });
 });

@@ -30,11 +30,13 @@ import {
   type IssueLookup,
 } from "./branch-cleanup.js";
 import {
+  executeMixedBlockedNormalize,
   executeUnblockSweep,
   planReconcileSweep,
   stragglerCounts,
   shouldWarnStragglers,
   type BlockerStateLookup,
+  type MixedBlockedCandidate,
   type StragglerCountLookup,
   type StragglerCounts,
   type UnblockCandidate,
@@ -306,6 +308,11 @@ export interface BootOptions {
    * reconcile sweep (step 7) will attempt to validate-and-land. When absent the
    * sweep is a no-op. Optional for back-compat. */
   reconcileSweepCandidates?: readonly ReconcileSweepCandidate[];
+  /** Open issues found in the illegal MIXED-BLOCKED state (`ready-for-agent` or
+   * `running` together with a `blocked:*` label) that the normalizer sweep (#1481)
+   * will heal by shedding the stale `blocked:*` labels. When absent the sweep is a
+   * no-op. Optional for back-compat. */
+  mixedBlockedCandidates?: readonly MixedBlockedCandidate[];
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -345,6 +352,11 @@ export interface UnblockSweepResult {
   promoted: number[];
 }
 
+export interface MixedBlockedNormalizeResult {
+  /** Issues healed out of the illegal mixed-blocked state (stale blocked:* shed). */
+  healed: number[];
+}
+
 export interface StragglerResult {
   counts: StragglerCounts;
   warn: boolean;
@@ -374,6 +386,7 @@ export interface BootResult {
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
   unblockSweep?: UnblockSweepResult;
+  mixedBlockedNormalize?: MixedBlockedNormalizeResult;
   staleClaimSweep?: StaleClaimSweepResult;
   reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
@@ -448,6 +461,9 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 6. unblock sweep ----
   const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
 
+  // ---- 6a0. mixed-blocked normalizer (#1481) ----
+  const mixedBlockedNormalize = await runMixedBlockedNormalize(deps, options);
+
   // ---- 6a. cross-host stale-claim sweep (#627) ----
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
@@ -464,6 +480,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     attemptCap,
     branchCleanup,
     unblockSweep,
+    mixedBlockedNormalize,
     staleClaimSweep,
     reconcileSweep,
     straggler,
@@ -699,6 +716,22 @@ async function runUnblockSweep(
   // periodic supervisor sweep (#844) promote through exactly one code path.
   const promoted = await executeUnblockSweep(candidates, deps.lookups.blockerState, deps.gh);
   return { promoted };
+}
+
+/** Step 6a0: mixed-blocked normalizer (#1481). Heal any issue found in the illegal
+ * MIXED-BLOCKED state (`ready-for-agent`/`running` together with a `blocked:*`
+ * label) by shedding the stale `blocked:*` labels, so it can never trip a worker's
+ * lifecycle FSM into the illegal state that crashed workers mid-setup. Sequenced
+ * right after the unblock sweep and before the stale-claim sweep so a healed issue
+ * rejoins the executable pool cleanly. A no-op when no candidates are provided. */
+async function runMixedBlockedNormalize(
+  deps: BootDeps,
+  options: BootOptions,
+): Promise<MixedBlockedNormalizeResult> {
+  const candidates = options.mixedBlockedCandidates ?? [];
+  if (candidates.length === 0) return { healed: [] };
+  const healed = await executeMixedBlockedNormalize(candidates, deps.gh);
+  return { healed };
 }
 
 /** Step 7: reconcile sweep (ADR 0055). For each owned parked-mechanical branch,

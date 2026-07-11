@@ -84,7 +84,15 @@ export const ISSUE_LIFECYCLE_TRANSITIONS: readonly IssueLifecycleTransition[] = 
   { edge: "retry", from: "claimed/active", to: "ready-for-agent" },
   { edge: "dependency-unblocked", from: "blocked:dependency", to: "ready-for-agent" },
   { edge: "dependency-blocked", from: "ready-for-agent", to: "blocked:dependency" },
-  { edge: "preflight-blocked", from: "ready-for-agent", to: "ready-for-human" },
+  // `preflight-blocked` parks a queued issue to a human gate when preflight
+  // refuses to run it (an active `## Current blocker`, an untrusted author with no
+  // sandbox). Like `claim` and `human-delegable` it must tolerate an illegal
+  // mixed-blocked start set (`ready-for-agent`/`running` + a stale `blocked:*`),
+  // shedding the conflicting labels in the SAME park edit — hence `from: "*"`.
+  // Before #1481 this was `from: "ready-for-agent"` only, so a mixed-blocked issue
+  // classified as `illegal` found no row and killed the worker mid-setup with an
+  // uncaught session-error, stranding the issue.
+  { edge: "preflight-blocked", from: "*", to: "ready-for-human" },
   { edge: "validation-blocked", from: "claimed/active", to: "blocked:validation" },
   { edge: "human-blocked", from: "*", to: "ready-for-human" },
   { edge: "human-blocked", from: "*", to: "blocked:validation" },
