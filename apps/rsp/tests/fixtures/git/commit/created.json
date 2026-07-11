@@ -1,23 +1,21 @@
 {
   "name": "commit-created",
-  "command": ["git", "commit"],
+  "command": [
+    "git",
+    "commit"
+  ],
   "recorded": {
     "stdout": "[feature/rsp 1234567] Refs #1412 add wrapper\n 2 files changed, 40 insertions(+), 1 deletion(-)\n",
     "stderr": "",
     "status": 0,
     "signal": null
   },
-  "expected": {
-    "command": "git commit",
-    "branch": "feature/rsp",
-    "commit": "1234567",
-    "subject": "Refs #1412 add wrapper",
-    "files_changed": 2,
-    "insertions": 40,
-    "deletions": 1,
-    "summary": "commit 1234567 on feature/rsp: 2 files, +40 -1"
-  },
+  "expected": "commit 1234567 on feature/rsp: 2 files, +40 -1\n",
   "assertions": [
-    { "question": "which commit was created?", "path": "commit", "expected": "1234567" }
+    {
+      "question": "which commit was created?",
+      "path": "summary",
+      "expected": "1234567"
+    }
   ]
 }

@@ -52,7 +52,7 @@ export async function runFidelityFixture(
 ): Promise<FidelityRunResult> {
   const result = await renderFixture(fixture, options);
   const assertionFailures = result.status === 0 && result.stdout.length > 0
-    ? evaluateAssertions(readDecodedToon(result.stdout), fixture.assertions)
+    ? evaluateAssertions(decodeRenderOutput(result), fixture.assertions)
     : [];
   return {
     ...result,
@@ -73,6 +73,11 @@ export async function renderFixture(
   return await renderGitContract(fixture.command, fixture.recorded, options);
 }
 
+function decodeRenderOutput(result: GitRenderResult): unknown {
+  if (result.oneLine) return result.stdout.toString("utf8").replace(/\n$/, "");
+  return readDecodedToon(result.stdout);
+}
+
 function readDecodedToon(stdout: Buffer): unknown {
   const text = stdout.toString("utf8");
   if (text === "git empty\n") return "git empty\n";
@@ -84,6 +89,12 @@ function readDecodedToon(stdout: Buffer): unknown {
 function evaluateAssertions(decoded: unknown, assertions: readonly FidelityAssertion[]): AssertionFailure[] {
   const failures: AssertionFailure[] = [];
   for (const assertion of assertions) {
+    if (typeof decoded === "string") {
+      if (!decoded.includes(String(assertion.expected))) {
+        failures.push({ question: assertion.question, expected: assertion.expected, actual: decoded });
+      }
+      continue;
+    }
     const actual = getPath(decoded, assertion.path);
     if (!Object.is(actual, assertion.expected)) {
       failures.push({ question: assertion.question, expected: assertion.expected, actual });

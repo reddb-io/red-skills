@@ -1,22 +1,21 @@
 {
   "name": "push-porcelain",
-  "command": ["git", "push"],
+  "command": [
+    "git",
+    "push"
+  ],
   "recorded": {
     "stdout": "To github.com:reddb-io/red-skills.git\n=\trefs/heads/main:refs/heads/main\t[up to date]\n \trefs/heads/feature/rsp:refs/heads/feature/rsp\t1111111..2222222\nDone\n",
     "stderr": "",
     "status": 0,
     "signal": null
   },
-  "expected": {
-    "command": "git push",
-    "remote": "github.com:reddb-io/red-skills.git",
-    "refs": [
-      { "flag": "=", "from": "refs/heads/main", "to": "refs/heads/main", "summary": "[up to date]" },
-      { "flag": " ", "from": "refs/heads/feature/rsp", "to": "refs/heads/feature/rsp", "summary": "1111111..2222222" }
-    ],
-    "summary": "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits"
-  },
+  "expected": "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits\n",
   "assertions": [
-    { "question": "which branch was pushed?", "path": "refs.1.to", "expected": "refs/heads/feature/rsp" }
+    {
+      "question": "which branch was pushed?",
+      "path": "summary",
+      "expected": "feature/rsp"
+    }
   ]
 }
