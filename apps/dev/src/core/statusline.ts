@@ -172,6 +172,8 @@ export interface StatuslineInput {
   afk?: AfkInput;
 }
 
+export type StatuslinePreset = "full" | "short";
+
 const BRANCH_MAX = 28;
 
 /**
@@ -402,6 +404,13 @@ export function renderRepoBlock(repo: RepoInput | undefined): string | null {
   return parts.length ? parts.join(" ") : null;
 }
 
+/** Short preset line-1 repo token: only the open issue count survives. */
+export function renderShortRepoBlock(repo: RepoInput | undefined): string | null {
+  if (!repo || !repo.openIssues || repo.openIssues <= 0) return null;
+  const ageSuffix = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
+  return `iss=${repo.openIssues}${ageSuffix}`;
+}
+
 /** Supervisor fleet cell: rendered only after IO proves pid-live and fresh. */
 export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   if (!fleet) return null;
@@ -454,6 +463,19 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
  *     as `origin=N` tokens read from the same `state.origin` the monitor uses.
  */
 export function renderStatusline(input: StatuslineInput): string {
+  return renderStatuslineWithPreset(input, "full");
+}
+
+export function renderStatuslineWithPreset(input: StatuslineInput, preset: StatuslinePreset = "full"): string {
+  if (preset === "short") {
+    const sections: string[] = [renderProjectBlock(input.project)];
+    const context = renderContextBlock(input.claude);
+    if (context !== null) sections.push(`ctx=${context}`);
+    const repo = renderShortRepoBlock(input.repo);
+    if (repo !== null) sections.push(repo);
+    return sections.join(" · ");
+  }
+
   const sections: string[] = [renderProjectBlock(input.project)];
   const model = renderModelBlock(input.claude);
   if (model !== null) sections.push(model);

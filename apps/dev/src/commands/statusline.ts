@@ -20,7 +20,7 @@ import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { resolveBase } from "../core/base-resolver.js";
-import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
+import { type ClaudeInput, type ProjectInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
@@ -123,6 +123,20 @@ export function statuslineEnabled(root: string): boolean {
   return true;
 }
 
+function coerceStatuslinePreset(raw: string): StatuslinePreset | undefined {
+  return raw === "full" || raw === "short" ? raw : undefined;
+}
+
+export function resolveStatuslinePreset(cfg: ReturnType<typeof loadConfig>): StatuslinePreset {
+  return (
+    coerceStatuslinePreset(getConfig(cfg, "plugins.dev.statusline.preset")) ??
+    coerceStatuslinePreset(getConfig(cfg, "dev.statusline.preset")) ??
+    coerceStatuslinePreset(getConfig(cfg, "afk.statusline.preset")) ??
+    coerceStatuslinePreset(getConfig(cfg, "statusline.preset")) ??
+    "full"
+  );
+}
+
 /** The block-1 project input: basename, the resolved git ref (branch or detached
  * short sha), and the running `dev` plugin version (build-info → dim `v<version>`
  * tag on the themed header). */
@@ -200,6 +214,7 @@ export async function statuslineCommand(
   // #1217) and thread it into both collectors — the hot render path never loads
   // config a second time per collector.
   const cfg = loadConfig(join(root, ".red", "config.yaml"), { warn: () => undefined });
+  const preset = resolveStatuslinePreset(cfg);
   const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(cfg, key));
   const base = await resolveBase(
     { issueBody: "" },
@@ -233,6 +248,7 @@ export async function statuslineCommand(
     columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
     workers,
     now: nowS,
+    preset,
   });
   stdout.write(`${line}\n`);
   return 0;

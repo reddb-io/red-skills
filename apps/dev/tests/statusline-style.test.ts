@@ -139,6 +139,20 @@ describe("statusline style — header line", () => {
     expect(stripAnsi(h)).toBe(" » c3 ");
     expect(h).not.toContain(WINE);
   });
+
+  it("short preset keeps only project identity, ctx, and iss", () => {
+    const h = renderHeaderLine(input.project, claude, repo, undefined, "short");
+    const t = stripAnsi(h);
+    expect(t).toContain("» red-skills (main)");
+    expect(t).toContain("ctx=47k 24%");
+    expect(t).toContain("iss=24");
+    expect(t).not.toContain("v1.2.3");
+    expect(t).not.toContain("Opus·high");
+    expect(t).not.toContain("5h=");
+    expect(t).not.toContain("7d=");
+    expect(t).not.toContain("prs=");
+    expect(t).not.toContain("loc=+142 -36");
+  });
 });
 
 describe("statusline style — terse per-worker line (issue #1175)", () => {
@@ -196,6 +210,21 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     // An explicit afk origin still renders org=afk.
     const afk = worker({ state: { ...worker().state, origin: "afk" } });
     expect(stripAnsi(renderWorkerLine(afk, NOW))).toContain("org=afk");
+  });
+
+  it("short preset keeps only worker id, issue, status, and timer", () => {
+    const t = stripAnsi(renderWorkerLine(worker(), NOW, "short"));
+    expect(t).toContain("w1");
+    expect(t).toContain("iss=17");
+    expect(t).toContain("impl");
+    expect(t).toContain("00:05:00");
+    expect(t).not.toContain("run=");
+    expect(t).not.toContain("org=");
+    expect(t).not.toContain("loc=");
+    expect(t).not.toContain("tks=");
+    expect(t).not.toContain("tls=");
+    expect(t).not.toContain("rsn=");
+    expect(t).not.toContain("txt=");
   });
 
   it.each(["gate", "push-pr", "merge", "cascade"])(
@@ -367,6 +396,21 @@ describe("statusline style — full themed assembly", () => {
     expect(out).not.toContain("\n");
     expect(stripAnsi(out)).toContain("Opus·high");
     expect(stripAnsi(out)).toContain("prs=3");
+  });
+
+  it("threads the short preset through themed assembly", () => {
+    const out = styleStatusline(input, { workers: [worker()], now: NOW, preset: "short" });
+    const rows = out.split("\n").map(stripAnsi);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("ctx=47k 24%");
+    expect(rows[0]).toContain("iss=24");
+    expect(rows[0]).not.toContain("Opus·high");
+    expect(rows[0]).not.toContain("prs=");
+    expect(rows[1]).toContain("w1");
+    expect(rows[1]).toContain("iss=17");
+    expect(rows[1]).toContain("00:05:00");
+    expect(rows[1]).not.toContain("run=");
+    expect(rows[1]).not.toContain("loc=");
   });
 
   it("aligns multi-worker rows by visible cell width while preserving ANSI color", () => {

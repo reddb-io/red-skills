@@ -12,6 +12,7 @@ import {
   renderProjectBlock,
   renderRepoBlock,
   renderStatusline,
+  renderStatuslineWithPreset,
   renderUsageBlock,
   type AfkInput,
   type StatuslineInput,
@@ -482,6 +483,18 @@ describe("statusline — full assembly", () => {
     expect(renderStatusline(input)).toBe(
       "red-skills (main) · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
     );
+    expect(renderStatuslineWithPreset(input, "full")).toBe(renderStatusline(input));
+  });
+
+  it("short preset keeps only project identity, ctx, and iss in the Codex/plain form", () => {
+    const input: StatuslineInput = {
+      project: { basename: "red-skills", branch: "main" },
+      claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 23, usage7d: 41 },
+      repo: { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 },
+      fleet: { runner: "codex", busy: 1, total: 4, queue: 9 },
+      afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
+    };
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24");
   });
 
   it("keeps the pre-#1165 line byte-for-byte when repo and usage are absent", () => {
