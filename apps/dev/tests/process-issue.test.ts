@@ -14,6 +14,7 @@ import type { IssueClassificationMetadata } from "../src/core/issue-classifier.j
 import type { TrustProvenance } from "../src/core/trust-gate.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import type { AttemptProgressInfo } from "../src/core/execution.js";
+import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safety.js";
 
 // Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
 // runs. The harness records the side-effect sequence (label edits, comments,
@@ -83,6 +84,8 @@ interface HarnessOptions {
   timeoutReason?: RunAgentResult["timeoutReason"];
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
+  /** Test hook invoked inside the fake runner while the issue claim is active. */
+  onRunAgent?: () => void | Promise<void>;
   feedbackOk?: boolean;
   /** When true, the feedback baseline probe fails the same check as the worker. */
   baselineFails?: boolean;
@@ -500,6 +503,7 @@ function harness(opts: HarnessOptions = {}): {
     async runAgent(input) {
       const callIdx = trace.runAgentCalls.length;
       trace.runAgentCalls.push(input);
+      await opts.onRunAgent?.();
       const thisOutcome = opts.outcomes ? (opts.outcomes[callIdx] ?? outcome) : outcome;
       return {
         outcome: thisOutcome,
@@ -2098,6 +2102,23 @@ describe("processIssue — claim lost", () => {
     // running was PROJECTED (label edit applied) but is not the lock.
     expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(true);
     expect(trace.comments.some((c) => /AFK claim by worker/.test(c.body))).toBe(true);
+  });
+
+  it("concedes the active GitHub-native claim when a SIGTERM arrives mid-attempt", async () => {
+    const safety = installProcessSafety(noopSafetyLogger, { workerId: "wAAAA", heartbeatMs: 0 });
+    try {
+      const { deps, input, trace } = harness({
+        claim: { winner: "self" },
+        onRunAgent: () => {
+          safety.handlers.sigTerm();
+        },
+      });
+      const result = await processIssue(deps, input);
+      expect(result.outcome).toBe("done");
+      expect(trace.comments.some((c) => /kind=concede/.test(c.body))).toBe(true);
+    } finally {
+      safety.uninstall();
+    }
   });
 });
 
