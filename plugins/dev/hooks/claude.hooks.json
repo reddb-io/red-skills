@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; for f in \"$root/../../dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" hook claude-pre-exec <\"$tmp\"; exit $?; }; done; exit 1'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CLAUDE_PLUGIN_ROOT}\"; for f in \"$root/../../dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" hook claude-pre-exec <\"$tmp\" || exit 0; exit 0; }; done; exit 0'"
           },
           {
             "type": "command",
