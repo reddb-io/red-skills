@@ -13,6 +13,14 @@
       "dependsOn": ["^build"],
       "outputs": ["../../dist/**"]
     },
+    "@reddb-io/dev#bundle": {
+      "dependsOn": [
+        "@reddb-io/build-info#build",
+        "@reddb-io/shared#build",
+        "@reddb-io/toon#build"
+      ],
+      "outputs": ["../../dist/**"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "../../dist/**"]
