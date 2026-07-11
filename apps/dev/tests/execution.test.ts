@@ -1719,6 +1719,78 @@ describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-st
     expect(g.firedTimeout()).toBe(true);
   });
 
+  it("does not abort at the soft cap while a dirty worktree is under active validation", async () => {
+    let clock = 0;
+    let activeDescendant = true;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    const g = startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 1_000,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => 40, // real uncommitted work, but no further LOC growth
+      activeDescendantProbe: () => activeDescendant,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // anchor: dirty worktree and validation already running
+    clock = 100;
+    await sched.tick(); // soft cap reached, but active build/test descendant is productive
+    expect(reason).toBeUndefined();
+    clock = 200;
+    await sched.tick(); // still productive; do not abort solely for no new commit
+    expect(reason).toBeUndefined();
+    activeDescendant = false;
+    clock = 300;
+    await sched.tick(); // validation gone, diff flat, no commit → now it is a real stall
+    expect(reason).toBe("stalled");
+    expect(g.firedTimeout()).toBe(true);
+    g.stop();
+  });
+
+  it("extends the soft deadline on heartbeat tool activity even when diff volume is flat", async () => {
+    let clock = 0;
+    let toolsCalled = 0;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    const g = startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 1_000,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => 25,
+      activityUsage: () => ({
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        toolsCalled,
+        waiting: 0,
+      }),
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // anchor
+    clock = 90;
+    toolsCalled = 1;
+    await sched.tick(); // tool activity resets soft progress
+    expect(reason).toBeUndefined();
+    clock = 170;
+    await sched.tick(); // 80ms since tool activity, still under cap
+    expect(reason).toBeUndefined();
+    clock = 190;
+    await sched.tick(); // 100ms since last activity, no commit/edit/activity → stall
+    expect(reason).toBe("stalled");
+    expect(g.firedTimeout()).toBe(true);
+    g.stop();
+  });
+
   it("does not reset the deadline for shrinking diff volume, but stays alive while still within the cap", async () => {
     let clock = 0;
     let volume = 100;
