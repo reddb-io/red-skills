@@ -27,8 +27,10 @@ describe("rsp git fidelity fixtures", () => {
 
     expect(fixtureNames).toEqual([
       "commit-created",
+      "diff-large-numstat",
       "diff-numstat",
       "log-contract",
+      "log-large-history",
       "push-porcelain",
       "push-rejected",
       "status-clean",
