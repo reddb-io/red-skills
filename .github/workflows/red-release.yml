@@ -466,22 +466,43 @@ jobs:
           pnpm pack --pack-destination .
           tarball="$(ls reddb-io-red-skills-*.tgz | head -n1)"
           echo "packed $tarball"
+          # Materialize the tar listing ONCE. Never pipe `tar -tzf` straight into
+          # `grep -q`: grep closes the pipe on its first match, tar then dies with
+          # SIGPIPE (exit 141), and `pipefail` propagates that failure — so once the
+          # tarball grew past the pipe buffer the check misreported a present bundle
+          # as missing. Matching each expected entry against the captured listing with
+          # a here-string (no pipe) lets tar always read to completion.
+          listing="$(tar -tzf "$tarball")"
           for expected in \
             package/dist/dev.bundle.min.mjs \
             package/dist/code-nav.bundle.min.mjs \
             package/dist/memory.bundle.min.mjs \
-            package/dist/brain.bundle.min.mjs; do
-            if ! tar -tzf "$tarball" | grep -qx "$expected"; then
+            package/dist/brain.bundle.min.mjs \
+            package/dist/rsp.bundle.min.mjs; do
+            if ! grep -qxF "$expected" <<<"$listing"; then
               echo "::error::npm tarball missing $expected"
               exit 1
             fi
           done
           # Contract check: install the packed tarball into a throwaway prefix and
-          # run the REAL packaged client (the bin the launcher execs) — proves the
+          # run the REAL packaged clients (the bins the launcher execs) — proves the
           # tarball resolves and runs before we publish it.
           smoke="$(mktemp -d)"
           npm install "./$tarball" --prefix "$smoke" --no-audit --no-fund --ignore-scripts --loglevel=error
-          node "$smoke/node_modules/@reddb-io/red-skills/bin/red-skills-dev.mjs" --version
+          pkg="$smoke/node_modules/@reddb-io/red-skills"
+          node "$pkg/bin/red-skills-dev.mjs" --version
+          # rsp needs a provisioned RedDB store (the `red` binary is not present under
+          # --ignore-scripts), so it cannot reach exit 0 here. What we DO smoke is that
+          # the packaged rsp bin resolves its bundle: a bin-without-bundle makes the
+          # shim print "packaged bundle missing" and exit before ever loading the
+          # runtime. Fail iff that guard fires — that is the exact "dangling bin" defect.
+          rsp_out="$(node "$pkg/bin/rsp.mjs" --store-uri "file://$smoke/rsp-store" 2>&1 || true)"
+          if grep -qF 'packaged bundle missing' <<<"$rsp_out"; then
+            echo "::error::packaged rsp bin shipped without its dist/rsp.bundle.min.mjs bundle"
+            printf '%s\n' "$rsp_out"
+            exit 1
+          fi
+          echo "packaged rsp bin resolved its bundle"
           rm -rf "$smoke"
 
       - name: Publish to npm
