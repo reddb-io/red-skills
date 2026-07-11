@@ -658,6 +658,30 @@ describe("runBoot unblock sweep promotes + comments", () => {
   });
 });
 
+describe("runBoot mixed-blocked normalizer (#1481)", () => {
+  it("heals a pre-existing mixed-blocked issue by shedding its stale blocked:*", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({
+        mixedBlockedCandidates: [
+          { number: 42, labels: ["ready-for-agent", "blocked:spec"] },
+          { number: 43, labels: ["ready-for-agent"] }, // clean → untouched
+        ],
+      }),
+    );
+    expect(ghCalls.editLabels).toEqual([{ issue: 42, remove: ["blocked:spec"], add: [] }]);
+    expect(r.mixedBlockedNormalize).toEqual({ healed: [42] });
+  });
+
+  it("is a no-op when no mixed-blocked candidates are provided", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(ghCalls.editLabels).toEqual([]);
+    expect(r.mixedBlockedNormalize).toEqual({ healed: [] });
+  });
+});
+
 describe("runBoot cross-host stale-claim sweep (#627)", () => {
   // A claim record from `worker` whose latest refresh was `ageS` ago.
   const claim = (commentId: number, worker: string, ageS: number) => ({
