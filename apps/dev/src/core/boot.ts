@@ -79,10 +79,16 @@ export interface PrecheckFacts {
   /**
    * The currently locked branch from `.red/tmp/branch-lock.yaml`, or
    * `undefined` when the session is unlocked. When set, the precheck gates on
-   * `currentBranch === lockedBranch` rather than `currentBranch === "main"`,
-   * so a locked checkout is on the lock branch, not main.
+   * `currentBranch === lockedBranch` rather than the configured trunk, so a
+   * locked checkout is on the lock branch, not the trunk.
    */
   lockedBranch?: string;
+  /**
+   * The configured AFK boot branch resolved by the caller from repo config
+   * (config lock/trunk, falling back to main). Kept injected so precheck stays
+   * a pure rule over facts.
+   */
+  configuredTrunk?: string;
   pnpmInstalled: boolean;
   /**
    * Relax the SSH-only remote rule. "Reject https remote" is a LOCAL-dev safety
@@ -96,9 +102,10 @@ export interface PrecheckFacts {
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
- * `detail` carries the offending value (e.g. the https URL, the wrong branch).
- * pnpm-missing is a WARNING in afk.sh (`log "warn: …"`), not a `die`; it is
- * surfaced via `warnings` while the verdict still passes. */
+ * `detail` carries the offending value (e.g. the https URL) or, for a branch
+ * mismatch, the branch the checkout was expected to be on. pnpm-missing is a
+ * WARNING in afk.sh (`log "warn: …"`), not a `die`; it is surfaced via
+ * `warnings` while the verdict still passes. */
 export type PrecheckResult =
   | { ok: true; warnings: string[] }
   | { ok: false; failed: Precondition; detail?: string };
@@ -119,9 +126,9 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
     }
   }
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
-  const expectedBranch = facts.lockedBranch ?? "main";
+  const expectedBranch = facts.lockedBranch ?? facts.configuredTrunk ?? "main";
   if (facts.currentBranch !== expectedBranch) {
-    return { ok: false, failed: "not-on-main", detail: facts.currentBranch };
+    return { ok: false, failed: "not-on-main", detail: expectedBranch };
   }
   const warnings: string[] = [];
   if (!facts.pnpmInstalled) {
