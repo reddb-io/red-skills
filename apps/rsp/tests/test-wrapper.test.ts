@@ -32,6 +32,7 @@ describe("rsp test runner fidelity fixtures", () => {
       "vitest-green",
       "vitest-large-green",
       "vitest-long-failure",
+      "vitest-many-failures",
       "vitest-mixed",
     ]);
   });
@@ -101,6 +102,84 @@ describe("rsp test runner fidelity fixtures", () => {
       if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
       expect(record.original.toString("utf8")).toContain("received: \"line-001\"");
       expect(record.original.toString("utf8")).toContain("received: \"line-040\"");
+    } finally {
+      await store.close();
+    }
+  });
+});
+
+function decodeTerse(stdout: string): unknown {
+  return decode(stdout.split("\n").filter((line) => !line.startsWith("… elided ")).join("\n"));
+}
+
+describe("rsp vitest terse failure budget", () => {
+  it("caps inline failures to top-K and elides the remainder behind a retrievable handle", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-many-failures")!;
+      const result = await runFidelityFixture(fixture, { level: "terse", store });
+      const stdout = result.stdout.toString("utf8");
+      const decoded = decodeTerse(stdout) as { summary: string; failures: unknown[] };
+
+      // Rollup preserved; only the top-3 failures stay inline.
+      expect(decoded.summary).toBe("5/8 failed · 2 suites · 3.2s");
+      expect(decoded.failures).toHaveLength(3);
+      expect(result.rowsElided).toBe(2);
+
+      // A single handle behind an elision marker collapses the remaining failures.
+      expect(stdout).toMatch(/… elided 2 failures \(\+\d+\) — rsp show el:[a-f0-9]{12}/);
+      expect(result.mintedHandle).toBeDefined();
+
+      // Full detail — all five failures — remains retrievable via `rsp show`.
+      const record = await store.get(result.mintedHandle!);
+      if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
+      const full = decode(record.original.toString("utf8")) as { failures: unknown[] };
+      expect(full.failures).toHaveLength(5);
+      expect(record.original.toString("utf8")).toContain("beta case five");
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("shortens each inline excerpt to first + last line under terse", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-long-failure")!;
+      const result = await runFidelityFixture(fixture, { level: "terse", store });
+      const decoded = decodeTerse(result.stdout.toString("utf8")) as { failures: { excerpt: string }[] };
+      const excerpt = decoded.failures[0].excerpt;
+
+      // First and last line survive; the middle is dropped.
+      expect(excerpt).toContain("Snapshot mismatch");
+      expect(excerpt).toContain('received: "line-040"');
+      expect(excerpt).not.toContain('received: "line-020"');
+      expect(excerpt).toContain("…");
+
+      // Full excerpt stays retrievable even when no failures were dropped.
+      expect(result.rowsElided).toBe(0);
+      expect(result.mintedHandle).toBeDefined();
+      const record = await store.get(result.mintedHandle!);
+      if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
+      const full = decode(record.original.toString("utf8")) as { failures: { excerpt: string }[] };
+      expect(full.failures[0].excerpt).toContain('received: "line-020"');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("keeps the green-suite summary line unchanged under terse", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-green")!;
+      const result = await runFidelityFixture(fixture, { level: "terse", store });
+
+      expect(result.status).toBe(0);
+      expect(result.mintedHandle).toBeUndefined();
+      expect(result.stdout.toString("utf8")).not.toContain("… elided");
+      expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
     } finally {
       await store.close();
     }

@@ -86,6 +86,11 @@
       "name": "vitest-mixed",
       "stdout": "rtk vitest run --reporter=json\n4 tests: 3 passed, 1 failed\nmath divides by zero: expected Infinity to equal 0\n",
       "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-many-failures",
+      "stdout": "rtk vitest run --reporter=json\n8 tests: 3 passed, 5 failed\nalpha case one: expected 1 got 2\nalpha case two: expected 3 got 4\nalpha case three: expected 5 got 6\nbeta case four: expected 7 got 8\nbeta case five: expected 9 got 10\n",
+      "fidelity_assertions_passed": true
     }
   ]
 }

@@ -35,6 +35,10 @@ interface TestFailureSource {
 }
 
 const EXCERPT_LIMIT_BYTES = 320;
+// Under `terse` the excerpt budget tightens to first + last line, capped at half the
+// lossless budget, and only the top-K failures stay inline — the rest collapse to a handle.
+const TERSE_EXCERPT_LIMIT_BYTES = 160;
+const TERSE_TOP_K_FAILURES = 3;
 
 export async function runTestWrapper(argv: readonly string[], options: TestRenderOptions): Promise<GitRenderResult> {
   const contract = await collectTestContract(argv);
@@ -59,6 +63,12 @@ export async function renderTestContract(
     };
   }
 
+  const summary = `${parsed.failed}/${parsed.total} failed · ${parsed.suites} suites · ${formatDuration(parsed.durationSeconds)}`;
+
+  if (options.level === "terse") {
+    return await renderTerse(command, contract, parsed, status, summary, options);
+  }
+
   const failures: TestFailure[] = [];
   let mintedHandle: `el:${string}` | undefined;
   let bytesElided = 0;
@@ -70,10 +80,7 @@ export async function renderTestContract(
     bytesElided += excerpt.bytesElided;
   }
 
-  const payload: TestPayload = {
-    exit_code: status,
-    summary: `${parsed.failed}/${parsed.total} failed · ${parsed.suites} suites · ${formatDuration(parsed.durationSeconds)}`,
-  };
+  const payload: TestPayload = { exit_code: status, summary };
   if (failures.length > 0) payload.failures = failures;
 
   return {
@@ -86,6 +93,77 @@ export async function renderTestContract(
     bytesElided: bytesElided > 0 ? bytesElided : undefined,
     rowsElided: failures.length > 0 ? Math.max(0, parsed.total - failures.length) : undefined,
   };
+}
+
+async function renderTerse(
+  command: readonly string[],
+  contract: RecordedGitContract,
+  parsed: ParsedTestRun,
+  status: number | null,
+  summary: string,
+  options: TestRenderOptions,
+): Promise<GitRenderResult> {
+  const inline: TestFailure[] = parsed.failures.slice(0, TERSE_TOP_K_FAILURES).map((failure) => ({
+    suite: failure.suite,
+    name: failure.name,
+    excerpt: terseExcerpt(failure.excerpt),
+  }));
+
+  const tersePayload: TestPayload = { exit_code: status, summary };
+  if (inline.length > 0) tersePayload.failures = inline;
+  const terseToon = encode(tersePayload as unknown as JsonObject);
+
+  const elidedFailures = Math.max(0, parsed.failures.length - inline.length);
+  const excerptTrimmed = inline.some((row, index) => row.excerpt !== parsed.failures[index].excerpt);
+
+  // Nothing was lost — the tighter view is byte-identical to the full one, so emit it as-is.
+  if (elidedFailures === 0 && !excerptTrimmed) {
+    return {
+      stdout: Buffer.from(terseToon),
+      stderr: Buffer.from(contract.stderr),
+      status: contract.status,
+      signal: contract.signal,
+      payload: tersePayload as unknown as JsonObject,
+    };
+  }
+
+  const fullPayload: TestPayload = { exit_code: status, summary };
+  if (parsed.failures.length > 0) {
+    fullPayload.failures = parsed.failures.map((failure) => ({
+      suite: failure.suite,
+      name: failure.name,
+      excerpt: failure.excerpt,
+    }));
+  }
+  const fullToon = encode(fullPayload as unknown as JsonObject);
+  const bytesElided = Buffer.byteLength(fullToon);
+
+  const handle = await options.store?.mint(Buffer.from(fullToon), {
+    command: command.join(" "),
+    loss: { level: "terse", bytes_elided: bytesElided },
+  });
+  if (!handle) throw new Error("terse test output requires an elision store");
+
+  const label = elidedFailures > 0 ? `${elidedFailures} failures` : "full detail";
+  const marker = `… elided ${label} (+${bytesElided}) — rsp show ${handle}`;
+  return {
+    stdout: Buffer.from(`${terseToon}\n${marker}`),
+    stderr: Buffer.from(contract.stderr),
+    status: contract.status,
+    signal: contract.signal,
+    payload: tersePayload as unknown as JsonObject,
+    mintedHandle: handle,
+    bytesElided,
+    rowsElided: elidedFailures,
+  };
+}
+
+function terseExcerpt(excerpt: string): string {
+  const lines = excerpt.split("\n");
+  const compact = lines.length <= 2 ? excerpt : `${lines[0]}\n…\n${lines[lines.length - 1]}`;
+  const bytes = Buffer.from(compact);
+  if (bytes.length <= TERSE_EXCERPT_LIMIT_BYTES) return compact;
+  return bytes.subarray(0, TERSE_EXCERPT_LIMIT_BYTES).toString("utf8").replace(/�$/, "");
 }
 
 function parseTestRunner(command: readonly string[]): "vitest" | "cargo" {
