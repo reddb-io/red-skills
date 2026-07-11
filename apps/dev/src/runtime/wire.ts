@@ -434,9 +434,12 @@ export function makeRunAgent(
             },
           }
         : {}),
-      // Per-attempt budget (#908): only wired when the progress guard is armed
-      // (the budget check rides its poll) AND a budget + live usage probe exist.
-      ...(guardArmed && attemptBudget && budgetUsage ? { budget: attemptBudget, budgetUsage } : {}),
+      // Live activity counters are wired whenever the progress guard is armed so
+      // tool/text progress can extend the soft stall deadline even without a
+      // configured resource budget. The budget predicate itself still requires
+      // both the ceilings and the usage probe.
+      ...(guardArmed && budgetUsage ? { budgetUsage } : {}),
+      ...(guardArmed && attemptBudget && budgetUsage ? { budget: attemptBudget } : {}),
       ...(laneArmed && laneAttemptDir
         ? {
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
