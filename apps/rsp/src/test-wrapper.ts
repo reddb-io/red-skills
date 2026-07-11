@@ -36,9 +36,9 @@ interface TestFailureSource {
 }
 
 const EXCERPT_LIMIT_BYTES = 320;
-// Under `terse` the excerpt budget tightens to first + last line, capped at half the
-// lossless budget, and only the top-K failures stay inline — the rest collapse to a handle.
+// Under `terse` the excerpt budget is shared across the top-K inline failures.
 const TERSE_EXCERPT_LIMIT_BYTES = 160;
+const TERSE_EXCERPT_BUDGET_BYTES = EXCERPT_LIMIT_BYTES;
 const TERSE_TOP_K_FAILURES = 3;
 
 export async function runTestWrapper(argv: readonly string[], options: TestRenderOptions): Promise<GitRenderResult> {
@@ -114,11 +114,7 @@ async function renderTerse(
   options: TestRenderOptions,
   query?: string,
 ): Promise<GitRenderResult> {
-  const inline: TestFailure[] = parsed.failures.slice(0, TERSE_TOP_K_FAILURES).map((failure) => ({
-    suite: failure.suite,
-    name: failure.name,
-    excerpt: terseExcerpt(failure.excerpt),
-  }));
+  const inline = renderTerseInlineFailures(parsed.failures);
 
   const tersePayload: TestPayload = { exit_code: status, summary: query ? `${summary} · ${parsed.failures.length} failures matched` : summary };
   if (inline.length > 0) tersePayload.failures = inline;
@@ -172,12 +168,26 @@ async function renderTerse(
   };
 }
 
-function terseExcerpt(excerpt: string): string {
+function renderTerseInlineFailures(failures: readonly TestFailureSource[]): TestFailure[] {
+  const inline: TestFailure[] = [];
+  let remainingBudget = TERSE_EXCERPT_BUDGET_BYTES;
+
+  for (const failure of failures.slice(0, TERSE_TOP_K_FAILURES)) {
+    const excerpt = terseExcerpt(failure.excerpt, Math.min(TERSE_EXCERPT_LIMIT_BYTES, remainingBudget));
+    remainingBudget = Math.max(0, remainingBudget - Buffer.byteLength(excerpt));
+    inline.push({ suite: failure.suite, name: failure.name, excerpt });
+  }
+
+  return inline;
+}
+
+function terseExcerpt(excerpt: string, limitBytes: number): string {
+  if (limitBytes <= 0) return "";
   const lines = excerpt.split("\n");
   const compact = lines.length <= 2 ? excerpt : `${lines[0]}\n…\n${lines[lines.length - 1]}`;
   const bytes = Buffer.from(compact);
-  if (bytes.length <= TERSE_EXCERPT_LIMIT_BYTES) return compact;
-  return bytes.subarray(0, TERSE_EXCERPT_LIMIT_BYTES).toString("utf8").replace(/�$/, "");
+  if (bytes.length <= limitBytes) return compact;
+  return bytes.subarray(0, limitBytes).toString("utf8").replace(/�$/, "");
 }
 
 function parseTestRunner(command: readonly string[]): "vitest" | "cargo" {
