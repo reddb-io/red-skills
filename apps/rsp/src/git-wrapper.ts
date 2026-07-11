@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
+import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export type GitSubcommand = "status" | "log" | "diff" | "commit" | "push";
 
@@ -29,8 +30,9 @@ export interface GitRenderResult {
 }
 
 export async function runGitWrapper(argv: readonly string[], options: GitRenderOptions): Promise<GitRenderResult> {
-  const subcommand = parseGitSubcommand(argv);
-  const contract = await collectGitContract(subcommand, argv.slice(1));
+  const parsed = extractQueryArg(argv);
+  const subcommand = parseGitSubcommand(parsed.argv);
+  const contract = await collectGitContract(subcommand, parsed.argv.slice(1));
   return renderGitContract(argv, contract, options);
 }
 
@@ -39,17 +41,18 @@ export async function renderGitContract(
   contract: RecordedGitContract,
   options: GitRenderOptions,
 ): Promise<GitRenderResult> {
+  const parsedCommand = extractQueryArg(command);
   if ((contract.status ?? 0) !== 0 || contract.signal) {
     return {
-      stdout: Buffer.from(contract.stdout),
+      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
       stderr: Buffer.from(contract.stderr),
       status: contract.status,
       signal: contract.signal,
     };
   }
 
-  const subcommand = parseGitSubcommand(command);
-  const payload = parseGitPayload(subcommand, command, contract.stdout);
+  const subcommand = parseGitSubcommand(parsedCommand.argv);
+  const payload = parseGitPayload(subcommand, parsedCommand.argv, contract.stdout, parsedCommand.query);
   if (payload === "git empty\n") {
     return {
       stdout: Buffer.from(payload),
@@ -157,22 +160,22 @@ async function collectGitContract(subcommand: GitSubcommand, rest: readonly stri
   });
 }
 
-function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], stdout: string): JsonObject | "git empty\n" {
+function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], stdout: string, query?: string): JsonObject | "git empty\n" {
   switch (subcommand) {
     case "status":
-      return parseStatus(command, stdout);
+      return parseStatus(command, stdout, query);
     case "log":
-      return parseLog(command, stdout);
+      return parseLog(command, stdout, query);
     case "diff":
-      return parseDiff(command, stdout);
+      return parseDiff(command, stdout, query);
     case "commit":
-      return parseCommit(command, stdout);
+      return helpIfQueried(parseCommit(command, stdout), query, ["rsp git status --query <path-or-state>"]);
     case "push":
-      return parsePush(command, stdout);
+      return helpIfQueried(parsePush(command, stdout), query, ["rsp gh pr list --query <branch>"]);
   }
 }
 
-function parseStatus(command: readonly string[], stdout: string): JsonObject | "git empty\n" {
+function parseStatus(command: readonly string[], stdout: string, query?: string): JsonObject | "git empty\n" {
   let branch = "";
   const rows: JsonObject[] = [];
   for (const raw of stdout.split("\0")) {
@@ -193,16 +196,17 @@ function parseStatus(command: readonly string[], stdout: string): JsonObject | "
     });
   }
   if (rows.length === 0) return "git empty\n";
-  const counts = countBy(rows, "state");
-  return {
+  const filteredRows = filterRows(rows, query);
+  const counts = countBy(filteredRows, "state");
+  return helpIfQueried({
     command: command.join(" "),
     branch,
-    rows,
-    summary: `${rows.length} changes: ${counts.added ?? 0} added, ${counts.modified ?? 0} modified, ${counts.deleted ?? 0} deleted`,
-  };
+    rows: filteredRows as JsonValue,
+    summary: `${query ? `${filteredRows.length}/${rows.length}` : filteredRows.length} changes: ${counts.added ?? 0} added, ${counts.modified ?? 0} modified, ${counts.deleted ?? 0} deleted`,
+  }, query, ["rsp git diff --query <path>", "rsp git log --query <subject>"]);
 }
 
-function parseLog(command: readonly string[], stdout: string): JsonObject {
+function parseLog(command: readonly string[], stdout: string, query?: string): JsonObject {
   const commits = stdout.split("\0").filter(Boolean).map((record) => {
     const fields = record.replace(/^\x1e/, "").split("\x1f");
     return {
@@ -212,10 +216,15 @@ function parseLog(command: readonly string[], stdout: string): JsonObject {
       subject: fields[3] ?? "",
     };
   });
-  return { command: command.join(" "), commits, summary: `${commits.length} commits` };
+  const filteredCommits = filterRows(commits, query);
+  return helpIfQueried({
+    command: command.join(" "),
+    commits: filteredCommits as JsonValue,
+    summary: `${query ? `${filteredCommits.length}/${commits.length}` : filteredCommits.length} commits`,
+  }, query, ["rsp git diff --query <path>", "rsp gh pr list --query <branch>"]);
 }
 
-function parseDiff(command: readonly string[], stdout: string): JsonObject {
+function parseDiff(command: readonly string[], stdout: string, query?: string): JsonObject {
   const fields = stdout.split("\0").filter(Boolean);
   const files = fields.map((entry) => {
     const [added, deleted, path] = entry.split("\t");
@@ -225,12 +234,17 @@ function parseDiff(command: readonly string[], stdout: string): JsonObject {
       deleted: deleted === "-" ? null : Number(deleted ?? 0),
     };
   });
-  const totals = files.reduce((acc, file) => {
+  const filteredFiles = filterRows(files, query);
+  const totals = filteredFiles.reduce((acc, file) => {
     acc.added += typeof file.added === "number" ? file.added : 0;
     acc.deleted += typeof file.deleted === "number" ? file.deleted : 0;
     return acc;
   }, { added: 0, deleted: 0 });
-  return { command: command.join(" "), files, summary: `${files.length} files, +${totals.added} -${totals.deleted}` };
+  return helpIfQueried({
+    command: command.join(" "),
+    files: filteredFiles as JsonValue,
+    summary: `${query ? `${filteredFiles.length}/${files.length}` : filteredFiles.length} files, +${totals.added} -${totals.deleted}`,
+  }, query, ["rsp git status --query <path>", "rsp git log --query <subject>"]);
 }
 
 function parseCommit(command: readonly string[], stdout: string): JsonObject {
@@ -273,6 +287,10 @@ function parsePush(command: readonly string[], stdout: string): JsonObject {
     refs,
     summary: `pushed ${branch} -> ${remote} +${commitCount} commits`,
   };
+}
+
+function helpIfQueried(payload: JsonObject, query: string | undefined, help: readonly string[]): JsonObject {
+  return query ? withHelp(payload, help) : payload;
 }
 
 function scalarFastPath(subcommand: GitSubcommand, payload: JsonObject): string | null {
