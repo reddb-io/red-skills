@@ -1,5 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  buildCommunityAnalytics,
+  type BridgeEdge,
+  type BridgeNode,
+  type CommunityAnalyticsReport,
+  type CommunityNodeAnalytics,
+} from "./communities.js";
 import { diagnose, type StaleNode } from "./doctor.js";
 import { buildGraphContract } from "./graph-contract.js";
 import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
@@ -105,20 +112,31 @@ export async function exportGraph(
 
   // Native community detection is opt-in: only run it (and only attach the
   // `community` field) when asked, so the default export stays byte-identical.
-  const [communities, superseded, doctor] = await Promise.all([
-    opts.communities ? store.communities() : Promise.resolve(new Map<number, string>()),
+  const [communityReport, superseded, doctor] = await Promise.all([
+    opts.communities
+      ? buildCommunityAnalytics(store, { cache: "read-only", now: opts.now ? new Date(opts.now) : undefined })
+      : Promise.resolve(null),
     store.supersededByMany(nodes.map((n) => n.rid)),
     diagnose(store, { staleDays: opts.staleDays, now: opts.now }),
   ]);
+  const communityModel = buildCommunityExportModel(communityReport);
+  const communities = communityModel.assignments;
   const dashboard = buildDashboard(nodes, edges, stats, docs, superseded, doctor.stale);
-  const withCommunity = (rid: number) =>
-    opts.communities ? { community: communities.get(rid) ?? null } : {};
+  const withCommunity = (rid: number) => {
+    if (!opts.communities) return {};
+    const community = communities.get(rid) ?? null;
+    return {
+      community,
+      community_label: community ? communityModel.labels.get(community) ?? community : null,
+    };
+  };
 
   // Versioned integration seam (#234): the stable contract consumers negotiate
   // against. Built from the same (redacted) nodes/edges and the community map so
   // it stays consistent with the rest of the bundle.
   const contract = buildGraphContract({ nodes, edges, communities });
 
+  const jsonEdges = edges.map((edge) => decorateEdge(edge, communityModel));
   const json = {
     generated_at: new Date().toISOString(),
     contract,
@@ -130,15 +148,22 @@ export async function exportGraph(
     context_pack_preview: dashboard.contextPackPreview,
     docs: docs.map(exportDoc),
     vector_projection: exportVectorStatus(vector),
+    semantic_lane: buildSemanticLaneSummary(nodes, edges),
+    ...(communityReport ? { communities: communityReport } : {}),
     nodes: nodes.map((n) => ({
       rid: n.rid,
       label: n.label,
       node_type: n.node_type,
       ...withCommunity(n.rid),
+      confidence: confidenceValue(n.properties),
+      audit_seal: auditSeal(n.properties),
+      confidence_band: confidenceBand(n.properties),
+      semantic_lane: semanticLane(n.properties),
+      navigation: communityModel.navigation.get(n.rid) ?? null,
       evidence_statuses: dashboard.nodeStatuses.get(n.rid) ?? ["active"],
       properties: n.properties,
     })),
-    edges,
+    edges: jsonEdges,
   };
 
   const jsonPath = join(dir, "graph.json");
@@ -155,8 +180,12 @@ export async function exportGraph(
 
   const writes = [
     writeFile(jsonPath, `${JSON.stringify(json, null, 2)}\n`, "utf8"),
-    writeFile(htmlPath, renderHtml(nodes, edges, stats, docs, vector, communities, dashboard), "utf8"),
-    writeFile(auditPath, renderAudit(nodes, edges, stats, docs, vector, dashboard), "utf8"),
+    writeFile(
+      htmlPath,
+      renderHtml(nodes, edges, stats, docs, vector, communityModel, dashboard),
+      "utf8",
+    ),
+    writeFile(auditPath, renderAudit(nodes, edges, stats, docs, vector, dashboard, communityModel), "utf8"),
   ];
   if (interop) {
     writes.push(
@@ -221,6 +250,149 @@ function exportVectorStatus(vector: VectorStatusReport): Record<string, unknown>
       updated_at: doc.updated_at,
     })),
   };
+}
+
+interface CommunityExportModel {
+  report: CommunityAnalyticsReport | null;
+  assignments: Map<number, string>;
+  labels: Map<string, string>;
+  navigation: Map<number, NodeNavigation>;
+  bridgeNodes: Map<number, BridgeNode>;
+  bridgeEdges: Set<string>;
+}
+
+interface NodeNavigation {
+  degree: number;
+  in_degree: number;
+  out_degree: number;
+  weighted_degree: number;
+  centrality: number;
+  hub: boolean;
+  bridge: boolean;
+  connected_community_count: number;
+  connected_community_ids: string[];
+  cross_community_edge_count: number;
+  cross_community_weight: number;
+}
+
+function buildCommunityExportModel(report: CommunityAnalyticsReport | null): CommunityExportModel {
+  const labels = new Map<string, string>();
+  const assignments = new Map<number, string>();
+  const bridgeNodes = new Map<number, BridgeNode>();
+  const bridgeEdges = new Set<string>();
+  const navigation = new Map<number, NodeNavigation>();
+  if (!report) return { report, assignments, labels, navigation, bridgeNodes, bridgeEdges };
+
+  for (const community of report.communities) {
+    labels.set(community.id, community.short_label ?? community.id);
+  }
+  for (const assignment of report.assignments) assignments.set(assignment.rid, assignment.community_id);
+  for (const bridge of report.bridge_nodes) bridgeNodes.set(bridge.rid, bridge);
+  for (const edge of report.bridge_edges) bridgeEdges.add(edgeKey(edge));
+  for (const item of report.node_analytics) {
+    const bridge = bridgeNodes.get(item.rid);
+    navigation.set(item.rid, nodeNavigation(item, bridge));
+  }
+  return { report, assignments, labels, navigation, bridgeNodes, bridgeEdges };
+}
+
+function nodeNavigation(item: CommunityNodeAnalytics, bridge: BridgeNode | undefined): NodeNavigation {
+  return {
+    degree: item.degree,
+    in_degree: item.in_degree,
+    out_degree: item.out_degree,
+    weighted_degree: item.weighted_degree,
+    centrality: item.centrality,
+    hub: item.degree > 0 && item.centrality >= 0.75,
+    bridge: bridge != null,
+    connected_community_count: bridge?.connected_community_count ?? 0,
+    connected_community_ids: bridge?.connected_community_ids ?? [],
+    cross_community_edge_count: bridge?.cross_community_edge_count ?? 0,
+    cross_community_weight: bridge?.cross_community_weight ?? 0,
+  };
+}
+
+function edgeKey(edge: Pick<BridgeEdge, "from_rid" | "to_rid" | "label">): string {
+  return `${edge.from_rid}\u0000${edge.to_rid}\u0000${edge.label}`;
+}
+
+function decorateEdge(edge: ExportEdge, communityModel: CommunityExportModel): ExportEdge & Record<string, unknown> {
+  const fromCommunity = communityModel.assignments.get(edge.from) ?? null;
+  const toCommunity = communityModel.assignments.get(edge.to) ?? null;
+  const bridge = communityModel.bridgeEdges.has(edgeKey({ from_rid: edge.from, to_rid: edge.to, label: edge.label }));
+  return {
+    ...edge,
+    confidence: confidenceValue(edge.properties),
+    audit_seal: auditSeal(edge.properties),
+    confidence_band: confidenceBand(edge.properties),
+    semantic_lane: semanticLane(edge.properties),
+    ...(fromCommunity || toCommunity
+      ? {
+          from_community: fromCommunity,
+          to_community: toCommunity,
+          from_community_label: fromCommunity ? communityModel.labels.get(fromCommunity) ?? fromCommunity : null,
+          to_community_label: toCommunity ? communityModel.labels.get(toCommunity) ?? toCommunity : null,
+          navigation: { bridge },
+        }
+      : {}),
+  };
+}
+
+function confidenceValue(props: Record<string, unknown>): string | null {
+  const value = props.confidence;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function auditSeal(props: Record<string, unknown>): string {
+  const value = props.audit_seal ?? props.confidence;
+  return typeof value === "string" && value.trim() ? value : "AMBIGUOUS";
+}
+
+function confidenceBand(props: Record<string, unknown>): string | null {
+  const value = props.confidence_band;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function semanticLane(props: Record<string, unknown>): "INFERRED" | "EXTRACTED" | "AMBIGUOUS" {
+  const seal = auditSeal(props);
+  if (seal === "INFERRED" || seal === "EXTRACTED") return seal;
+  return "AMBIGUOUS";
+}
+
+interface SemanticLaneSummary {
+  seal_distribution: Record<string, { nodes: number; edges: number; total: number }>;
+  inferred_nodes: number;
+  inferred_edges: number;
+  token_cost: { input: number; output: number } | null;
+}
+
+function buildSemanticLaneSummary(nodes: StoredNode[], edges: ExportEdge[]): SemanticLaneSummary {
+  const sealDistribution: Record<string, { nodes: number; edges: number; total: number }> = {};
+  const bump = (seal: string, kind: "nodes" | "edges") => {
+    const current = sealDistribution[seal] ?? { nodes: 0, edges: 0, total: 0 };
+    current[kind] += 1;
+    current.total += 1;
+    sealDistribution[seal] = current;
+  };
+  for (const node of nodes) bump(auditSeal(node.properties), "nodes");
+  for (const edge of edges) bump(auditSeal(edge.properties), "edges");
+  return {
+    seal_distribution: sealDistribution,
+    inferred_nodes: nodes.filter((node) => semanticLane(node.properties) === "INFERRED").length,
+    inferred_edges: edges.filter((edge) => semanticLane(edge.properties) === "INFERRED").length,
+    token_cost: semanticTokenCost(nodes),
+  };
+}
+
+function semanticTokenCost(nodes: StoredNode[]): { input: number; output: number } | null {
+  for (const node of nodes) {
+    const input = Number(node.properties.semantic_token_input);
+    const output = Number(node.properties.semantic_token_output);
+    if (Number.isFinite(input) && Number.isFinite(output) && (input > 0 || output > 0)) {
+      return { input, output };
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -617,9 +789,11 @@ function renderAudit(
   docs: StoredDoc[],
   vector: VectorStatusReport,
   dashboard: DashboardModel,
+  communityModel: CommunityExportModel,
 ): string {
   const byType = tally(nodes, (n) => n.node_type);
   const byLabel = tally(edges, (e) => e.label);
+  const semantic = buildSemanticLaneSummary(nodes, edges);
 
   // Degree per node (in + out) and orphan detection.
   const degree = new Map<number, number>();
@@ -644,6 +818,42 @@ function renderAudit(
   lines.push(`- **Documents:** ${docs.length}`);
   lines.push(`- **Orphan nodes (no edges):** ${orphans.length}`);
   lines.push(`- **Superseded chains:** ${superseded.length}`, "");
+
+  lines.push("## Seal distribution", "");
+  lines.push(
+    "EXTRACTED evidence comes from structural extractors. INFERRED evidence is provider-inferred semantic-lane material and should be reviewed with its confidence band before treating it as source-level fact.",
+  );
+  for (const [seal, count] of Object.entries(semantic.seal_distribution).sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(`- **${seal}:** ${count.total} total (${count.nodes} node(s), ${count.edges} edge(s))`);
+  }
+  if (semantic.token_cost) {
+    lines.push(
+      `- Semantic lane token cost: ${semantic.token_cost.input} input / ${semantic.token_cost.output} output tokens from the originating ingest run.`,
+    );
+  } else {
+    lines.push("- Semantic lane token cost: unavailable in this export.");
+  }
+  lines.push("");
+
+  if (communityModel.report) {
+    lines.push("## Community navigation", "");
+    for (const community of communityModel.report.communities) {
+      const label = community.short_label ?? community.id;
+      lines.push(
+        `- **${label}:** ${community.count} node(s), cohesion ${community.cohesion_score}, external edge weight ${community.external_edge_weight}`,
+      );
+    }
+    if (communityModel.report.bridge_nodes.length === 0) {
+      lines.push("- **Bridges:** none detected");
+    } else {
+      for (const bridge of communityModel.report.bridge_nodes.slice(0, 10)) {
+        lines.push(
+          `- **Bridge:** ${bridge.title} links ${bridge.connected_community_count} communities (${bridge.connected_community_ids.join(", ")})`,
+        );
+      }
+    }
+    lines.push("");
+  }
 
   lines.push("## Memory health", "");
   lines.push(`- **State:** ${dashboard.health.state}`);
@@ -776,9 +986,11 @@ function renderHtml(
   stats: { nodes: number; edges: number },
   docs: StoredDoc[],
   vector: VectorStatusReport,
-  communities: Map<number, string> = new Map(),
+  communityModel: CommunityExportModel,
   dashboard: DashboardModel,
 ): string {
+  const communities = communityModel.assignments;
+  const semantic = buildSemanticLaneSummary(nodes, edges);
   const palette = communityPalette([...new Set(communities.values())].sort());
   const data = {
     nodes: nodes.map((n) => ({
@@ -788,9 +1000,26 @@ function renderHtml(
       title: n.properties.title ?? n.label,
       excerpt: String(n.properties.summary ?? n.properties.content ?? "").slice(0, 280),
       community: communities.get(n.rid) ?? null,
+      community_label: communities.get(n.rid)
+        ? communityModel.labels.get(communities.get(n.rid) as string) ?? communities.get(n.rid)
+        : null,
+      confidence: confidenceValue(n.properties),
+      audit_seal: auditSeal(n.properties),
+      confidence_band: confidenceBand(n.properties),
+      semantic_lane: semanticLane(n.properties),
+      navigation: communityModel.navigation.get(n.rid) ?? null,
       statuses: dashboard.nodeStatuses.get(n.rid) ?? ["active"],
     })),
-    edges: edges.map((e) => ({ from: e.from, to: e.to, label: e.label })),
+    edges: edges.map((e) => ({
+      from: e.from,
+      to: e.to,
+      label: e.label,
+      confidence: confidenceValue(e.properties),
+      audit_seal: auditSeal(e.properties),
+      confidence_band: confidenceBand(e.properties),
+      semantic_lane: semanticLane(e.properties),
+      bridge: communityModel.bridgeEdges.has(edgeKey({ from_rid: e.from, to_rid: e.to, label: e.label })),
+    })),
     docs: docs.map((doc) => ({
       rid: doc.rid,
       path: doc.path,
@@ -798,6 +1027,8 @@ function renderHtml(
       body_length: doc.body.length,
     })),
     vector: exportVectorStatus(vector),
+    semantic,
+    communities: communityModel.report,
     palette,
   };
   const health = dashboard.health;
@@ -852,6 +1083,26 @@ function renderHtml(
   ]
     .map(([label, value]) => `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`)
     .join("");
+  const semanticRows = [
+    ["Inferred nodes", String(semantic.inferred_nodes)],
+    ["Inferred edges", String(semantic.inferred_edges)],
+    [
+      "Token cost",
+      semantic.token_cost ? `${semantic.token_cost.input} in / ${semantic.token_cost.output} out` : "unavailable",
+    ],
+  ]
+    .map(([label, value]) => `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`)
+    .join("");
+  const communityRows =
+    communityModel.report == null
+      ? `<p class="muted">Community export disabled.</p>`
+      : communityModel.report.communities
+          .slice(0, 8)
+          .map((community) => {
+            const label = community.short_label ?? community.id;
+            return `<li><b>${escapeHtml(label)}</b><span>${community.count} node(s), cohesion ${community.cohesion_score}</span></li>`;
+          })
+          .join("");
 
   // Self-contained: a tiny canvas force layout + a filterable sidebar. No CDN,
   // no build — opens straight from disk. The simulation is intentionally minimal
@@ -906,6 +1157,14 @@ function renderHtml(
     <section class="panel">
       <h2>Vector projection</h2>
       <div class="metrics">${vectorRows}</div>
+    </section>
+    <section class="panel">
+      <h2>Semantic lane</h2>
+      <div class="metrics">${semanticRows}</div>
+    </section>
+    <section class="panel">
+      <h2>Community navigation</h2>
+      <ul>${communityRows}</ul>
     </section>
     <section class="panel">
       <h2>Documents</h2>
@@ -997,16 +1256,19 @@ function step() {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = "#2c2f36"; ctx.lineWidth = 1;
+  ctx.lineWidth = 1;
   for (const e of edges) {
     const a = index.get(e.from), b = index.get(e.to);
+    ctx.strokeStyle = e.semantic_lane === "INFERRED" ? "#d8a441" : "#2c2f36";
+    ctx.setLineDash(e.semantic_lane === "INFERRED" ? [4, 4] : []);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
+  ctx.setLineDash([]);
   for (const n of nodes) {
     const on = selected === n.rid;
     ctx.beginPath(); ctx.arc(n.x, n.y, on ? 8 : 5, 0, Math.PI * 2);
     const clusterColor = (n.community && DATA.palette) ? DATA.palette[n.community] : null;
-    ctx.fillStyle = on ? "#ffb454" : (clusterColor || "#5b9dd9"); ctx.fill();
+    ctx.fillStyle = on ? "#ffb454" : (n.semantic_lane === "INFERRED" ? "#d8795f" : (clusterColor || "#5b9dd9")); ctx.fill();
     if (on) {
       ctx.fillStyle = "#e6e6e6"; ctx.font = "12px system-ui";
       ctx.fillText(n.title, n.x + 10, n.y + 4);
@@ -1026,19 +1288,26 @@ function renderList(filter) {
   const f = (filter || "").toLowerCase();
   listEl.innerHTML = "";
   for (const n of nodes) {
-    if (f && !(n.title + " " + n.label + " " + n.type).toLowerCase().includes(f)) continue;
+    if (f && !(n.title + " " + n.label + " " + n.type + " " + (n.community_label || "")).toLowerCase().includes(f)) continue;
     const div = document.createElement("div");
     div.className = "item" + (selected === n.rid ? " active" : "");
     div.innerHTML =
       '<div class="t"></div><div class="ty"></div><div class="ex"></div><div class="badges"></div>';
     div.querySelector(".t").textContent = n.title;
-    div.querySelector(".ty").textContent = n.type;
+    div.querySelector(".ty").textContent = [n.type, n.community_label].filter(Boolean).join(" · ");
     div.querySelector(".ex").textContent = n.excerpt;
     const badges = div.querySelector(".badges");
     for (const status of n.statuses || ["active"]) {
       const badge = document.createElement("span");
       badge.className = "badge";
       badge.textContent = status;
+      badges.appendChild(badge);
+    }
+    for (const label of [n.semantic_lane, n.confidence_band ? "confidence " + n.confidence_band : null, n.navigation?.hub ? "Hub" : null, n.navigation?.bridge ? "Bridge" : null]) {
+      if (!label) continue;
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = label;
       badges.appendChild(badge);
     }
     div.onclick = () => { selected = n.rid; frames = 0; renderList(qEl.value); };
