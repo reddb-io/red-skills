@@ -52,13 +52,22 @@ export interface RspElisionStoreOptions {
 interface StoredRecord {
   collection: typeof RSP_ELISION_COLLECTION;
   handle: `el:${string}`;
-  original: string;
+  original?: string;
+  original_chunks?: number;
   original_encoding: "base64";
   original_bytes: number;
   command: string;
   created_at: string;
   expires_at: string;
   loss: RspLossMeta;
+}
+
+interface StoredChunk {
+  collection: typeof RSP_ELISION_COLLECTION;
+  handle: `el:${string}`;
+  index: number;
+  original: string;
+  original_encoding: "base64";
 }
 
 interface IndexEntry {
@@ -106,10 +115,11 @@ export class RspElisionStore {
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
 
+    const chunks = chunkBytes(bytes);
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
-      original: bytes.toString("base64"),
+      ...(chunks.length === 1 ? { original: chunks[0] } : { original_chunks: chunks.length }),
       original_encoding: "base64",
       original_bytes: bytes.length,
       command: meta.command,
@@ -118,6 +128,17 @@ export class RspElisionStore {
       loss: meta.loss,
     };
 
+    await this.deleteChunks(handle);
+    for (let i = 0; i < chunks.length; i++) {
+      if (chunks.length === 1) break;
+      await this.kv().put(chunkKey(handle, i), {
+        collection: RSP_ELISION_COLLECTION,
+        handle,
+        index: i,
+        original: chunks[i],
+        original_encoding: "base64",
+      } satisfies StoredChunk);
+    }
     await this.kv().put(key, record);
     await this.removeTombstone(handle);
     await this.upsertIndex({
@@ -153,10 +174,13 @@ export class RspElisionStore {
       return expired;
     }
 
+    const original = await this.readOriginal(raw);
+    if (!original) return null;
+
     return {
       collection: RSP_ELISION_COLLECTION,
       handle: raw.handle,
-      original: Buffer.from(raw.original, "base64"),
+      original,
       command: raw.command,
       created_at: raw.created_at,
       loss: raw.loss,
@@ -225,6 +249,7 @@ export class RspElisionStore {
   }
 
   private async expireEntry(entry: IndexEntry, expiredAt: string): Promise<void> {
+    await this.deleteChunks(entry.handle);
     await this.kv().delete(entry.key);
     await this.kv().put(tombstoneKey(entry.handle), {
       status: "expired",
@@ -240,6 +265,24 @@ export class RspElisionStore {
 
   private async removeTombstone(handle: `el:${string}`): Promise<void> {
     await this.kv().delete(tombstoneKey(handle));
+  }
+
+  private async readOriginal(record: StoredRecord): Promise<Buffer | null> {
+    if (record.original) return Buffer.from(record.original, "base64");
+    if (!record.original_chunks) return null;
+    const chunks: Buffer[] = [];
+    for (let i = 0; i < record.original_chunks; i++) {
+      const raw = parseStoredValue(await this.kv().get(chunkKey(record.handle, i)));
+      if (!isStoredChunk(raw) || raw.handle !== record.handle || raw.index !== i) return null;
+      chunks.push(Buffer.from(raw.original, "base64"));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  private async deleteChunks(handle: `el:${string}`): Promise<void> {
+    const existing = parseStoredValue(await this.kv().get(recordKey(handle)));
+    if (!isStoredRecord(existing) || !existing.original_chunks) return;
+    await Promise.all(Array.from({ length: existing.original_chunks }, (_, i) => this.kv().delete(chunkKey(handle, i))));
   }
 }
 
@@ -258,6 +301,10 @@ function recordKey(handle: `el:${string}`): string {
   return `record:${handle.slice(3)}`;
 }
 
+function chunkKey(handle: `el:${string}`, index: number): string {
+  return `chunk:${handle.slice(3)}:${index}`;
+}
+
 function tombstoneKey(handle: `el:${string}`): string {
   return `expired:${handle.slice(3)}`;
 }
@@ -270,18 +317,38 @@ function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function chunkBytes(bytes: Buffer): string[] {
+  const chunks: string[] = [];
+  const chunkSize = 2048;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(bytes.subarray(offset, offset + chunkSize).toString("base64"));
+  }
+  return chunks.length > 0 ? chunks : [""];
+}
+
 function isStoredRecord(value: unknown): value is StoredRecord {
   if (!isRecord(value)) return false;
   return value.collection === RSP_ELISION_COLLECTION &&
     typeof value.handle === "string" &&
     isHandle(value.handle) &&
-    typeof value.original === "string" &&
+    (typeof value.original === "string" || (typeof value.original_chunks === "number" && Number.isInteger(value.original_chunks) && value.original_chunks > 0)) &&
     value.original_encoding === "base64" &&
     typeof value.original_bytes === "number" &&
     typeof value.command === "string" &&
     typeof value.created_at === "string" &&
     typeof value.expires_at === "string" &&
     isLossMeta(value.loss);
+}
+
+function isStoredChunk(value: unknown): value is StoredChunk {
+  return isRecord(value) &&
+    value.collection === RSP_ELISION_COLLECTION &&
+    typeof value.handle === "string" &&
+    isHandle(value.handle) &&
+    typeof value.index === "number" &&
+    Number.isInteger(value.index) &&
+    typeof value.original === "string" &&
+    value.original_encoding === "base64";
 }
 
 function isIndexDocument(value: unknown): value is IndexDocument {
