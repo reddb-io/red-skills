@@ -34,27 +34,15 @@ if [ -n "$plugin_json" ]; then
   ver="$(node -e "process.stdout.write(require(process.argv[1]).version)" "$plugin_json" 2>/dev/null || true)"
 fi
 
-cache="${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}"
 bundle=""
 
-if [ -n "$ver" ] && [ -f "$cache/code-nav-$ver.bundle.min.mjs" ]; then
-  bundle="$cache/code-nav-$ver.bundle.min.mjs"
-fi
-
-if [ -z "$bundle" ] && [ -n "$root" ] && [ -n "$ver" ]; then
-  for fetcher in \
-    "$root/hooks/red-fetch.mjs" \
-    "$root/dist/red-fetch.mjs" \
-    "$root/../../dist/red-fetch.mjs"; do
-    if [ -f "$fetcher" ]; then
-      node "$fetcher" code-nav "$ver" >/dev/null 2>&1 || true
-      break
-    fi
-  done
-
-  if [ -f "$cache/code-nav-$ver.bundle.min.mjs" ]; then
-    bundle="$cache/code-nav-$ver.bundle.min.mjs"
+if [ -n "$ver" ]; then
+  npx -y -p "@reddb-io/red-skills@$ver" red-skills-code-nav
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    exit 0
   fi
+  printf 'code-nav: npm package launcher failed for %s (exit %s); trying local dist fallback\n' "$ver" "$status" >&2
 fi
 
 if [ -z "$bundle" ]; then
@@ -68,7 +56,7 @@ fi
 
 if [ -z "$bundle" ]; then
   expected="${ver:-<unknown>}"
-  printf 'code-nav: could not locate code-nav-mcp bundle for %s (looked in cache %s and repo-root dist; red-fetch on-demand also failed)\\n' "$expected" "$cache" >&2
+  printf 'code-nav: could not launch red-skills-code-nav for %s and could not locate repo-root dist fallback\n' "$expected" >&2
   exit 0
 fi
 

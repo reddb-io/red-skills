@@ -4,12 +4,11 @@ The RedSkills plugin runtime bundles (`dev`, `code-nav`, `memory`, `brain`), dis
 **npm** — the v2 client transport (ADR 0091), replacing the broken GitHub-release
 + hand-rolled sigstore channel.
 
-The tarball carries the platform-independent JS bundles under `dist/` plus three
-bin shims (`red-skills-dev`, `red-skills-memory`, `red-skills-brain`) that exec
-the corresponding packaged bundle. `code-nav` has no bin shim; the dev plugin's
-MCP launcher resolves `dist/code-nav.bundle.min.mjs` through the shared bundle
-fetcher. **No postinstall download** — the bundles ship in the tarball, so
-integrity is npm's own shasum/provenance and delivery is atomic.
+The tarball carries the platform-independent JS bundles under `dist/` plus bin
+shims (`red-skills-dev`, `red-skills-code-nav`, `red-skills-memory`,
+`red-skills-brain`) that exec the corresponding packaged bundle. **No
+postinstall download** — the bundles ship in the tarball, so integrity is npm's
+own shasum/provenance and delivery is atomic.
 
 ## Client resolution
 
