@@ -113,6 +113,10 @@ function decodeTerse(stdout: string): unknown {
   return decode(stdout.split("\n").filter((line) => !line.startsWith("… elided ")).join("\n"));
 }
 
+function inlineExcerptBytes(failures: Array<{ excerpt: string }>): number {
+  return failures.reduce((sum, failure) => sum + Buffer.byteLength(failure.excerpt), 0);
+}
+
 describe("rsp vitest terse failure budget", () => {
   it("caps inline failures to top-K and elides the remainder behind a retrievable handle", async () => {
     const root = await tempRoot();
@@ -121,11 +125,12 @@ describe("rsp vitest terse failure budget", () => {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-many-failures")!;
       const result = await runFidelityFixture(fixture, { level: "terse", store });
       const stdout = result.stdout.toString("utf8");
-      const decoded = decodeTerse(stdout) as { summary: string; failures: unknown[] };
+      const decoded = decodeTerse(stdout) as { summary: string; failures: Array<{ excerpt: string }> };
 
       // Rollup preserved; only the top-3 failures stay inline.
       expect(decoded.summary).toBe("5/8 failed · 2 suites · 3.2s");
       expect(decoded.failures).toHaveLength(3);
+      expect(inlineExcerptBytes(decoded.failures)).toBeLessThanOrEqual(320);
       expect(result.rowsElided).toBe(2);
 
       // A single handle behind an elision marker collapses the remaining failures.
@@ -174,13 +179,14 @@ describe("rsp vitest terse failure budget", () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
-      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-green")!;
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-large-green")!;
       const result = await runFidelityFixture(fixture, { level: "terse", store });
 
       expect(result.status).toBe(0);
       expect(result.mintedHandle).toBeUndefined();
       expect(result.stdout.toString("utf8")).not.toContain("… elided");
       expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
+      expect(Buffer.byteLength(result.stdout)).toBeLessThan(Buffer.byteLength(fixture.recorded.stdout) / 100);
     } finally {
       await store.close();
     }
