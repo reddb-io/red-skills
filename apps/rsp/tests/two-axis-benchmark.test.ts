@@ -34,6 +34,10 @@ describe("rsp two-axis benchmark report", () => {
       brief: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       terse: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       rtk: { fidelity_pass_rate_pct: 100, source: "recorded" },
+      hypothetical_active: {
+        brief: { source: "measured" },
+        terse: { source: "measured" },
+      },
     });
     expect(typeof gitCommit?.brief.median_delta_pct).toBe("number");
 
@@ -67,6 +71,6 @@ describe("rsp two-axis benchmark report", () => {
 
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
-    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief median/p90 token delta | brief fidelity | terse median/p90 token delta | terse fidelity | RTK median/p90 token delta | RTK fidelity |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |");
   });
 });

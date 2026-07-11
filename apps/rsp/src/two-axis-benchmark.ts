@@ -32,6 +32,11 @@ export interface TwoAxisFilterRow {
   brief: BaselineAxis;
   terse: BaselineAxis;
   rtk: BaselineAxis;
+  /** Measured delta if this filter were forced active; equals brief/terse for active filters, non-zero for passthrough. */
+  hypothetical_active: {
+    brief: BaselineAxis;
+    terse: BaselineAxis;
+  };
 }
 
 export interface TwoAxisParityRow {
@@ -188,10 +193,10 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     "",
     `Production mode uses admission threshold ${ADMISSION_THRESHOLD_PCT}%; passthrough filters count as 0% token delta because rsp returns the original command output.`,
     "",
-    "| Filter | Mode | Fixtures | brief median/p90 token delta | brief fidelity | terse median/p90 token delta | terse fidelity | RTK median/p90 token delta | RTK fidelity |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.filters.map((row) =>
-      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.rtk.median_delta_pct)}/${fmt(row.rtk.p90_delta_pct)}% | ${fmt(row.rtk.fidelity_pass_rate_pct)}% |`
+      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.brief.median_delta_pct)}/${fmt(row.hypothetical_active.brief.p90_delta_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.terse.median_delta_pct)}/${fmt(row.hypothetical_active.terse.p90_delta_pct)}% | ${fmt(row.rtk.median_delta_pct)}/${fmt(row.rtk.p90_delta_pct)}% | ${fmt(row.rtk.fidelity_pass_rate_pct)}% |`
     ),
     "",
     `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
@@ -247,18 +252,17 @@ function parityRow(domain: TwoAxisParityRow["domain"], filter: string, rows: rea
 function filterRow(filter: string, rows: readonly FixtureMeasurement[], admission?: AdmissionFilterReport): TwoAxisFilterRow {
   const mode = admission?.mode ?? "passthrough";
   const active = mode === "active";
+  const measuredBrief = axis(rows.map((row) => row.briefDelta), rows.map((row) => row.briefFidelity), "measured");
+  const measuredTerse = axis(rows.map((row) => row.terseDelta), rows.map((row) => row.terseFidelity), "measured");
   return {
     filter,
     mode,
     fixture_count: rows.length,
     raw: axis(rows.map((row) => row.rawDelta), rows.map((row) => row.rawFidelity), "recorded"),
-    brief: active
-      ? axis(rows.map((row) => row.briefDelta), rows.map((row) => row.briefFidelity), "measured")
-      : passthroughAxis(rows.length),
-    terse: active
-      ? axis(rows.map((row) => row.terseDelta), rows.map((row) => row.terseFidelity), "measured")
-      : passthroughAxis(rows.length),
+    brief: active ? measuredBrief : passthroughAxis(rows.length),
+    terse: active ? measuredTerse : passthroughAxis(rows.length),
     rtk: axis(rows.map((row) => row.rtkDelta), rows.map((row) => row.rtkFidelity), "recorded"),
+    hypothetical_active: { brief: measuredBrief, terse: measuredTerse },
   };
 }
 
