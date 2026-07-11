@@ -1672,6 +1672,38 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(trace.released).toEqual([9]);
   });
 
+  it("parks a MIXED-BLOCKED issue cleanly instead of crashing the worker (#1481)", async () => {
+    // An illegal mixed-blocked issue: ready-for-agent dragging a stale
+    // blocked:validation, with an active non-mechanical Current blocker so
+    // preflight decides to park. Before #1481 the preflight-blocked transition
+    // classified the start state as `illegal`, found no legal row, and killed the
+    // worker with an uncaught session-error. Now it reconciles: sheds every stale
+    // blocked:* in the same park edit and lands cleanly on ready-for-human.
+    const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
+      status: "blocked",
+      kind: "decision",
+      ref: "#856",
+      summary: "Measurement did not prove a win.",
+      next: "Decide whether to stop, redesign, or continue anyway.",
+    });
+    const { deps, input, trace } = harness({
+      body,
+      labels: ["ready-for-agent", "blocked:validation"],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("blocked");
+    expect(trace.runAgentCalls).toEqual([]);
+    const parkEdit = trace.labelEdits.at(-1)!;
+    // Stale blocked:validation shed AND ready-for-agent removed in the same edit.
+    expect(parkEdit.remove).toContain("ready-for-agent");
+    expect(parkEdit.remove).toContain("blocked:validation");
+    // Parks to a clean human gate with the blocking-reason label.
+    expect(parkEdit.add).toContain("ready-for-human");
+    expect(parkEdit.add).toContain("blocked:spec");
+    expect(trace.released).toEqual([9]);
+  });
+
   it("does not escalate a mechanical Current blocker before reconcile can handle it", async () => {
     const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
       status: "blocked",
