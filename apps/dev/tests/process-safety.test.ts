@@ -9,6 +9,7 @@ import {
   installProcessSafety,
   noopSafetyLogger,
   safetyLogPath,
+  setActiveClaimFinalizer,
   splitClaimIdentity,
   type SafetyLogger,
 } from "../src/core/process-safety.js";
@@ -125,10 +126,29 @@ describe("installProcessSafety — event log lines (via direct handler call)", (
     expect(line).toMatch(/received/);
   });
 
+  it("SIGTERM handler invokes the active claim finalizer once", () => {
+    let calls = 0;
+    setActiveClaimFinalizer(() => {
+      calls += 1;
+    });
+    handlers.sigTerm();
+    handlers.sigTerm();
+    expect(calls).toBe(1);
+  });
+
   it("SIGINT handler records the signal name", () => {
     handlers.sigInt();
     const line = log.find((l) => l.includes("event=SIGINT"));
     expect(line).toBeDefined();
+  });
+
+  it("uncaughtException handler invokes the active claim finalizer", () => {
+    let calls = 0;
+    setActiveClaimFinalizer(() => {
+      calls += 1;
+    });
+    handlers.uncaughtException(new Error("simulated boom"));
+    expect(calls).toBe(1);
   });
 
   it("SIGHUP handler records the signal name", () => {
