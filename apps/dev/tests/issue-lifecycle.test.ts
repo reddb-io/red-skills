@@ -115,6 +115,30 @@ describe("issue lifecycle transition table", () => {
     ).toEqual(["ready-for-agent"]);
   });
 
+  it("parks a mixed-blocked issue cleanly through preflight-blocked (#1481)", () => {
+    // A queued issue carrying a stale `blocked:spec` classifies as illegal. The
+    // preflight park sheds every blocked:* in the same edit and lands on a clean
+    // ready-for-human — the `from: "*"` row must accept the illegal start state.
+    expect(
+      validateIssueLifecycleTransition({
+        edge: "preflight-blocked",
+        fromLabels: ["ready-for-agent", "blocked:validation"],
+        removeLabels: ["ready-for-agent", "blocked:validation"],
+        addLabels: ["ready-for-human", "blocked:spec"],
+      }).sort(),
+    ).toEqual(["blocked:spec", "ready-for-human"]);
+
+    // The plain queued → parked case still works (no blocked:* to shed).
+    expect(
+      validateIssueLifecycleTransition({
+        edge: "preflight-blocked",
+        fromLabels: ["ready-for-agent"],
+        removeLabels: ["ready-for-agent"],
+        addLabels: ["ready-for-human"],
+      }),
+    ).toEqual(["ready-for-human"]);
+  });
+
   it("rejects illegal mixed blocked states through a table edge", () => {
     expect(() =>
       validateIssueLifecycleTransition({
