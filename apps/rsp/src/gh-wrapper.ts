@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 import type { RecordedGitContract } from "./git-wrapper.js";
+import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export type GhKind = "pr" | "issue" | "run";
-export type GhAction = "list" | "view";
+export type GhAction = "list" | "view" | "combined";
 
 export interface GhRenderOptions {
   level: RspLossLevel;
@@ -25,12 +26,16 @@ export interface GhRenderResult {
 interface GhCommand {
   kind: GhKind;
   action: GhAction;
+  target?: string;
   full: boolean;
   wide: boolean;
   passthrough: string[];
+  query?: string;
 }
 
-const DEFAULT_FIELDS: Record<`${GhKind}:${GhAction}`, string[]> = {
+type MachineGhAction = Exclude<GhAction, "combined">;
+
+const DEFAULT_FIELDS: Record<`${GhKind}:${MachineGhAction}`, string[]> = {
   "pr:list": ["number", "title", "state", "isDraft"],
   "pr:view": ["number", "title", "state", "body"],
   "issue:list": ["number", "title", "state", "labels"],
@@ -39,7 +44,7 @@ const DEFAULT_FIELDS: Record<`${GhKind}:${GhAction}`, string[]> = {
   "run:view": ["databaseId", "name", "status", "conclusion", "jobs"],
 };
 
-const WIDE_FIELDS: Record<`${GhKind}:${GhAction}`, string[]> = {
+const WIDE_FIELDS: Record<`${GhKind}:${MachineGhAction}`, string[]> = {
   "pr:list": ["number", "title", "state", "isDraft", "author", "labels", "url", "updatedAt"],
   "pr:view": ["number", "title", "state", "body", "author", "labels", "url", "baseRefName", "headRefName"],
   "issue:list": ["number", "title", "state", "labels", "author", "url", "updatedAt"],
@@ -62,9 +67,10 @@ export async function renderGhContract(
   contract: RecordedGitContract,
   options: GhRenderOptions,
 ): Promise<GhRenderResult> {
+  const parsedCommand = extractQueryArg(commandArgv);
   if ((contract.status ?? 0) !== 0 || contract.signal) {
     return {
-      stdout: Buffer.from(contract.stdout),
+      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
       stderr: Buffer.from(contract.stderr),
       status: contract.status,
       signal: contract.signal,
@@ -141,31 +147,74 @@ export async function renderGhContract(
 }
 
 function parseGhCommand(argv: readonly string[]): GhCommand {
-  if (argv[0] !== "gh") throw new Error("expected rsp gh <surface> <subcommand>");
-  const kind = argv[1];
-  const action = argv[2];
+  const parsed = extractQueryArg(argv);
+  if (parsed.argv[0] !== "gh") throw new Error("expected rsp gh <surface> <subcommand>");
+  const kind = parsed.argv[1];
+  const action = parsed.argv[2];
   if (!(kind === "pr" || kind === "issue" || kind === "run")) throw new Error(`unsupported gh surface: ${kind ?? ""}`);
-  if (!(action === "list" || action === "view")) throw new Error(`unsupported gh subcommand: ${action ?? ""}`);
+  const combined = kind === "pr" && action && action !== "list" && action !== "view";
+  if (!(action === "list" || action === "view" || combined)) throw new Error(`unsupported gh subcommand: ${action ?? ""}`);
 
   const passthrough: string[] = [];
   let full = false;
   let wide = false;
-  for (const arg of argv.slice(3)) {
+  for (const arg of parsed.argv.slice(3)) {
     if (arg === "--full") full = true;
     else if (arg === "--wide") wide = true;
     else passthrough.push(arg);
   }
-  return { kind, action, full, wide, passthrough };
+  const parsedAction: GhAction = combined ? "combined" : action === "list" ? "list" : "view";
+  return { kind, action: parsedAction, target: combined ? action : undefined, full, wide, passthrough, query: parsed.query };
 }
 
 function machineArgs(command: GhCommand): string[] {
+  if (command.action === "combined") throw new Error("combined gh command uses multiple machine calls");
   const key = `${command.kind}:${command.action}` as const;
   const fields = command.wide ? WIDE_FIELDS[key] : DEFAULT_FIELDS[key];
   return [command.kind, command.action, ...command.passthrough, "--json", fields.join(",")];
 }
 
 async function collectGhContract(command: GhCommand): Promise<RecordedGitContract> {
+  if (command.action === "combined") return await collectCombinedPrContract(command);
   const child = spawn("gh", machineArgs(command), { stdio: ["ignore", "pipe", "pipe"] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (status, signal) => {
+      resolve({
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        status,
+        signal,
+      });
+    });
+  });
+}
+
+async function collectCombinedPrContract(command: GhCommand): Promise<RecordedGitContract> {
+  const target = command.target ?? "";
+  const viewFields = ["number", "title", "state", "body", "author", "labels", "url", "baseRefName", "headRefName"];
+  const commentsFields = ["comments"];
+  const [view, checks, comments] = await Promise.all([
+    collectRawGh(["pr", "view", target, "--json", viewFields.join(",")]),
+    collectRawGh(["pr", "checks", target, "--json", "name,state,bucket,conclusion,link,startedAt,completedAt,workflow"]),
+    collectRawGh(["pr", "view", target, "--comments", "--json", commentsFields.join(",")]),
+  ]);
+  const failed = [view, checks, comments].find((result) => (result.status ?? 0) !== 0 || result.signal);
+  if (failed) return failed;
+  return {
+    stdout: JSON.stringify({ view: parseJson(view.stdout), checks: parseJson(checks.stdout), comments: parseJson(comments.stdout) }),
+    stderr: [view.stderr, checks.stderr, comments.stderr].filter(Boolean).join(""),
+    status: 0,
+    signal: null,
+  };
+}
+
+async function collectRawGh(args: readonly string[]): Promise<RecordedGitContract> {
+  const child = spawn("gh", args, { stdio: ["ignore", "pipe", "pipe"] });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -192,24 +241,62 @@ function renderGhPayload(command: GhCommand, commandArgv: readonly string[], par
   switch (`${command.kind}:${command.action}`) {
     case "pr:list": {
       const rows = arrayOfRecords(parsed).map((row) => projectPr(row, command.wide));
-      return { ...base, prs: rows, summary: `${rows.length} ${stateWord(rows, "open")} PRs` };
+      const filteredRows = filterRows(rows, command.query);
+      return helpIfQueried({ ...base, prs: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} PRs` }, command, ["rsp gh pr <number>", "rsp gh pr list --query <title-or-label>"]);
     }
     case "pr:view":
-      return { ...base, pr: projectPrView(recordOf(parsed), command), summary: `PR #${numberField(recordOf(parsed), "number")}` };
+      return helpIfQueried({ ...base, pr: projectPrView(recordOf(parsed), command), summary: `PR #${numberField(recordOf(parsed), "number")}` }, command, ["rsp gh pr <number>", "rsp gh pr view <number> --full"]);
+    case "pr:combined":
+      return renderCombinedPrPayload(command, commandArgv, recordOf(parsed));
     case "issue:list": {
       const rows = arrayOfRecords(parsed).map((row) => projectIssue(row, command.wide));
-      return { ...base, issues: rows, summary: `${rows.length} ${stateWord(rows, "open")} issues` };
+      const filteredRows = filterRows(rows, command.query);
+      return helpIfQueried({ ...base, issues: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} issues` }, command, ["rsp gh issue view <number>", "rsp gh issue list --query <label-or-title>"]);
     }
     case "issue:view":
-      return { ...base, issue: projectIssueView(recordOf(parsed), command), summary: `issue #${numberField(recordOf(parsed), "number")}` };
+      return helpIfQueried({ ...base, issue: projectIssueView(recordOf(parsed), command), summary: `issue #${numberField(recordOf(parsed), "number")}` }, command, ["rsp gh issue view <number> --full"]);
     case "run:list": {
       const rows = arrayOfRecords(parsed).map((row) => projectRun(row, command.wide));
-      return { ...base, runs: rows, summary: `${rows.length} runs` };
+      const filteredRows = filterRows(rows, command.query);
+      return helpIfQueried({ ...base, runs: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} runs` }, command, ["rsp gh run view <id>", "rsp gh run list --query <workflow-or-status>"]);
     }
     case "run:view":
-      return { ...base, run: projectRunView(recordOf(parsed), command), summary: `run ${numberField(recordOf(parsed), "databaseId")}` };
+      return helpIfQueried({ ...base, run: projectRunView(recordOf(parsed), command), summary: `run ${numberField(recordOf(parsed), "databaseId")}` }, command, ["rsp gh run view <id> --full"]);
   }
   throw new Error(`unsupported gh command: ${command.kind} ${command.action}`);
+}
+
+function renderCombinedPrPayload(command: GhCommand, commandArgv: readonly string[], parsed: Record<string, unknown>): JsonObject {
+  const view = projectPrView(recordOf(parsed.view), { ...command, action: "view", wide: true });
+  const checks = filterRows(arrayOfRecords(parsed.checks).map(projectCheck), command.query);
+  const commentsSource = recordOf(parsed.comments).comments;
+  const comments = filterRows(arrayOfRecords(commentsSource).map(projectComment).slice(-3), command.query);
+  return withHelp({
+    command: commandArgv.join(" "),
+    pr: view,
+    checks: checks as JsonValue,
+    comments: comments as JsonValue,
+    summary: `PR #${numberField(recordOf(parsed.view), "number")}: ${checks.length} checks, ${comments.length} comments`,
+  }, ["rsp gh pr view <number> --full", "rsp gh pr <number> --query <check-or-comment>", "rsp gh run view <id>"]);
+}
+
+function projectCheck(row: Record<string, unknown>): JsonObject {
+  return {
+    name: stringField(row, "name"),
+    state: stateClass(row),
+    bucket: stringField(row, "bucket"),
+    conclusion: stringField(row, "conclusion"),
+    workflow: stringField(row, "workflow"),
+    link: stringField(row, "link"),
+  };
+}
+
+function projectComment(row: Record<string, unknown>): JsonObject {
+  return {
+    author: authorLogin(row.author),
+    body: textField(row, "body", BODY_LIMIT, false),
+    created: stringField(row, "createdAt"),
+  };
 }
 
 function emptyState(kind: GhKind): string {
@@ -331,6 +418,14 @@ function tersePayload(payload: JsonObject): { payload: JsonObject; rowsElided: n
 function stateWord(rows: readonly JsonObject[], preferred: string): string {
   if (rows.every((row) => row.state === preferred)) return preferred;
   return "returned";
+}
+
+function countLabel(filtered: number, total: number, query?: string): string {
+  return query ? `${filtered}/${total}` : String(filtered);
+}
+
+function helpIfQueried(payload: JsonObject, command: GhCommand, help: readonly string[]): JsonObject {
+  return command.query ? withHelp(payload, help) : payload;
 }
 
 function stateClass(row: Record<string, unknown>): string {

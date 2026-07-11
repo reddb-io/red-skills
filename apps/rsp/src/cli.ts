@@ -11,6 +11,7 @@ interface ParsedArgs {
   command?: string;
   handle?: string;
   storeUri?: string;
+  query?: string;
   level: "lossless" | "brief" | "terse";
   positional: string[];
 }
@@ -97,7 +98,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--store-uri") out.storeUri = argv[++i];
     else if (arg === "--brief") out.level = "brief";
     else if (arg === "--terse") out.level = "terse";
+    else if (arg === "--query") out.query = argv[++i];
+    else if (arg.startsWith("--query=")) out.query = arg.slice("--query=".length);
     else positional.push(arg);
+  }
+  if (out.query && positional[0] !== "show" && !positional.some((arg) => arg === "--query" || arg.startsWith("--query="))) {
+    positional.push("--query", out.query);
   }
   out.command = positional[0];
   out.handle = positional[1];

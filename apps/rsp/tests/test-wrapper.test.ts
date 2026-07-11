@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { discoverFidelityFixtures, runFidelityFixture } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
+import { renderTestContract } from "../src/test-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "test-runners");
@@ -183,6 +184,18 @@ describe("rsp vitest terse failure budget", () => {
     } finally {
       await store.close();
     }
+  });
+});
+
+describe("rsp test runner token levers", () => {
+  it("filters failure rows with --query and appends contextual help", async () => {
+    const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-many-failures")!;
+    const result = await renderTestContract(["vitest", "--query", "beta case five"], fixture.recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { summary: string; failures: Array<{ name: string }>; help: string[] };
+
+    expect(decoded.failures).toEqual([expect.objectContaining({ name: "beta case five" })]);
+    expect(decoded.summary).toContain("1/5 failures matched");
+    expect(decoded.help).toContain("rsp vitest --query <suite-or-test>");
   });
 });
 
