@@ -296,12 +296,14 @@ function helpIfQueried(payload: JsonObject, query: string | undefined, help: rea
 }
 
 function scalarFastPath(subcommand: GitSubcommand, payload: JsonObject): string | null {
-  if (subcommand === "commit") return String(payload.summary ?? "");
+  if (subcommand === "commit" && typeof payload.commit === "string" && payload.commit.length > 0) {
+    return String(payload.summary ?? "");
+  }
   if (subcommand === "push") {
     const refsValue = payload.refs;
     const refs = Array.isArray(refsValue) ? refsValue : [];
     const realPushes = refs.filter((ref) => isRecord(ref) && ref.flag !== "=");
-    if (realPushes.length <= 1) return String(payload.summary ?? "");
+    if (realPushes.length === 1) return String(payload.summary ?? "");
     return null;
   }
   return null;

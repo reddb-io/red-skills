@@ -114,6 +114,43 @@ describe("rsp git fidelity fixtures", () => {
     }
   });
 
+  it("keeps commit-created and push-ref-update fixtures compact without exceeding raw tokens", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixtures = await discoverFidelityFixtures(fixtureRoot);
+      for (const name of ["commit-created", "push-porcelain"]) {
+        const fixture = fixtures.find((candidate) => candidate.name === name)!;
+        const result = await runFidelityFixture(fixture, { level: "lossless", store });
+        const rawTokens = tokenizer.encode(fixture.recorded.stdout).length;
+        const wrappedTokens = tokenizer.encode(result.stdout.toString("utf8")).length;
+
+        expect(result.oneLine).toBe(true);
+        expect(result.stdout.toString("utf8")).toBe(fixture.expected);
+        expect(wrappedTokens).toBeLessThanOrEqual(rawTokens);
+        expect(result.tokenDelta).toBeGreaterThanOrEqual(0);
+        expect(result.assertionFailures).toEqual([]);
+      }
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("keeps rejected push fixtures at full fidelity while bypassing the scalar fast-path", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "push-rejected")!;
+      const result = await runFidelityFixture(fixture, { level: "lossless", store });
+
+      expect(result.oneLine).toBeUndefined();
+      expect(result.stdout.toString("utf8")).toBe(fixture.expected);
+      expect(result.assertionFailures).toEqual([]);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("fails the suite when a fixture assertion is false even with positive token delta", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
