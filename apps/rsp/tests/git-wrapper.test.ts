@@ -48,7 +48,11 @@ describe("rsp git fidelity fixtures", () => {
         expect(result.status).toBe(fixture.recorded.status);
         expect(result.stderr).toEqual(Buffer.from(fixture.recorded.stderr, "utf8"));
         expect(result.assertionFailures).toEqual([]);
-        expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
+        if (typeof fixture.expected === "string") {
+          expect(result.stdout.toString("utf8")).toBe(fixture.expected);
+        } else {
+          expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
+        }
       }
     } finally {
       await store.close();
@@ -119,7 +123,7 @@ describe("rsp git fidelity fixtures", () => {
         {
           question: "which branch was pushed?",
           expected: "main",
-          actual: "refs/heads/feature/rsp",
+          actual: "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits",
         },
       ]);
     } finally {
@@ -132,15 +136,19 @@ describe("rsp git admission harness", () => {
   it("reports per-filter median token delta with a real tokenizer and enforces passthrough below threshold", async () => {
     const fixtures = await discoverFidelityFixtures(fixtureRoot);
     const report = evaluateAdmission(fixtures, { thresholdPct: 60 });
+    const commitRow = report.filters.find((row) => row.filter === "git:commit")!;
     const pushRow = report.filters.find((row) => row.filter === "git:push")!;
 
-    expect(report.summary).toBe("1/5 filters active at threshold 60%");
-    expect(pushRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
+    expect(report.summary).toBe("2/5 filters active at threshold 60%");
+    // git:commit's one-line fast-path is a modest positive win that stays below the admission threshold.
+    expect(commitRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
+    // git:push clears the threshold now that the fast-path replaces the negative-delta TOON framing.
+    expect(pushRow).toMatchObject({ active: true, mode: "active" });
 
     const tmp = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(tmp, "red.rdb")}` });
     try {
-      const fixture = fixtures.find((candidate) => candidate.name === "push-porcelain")!;
+      const fixture = fixtures.find((candidate) => candidate.name === "commit-created")!;
       const result = await runAdmittedFixture(fixture, { thresholdPct: 60, level: "lossless", store });
 
       expect(result.mode).toBe("passthrough");
