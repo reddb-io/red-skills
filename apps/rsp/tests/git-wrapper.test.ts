@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { runFidelityFixture, discoverFidelityFixtures } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
+import { renderGitContract } from "../src/git-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "git");
@@ -156,6 +157,18 @@ describe("rsp git admission harness", () => {
     } finally {
       await store.close();
     }
+  });
+});
+
+describe("rsp git token levers", () => {
+  it("filters row payloads with --query and appends contextual help", async () => {
+    const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "status-working-tree")!;
+    const result = await renderGitContract(["git", "status", "--query", "modified"], fixture.recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { rows: Array<{ path: string; state: string }>; summary: string; help: string[] };
+
+    expect(decoded.rows).toEqual([expect.objectContaining({ state: "modified" })]);
+    expect(decoded.summary).toMatch(/^1\/3 changes:/);
+    expect(decoded.help).toContain("rsp git diff --query <path>");
   });
 });
 
