@@ -26,7 +26,7 @@
 
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
-import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
+import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
 import {
   renderIssueReferenceList,
   resolveIssueReferences,
@@ -346,6 +346,74 @@ export async function stragglerCounts(lookup: StragglerCountLookup): Promise<Str
  * `[[ $unlabeled -gt 0 || $needs_triage -gt 0 || $needs_info -gt 0 ]]`. */
 export function shouldWarnStragglers(counts: StragglerCounts): boolean {
   return counts.unlabeled > 0 || counts.needsTriage > 0 || counts.needsInfo > 0;
+}
+
+// ---------- mixed-blocked normalizer (#1481) ----------
+
+/** A candidate the mixed-blocked normalizer examines: number + full label set. */
+export interface MixedBlockedCandidate {
+  number: number;
+  labels: string[];
+}
+
+/** One planned heal: strip the stale `blocked:*` labels off a queued/active issue
+ * so it can never trip a worker's lifecycle FSM into the illegal state. */
+export interface MixedBlockedNormalizePlan {
+  number: number;
+  /** The `blocked:*` labels to remove (sorted-unique). */
+  remove: string[];
+}
+
+/**
+ * Plan the mixed-blocked normalizer over `candidates`. An issue is MIXED-BLOCKED
+ * when it carries a queued/active label (`ready-for-agent` or `running`) TOGETHER
+ * with one or more `blocked:*` labels — the illegal FSM state that crashed workers
+ * mid-setup before #1481. The heal is to shed every `blocked:*` label, restoring a
+ * clean queued/active state. Issues that are cleanly queued (no blocked:*), cleanly
+ * blocked (no ready/running), or otherwise legal produce no plan. Pure and
+ * idempotent: a healed issue no longer matches, so a replay no-ops.
+ */
+export function planMixedBlockedNormalize(
+  candidates: readonly MixedBlockedCandidate[],
+): MixedBlockedNormalizePlan[] {
+  const plans: MixedBlockedNormalizePlan[] = [];
+  for (const c of candidates) {
+    const queuedOrActive = c.labels.includes(LABEL_READY) || c.labels.includes(LABEL_RUNNING);
+    if (!queuedOrActive) continue;
+    const blocked = [...new Set(c.labels.filter((l) => l.startsWith("blocked:")))].sort();
+    if (blocked.length === 0) continue;
+    plans.push({ number: c.number, remove: blocked });
+  }
+  return plans;
+}
+
+/** The minimal gh surface the normalizer MUTATES: strip the stale blocked:* labels
+ * (REMOVE first, ADD second — BootDeps.gh order). */
+export interface MixedBlockedNormalizeGh {
+  editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
+}
+
+/**
+ * Run the mixed-blocked normalizer end-to-end: {@link planMixedBlockedNormalize}
+ * the candidates, then strip each planned issue's stale `blocked:*` labels in one
+ * edit. Returns the healed issue numbers. Best-effort: a failed edit skips that
+ * issue and leaves it for the next sweep — a normalizer must never abort the boot.
+ */
+export async function executeMixedBlockedNormalize(
+  candidates: readonly MixedBlockedCandidate[],
+  gh: MixedBlockedNormalizeGh,
+): Promise<number[]> {
+  const plans = planMixedBlockedNormalize(candidates);
+  const healed: number[] = [];
+  for (const p of plans) {
+    try {
+      await gh.editLabels(p.number, p.remove, []);
+      healed.push(p.number);
+    } catch {
+      // Best-effort: a failed heal leaves the issue for the next boot's sweep.
+    }
+  }
+  return healed;
 }
 
 // ---------- reconcile sweep ----------
