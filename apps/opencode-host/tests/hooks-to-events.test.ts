@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  isRspRewriteHook,
   listHookFiles,
   matcherToRegex,
   planPluginHooks,
@@ -176,6 +177,118 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
 
   it("returns no plans when no hook files exist", () => {
     expect(planPluginHooks(root, "dev")).toEqual([]);
+  });
+});
+
+describe("isRspRewriteHook (ADR 0095 Decision 7)", () => {
+  it("identifies hook claude-pre-exec invocations", () => {
+    expect(isRspRewriteHook("node rsp.bundle.min.mjs hook claude-pre-exec")).toBe(true);
+    expect(isRspRewriteHook("for f in ...; do node \"$f\" hook claude-pre-exec <\"$tmp\"; exit $?; done")).toBe(true);
+  });
+
+  it("does not classify other rsp subcommands as rewrite hooks", () => {
+    expect(isRspRewriteHook("node rsp.bundle.min.mjs git status")).toBe(false);
+    expect(isRspRewriteHook("bash branch-lock.sh")).toBe(false);
+    expect(isRspRewriteHook("")).toBe(false);
+  });
+});
+
+describe("planPluginHooks — rsp rewrite delegation (ADR 0095 Decision 7)", () => {
+  it("generates a rewrite module when the hook invokes hook claude-pre-exec", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/../../dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before")!;
+    expect(pre).toBeDefined();
+    // Must contain the rewrite helper — the module delegates, not copies.
+    expect(pre.source).toContain("__runRspRewrite");
+    expect(pre.source).toContain("hook claude-pre-exec");
+    // Must apply the rewrite to output.args.command.
+    expect(pre.source).toContain("output.args = { ...output.args, command: __rewritten }");
+    // Must return null on passthrough (exit 1) — not block.
+    expect(pre.source).toContain("if (result.exitCode !== 0) return null");
+  });
+
+  it("does NOT emit __runRspRewrite when there are no rsp-style hooks (no dead code)", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "sh -c 'branch-lock.sh'" }],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before")!;
+    expect(pre.source).not.toContain("__runRspRewrite");
+  });
+
+  it("contains no allowlist copy — the generated module delegates to rsp, not a local table", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before")!;
+    // None of the rsp capability table entries may appear literally.
+    expect(pre.source).not.toContain("RSP_WRAPPER_CAPABILITIES");
+    expect(pre.source).not.toContain("git\\0status");
+    expect(pre.source).not.toContain("rsp git status");
+    expect(pre.source).not.toContain("gh pr list");
+  });
+
+  it("mixes rsp-rewrite and block-deny hooks in the same module correctly", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+              },
+              { type: "command", command: "sh -c 'branch-lock.sh'" },
+            ],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before")!;
+    // Both helpers must be present.
+    expect(pre.source).toContain("__runRspRewrite");
+    expect(pre.source).toContain("__runHook");
+    // Rsp hook uses rewrite path; block hook uses block path.
+    expect(pre.source).toContain("__rewritten");
+    expect(pre.source).toContain("__blocked");
+    expect(pre.source).toContain("branch-lock.sh");
   });
 });
 
