@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { discoverFidelityFixtures, runFidelityFixture } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
+import { renderGhContract } from "../src/gh-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "gh");
@@ -160,6 +161,60 @@ describe("rsp gh admission harness", () => {
     } finally {
       await store.close();
     }
+  });
+});
+
+describe("rsp gh token levers", () => {
+  it("filters list rows with --query and appends next-step help", async () => {
+    const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "pr-list-default")!;
+    const result = await renderGhContract(["gh", "pr", "list", "--query", "Draft"], fixture.recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { prs: Array<{ title: string }>; summary: string; help: string[] };
+
+    expect(decoded.prs).toEqual([expect.objectContaining({ title: "Draft docs" })]);
+    expect(decoded.summary).toBe("1/2 open PRs");
+    expect(decoded.help).toContain("rsp gh pr <number>");
+  });
+
+  it("combines PR view, checks, and latest comments in one output", async () => {
+    const recorded = {
+      stdout: JSON.stringify({
+        view: {
+          number: 42,
+          title: "Add rsp gh wrapper",
+          state: "OPEN",
+          isDraft: false,
+          body: "Combined operation body",
+          labels: [{ name: "ready-for-agent" }],
+          author: { login: "octocat" },
+          url: "https://example.invalid/pr/42",
+          baseRefName: "main",
+          headRefName: "feature",
+        },
+        checks: [
+          { name: "test", state: "SUCCESS", bucket: "pass", conclusion: "SUCCESS", workflow: "ci", link: "https://example.invalid/check" },
+          { name: "lint", state: "PENDING", bucket: "pending", conclusion: "", workflow: "ci", link: "https://example.invalid/lint" },
+        ],
+        comments: {
+          comments: [
+            { author: { login: "a" }, body: "first", createdAt: "2026-01-01T00:00:00Z" },
+            { author: { login: "b" }, body: "second", createdAt: "2026-01-02T00:00:00Z" },
+            { author: { login: "c" }, body: "third", createdAt: "2026-01-03T00:00:00Z" },
+            { author: { login: "d" }, body: "fourth", createdAt: "2026-01-04T00:00:00Z" },
+          ],
+        },
+      }),
+      stderr: "",
+      status: 0,
+      signal: null,
+    };
+
+    const result = await renderGhContract(["gh", "pr", "42"], recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { pr: { number: number }; checks: unknown[]; comments: Array<{ body: string }>; help: string[] };
+
+    expect(decoded.pr.number).toBe(42);
+    expect(decoded.checks).toHaveLength(2);
+    expect(decoded.comments.map((row) => row.body)).toEqual(["second", "third", "fourth"]);
+    expect(decoded.help).toContain("rsp gh pr <number> --query <check-or-comment>");
   });
 });
 
