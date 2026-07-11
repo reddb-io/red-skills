@@ -37,6 +37,17 @@ filters[7]:
       p90_delta_pct: 82.4
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: 61.9
+        p90_delta_pct: 84.2
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 57.7
+        p90_delta_pct: 84.2
+        fidelity_pass_rate_pct: 100
+        source: measured
   - filter: "git:commit"
     mode: passthrough
     fixture_count: 1
@@ -60,6 +71,17 @@ filters[7]:
       p90_delta_pct: -78.8
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: 42.4
+        p90_delta_pct: 42.4
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 42.4
+        p90_delta_pct: 42.4
+        fidelity_pass_rate_pct: 100
+        source: measured
   - filter: "git:diff"
     mode: passthrough
     fixture_count: 2
@@ -83,6 +105,17 @@ filters[7]:
       p90_delta_pct: 99.6
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: -56
+        p90_delta_pct: -0.4
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: -21.6
+        p90_delta_pct: 99.1
+        fidelity_pass_rate_pct: 50
+        source: measured
   - filter: "git:log"
     mode: passthrough
     fixture_count: 2
@@ -102,12 +135,23 @@ filters[7]:
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
-      median_delta_pct: 79.4
-      p90_delta_pct: 99.7
+      median_delta_pct: 52.3
+      p90_delta_pct: 99.3
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: -35.4
+        p90_delta_pct: -5
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 13.7
+        p90_delta_pct: 98.4
+        fidelity_pass_rate_pct: 50
+        source: measured
   - filter: "git:push"
-    mode: passthrough
+    mode: active
     fixture_count: 2
     raw:
       median_delta_pct: 0
@@ -115,13 +159,13 @@ filters[7]:
       fidelity_pass_rate_pct: 100
       source: recorded
     brief:
-      median_delta_pct: 0
-      p90_delta_pct: 0
+      median_delta_pct: 31.9
+      p90_delta_pct: 63.8
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 0
-      p90_delta_pct: 0
+      median_delta_pct: 31.9
+      p90_delta_pct: 63.8
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
@@ -129,6 +173,17 @@ filters[7]:
       p90_delta_pct: 27.6
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: 31.9
+        p90_delta_pct: 63.8
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 31.9
+        p90_delta_pct: 63.8
+        fidelity_pass_rate_pct: 100
+        source: measured
   - filter: "git:status"
     mode: active
     fixture_count: 2
@@ -152,6 +207,17 @@ filters[7]:
       p90_delta_pct: 72.3
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: 60.5
+        p90_delta_pct: 75
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 60.5
+        p90_delta_pct: 75
+        fidelity_pass_rate_pct: 50
+        source: measured
   - filter: "vitest:run"
     mode: active
     fixture_count: 6
@@ -175,6 +241,17 @@ filters[7]:
       p90_delta_pct: 100
       fidelity_pass_rate_pct: 100
       source: recorded
+    hypothetical_active:
+      brief:
+        median_delta_pct: 58.8
+        p90_delta_pct: 100
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: 70
+        p90_delta_pct: 100
+        fidelity_pass_rate_pct: 100
+        source: measured
 parity[2]{domain,filter,rsp_median_delta_pct,rtk_median_delta_pct,rsp_fidelity_pass_rate_pct,rtk_fidelity_pass_rate_pct,parity_gate}:
   cargo-test,"cargo:test",61.9,67.8,100,100,fail
   git-commit,"git:commit",0,-78.8,100,100,pass

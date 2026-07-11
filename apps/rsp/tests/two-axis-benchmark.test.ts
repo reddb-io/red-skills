@@ -22,7 +22,10 @@ describe("rsp two-axis benchmark report", () => {
   it("reports shipped modes plus brief and terse token deltas with fidelity", async () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
-    expect(report.corpus.fixture_count).toBeGreaterThanOrEqual(17);
+    expect(report.corpus).toMatchObject({
+      fixture_count: 18,
+      large_output_filters: ["git:diff", "git:log", "vitest:run"],
+    });
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
@@ -44,14 +47,14 @@ describe("rsp two-axis benchmark report", () => {
     const vitest = report.filters.find((row) => row.filter === "vitest:run");
     expect(vitest).toMatchObject({
       mode: "active",
+      fixture_count: 6,
       brief: { fidelity_pass_rate_pct: 100 },
       terse: { fidelity_pass_rate_pct: 100 },
     });
     expect(vitest?.terse.median_delta_pct).toBeGreaterThanOrEqual(vitest?.brief.median_delta_pct ?? 0);
 
-    for (const filter of ["git:diff", "git:log", "vitest:run"]) {
-      expect(report.corpus.large_output_filters).toContain(filter);
-    }
+    expect(report.filters.find((row) => row.filter === "git:diff")).toMatchObject({ fixture_count: 2 });
+    expect(report.filters.find((row) => row.filter === "git:log")).toMatchObject({ fixture_count: 2 });
 
     expect(report.parity).toEqual(expect.arrayContaining([
       expect.objectContaining({ domain: "cargo-test", filter: "cargo:test", rsp_fidelity_pass_rate_pct: 100 }),
