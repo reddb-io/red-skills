@@ -19,21 +19,35 @@ afterEach(async () => {
 });
 
 describe("rsp two-axis benchmark report", () => {
-  it("reports token deltas and fidelity for raw, rsp, and recorded RTK baselines", async () => {
+  it("reports shipped modes plus brief and terse token deltas with fidelity", async () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
-    expect(report.corpus.fixture_count).toBeGreaterThanOrEqual(12);
+    expect(report.corpus.fixture_count).toBeGreaterThanOrEqual(17);
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
 
     const gitCommit = report.filters.find((row) => row.filter === "git:commit");
     expect(gitCommit).toMatchObject({
+      mode: "passthrough",
       raw: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
-      rsp: { fidelity_pass_rate_pct: 100 },
+      brief: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
+      terse: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       rtk: { fidelity_pass_rate_pct: 100, source: "recorded" },
     });
-    expect(typeof gitCommit?.rsp.median_delta_pct).toBe("number");
+    expect(typeof gitCommit?.brief.median_delta_pct).toBe("number");
+
+    const vitest = report.filters.find((row) => row.filter === "vitest:run");
+    expect(vitest).toMatchObject({
+      mode: "active",
+      brief: { fidelity_pass_rate_pct: 100 },
+      terse: { fidelity_pass_rate_pct: 100 },
+    });
+    expect(vitest?.terse.median_delta_pct).toBeGreaterThanOrEqual(vitest?.brief.median_delta_pct ?? 0);
+
+    for (const filter of ["git:diff", "git:log", "vitest:run"]) {
+      expect(report.corpus.large_output_filters).toContain(filter);
+    }
 
     expect(report.parity).toEqual(expect.arrayContaining([
       expect.objectContaining({ domain: "cargo-test", filter: "cargo:test", rsp_fidelity_pass_rate_pct: 100 }),
@@ -53,5 +67,6 @@ describe("rsp two-axis benchmark report", () => {
 
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief median/p90 token delta | brief fidelity | terse median/p90 token delta | terse fidelity | RTK median/p90 token delta | RTK fidelity |");
   });
 });
