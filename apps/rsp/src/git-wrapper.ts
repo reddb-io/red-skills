@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
+
+export { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 
 export type GitSubcommand = "status" | "log" | "diff" | "commit" | "push";
 
@@ -17,6 +20,7 @@ export interface RecordedGitContract {
 export interface GitRenderOptions {
   level: RspLossLevel;
   store?: RspElisionStore;
+  heavyGitByteThreshold?: number;
 }
 
 export interface GitRenderResult {
@@ -32,7 +36,7 @@ export interface GitRenderResult {
 }
 
 export async function runGitWrapper(argv: readonly string[], options: GitRenderOptions): Promise<GitRenderResult> {
-  const parsed = extractQueryArg(argv);
+  const parsed = parseGitRenderCommand(argv);
   const subcommand = parseGitSubcommand(parsed.argv);
   const contract = await collectGitContract(subcommand, parsed.argv.slice(1));
   return renderGitContract(argv, contract, options);
@@ -43,7 +47,7 @@ export async function renderGitContract(
   contract: RecordedGitContract,
   options: GitRenderOptions,
 ): Promise<GitRenderResult> {
-  const parsedCommand = extractQueryArg(command);
+  const parsedCommand = parseGitRenderCommand(command);
   if ((contract.status ?? 0) !== 0 || contract.signal) {
     return {
       stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
@@ -77,7 +81,7 @@ export async function renderGitContract(
   }
 
   const fullToon = encode(payload);
-  if (options.level !== "terse") {
+  if (shouldEmitFull(subcommand, fullToon, parsedCommand.full, options)) {
     return {
       stdout: Buffer.from(fullToon),
       stderr: Buffer.from(contract.stderr),
@@ -116,6 +120,45 @@ export async function renderGitContract(
     bytesElided,
     rowsElided: terse.rowsElided,
   };
+}
+
+interface ParsedGitRenderCommand {
+  argv: string[];
+  query?: string;
+  full: boolean;
+}
+
+function parseGitRenderCommand(command: readonly string[]): ParsedGitRenderCommand {
+  const parsed = extractQueryArg(command);
+  const argv: string[] = [];
+  let full = false;
+  for (const arg of parsed.argv) {
+    if (arg === "--full") {
+      full = true;
+      continue;
+    }
+    argv.push(arg);
+  }
+  return { argv, query: parsed.query, full };
+}
+
+function shouldEmitFull(
+  subcommand: GitSubcommand,
+  fullToon: string,
+  fullRequested: boolean,
+  options: GitRenderOptions,
+): boolean {
+  if (options.level === "terse") return false;
+  if (fullRequested || options.level === "full") return true;
+  if (!isHeavyGitSubcommand(subcommand)) return true;
+  if (options.level !== "lossless") return true;
+
+  const threshold = positiveNumber(options.heavyGitByteThreshold, DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD);
+  return Buffer.byteLength(fullToon) <= threshold;
+}
+
+function isHeavyGitSubcommand(subcommand: GitSubcommand): boolean {
+  return subcommand === "diff" || subcommand === "log";
 }
 
 function parseGitSubcommand(argv: readonly string[]): GitSubcommand {
@@ -328,6 +371,10 @@ function countBy(rows: readonly JsonObject[], field: string): Record<string, num
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;
+}
+
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function tersePayload(payload: JsonObject): { payload: JsonObject; rowsElided: number } | null {

@@ -2,11 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
+export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
+
 export interface RspRuntimeConfig {
   enabled: boolean;
   storeUri: string;
   ttlDays: number;
   byteBudget: number;
+  heavyGitByteThreshold: number;
 }
 
 export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitStoreUri?: string): RspRuntimeConfig {
@@ -16,9 +19,13 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   const enabled = readYamlPath(yaml, "rsp.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
   const byteBudget = positiveNumber(readNumericYamlPath(yaml, "rsp.byteBudget"), DEFAULT_RSP_BYTE_BUDGET);
+  const heavyGitByteThreshold = positiveNumber(
+    numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
+    DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
+  );
   const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), ".red", "red.rdb")}`;
 
-  return { enabled, storeUri, ttlDays, byteBudget };
+  return { enabled, storeUri, ttlDays, byteBudget, heavyGitByteThreshold };
 }
 
 function findUp(start: string, relativePath: string): string | null {
@@ -67,4 +74,10 @@ function stripInlineComment(value: string): string {
 
 function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function numericEnv(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }

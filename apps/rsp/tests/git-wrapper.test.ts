@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { runFidelityFixture, discoverFidelityFixtures } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
-import { GIT_LOG_MACHINE_FIELDS, renderGitContract } from "../src/git-wrapper.js";
+import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD, GIT_LOG_MACHINE_FIELDS, renderGitContract } from "../src/git-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "git");
@@ -47,7 +47,7 @@ describe("rsp git fidelity fixtures", () => {
     try {
       for (const fixture of await discoverFidelityFixtures(fixtureRoot)) {
         if (fixture.name === "status-clean" || fixture.name === "push-rejected") continue;
-        const result = await runFidelityFixture(fixture, { level: "lossless", store });
+        const result = await runFidelityFixture(fixture, { level: "full", store });
         expect(result.status).toBe(fixture.recorded.status);
         expect(result.stderr).toEqual(Buffer.from(fixture.recorded.stderr, "utf8"));
         expect(result.assertionFailures).toEqual([]);
@@ -91,6 +91,82 @@ describe("rsp git fidelity fixtures", () => {
       expect(marker).toBe(`… elided 2 rows (+${result.bytesElided}) — rsp show ${result.mintedHandle}`);
       expect(result.mintedHandle).toBeDefined();
 
+      const record = await store.get(result.mintedHandle!);
+      if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
+      expect(decode(record.original.toString("utf8"))).toEqual(fixture.expected);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("keeps small heavy git outputs full by default", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixtures = await discoverFidelityFixtures(fixtureRoot);
+      for (const name of ["diff-numstat", "log-contract"]) {
+        const fixture = fixtures.find((candidate) => candidate.name === name)!;
+        const result = await runFidelityFixture(fixture, { level: "lossless", store });
+
+        expect(result.mintedHandle).toBeUndefined();
+        expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
+      }
+      await expect(store.stats()).resolves.toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("truncates large heavy git outputs by default while show recovers the full TOON", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixtures = await discoverFidelityFixtures(fixtureRoot);
+      for (const name of ["diff-large-numstat", "log-large-history"]) {
+        const fixture = fixtures.find((candidate) => candidate.name === name)!;
+        const result = await runFidelityFixture(fixture, { level: "lossless", store });
+        const stdout = result.stdout.toString("utf8");
+        const marker = stdout.split("\n").at(-2)!;
+
+        expect(marker).toMatch(/^… elided \d+ rows \(\+\d+\) — rsp show el:[a-f0-9]{12}$/);
+        expect(result.mintedHandle).toBeDefined();
+        expect(result.bytesElided).toBeGreaterThan(DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD);
+
+        const record = await store.get(result.mintedHandle!);
+        if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
+        expect(decode(record.original.toString("utf8"))).toEqual(fixture.expected);
+      }
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("--full keeps large heavy git outputs lossless and skips handle minting", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = {
+        ...(await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "diff-large-numstat")!,
+        command: ["git", "diff", "--full"],
+      };
+      const result = await runFidelityFixture(fixture, { level: "lossless", store });
+
+      expect(result.mintedHandle).toBeUndefined();
+      expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
+      await expect(store.stats()).resolves.toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("keeps --terse as an always-elide mode even below the default size threshold", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "diff-numstat")!;
+      const result = await runFidelityFixture(fixture, { level: "terse", store });
+
+      expect(result.mintedHandle).toBeDefined();
       const record = await store.get(result.mintedHandle!);
       if (!record || !("original" in record) || !record.original) throw new Error("expected live elision record");
       expect(decode(record.original.toString("utf8"))).toEqual(fixture.expected);
@@ -212,7 +288,7 @@ describe("rsp git token levers", () => {
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "log-large-history")!;
-      const result = await runFidelityFixture(fixture, { level: "lossless", store });
+      const result = await runFidelityFixture(fixture, { level: "full", store });
       const previousRedundantStdout = toPreviousRedundantLogStdout(fixture.recorded.stdout);
 
       expect(result.assertionFailures).toEqual([]);
