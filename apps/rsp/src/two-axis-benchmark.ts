@@ -111,10 +111,17 @@ const ADMISSION_THRESHOLD_PCT = 60;
 const DEFAULT_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");
 const DEFAULT_ARTIFACT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.toon");
 const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.md");
+const REQUIRED_LARGE_OUTPUT_FIXTURES = [
+  "diff-large-numstat",
+  "log-large-history",
+  "vitest-large-green",
+  "vitest-many-failures",
+] as const;
 
 export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptions = {}): Promise<TwoAxisBenchmarkReport> {
   const fixtureRoot = options.fixtureRoot ?? DEFAULT_FIXTURE_ROOT;
   const fixtures = await discoverBenchmarkFixtures(fixtureRoot);
+  assertRequiredLargeOutputFixtures(fixtures);
   const admission = evaluateAdmission(fixtures, { thresholdPct: ADMISSION_THRESHOLD_PCT });
   const admissionByFilter = new Map(admission.filters.map((row) => [row.filter, row]));
   const rtk = await readRtkBaselines(join(fixtureRoot, "rtk", "baselines.json"));
@@ -218,6 +225,15 @@ async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityF
   const roots = [join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
   const groups = await Promise.all(roots.map((root) => discoverFidelityFixtures(root)));
   return groups.flat().sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function assertRequiredLargeOutputFixtures(fixtures: readonly FidelityFixture[]): void {
+  const byName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
+  for (const name of REQUIRED_LARGE_OUTPUT_FIXTURES) {
+    const fixture = byName.get(name);
+    if (!fixture) throw new Error(`benchmark corpus missing large-output fixture: ${name}`);
+    if (fixture.large_output !== true) throw new Error(`benchmark corpus fixture is not marked large_output: ${name}`);
+  }
 }
 
 async function readRtkBaselines(path: string): Promise<RtkBaselines> {
