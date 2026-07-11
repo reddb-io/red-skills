@@ -1183,8 +1183,8 @@ async function refuseNoSandboxForUntrustedAuthor(
 async function syncMainRedRepairIssue(
   deps: ProcessIssueDeps,
   feedback: RunFeedbackResult,
-): Promise<void> {
-  if (!feedback.baselineProbeRan) return;
+): Promise<string | null> {
+  if (!feedback.baselineProbeRan) return null;
   const {
     findMainRedRepairIssue,
     createMainRedRepairIssue,
@@ -1192,7 +1192,7 @@ async function syncMainRedRepairIssue(
     closeMainRedRepairIssue,
   } = deps.gh;
   if (!findMainRedRepairIssue || !createMainRedRepairIssue || !updateMainRedRepairIssue || !closeMainRedRepairIssue) {
-    return;
+    return null;
   }
 
   try {
@@ -1200,7 +1200,7 @@ async function syncMainRedRepairIssue(
     const plan = planMainRedRepair(feedback.baselineFailures ?? [], current);
     switch (plan.action) {
       case "noop":
-        return;
+        return null;
       case "create": {
         const created = await createMainRedRepairIssue({
           title: plan.title,
@@ -1208,7 +1208,7 @@ async function syncMainRedRepairIssue(
           labels: plan.labels,
         });
         deps.appendIterLog(`🤖 /afk baseline probe: opened main-red repair issue #${created}.`);
-        return;
+        return null;
       }
       case "update":
         await updateMainRedRepairIssue(plan.issue, {
@@ -1217,15 +1217,16 @@ async function syncMainRedRepairIssue(
           labels: plan.labels,
         });
         deps.appendIterLog(`🤖 /afk baseline probe: updated main-red repair issue #${plan.issue}.`);
-        return;
+        return null;
       case "close":
         await closeMainRedRepairIssue(plan.issue, plan.comment);
         deps.appendIterLog(`🤖 /afk baseline probe: closed main-red repair issue #${plan.issue}.`);
-        return;
+        return null;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     deps.appendIterLog(`warn: main-red repair issue sync failed: ${message}`);
+    return message;
   }
 }
 
@@ -1578,6 +1579,7 @@ export async function processIssue(
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
   let mainRed = false;
+  let mainRedRepairSyncFailure: string | null = null;
   let currentHandoff = handoff;
   let goVerifyRetriesUsed = 0;
   let salvagedUncommittedFiles = 0;
@@ -2195,7 +2197,7 @@ export async function processIssue(
       );
     }
     mainRed = feedback.baselineProbeRan === true && (feedback.baselineFailures?.length ?? 0) > 0;
-    await syncMainRedRepairIssue(deps, feedback);
+    mainRedRepairSyncFailure = await syncMainRedRepairIssue(deps, feedback);
     // post_feedback (#832): the scope-derived gate has produced its verdict.
     await fireHook(
       "post_feedback",
@@ -2458,6 +2460,7 @@ export async function processIssue(
         common,
         landing.message ?? "Admin-merge refused: main is red without an open main-red repair issue.",
         landing.locked,
+        mainRedRepairSyncFailure,
       );
     }
     // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
@@ -3273,11 +3276,15 @@ async function mainRedUntrackedBlocked(
   c: StageCommon,
   message: string,
   locked: boolean,
+  repairSyncFailure: string | null = null,
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
+  const syncFailureDetail = repairSyncFailure
+    ? ` The auto-file attempt for the main-red repair issue failed and must be inspected: ${repairSyncFailure}.`
+    : "";
   const detail =
-    `${message} The attempt branch is intact and validated, but landing is held until the tracked-red ` +
-    `repair issue exists. Requeue after the auto-file path recreates it.`;
+    `${message} The attempt branch \`${c.branch}\` is intact and validated, but landing is held until the tracked-red ` +
+    `repair issue exists.${syncFailureDetail} Requeue after the auto-file path recreates it.`;
   await routeRecovery(deps, input.issue, "main-red-untracked", input.attempt);
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("main-red-untracked", { log: detail }));
   const posted = await emitFailure(c, envelopeStatusFor("main-red-untracked"), "main-red-untracked", { log: detail });
