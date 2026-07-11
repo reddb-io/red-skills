@@ -93,6 +93,8 @@ export interface ProcessSafety {
   };
 }
 
+export type ActiveClaimFinalizer = () => void | Promise<void>;
+
 /** Options for {@link installProcessSafety}. */
 export interface ProcessSafetyOptions {
   workerId?: string;
@@ -127,12 +129,28 @@ export type DeathClass =
 /** The current safety installation status, exported for tests + diagnostics.
  * `null` when no handlers are installed (the default state). */
 let activeSafety: ProcessSafety | null = null;
+let activeClaimFinalizer: ActiveClaimFinalizer | null = null;
 
 /** Return the active safety installation (or null). Useful for tests and for
  * code that wants to coordinate with the handlers (e.g. a graceful-shutdown
  * path that should also uninstall the death detectors). */
 export function getActiveSafety(): ProcessSafety | null {
   return activeSafety;
+}
+
+export function setActiveClaimFinalizer(finalizer: ActiveClaimFinalizer | null): void {
+  activeClaimFinalizer = finalizer;
+}
+
+function runActiveClaimFinalizer(): void {
+  const finalizer = activeClaimFinalizer;
+  if (!finalizer) return;
+  activeClaimFinalizer = null;
+  try {
+    void finalizer();
+  } catch {
+    // best-effort shutdown cleanup; a broken finalizer must not hide the signal
+  }
 }
 
 /**
@@ -166,16 +184,27 @@ export function installProcessSafety(
 
   const onUncaught = (err: Error): void => {
     write("uncaughtException", `message=${JSON.stringify(err.message)} stack=${JSON.stringify(err.stack ?? "")}`);
+    runActiveClaimFinalizer();
   };
   const onUnhandled = (reason: unknown): void => {
     const r = reason instanceof Error
       ? `message=${JSON.stringify(reason.message)} stack=${JSON.stringify(reason.stack ?? "")}`
       : `value=${JSON.stringify(reason)}`;
     write("unhandledRejection", r);
+    runActiveClaimFinalizer();
   };
-  const onSigTerm = (): void => write("SIGTERM", "received");
-  const onSigInt = (): void => write("SIGINT", "received");
-  const onSigHup = (): void => write("SIGHUP", "received");
+  const onSigTerm = (): void => {
+    write("SIGTERM", "received");
+    runActiveClaimFinalizer();
+  };
+  const onSigInt = (): void => {
+    write("SIGINT", "received");
+    runActiveClaimFinalizer();
+  };
+  const onSigHup = (): void => {
+    write("SIGHUP", "received");
+    runActiveClaimFinalizer();
+  };
   const onExit = (code: number | null): void => {
     // The exit handler is best-effort: a process is already on its way out
     // when this fires, so we use the synchronous file write and accept that
@@ -218,6 +247,7 @@ export function installProcessSafety(
       process.off("exit", onExit);
       if (timer) clearIntervalFn(timer);
       timer = null;
+      activeClaimFinalizer = null;
       activeSafety = null;
     },
     handlers: {
