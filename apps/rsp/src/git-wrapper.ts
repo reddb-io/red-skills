@@ -5,6 +5,8 @@ import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output
 
 export type GitSubcommand = "status" | "log" | "diff" | "commit" | "push";
 
+export const GIT_LOG_MACHINE_FIELDS = ["%h", "%an", "%as", "%s"] as const;
+
 export interface RecordedGitContract {
   stdout: string;
   stderr: string;
@@ -131,7 +133,7 @@ function machineArgs(subcommand: GitSubcommand, rest: readonly string[]): string
     case "status":
       return ["status", "--porcelain=v2", "-z", "-b", ...passthrough];
     case "log":
-      return ["log", "--format=%x1e%h%x1f%an%x1f%as%x1f%s", "-z", ...passthrough];
+      return ["log", `--format=%x1e${GIT_LOG_MACHINE_FIELDS.join("%x1f")}`, "-z", ...passthrough];
     case "diff":
       return ["diff", "--numstat", "-z", ...passthrough];
     case "commit":
