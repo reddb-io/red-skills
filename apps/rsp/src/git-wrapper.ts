@@ -25,6 +25,7 @@ export interface GitRenderResult {
   mintedHandle?: `el:${string}`;
   bytesElided?: number;
   rowsElided?: number;
+  oneLine?: boolean;
 }
 
 export async function runGitWrapper(argv: readonly string[], options: GitRenderOptions): Promise<GitRenderResult> {
@@ -55,6 +56,18 @@ export async function renderGitContract(
       stderr: Buffer.from(contract.stderr),
       status: contract.status,
       signal: contract.signal,
+    };
+  }
+
+  const scalar = scalarFastPath(subcommand, payload);
+  if (scalar) {
+    return {
+      stdout: Buffer.from(`${scalar}\n`),
+      stderr: Buffer.from(contract.stderr),
+      status: contract.status,
+      signal: contract.signal,
+      payload,
+      oneLine: true,
     };
   }
 
@@ -115,7 +128,7 @@ function machineArgs(subcommand: GitSubcommand, rest: readonly string[]): string
     case "status":
       return ["status", "--porcelain=v2", "-z", "-b", ...passthrough];
     case "log":
-      return ["log", "--format=%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s", "-z", ...passthrough];
+      return ["log", "--format=%x1e%h%x1f%an%x1f%as%x1f%s", "-z", ...passthrough];
     case "diff":
       return ["diff", "--numstat", "-z", ...passthrough];
     case "commit":
@@ -193,11 +206,10 @@ function parseLog(command: readonly string[], stdout: string): JsonObject {
   const commits = stdout.split("\0").filter(Boolean).map((record) => {
     const fields = record.replace(/^\x1e/, "").split("\x1f");
     return {
-      hash: fields[0] ?? "",
-      short: fields[1] ?? "",
-      author: fields[2] ?? "",
-      date: fields[3] ?? "",
-      subject: fields[4] ?? "",
+      short: fields[0] ?? "",
+      author: fields[1] ?? "",
+      date: fields[2] ?? "",
+      subject: fields[3] ?? "",
     };
   });
   return { command: command.join(" "), commits, summary: `${commits.length} commits` };
@@ -261,6 +273,22 @@ function parsePush(command: readonly string[], stdout: string): JsonObject {
     refs,
     summary: `pushed ${branch} -> ${remote} +${commitCount} commits`,
   };
+}
+
+function scalarFastPath(subcommand: GitSubcommand, payload: JsonObject): string | null {
+  if (subcommand === "commit") return String(payload.summary ?? "");
+  if (subcommand === "push") {
+    const refsValue = payload.refs;
+    const refs = Array.isArray(refsValue) ? refsValue : [];
+    const realPushes = refs.filter((ref) => isRecord(ref) && ref.flag !== "=");
+    if (realPushes.length <= 1) return String(payload.summary ?? "");
+    return null;
+  }
+  return null;
+}
+
+function isRecord(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function statusState(xy: string): string {
