@@ -30,6 +30,7 @@ describe("rsp test runner fidelity fixtures", () => {
       "cargo-red",
       "vitest-fault-green-nonzero",
       "vitest-green",
+      "vitest-large-green",
       "vitest-long-failure",
       "vitest-mixed",
     ]);

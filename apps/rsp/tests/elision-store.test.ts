@@ -49,6 +49,29 @@ describe("RspElisionStore", () => {
     }
   });
 
+  it("round-trips large elisions beyond the database value size", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({
+      uri: `file://${join(root, "red.rdb")}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    try {
+      const original = Buffer.from(Array.from({ length: 12_000 }, (_, i) => i % 251));
+      const handle = await store.mint(original, {
+        command: "git log --format=fixture",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+
+      const record = await store.get(handle);
+
+      if (!record || "status" in record) throw new Error("expected live elision record");
+      expect(record.original).toEqual(original);
+      await expect(store.stats()).resolves.toMatchObject({ records: 1, bytes: original.length });
+    } finally {
+      await store.close();
+    }
+  });
+
   it("expires records by TTL on amortized write and reports the original command", async () => {
     let now = new Date("2026-07-10T12:00:00.000Z");
     const root = await tempRoot();

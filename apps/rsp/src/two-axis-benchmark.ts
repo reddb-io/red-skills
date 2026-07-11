@@ -6,6 +6,7 @@ import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
 import { discoverFidelityFixtures, runFidelityFixture, type FidelityFixture } from "./fidelity.js";
 import { RspElisionStore } from "./elision-store.js";
+import { evaluateAdmission, type AdmissionFilterReport } from "./admission.js";
 
 export interface TwoAxisBenchmarkOptions {
   fixtureRoot?: string;
@@ -25,9 +26,11 @@ export interface BaselineAxis {
 
 export interface TwoAxisFilterRow {
   filter: string;
+  mode: "active" | "passthrough";
   fixture_count: number;
   raw: BaselineAxis;
-  rsp: BaselineAxis;
+  brief: BaselineAxis;
+  terse: BaselineAxis;
   rtk: BaselineAxis;
 }
 
@@ -46,6 +49,7 @@ export interface TwoAxisBenchmarkReport {
   corpus: {
     fixture_count: number;
     filters: string[];
+    large_output_filters: string[];
   };
   method: {
     tokenizer: "js-tiktoken:gpt-4o";
@@ -89,13 +93,16 @@ interface FixtureMeasurement {
   filter: string;
   rawDelta: number;
   rawFidelity: boolean;
-  rspDelta: number;
-  rspFidelity: boolean;
+  briefDelta: number;
+  briefFidelity: boolean;
+  terseDelta: number;
+  terseFidelity: boolean;
   rtkDelta: number;
   rtkFidelity: boolean;
 }
 
 const tokenizer = encodingForModel("gpt-4o");
+const ADMISSION_THRESHOLD_PCT = 60;
 const DEFAULT_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");
 const DEFAULT_ARTIFACT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.toon");
 const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.md");
@@ -103,6 +110,8 @@ const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..",
 export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptions = {}): Promise<TwoAxisBenchmarkReport> {
   const fixtureRoot = options.fixtureRoot ?? DEFAULT_FIXTURE_ROOT;
   const fixtures = await discoverBenchmarkFixtures(fixtureRoot);
+  const admission = evaluateAdmission(fixtures, { thresholdPct: ADMISSION_THRESHOLD_PCT });
+  const admissionByFilter = new Map(admission.filters.map((row) => [row.filter, row]));
   const rtk = await readRtkBaselines(join(fixtureRoot, "rtk", "baselines.json"));
   const byName = new Map(rtk.fixtures.map((fixture) => [fixture.name, fixture]));
   const measurements: FixtureMeasurement[] = [];
@@ -112,14 +121,17 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     for (const fixture of fixtures) {
       const rtkFixture = byName.get(fixture.name);
       if (!rtkFixture) throw new Error(`missing recorded RTK baseline for ${fixture.name}`);
-      const rsp = await runFidelityFixture(fixture, { level: "lossless", store });
+      const brief = await runFidelityFixture(fixture, { level: "lossless", store });
+      const terse = await runFidelityFixture(fixture, { level: "terse", store });
       measurements.push({
         fixture,
         filter: filterName(fixture),
         rawDelta: 0,
         rawFidelity: true,
-        rspDelta: rsp.tokenDelta,
-        rspFidelity: rsp.status === fixture.recorded.status && rsp.assertionFailures.length === 0,
+        briefDelta: brief.tokenDelta,
+        briefFidelity: brief.status === fixture.recorded.status && brief.assertionFailures.length === 0,
+        terseDelta: terse.tokenDelta,
+        terseFidelity: terse.status === fixture.recorded.status && terse.assertionFailures.length === 0,
         rtkDelta: tokenDelta(fixture.recorded.stdout, rtkFixture.stdout),
         rtkFidelity: rtkFixture.fidelity_assertions_passed,
       });
@@ -129,19 +141,16 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     await rm(tempRoot, { recursive: true, force: true });
   }
 
-  const rows = [...groupByFilter(measurements).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([filter, rows]) => ({
-    filter,
-    fixture_count: rows.length,
-    raw: axis(rows.map((row) => row.rawDelta), rows.map((row) => row.rawFidelity), "recorded"),
-    rsp: axis(rows.map((row) => row.rspDelta), rows.map((row) => row.rspFidelity), "measured"),
-    rtk: axis(rows.map((row) => row.rtkDelta), rows.map((row) => row.rtkFidelity), "recorded"),
-  }));
+  const rows = [...groupByFilter(measurements).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([filter, rows]) =>
+    filterRow(filter, rows, admissionByFilter.get(filter))
+  );
   const parity = buildParity(rows);
   const payload = {
     benchmark: "rsp-two-axis",
     corpus: {
       fixture_count: measurements.length,
       filters: rows.map((row) => row.filter),
+      large_output_filters: largeOutputFilters(measurements),
     },
     method: {
       tokenizer: "js-tiktoken:gpt-4o",
@@ -156,7 +165,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     },
     filters: rows,
     parity,
-    summary: `${measurements.length} fixtures, ${rows.length} filters; tokens and fidelity reported together`,
+    summary: `${measurements.length} fixtures, ${rows.length} filters; shipped modes apply admission threshold ${ADMISSION_THRESHOLD_PCT}%`,
   } satisfies Omit<TwoAxisBenchmarkReport, "toon">;
 
   return { ...payload, toon: encode(payload as unknown as JsonObject) };
@@ -177,11 +186,15 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
   const lines = [
     `rsp two-axis benchmark: ${report.corpus.fixture_count} fixtures across ${report.filters.length} filters`,
     "",
-    "| Filter | Fixtures | rsp median/p90 token delta | rsp fidelity | RTK median/p90 token delta | RTK fidelity |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    `Production mode uses admission threshold ${ADMISSION_THRESHOLD_PCT}%; passthrough filters count as 0% token delta because rsp returns the original command output.`,
+    "",
+    "| Filter | Mode | Fixtures | brief median/p90 token delta | brief fidelity | terse median/p90 token delta | terse fidelity | RTK median/p90 token delta | RTK fidelity |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.filters.map((row) =>
-      `| ${row.filter} | ${row.fixture_count} | ${fmt(row.rsp.median_delta_pct)}/${fmt(row.rsp.p90_delta_pct)}% | ${fmt(row.rsp.fidelity_pass_rate_pct)}% | ${fmt(row.rtk.median_delta_pct)}/${fmt(row.rtk.p90_delta_pct)}% | ${fmt(row.rtk.fidelity_pass_rate_pct)}% |`
+      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.rtk.median_delta_pct)}/${fmt(row.rtk.p90_delta_pct)}% | ${fmt(row.rtk.fidelity_pass_rate_pct)}% |`
     ),
+    "",
+    `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
     "",
     "| Parity domain | Filter | Gate | rsp fidelity | RTK fidelity |",
     "| --- | --- | --- | ---: | ---: |",
@@ -218,17 +231,47 @@ function buildParity(rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow[] {
 function parityRow(domain: TwoAxisParityRow["domain"], filter: string, rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow {
   const row = rows.find((candidate) => candidate.filter === filter);
   if (!row) throw new Error(`missing parity filter ${filter}`);
-  const pass = row.rsp.fidelity_pass_rate_pct >= row.rtk.fidelity_pass_rate_pct &&
-    row.rsp.median_delta_pct >= row.rtk.median_delta_pct;
+  const pass = row.brief.fidelity_pass_rate_pct >= row.rtk.fidelity_pass_rate_pct &&
+    row.brief.median_delta_pct >= row.rtk.median_delta_pct;
   return {
     domain,
     filter,
-    rsp_median_delta_pct: row.rsp.median_delta_pct,
+    rsp_median_delta_pct: row.brief.median_delta_pct,
     rtk_median_delta_pct: row.rtk.median_delta_pct,
-    rsp_fidelity_pass_rate_pct: row.rsp.fidelity_pass_rate_pct,
+    rsp_fidelity_pass_rate_pct: row.brief.fidelity_pass_rate_pct,
     rtk_fidelity_pass_rate_pct: row.rtk.fidelity_pass_rate_pct,
     parity_gate: pass ? "pass" : "fail",
   };
+}
+
+function filterRow(filter: string, rows: readonly FixtureMeasurement[], admission?: AdmissionFilterReport): TwoAxisFilterRow {
+  const mode = admission?.mode ?? "passthrough";
+  const active = mode === "active";
+  return {
+    filter,
+    mode,
+    fixture_count: rows.length,
+    raw: axis(rows.map((row) => row.rawDelta), rows.map((row) => row.rawFidelity), "recorded"),
+    brief: active
+      ? axis(rows.map((row) => row.briefDelta), rows.map((row) => row.briefFidelity), "measured")
+      : passthroughAxis(rows.length),
+    terse: active
+      ? axis(rows.map((row) => row.terseDelta), rows.map((row) => row.terseFidelity), "measured")
+      : passthroughAxis(rows.length),
+    rtk: axis(rows.map((row) => row.rtkDelta), rows.map((row) => row.rtkFidelity), "recorded"),
+  };
+}
+
+function passthroughAxis(count: number): BaselineAxis {
+  return axis(Array.from({ length: count }, () => 0), Array.from({ length: count }, () => true), "measured");
+}
+
+function largeOutputFilters(measurements: readonly FixtureMeasurement[]): string[] {
+  const filters = new Set<string>();
+  for (const measurement of measurements) {
+    if (measurement.fixture.large_output === true) filters.add(measurement.filter);
+  }
+  return [...filters].sort((a, b) => a.localeCompare(b));
 }
 
 function groupByFilter(measurements: readonly FixtureMeasurement[]): Map<string, FixtureMeasurement[]> {

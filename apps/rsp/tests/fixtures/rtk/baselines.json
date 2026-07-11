@@ -23,6 +23,11 @@
       "fidelity_assertions_passed": true
     },
     {
+      "name": "diff-large-numstat",
+      "stdout": "rtk git diff --numstat\n500 files changed, +4472 -2490\nfirst packages/module-001/src/file-001.ts\n",
+      "fidelity_assertions_passed": true
+    },
+    {
       "name": "diff-numstat",
       "stdout": "rtk git diff --numstat\napps/rsp/src/cli.ts +3 -1\nold.txt +0 -12\nassets/logo.bin binary\n",
       "fidelity_assertions_passed": true
@@ -30,6 +35,11 @@
     {
       "name": "log-contract",
       "stdout": "rtk git log\n1111111 Ada 2026-07-10 Add rsp wrapper\n2222222 Ben 2026-07-09 Scaffold elision store\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "log-large-history",
+      "stdout": "rtk git log\n200 commits\n0000001 Author 001 Recorded benchmark commit 001\n0000002 Author 002 Recorded benchmark commit 002\n",
       "fidelity_assertions_passed": true
     },
     {
@@ -60,6 +70,11 @@
     {
       "name": "vitest-green",
       "stdout": "rtk vitest run --reporter=json\n2 tests passed in apps/rsp/tests/math.test.ts\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "vitest-large-green",
+      "stdout": "rtk vitest run --reporter=json\n2000 tests passed in apps/rsp/tests/large-suite.test.ts\n",
       "fidelity_assertions_passed": true
     },
     {

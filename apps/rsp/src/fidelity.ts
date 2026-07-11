@@ -16,6 +16,7 @@ export interface FidelityAssertion {
 export interface FidelityFixture {
   name: string;
   command: string[];
+  large_output?: boolean;
   recorded: RecordedGitContract;
   expected: unknown;
   assertions: FidelityAssertion[];
@@ -137,6 +138,7 @@ function isFixture(value: unknown): value is FidelityFixture {
     typeof value.name === "string" &&
     Array.isArray(value.command) &&
     value.command.every((part) => typeof part === "string") &&
+    (!Object.prototype.hasOwnProperty.call(value, "large_output") || typeof value.large_output === "boolean") &&
     isRecord(value.recorded) &&
     typeof value.recorded.stdout === "string" &&
     typeof value.recorded.stderr === "string" &&
