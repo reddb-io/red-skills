@@ -6,6 +6,29 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## doctor (engineering) — renamed to red-doctor (issue #1480)
+
+- **status**: renamed-from-doctor
+- **upstream**: —
+- **why**: Align skill name with the `red-` prefix convention used by other reddb-original skills in the engineering bucket.
+- **what changed**: Renamed directory `plugins/dev/skills/engineering/doctor` → `red-doctor`; updated frontmatter `name:` to `red-doctor`; updated all live references (root README, bucket README, plugin.json, ask-red router, doctor fix-home tags, cross-referencing SKILL.md files and docs, source TypeScript, test files, and compiled bundles). ADR history left untouched.
+
+## setup-red-skills (engineering) — renamed to red-setup (issue #1480)
+
+- **status**: renamed-from-setup-red-skills
+- **upstream**: —
+- **why**: Align skill name with the `red-` prefix convention for the dev-plugin skill set.
+- **what changed**: Renamed directory `plugins/dev/skills/engineering/setup-red-skills` → `red-setup`; updated frontmatter `name:` to `red-setup`; updated all live references (root README, bucket README, plugin.json, ask-red router, cross-referencing SKILL.md files and docs, sub-documents, source TypeScript, test files, and compiled bundles). ADR history left untouched.
+
+## setup-statusline (engineering) — renamed to red-statusline (issue #1480)
+
+- **status**: renamed-from-setup-statusline
+- **upstream**: —
+- **why**: Align skill name with the `red-` prefix convention for the dev-plugin skill set.
+- **what changed**: Renamed directory `plugins/dev/skills/engineering/setup-statusline` → `red-statusline`; updated frontmatter `name:` to `red-statusline`; updated all live references (root README, bucket README, plugin.json, ask-red router, cross-referencing SKILL.md files and docs). ADR history left untouched.
+
+---
+
 ## wiki, wiki-init (knowledge → memory) — relocated to the memory plugin (issue #1387)
 
 - **status**: modified

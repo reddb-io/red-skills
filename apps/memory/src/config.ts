@@ -24,7 +24,7 @@ export interface MemoryConfig {
   /**
    * Per-directory activation flag (ADR 0067). `plugins.memory.enabled: true` is
    * what authorizes the globally-installed memory launcher to run in this repo;
-   * `/setup-red-skills` writes it. Carried here only so the `memory init` write
+   * `/red-setup` writes it. Carried here only so the `memory init` write
    * path round-trips it — the launcher gate reads it straight from the YAML.
    */
   enabled?: boolean;
@@ -174,7 +174,7 @@ export const DEFAULT_NOTES_DIR = ".red/memory/notes";
 /** Default location for the per-project RedDB graph store, under `.red/`. */
 export const DEFAULT_STORE_PATH = ".red/memory/graph.rdb";
 
-/** Shared Repo store provisioned by `/setup-red-skills` for all RedDB-backed plugins. */
+/** Shared Repo store provisioned by `/red-setup` for all RedDB-backed plugins. */
 export const REPO_STORE_PATH = ".red/red.rdb";
 
 /**
@@ -263,7 +263,7 @@ export interface StorePathMigrationResult {
 
 /**
  * One-time migration from the legacy standalone memory graph store to the shared
- * Repo store. `/setup-red-skills` and `memory doctor` call this explicitly; the
+ * Repo store. `/red-setup` and `memory doctor` call this explicitly; the
  * normal read path stays side-effect free.
  */
 export async function migrateStorePathToRepoStore(rootDir: string): Promise<StorePathMigrationResult | null> {

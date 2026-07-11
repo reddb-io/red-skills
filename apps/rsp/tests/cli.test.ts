@@ -45,7 +45,7 @@ describe("rsp cli", () => {
     const res = runRspFromCwd(root, [], {});
 
     expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /setup-red-skills\n"));
+    expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 

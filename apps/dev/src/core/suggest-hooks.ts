@@ -1,6 +1,6 @@
 // suggest-hooks.ts — detect concrete repo signals and produce the ordered list
 // of `.red/hooks/<point>/red-*.sh` scripts to offer in Section I of
-// /setup-red-skills.
+// /red-setup.
 //
 // Pure + IO-injected: SignalFs carries the only two FS operations needed so
 // the detection and suggestion mapping are unit-testable against fixture inputs
@@ -67,7 +67,7 @@ const SCRIPT_HEADER = "#!/usr/bin/env bash\nset -euo pipefail\n";
 
 /**
  * Scan `root` for concrete repo signals and return the ordered list of hook
- * scripts to offer in `/setup-red-skills` Section I.
+ * scripts to offer in `/red-setup` Section I.
  *
  * Returns an empty array when no signals are found — the caller should skip
  * Section I entirely when the result is empty (absence of signals → no offer).

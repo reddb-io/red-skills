@@ -89,7 +89,7 @@ the primary checkout's branch — always, with no lock file and no config toggle
 The answer to "may an agent switch the primary checkout's branch" is not
 configurable: it is always **no**. The historical `dev.lock.primary-branch` key
 stays **readable** for backward compatibility but can no longer enable or disable
-switching; the guard fires regardless of its value, and `/doctor` may note it as
+switching; the guard fires regardless of its value, and `/red-doctor` may note it as
 redundant.
 
 ```yaml

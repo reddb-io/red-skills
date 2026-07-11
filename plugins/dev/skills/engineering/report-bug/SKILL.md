@@ -124,7 +124,7 @@ Apply exactly two on creation:
 
 The `/triage` skill is responsible for adding the rest (`priority:*`, `prd:*`, eventually `ready-for-agent`). Pre-emptively labelling here breaks that contract.
 
-If `type:bug` or `needs-triage` don't exist in the repo (fresh checkout), stop and tell the user to run `/setup-red-skills` first — same precondition as `/triage`.
+If `type:bug` or `needs-triage` don't exist in the repo (fresh checkout), stop and tell the user to run `/red-setup` first — same precondition as `/triage`.
 
 ## Conversation-mining heuristic
 

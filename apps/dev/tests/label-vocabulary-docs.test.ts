@@ -18,11 +18,11 @@ async function readRepoFile(path: string): Promise<string> {
 
 async function readSetupRedSkillsDocs(): Promise<string> {
   const docs = await Promise.all([
-    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md"),
-    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/REFERENCE.md"),
-    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/INTERVIEW.md"),
-    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/WRITE-CONTRACT.md"),
-    readRepoFile("plugins/dev/skills/engineering/setup-red-skills/ISSUE-SWEEP.md"),
+    readRepoFile("plugins/dev/skills/engineering/red-setup/SKILL.md"),
+    readRepoFile("plugins/dev/skills/engineering/red-setup/REFERENCE.md"),
+    readRepoFile("plugins/dev/skills/engineering/red-setup/INTERVIEW.md"),
+    readRepoFile("plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md"),
+    readRepoFile("plugins/dev/skills/engineering/red-setup/ISSUE-SWEEP.md"),
   ]);
   return docs.join("\n");
 }
@@ -72,7 +72,7 @@ describe("label vocabulary docs", () => {
 
   it("pins the external-PR triage surface as opt-in and never-execute", async () => {
     const triage = await readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md");
-    const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
 
     expect(template).toContain("external_pr_surface");
     expect(template).toContain("enabled: false");
@@ -86,8 +86,8 @@ describe("label vocabulary docs", () => {
 
   it("does not teach obsolete slice-routing labels", async () => {
     const docs = await Promise.all([
-      readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md"),
-      readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md"),
+      readRepoFile("plugins/dev/skills/engineering/red-setup/SKILL.md"),
+      readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md"),
       readRepoFile("plugins/dev/skills/engineering/hitl/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md"),
@@ -102,7 +102,7 @@ describe("label vocabulary docs", () => {
   });
 
   it("defines ready-for-human as human decision or resolution", async () => {
-    const canonical = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md");
+    const canonical = await readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md");
 
     expect(canonical).toContain(
       "The issue requires human decision or resolution before it can proceed or be delegated.",
@@ -112,10 +112,10 @@ describe("label vocabulary docs", () => {
   });
 });
 
-describe("setup-red-skills docs", () => {
+describe("red-setup docs", () => {
   it("documents Section H as the development-workflow activation on-ramp", async () => {
     const skill = await readSetupRedSkillsDocs();
-    const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
 
     expect(skill).toContain("**Section H — Development workflow.**");
     expect(skill).toContain("dev.lock.primary-branch: true");
@@ -131,7 +131,7 @@ describe("setup-red-skills docs", () => {
 
   it("documents command guards as repo-owned proxy policy", async () => {
     const skill = await readSetupRedSkillsDocs();
-    const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
     const readme = await readRepoFile("README.md");
 
     expect(skill).toContain("**Section G1 — Command guards");
@@ -156,7 +156,7 @@ describe("setup-red-skills docs", () => {
   it("documents the cross-cli runtime shim instead of global plugin-root env vars", async () => {
     const skill = await readSetupRedSkillsDocs();
     const script = await readRepoFile(
-      "plugins/dev/skills/engineering/setup-red-skills/scripts/install-runtime-shim.sh",
+      "plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh",
     );
 
     expect(skill).toContain("**Section E1 — Runtime launcher");
@@ -174,7 +174,7 @@ describe("setup-red-skills docs", () => {
     const bin = join(tmp, "bin");
     const home = join(tmp, "home");
     const envRoot = join(tmp, "env-root");
-    const script = join(ROOT, "plugins/dev/skills/engineering/setup-red-skills/scripts/install-runtime-shim.sh");
+    const script = join(ROOT, "plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh");
 
     try {
       writeFakeRuntime(envRoot, "env");
@@ -212,7 +212,7 @@ describe("setup-red-skills docs", () => {
 describe("wayfinder docs", () => {
   it("pins the map shape, routing classes, and no-fog exit", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
-    const labels = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/triage-labels.md");
+    const labels = await readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md");
 
     expect(skill).toContain("## Destination");
     expect(skill).toContain("## Decisions so far");

@@ -215,7 +215,7 @@ describe("plugins.memory.enabled (ADR 0067 activation flag)", () => {
     expect(lines.some((l) => l.includes("enabled"))).toBe(false);
   });
 
-  test("mergeMemoryBlock preserves an enabled: true that setup-red-skills wrote", () => {
+  test("mergeMemoryBlock preserves an enabled: true that red-setup wrote", () => {
     // setup wrote only the activation flag; the init wizard's config object does
     // not carry it, yet the merge must not drop it (else memory goes dark).
     const existing = "plugins:\n  memory:\n    enabled: true\n";

@@ -92,7 +92,7 @@ If `.gitignore` doesn't exist, create it. If the line already exists (same prefi
 
 **Update CLAUDE.md/AGENTS.md:**
 
-Pick rules identical to `setup-red-skills`:
+Pick rules identical to `red-setup`:
 - If `CLAUDE.md` exists, edit it.
 - Else if `AGENTS.md` exists, edit it.
 - If neither exists, ask which one to create.

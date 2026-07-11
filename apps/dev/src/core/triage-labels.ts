@@ -37,7 +37,7 @@ export const LABEL_SCOUT_LANE = "lane:scout";
 // lets fully agent-codable slices that must not be auto-merged (e.g. changes to
 // AFK's own landing/claim machinery) stay in the autonomous lane instead of being
 // hand-dispatched via `/go`. The issue closes on PR merge via the `Closes #N`
-// back-reference. Created idempotently by `/setup-red-skills`; `/triage` may set
+// back-reference. Created idempotently by `/red-setup`; `/triage` may set
 // it at brief-writing time when the slice touches landing/claim machinery.
 export const LABEL_LANDING_MANUAL = "landing:manual";
 

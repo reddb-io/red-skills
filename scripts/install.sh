@@ -631,4 +631,4 @@ fi
 
 log "done"
 log "restart open CLI sessions so they reload plugin manifests"
-log "inside each repo, run /setup-red-skills (Claude/OpenCode) or \$dev:setup-red-skills (Codex when namespace-qualified)"
+log "inside each repo, run /red-setup (Claude/OpenCode) or \$dev:red-setup (Codex when namespace-qualified)"

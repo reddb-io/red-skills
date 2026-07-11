@@ -7,7 +7,7 @@ description: Break a plan or Spec into independently-grabbable Tickets on the pr
 
 **Break a plan into independently-grabbable vertical slices and publish them to the issue tracker.**
 
-The issue tracker and triage label vocabulary should have been provided to you — if not, ask the user to run `/setup-red-skills` and stop.
+The issue tracker and triage label vocabulary should have been provided to you — if not, ask the user to run `/red-setup` and stop.
 
 <what-to-do>
 
@@ -65,8 +65,8 @@ Then ask, **explicitly**:
 For each approved slice, publish a new issue. Use the issue template in `<supporting-info>`.
 
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
-- Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`).
-- If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human). Also create the tracker-native blocked-by relationship for each blocker. The native blocked-by relationship is the human surface; req:N labels remain the machine truth for `/afk` close cascade, boot sweep, and gate census. Keep the strict `## Blocked by` task list in the body as the body fallback and human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/setup-red-skills` triage-labels *Dependency Edges* and ADR 0094.
+- Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/red-setup`).
+- If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human). Also create the tracker-native blocked-by relationship for each blocker. The native blocked-by relationship is the human surface; req:N labels remain the machine truth for `/afk` close cascade, boot sweep, and gate census. Keep the strict `## Blocked by` task list in the body as the body fallback and human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/red-setup` triage-labels *Dependency Edges* and ADR 0094.
   - **`req:N` targets must be executable slices, never a Spec** (authoritative statement + rationale in Hard rules below). Before creating each `req:N` label, check the target with `gh issue view N --json labels`: if #N carries `type:spec`, **refuse the edge** and re-point it at the Spec's concrete executable slice(s) instead (the child issues carrying `spec:N`); when the Spec has no slices yet, first create the concrete slice the dependent actually waits on, then point `req:N` at that slice.
 - If a slice is HITL, publish it as `ready-for-human`. Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use `## Current blocker` / `## Human decision needed` for gates, measurements, and decisions where closing a referenced issue is not enough to make the slice delegable.
 - If the parent is a Spec (carries `type:spec` + `needs-slicing`), tag every child with `spec:{N}` referencing the parent and create the tracker-native sub-issue relationship from the parent Spec to the child Ticket. The native sub-issue relationship is the human surface; `spec:{N}` remains the label contract. After all slices are published, remove `needs-slicing` from the parent Spec. Never remove `type:spec` — it is a permanent type marker. Never apply `ready-for-agent` to the parent Spec itself.
@@ -77,7 +77,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - ❌ Do **not** publish until the user explicitly approved the breakdown in Step 4
 - ❌ Do **not** modify or close any parent issue
 - ❌ Do **not** create horizontal-slice issues ("the schema layer", "the API layer", "the UI layer")
-- ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`
+- ❌ Do **not** invent label strings — use the mapping from `/red-setup`
 - ❌ Do **not** create a `req:N` edge whose target #N is a `type:spec` — dependency edges must point at executable slices. A Spec closes only after a manual bookkeeping step long after its substance ships (#907/#928: 46/46 children closed, Specs still open), so a `req:<Spec>` edge strands the dependent in `blocked:dependency` forever. Re-point at the Spec's `spec:N` children, or, when the Spec has no slices yet, first create the concrete slice the dependent waits on and point `req:N` at that.
 - ❌ Do **not** "clean up" controlled redundancy between native tracker edges and labels/body text. Do not clean up either side: native sub-issue relationship and native blocked-by relationship edges are for humans; req:N labels remain the machine truth; the `## Blocked by` body fallback stays for compatibility.
 - ❌ Do **not** inline file paths or code snippets in issue bodies — they go stale. The one exception is in `<supporting-info>` (decision-rich prototype output)

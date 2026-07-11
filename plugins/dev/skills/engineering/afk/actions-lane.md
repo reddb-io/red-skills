@@ -37,7 +37,7 @@ and the ADR 0085 trust gate. Template:
 [`examples/rs-afk-attempt.yml`](./examples/rs-afk-attempt.yml).
 
 Install the caller as `rs-afk-attempt.yml` (the `rs-*`
-installed-name convention — see [WORKFLOWS.md](../setup-red-skills/WORKFLOWS.md);
+installed-name convention — see [WORKFLOWS.md](../red-setup/WORKFLOWS.md);
 only the filename changes, the `uses:` ref keeps the `reusable-` source name).
 
 ```yaml

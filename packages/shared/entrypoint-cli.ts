@@ -306,7 +306,7 @@ async function runMode(plan: RunPlan): Promise<never> {
       process.stderr.write(
         `entrypoint: ${plugin} is not enabled in this directory ` +
           `(no \`plugins.${gatePluginName(plugin)}.enabled: true\` in .red/config.yaml). ` +
-          `Run /setup-red-skills to enable it.\n`,
+          `Run /red-setup to enable it.\n`,
       );
     }
     process.exit(0);

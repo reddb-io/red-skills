@@ -2,7 +2,7 @@
 # that has no labels yet. Keeps fresh issues from slipping past `/triage` and
 # `/afk` (which only consumes `ready-for-agent`).
 #
-# Installed by `/setup-red-skills`. Filename prefix `red-` marks it as belonging
+# Installed by `/red-setup`. Filename prefix `red-` marks it as belonging
 # to the RedSkills ecosystem.
 
 name: red-issues-needs-triage

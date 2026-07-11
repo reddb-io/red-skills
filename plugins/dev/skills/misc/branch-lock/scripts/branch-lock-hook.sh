@@ -69,7 +69,7 @@ scope_should_enforce "$ROOT" || allow
 # Untouchable primary (ADR 0083 §2): an agent may never move the primary
 # checkout's branch. This block is unconditional — it no longer arms with the
 # `dev.lock.primary-branch` toggle (which stays readable for backward
-# compatibility but can no longer *enable* switching; /doctor may flag it as
+# compatibility but can no longer *enable* switching; /red-doctor may flag it as
 # redundant). Human terminals are unaffected: this is an agent-only pre-tool hook
 # (ADR 0006).
 if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then

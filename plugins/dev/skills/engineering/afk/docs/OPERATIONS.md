@@ -190,7 +190,7 @@ Before issue selection, `/afk` counts open issues in states it cannot consume:
 
 If any of those are non-zero, print a warning and (on a TTY, not in `--once`) prompt to confirm before proceeding. This catches the "lost issue" case where a fresh report never made it through `/triage` and is silently invisible to `/afk`.
 
-The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/setup-red-skills`, which auto-applies `needs-triage` to every fresh issue. The straggler check is the in-loop safety net for repos where the workflow isn't installed yet.
+The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/red-setup`, which auto-applies `needs-triage` to every fresh issue. The straggler check is the in-loop safety net for repos where the workflow isn't installed yet.
 
 ## Issue Selection
 
@@ -207,7 +207,7 @@ Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE
 
 ## Issue Lifecycle (the `/afk` slice)
 
-Canonical state machine lives in [`setup-red-skills/triage-labels.md`](../../setup-red-skills/triage-labels.md). The portion `/afk` touches:
+Canonical state machine lives in [`red-setup/triage-labels.md`](../../red-setup/triage-labels.md). The portion `/afk` touches:
 
 ```
   ready-for-agent

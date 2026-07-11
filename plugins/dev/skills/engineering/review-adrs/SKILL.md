@@ -10,7 +10,7 @@ description: Review the `.red/adr/` set for consistency issues, reconcile each f
 ADRs accumulate (30–40+ per repo) and **derive**: one reverses another, a path it
 cites moves, a decision was taken controversially and never reconciled, the wiki and
 Memory graph hold claims sourced from a decision that later changed. This is the
-"doctor of decisions" — sibling to `/doctor` (adoption) and `memory:doctor` (graph).
+"doctor of decisions" — sibling to `/red-doctor` (adoption) and `memory:doctor` (graph).
 Detection is read-only; **every resolution is reached through an interview** — one
 question per turn, `/start`-style — and the agreement is captured, not applied. The
 skill never edits an ADR, the wiki, or the graph: it consolidates every agreed fix
@@ -116,6 +116,6 @@ ADR reconciliation decisions are exactly the kind `/start` exists for: hard to r
 ### Boundaries
 
 - The skill **reaches agreement, then packages** — it never silently rewrites a decision, the wiki, or the graph, and never applies an ADR edit directly. Execution is a separate, scheduled step driven by the Spec.
-- Pairs with `/doctor` (adoption/process) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **the decision record**, resolves through dialogue, and turns its debt into work.
+- Pairs with `/red-doctor` (adoption/process) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **the decision record**, resolves through dialogue, and turns its debt into work.
 
 </supporting-info>
