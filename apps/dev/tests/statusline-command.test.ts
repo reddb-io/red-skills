@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
@@ -130,6 +131,45 @@ const PAYLOAD_WITH_RATE_LIMITS = JSON.stringify({
     seven_day: { used_percentage: 41, resets_at: "2026-07-12T12:00:00Z" },
   },
 });
+
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+async function initRepoWithDevelopTrunk(root: string): Promise<void> {
+  git(root, ["init"]);
+  git(root, ["config", "user.email", "agent@example.test"]);
+  git(root, ["config", "user.name", "Agent"]);
+  git(root, ["checkout", "-b", "main"]);
+  await writeFile(join(root, "base.txt"), "base\n", "utf8");
+  git(root, ["add", "base.txt"]);
+  git(root, ["commit", "-m", "base"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+
+  git(root, ["checkout", "-b", "develop"]);
+  await writeFile(join(root, "backlog.txt"), "backlog\n", "utf8");
+  git(root, ["add", "backlog.txt"]);
+  git(root, ["commit", "-m", "develop backlog"]);
+  git(root, ["update-ref", "refs/remotes/origin/develop", "HEAD"]);
+
+  git(root, ["checkout", "-b", "feature/statusline"]);
+  await writeFile(join(root, "work.txt"), "work\n", "utf8");
+  git(root, ["add", "work.txt"]);
+  git(root, ["commit", "-m", "feature work"]);
+}
+
+async function withFakeGh<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "fake-gh-"));
+  const orig = process.env.PATH;
+  try {
+    await writeFile(join(dir, "gh"), "#!/bin/sh\necho '[]'\n", { mode: 0o755 });
+    process.env.PATH = `${dir}:${orig ?? ""}`;
+    return await fn();
+  } finally {
+    process.env.PATH = orig;
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 describe("statusline command — pure helpers", () => {
   it("resolveRoot prefers an existing first-arg directory", async () => {
@@ -455,6 +495,34 @@ describe("statusline command — rendered line", () => {
     expect(rows).toHaveLength(1); // 0 workers → header row alone
     expect(rows[0]).toContain("Opus·high");
     expect(rows[0]).toContain("47k 24%");
+  });
+
+  it("uses the configured trunk as the repo-wide loc= diff base", async () => {
+    await initRepoWithDevelopTrunk(root);
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: develop\n", "utf8");
+    await seedFreshCache(root, 0, 0);
+
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      const code = await withFakeGh(() => statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD)));
+      expect(code).toBe(0);
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    const text = stripAnsi(out.text());
+    expect(text).toContain("loc=+1");
+    expect(text).not.toContain("loc=+2");
+    const cache = JSON.parse(await readFile(join(root, ".red", "tmp", "statusline-repo-cache.json"), "utf8")) as {
+      baseRef: string;
+      localAdded: number;
+    };
+    expect(cache.baseRef).toBe("origin/develop");
+    expect(cache.localAdded).toBe(1);
   });
 
   it("renders a fresh live supervisor fleet segment even when zero worker rows render", async () => {
