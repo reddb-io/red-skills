@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveRspConfig } from "../src/config.js";
+import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD, resolveRspConfig } from "../src/config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
 
 const roots: string[] = [];
@@ -21,13 +21,14 @@ describe("resolveRspConfig", () => {
   it("reads retention knobs from the top-level rsp block", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
-    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  ttlDays: 3\n  byteBudget: 42\n", "utf8");
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  heavyGitByteThreshold: 99\n", "utf8");
 
     expect(resolveRspConfig(join(root, "nested"), {}, undefined)).toEqual({
       enabled: false,
       storeUri: `file://${join(root, ".red", "red.rdb")}`,
       ttlDays: 3,
       byteBudget: 42,
+      heavyGitByteThreshold: 99,
     });
   });
 
@@ -41,7 +42,15 @@ describe("resolveRspConfig", () => {
       storeUri: `file://${join(root, ".red", "red.rdb")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     });
+  });
+
+  it("lets env override the heavy git truncation threshold", async () => {
+    const root = await tempRoot();
+    const config = resolveRspConfig(root, { RSP_HEAVY_GIT_BYTE_THRESHOLD: "123" }, undefined);
+
+    expect(config.heavyGitByteThreshold).toBe(123);
   });
 
   it("does not create .red or red.rdb while resolving runtime config", async () => {
