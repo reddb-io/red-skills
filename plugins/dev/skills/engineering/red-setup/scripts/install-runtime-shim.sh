@@ -69,7 +69,7 @@ Expected one of:
 - an installed dev plugin under ~/.claude/plugins/cache/red-skills/dev/*
 - a warmed bundle under ~/.cache/red-skills/bundles/dev-*.bundle.min.mjs
 
-Run /setup-red-skills in a repo with plugins.dev.enabled: true, then restart the
+Run /red-setup in a repo with plugins.dev.enabled: true, then restart the
 agent session so the plugin SessionStart hook can warm the runtime cache.
 EOF
 exit 127

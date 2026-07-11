@@ -23,7 +23,7 @@ RedSkills workflows carry one of three filename prefixes, chosen by the file's
 
 Classification is by **role**, decidable from a file's content: has
 `workflow_call:` → `reusable-*`; `uses:` a `reusable-*` → `rs-*`; otherwise →
-`red-*`. (`/doctor` audits this — see its naming-convention check.)
+`red-*`. (`/red-doctor` audits this — see its naming-convention check.)
 
 Install mapping (body copied verbatim, including any
 `uses: …/reusable-afk-attempt.yml@v1` ref):
@@ -37,7 +37,7 @@ So `red-skills` itself, as an adopter of its own lane, carries a
 `rs-afk-attempt.yml` caller next to the `reusable-afk-attempt.yml`
 reusable.
 
-## Adopter-installable (offered by `/setup-red-skills`)
+## Adopter-installable (offered by `/red-setup`)
 
 Section D is a **menu** — the user picks which workflows + configs. A reusable's
 **caller** installs as `rs-*`; a standalone copy-installable keeps its `red-*`
@@ -49,7 +49,7 @@ name.
 | `reusable-afk-attempt.yml` (reusable, called by ref) | `rs-afk-attempt.yml` (the caller) | **opt-in (no)** | `issues: labeled`/`opened` (on `ready-for-agent`), `workflow_dispatch`, `workflow_call` | The **AFK Actions lane** — runs one `/afk` attempt per issue headless from Actions and opens a PR (no fleet, no admin-merge; human merges). Needs an OpenCode auth secret + a trust-gate allowlist. Full guide: [`../afk/actions-lane.md`](../afk/actions-lane.md). |
 
 The AFK lane has two shapes (both in `../afk/examples/`): the **turnkey caller**
-(`rs-afk-attempt.yml`, what `/setup-red-skills` installs) and the
+(`rs-afk-attempt.yml`, what `/red-setup` installs) and the
 **composable action** (`red-afk-attempt-action.yml`, for your own
 triggers/gate). It depends only on GitHub-official actions plus reddb-io's own
 composite action.

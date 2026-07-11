@@ -141,7 +141,7 @@ These exist for filtering and don't drive lifecycle transitions:
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 | `landing:manual` | Per-issue **manual-landing** mode (#1049): on a `ready-for-agent` issue, `/afk` runs the full pipeline + opens the PR, then **holds for a human's merge click** (parks `ready-for-human`, never auto-merges, never re-runs the agent). The issue auto-closes on PR merge via `Closes #N`. Lets agent-codable slices that must not be auto-merged stay in the autonomous lane instead of being hand-dispatched via `/go`. | `/triage` at brief time, or `/hitl`'s **delegable-manual-landing** disposition |
 
-`runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned. Provision it up front via `/setup-red-skills` to keep colour/description consistent across repos.
+`runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned. Provision it up front via `/red-setup` to keep colour/description consistent across repos.
 
 ## Blocked Reasons (`blocked:<reason>`) — typed, auto-classified
 
@@ -164,7 +164,7 @@ These exist for filtering and don't drive lifecycle transitions:
 
 > Not yet wired: time-based backoff (today the re-queue is immediate; the cap is what prevents runaway).
 
-All `blocked:*` labels are created on the fly when first applied (mirroring `runner-error`) and provisioned by `/setup-red-skills`.
+All `blocked:*` labels are created on the fly when first applied (mirroring `runner-error`) and provisioned by `/red-setup`.
 
 ## Naming Convention
 
@@ -173,4 +173,4 @@ All labels follow one of two shapes:
 - **kebab-case** — `needs-triage`, `ready-for-agent`, `running`, `wontfix`, `bug`.
 - **`prefix:value`** — `priority:high`, `spec:42`.
 
-No uppercase, CamelCase, snake_case, or spaces. GitHub matches labels case-insensitively for filtering but stores the case you create them with — keep the tracker clean by normalising on creation. `/setup-red-skills` surfaces non-conforming labels and offers to rename via `gh label edit "Old Name" --name "new-name"`.
+No uppercase, CamelCase, snake_case, or spaces. GitHub matches labels case-insensitively for filtering but stores the case you create them with — keep the tracker clean by normalising on creation. `/red-setup` surfaces non-conforming labels and offers to rename via `gh label edit "Old Name" --name "new-name"`.

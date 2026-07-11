@@ -1,5 +1,5 @@
 ---
-name: setup-statusline
+name: red-statusline
 description: Install or inspect the RedSkills statusline for the active host. RedSkills has one shared `statusline` producer in the dev bundle; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
 disable-model-invocation: true
 ---
@@ -52,7 +52,7 @@ Tell the user which host branch you used, what changed or why nothing changed, a
 
 ## Invocation Notes
 
-- Invoke as `/setup-statusline` (Claude Code) or `$setup-statusline` (Codex). Wire the host you are running under; do not imply the statusline feature belongs to only one client.
-- `/setup-red-skills` may offer the Claude Code command-backed adapter during project bootstrap. Under Codex, use this skill to inspect or configure the native footer path.
+- Invoke as `/red-statusline` (Claude Code) or `$red-statusline` (Codex). Wire the host you are running under; do not imply the statusline feature belongs to only one client.
+- `/red-setup` may offer the Claude Code command-backed adapter during project bootstrap. Under Codex, use this skill to inspect or configure the native footer path.
 
 </supporting-info>
