@@ -2,15 +2,17 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decode } from "@reddb-io/toon";
+import { encodingForModel } from "js-tiktoken";
 import { afterEach, describe, expect, it } from "vitest";
 import { evaluateAdmission, runAdmittedFixture } from "../src/admission.js";
 import { runFidelityFixture, discoverFidelityFixtures } from "../src/fidelity.js";
 import { RspElisionStore } from "../src/elision-store.js";
-import { renderGitContract } from "../src/git-wrapper.js";
+import { GIT_LOG_MACHINE_FIELDS, renderGitContract } from "../src/git-wrapper.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures", "git");
 const redFixtureRoot = join(import.meta.dirname, "fixtures", "fidelity-red");
+const tokenizer = encodingForModel("gpt-4o");
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-git-"));
@@ -161,6 +163,28 @@ describe("rsp git admission harness", () => {
 });
 
 describe("rsp git token levers", () => {
+  it("keeps git log on the lean four-field machine contract", () => {
+    expect(GIT_LOG_MACHINE_FIELDS).toEqual(["%h", "%an", "%as", "%s"]);
+    expect(GIT_LOG_MACHINE_FIELDS).not.toContain("%H");
+    expect(GIT_LOG_MACHINE_FIELDS).not.toContain("%aI");
+    expect(GIT_LOG_MACHINE_FIELDS).toHaveLength(4);
+  });
+
+  it("keeps the large log fixture at full fidelity with fewer recorded tokens than the redundant contract", async () => {
+    const root = await tempRoot();
+    const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
+    try {
+      const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "log-large-history")!;
+      const result = await runFidelityFixture(fixture, { level: "lossless", store });
+      const previousRedundantStdout = toPreviousRedundantLogStdout(fixture.recorded.stdout);
+
+      expect(result.assertionFailures).toEqual([]);
+      expect(tokenizer.encode(fixture.recorded.stdout).length).toBeLessThan(tokenizer.encode(previousRedundantStdout).length);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("filters row payloads with --query and appends contextual help", async () => {
     const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "status-working-tree")!;
     const result = await renderGitContract(["git", "status", "--query", "modified"], fixture.recorded, { level: "lossless" });
@@ -171,6 +195,14 @@ describe("rsp git token levers", () => {
     expect(decoded.help).toContain("rsp git diff --query <path>");
   });
 });
+
+function toPreviousRedundantLogStdout(stdout: string): string {
+  return stdout.split("\0").filter(Boolean).map((record) => {
+    const [short, author, date, subject] = record.replace(/^\x1e/, "").split("\x1f");
+    const full = `${short}${"0".repeat(40)}`.slice(0, 40);
+    return `\x1e${full}\x1f${short ?? ""}\x1f${author ?? ""}\x1f${date ?? ""}T12:34:56+00:00\x1f${subject ?? ""}`;
+  }).join("\0") + "\0";
+}
 
 describe("fixture convention guard", () => {
   it("does not need a central registry file", async () => {

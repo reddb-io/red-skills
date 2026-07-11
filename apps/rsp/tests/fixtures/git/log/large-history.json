@@ -1227,6 +1227,11 @@
       "question": "what is the newest short hash?",
       "path": "commits.0.short",
       "expected": "0000001"
+    },
+    {
+      "question": "what is the newest short author date?",
+      "path": "commits.0.date",
+      "expected": "2026-07-02"
     }
   ]
 }
