@@ -56,6 +56,8 @@ interface Trace {
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
+  /** Main-red repair issue create attempts from the baseline probe sync path. */
+  mainRedRepairCreates: Array<{ title: string; body: string; labels: readonly string[] }>;
   /** Compact state patches written to afk.state.json. */
   statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
@@ -82,6 +84,12 @@ interface HarnessOptions {
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
   feedbackOk?: boolean;
+  /** When true, the feedback baseline probe fails the same check as the worker. */
+  baselineFails?: boolean;
+  /** Existing main-red repair issue returned by the finder. false/null means missing. */
+  mainRedRepairIssue?: boolean;
+  /** When set, creating the main-red repair issue throws this message. */
+  mainRedRepairCreateError?: string;
   /** Scripted per-feedback-gate outcomes. Each feedback run executes the four
    * standard scripts; this controls the aggregate pass/fail for each run. */
   feedbackResults?: boolean[];
@@ -237,6 +245,7 @@ function harness(opts: HarnessOptions = {}): {
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
+    mainRedRepairCreates: [],
     statePatches: [],
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
@@ -251,6 +260,8 @@ function harness(opts: HarnessOptions = {}): {
   // verification reads above key off it to model "the agent resolved the merge".
   let mergeResolved = false;
   let pnpmCalls = 0;
+  let currentMainRedRepairIssue: { number: number; title?: string; body?: string; labels?: readonly string[] } | null =
+    opts.mainRedRepairIssue ? { number: 123 } : null;
 
   const deps: ProcessIssueDeps = {
     gh: {
@@ -297,6 +308,31 @@ function harness(opts: HarnessOptions = {}): {
             inCodeowners: false,
           })
         : undefined,
+      findMainRedRepairIssue:
+        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
+          ? async () => currentMainRedRepairIssue
+          : undefined,
+      createMainRedRepairIssue:
+        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
+          ? async (spec) => {
+              trace.mainRedRepairCreates.push(spec);
+              if (opts.mainRedRepairCreateError) throw new Error(opts.mainRedRepairCreateError);
+              currentMainRedRepairIssue = { number: 124 };
+              return 124;
+            }
+          : undefined,
+      updateMainRedRepairIssue:
+        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
+          ? async (issue, spec) => {
+              currentMainRedRepairIssue = { number: issue, ...spec };
+            }
+          : undefined,
+      closeMainRedRepairIssue:
+        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
+          ? async () => {
+              currentMainRedRepairIssue = null;
+            }
+          : undefined,
     },
     claimGh: opts.claim
       ? {
@@ -429,7 +465,7 @@ function harness(opts: HarnessOptions = {}): {
       const cIdx = Array.isArray(args) ? args.indexOf("-C") : -1;
       const dir = cIdx >= 0 ? (args[cIdx + 1] ?? "") : "";
       if (dir === "main" || dir.startsWith("main/")) {
-        return { code: 0, stdout: "", stderr: "" };
+        return { code: opts.baselineFails ? 1 : 0, stdout: "", stderr: "" };
       }
       const feedbackRun = Math.floor(pnpmCalls / 4);
       pnpmCalls += 1;
@@ -901,6 +937,46 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.closed).toEqual([]);
     expect(trace.deletedRemote).toEqual([]);
     expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.released).toEqual([9]);
+  });
+});
+
+describe("processIssue — main-red-untracked landing park (#1473)", () => {
+  it("red main + missing repair issue parks ready-for-human, preserves the branch, and surfaces auto-file failure", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: false,
+      baselineFails: true,
+      locked: false,
+      mainRedRepairIssue: false,
+      mainRedRepairCreateError: "gh issue create failed",
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("main-red-untracked");
+    expect(result.preserved).toBe(true);
+    expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(trace.mainRedRepairCreates).toHaveLength(1);
+    expect(trace.iterLogs).toContain("warn: main-red repair issue sync failed: gh issue create failed");
+    expect(trace.ensuredLabels).toContain("blocked:main-red-untracked");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:main-red-untracked"))).toBe(
+      true,
+    );
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.closed).toEqual([]);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.pushedAttempt.length).toBe(1);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+
+    const blocker = parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "");
+    expect(blocker?.status).toBe("blocked");
+    expect(blocker?.kind).toBe("main-red-untracked");
+    expect(blocker?.summary).toContain("red main");
+    expect(blocker?.summary).toContain("gh issue create failed");
+    expect(blocker?.summary).toContain("afk/wAAAA/9-fix-the-thing");
+    expect(trace.comments.at(-1)?.body).toContain("afk/wAAAA/9-fix-the-thing");
+    expect(trace.comments.at(-1)?.body).toContain("gh issue create failed");
     expect(trace.released).toEqual([9]);
   });
 });
