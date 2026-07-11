@@ -18,6 +18,7 @@ import { buildLineRedactor } from "../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "./host-env-allowlist.js";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
+import { deriveSnapshot } from "./reaper-signal.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "./runner-spec.js";
 import {
   AGENT_OUTPUT_CLOSE,
@@ -113,7 +114,8 @@ export const DEFAULT_IDLE_TIMEOUT_S = 600;
 
 /**
  * Attempt wall-clock guard (proof-of-PROGRESS): the inner agent is aborted when
- * no NEW commit has landed on the worker branch within this many seconds.
+ * no NEW commit or other productive signal has landed on the worker branch
+ * within this many seconds.
  * `idleTimeoutSeconds` catches *silence* (no output) and `maxIterations` caps
  * *re-invocations*, but a single iteration that stays busy — re-exploring,
  * re-running tests — without ever committing or signalling slips past both and
@@ -139,10 +141,10 @@ export function parseAttemptTimeout(raw: string | undefined): number | undefined
  * commit (or spawn). A busy-but-unproductive agent that re-validates in a loop
  * while occasionally touching a file resets the soft deadline forever — the
  * observed #579 worker burned 5h+ that way. Past the hard cap with no NEW
- * commit, the guard aborts regardless of worktree edits, which routes the
- * attempt to the `timeout` terminal where the ADR 0055 reconcile can land an
- * already-committed green branch without re-running the agent. Env-tunable via
- * `RED_AFK_ATTEMPT_HARD_CAP_S`.
+ * commit, the guard aborts even if worktree/activity signals keep extending the
+ * soft deadline, which routes the attempt to the `timeout` terminal where the
+ * ADR 0055 reconcile can land an already-committed green branch without
+ * re-running the agent. Env-tunable via `RED_AFK_ATTEMPT_HARD_CAP_S`.
  */
 export const DEFAULT_ATTEMPT_HARD_CAP_S = 5400;
 
@@ -381,7 +383,8 @@ export interface RunAgentInput {
    */
   budget?: AttemptBudget;
   /** Sync probe returning the attempt's cumulative usage (the activity meter's
-   * `peek()`), read each guard poll to evaluate `budget`. */
+   * `peek()`), read each guard poll to evaluate `budget` and to treat live
+   * tool/text activity as productive progress for the soft timeout. */
   budgetUsage?: () => AttemptBudgetUsage;
   /**
    * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on the
@@ -999,17 +1002,19 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
 
 /**
  * Arm the attempt progress guard. Polls `headProbe` every `intervalMs`; the
- * deadline resets whenever the HEAD sha ADVANCES (a new commit = real progress),
- * and `abort` fires once `capMs` elapses with no advance. Pure over its injected
- * clock / scheduler — no real timers, no git — so it is fully unit-testable. The
- * first observed head anchors the clock (≈ from spawn). A `headProbe` rejection
- * is treated as "no progress observed" (never resets), so a flaky git read
- * cannot keep a hung agent alive.
+ * deadline resets whenever the HEAD sha advances, the diff reaches a new
+ * high-water mark, activity counters advance, or an active build/test descendant
+ * is observed. `abort` fires once `capMs` elapses with none of those soft
+ * progress signals. Pure over its injected clock / scheduler — no real timers,
+ * no git — so it is fully unit-testable. The first observed head anchors the
+ * clock (≈ from spawn). A `headProbe` rejection is treated as "no progress
+ * observed" (never resets), so a flaky git read cannot keep a hung agent alive.
  */
 export interface AttemptProgressInfo {
   /** The worker branch HEAD observed this tick (undefined when unresolved). */
   head: string | undefined;
-  /** Epoch ms of the last observed progress (last new commit, or spawn). */
+  /** Epoch ms of the last observed soft progress (commit, diff growth, activity,
+   * active validation descendant, or spawn). */
   lastProgressMs: number;
   /** The guard's clock (epoch ms) at this tick. */
   nowMs: number;
@@ -1053,6 +1058,11 @@ export interface AttemptBudgetUsage {
   waiting: number;
 }
 
+export interface AttemptActivityUsage extends AttemptBudgetUsage {
+  textChunks?: number;
+  reasoningCount?: number;
+}
+
 export type AttemptTimeoutReason = "stalled" | "edit-loop-stall" | "hard-cap";
 type AttemptGuardAbortReason = AttemptTimeoutReason | "goal-moot" | "budget";
 
@@ -1094,6 +1104,13 @@ export function startAttemptGuard(opts: {
   /** Sync probe for the cumulative usage this poll (the activity meter's
    * `peek()`). Read only when `budget` is also set. */
   budgetUsage?: () => AttemptBudgetUsage;
+  /** Live activity-meter snapshot. Increases in tool/text/reasoning/token
+   * counters are productive activity and extend the soft progress deadline while
+   * the worker is still below the commit hard cap. */
+  activityUsage?: () => AttemptActivityUsage;
+  /** Active build/test descendant predicate. A true value extends the soft
+   * progress deadline so slow validation is not killed as a commit stall. */
+  activeDescendantProbe?: () => boolean;
   /**
    * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on THIS
    * same poll (one issue-state read per tick — no extra polling loop). Resolves
@@ -1122,6 +1139,7 @@ export function startAttemptGuard(opts: {
   let lastCommit = opts.now();
   let lastHead: string | undefined;
   let lastVolume: number | undefined;
+  let lastActivityScore: number | undefined;
   let diffHighWater: number | undefined;
   let sawNonGrowingEditSinceProgress = false;
   let fired = false;
@@ -1165,6 +1183,29 @@ export function startAttemptGuard(opts: {
           return;
         }
       }
+      let activityScore: number | undefined;
+      if (opts.activityUsage) {
+        try {
+          const usage = opts.activityUsage();
+          activityScore =
+            usage.inputTokens +
+            usage.outputTokens +
+            usage.toolsCalled +
+            usage.waiting +
+            (usage.textChunks ?? 0) +
+            (usage.reasoningCount ?? 0);
+        } catch {
+          activityScore = undefined;
+        }
+      }
+      let activeDescendant = false;
+      if (opts.activeDescendantProbe) {
+        try {
+          activeDescendant = opts.activeDescendantProbe();
+        } catch {
+          activeDescendant = false;
+        }
+      }
       // Commit signal (always present). A headProbe rejection = no progress
       // observed (let the deadline run), matching the prior commit-anchored
       // behaviour exactly when no progressProbe is supplied.
@@ -1192,6 +1233,9 @@ export function startAttemptGuard(opts: {
       const committed = headOk && head !== undefined && head !== lastHead;
       const volumeChanged = volume !== undefined && lastVolume !== undefined && volume !== lastVolume;
       const grewDiff = volume !== undefined && diffHighWater !== undefined && volume > diffHighWater;
+      const activityAdvanced =
+        activityScore !== undefined && lastActivityScore !== undefined && activityScore > lastActivityScore;
+      const productiveActivity = activeDescendant || activityAdvanced;
       const nonGrowingEdit = volumeChanged && !grewDiff;
       if (committed) {
         lastProgress = opts.now();
@@ -1200,13 +1244,15 @@ export function startAttemptGuard(opts: {
       } else if (grewDiff) {
         lastProgress = opts.now();
         sawNonGrowingEditSinceProgress = false;
+      } else if (productiveActivity) {
+        lastProgress = opts.now();
       } else if (nonGrowingEdit) {
         sawNonGrowingEditSinceProgress = true;
       }
       // The soft deadline resets on commit OR diff growth; the hard cap resets on
       // commit ONLY, so periodic edits cannot keep an uncommitting agent alive
       // past it (issue #637 — the 5h+ re-validation loop).
-      const softExpired = !committed && !grewDiff && opts.now() - lastProgress >= opts.capMs;
+      const softExpired = !committed && !grewDiff && !productiveActivity && opts.now() - lastProgress >= opts.capMs;
       const hardExpired = !committed && opts.hardCapMs !== undefined && opts.now() - lastCommit >= opts.hardCapMs;
       if (softExpired || hardExpired) {
         fired = true;
@@ -1217,6 +1263,7 @@ export function startAttemptGuard(opts: {
         lastVolume = volume;
         diffHighWater = diffHighWater === undefined ? volume : Math.max(diffHighWater, volume);
       }
+      if (activityScore !== undefined) lastActivityScore = activityScore;
       opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
     })();
   }, opts.intervalMs);
@@ -1296,6 +1343,8 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       schedule,
       ...(input.goalProbe ? { goalProbe: input.goalProbe } : {}),
       ...(input.budget && input.budgetUsage ? { budget: input.budget, budgetUsage: input.budgetUsage } : {}),
+      ...(input.budgetUsage ? { activityUsage: input.budgetUsage } : {}),
+      ...(input.inspectTree ? { activeDescendantProbe: () => deriveSnapshot(input.inspectTree!()).activeDescendant } : {}),
       abort: (reason) => {
         if (reason === "stalled" || reason === "edit-loop-stall" || reason === "hard-cap") timeoutReason = reason;
         controller?.abort(
