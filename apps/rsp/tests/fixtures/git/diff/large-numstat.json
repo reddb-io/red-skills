@@ -1,0 +1,2532 @@
+{
+  "name": "diff-large-numstat",
+  "command": [
+    "git",
+    "diff"
+  ],
+  "large_output": true,
+  "recorded": {
+    "stdout": "2\t1\tpackages/module-001/src/file-001.ts\u00003\t2\tpackages/module-002/src/file-002.ts\u00004\t3\tpackages/module-003/src/file-003.ts\u00005\t4\tpackages/module-004/src/file-004.ts\u00006\t5\tpackages/module-005/src/file-005.ts\u00007\t6\tpackages/module-006/src/file-006.ts\u00008\t7\tpackages/module-007/src/file-007.ts\u00009\t8\tpackages/module-008/src/file-008.ts\u000010\t9\tpackages/module-009/src/file-009.ts\u000011\t10\tpackages/module-010/src/file-010.ts\u000012\t0\tpackages/module-011/src/file-011.ts\u000013\t1\tpackages/module-012/src/file-012.ts\u000014\t2\tpackages/module-013/src/file-013.ts\u000015\t3\tpackages/module-014/src/file-014.ts\u000016\t4\tpackages/module-015/src/file-015.ts\u000017\t5\tpackages/module-016/src/file-016.ts\u00001\t6\tpackages/module-017/src/file-017.ts\u00002\t7\tpackages/module-018/src/file-018.ts\u00003\t8\tpackages/module-019/src/file-019.ts\u00004\t9\tpackages/module-020/src/file-020.ts\u00005\t10\tpackages/module-021/src/file-021.ts\u00006\t0\tpackages/module-022/src/file-022.ts\u00007\t1\tpackages/module-023/src/file-023.ts\u00008\t2\tpackages/module-024/src/file-024.ts\u00009\t3\tpackages/module-025/src/file-025.ts\u000010\t4\tpackages/module-026/src/file-026.ts\u000011\t5\tpackages/module-027/src/file-027.ts\u000012\t6\tpackages/module-028/src/file-028.ts\u000013\t7\tpackages/module-029/src/file-029.ts\u000014\t8\tpackages/module-030/src/file-030.ts\u000015\t9\tpackages/module-031/src/file-031.ts\u000016\t10\tpackages/module-032/src/file-032.ts\u000017\t0\tpackages/module-033/src/file-033.ts\u00001\t1\tpackages/module-034/src/file-034.ts\u00002\t2\tpackages/module-035/src/file-035.ts\u00003\t3\tpackages/module-036/src/file-036.ts\u00004\t4\tpackages/module-037/src/file-037.ts\u00005\t5\tpackages/module-038/src/file-038.ts\u00006\t6\tpackages/module-039/src/file-039.ts\u00007\t7\tpackages/module-040/src/file-040.ts\u00008\t8\tpackages/module-041/src/file-041.ts\u00009\t9\tpackages/module-042/src/file-042.ts\u000010\t10\tpackages/module-043/src/file-043.ts\u000011\t0\tpackages/module-044/src/file-044.ts\u000012\t1\tpackages/module-045/src/file-045.ts\u000013\t2\tpackages/module-046/src/file-046.ts\u000014\t3\tpackages/module-047/src/file-047.ts\u000015\t4\tpackages/module-048/src/file-048.ts\u000016\t5\tpackages/module-049/src/file-049.ts\u000017\t6\tpackages/module-050/src/file-050.ts\u00001\t7\tpackages/module-051/src/file-051.ts\u00002\t8\tpackages/module-052/src/file-052.ts\u00003\t9\tpackages/module-053/src/file-053.ts\u00004\t10\tpackages/module-054/src/file-054.ts\u00005\t0\tpackages/module-055/src/file-055.ts\u00006\t1\tpackages/module-056/src/file-056.ts\u00007\t2\tpackages/module-057/src/file-057.ts\u00008\t3\tpackages/module-058/src/file-058.ts\u00009\t4\tpackages/module-059/src/file-059.ts\u000010\t5\tpackages/module-060/src/file-060.ts\u000011\t6\tpackages/module-061/src/file-061.ts\u000012\t7\tpackages/module-062/src/file-062.ts\u000013\t8\tpackages/module-063/src/file-063.ts\u000014\t9\tpackages/module-064/src/file-064.ts\u000015\t10\tpackages/module-065/src/file-065.ts\u000016\t0\tpackages/module-066/src/file-066.ts\u000017\t1\tpackages/module-067/src/file-067.ts\u00001\t2\tpackages/module-068/src/file-068.ts\u00002\t3\tpackages/module-069/src/file-069.ts\u00003\t4\tpackages/module-070/src/file-070.ts\u00004\t5\tpackages/module-071/src/file-071.ts\u00005\t6\tpackages/module-072/src/file-072.ts\u00006\t7\tpackages/module-073/src/file-073.ts\u00007\t8\tpackages/module-074/src/file-074.ts\u00008\t9\tpackages/module-075/src/file-075.ts\u00009\t10\tpackages/module-076/src/file-076.ts\u000010\t0\tpackages/module-077/src/file-077.ts\u000011\t1\tpackages/module-078/src/file-078.ts\u000012\t2\tpackages/module-079/src/file-079.ts\u000013\t3\tpackages/module-080/src/file-080.ts\u000014\t4\tpackages/module-081/src/file-081.ts\u000015\t5\tpackages/module-082/src/file-082.ts\u000016\t6\tpackages/module-083/src/file-083.ts\u000017\t7\tpackages/module-084/src/file-084.ts\u00001\t8\tpackages/module-085/src/file-085.ts\u00002\t9\tpackages/module-086/src/file-086.ts\u00003\t10\tpackages/module-087/src/file-087.ts\u00004\t0\tpackages/module-088/src/file-088.ts\u00005\t1\tpackages/module-089/src/file-089.ts\u00006\t2\tpackages/module-090/src/file-090.ts\u00007\t3\tpackages/module-091/src/file-091.ts\u00008\t4\tpackages/module-092/src/file-092.ts\u00009\t5\tpackages/module-093/src/file-093.ts\u000010\t6\tpackages/module-094/src/file-094.ts\u000011\t7\tpackages/module-095/src/file-095.ts\u000012\t8\tpackages/module-096/src/file-096.ts\u000013\t9\tpackages/module-097/src/file-097.ts\u000014\t10\tpackages/module-098/src/file-098.ts\u000015\t0\tpackages/module-099/src/file-099.ts\u000016\t1\tpackages/module-100/src/file-100.ts\u000017\t2\tpackages/module-101/src/file-101.ts\u00001\t3\tpackages/module-102/src/file-102.ts\u00002\t4\tpackages/module-103/src/file-103.ts\u00003\t5\tpackages/module-104/src/file-104.ts\u00004\t6\tpackages/module-105/src/file-105.ts\u00005\t7\tpackages/module-106/src/file-106.ts\u00006\t8\tpackages/module-107/src/file-107.ts\u00007\t9\tpackages/module-108/src/file-108.ts\u00008\t10\tpackages/module-109/src/file-109.ts\u00009\t0\tpackages/module-110/src/file-110.ts\u000010\t1\tpackages/module-111/src/file-111.ts\u000011\t2\tpackages/module-112/src/file-112.ts\u000012\t3\tpackages/module-113/src/file-113.ts\u000013\t4\tpackages/module-114/src/file-114.ts\u000014\t5\tpackages/module-115/src/file-115.ts\u000015\t6\tpackages/module-116/src/file-116.ts\u000016\t7\tpackages/module-117/src/file-117.ts\u000017\t8\tpackages/module-118/src/file-118.ts\u00001\t9\tpackages/module-119/src/file-119.ts\u00002\t10\tpackages/module-120/src/file-120.ts\u00003\t0\tpackages/module-121/src/file-121.ts\u00004\t1\tpackages/module-122/src/file-122.ts\u00005\t2\tpackages/module-123/src/file-123.ts\u00006\t3\tpackages/module-124/src/file-124.ts\u00007\t4\tpackages/module-125/src/file-125.ts\u00008\t5\tpackages/module-126/src/file-126.ts\u00009\t6\tpackages/module-127/src/file-127.ts\u000010\t7\tpackages/module-128/src/file-128.ts\u000011\t8\tpackages/module-129/src/file-129.ts\u000012\t9\tpackages/module-130/src/file-130.ts\u000013\t10\tpackages/module-131/src/file-131.ts\u000014\t0\tpackages/module-132/src/file-132.ts\u000015\t1\tpackages/module-133/src/file-133.ts\u000016\t2\tpackages/module-134/src/file-134.ts\u000017\t3\tpackages/module-135/src/file-135.ts\u00001\t4\tpackages/module-136/src/file-136.ts\u00002\t5\tpackages/module-137/src/file-137.ts\u00003\t6\tpackages/module-138/src/file-138.ts\u00004\t7\tpackages/module-139/src/file-139.ts\u00005\t8\tpackages/module-140/src/file-140.ts\u00006\t9\tpackages/module-141/src/file-141.ts\u00007\t10\tpackages/module-142/src/file-142.ts\u00008\t0\tpackages/module-143/src/file-143.ts\u00009\t1\tpackages/module-144/src/file-144.ts\u000010\t2\tpackages/module-145/src/file-145.ts\u000011\t3\tpackages/module-146/src/file-146.ts\u000012\t4\tpackages/module-147/src/file-147.ts\u000013\t5\tpackages/module-148/src/file-148.ts\u000014\t6\tpackages/module-149/src/file-149.ts\u000015\t7\tpackages/module-150/src/file-150.ts\u000016\t8\tpackages/module-151/src/file-151.ts\u000017\t9\tpackages/module-152/src/file-152.ts\u00001\t10\tpackages/module-153/src/file-153.ts\u00002\t0\tpackages/module-154/src/file-154.ts\u00003\t1\tpackages/module-155/src/file-155.ts\u00004\t2\tpackages/module-156/src/file-156.ts\u00005\t3\tpackages/module-157/src/file-157.ts\u00006\t4\tpackages/module-158/src/file-158.ts\u00007\t5\tpackages/module-159/src/file-159.ts\u00008\t6\tpackages/module-160/src/file-160.ts\u00009\t7\tpackages/module-161/src/file-161.ts\u000010\t8\tpackages/module-162/src/file-162.ts\u000011\t9\tpackages/module-163/src/file-163.ts\u000012\t10\tpackages/module-164/src/file-164.ts\u000013\t0\tpackages/module-165/src/file-165.ts\u000014\t1\tpackages/module-166/src/file-166.ts\u000015\t2\tpackages/module-167/src/file-167.ts\u000016\t3\tpackages/module-168/src/file-168.ts\u000017\t4\tpackages/module-169/src/file-169.ts\u00001\t5\tpackages/module-170/src/file-170.ts\u00002\t6\tpackages/module-171/src/file-171.ts\u00003\t7\tpackages/module-172/src/file-172.ts\u00004\t8\tpackages/module-173/src/file-173.ts\u00005\t9\tpackages/module-174/src/file-174.ts\u00006\t10\tpackages/module-175/src/file-175.ts\u00007\t0\tpackages/module-176/src/file-176.ts\u00008\t1\tpackages/module-177/src/file-177.ts\u00009\t2\tpackages/module-178/src/file-178.ts\u000010\t3\tpackages/module-179/src/file-179.ts\u000011\t4\tpackages/module-180/src/file-180.ts\u000012\t5\tpackages/module-181/src/file-181.ts\u000013\t6\tpackages/module-182/src/file-182.ts\u000014\t7\tpackages/module-183/src/file-183.ts\u000015\t8\tpackages/module-184/src/file-184.ts\u000016\t9\tpackages/module-185/src/file-185.ts\u000017\t10\tpackages/module-186/src/file-186.ts\u00001\t0\tpackages/module-187/src/file-187.ts\u00002\t1\tpackages/module-188/src/file-188.ts\u00003\t2\tpackages/module-189/src/file-189.ts\u00004\t3\tpackages/module-190/src/file-190.ts\u00005\t4\tpackages/module-191/src/file-191.ts\u00006\t5\tpackages/module-192/src/file-192.ts\u00007\t6\tpackages/module-193/src/file-193.ts\u00008\t7\tpackages/module-194/src/file-194.ts\u00009\t8\tpackages/module-195/src/file-195.ts\u000010\t9\tpackages/module-196/src/file-196.ts\u000011\t10\tpackages/module-197/src/file-197.ts\u000012\t0\tpackages/module-198/src/file-198.ts\u000013\t1\tpackages/module-199/src/file-199.ts\u000014\t2\tpackages/module-200/src/file-200.ts\u000015\t3\tpackages/module-201/src/file-201.ts\u000016\t4\tpackages/module-202/src/file-202.ts\u000017\t5\tpackages/module-203/src/file-203.ts\u00001\t6\tpackages/module-204/src/file-204.ts\u00002\t7\tpackages/module-205/src/file-205.ts\u00003\t8\tpackages/module-206/src/file-206.ts\u00004\t9\tpackages/module-207/src/file-207.ts\u00005\t10\tpackages/module-208/src/file-208.ts\u00006\t0\tpackages/module-209/src/file-209.ts\u00007\t1\tpackages/module-210/src/file-210.ts\u00008\t2\tpackages/module-211/src/file-211.ts\u00009\t3\tpackages/module-212/src/file-212.ts\u000010\t4\tpackages/module-213/src/file-213.ts\u000011\t5\tpackages/module-214/src/file-214.ts\u000012\t6\tpackages/module-215/src/file-215.ts\u000013\t7\tpackages/module-216/src/file-216.ts\u000014\t8\tpackages/module-217/src/file-217.ts\u000015\t9\tpackages/module-218/src/file-218.ts\u000016\t10\tpackages/module-219/src/file-219.ts\u000017\t0\tpackages/module-220/src/file-220.ts\u00001\t1\tpackages/module-221/src/file-221.ts\u00002\t2\tpackages/module-222/src/file-222.ts\u00003\t3\tpackages/module-223/src/file-223.ts\u00004\t4\tpackages/module-224/src/file-224.ts\u00005\t5\tpackages/module-225/src/file-225.ts\u00006\t6\tpackages/module-226/src/file-226.ts\u00007\t7\tpackages/module-227/src/file-227.ts\u00008\t8\tpackages/module-228/src/file-228.ts\u00009\t9\tpackages/module-229/src/file-229.ts\u000010\t10\tpackages/module-230/src/file-230.ts\u000011\t0\tpackages/module-231/src/file-231.ts\u000012\t1\tpackages/module-232/src/file-232.ts\u000013\t2\tpackages/module-233/src/file-233.ts\u000014\t3\tpackages/module-234/src/file-234.ts\u000015\t4\tpackages/module-235/src/file-235.ts\u000016\t5\tpackages/module-236/src/file-236.ts\u000017\t6\tpackages/module-237/src/file-237.ts\u00001\t7\tpackages/module-238/src/file-238.ts\u00002\t8\tpackages/module-239/src/file-239.ts\u00003\t9\tpackages/module-240/src/file-240.ts\u00004\t10\tpackages/module-241/src/file-241.ts\u00005\t0\tpackages/module-242/src/file-242.ts\u00006\t1\tpackages/module-243/src/file-243.ts\u00007\t2\tpackages/module-244/src/file-244.ts\u00008\t3\tpackages/module-245/src/file-245.ts\u00009\t4\tpackages/module-246/src/file-246.ts\u000010\t5\tpackages/module-247/src/file-247.ts\u000011\t6\tpackages/module-248/src/file-248.ts\u000012\t7\tpackages/module-249/src/file-249.ts\u000013\t8\tpackages/module-250/src/file-250.ts\u000014\t9\tpackages/module-251/src/file-251.ts\u000015\t10\tpackages/module-252/src/file-252.ts\u000016\t0\tpackages/module-253/src/file-253.ts\u000017\t1\tpackages/module-254/src/file-254.ts\u00001\t2\tpackages/module-255/src/file-255.ts\u00002\t3\tpackages/module-256/src/file-256.ts\u00003\t4\tpackages/module-257/src/file-257.ts\u00004\t5\tpackages/module-258/src/file-258.ts\u00005\t6\tpackages/module-259/src/file-259.ts\u00006\t7\tpackages/module-260/src/file-260.ts\u00007\t8\tpackages/module-261/src/file-261.ts\u00008\t9\tpackages/module-262/src/file-262.ts\u00009\t10\tpackages/module-263/src/file-263.ts\u000010\t0\tpackages/module-264/src/file-264.ts\u000011\t1\tpackages/module-265/src/file-265.ts\u000012\t2\tpackages/module-266/src/file-266.ts\u000013\t3\tpackages/module-267/src/file-267.ts\u000014\t4\tpackages/module-268/src/file-268.ts\u000015\t5\tpackages/module-269/src/file-269.ts\u000016\t6\tpackages/module-270/src/file-270.ts\u000017\t7\tpackages/module-271/src/file-271.ts\u00001\t8\tpackages/module-272/src/file-272.ts\u00002\t9\tpackages/module-273/src/file-273.ts\u00003\t10\tpackages/module-274/src/file-274.ts\u00004\t0\tpackages/module-275/src/file-275.ts\u00005\t1\tpackages/module-276/src/file-276.ts\u00006\t2\tpackages/module-277/src/file-277.ts\u00007\t3\tpackages/module-278/src/file-278.ts\u00008\t4\tpackages/module-279/src/file-279.ts\u00009\t5\tpackages/module-280/src/file-280.ts\u000010\t6\tpackages/module-281/src/file-281.ts\u000011\t7\tpackages/module-282/src/file-282.ts\u000012\t8\tpackages/module-283/src/file-283.ts\u000013\t9\tpackages/module-284/src/file-284.ts\u000014\t10\tpackages/module-285/src/file-285.ts\u000015\t0\tpackages/module-286/src/file-286.ts\u000016\t1\tpackages/module-287/src/file-287.ts\u000017\t2\tpackages/module-288/src/file-288.ts\u00001\t3\tpackages/module-289/src/file-289.ts\u00002\t4\tpackages/module-290/src/file-290.ts\u00003\t5\tpackages/module-291/src/file-291.ts\u00004\t6\tpackages/module-292/src/file-292.ts\u00005\t7\tpackages/module-293/src/file-293.ts\u00006\t8\tpackages/module-294/src/file-294.ts\u00007\t9\tpackages/module-295/src/file-295.ts\u00008\t10\tpackages/module-296/src/file-296.ts\u00009\t0\tpackages/module-297/src/file-297.ts\u000010\t1\tpackages/module-298/src/file-298.ts\u000011\t2\tpackages/module-299/src/file-299.ts\u000012\t3\tpackages/module-300/src/file-300.ts\u000013\t4\tpackages/module-301/src/file-301.ts\u000014\t5\tpackages/module-302/src/file-302.ts\u000015\t6\tpackages/module-303/src/file-303.ts\u000016\t7\tpackages/module-304/src/file-304.ts\u000017\t8\tpackages/module-305/src/file-305.ts\u00001\t9\tpackages/module-306/src/file-306.ts\u00002\t10\tpackages/module-307/src/file-307.ts\u00003\t0\tpackages/module-308/src/file-308.ts\u00004\t1\tpackages/module-309/src/file-309.ts\u00005\t2\tpackages/module-310/src/file-310.ts\u00006\t3\tpackages/module-311/src/file-311.ts\u00007\t4\tpackages/module-312/src/file-312.ts\u00008\t5\tpackages/module-313/src/file-313.ts\u00009\t6\tpackages/module-314/src/file-314.ts\u000010\t7\tpackages/module-315/src/file-315.ts\u000011\t8\tpackages/module-316/src/file-316.ts\u000012\t9\tpackages/module-317/src/file-317.ts\u000013\t10\tpackages/module-318/src/file-318.ts\u000014\t0\tpackages/module-319/src/file-319.ts\u000015\t1\tpackages/module-320/src/file-320.ts\u000016\t2\tpackages/module-321/src/file-321.ts\u000017\t3\tpackages/module-322/src/file-322.ts\u00001\t4\tpackages/module-323/src/file-323.ts\u00002\t5\tpackages/module-324/src/file-324.ts\u00003\t6\tpackages/module-325/src/file-325.ts\u00004\t7\tpackages/module-326/src/file-326.ts\u00005\t8\tpackages/module-327/src/file-327.ts\u00006\t9\tpackages/module-328/src/file-328.ts\u00007\t10\tpackages/module-329/src/file-329.ts\u00008\t0\tpackages/module-330/src/file-330.ts\u00009\t1\tpackages/module-331/src/file-331.ts\u000010\t2\tpackages/module-332/src/file-332.ts\u000011\t3\tpackages/module-333/src/file-333.ts\u000012\t4\tpackages/module-334/src/file-334.ts\u000013\t5\tpackages/module-335/src/file-335.ts\u000014\t6\tpackages/module-336/src/file-336.ts\u000015\t7\tpackages/module-337/src/file-337.ts\u000016\t8\tpackages/module-338/src/file-338.ts\u000017\t9\tpackages/module-339/src/file-339.ts\u00001\t10\tpackages/module-340/src/file-340.ts\u00002\t0\tpackages/module-341/src/file-341.ts\u00003\t1\tpackages/module-342/src/file-342.ts\u00004\t2\tpackages/module-343/src/file-343.ts\u00005\t3\tpackages/module-344/src/file-344.ts\u00006\t4\tpackages/module-345/src/file-345.ts\u00007\t5\tpackages/module-346/src/file-346.ts\u00008\t6\tpackages/module-347/src/file-347.ts\u00009\t7\tpackages/module-348/src/file-348.ts\u000010\t8\tpackages/module-349/src/file-349.ts\u000011\t9\tpackages/module-350/src/file-350.ts\u000012\t10\tpackages/module-351/src/file-351.ts\u000013\t0\tpackages/module-352/src/file-352.ts\u000014\t1\tpackages/module-353/src/file-353.ts\u000015\t2\tpackages/module-354/src/file-354.ts\u000016\t3\tpackages/module-355/src/file-355.ts\u000017\t4\tpackages/module-356/src/file-356.ts\u00001\t5\tpackages/module-357/src/file-357.ts\u00002\t6\tpackages/module-358/src/file-358.ts\u00003\t7\tpackages/module-359/src/file-359.ts\u00004\t8\tpackages/module-360/src/file-360.ts\u00005\t9\tpackages/module-361/src/file-361.ts\u00006\t10\tpackages/module-362/src/file-362.ts\u00007\t0\tpackages/module-363/src/file-363.ts\u00008\t1\tpackages/module-364/src/file-364.ts\u00009\t2\tpackages/module-365/src/file-365.ts\u000010\t3\tpackages/module-366/src/file-366.ts\u000011\t4\tpackages/module-367/src/file-367.ts\u000012\t5\tpackages/module-368/src/file-368.ts\u000013\t6\tpackages/module-369/src/file-369.ts\u000014\t7\tpackages/module-370/src/file-370.ts\u000015\t8\tpackages/module-371/src/file-371.ts\u000016\t9\tpackages/module-372/src/file-372.ts\u000017\t10\tpackages/module-373/src/file-373.ts\u00001\t0\tpackages/module-374/src/file-374.ts\u00002\t1\tpackages/module-375/src/file-375.ts\u00003\t2\tpackages/module-376/src/file-376.ts\u00004\t3\tpackages/module-377/src/file-377.ts\u00005\t4\tpackages/module-378/src/file-378.ts\u00006\t5\tpackages/module-379/src/file-379.ts\u00007\t6\tpackages/module-380/src/file-380.ts\u00008\t7\tpackages/module-381/src/file-381.ts\u00009\t8\tpackages/module-382/src/file-382.ts\u000010\t9\tpackages/module-383/src/file-383.ts\u000011\t10\tpackages/module-384/src/file-384.ts\u000012\t0\tpackages/module-385/src/file-385.ts\u000013\t1\tpackages/module-386/src/file-386.ts\u000014\t2\tpackages/module-387/src/file-387.ts\u000015\t3\tpackages/module-388/src/file-388.ts\u000016\t4\tpackages/module-389/src/file-389.ts\u000017\t5\tpackages/module-390/src/file-390.ts\u00001\t6\tpackages/module-391/src/file-391.ts\u00002\t7\tpackages/module-392/src/file-392.ts\u00003\t8\tpackages/module-393/src/file-393.ts\u00004\t9\tpackages/module-394/src/file-394.ts\u00005\t10\tpackages/module-395/src/file-395.ts\u00006\t0\tpackages/module-396/src/file-396.ts\u00007\t1\tpackages/module-397/src/file-397.ts\u00008\t2\tpackages/module-398/src/file-398.ts\u00009\t3\tpackages/module-399/src/file-399.ts\u000010\t4\tpackages/module-400/src/file-400.ts\u000011\t5\tpackages/module-401/src/file-401.ts\u000012\t6\tpackages/module-402/src/file-402.ts\u000013\t7\tpackages/module-403/src/file-403.ts\u000014\t8\tpackages/module-404/src/file-404.ts\u000015\t9\tpackages/module-405/src/file-405.ts\u000016\t10\tpackages/module-406/src/file-406.ts\u000017\t0\tpackages/module-407/src/file-407.ts\u00001\t1\tpackages/module-408/src/file-408.ts\u00002\t2\tpackages/module-409/src/file-409.ts\u00003\t3\tpackages/module-410/src/file-410.ts\u00004\t4\tpackages/module-411/src/file-411.ts\u00005\t5\tpackages/module-412/src/file-412.ts\u00006\t6\tpackages/module-413/src/file-413.ts\u00007\t7\tpackages/module-414/src/file-414.ts\u00008\t8\tpackages/module-415/src/file-415.ts\u00009\t9\tpackages/module-416/src/file-416.ts\u000010\t10\tpackages/module-417/src/file-417.ts\u000011\t0\tpackages/module-418/src/file-418.ts\u000012\t1\tpackages/module-419/src/file-419.ts\u000013\t2\tpackages/module-420/src/file-420.ts\u000014\t3\tpackages/module-421/src/file-421.ts\u000015\t4\tpackages/module-422/src/file-422.ts\u000016\t5\tpackages/module-423/src/file-423.ts\u000017\t6\tpackages/module-424/src/file-424.ts\u00001\t7\tpackages/module-425/src/file-425.ts\u00002\t8\tpackages/module-426/src/file-426.ts\u00003\t9\tpackages/module-427/src/file-427.ts\u00004\t10\tpackages/module-428/src/file-428.ts\u00005\t0\tpackages/module-429/src/file-429.ts\u00006\t1\tpackages/module-430/src/file-430.ts\u00007\t2\tpackages/module-431/src/file-431.ts\u00008\t3\tpackages/module-432/src/file-432.ts\u00009\t4\tpackages/module-433/src/file-433.ts\u000010\t5\tpackages/module-434/src/file-434.ts\u000011\t6\tpackages/module-435/src/file-435.ts\u000012\t7\tpackages/module-436/src/file-436.ts\u000013\t8\tpackages/module-437/src/file-437.ts\u000014\t9\tpackages/module-438/src/file-438.ts\u000015\t10\tpackages/module-439/src/file-439.ts\u000016\t0\tpackages/module-440/src/file-440.ts\u000017\t1\tpackages/module-441/src/file-441.ts\u00001\t2\tpackages/module-442/src/file-442.ts\u00002\t3\tpackages/module-443/src/file-443.ts\u00003\t4\tpackages/module-444/src/file-444.ts\u00004\t5\tpackages/module-445/src/file-445.ts\u00005\t6\tpackages/module-446/src/file-446.ts\u00006\t7\tpackages/module-447/src/file-447.ts\u00007\t8\tpackages/module-448/src/file-448.ts\u00008\t9\tpackages/module-449/src/file-449.ts\u00009\t10\tpackages/module-450/src/file-450.ts\u000010\t0\tpackages/module-451/src/file-451.ts\u000011\t1\tpackages/module-452/src/file-452.ts\u000012\t2\tpackages/module-453/src/file-453.ts\u000013\t3\tpackages/module-454/src/file-454.ts\u000014\t4\tpackages/module-455/src/file-455.ts\u000015\t5\tpackages/module-456/src/file-456.ts\u000016\t6\tpackages/module-457/src/file-457.ts\u000017\t7\tpackages/module-458/src/file-458.ts\u00001\t8\tpackages/module-459/src/file-459.ts\u00002\t9\tpackages/module-460/src/file-460.ts\u00003\t10\tpackages/module-461/src/file-461.ts\u00004\t0\tpackages/module-462/src/file-462.ts\u00005\t1\tpackages/module-463/src/file-463.ts\u00006\t2\tpackages/module-464/src/file-464.ts\u00007\t3\tpackages/module-465/src/file-465.ts\u00008\t4\tpackages/module-466/src/file-466.ts\u00009\t5\tpackages/module-467/src/file-467.ts\u000010\t6\tpackages/module-468/src/file-468.ts\u000011\t7\tpackages/module-469/src/file-469.ts\u000012\t8\tpackages/module-470/src/file-470.ts\u000013\t9\tpackages/module-471/src/file-471.ts\u000014\t10\tpackages/module-472/src/file-472.ts\u000015\t0\tpackages/module-473/src/file-473.ts\u000016\t1\tpackages/module-474/src/file-474.ts\u000017\t2\tpackages/module-475/src/file-475.ts\u00001\t3\tpackages/module-476/src/file-476.ts\u00002\t4\tpackages/module-477/src/file-477.ts\u00003\t5\tpackages/module-478/src/file-478.ts\u00004\t6\tpackages/module-479/src/file-479.ts\u00005\t7\tpackages/module-480/src/file-480.ts\u00006\t8\tpackages/module-481/src/file-481.ts\u00007\t9\tpackages/module-482/src/file-482.ts\u00008\t10\tpackages/module-483/src/file-483.ts\u00009\t0\tpackages/module-484/src/file-484.ts\u000010\t1\tpackages/module-485/src/file-485.ts\u000011\t2\tpackages/module-486/src/file-486.ts\u000012\t3\tpackages/module-487/src/file-487.ts\u000013\t4\tpackages/module-488/src/file-488.ts\u000014\t5\tpackages/module-489/src/file-489.ts\u000015\t6\tpackages/module-490/src/file-490.ts\u000016\t7\tpackages/module-491/src/file-491.ts\u000017\t8\tpackages/module-492/src/file-492.ts\u00001\t9\tpackages/module-493/src/file-493.ts\u00002\t10\tpackages/module-494/src/file-494.ts\u00003\t0\tpackages/module-495/src/file-495.ts\u00004\t1\tpackages/module-496/src/file-496.ts\u00005\t2\tpackages/module-497/src/file-497.ts\u00006\t3\tpackages/module-498/src/file-498.ts\u00007\t4\tpackages/module-499/src/file-499.ts\u00008\t5\tpackages/module-500/src/file-500.ts\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git diff",
+    "files": [
+      {
+        "path": "packages/module-001/src/file-001.ts",
+        "added": 2,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-002/src/file-002.ts",
+        "added": 3,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-003/src/file-003.ts",
+        "added": 4,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-004/src/file-004.ts",
+        "added": 5,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-005/src/file-005.ts",
+        "added": 6,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-006/src/file-006.ts",
+        "added": 7,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-007/src/file-007.ts",
+        "added": 8,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-008/src/file-008.ts",
+        "added": 9,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-009/src/file-009.ts",
+        "added": 10,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-010/src/file-010.ts",
+        "added": 11,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-011/src/file-011.ts",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-012/src/file-012.ts",
+        "added": 13,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-013/src/file-013.ts",
+        "added": 14,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-014/src/file-014.ts",
+        "added": 15,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-015/src/file-015.ts",
+        "added": 16,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-016/src/file-016.ts",
+        "added": 17,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-017/src/file-017.ts",
+        "added": 1,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-018/src/file-018.ts",
+        "added": 2,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-019/src/file-019.ts",
+        "added": 3,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-020/src/file-020.ts",
+        "added": 4,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-021/src/file-021.ts",
+        "added": 5,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-022/src/file-022.ts",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-023/src/file-023.ts",
+        "added": 7,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-024/src/file-024.ts",
+        "added": 8,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-025/src/file-025.ts",
+        "added": 9,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-026/src/file-026.ts",
+        "added": 10,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-027/src/file-027.ts",
+        "added": 11,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-028/src/file-028.ts",
+        "added": 12,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-029/src/file-029.ts",
+        "added": 13,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-030/src/file-030.ts",
+        "added": 14,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-031/src/file-031.ts",
+        "added": 15,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-032/src/file-032.ts",
+        "added": 16,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-033/src/file-033.ts",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-034/src/file-034.ts",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-035/src/file-035.ts",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-036/src/file-036.ts",
+        "added": 3,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-037/src/file-037.ts",
+        "added": 4,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-038/src/file-038.ts",
+        "added": 5,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-039/src/file-039.ts",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-040/src/file-040.ts",
+        "added": 7,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-041/src/file-041.ts",
+        "added": 8,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-042/src/file-042.ts",
+        "added": 9,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-043/src/file-043.ts",
+        "added": 10,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-044/src/file-044.ts",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-045/src/file-045.ts",
+        "added": 12,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-046/src/file-046.ts",
+        "added": 13,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-047/src/file-047.ts",
+        "added": 14,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-048/src/file-048.ts",
+        "added": 15,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-049/src/file-049.ts",
+        "added": 16,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-050/src/file-050.ts",
+        "added": 17,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-051/src/file-051.ts",
+        "added": 1,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-052/src/file-052.ts",
+        "added": 2,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-053/src/file-053.ts",
+        "added": 3,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-054/src/file-054.ts",
+        "added": 4,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-055/src/file-055.ts",
+        "added": 5,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-056/src/file-056.ts",
+        "added": 6,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-057/src/file-057.ts",
+        "added": 7,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-058/src/file-058.ts",
+        "added": 8,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-059/src/file-059.ts",
+        "added": 9,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-060/src/file-060.ts",
+        "added": 10,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-061/src/file-061.ts",
+        "added": 11,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-062/src/file-062.ts",
+        "added": 12,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-063/src/file-063.ts",
+        "added": 13,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-064/src/file-064.ts",
+        "added": 14,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-065/src/file-065.ts",
+        "added": 15,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-066/src/file-066.ts",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-067/src/file-067.ts",
+        "added": 17,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-068/src/file-068.ts",
+        "added": 1,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-069/src/file-069.ts",
+        "added": 2,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-070/src/file-070.ts",
+        "added": 3,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-071/src/file-071.ts",
+        "added": 4,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-072/src/file-072.ts",
+        "added": 5,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-073/src/file-073.ts",
+        "added": 6,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-074/src/file-074.ts",
+        "added": 7,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-075/src/file-075.ts",
+        "added": 8,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-076/src/file-076.ts",
+        "added": 9,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-077/src/file-077.ts",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-078/src/file-078.ts",
+        "added": 11,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-079/src/file-079.ts",
+        "added": 12,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-080/src/file-080.ts",
+        "added": 13,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-081/src/file-081.ts",
+        "added": 14,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-082/src/file-082.ts",
+        "added": 15,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-083/src/file-083.ts",
+        "added": 16,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-084/src/file-084.ts",
+        "added": 17,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-085/src/file-085.ts",
+        "added": 1,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-086/src/file-086.ts",
+        "added": 2,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-087/src/file-087.ts",
+        "added": 3,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-088/src/file-088.ts",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-089/src/file-089.ts",
+        "added": 5,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-090/src/file-090.ts",
+        "added": 6,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-091/src/file-091.ts",
+        "added": 7,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-092/src/file-092.ts",
+        "added": 8,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-093/src/file-093.ts",
+        "added": 9,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-094/src/file-094.ts",
+        "added": 10,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-095/src/file-095.ts",
+        "added": 11,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-096/src/file-096.ts",
+        "added": 12,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-097/src/file-097.ts",
+        "added": 13,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-098/src/file-098.ts",
+        "added": 14,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-099/src/file-099.ts",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-100/src/file-100.ts",
+        "added": 16,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-101/src/file-101.ts",
+        "added": 17,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-102/src/file-102.ts",
+        "added": 1,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-103/src/file-103.ts",
+        "added": 2,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-104/src/file-104.ts",
+        "added": 3,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-105/src/file-105.ts",
+        "added": 4,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-106/src/file-106.ts",
+        "added": 5,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-107/src/file-107.ts",
+        "added": 6,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-108/src/file-108.ts",
+        "added": 7,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-109/src/file-109.ts",
+        "added": 8,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-110/src/file-110.ts",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-111/src/file-111.ts",
+        "added": 10,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-112/src/file-112.ts",
+        "added": 11,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-113/src/file-113.ts",
+        "added": 12,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-114/src/file-114.ts",
+        "added": 13,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-115/src/file-115.ts",
+        "added": 14,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-116/src/file-116.ts",
+        "added": 15,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-117/src/file-117.ts",
+        "added": 16,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-118/src/file-118.ts",
+        "added": 17,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-119/src/file-119.ts",
+        "added": 1,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-120/src/file-120.ts",
+        "added": 2,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-121/src/file-121.ts",
+        "added": 3,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-122/src/file-122.ts",
+        "added": 4,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-123/src/file-123.ts",
+        "added": 5,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-124/src/file-124.ts",
+        "added": 6,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-125/src/file-125.ts",
+        "added": 7,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-126/src/file-126.ts",
+        "added": 8,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-127/src/file-127.ts",
+        "added": 9,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-128/src/file-128.ts",
+        "added": 10,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-129/src/file-129.ts",
+        "added": 11,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-130/src/file-130.ts",
+        "added": 12,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-131/src/file-131.ts",
+        "added": 13,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-132/src/file-132.ts",
+        "added": 14,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-133/src/file-133.ts",
+        "added": 15,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-134/src/file-134.ts",
+        "added": 16,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-135/src/file-135.ts",
+        "added": 17,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-136/src/file-136.ts",
+        "added": 1,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-137/src/file-137.ts",
+        "added": 2,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-138/src/file-138.ts",
+        "added": 3,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-139/src/file-139.ts",
+        "added": 4,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-140/src/file-140.ts",
+        "added": 5,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-141/src/file-141.ts",
+        "added": 6,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-142/src/file-142.ts",
+        "added": 7,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-143/src/file-143.ts",
+        "added": 8,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-144/src/file-144.ts",
+        "added": 9,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-145/src/file-145.ts",
+        "added": 10,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-146/src/file-146.ts",
+        "added": 11,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-147/src/file-147.ts",
+        "added": 12,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-148/src/file-148.ts",
+        "added": 13,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-149/src/file-149.ts",
+        "added": 14,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-150/src/file-150.ts",
+        "added": 15,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-151/src/file-151.ts",
+        "added": 16,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-152/src/file-152.ts",
+        "added": 17,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-153/src/file-153.ts",
+        "added": 1,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-154/src/file-154.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-155/src/file-155.ts",
+        "added": 3,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-156/src/file-156.ts",
+        "added": 4,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-157/src/file-157.ts",
+        "added": 5,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-158/src/file-158.ts",
+        "added": 6,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-159/src/file-159.ts",
+        "added": 7,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-160/src/file-160.ts",
+        "added": 8,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-161/src/file-161.ts",
+        "added": 9,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-162/src/file-162.ts",
+        "added": 10,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-163/src/file-163.ts",
+        "added": 11,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-164/src/file-164.ts",
+        "added": 12,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-165/src/file-165.ts",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-166/src/file-166.ts",
+        "added": 14,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-167/src/file-167.ts",
+        "added": 15,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-168/src/file-168.ts",
+        "added": 16,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-169/src/file-169.ts",
+        "added": 17,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-170/src/file-170.ts",
+        "added": 1,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-171/src/file-171.ts",
+        "added": 2,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-172/src/file-172.ts",
+        "added": 3,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-173/src/file-173.ts",
+        "added": 4,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-174/src/file-174.ts",
+        "added": 5,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-175/src/file-175.ts",
+        "added": 6,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-176/src/file-176.ts",
+        "added": 7,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-177/src/file-177.ts",
+        "added": 8,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-178/src/file-178.ts",
+        "added": 9,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-179/src/file-179.ts",
+        "added": 10,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-180/src/file-180.ts",
+        "added": 11,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-181/src/file-181.ts",
+        "added": 12,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-182/src/file-182.ts",
+        "added": 13,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-183/src/file-183.ts",
+        "added": 14,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-184/src/file-184.ts",
+        "added": 15,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-185/src/file-185.ts",
+        "added": 16,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-186/src/file-186.ts",
+        "added": 17,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-187/src/file-187.ts",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-188/src/file-188.ts",
+        "added": 2,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-189/src/file-189.ts",
+        "added": 3,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-190/src/file-190.ts",
+        "added": 4,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-191/src/file-191.ts",
+        "added": 5,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-192/src/file-192.ts",
+        "added": 6,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-193/src/file-193.ts",
+        "added": 7,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-194/src/file-194.ts",
+        "added": 8,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-195/src/file-195.ts",
+        "added": 9,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-196/src/file-196.ts",
+        "added": 10,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-197/src/file-197.ts",
+        "added": 11,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-198/src/file-198.ts",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-199/src/file-199.ts",
+        "added": 13,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-200/src/file-200.ts",
+        "added": 14,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-201/src/file-201.ts",
+        "added": 15,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-202/src/file-202.ts",
+        "added": 16,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-203/src/file-203.ts",
+        "added": 17,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-204/src/file-204.ts",
+        "added": 1,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-205/src/file-205.ts",
+        "added": 2,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-206/src/file-206.ts",
+        "added": 3,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-207/src/file-207.ts",
+        "added": 4,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-208/src/file-208.ts",
+        "added": 5,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-209/src/file-209.ts",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-210/src/file-210.ts",
+        "added": 7,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-211/src/file-211.ts",
+        "added": 8,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-212/src/file-212.ts",
+        "added": 9,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-213/src/file-213.ts",
+        "added": 10,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-214/src/file-214.ts",
+        "added": 11,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-215/src/file-215.ts",
+        "added": 12,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-216/src/file-216.ts",
+        "added": 13,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-217/src/file-217.ts",
+        "added": 14,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-218/src/file-218.ts",
+        "added": 15,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-219/src/file-219.ts",
+        "added": 16,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-220/src/file-220.ts",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-221/src/file-221.ts",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-222/src/file-222.ts",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-223/src/file-223.ts",
+        "added": 3,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-224/src/file-224.ts",
+        "added": 4,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-225/src/file-225.ts",
+        "added": 5,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-226/src/file-226.ts",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-227/src/file-227.ts",
+        "added": 7,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-228/src/file-228.ts",
+        "added": 8,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-229/src/file-229.ts",
+        "added": 9,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-230/src/file-230.ts",
+        "added": 10,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-231/src/file-231.ts",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-232/src/file-232.ts",
+        "added": 12,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-233/src/file-233.ts",
+        "added": 13,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-234/src/file-234.ts",
+        "added": 14,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-235/src/file-235.ts",
+        "added": 15,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-236/src/file-236.ts",
+        "added": 16,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-237/src/file-237.ts",
+        "added": 17,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-238/src/file-238.ts",
+        "added": 1,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-239/src/file-239.ts",
+        "added": 2,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-240/src/file-240.ts",
+        "added": 3,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-241/src/file-241.ts",
+        "added": 4,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-242/src/file-242.ts",
+        "added": 5,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-243/src/file-243.ts",
+        "added": 6,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-244/src/file-244.ts",
+        "added": 7,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-245/src/file-245.ts",
+        "added": 8,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-246/src/file-246.ts",
+        "added": 9,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-247/src/file-247.ts",
+        "added": 10,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-248/src/file-248.ts",
+        "added": 11,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-249/src/file-249.ts",
+        "added": 12,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-250/src/file-250.ts",
+        "added": 13,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-251/src/file-251.ts",
+        "added": 14,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-252/src/file-252.ts",
+        "added": 15,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-253/src/file-253.ts",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-254/src/file-254.ts",
+        "added": 17,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-255/src/file-255.ts",
+        "added": 1,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-256/src/file-256.ts",
+        "added": 2,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-257/src/file-257.ts",
+        "added": 3,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-258/src/file-258.ts",
+        "added": 4,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-259/src/file-259.ts",
+        "added": 5,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-260/src/file-260.ts",
+        "added": 6,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-261/src/file-261.ts",
+        "added": 7,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-262/src/file-262.ts",
+        "added": 8,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-263/src/file-263.ts",
+        "added": 9,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-264/src/file-264.ts",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-265/src/file-265.ts",
+        "added": 11,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-266/src/file-266.ts",
+        "added": 12,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-267/src/file-267.ts",
+        "added": 13,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-268/src/file-268.ts",
+        "added": 14,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-269/src/file-269.ts",
+        "added": 15,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-270/src/file-270.ts",
+        "added": 16,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-271/src/file-271.ts",
+        "added": 17,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-272/src/file-272.ts",
+        "added": 1,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-273/src/file-273.ts",
+        "added": 2,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-274/src/file-274.ts",
+        "added": 3,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-275/src/file-275.ts",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-276/src/file-276.ts",
+        "added": 5,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-277/src/file-277.ts",
+        "added": 6,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-278/src/file-278.ts",
+        "added": 7,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-279/src/file-279.ts",
+        "added": 8,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-280/src/file-280.ts",
+        "added": 9,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-281/src/file-281.ts",
+        "added": 10,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-282/src/file-282.ts",
+        "added": 11,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-283/src/file-283.ts",
+        "added": 12,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-284/src/file-284.ts",
+        "added": 13,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-285/src/file-285.ts",
+        "added": 14,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-286/src/file-286.ts",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-287/src/file-287.ts",
+        "added": 16,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-288/src/file-288.ts",
+        "added": 17,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-289/src/file-289.ts",
+        "added": 1,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-290/src/file-290.ts",
+        "added": 2,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-291/src/file-291.ts",
+        "added": 3,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-292/src/file-292.ts",
+        "added": 4,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-293/src/file-293.ts",
+        "added": 5,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-294/src/file-294.ts",
+        "added": 6,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-295/src/file-295.ts",
+        "added": 7,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-296/src/file-296.ts",
+        "added": 8,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-297/src/file-297.ts",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-298/src/file-298.ts",
+        "added": 10,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-299/src/file-299.ts",
+        "added": 11,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-300/src/file-300.ts",
+        "added": 12,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-301/src/file-301.ts",
+        "added": 13,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-302/src/file-302.ts",
+        "added": 14,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-303/src/file-303.ts",
+        "added": 15,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-304/src/file-304.ts",
+        "added": 16,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-305/src/file-305.ts",
+        "added": 17,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-306/src/file-306.ts",
+        "added": 1,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-307/src/file-307.ts",
+        "added": 2,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-308/src/file-308.ts",
+        "added": 3,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-309/src/file-309.ts",
+        "added": 4,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-310/src/file-310.ts",
+        "added": 5,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-311/src/file-311.ts",
+        "added": 6,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-312/src/file-312.ts",
+        "added": 7,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-313/src/file-313.ts",
+        "added": 8,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-314/src/file-314.ts",
+        "added": 9,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-315/src/file-315.ts",
+        "added": 10,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-316/src/file-316.ts",
+        "added": 11,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-317/src/file-317.ts",
+        "added": 12,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-318/src/file-318.ts",
+        "added": 13,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-319/src/file-319.ts",
+        "added": 14,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-320/src/file-320.ts",
+        "added": 15,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-321/src/file-321.ts",
+        "added": 16,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-322/src/file-322.ts",
+        "added": 17,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-323/src/file-323.ts",
+        "added": 1,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-324/src/file-324.ts",
+        "added": 2,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-325/src/file-325.ts",
+        "added": 3,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-326/src/file-326.ts",
+        "added": 4,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-327/src/file-327.ts",
+        "added": 5,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-328/src/file-328.ts",
+        "added": 6,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-329/src/file-329.ts",
+        "added": 7,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-330/src/file-330.ts",
+        "added": 8,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-331/src/file-331.ts",
+        "added": 9,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-332/src/file-332.ts",
+        "added": 10,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-333/src/file-333.ts",
+        "added": 11,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-334/src/file-334.ts",
+        "added": 12,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-335/src/file-335.ts",
+        "added": 13,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-336/src/file-336.ts",
+        "added": 14,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-337/src/file-337.ts",
+        "added": 15,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-338/src/file-338.ts",
+        "added": 16,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-339/src/file-339.ts",
+        "added": 17,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-340/src/file-340.ts",
+        "added": 1,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-341/src/file-341.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-342/src/file-342.ts",
+        "added": 3,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-343/src/file-343.ts",
+        "added": 4,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-344/src/file-344.ts",
+        "added": 5,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-345/src/file-345.ts",
+        "added": 6,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-346/src/file-346.ts",
+        "added": 7,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-347/src/file-347.ts",
+        "added": 8,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-348/src/file-348.ts",
+        "added": 9,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-349/src/file-349.ts",
+        "added": 10,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-350/src/file-350.ts",
+        "added": 11,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-351/src/file-351.ts",
+        "added": 12,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-352/src/file-352.ts",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-353/src/file-353.ts",
+        "added": 14,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-354/src/file-354.ts",
+        "added": 15,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-355/src/file-355.ts",
+        "added": 16,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-356/src/file-356.ts",
+        "added": 17,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-357/src/file-357.ts",
+        "added": 1,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-358/src/file-358.ts",
+        "added": 2,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-359/src/file-359.ts",
+        "added": 3,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-360/src/file-360.ts",
+        "added": 4,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-361/src/file-361.ts",
+        "added": 5,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-362/src/file-362.ts",
+        "added": 6,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-363/src/file-363.ts",
+        "added": 7,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-364/src/file-364.ts",
+        "added": 8,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-365/src/file-365.ts",
+        "added": 9,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-366/src/file-366.ts",
+        "added": 10,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-367/src/file-367.ts",
+        "added": 11,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-368/src/file-368.ts",
+        "added": 12,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-369/src/file-369.ts",
+        "added": 13,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-370/src/file-370.ts",
+        "added": 14,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-371/src/file-371.ts",
+        "added": 15,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-372/src/file-372.ts",
+        "added": 16,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-373/src/file-373.ts",
+        "added": 17,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-374/src/file-374.ts",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-375/src/file-375.ts",
+        "added": 2,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-376/src/file-376.ts",
+        "added": 3,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-377/src/file-377.ts",
+        "added": 4,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-378/src/file-378.ts",
+        "added": 5,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-379/src/file-379.ts",
+        "added": 6,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-380/src/file-380.ts",
+        "added": 7,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-381/src/file-381.ts",
+        "added": 8,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-382/src/file-382.ts",
+        "added": 9,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-383/src/file-383.ts",
+        "added": 10,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-384/src/file-384.ts",
+        "added": 11,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-385/src/file-385.ts",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-386/src/file-386.ts",
+        "added": 13,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-387/src/file-387.ts",
+        "added": 14,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-388/src/file-388.ts",
+        "added": 15,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-389/src/file-389.ts",
+        "added": 16,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-390/src/file-390.ts",
+        "added": 17,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-391/src/file-391.ts",
+        "added": 1,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-392/src/file-392.ts",
+        "added": 2,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-393/src/file-393.ts",
+        "added": 3,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-394/src/file-394.ts",
+        "added": 4,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-395/src/file-395.ts",
+        "added": 5,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-396/src/file-396.ts",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-397/src/file-397.ts",
+        "added": 7,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-398/src/file-398.ts",
+        "added": 8,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-399/src/file-399.ts",
+        "added": 9,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-400/src/file-400.ts",
+        "added": 10,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-401/src/file-401.ts",
+        "added": 11,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-402/src/file-402.ts",
+        "added": 12,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-403/src/file-403.ts",
+        "added": 13,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-404/src/file-404.ts",
+        "added": 14,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-405/src/file-405.ts",
+        "added": 15,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-406/src/file-406.ts",
+        "added": 16,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-407/src/file-407.ts",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-408/src/file-408.ts",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-409/src/file-409.ts",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-410/src/file-410.ts",
+        "added": 3,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-411/src/file-411.ts",
+        "added": 4,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-412/src/file-412.ts",
+        "added": 5,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-413/src/file-413.ts",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-414/src/file-414.ts",
+        "added": 7,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-415/src/file-415.ts",
+        "added": 8,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-416/src/file-416.ts",
+        "added": 9,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-417/src/file-417.ts",
+        "added": 10,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-418/src/file-418.ts",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-419/src/file-419.ts",
+        "added": 12,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-420/src/file-420.ts",
+        "added": 13,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-421/src/file-421.ts",
+        "added": 14,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-422/src/file-422.ts",
+        "added": 15,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-423/src/file-423.ts",
+        "added": 16,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-424/src/file-424.ts",
+        "added": 17,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-425/src/file-425.ts",
+        "added": 1,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-426/src/file-426.ts",
+        "added": 2,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-427/src/file-427.ts",
+        "added": 3,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-428/src/file-428.ts",
+        "added": 4,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-429/src/file-429.ts",
+        "added": 5,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-430/src/file-430.ts",
+        "added": 6,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-431/src/file-431.ts",
+        "added": 7,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-432/src/file-432.ts",
+        "added": 8,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-433/src/file-433.ts",
+        "added": 9,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-434/src/file-434.ts",
+        "added": 10,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-435/src/file-435.ts",
+        "added": 11,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-436/src/file-436.ts",
+        "added": 12,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-437/src/file-437.ts",
+        "added": 13,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-438/src/file-438.ts",
+        "added": 14,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-439/src/file-439.ts",
+        "added": 15,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-440/src/file-440.ts",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-441/src/file-441.ts",
+        "added": 17,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-442/src/file-442.ts",
+        "added": 1,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-443/src/file-443.ts",
+        "added": 2,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-444/src/file-444.ts",
+        "added": 3,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-445/src/file-445.ts",
+        "added": 4,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-446/src/file-446.ts",
+        "added": 5,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-447/src/file-447.ts",
+        "added": 6,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-448/src/file-448.ts",
+        "added": 7,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-449/src/file-449.ts",
+        "added": 8,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-450/src/file-450.ts",
+        "added": 9,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-451/src/file-451.ts",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-452/src/file-452.ts",
+        "added": 11,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-453/src/file-453.ts",
+        "added": 12,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-454/src/file-454.ts",
+        "added": 13,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-455/src/file-455.ts",
+        "added": 14,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-456/src/file-456.ts",
+        "added": 15,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-457/src/file-457.ts",
+        "added": 16,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-458/src/file-458.ts",
+        "added": 17,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-459/src/file-459.ts",
+        "added": 1,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-460/src/file-460.ts",
+        "added": 2,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-461/src/file-461.ts",
+        "added": 3,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-462/src/file-462.ts",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-463/src/file-463.ts",
+        "added": 5,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-464/src/file-464.ts",
+        "added": 6,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-465/src/file-465.ts",
+        "added": 7,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-466/src/file-466.ts",
+        "added": 8,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-467/src/file-467.ts",
+        "added": 9,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-468/src/file-468.ts",
+        "added": 10,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-469/src/file-469.ts",
+        "added": 11,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-470/src/file-470.ts",
+        "added": 12,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-471/src/file-471.ts",
+        "added": 13,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-472/src/file-472.ts",
+        "added": 14,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-473/src/file-473.ts",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-474/src/file-474.ts",
+        "added": 16,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-475/src/file-475.ts",
+        "added": 17,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-476/src/file-476.ts",
+        "added": 1,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-477/src/file-477.ts",
+        "added": 2,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-478/src/file-478.ts",
+        "added": 3,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-479/src/file-479.ts",
+        "added": 4,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-480/src/file-480.ts",
+        "added": 5,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-481/src/file-481.ts",
+        "added": 6,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-482/src/file-482.ts",
+        "added": 7,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-483/src/file-483.ts",
+        "added": 8,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-484/src/file-484.ts",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-485/src/file-485.ts",
+        "added": 10,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-486/src/file-486.ts",
+        "added": 11,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-487/src/file-487.ts",
+        "added": 12,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-488/src/file-488.ts",
+        "added": 13,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-489/src/file-489.ts",
+        "added": 14,
+        "deleted": 5
+      },
+      {
+        "path": "packages/module-490/src/file-490.ts",
+        "added": 15,
+        "deleted": 6
+      },
+      {
+        "path": "packages/module-491/src/file-491.ts",
+        "added": 16,
+        "deleted": 7
+      },
+      {
+        "path": "packages/module-492/src/file-492.ts",
+        "added": 17,
+        "deleted": 8
+      },
+      {
+        "path": "packages/module-493/src/file-493.ts",
+        "added": 1,
+        "deleted": 9
+      },
+      {
+        "path": "packages/module-494/src/file-494.ts",
+        "added": 2,
+        "deleted": 10
+      },
+      {
+        "path": "packages/module-495/src/file-495.ts",
+        "added": 3,
+        "deleted": 0
+      },
+      {
+        "path": "packages/module-496/src/file-496.ts",
+        "added": 4,
+        "deleted": 1
+      },
+      {
+        "path": "packages/module-497/src/file-497.ts",
+        "added": 5,
+        "deleted": 2
+      },
+      {
+        "path": "packages/module-498/src/file-498.ts",
+        "added": 6,
+        "deleted": 3
+      },
+      {
+        "path": "packages/module-499/src/file-499.ts",
+        "added": 7,
+        "deleted": 4
+      },
+      {
+        "path": "packages/module-500/src/file-500.ts",
+        "added": 8,
+        "deleted": 5
+      }
+    ],
+    "summary": "500 files, +4472 -2490"
+  },
+  "assertions": [
+    {
+      "question": "how many files changed?",
+      "path": "files.length",
+      "expected": 500
+    },
+    {
+      "question": "which first file changed?",
+      "path": "files.0.path",
+      "expected": "packages/module-001/src/file-001.ts"
+    }
+  ]
+}
