@@ -1294,6 +1294,7 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
 }
 
 interface RepoStatsCache {
+  baseRef: string;
   openPrs: number;
   todayPrs: number;
   openIssues: number;
@@ -1306,6 +1307,7 @@ function readRepoStatsCache(path: string): RepoStatsCache | null {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
     return {
+      baseRef: typeof parsed.baseRef === "string" && parsed.baseRef.trim() ? parsed.baseRef.trim() : "origin/main",
       openPrs: Number(parsed.openPrs ?? 0),
       todayPrs: Number(parsed.todayPrs ?? 0),
       openIssues: Number(parsed.openIssues ?? 0),
@@ -1331,7 +1333,8 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
 /**
  * Repo-global statusline header inputs (line 1, ALWAYS rendered — unlike the
  * AFK block these show with no live workers): open-PR / open-issue counts from
- * GitHub PLUS the LOCAL branch diffstat (committed + uncommitted vs origin/main)
+ * GitHub PLUS the LOCAL branch diffstat (committed + uncommitted vs the
+ * resolved base ref)
  * measured at the project root. All three are EXPENSIVE FETCHED numbers (gh/git
  * subprocesses), so all three are cached together for {@link
  * STATUSLINE_CACHE_TTL_S} seconds in `.red/tmp/statusline-repo-cache.json`: a
@@ -1342,30 +1345,32 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
 export async function collectStatuslineRepo(
   ctx: RepoContext,
   cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
+  baseRef = "origin/main",
 ): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
   const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readRepoStatsCache(cachePath);
+  const cacheMatchesBase = cached?.baseRef === baseRef;
   let openPrs = cached?.openPrs ?? 0;
   let todayPrs = cached?.todayPrs ?? 0;
   let openIssues = cached?.openIssues ?? 0;
-  let localAdded = cached?.localAdded ?? 0;
-  let localRemoved = cached?.localRemoved ?? 0;
+  let localAdded = cacheMatchesBase ? (cached?.localAdded ?? 0) : 0;
+  let localRemoved = cacheMatchesBase ? (cached?.localRemoved ?? 0) : 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   let repoRefreshSucceeded = false;
   const refresh = async (): Promise<void> => {
-    // The local branch diff (committed + uncommitted) vs origin/main is folded
-    // into the same refresh as the gh counts — diffstatShortstat resolves the
-    // merge-base, so this counts every commit on the branch plus the dirty
-    // worktree. It is a git subprocess and therefore cacheable: no per-render
-    // git diff.
+    // The local branch diff (committed + uncommitted) vs the resolved base ref
+    // is folded into the same refresh as the gh counts — diffstatShortstat
+    // resolves the merge-base, so this counts every commit on the branch plus
+    // the dirty worktree. It is a git subprocess and therefore cacheable: no
+    // per-render git diff.
     const [p, t, i, diff] = await Promise.all([
       ghx.countOpenPrs(ghCtx),
       ghx.countPrsCreatedToday(ghCtx),
       ghx.countOpenIssues(ghCtx),
-      gitx.diffstatShortstat({ cwd: ctx.root }, "origin/main"),
+      gitx.diffstatShortstat({ cwd: ctx.root }, baseRef),
     ]);
     openPrs = p;
     todayPrs = t;
@@ -1374,6 +1379,7 @@ export async function collectStatuslineRepo(
     localRemoved = diff.removed;
     repoRefreshSucceeded = true;
     writeRepoStatsCacheAtomic(cachePath, {
+      baseRef,
       openPrs: p,
       todayPrs: t,
       openIssues: i,
@@ -1383,7 +1389,7 @@ export async function collectStatuslineRepo(
     });
   };
   let repoCacheAgeS: number | undefined;
-  if (!cached) {
+  if (!cached || !cacheMatchesBase) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= cacheTtlS) {
     // Stale: await a bounded refresh so the cache is rewritten before the
