@@ -6,6 +6,7 @@ import { resolveRspConfig } from "./config.js";
 import { runGitWrapper } from "./git-wrapper.js";
 import { runGhWrapper } from "./gh-wrapper.js";
 import { runClaudePreExecHook } from "./intercept.js";
+import { runClaudePostExecHook } from "./normalize.js";
 import { runTestWrapper } from "./test-wrapper.js";
 
 interface ParsedArgs {
@@ -21,6 +22,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
     return await runClaudePreExecHook();
+  }
+  if (args.command === "hook" && args.positional[1] === "claude-post-exec") {
+    return await runClaudePostExecHook();
   }
 
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
