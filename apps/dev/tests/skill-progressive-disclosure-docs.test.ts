@@ -9,9 +9,9 @@ function readRepoFile(path: string) {
 }
 
 describe("skill progressive-disclosure docs", () => {
-  it("keeps setup-statusline routing hot while preserving host recipes in HOST-NOTES", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-statusline/SKILL.md");
-    const hostNotes = await readRepoFile("plugins/dev/skills/engineering/setup-statusline/HOST-NOTES.md");
+  it("keeps red-statusline routing hot while preserving host recipes in HOST-NOTES", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/red-statusline/SKILL.md");
+    const hostNotes = await readRepoFile("plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md");
 
     expect(skill).toContain("<what-to-do>");
     expect(skill).toContain("<supporting-info>");

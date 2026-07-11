@@ -268,7 +268,7 @@ function topKey(line: string): string {
  * new file text with a single trailing newline.
  */
 export function mergeMemoryBlock(existingText: string, config: MemoryConfig): string {
-  // Preserve an `enabled: true` that `/setup-red-skills` already wrote (ADR
+  // Preserve an `enabled: true` that `/red-setup` already wrote (ADR
   // 0067): the wizard builds `config` from its own answers and does not know
   // about the activation flag, so recover it from the existing block rather than
   // letting the in-place replacement drop it (which would silently disable the

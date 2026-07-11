@@ -14,7 +14,7 @@
  *     opt-in — ADR 0067). Block-presence alone is NOT enough.
  *   - `plugins.<name>.enabled: true`                  → enabled.
  *
- * Only `/setup-red-skills` may create `.red/`; this gate NEVER creates anything,
+ * Only `/red-setup` may create `.red/`; this gate NEVER creates anything,
  * it only reads. It is dependency-free (constrained-subset YAML, the same
  * grammar ADR 0042 uses) so it can run inside the pre-bundle launchers
  * (`red-fetch.mjs`, `afk.mjs`). The hand-written `memory`/`brain`

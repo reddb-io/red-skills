@@ -12,7 +12,7 @@ plugins:
 ```
 
 Per ADR 0067, installed plugins do not imply activation. This plugin must not
-create or edit `.red/`; `/setup-red-skills` remains the only RedSkills bootstrap
+create or edit `.red/`; `/red-setup` remains the only RedSkills bootstrap
 path that creates project configuration.
 
 ## Skills

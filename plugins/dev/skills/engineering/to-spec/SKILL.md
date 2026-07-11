@@ -5,7 +5,7 @@ description: Turn the current conversation context into a Spec and publish it to
 
 **Synthesize the current conversation into a Spec and publish it — no interview, no implementation.** Just synthesize what you already know from the conversation.
 
-The issue tracker and triage label vocabulary should have been provided to you — run `/setup-red-skills` if not.
+The issue tracker and triage label vocabulary should have been provided to you — run `/red-setup` if not.
 
 <what-to-do>
 

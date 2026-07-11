@@ -5,24 +5,24 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 async function readDoctorSkill(): Promise<string> {
-  return readFile(join(ROOT, "plugins/dev/skills/engineering/doctor/SKILL.md"), "utf8");
+  return readFile(join(ROOT, "plugins/dev/skills/engineering/red-doctor/SKILL.md"), "utf8");
 }
 
 // The `--fix` Apply table lives in a bundled sibling `APPLY.md`, behind a
 // one-line pointer in SKILL.md (issue #1145). Assertions on Apply-row content
 // read APPLY.md; assertions on the read-only diagnose pass read SKILL.md.
 async function readDoctorApply(): Promise<string> {
-  return readFile(join(ROOT, "plugins/dev/skills/engineering/doctor/APPLY.md"), "utf8");
+  return readFile(join(ROOT, "plugins/dev/skills/engineering/red-doctor/APPLY.md"), "utf8");
 }
 
 describe("doctor docs contract", () => {
-  it("checks Development-workflow adoption read-only with setup-red-skills as the fix-home", async () => {
+  it("checks Development-workflow adoption read-only with red-setup as the fix-home", async () => {
     const skill = await readDoctorSkill();
 
     expect(skill).toContain("AGENTS ≡ CLAUDE Development-workflow parity");
     expect(skill).toContain("`## Development workflow` block");
     expect(skill).toContain("Report `C/A` for presence");
-    expect(skill).toContain("out-of-parity block as a finding tagged `→ /setup-red-skills`");
+    expect(skill).toContain("out-of-parity block as a finding tagged `→ /red-setup`");
     expect(skill).toContain("do not run `inject-development-workflow`");
     expect(skill).toContain("do not create files");
     expect(skill).toContain("do not edit either agent rules file");
@@ -35,7 +35,7 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("read `.red/config.yaml`");
     expect(skill).toContain("canonical key is the namespaced `plugins.dev.lock.primary-branch`");
     expect(skill).toContain("any value other than `true` as \"unset\"");
-    expect(skill).toContain("recommend `→ /setup-red-skills`");
+    expect(skill).toContain("recommend `→ /red-setup`");
     expect(skill).toContain("never write `.red/config.yaml`");
   });
 
@@ -94,7 +94,7 @@ describe("doctor docs contract", () => {
     // #1145) flags and points at the fix-home.
     const apply = await readDoctorApply();
     expect(apply).toContain("`--fix` cannot auto-fix operator intent");
-    expect(skill).toContain("`/setup-red-skills`");
+    expect(skill).toContain("`/red-setup`");
   });
 
   it("audits native blocked-by vs req:N divergence read-only with triage as the fix-home", async () => {

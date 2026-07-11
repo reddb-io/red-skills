@@ -1,5 +1,5 @@
 ---
-name: setup-red-skills
+name: red-setup
 description: >-
   The one authorized creator of a repo's `.red/` directory and the only way to
   enable RedSkills plugins (dev, memory, brain) in a project (ADR 0067).

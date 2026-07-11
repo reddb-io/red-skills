@@ -3,7 +3,7 @@
 
 # Plugin activation gate (ADR 0067). RedSkills hooks are installed globally on
 # every agent but stay fully inert in any directory whose `.red/config.yaml`
-# does NOT set `plugins.<name>.enabled: true`. /setup-red-skills writes this
+# does NOT set `plugins.<name>.enabled: true`. /red-setup writes this
 # block; it is the only authorized creator of `.red/`. Strict opt-in: a block
 # without `enabled: true` is OFF.
 plugins:
@@ -16,7 +16,7 @@ plugins:
   #                               # branch. Set e.g. develop or workspace/<user>.
   #   lock:
   #     primary-branch: true      # branch-lock compatibility/base-pinning flag
-  #                               # (Section H of /setup-red-skills sets this)
+  #                               # (Section H of /red-setup sets this)
   #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
   #                               # the runtime /branch-lock overrides it per session
   #   triage:
@@ -30,7 +30,7 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
-# rsp hook activation and retention (ADR 0095). /setup-red-skills provisions
+# rsp hook activation and retention (ADR 0095). /red-setup provisions
 # `.red/red.rdb`; the hook remains inert unless this explicit flag is true.
 rsp:
   enabled: true
@@ -123,7 +123,7 @@ rsp:
 #                                 # Each entry excludes a known-flaky test file from the
 #                                 # scoped gate run and emits a visible "quarantined" sidecar
 #                                 # record — exclusions are NEVER silent (repo norm). An entry
-#                                 # without an issue ref fails the gate loudly. /doctor warns
+#                                 # without an issue ref fails the gate loudly. /red-doctor warns
 #                                 # when a referenced issue is closed (managed debt, not
 #                                 # permanent forgetting).
 #                                 # Pattern is a repo-relative file path passed to vitest

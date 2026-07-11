@@ -72,12 +72,12 @@ Next handoff: <what must be true before the next command>
 
 ## Coverage Inventory
 
-The router must mention every published dev skill so `/doctor` can flag drift:
+The router must mention every published dev skill so `/red-doctor` can flag drift:
 `/afk`, `/ask-red`, `/go`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
-`/ground-truth`, `/doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
+`/ground-truth`, `/red-doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
-`/setup-red-skills`, `/setup-statusline`, `/implement`, `/tdd`, `/to-tickets`,
+`/red-setup`, `/red-statusline`, `/implement`, `/tdd`, `/to-tickets`,
 `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
@@ -95,9 +95,9 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 ## Standalone And Maintenance Routes
 
-- `/doctor` checks RedSkills adoption drift, including whether this router still
+- `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set.
-- `/setup-red-skills` and `/setup-statusline` are setup/adoption routes, not
+- `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes.
 - `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,
   uncommitted work, blocker — then acts on it: requeue into `ready-for-agent`,

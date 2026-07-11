@@ -130,7 +130,7 @@ Keep this summary concise. The goal is to prove the agent is grounded, not to du
 
 ## Common outcomes
 
-- **Cold repo:** run `/setup-red-skills`, then `/wiki-init` only if the repo needs a private knowledge base, then `memory init --mode graph` when persistent graph recall is worth the local RedDB store.
+- **Cold repo:** run `/red-setup`, then `/wiki-init` only if the repo needs a private knowledge base, then `memory init --mode graph` when persistent graph recall is worth the local RedDB store.
 - **Large code change:** recall prior decisions, ingest if graph is stale, zoom out around the target, then drill down.
 - **Repeated agent failures:** recall prior attempts/root causes, inspect Skill telemetry, update the failing skill or file a human-ready curator issue.
 - **Research-heavy project:** ingest sources into the wiki, create synthesis pages, store only stable operational decisions/gotchas in Memory, and capture Personal facts or human-facing context in Brain.

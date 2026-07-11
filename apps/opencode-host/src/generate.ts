@@ -207,7 +207,7 @@ function main(argv: ReadonlyArray<string>): void {
 
   if (!isDevPluginEnabled(configText)) {
     process.stderr.write(
-      "opencode-host: refusing to emit — plugins.dev.enabled is not true in .red/config.yaml (ADR 0067 strict opt-in). Run /setup-red-skills to enable the dev plugin.\n",
+      "opencode-host: refusing to emit — plugins.dev.enabled is not true in .red/config.yaml (ADR 0067 strict opt-in). Run /red-setup to enable the dev plugin.\n",
     );
     process.exit(1);
   }

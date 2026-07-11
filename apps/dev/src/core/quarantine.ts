@@ -6,7 +6,7 @@
 // must never silently skip tests), emits visible "skipped/quarantined" sidecar
 // records so exclusions are envelope-visible, and passes --exclude args to
 // vitest so the tests actually do not run. An optional staleness check (used
-// by /doctor) warns when the referenced issue is already closed.
+// by /red-doctor) warns when the referenced issue is already closed.
 
 import type { ConfigValues } from "./config.js";
 

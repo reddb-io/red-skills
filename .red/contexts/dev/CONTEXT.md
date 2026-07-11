@@ -209,7 +209,7 @@ A question the elided output must still answer, recorded in a filter's fixture b
 _Avoid_: accuracy check, snapshot test, golden file
 
 **Repo store**:
-The single local RedDB file the repo's plugins share, provisioned by `/setup-red-skills`. Plugins separate logically inside it by collection — the governed memory graph and the **Elision** records never mix — not by opening separate files.
+The single local RedDB file the repo's plugins share, provisioned by `/red-setup`. Plugins separate logically inside it by collection — the governed memory graph and the **Elision** records never mix — not by opening separate files.
 _Avoid_: graph.rdb, the memory database, elision cache
 
 **rsp**:

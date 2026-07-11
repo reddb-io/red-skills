@@ -78,7 +78,7 @@ manifest is generated from it. Any runtime code for a plugin lives under
    in `.red/contexts/{dev,memory,brain}/CONTEXT.md`, in the context that owns
    the term.
 7. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
-8. **ask-red maintenance rule.** any skill add, rename, removal, or flow change must re-check `plugins/dev/skills/engineering/ask-red/SKILL.md`, update its Coverage Inventory and routes, and keep the `/doctor` router sync check green.
+8. **ask-red maintenance rule.** any skill add, rename, removal, or flow change must re-check `plugins/dev/skills/engineering/ask-red/SKILL.md`, update its Coverage Inventory and routes, and keep the `/red-doctor` router sync check green.
 
 ## Plugin activation (ADR 0067)
 
@@ -86,7 +86,7 @@ RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on
 every agent, but a plugin only runs in a directory whose `.red/config.yaml` sets
 `plugins.<name>.enabled: true` (strict opt-in). No `.red/config.yaml`, or a block
 without the explicit `enabled: true`, → the plugin stays fully inert there (no
-bundle fetch, no hooks). `/setup-red-skills` is the **only** thing authorized to
+bundle fetch, no hooks). `/red-setup` is the **only** thing authorized to
 create `.red/` and to write the activation flags — no other code path may create
 `.red/`. The gate lives in `packages/shared/plugin-gate.ts` (consumed by the dev
 launchers) with a mirrored inline copy in each of memory/brain's `bootstrap.mjs`;
@@ -146,18 +146,18 @@ Incremental LLM Wiki for accumulating knowledge about `RedSkills, agents, skills
 
 ### Issue tracker
 
-GitHub Issues on `reddb-io/red-skills`. See `plugins/dev/skills/engineering/setup-red-skills/issue-tracker-github.md`.
+GitHub Issues on `reddb-io/red-skills`. See `plugins/dev/skills/engineering/red-setup/issue-tracker-github.md`.
 
 ### Triage labels
 
-Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `plugins/dev/skills/engineering/setup-red-skills/triage-labels.md`.
+Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 
 ### Domain docs
 
 Multi-context — start at `.red/CONTEXT-MAP.md`, then read the owning glossary in
 `.red/contexts/dev/CONTEXT.md`. `.red/CONTEXT.md` is a
 compatibility pointer only. ADRs remain in the single root `.red/adr/` sequence
-for now. See `plugins/dev/skills/engineering/setup-red-skills/domain.md`.
+for now. See `plugins/dev/skills/engineering/red-setup/domain.md`.
 
 ## Development workflow
 

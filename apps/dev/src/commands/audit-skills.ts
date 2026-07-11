@@ -6,7 +6,7 @@
 // worst-first, and prints a scorecard. ZERO side effects — no git, no gh, no
 // labels, no backlog, no --fix. The command has no push/gh seam by construction.
 //
-// Output mirrors /doctor Pass 1: one row per skill (glyph, composite score, top
+// Output mirrors /red-doctor Pass 1: one row per skill (glyph, composite score, top
 // finding, telemetry tag when present), sorted worst-first, then a short
 // prioritized recommendation list. Agent-facing/--json renders TOON (ADR 0089);
 // a TTY renders a human table.
@@ -151,7 +151,7 @@ export async function enumerateSkills(
 }
 
 // ---------------------------------------------------------------------------
-// Rendering (mirrors /doctor Pass 1).
+// Rendering (mirrors /red-doctor Pass 1).
 // ---------------------------------------------------------------------------
 
 const GLYPH: Record<SkillScore["glyph"], string> = { pass: "✓", warn: "⚠", fail: "✗" };
