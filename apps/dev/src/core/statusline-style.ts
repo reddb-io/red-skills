@@ -33,13 +33,14 @@ import {
   formatCacheAge,
   humanizeCount,
   humanizeTokens,
-  renderStatusline,
+  renderStatuslineWithPreset,
   renderFleetBlock,
   shortModel,
   type ClaudeInput,
   type FleetInput,
   type ProjectInput,
   type RepoInput,
+  type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
 import { formatDiff, workerFields, type CompactWorker } from "./monitor.js";
@@ -75,6 +76,7 @@ const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "rsn",
   "txt",
 ];
+const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "phase", "elapsed"];
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
@@ -110,7 +112,7 @@ function tokenDisplay(f: ReturnType<typeof workerFields>): string {
 // ---------- identity zone (wine background) ----------
 
 /** `» bold-project dim-(branch) dim-vX`. Branch truncated like the plain renderer. */
-function projectContent(project: ProjectInput): string {
+function projectContent(project: ProjectInput, includeVersion = true): string {
   let ref = "";
   if (project.branch) {
     const b = project.branch.length > BRANCH_MAX ? `${project.branch.slice(0, 27)}…` : project.branch;
@@ -118,7 +120,7 @@ function projectContent(project: ProjectInput): string {
   } else if (project.detachedSha) {
     ref = ` ${DIM}(detached ${project.detachedSha})${WHITE}`;
   }
-  const ver = project.version ? ` ${DIM}v${project.version}${WHITE}` : "";
+  const ver = includeVersion && project.version ? ` ${DIM}v${project.version}${WHITE}` : "";
   return `${GOLD}»${WHITE} ${BOLD}${project.basename}${NOBOLD}${ref}${ver}`;
 }
 
@@ -195,19 +197,28 @@ export function renderHeaderLine(
   claude: ClaudeInput | undefined,
   repo: RepoInput | undefined,
   fleet?: FleetInput,
+  preset: StatuslinePreset = "full",
 ): string {
-  let s = `${WINE2}${WHITE} ${projectContent(project)} `;
+  let s = `${WINE2}${WHITE} ${projectContent(project, preset === "full")} `;
   const model = modelContent(claude);
-  if (model !== null) s += `${WINE}${WHITE} ${model} `;
+  if (preset === "full" && model !== null) s += `${WINE}${WHITE} ${model} `;
   // Drop the background: from here on the line is transparent.
   s += `${NOBG}${SOFT}`;
-  const tail = [
-    ctxKv(claude),
-    ...usageKvs(claude),
-    ...repoCountsKv(repo),
-    ...localDiffKv(repo),
-    ...fleetKv(fleet),
-  ].filter((x): x is string => x !== null);
+  const tail = preset === "short"
+    ? [
+        ctxKv(claude),
+        repo && repo.openIssues && repo.openIssues > 0
+          ? kv("iss", String(repo.openIssues)) +
+            (repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "")
+          : null,
+      ].filter((x): x is string => x !== null)
+    : [
+        ctxKv(claude),
+        ...usageKvs(claude),
+        ...repoCountsKv(repo),
+        ...localDiffKv(repo),
+        ...fleetKv(fleet),
+      ].filter((x): x is string => x !== null);
   if (tail.length) s += ` ${tail.join("  ")}`;
   return `${s}${RESET}`;
 }
@@ -251,10 +262,10 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
   };
 }
 
-function workerWidths(rows: readonly WorkerCells[]): WorkerWidths {
+function workerWidths(rows: readonly WorkerCells[], columns: readonly WorkerColumn[] = WORKER_COLUMNS): WorkerWidths {
   const widths = Object.fromEntries(WORKER_COLUMNS.map((column) => [column, 0])) as WorkerWidths;
   for (const row of rows) {
-    for (const column of WORKER_COLUMNS) widths[column] = Math.max(widths[column], visibleWidth(row[column]));
+    for (const column of columns) widths[column] = Math.max(widths[column], visibleWidth(row[column]));
   }
   return widths;
 }
@@ -266,15 +277,24 @@ function colorWorkerCell(column: WorkerColumn, raw: string): string {
   return raw;
 }
 
-function formatWorkerCells(row: WorkerCells, widths: WorkerWidths): string {
-  const parts = WORKER_COLUMNS.map((column) => colorWorkerCell(column, padVisible(row[column], widths[column])));
+function formatWorkerCells(
+  row: WorkerCells,
+  widths: WorkerWidths,
+  columns: readonly WorkerColumn[] = WORKER_COLUMNS,
+): string {
+  const parts = columns.map((column) => colorWorkerCell(column, padVisible(row[column], widths[column])));
   return `${NOBG}${SOFT}${parts.join(WORKER_GUTTER)}${RESET}`;
 }
 
-function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): string[] {
+function renderWorkerLines(
+  workers: ReadonlyArray<CompactWorker>,
+  now: number,
+  preset: StatuslinePreset = "full",
+): string[] {
   const rows = workers.map((worker) => workerCells(worker, now));
-  const widths = workerWidths(rows);
-  return rows.map((row) => formatWorkerCells(row, widths));
+  const columns = preset === "short" ? SHORT_WORKER_COLUMNS : WORKER_COLUMNS;
+  const widths = workerWidths(rows, columns);
+  return rows.map((row) => formatWorkerCells(row, widths, columns));
 }
 
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
@@ -295,8 +315,18 @@ function renderWorkerLines(workers: ReadonlyArray<CompactWorker>, now: number): 
  * line (`renderWorkerCompactLine`) keeps them. The two share only the field data
  * ({@link workerFields}), never a renderer, so the terse form cannot bleed into
  * the monitor. `now` is an epoch in seconds. */
-export function renderWorkerLine(worker: CompactWorker, now: number): string {
+export function renderWorkerLine(worker: CompactWorker, now: number, preset: StatuslinePreset = "full"): string {
   const f = workerFields(worker, now);
+  if (preset === "short") {
+    const parts: string[] = [`${BOLD}${f.workerId}${NOBOLD}`];
+    if (f.issue !== null) {
+      parts.push(kv("iss", String(f.issue)));
+      const progress = progressCell(f.phase, f.activity);
+      if (progress) parts.push(progress);
+    }
+    parts.push(f.elapsed);
+    return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
+  }
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
     .filter((x): x is string => Boolean(x))
     .join(" ");
@@ -338,15 +368,17 @@ export interface StyleOptions {
   columns?: number;
   workers?: ReadonlyArray<CompactWorker>;
   now?: number;
+  preset?: StatuslinePreset;
 }
 
 /** The full themed statusline: the header line, plus one line per live worker
  * (Claude Code renders each `\n`-separated segment as its own row). Zero workers
  * → only the header line. */
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
-  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet)];
+  const preset = opts.preset ?? "full";
+  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet, preset)];
   const now = opts.now ?? 0;
-  lines.push(...renderWorkerLines(opts.workers ?? [], now));
+  lines.push(...renderWorkerLines(opts.workers ?? [], now, preset));
   return lines.join("\n");
 }
 
@@ -358,5 +390,6 @@ export function renderStatuslineThemed(
   color: boolean,
   opts: StyleOptions = {},
 ): string {
-  return color ? styleStatusline(input, opts) : renderStatusline(input);
+  const preset = opts.preset ?? "full";
+  return color ? styleStatusline(input, opts) : renderStatuslineWithPreset(input, preset);
 }
