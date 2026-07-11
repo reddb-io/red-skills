@@ -21,6 +21,13 @@
       ],
       "outputs": ["../../dist/**"]
     },
+    "@reddb-io/rsp#bundle": {
+      "dependsOn": [
+        "@reddb-io/build-info#build",
+        "@reddb-io/toon#build"
+      ],
+      "outputs": ["../../dist/**"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "../../dist/**"]
