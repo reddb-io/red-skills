@@ -118,6 +118,7 @@ import type { Runner } from "../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
 import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "./go.js";
+import { setActiveClaimFinalizer } from "./process-safety.js";
 
 type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 
@@ -1278,7 +1279,11 @@ export async function processIssue(
   const releaseClaim = async () => {
     if (ownsCommentClaim) {
       ownsCommentClaim = false;
-      await releaseOwnedClaim(deps, input);
+      try {
+        await releaseOwnedClaim(deps, input);
+      } finally {
+        setActiveClaimFinalizer(null);
+      }
       return;
     }
     await deps.claimLock.release(issue);
@@ -1356,6 +1361,11 @@ export async function processIssue(
       return claimLost(issue, hooksFired, deps, decision);
     }
     ownsCommentClaim = true;
+    setActiveClaimFinalizer(async () => {
+      if (!ownsCommentClaim) return;
+      ownsCommentClaim = false;
+      await releaseOwnedClaim(deps, input);
+    });
   } else if (labels.includes(LABEL_RUNNING)) {
     // Legacy lock (no claimGh): `running` present means another worker holds it.
     await deps.claimLock.release(issue);
