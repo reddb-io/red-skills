@@ -19,25 +19,32 @@ const repoRoot = join(pkgRoot, "..", "..");
 const srcDist = join(repoRoot, "dist");
 const destDist = join(pkgRoot, "dist");
 
+// Each entry stages one bundle into this package's dist/. `dest` is the packaged
+// filename the bin shims / launchers resolve; the first existing `sources` entry
+// is copied to it. Most bundles are named identically by `pnpm bundle`, but
+// code-nav's turbo outfile is `code-nav-mcp.bundle.min.mjs` while the packaged /
+// release-asset name is `code-nav.bundle.min.mjs` — so it lists both: CI's
+// dedicated code-nav step pre-copies the asset name, and the plain `pnpm bundle`
+// path falls back to the turbo outfile. No bundle silently skips as "not built".
 const BUNDLES = [
-  "dev.bundle.min.mjs",
-  "code-nav.bundle.min.mjs",
-  "memory.bundle.min.mjs",
-  "brain.bundle.min.mjs",
-  "rsp.bundle.min.mjs",
+  { dest: "dev.bundle.min.mjs", sources: ["dev.bundle.min.mjs"] },
+  { dest: "code-nav.bundle.min.mjs", sources: ["code-nav.bundle.min.mjs", "code-nav-mcp.bundle.min.mjs"] },
+  { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
+  { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
+  { dest: "rsp.bundle.min.mjs", sources: ["rsp.bundle.min.mjs"] },
 ];
 
 mkdirSync(destDist, { recursive: true });
 let staged = 0;
-for (const name of BUNDLES) {
-  const src = join(srcDist, name);
-  if (!existsSync(src)) {
-    process.stderr.write(`prepare: ${name} not built at ${src}; skipping\n`);
+for (const { dest, sources } of BUNDLES) {
+  const src = sources.map((name) => join(srcDist, name)).find((path) => existsSync(path));
+  if (!src) {
+    process.stderr.write(`prepare: ${dest} not built (looked for ${sources.join(", ")}); skipping\n`);
     continue;
   }
-  copyFileSync(src, join(destDist, name));
+  copyFileSync(src, join(destDist, dest));
   staged += 1;
-  process.stdout.write(`prepare: staged ${name}\n`);
+  process.stdout.write(`prepare: staged ${dest}\n`);
 }
 if (staged === 0) {
   process.stderr.write("prepare: no bundles staged — run `pnpm bundle` first\n");
