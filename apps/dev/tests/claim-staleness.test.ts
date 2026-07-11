@@ -262,6 +262,15 @@ describe("planStaleClaimSweep", () => {
     expect(releases).toEqual([]);
   });
 
+  it("releases a dead-owner claim immediately, regardless of age grace", () => {
+    const releases = planStaleClaimSweep(
+      [{ issue: 7, records: [claimAt(10, "dead:host", 30)], deadOwners: ["dead:host"] }],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([{ issue: 7, staleOwners: ["dead:host"] }]);
+  });
+
   it("never releases a stale claim whose attempt branch has a recent commit", () => {
     const releases = planStaleClaimSweep(
       [
@@ -275,6 +284,22 @@ describe("planStaleClaimSweep", () => {
       cfg,
     );
     expect(releases).toEqual([]);
+  });
+
+  it("does not let recent branch commits protect a dead-owner claim", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 7,
+          records: [claimAt(10, "dead:host", 30)],
+          deadOwners: ["dead:host"],
+          attemptBranchCommitS: T0 - 10,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([{ issue: 7, staleOwners: ["dead:host"] }]);
   });
 
   it("still releases a stale claim when no commit landed inside the protection window", () => {
