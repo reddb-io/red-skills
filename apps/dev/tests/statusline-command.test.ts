@@ -7,8 +7,10 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   statuslineCommand,
   resolveRoot,
+  resolveStatuslinePreset,
   statuslineEnabled,
 } from "../src/commands/statusline.js";
+import { loadConfig } from "../src/core/config.js";
 
 /** Strip ANSI SGR escapes so assertions read the plain rendered text. The
  * command now themes the line (wine background + black-chipped KPI numbers);
@@ -214,6 +216,30 @@ describe("statusline command — pure helpers", () => {
     expect(statuslineEnabled(on)).toBe(true);
 
     await Promise.all([top, nested, on].map((d) => rm(d, { recursive: true, force: true })));
+  });
+
+  it("resolves statusline preset from namespaced and legacy config keys", async () => {
+    const cases = [
+      ["plugins:\n  dev:\n    statusline:\n      preset: short\n", "short"],
+      ["afk:\n  statusline:\n    preset: short\n", "short"],
+      ["statusline:\n  preset: short\n", "short"],
+      ["plugins:\n  dev:\n    statusline:\n      preset: compact\n", "full"],
+      ["", "full"],
+    ] as const;
+
+    const dirs: string[] = [];
+    try {
+      for (const [yaml, expected] of cases) {
+        const dir = await mkdtemp(join(tmpdir(), "sl-cfg-"));
+        dirs.push(dir);
+        await mkdir(join(dir, ".red"), { recursive: true });
+        await writeFile(join(dir, ".red", "config.yaml"), yaml, "utf8");
+        const cfg = loadConfig(join(dir, ".red", "config.yaml"), { warn: () => undefined });
+        expect(resolveStatuslinePreset(cfg)).toBe(expected);
+      }
+    } finally {
+      await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+    }
   });
 });
 
