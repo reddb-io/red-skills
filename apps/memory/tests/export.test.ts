@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +103,104 @@ describe("export", () => {
       expect(audit).toContain("Documents");
       expect(audit).toContain("Vector projection");
       expect(audit).toContain("docs/auth.md");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "bundle exports semantic seals, community labels, bridge annotations, and semantic cost",
+    async () => {
+      const { store, dir } = await openStore();
+      const mk = (label: string, confidence: "EXTRACTED" | "INFERRED", extra: Record<string, unknown> = {}) =>
+        store.upsertNode({
+          label,
+          node_type: "concept",
+          properties: {
+            title: label,
+            content: `${label} evidence`,
+            confidence,
+            audit_seal: confidence,
+            confidence_band: confidence === "INFERRED" ? "medium" : "high",
+            ...extra,
+          },
+        });
+      const [auth, jwt, cache, eviction] = await Promise.all([
+        mk("auth service", "EXTRACTED", { semantic_token_input: 120, semantic_token_output: 34 }),
+        mk("jwt rotation", "INFERRED"),
+        mk("cache service", "EXTRACTED"),
+        mk("cache eviction", "EXTRACTED"),
+      ]);
+      await store.upsertEdge({ label: "REFERENCES", from_rid: auth, to_rid: jwt, properties: { confidence: "INFERRED", audit_seal: "INFERRED", confidence_band: "medium" } });
+      await store.upsertEdge({ label: "REFERENCES", from_rid: cache, to_rid: eviction, properties: { confidence: "EXTRACTED", audit_seal: "EXTRACTED", confidence_band: "high" } });
+      await store.upsertEdge({ label: "REFERENCES", from_rid: jwt, to_rid: cache, properties: { confidence: "INFERRED", audit_seal: "INFERRED", confidence_band: "medium" } });
+
+      const communities = await store.communities();
+      const nodes = await store.listNodes();
+      const membersByCommunity = new Map<string, typeof nodes>();
+      for (const node of nodes) {
+        const community = communities.get(node.rid);
+        if (!community) continue;
+        membersByCommunity.set(community, [...(membersByCommunity.get(community) ?? []), node]);
+      }
+      for (const [community, members] of membersByCommunity) {
+        const hasAuth = members.some((node) => node.label.includes("auth") || node.label.includes("jwt"));
+        await store.kvPut(`cache:community-label:v1:${membershipHash(members)}`, {
+          schema_version: "memory.community-label.v1",
+          community_id: community,
+          short_label: hasAuth ? "Auth Tokens" : "Cache Ops",
+          provenance: {
+            source: "deterministic",
+            provider: { mode: null, model: null },
+            membership_hash: membershipHash(members),
+            generated_at: "2026-07-10T00:00:00.000Z",
+          },
+        });
+      }
+
+      const result = await exportGraph(store, join(dir, "export"), { communities: true });
+
+      const json = JSON.parse(await readFile(result.jsonPath, "utf8"));
+      expect(json.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rid: jwt,
+            confidence: "INFERRED",
+            audit_seal: "INFERRED",
+            confidence_band: "medium",
+            community_label: expect.any(String),
+            navigation: expect.objectContaining({ hub: expect.any(Boolean), bridge: expect.any(Boolean) }),
+          }),
+        ]),
+      );
+      expect(json.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            from: auth,
+            to: jwt,
+            confidence: "INFERRED",
+            audit_seal: "INFERRED",
+            confidence_band: "medium",
+            semantic_lane: "INFERRED",
+          }),
+        ]),
+      );
+      expect(json.communities.communities.map((community: { short_label: string | null }) => community.short_label)).toEqual(
+        expect.arrayContaining(["Auth Tokens", "Cache Ops"]),
+      );
+      expect(json.communities.bridge_nodes.length).toBeGreaterThan(0);
+
+      const html = await readFile(result.htmlPath, "utf8");
+      expect(html).toContain("Auth Tokens");
+      expect(html).toContain("INFERRED");
+      expect(html).toContain("Semantic lane");
+      expect(html).toContain("Bridge");
+
+      const audit = await readFile(result.auditPath, "utf8");
+      expect(audit).toContain("## Seal distribution");
+      expect(audit).toContain("INFERRED evidence is provider-inferred semantic-lane material");
+      expect(audit).toContain("Semantic lane token cost: 120 input / 34 output tokens");
+      expect(audit).toContain("## Community navigation");
+      expect(audit).toContain("Auth Tokens");
     },
     TIMEOUT,
   );
@@ -427,3 +526,24 @@ describe("export", () => {
     TIMEOUT,
   );
 });
+
+function membershipHash(
+  members: Array<{ rid: number; label: string; node_type: string; properties: Record<string, unknown> }>,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        members
+          .slice()
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((node) => ({
+            rid: node.rid,
+            label: node.label,
+            node_type: node.node_type,
+            title: node.properties.title,
+            hash: node.properties.hash,
+          })),
+      ),
+    )
+    .digest("hex");
+}
