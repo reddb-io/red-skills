@@ -154,7 +154,8 @@ function isUnreadableFileStore(uri: string): boolean {
     fd = openSync(fileURLToPath(uri), "r");
     const header = Buffer.alloc(64);
     const bytesRead = readSync(fd, header, 0, header.length, 0);
-    return !header.subarray(0, bytesRead).includes("RDDB");
+    const bytes = header.subarray(0, bytesRead);
+    return !bytes.includes("RDDB") && !bytes.includes("RDBS");
   } catch {
     return true;
   } finally {
