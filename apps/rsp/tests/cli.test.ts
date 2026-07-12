@@ -475,6 +475,29 @@ describe("rsp cli", () => {
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
   }, 120_000);
 
+  it("built bundle recovers an orphaned resident socket before spawning", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    await mkdir(dirname(paths.socketPath), { recursive: true });
+    await writeFile(paths.socketPath, "orphaned resident socket\n", "utf8");
+
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+    });
+
+    expect(compressed.status, `${compressed.stdout.toString("utf8")}${compressed.stderr.toString("utf8")}`).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+    await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  }, 120_000);
+
   it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
