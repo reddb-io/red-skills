@@ -1,4 +1,6 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +9,8 @@ import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-st
 import { mergeRspBlock, provisionRspRepoStore } from "../src/setup.js";
 
 const roots: string[] = [];
+const cli = join(import.meta.dirname, "..", "src", "cli.ts");
+const tsxLoader = createRequire(import.meta.url).resolve("tsx");
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-setup-"));
@@ -85,5 +89,61 @@ describe("provisionRspRepoStore", () => {
 
     expect(result.storeCreated).toBe(false);
     await expect(readFile(join(root, ".red", "red.rdb"))).resolves.toEqual(marker);
+  });
+
+  it("copies the legacy memory graph store into the shared repo store before creating a new store", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red", "memory"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), [
+      "plugins:",
+      "  memory:",
+      "    enabled: true",
+      "    mode: graph",
+      "    storePath: .red/memory/graph.rdb",
+      "",
+    ].join("\n"), "utf8");
+    await writeFile(join(root, ".red", "memory", "graph.rdb"), "legacy graph data", "utf8");
+
+    const result = await provisionRspRepoStore(root);
+
+    expect(result.storeCreated).toBe(false);
+    expect(result.memoryStoreMigrated).toBe(true);
+    await expect(readFile(join(root, ".red", "red.rdb"), "utf8")).resolves.toBe("legacy graph data");
+    await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("    storePath: .red/red.rdb");
+  });
+});
+
+describe("rsp setup CLI", () => {
+  it("provisions the repo store and enables bare rsp wrappers", async () => {
+    const root = await tempRoot();
+
+    const before = spawnSync(process.execPath, ["--import", tsxLoader, cli, "git", "status"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(before.status).toBe(1);
+    expect(before.stdout).toContain("rsp repo store is not provisioned");
+
+    const setup = spawnSync(process.execPath, ["--import", tsxLoader, cli, "setup"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(setup.status).toBe(0);
+    expect(setup.stdout).toContain("store: created");
+    await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("rsp:\n  enabled: true");
+
+    const rerun = spawnSync(process.execPath, ["--import", tsxLoader, cli, "setup"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(rerun.status).toBe(0);
+    expect(rerun.stdout).toContain("store: existing");
+
+    const after = spawnSync(process.execPath, ["--import", tsxLoader, cli, "git", "status"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(after.stdout).not.toContain("rsp repo store is not provisioned");
+    expect(after.stderr).toContain("not a git repository");
   });
 });
