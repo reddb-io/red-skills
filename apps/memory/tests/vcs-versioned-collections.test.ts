@@ -55,11 +55,49 @@ async function collectionVersioned(uri: string, collection: string): Promise<boo
   }
 }
 
+async function seedVersionedCollections(store: MemoryStore): Promise<void> {
+  const first = await store.upsertNode({
+    label: "versioned-node-a",
+    node_type: "decision",
+    properties: {
+      title: "Versioned node A",
+      content: "Fixture node for RedDB versioning probes.",
+      confidence: "EXTRACTED",
+    },
+  });
+  const second = await store.upsertNode({
+    label: "versioned-node-b",
+    node_type: "solution",
+    properties: {
+      title: "Versioned node B",
+      content: "Second fixture node for edge versioning probes.",
+      confidence: "EXTRACTED",
+    },
+  });
+  await store.upsertEdge({
+    label: "REFERENCES",
+    from_rid: first,
+    to_rid: second,
+    properties: {
+      confidence: "EXTRACTED",
+      source: "test",
+    },
+  });
+  await store.upsertDoc({
+    path: "docs/versioned.md",
+    title: "Versioned doc",
+    body: "Fixture document for RedDB document versioning probes.",
+    hash: "versioned-doc-hash",
+    updated_at: Date.now(),
+  });
+}
+
 describe("VCS versioned Memory collections (#105)", () => {
   test(
     "applies tier versioning and reports the actual RedDB store state",
     async () => {
       const { store, uri } = await openStore();
+      await seedVersionedCollections(store);
 
       const report = await applyTierVersioning(store);
 
@@ -90,6 +128,7 @@ describe("VCS versioned Memory collections (#105)", () => {
     "is idempotent on an already-versioned store",
     async () => {
       const { store, uri } = await openStore();
+      await seedVersionedCollections(store);
 
       const first = await applyTierVersioning(store);
       const second = await applyTierVersioning(store);

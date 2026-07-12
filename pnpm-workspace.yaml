@@ -31,4 +31,4 @@ allowBuilds:
   protobufjs: false
 
 minimumReleaseAgeExclude:
-  - "@reddb-io/sdk@1.7.0"
+  - "@reddb-io/sdk"

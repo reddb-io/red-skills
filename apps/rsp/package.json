@@ -25,7 +25,7 @@
     "@reddb-io/toon": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/shared": "workspace:*",
-    "@reddb-io/sdk": "1.7.0",
+    "@reddb-io/sdk": "1.23.1",
     "js-tiktoken": "^1.0.21"
   },
   "pnpm": {
