@@ -120,7 +120,7 @@ Offer to install the host-level runtime shim:
 bash plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh
 ```
 
-The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev`. The shim:
+The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev` and `${XDG_BIN_HOME:-$HOME/.local/bin}/rsp`. The `red-skills-dev` shim:
 
 - prefers the active CLI plugin-root env var when the host exposes one;
 - otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
@@ -128,11 +128,15 @@ The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev`. The shim:
 - forwards all arguments to the dev runtime, so skills can say `red-skills-dev go ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
 - stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
 
+The `rsp` shim uses the same local-first shape: active plugin-root env var, installed host plugin cache, then the warmed rsp bundle under `${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}`. It never runs npm, installs a global package, or performs network resolution during session startup.
+
 After installing, verify:
 
 ```bash
 command -v red-skills-dev
+command -v rsp
 red-skills-dev dashboard --json
+rsp git status
 ```
 
 If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the shell `PATH`. Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally as a substitute.
