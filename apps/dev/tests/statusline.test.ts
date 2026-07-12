@@ -491,10 +491,24 @@ describe("statusline — full assembly", () => {
       project: { basename: "red-skills", branch: "main" },
       claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 23, usage7d: 41 },
       repo: { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 },
+      rsp: "on",
       fleet: { runner: "codex", busy: 1, total: 4, queue: 9 },
       afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
     };
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp●");
+  });
+
+  it("renders rsp as one optional token in full and short presets", () => {
+    const input: StatuslineInput = {
+      project: { basename: "red-skills", branch: "main" },
+      rsp: "warming",
+    };
+    expect(renderStatusline(input)).toBe("red-skills (main) · rsp○");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp○");
+  });
+
+  it("omits rsp when the gather side leaves the status absent", () => {
+    expect(renderStatusline({ project: { basename: "red-skills" } })).toBe("red-skills");
   });
 
   it("keeps the pre-#1165 line byte-for-byte when repo and usage are absent", () => {
