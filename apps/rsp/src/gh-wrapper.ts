@@ -9,7 +9,7 @@ export type GhAction = "list" | "view" | "combined";
 
 export interface GhRenderOptions {
   level: RspLossLevel;
-  store?: RspElisionStore;
+  store?: Pick<RspElisionStore, "mint">;
 }
 
 export interface GhRenderResult {
