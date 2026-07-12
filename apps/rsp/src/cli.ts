@@ -2,14 +2,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { RspElisionStore } from "./elision-store.js";
+import type { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
-import { runGitWrapper } from "./git-wrapper.js";
-import { runGhWrapper } from "./gh-wrapper.js";
-import { runClaudePreExecHook } from "./intercept.js";
-import { runClaudePostExecHook } from "./normalize.js";
-import { provisionRspRepoStore } from "./setup.js";
-import { runTestWrapper } from "./test-wrapper.js";
+import { ResidentRspElisionStore, resolveResidentPaths } from "./resident-client.js";
 
 interface ParsedArgs {
   command?: string;
@@ -23,33 +18,66 @@ interface ParsedArgs {
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
+    const { runClaudePreExecHook } = await import("./intercept.js");
     return await runClaudePreExecHook();
   }
   if (args.command === "hook" && args.positional[1] === "claude-post-exec") {
+    const { runClaudePostExecHook } = await import("./normalize.js");
     return await runClaudePostExecHook();
   }
   if (args.command === "setup") {
+    const { provisionRspRepoStore } = await import("./setup.js");
     const result = await provisionRspRepoStore(process.cwd());
     process.stdout.write(renderSetupResult(result));
     return 0;
   }
+  if (args.command === "mcp") {
+    const { runRspMcpServer } = await import("./mcp-server.js");
+    await runRspMcpServer();
+    return 0;
+  }
+  if (args.command === "server") {
+    const { runResidentServer } = await import("./resident-server.js");
+    const socket = valueAfter(args.positional, "--socket") ?? resolveResidentPaths(process.cwd()).socketPath;
+    const storeUri = args.storeUri ?? valueAfter(args.positional, "--store-uri");
+    if (!storeUri) throw new Error("rsp server requires --store-uri");
+    await runResidentServer({
+      socketPath: socket,
+      storeUri,
+      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? 7,
+      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? 64 * 1024 * 1024,
+    });
+    return 0;
+  }
 
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
+  const residentPaths = resolveResidentPaths(process.cwd());
   const wrapperCommand = isWrapperCommand(args.command);
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await degradeToPassthrough("store not provisioned", args.positional);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  const openStore = () => RspElisionStore.open({
-    uri: config.storeUri,
+  const openResidentStore = () => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
+    storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
-  });
+  }));
+  const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
+    const { RspElisionStore } = await import("./elision-store.js");
+    return await RspElisionStore.open({
+      uri: config.storeUri,
+      ttlDays: config.ttlDays,
+      byteBudget: config.byteBudget,
+    });
+  };
+  const openReadStore = () => !config.storeUri.endsWith("/red-skills.rdb")
+    ? openDirectStore()
+    : openResidentStore();
   let closeStore: (() => Promise<void>) | undefined;
   try {
     if (!args.command) {
-      const store = await openStore();
+      const store = await openReadStore();
       closeStore = () => store.close();
       const stats = await store.stats();
       process.stdout.write(renderStats(stats));
@@ -57,7 +85,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      if (isFastGitStatus(args.positional)) return await runFastGitStatus();
+      const { runGitWrapper } = await import("./git-wrapper.js");
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
       const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
         level: args.level,
@@ -74,7 +104,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "gh") {
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      const { runGhWrapper } = await import("./gh-wrapper.js");
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
       const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
@@ -87,7 +118,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      const { runTestWrapper } = await import("./test-wrapper.js");
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
       const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
@@ -100,7 +132,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "show" && args.handle) {
-      const store = await openStore();
+      const store = await openReadStore();
       closeStore = () => store.close();
       const record = await store.get(args.handle);
       if (record && "original" in record && record.original) {
@@ -125,10 +157,48 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
-class LazyRspElisionStore implements Pick<RspElisionStore, "mint" | "close"> {
-  private store?: Promise<RspElisionStore>;
+function valueAfter(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+}
 
-  constructor(private readonly openStore: () => Promise<RspElisionStore>) {}
+function numericValueAfter(args: readonly string[], flag: string): number | undefined {
+  const value = valueAfter(args, flag);
+  if (value == null) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function isFastGitStatus(argv: readonly string[]): boolean {
+  return argv.length === 2 && argv[0] === "git" && argv[1] === "status";
+}
+
+async function runFastGitStatus(): Promise<number> {
+  const child = spawn("git", ["status", "--porcelain=v1"], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = Buffer.alloc(0);
+  let stderr = Buffer.alloc(0);
+  child.stdout.on("data", (chunk) => {
+    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr = Buffer.concat([stderr, Buffer.from(chunk)]);
+  });
+  const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  if ((status ?? 0) !== 0) {
+    process.stdout.write(stdout);
+    process.stderr.write(stderr);
+    return status ?? 1;
+  }
+  process.stdout.write(stdout.length === 0 ? "git empty\n" : stdout);
+  return 0;
+}
+
+type ElisionStoreLike = Pick<RspElisionStore, "mint" | "close">;
+
+class LazyRspElisionStore implements ElisionStoreLike {
+  private store?: Promise<ElisionStoreLike>;
+
+  constructor(private readonly openStore: () => Promise<ElisionStoreLike>) {}
 
   async mint(...args: Parameters<RspElisionStore["mint"]>): ReturnType<RspElisionStore["mint"]> {
     return await (await this.open()).mint(...args);
@@ -136,7 +206,7 @@ class LazyRspElisionStore implements Pick<RspElisionStore, "mint" | "close"> {
 
   async close(): Promise<void> {
     if (!this.store) return;
-    let store: RspElisionStore;
+    let store: ElisionStoreLike;
     try {
       store = await this.store;
     } catch {
@@ -145,7 +215,7 @@ class LazyRspElisionStore implements Pick<RspElisionStore, "mint" | "close"> {
     await store.close();
   }
 
-  private open(): Promise<RspElisionStore> {
+  private open(): Promise<ElisionStoreLike> {
     this.store ??= this.openStore();
     return this.store;
   }
