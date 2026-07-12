@@ -15,7 +15,9 @@
     "./self-update.js": "./self-update.ts",
     "./log.js": "./log.ts",
     "./plugin-gate.js": "./plugin-gate.ts",
-    "./outcome-event.js": "./outcome-event.ts"
+    "./outcome-event.js": "./outcome-event.ts",
+    "./resident-client.js": "./resident-client.ts",
+    "./resident-protocol.js": "./resident-protocol.ts"
   },
   "dependencies": {
     "cli-args-parser": "^1.0.6"

@@ -118,6 +118,7 @@ import {
 import {
   graphRecallResult,
   renderSignalProvenance,
+  type GraphRecallResult,
   type GraphRecallHit,
 } from "./graph-recall.js";
 import {
@@ -262,6 +263,7 @@ import {
   refreshGovernanceTidyReviewArtifacts,
 } from "./governance-tidy-review.js";
 import { recall } from "./recall.js";
+import { residentMemoryRequest, shouldUseResidentMemory } from "./resident-memory.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
@@ -1374,6 +1376,49 @@ async function runRecall(args: ParsedArgs): Promise<void> {
 
   if (config.mode === "graph") {
     const asOf = stringFlag(args.flags, "as-of");
+    if (!asOf && shouldUseResidentMemory(rootDir, config)) {
+      try {
+        const residentResult = await residentMemoryRequest(rootDir, config, "recall", {
+          query,
+          limit,
+          includeSuperseded: args.flags["include-superseded"] === true,
+          scope: scopeFlags(args.flags),
+          ranking: config.recallRanking,
+        });
+        const { hits: rawHits, diagnostics } = asGraphRecallResult(residentResult);
+        const hits = layerFiltersOut ? [] : rawHits;
+        if (args.flags.json === true) {
+          printLegacyGraphRecall(query, hits, diagnostics);
+          return;
+        }
+        if (hits.length === 0) {
+          printRecallToon({
+            items: [],
+            query,
+            store: "graph",
+            ranking: "hybrid-rrf",
+            vector: diagnostics.vector,
+          });
+          return;
+        }
+        printRecallToon({
+          items: hits.map((hit) => ({
+            id: hit.id,
+            score: hit.score,
+            kind: hit.node_type,
+            content: `${hit.label} ${hit.excerpt}`.trim(),
+          })),
+          query,
+          store: "graph",
+          ranking: "hybrid-rrf",
+          vector: diagnostics.vector,
+        });
+        return;
+      } catch {
+        // Fail open: if the resident cannot start or answer, keep the legacy
+        // embedded path so CLI calls and hooks do not break the agent turn.
+      }
+    }
     const store = asOf
       ? await HistoricalMemoryStore.open({ uri: resolveStoreUri(rootDir, config), ref: asOf })
       : await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
@@ -1444,6 +1489,13 @@ async function runRecall(args: ParsedArgs): Promise<void> {
     store: "markdown",
     ranking: "term-count",
   });
+}
+
+function asGraphRecallResult(value: unknown): GraphRecallResult {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { hits?: unknown }).hits)) {
+    throw new Error("resident returned invalid memory recall result");
+  }
+  return value as GraphRecallResult;
 }
 
 type RecallToonItem = {
@@ -4095,6 +4147,29 @@ async function runIngest(args: ParsedArgs): Promise<void> {
 
   const semanticProvider = !structuralOnly && config.provider ? resolveProvider(config.provider) : null;
   if (semanticProvider && config.provider) applyProviderEnv(semanticProvider, config.provider.apiKeyEnv);
+
+  if (!semanticProvider && shouldUseResidentMemory(rootDir, config)) {
+    let residentReport: Awaited<ReturnType<typeof ingestProject>> | null = null;
+    try {
+      residentReport = await residentMemoryRequest(rootDir, config, "ingest", {
+        cwd,
+        maxFiles,
+        ignore: preset.ignore,
+      }) as Awaited<ReturnType<typeof ingestProject>>;
+    } catch {
+      // Fail open: keep the legacy embedded ingest path available if the
+      // resident cannot come up in this environment.
+    }
+    if (residentReport) {
+      console.log(
+        renderIngestReportToon(residentReport, {
+          includeSemanticCost: false,
+        }),
+      );
+      console.log(ingestGuidance(await currentGitCommit(rootDir)));
+      return;
+    }
+  }
 
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {

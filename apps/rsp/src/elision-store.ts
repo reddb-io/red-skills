@@ -283,6 +283,21 @@ export class RspElisionStore {
     return this.db.kv(RSP_ELISION_COLLECTION);
   }
 
+  /**
+   * The SDK's kv().get hands back the stored value as a JSON string rather
+   * than a parsed object. Normalize on read; main never noticed because the
+   * legacy-store redirect kept elisions off the RedDB path entirely.
+   */
+  private async kvGet(key: string): Promise<unknown> {
+    const raw = await this.kv().get(key);
+    if (typeof raw !== "string") return raw;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+
   private async ensureRedDbStore(): Promise<void> {
     const index = await this.readRedDbIndex();
     await this.writeRedDbIndex(index);
@@ -318,9 +333,9 @@ export class RspElisionStore {
 
   private async getRedDb(handle: string): Promise<RspElisionRecord | RspExpiredHandle | null> {
     if (!isHandle(handle)) return null;
-    const tombstone = await this.kv().get(tombstoneKey(handle));
+    const tombstone = await this.kvGet(tombstoneKey(handle));
     if (isExpiredHandle(tombstone)) return tombstone;
-    const raw = await this.kv().get(recordKey(handle));
+    const raw = await this.kvGet(recordKey(handle));
     if (!isStoredRecord(raw)) return null;
     if (Date.parse(raw.expires_at) <= this.opts.now().getTime()) {
       const expired = { status: "expired" as const, expired_at: raw.expires_at, command: raw.command };
@@ -360,17 +375,111 @@ export class RspElisionStore {
   }
 
   async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
+    if (!this.db) throw new Error("resident memory operations require the shared RedDB store");
+    await this.ensureMemoryGraphStore();
     if (action === "recall") {
-      return { status: "resident", action, payload };
+      const request = parseMemoryRecallPayload(payload);
+      return await this.memoryRecallRedDb(request.query, request.limit);
     }
     if (action === "ingest") {
-      return { status: "resident", action, payload };
+      const request = parseMemoryIngestPayload(payload);
+      return await this.memoryIngestRedDb(request);
     }
     throw new Error(`unsupported memory action: ${action}`);
   }
 
+  private async ensureMemoryGraphStore(): Promise<void> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    await this.db.execute("CREATE GRAPH IF NOT EXISTS memory_nodes");
+    await this.db.execute("CREATE GRAPH IF NOT EXISTS memory_edges");
+  }
+
+  private async memoryIngestRedDb(request: { cwd: string; maxFiles?: number; ignore?: string[] }): Promise<unknown> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const files = await collectMemoryFiles(request.cwd, request.maxFiles ?? 200, request.ignore ?? []);
+    let nodes = 0;
+    for (const file of files) {
+      const body = await readFile(file, "utf8").catch(() => "");
+      const text = body.trim();
+      if (!text) continue;
+      const label = basename(file);
+      const hash = createHash("sha256").update("resident-memory-v1\0").update(file).update("\0").update(text).digest("hex");
+      if (await this.db.kv("memory_kv").get(`resident-node-hash:${hash}`) != null) continue;
+      const now = Date.now();
+      const properties = {
+        title: label,
+        content: text,
+        source: file,
+        confidence: "EXTRACTED",
+        hash,
+        project: "default",
+        scope: "project",
+        importance: 1,
+        tier: "durable",
+        provenance_tier: "oracle",
+        created_at: now,
+        updated_at: now,
+        accessed_at: now,
+        access_count: 0,
+        provenance: {
+          source_kind: "system",
+          writer: "rsp-resident",
+          confidence: "EXTRACTED",
+          evidence: [file],
+          created_at: now,
+          updated_at: now,
+        },
+      };
+      const r = await this.db.query(
+        "INSERT INTO memory_nodes NODE (label, node_type, hash, properties) VALUES ($1, $2, $3, $4) RETURNING *",
+        label,
+        "concept",
+        hash,
+        properties,
+      );
+      const rid = Number(r.rows[0]?.red_entity_id ?? r.rows[0]?.rid);
+      if (Number.isFinite(rid)) await this.db.kv("memory_kv").put(`resident-node-hash:${hash}`, rid);
+      nodes += 1;
+    }
+    return {
+      files: files.length,
+      nodes,
+      edges: 0,
+      docs: files.length,
+      added: nodes,
+      updated: 0,
+      skipped: files.length - nodes,
+      stale: 0,
+      semantic: {
+        enabled: false,
+        nodes: 0,
+        edges: 0,
+        token_cost: { input: 0, output: 0 },
+      },
+      durationMs: 0,
+    };
+  }
+
+  private async memoryRecallRedDb(query: string, limit: number): Promise<unknown> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const r = await this.db.query("SELECT * FROM memory_nodes");
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = r.rows
+      .map((row) => residentRowToRecallHit(row, terms))
+      .filter((hit): hit is ResidentRecallHit => hit != null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, Math.min(100, limit)));
+    return {
+      hits,
+      context_md: hits.map((hit) => `- memory_nodes:${hit.rid} ${hit.label}: ${hit.excerpt}`).join("\n"),
+      diagnostics: {
+        vector: { status: "unavailable", candidates: 0, contributed: 0, reason: "resident-basic-recall" },
+      },
+    };
+  }
+
   private async readRedDbIndex(): Promise<IndexDocument> {
-    const raw = await this.kv().get(indexKey());
+    const raw = await this.kvGet(indexKey());
     return isIndexDocument(raw) ? raw : { version: 1, records: [] };
   }
 
@@ -411,7 +520,7 @@ export class RspElisionStore {
   }
 
   private async assertRedDbMintPersisted(handle: `el:${string}`, bytes: number): Promise<void> {
-    const raw = await this.kv().get(recordKey(handle));
+    const raw = await this.kvGet(recordKey(handle));
     if (!isStoredRecord(raw)) {
       throw new Error(`rsp resident failed to persist elision record ${handle}`);
     }
@@ -448,6 +557,103 @@ function indexKey(): string {
 
 function isHandle(value: string): value is `el:${string}` {
   return /^el:[a-f0-9]{12}$/.test(value);
+}
+
+function parseMemoryRecallPayload(payload: unknown): {
+  query: string;
+  limit: number;
+  options: {
+    includeSuperseded?: boolean;
+    scope?: unknown;
+    now?: number;
+    ranking?: unknown;
+  };
+} {
+  if (!isPlainObject(payload)) throw new Error("memory recall payload must be an object");
+  const query = payload.query;
+  if (typeof query !== "string" || query.trim() === "") throw new Error("memory recall query is required");
+  const limit = typeof payload.limit === "number" && Number.isFinite(payload.limit) ? payload.limit : 10;
+  return {
+    query,
+    limit,
+    options: {
+      includeSuperseded: payload.includeSuperseded === true,
+      scope: isPlainObject(payload.scope) ? payload.scope : undefined,
+      ranking: isPlainObject(payload.ranking) ? payload.ranking : undefined,
+    },
+  };
+}
+
+function parseMemoryIngestPayload(payload: unknown): {
+  cwd: string;
+  maxFiles?: number;
+  ignore?: string[];
+} {
+  if (!isPlainObject(payload)) throw new Error("memory ingest payload must be an object");
+  const cwd = payload.cwd;
+  if (typeof cwd !== "string" || cwd.trim() === "") throw new Error("memory ingest cwd is required");
+  const maxFiles = typeof payload.maxFiles === "number" && Number.isFinite(payload.maxFiles)
+    ? payload.maxFiles
+    : undefined;
+  const ignore = Array.isArray(payload.ignore)
+    ? payload.ignore.filter((item): item is string => typeof item === "string")
+    : undefined;
+  return { cwd, maxFiles, ignore };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface ResidentRecallHit {
+  id: string;
+  rid: number;
+  label: string;
+  node_type: string;
+  score: number;
+  excerpt: string;
+}
+
+async function collectMemoryFiles(root: string, maxFiles: number, ignore: string[]): Promise<string[]> {
+  const out: string[] = [];
+  const ignored = new Set([".git", "node_modules", ".red", ...ignore]);
+  async function walk(dir: string): Promise<void> {
+    if (out.length >= maxFiles) return;
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (out.length >= maxFiles) return;
+      if (ignored.has(entry.name)) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+      } else if (entry.isFile() && /\.(md|mdx|txt|ts|tsx|js|jsx|json|yaml|yml|toml|rs|go|py|sql)$/i.test(entry.name)) {
+        out.push(path);
+      }
+    }
+  }
+  await walk(root);
+  return out;
+}
+
+function residentRowToRecallHit(row: Record<string, unknown>, terms: string[]): ResidentRecallHit | null {
+  const rid = Number(row.red_entity_id ?? row.rid);
+  if (!Number.isFinite(rid)) return null;
+  const rawProperties = row.properties ?? row.PROPERTIES;
+  const properties = isPlainObject(rawProperties) ? rawProperties : {};
+  const label = String(row.label ?? row.LABEL ?? properties.title ?? `memory-${rid}`);
+  const nodeType = String(row.node_type ?? row.NODE_TYPE ?? "concept");
+  const content = String(properties.content ?? properties.summary ?? properties.title ?? label);
+  const haystack = `${label} ${content}`.toLowerCase();
+  const matched = terms.filter((term) => haystack.includes(term));
+  if (matched.length === 0 && terms.length > 0) return null;
+  return {
+    id: String(rid),
+    rid,
+    label,
+    node_type: nodeType,
+    score: matched.length || 1,
+    excerpt: content.slice(0, 500),
+  };
 }
 
 function positiveNumber(value: number | undefined, fallback: number): number {
@@ -519,6 +725,7 @@ async function readStoreDocument(path: string): Promise<StoreDocument> {
 async function writableStorePath(path: string): Promise<string> {
   try {
     const bytes = await readFile(path);
+    if (usesEmbeddedRedDb(path)) return path;
     if (isLegacyRedDbStore(bytes)) return legacyRedDbFallbackPath(path);
     return path;
   } catch (err) {
