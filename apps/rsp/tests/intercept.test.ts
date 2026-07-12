@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,29 +73,81 @@ describe("rsp Claude pre-execution hook integration", () => {
       input: Buffer.from(JSON.stringify({ cwd: root, tool_input: { command: "git status" } })),
     });
 
-    expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(Buffer.from("rsp git status\n"));
+    expect(res.status).toBe(1);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
     expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("prints only the rewritten command and exits 0 on a certain match", async () => {
+  it("prints only the rewritten command and exits 0 on a certain match when the resident is healthy", async () => {
     const root = await tempRoot();
+    let healthCalls = 0;
+    let wakeCalls = 0;
     const result = await hookDecisionFromClaudePreExecJson(
       JSON.stringify({ cwd: root, tool_input: { command: "git status" } }),
-      { cwd: root, isEnabled: () => true },
+      {
+        cwd: root,
+        isEnabled: () => true,
+        isResidentHealthy: async () => {
+          healthCalls += 1;
+          return true;
+        },
+        wakeResident: () => {
+          wakeCalls += 1;
+        },
+      },
     );
 
     expect(formatHookDecision(result)).toEqual({ stdout: "rsp git status\n", status: 0 });
+    expect(healthCalls).toBe(1);
+    expect(wakeCalls).toBe(0);
   });
 
   it("prints nothing and exits non-zero on passthrough", async () => {
     const root = await tempRoot();
+    let healthCalls = 0;
+    let wakeCalls = 0;
     const result = await hookDecisionFromClaudePreExecJson(
       JSON.stringify({ cwd: root, tool_input: { command: "git status --short" } }),
-      { cwd: root, isEnabled: () => true },
+      {
+        cwd: root,
+        isEnabled: () => true,
+        isResidentHealthy: async () => {
+          healthCalls += 1;
+          return true;
+        },
+        wakeResident: () => {
+          wakeCalls += 1;
+        },
+      },
     );
 
     expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(healthCalls).toBe(0);
+    expect(wakeCalls).toBe(0);
+  });
+
+  it("passes through and wakes the resident when the resident is not healthy", async () => {
+    const root = await tempRoot();
+    let wakeCalls = 0;
+    const started = performance.now();
+    const result = await hookDecisionFromClaudePreExecJson(
+      JSON.stringify({ cwd: root, tool_input: { command: "git status" } }),
+      {
+        cwd: root,
+        isEnabled: () => true,
+        isResidentHealthy: async () => false,
+        wakeResident: () => {
+          wakeCalls += 1;
+        },
+      },
+    );
+    const elapsedMs = performance.now() - started;
+
+    expect(result).toEqual({ kind: "passthrough", reason: "resident-unhealthy" });
+    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(wakeCalls).toBe(1);
+    expect(elapsedMs).toBeLessThan(50);
   });
 
   it("makes disabled directories inert before rewrite work", async () => {

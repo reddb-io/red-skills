@@ -19,6 +19,7 @@ export interface RspResidentPaths {
   rootDir: string;
   socketPath: string;
   lockPath: string;
+  wakeLockPath: string;
 }
 
 const UNIX_SOCKET_PATH_LIMIT = 108;
@@ -30,6 +31,7 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
     rootDir,
     socketPath: join(socketDir, "rsp.sock"),
     lockPath: join(socketDir, "rsp.lock"),
+    wakeLockPath: join(socketDir, "rsp.wake.lock"),
   };
 }
 
@@ -87,12 +89,12 @@ type ResidentRequestWithoutId = RspResidentRequest extends infer Request
 
 export async function ensureResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
-  if (await ping(paths.socketPath)) return;
+  if (await pingResident(paths.socketPath)) return;
 
   const lock = await tryAcquireLock(paths.lockPath);
   if (lock) {
     try {
-      if (await ping(paths.socketPath)) return;
+      if (await pingResident(paths.socketPath)) return;
       const child = spawnResident(paths, config);
       await waitForServer(paths.socketPath, child);
       return;
@@ -105,12 +107,53 @@ export async function ensureResidentServer(paths: RspResidentPaths, config: RspR
   await waitForServer(paths.socketPath);
 }
 
-async function ping(socketPath: string): Promise<boolean> {
+export async function pingResident(socketPath: string, timeoutMs = 200): Promise<boolean> {
   try {
-    const response = await sendResidentRequest({ socketPath, timeoutMs: 200 }, { id: randomUUID(), op: "ping" });
+    const response = await sendResidentRequest({ socketPath, timeoutMs }, { id: randomUUID(), op: "ping" });
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+export async function kickResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<boolean> {
+  await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
+  if (await pingResident(paths.socketPath, 50)) return false;
+
+  const lock = await tryAcquireLock(paths.wakeLockPath);
+  if (!lock) return false;
+  await lock.close();
+
+  const entry = process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
+  const child = spawn(process.execPath, [
+    ...process.execArgv,
+    entry,
+    "warm-resident",
+    "--socket",
+    paths.socketPath,
+    "--store-uri",
+    config.storeUri,
+    "--ttl-days",
+    String(config.ttlDays),
+    "--byte-budget",
+    String(config.byteBudget),
+    "--wake-lock",
+    paths.wakeLockPath,
+  ], {
+    cwd: paths.rootDir,
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, RSP_RESIDENT_WARMER: "1" },
+  });
+  child.unref();
+  return true;
+}
+
+export async function warmResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
+  try {
+    await ensureResidentServer(paths, config);
+  } finally {
+    await rm(paths.wakeLockPath, { force: true });
   }
 }
 
@@ -118,7 +161,7 @@ async function waitForServer(socketPath: string, child?: ChildProcess): Promise<
   const deadline = Date.now() + 5_000;
   let last: unknown;
   while (Date.now() < deadline) {
-    if (await ping(socketPath)) return;
+    if (await pingResident(socketPath)) return;
     if (child && child.exitCode != null) {
       throw new Error(`resident rsp server exited before ready (${child.exitCode})`);
     }

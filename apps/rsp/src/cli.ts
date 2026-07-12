@@ -61,6 +61,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     return 0;
   }
+  if (args.command === "warm-resident") {
+    const warmPaths = resolveResidentPaths(process.cwd());
+    const socket = valueAfter(args.positional, "--socket") ?? warmPaths.socketPath;
+    const wakeLock = valueAfter(args.positional, "--wake-lock") ?? warmPaths.wakeLockPath;
+    const warmConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    if (!warmConfig.enabled) return 0;
+    const { warmResidentServer } = await import("./resident-client.js");
+    await warmResidentServer({
+      ...warmPaths,
+      socketPath: socket,
+      wakeLockPath: wakeLock,
+    }, {
+      storeUri: warmConfig.storeUri,
+      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
+      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
+    });
+    return 0;
+  }
 
   const { existsSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");

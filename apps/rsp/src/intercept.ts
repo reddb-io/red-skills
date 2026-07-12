@@ -1,5 +1,12 @@
 import { readFileSync } from "node:fs";
-import { resolveRspConfig } from "./config.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
+import {
+  kickResidentServer,
+  pingResident,
+  resolveResidentPaths,
+} from "./resident-client.js";
 
 export interface RspWrapperCapability {
   id: string;
@@ -14,6 +21,8 @@ export type RewriteDecision =
 export interface HookDecisionOptions {
   cwd: string;
   isEnabled?: (cwd: string) => boolean | Promise<boolean>;
+  isResidentHealthy?: (cwd: string) => boolean | Promise<boolean>;
+  wakeResident?: (cwd: string) => void | Promise<void>;
   rewrite?: (command: string) => RewriteDecision;
 }
 
@@ -68,7 +77,14 @@ export async function hookDecisionFromClaudePreExecJson(
 
   const command = extractHookCommand(payload);
   if (!command) return { kind: "passthrough", reason: "missing-command" };
-  return (options.rewrite ?? rewriteCommand)(command);
+  const decision = (options.rewrite ?? rewriteCommand)(command);
+  if (decision.kind !== "rewrite") return decision;
+
+  const healthy = await (options.isResidentHealthy ?? isRspResidentHealthy)(cwd);
+  if (healthy) return decision;
+
+  await (options.wakeResident ?? wakeRspResident)(cwd);
+  return { kind: "passthrough", reason: "resident-unhealthy" };
 }
 
 export function formatHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
@@ -86,6 +102,36 @@ export async function runClaudePreExecHook(stdinPath?: string): Promise<number> 
 
 function isRspHookEnabled(cwd: string): boolean {
   return resolveRspConfig(cwd, process.env).enabled;
+}
+
+async function isRspResidentHealthy(cwd: string): Promise<boolean> {
+  const paths = resolveResidentPaths(cwd);
+  return await pingResident(paths.socketPath, 50);
+}
+
+async function wakeRspResident(cwd: string): Promise<void> {
+  const config = resolveRspConfig(cwd, process.env);
+  if (!config.enabled) return;
+  if (!storeIsProvisioned(config)) return;
+  const paths = resolveResidentPaths(cwd);
+  await kickResidentServer(paths, toResidentConfig(config));
+}
+
+function toResidentConfig(config: RspRuntimeConfig) {
+  return {
+    storeUri: config.storeUri,
+    ttlDays: config.ttlDays,
+    byteBudget: config.byteBudget,
+  };
+}
+
+function storeIsProvisioned(config: RspRuntimeConfig): boolean {
+  if (!config.storeUri.startsWith("file://")) return true;
+  try {
+    return existsSync(fileURLToPath(config.storeUri));
+  } catch {
+    return false;
+  }
 }
 
 function extractHookCommand(payload: Record<string, unknown>): string {

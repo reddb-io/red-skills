@@ -67,6 +67,15 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
   });
 }
 
+function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
+  return spawnSync(process.execPath, [bundle, "hook", "claude-pre-exec"], {
+    cwd,
+    env: { ...process.env, ...env },
+    input: Buffer.from(JSON.stringify({ cwd, tool_input: { command } })),
+    encoding: "buffer",
+  });
+}
+
 function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, string> = {}) {
   return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
@@ -195,6 +204,19 @@ async function seedWarmRedCache(): Promise<string> {
   return cacheDir;
 }
 
+async function waitForResidentSocket(root: string): Promise<void> {
+  const paths = trackedResidentPaths(root);
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      await stat(paths.socketPath);
+      return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  await stat(paths.socketPath);
+}
+
 describe("rsp cli", () => {
   it("passes wrappers through without creating .red when rsp is not enabled", async () => {
     const root = await initGitRepo();
@@ -293,6 +315,45 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+  }, 120_000);
+
+  it("built bundle pre-exec hook passes through while cold, warms once, then rewrites when healthy", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+    const paths = trackedResidentPaths(root);
+
+    const cold = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
+
+    expect(cold.status).toBe(1);
+    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.stderr).toEqual(Buffer.alloc(0));
+    expect(cold.elapsedMs).toBeLessThan(200);
+    await expect(stat(paths.wakeLockPath)).resolves.toMatchObject({ size: expect.any(Number) });
+
+    for (let i = 0; i < 4; i++) {
+      const repeat = runBundleHookFromCwd(root, "git status", env);
+      expect([0, 1]).toContain(repeat.status);
+      if (repeat.status === 0) {
+        expect(repeat.stdout).toEqual(Buffer.from("rsp git status\n"));
+      } else {
+        expect(repeat.stdout).toEqual(Buffer.alloc(0));
+      }
+      expect(repeat.stderr).toEqual(Buffer.alloc(0));
+    }
+
+    await waitForResidentSocket(root);
+    await expect(stat(paths.wakeLockPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
+
+    expect(warm.status).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
+    expect(warm.elapsedMs).toBeLessThan(100);
   }, 120_000);
 
   it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {
