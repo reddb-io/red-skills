@@ -2,6 +2,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import type { RspElisionStore } from "./elision-store.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
+import type { RspTelemetryStats } from "./telemetry.js";
 
 interface ParsedArgs {
   command?: string;
@@ -120,11 +121,14 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     : openResidentStore();
   let closeStore: (() => Promise<void>) | undefined;
   try {
-    if (!args.command) {
+    if (!args.command || args.command === "stats") {
       const store = await openReadStore();
       closeStore = () => store.close();
       const stats = await store.stats();
-      process.stdout.write(renderStats(stats));
+      const telemetry = hasTelemetryStats(store)
+        ? await store.telemetryStats(statsSinceDays(args.positional))
+        : emptyTelemetryStats(statsSinceDays(args.positional));
+      process.stdout.write(renderStats(stats, telemetry, statsFull(args.positional)));
       return 0;
     }
 
@@ -257,6 +261,17 @@ function isEmptyUnbornGitRepo(cwd: string): boolean {
 type ElisionStoreLike = Pick<RspElisionStore, "mint" | "close"> & {
   lastResponseMetrics?: () => ResidentResponseMetrics | undefined;
 };
+
+type TelemetryStatsStore = {
+  telemetryStats: (sinceDays: number) => Promise<RspTelemetryStats>;
+};
+
+function hasTelemetryStats(store: unknown): store is TelemetryStatsStore {
+  return typeof store === "object" &&
+    store !== null &&
+    "telemetryStats" in store &&
+    typeof (store as { telemetryStats?: unknown }).telemetryStats === "function";
+}
 
 interface WrappedCommandResult {
   stdout: Buffer;
@@ -423,14 +438,117 @@ function parseArgs(argv: string[]): ParsedArgs {
   return out;
 }
 
-function renderStats(stats: { records: number; bytes: number; oldest: string | null; budget: number }): string {
+function statsSinceDays(args: readonly string[]): number {
+  const raw = valueAfter(args, "--since") ?? args.find((arg) => arg.startsWith("--since="))?.slice("--since=".length);
+  if (!raw) return 30;
+  const match = /^(\d+)(d)?$/.exec(raw);
+  if (!match) return 30;
+  const days = Number(match[1]);
+  return Number.isFinite(days) && days > 0 ? days : 30;
+}
+
+function statsFull(args: readonly string[]): boolean {
+  return args.includes("--full");
+}
+
+function renderStats(
+  stats: { records: number; bytes: number; oldest: string | null; budget: number },
+  telemetry = emptyTelemetryStats(30),
+  full = false,
+): string {
+  const topCommands = telemetry.savings.top_commands.slice(0, full ? 10 : 3);
+  const daily = full ? telemetry.savings.daily_tokens_saved : telemetry.savings.daily_tokens_saved.slice(-7);
   return [
     `records: ${stats.records}`,
     `bytes: ${stats.bytes}`,
     `oldest: ${stats.oldest ?? "none"}`,
     `budget: ${stats.budget}`,
+    "savings:",
+    `  window_days: ${telemetry.window_days}`,
+    `  empty: ${telemetry.empty}`,
+    `  invocations: ${telemetry.savings.invocations}`,
+    `  elided: ${telemetry.savings.elided}`,
+    `  raw_bytes: ${telemetry.savings.raw_bytes}`,
+    `  emitted_bytes: ${telemetry.savings.emitted_bytes}`,
+    `  bytes_saved: ${telemetry.savings.bytes_saved}`,
+    `  tokens_saved: ${telemetry.savings.tokens_saved}`,
+    "  daily_tokens_saved:",
+    ...renderDaily(daily),
+    ...(!full && telemetry.savings.daily_tokens_saved.length > daily.length
+      ? [`    elided_days: ${telemetry.savings.daily_tokens_saved.length - daily.length}`, "    hint: --full"]
+      : []),
+    "  top_commands:",
+    ...renderTopCommands(topCommands),
+    "health:",
+    `  degradations: ${telemetry.health.degradations}`,
+    `  degradation_rate: ${formatRate(telemetry.health.degradation_rate)}`,
+    `  most_recent_degradation_at: ${telemetry.health.most_recent?.timestamp ?? "none"}`,
+    `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
+    "  degradations_by_reason:",
+    ...renderReasons(telemetry.health.by_reason),
+    "latency:",
+    `  wrapper_ms_p50: ${formatNullable(telemetry.latency.wrapper_ms_p50)}`,
+    `  wrapper_ms_p95: ${formatNullable(telemetry.latency.wrapper_ms_p95)}`,
+    `  store_open_count_sum: ${telemetry.latency.store_open_count_sum}`,
+    `  store_elapsed_ms_sum: ${telemetry.latency.store_elapsed_ms_sum}`,
+    `  store_elapsed_ms_avg: ${formatNullable(telemetry.latency.store_elapsed_ms_avg)}`,
     "",
   ].join("\n");
+}
+
+function renderDaily(series: Array<{ date: string; tokens_saved: number }>): string[] {
+  if (series.length === 0) return ["    empty: true"];
+  return series.map((entry) => `    ${entry.date}: ${entry.tokens_saved}`);
+}
+
+function renderTopCommands(commands: Array<{ command: string; invocations: number; bytes_saved: number; tokens_saved: number }>): string[] {
+  if (commands.length === 0) return ["    empty: true"];
+  return commands.map((entry) =>
+    `    - command: ${entry.command} invocations: ${entry.invocations} bytes_saved: ${entry.bytes_saved} tokens_saved: ${entry.tokens_saved}`
+  );
+}
+
+function renderReasons(reasons: Array<{ reason: string; count: number }>): string[] {
+  if (reasons.length === 0) return ["    empty: true"];
+  return reasons.map((entry) => `    ${entry.reason}: ${entry.count}`);
+}
+
+function formatNullable(value: number | null): string {
+  return value == null ? "none" : String(value);
+}
+
+function formatRate(value: number): string {
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".0");
+}
+
+function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
+  return {
+    window_days: windowDays,
+    empty: true,
+    savings: {
+      invocations: 0,
+      elided: 0,
+      raw_bytes: 0,
+      emitted_bytes: 0,
+      bytes_saved: 0,
+      tokens_saved: 0,
+      daily_tokens_saved: [],
+      top_commands: [],
+    },
+    health: {
+      degradations: 0,
+      degradation_rate: 0,
+      by_reason: [],
+      most_recent: null,
+    },
+    latency: {
+      wrapper_ms_p50: null,
+      wrapper_ms_p95: null,
+      store_open_count_sum: 0,
+      store_elapsed_ms_sum: 0,
+      store_elapsed_ms_avg: null,
+    },
+  };
 }
 
 function renderSetupResult(result: { configChanged: boolean; storeCreated: boolean }): string {
