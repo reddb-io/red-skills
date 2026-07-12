@@ -6,7 +6,7 @@ import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output
 
 export interface TestRenderOptions {
   level: RspLossLevel;
-  store?: RspElisionStore;
+  store?: Pick<RspElisionStore, "mint">;
 }
 
 interface TestFailure extends JsonObject {
@@ -329,7 +329,7 @@ function parseCargoTest(stdout: string): ParsedTestRun | null {
 async function renderExcerpt(
   excerpt: string,
   command: string,
-  store?: RspElisionStore,
+  store?: Pick<RspElisionStore, "mint">,
 ): Promise<{ text: string; handle?: `el:${string}`; bytesElided: number }> {
   const bytes = Buffer.from(excerpt);
   if (bytes.length <= EXCERPT_LIMIT_BYTES) return { text: excerpt, bytesElided: 0 };
