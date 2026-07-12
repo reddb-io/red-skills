@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -37,6 +37,17 @@ function runRspFromCwd(cwd: string, args: string[], env: Record<string, string>)
   });
 }
 
+function runGit(args: string[]) {
+  return spawnSync("git", args, { encoding: "buffer" });
+}
+
+async function initGitRepo(): Promise<string> {
+  const root = await tempRoot();
+  const init = runGit(["-C", root, "init"]);
+  expect(init.status).toBe(0);
+  return root;
+}
+
 describe("rsp cli", () => {
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
     const root = await tempRoot();
@@ -47,6 +58,62 @@ describe("rsp cli", () => {
     expect(res.status).toBe(1);
     expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("passes through a successful wrapper when the repo store has not been provisioned", async () => {
+    const root = await initGitRepo();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
+    const direct = runGit(["-C", root, "status", "--short"]);
+
+    const res = runRspFromCwd(root, ["git", "-C", root, "status", "--short"], {});
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(direct.stderr);
+    await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("passes through a failing wrapper with the underlying exit code and raw stderr when the store is absent", async () => {
+    const root = await initGitRepo();
+    await mkdir(join(root, ".red"), { recursive: true });
+    const args = ["-C", root, "definitely-not-a-git-subcommand"];
+    const direct = runGit(args);
+
+    const res = runRspFromCwd(root, ["git", ...args], {});
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(direct.stderr);
+  });
+
+  it("passes through wrappers when the configured store is unreadable", async () => {
+    const root = await initGitRepo();
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "red.rdb");
+    await writeFile(storePath, "not a reddb store", "utf8");
+    await writeFile(join(root, "raw.txt"), "raw\n", "utf8");
+    const direct = runGit(["-C", root, "status", "--short"]);
+
+    const res = runRspFromCwd(root, ["git", "-C", root, "status", "--short"], { RSP_STORE_URI: `file://${storePath}` });
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(direct.stderr);
+  });
+
+  it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
+    const root = await tempRoot();
+    const storeUri = `file://${join(root, "red.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri });
+    await store.close();
+    const direct = runGit(["--version"]);
+
+    const res = runRsp(root, ["git", "--version"], { RSP_STORE_URI: storeUri });
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(direct.stderr);
   });
 
   it("prints store stats instead of help when called without arguments", async () => {
