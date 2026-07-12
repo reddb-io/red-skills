@@ -4,9 +4,14 @@ import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { connect } from "@reddb-io/sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
+import {
+  RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+  RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+} from "../src/telemetry.js";
 
 const roots: string[] = [];
 const residentDirs: string[] = [];
@@ -229,6 +234,20 @@ async function waitForResidentSocket(root: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   await stat(paths.socketPath);
+}
+
+async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
+  const db = await connect(storeUri);
+  try {
+    const raw = await db.kv(collection).list({ limit: 1000 });
+    return raw.items.map((entry) => typeof entry.value === "string" ? JSON.parse(entry.value) as unknown : entry.value);
+  } finally {
+    await db.close();
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 describe("rsp cli", () => {
@@ -549,6 +568,61 @@ describe("rsp cli", () => {
     expect(degraded.status).toBe(raw.status);
     expect(degraded.stdout).toEqual(raw.stdout);
     expect(degraded.stderr.toString("utf8")).toBe("rsp: store not provisioned, passing through\n");
+  }, 120_000);
+
+  it("built bundle records invocation and degradation telemetry through the resident", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    await waitForResidentSocket(root);
+
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(compressed.status).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+    const residentResult = await resident;
+    expect(residentResult.status, `${residentResult.stdout.toString("utf8")}${residentResult.stderr.toString("utf8")}`).toBe(0);
+
+    const degradedResident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    await waitForResidentSocket(root);
+    const degraded = runBundleFromCwd(root, ["git", "--version"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const direct = runGit(["--version"]);
+    expect(degraded.status).toBe(direct.status);
+    expect(degraded.stdout).toEqual(direct.stdout);
+    expect(degraded.stderr.toString("utf8")).toBe("rsp: wrapper failed, passing through\n");
+    const degradedResidentResult = await degradedResident;
+    expect(
+      degradedResidentResult.status,
+      `${degradedResidentResult.stdout.toString("utf8")}${degradedResidentResult.stderr.toString("utf8")}`,
+    ).toBe(0);
+
+    const invocations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    const invocation = invocations.find((record) => isRecord(record) && record.command === "git log");
+    expect(invocation).toMatchObject({
+      command: "git log",
+      wrapper: "git",
+      loss: "terse",
+      elided: true,
+      raw_bytes: expect.any(Number),
+      emitted_bytes: compressed.stdout.length,
+      wrapper_ms: expect.any(Number),
+      store_open_count: expect.any(Number),
+      store_elapsed_ms: expect.any(Number),
+      tokens_raw: expect.any(Number),
+      tokens_emitted: expect.any(Number),
+      estimated: false,
+    });
+
+    const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
+    expect(degradations).toContainEqual(expect.objectContaining({
+      command: "git --version",
+      reason: "wrapper failed",
+    }));
   }, 120_000);
 
   it("built bundle keeps git log terse elision latency under budget", async () => {

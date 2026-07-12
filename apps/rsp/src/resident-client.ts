@@ -17,6 +17,11 @@ import {
   type RspResidentPaths,
 } from "@reddb-io/shared/resident-client.js";
 
+export interface ResidentResponseMetrics {
+  storeOpenCount?: number;
+  storeElapsedMs?: number;
+}
+
 export {
   ensureResidentServer,
   kickResidentServer,
@@ -28,10 +33,16 @@ export {
 
 /** rsp-side adapter: the elision-store surface, served by the resident. */
 export class ResidentRspElisionStore {
+  private metrics?: ResidentResponseMetrics;
+
   constructor(
     private readonly paths: RspResidentPaths,
     private readonly config: RspResidentConfig,
   ) {}
+
+  lastResponseMetrics(): ResidentResponseMetrics | undefined {
+    return this.metrics;
+  }
 
   async mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
     const response = await this.request({
@@ -69,6 +80,10 @@ export class ResidentRspElisionStore {
     await ensureResidentServer(this.paths, this.config);
     const response = await sendResidentRequest(this.paths, { ...request, id: randomUUID() } as RspResidentRequest);
     if (!response.ok) throw new Error(response.error);
+    this.metrics = {
+      storeOpenCount: response.storeOpenCount,
+      storeElapsedMs: response.storeElapsedMs,
+    };
     return response.value;
   }
 }

@@ -56,6 +56,8 @@ describe("rsp telemetry spool", () => {
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
       id: "boot-event",
       command: "git status",
+      raw_text: "hello world",
+      emitted_text: "hello",
       bytes: 100,
     });
     await writeFile(telemetrySpoolPath(root), "not-json\n", { flag: "a" });
@@ -86,10 +88,59 @@ describe("rsp telemetry spool", () => {
     await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "boot-event")).resolves.toMatchObject({
       id: "boot-event",
       command: "git status",
+      tokens_raw: expect.any(Number),
+      tokens_emitted: expect.any(Number),
+      estimated: false,
     });
     await expect(readTelemetry(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION, "idle-event")).resolves.toMatchObject({
       id: "idle-event",
       reason: "resident unavailable",
+    });
+  }, 20_000);
+
+  it("computes telemetry tokens at drain time and estimates oversized payloads", async () => {
+    const root = await tempRoot();
+    const huge = "x".repeat(300 * 1024);
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "exact",
+      command: "git status",
+      raw_text: "alpha beta",
+      emitted_text: "alpha",
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "estimated",
+      command: "git log",
+      raw_text: huge,
+      emitted_text: huge,
+    });
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const server = runResidentServer({
+      rootDir: root,
+      socketPath: paths.socketPath,
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      telemetryTtlDays: 90,
+      telemetryByteBudget: 1_000_000,
+      idleMs: 100,
+    });
+    await waitForResident(paths.socketPath);
+    await server;
+
+    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "exact")).resolves.toMatchObject({
+      tokens_raw: expect.any(Number),
+      tokens_emitted: expect.any(Number),
+      estimated: false,
+    });
+    const estimated = await readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "estimated");
+    expect(estimated).toMatchObject({
+      tokens_raw: Math.ceil(Buffer.byteLength(huge, "utf8") / 4),
+      tokens_emitted: Math.ceil(Buffer.byteLength(huge, "utf8") / 4),
+      estimated: true,
     });
   }, 20_000);
 

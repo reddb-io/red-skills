@@ -165,6 +165,7 @@ async function renderTerse(
     mintedHandle: handle,
     bytesElided,
     rowsElided: elidedFailures,
+    rawOutput: Buffer.from(fullToon),
   };
 }
 
