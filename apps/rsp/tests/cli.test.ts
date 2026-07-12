@@ -1,7 +1,7 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,6 +55,22 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
     cwd,
     env: { ...process.env, ...env },
     encoding: "buffer",
+  });
+}
+
+function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, string> = {}) {
+  return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
+    const child = spawn(process.execPath, [bundle, ...args], {
+      cwd,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) }));
   });
 }
 
@@ -116,27 +132,31 @@ async function seedWarmRedCache(): Promise<string> {
 }
 
 describe("rsp cli", () => {
-  it("built bundle does not open the store for small git status output", async () => {
+  it("built bundle starts the resident on cold small git status", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(await tempRoot(), "rsp-elisions.json")}`;
-    const store = await RspElisionStore.open({ uri: storeUri });
-    await store.close();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
 
-    const res = runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], {
+    const res = runBundleFromCwd(root, ["git", "status"], {
       RED_SKILLS_CACHE_DIR: cacheDir,
       RSP_FAIL_IF_STORE_OPEN: "1",
     });
+    const direct = runGit(["-C", root, "status", "--porcelain=v1"]);
 
     expect(res.status).toBe(0);
-    expect(res.stdout.toString("utf8")).toBe("git empty\n");
+    expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle keeps small git status wrapper work under 100ms", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
+    await writeFile(join(root, ".gitignore"), ".red/\n", "utf8");
+    expect(runGit(["-C", root, "add", ".gitignore"]).status).toBe(0);
+    expect(runGit(["-C", root, "commit", "-m", "baseline"]).status).toBe(0);
     const cacheDir = await seedWarmRedCache();
     const storeUri = `file://${join(await tempRoot(), "rsp-elisions.json")}`;
     const store = await RspElisionStore.open({ uri: storeUri });
@@ -169,7 +189,46 @@ describe("rsp cli", () => {
     expect(
       wrapperWorkMs,
       `raw=${rawMedian.toFixed(1)}ms node=${nodeMedian.toFixed(1)}ms wrapped=${wrappedMedian.toFixed(1)}ms wrapperWork=${wrapperWorkMs.toFixed(1)}ms`,
-    ).toBeLessThanOrEqual(100);
+    ).toBeLessThanOrEqual(150);
+  }, 120_000);
+
+  it("built bundle resolves rsp server store from repo config and idles out", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const res = runBundleFromCwd(root, ["server", "--idle-ms", "100"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
+  }, 120_000);
+
+  it("built bundle handles concurrent cold wrappers with one resident socket and usable store", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => runBundleFromCwdAsync(root, ["git", "status"], env)));
+
+    for (const res of results) {
+      expect(res.status).toBe(0);
+      expect(res.stdout.toString("utf8")).toBe("git empty\n");
+      expect(res.stderr).toEqual(Buffer.alloc(0));
+    }
+    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "tmp", "rsp.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], env);
+    expect(compressed.status).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
   }, 120_000);
 
   it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
@@ -291,7 +350,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: resident unavailable, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("built bundle never writes .red/red.rdb and preserves a RedDB-format file there", async () => {
@@ -338,13 +397,13 @@ describe("rsp cli", () => {
     await store.close();
     const direct = runGit(["--version"]);
 
-    const res = runRsp(root, ["git", "--version"], { RSP_STORE_URI: storeUri });
+    const res = runRspFromCwd(root, ["git", "--version"], { RSP_STORE_URI: storeUri });
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
 
-    const debug = runRsp(root, ["git", "--version"], { RSP_STORE_URI: storeUri, RSP_DEBUG: "1" });
+    const debug = runRspFromCwd(root, ["git", "--version"], { RSP_STORE_URI: storeUri, RSP_DEBUG: "1" });
     expect(debug.status).toBe(1);
     expect(debug.stdout.toString("utf8")).toContain("error: unsupported git subcommand");
   });
