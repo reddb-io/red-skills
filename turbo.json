@@ -11,7 +11,7 @@
     },
     "bundle": {
       "dependsOn": ["^build"],
-      "outputs": ["../../dist/**"]
+      "cache": false
     },
     "@reddb-io/dev#bundle": {
       "dependsOn": [
@@ -19,18 +19,18 @@
         "@reddb-io/shared#build",
         "@reddb-io/toon#build"
       ],
-      "outputs": ["../../dist/**"]
+      "cache": false
     },
     "@reddb-io/rsp#bundle": {
       "dependsOn": [
         "@reddb-io/build-info#build",
         "@reddb-io/toon#build"
       ],
-      "outputs": ["../../dist/**"]
+      "cache": false
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "../../dist/**"]
+      "cache": false
     }
   }
 }
