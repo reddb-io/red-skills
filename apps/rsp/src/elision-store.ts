@@ -283,6 +283,21 @@ export class RspElisionStore {
     return this.db.kv(RSP_ELISION_COLLECTION);
   }
 
+  /**
+   * The SDK's kv().get hands back the stored value as a JSON string rather
+   * than a parsed object. Normalize on read; main never noticed because the
+   * legacy-store redirect kept elisions off the RedDB path entirely.
+   */
+  private async kvGet(key: string): Promise<unknown> {
+    const raw = await this.kv().get(key);
+    if (typeof raw !== "string") return raw;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+
   private async ensureRedDbStore(): Promise<void> {
     const index = await this.readRedDbIndex();
     await this.writeRedDbIndex(index);
@@ -318,9 +333,9 @@ export class RspElisionStore {
 
   private async getRedDb(handle: string): Promise<RspElisionRecord | RspExpiredHandle | null> {
     if (!isHandle(handle)) return null;
-    const tombstone = await this.kv().get(tombstoneKey(handle));
+    const tombstone = await this.kvGet(tombstoneKey(handle));
     if (isExpiredHandle(tombstone)) return tombstone;
-    const raw = await this.kv().get(recordKey(handle));
+    const raw = await this.kvGet(recordKey(handle));
     if (!isStoredRecord(raw)) return null;
     if (Date.parse(raw.expires_at) <= this.opts.now().getTime()) {
       const expired = { status: "expired" as const, expired_at: raw.expires_at, command: raw.command };
@@ -464,7 +479,7 @@ export class RspElisionStore {
   }
 
   private async readRedDbIndex(): Promise<IndexDocument> {
-    const raw = await this.kv().get(indexKey());
+    const raw = await this.kvGet(indexKey());
     return isIndexDocument(raw) ? raw : { version: 1, records: [] };
   }
 
@@ -505,7 +520,7 @@ export class RspElisionStore {
   }
 
   private async assertRedDbMintPersisted(handle: `el:${string}`, bytes: number): Promise<void> {
-    const raw = await this.kv().get(recordKey(handle));
+    const raw = await this.kvGet(recordKey(handle));
     if (!isStoredRecord(raw)) {
       throw new Error(`rsp resident failed to persist elision record ${handle}`);
     }
