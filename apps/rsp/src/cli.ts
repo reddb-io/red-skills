@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
@@ -43,8 +43,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  if (wrapperCommand && isUnreadableFileStore(config.storeUri)) return await degradeToPassthrough("store unreadable", args.positional);
-
   const openStore = () => RspElisionStore.open({
     uri: config.storeUri,
     ttlDays: config.ttlDays,
@@ -175,22 +173,6 @@ async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
 
 function isWrapperCommand(command: string | undefined): boolean {
   return command === "git" || command === "gh" || command === "vitest" || command === "cargo";
-}
-
-function isUnreadableFileStore(uri: string): boolean {
-  if (!uri.startsWith("file://")) return false;
-  let fd: number | undefined;
-  try {
-    fd = openSync(fileURLToPath(uri), "r");
-    const header = Buffer.alloc(64);
-    const bytesRead = readSync(fd, header, 0, header.length, 0);
-    const bytes = header.subarray(0, bytesRead);
-    return !bytes.includes("RDDB") && !bytes.includes("RDBS");
-  } catch {
-    return true;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
