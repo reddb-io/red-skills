@@ -214,7 +214,7 @@ _Avoid_: graph.rdb, the memory database, elision cache
 
 **rsp**:
 The single shared binary that wraps engineering CLIs behind agent-ergonomic subcommands (`rsp git status`, `rsp test`) and carries the interception hook's rewrite table in the same artifact, so the two can never version-skew. It lives in a neutral package consumed by `dev` and `memory`; its hook activates only in a repo whose `.red/config.yaml` opts in (ADR 0067 posture). Wrapper output is TOON per the public spec; every lossy level mints an **Elision handle**.
-_Avoid_: proxy, RTK replacement, compression layer, when naming the whole surface — interception is only one of its three parts
+_Avoid_: proxy, drop-in replacement, compression layer, when naming the whole surface — interception is only one of its three parts
 
 ## Relationships
 
