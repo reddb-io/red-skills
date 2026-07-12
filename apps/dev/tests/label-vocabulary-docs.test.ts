@@ -36,6 +36,15 @@ function writeFakeRuntime(root: string, label: string): void {
   );
 }
 
+function writeFakeRspBundle(root: string, label: string): void {
+  const dist = join(root, "dist");
+  mkdirSync(dist, { recursive: true });
+  writeFileSync(
+    join(dist, "rsp.bundle.min.mjs"),
+    `#!/usr/bin/env node\nconsole.log(JSON.stringify({ label: ${JSON.stringify(label)}, args: process.argv.slice(2) }));\n`,
+  );
+}
+
 function shimEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
   delete env.CLAUDE_PLUGIN_ROOT;
@@ -164,6 +173,8 @@ describe("red-setup docs", () => {
     expect(skill).toContain("red-skills-dev go");
     expect(skill).toContain("Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally");
     expect(script).toContain("RED_SKILLS_DEV_PLUGIN_ROOT");
+    expect(script).toContain("rsp_target=");
+    expect(script).toContain("dist/rsp.bundle.min.mjs");
     expect(script).toContain(".codex/plugins/cache/red-skills/dev");
     expect(script).toContain(".claude/plugins/cache/red-skills/dev");
     expect(script).toContain(".cache/red-skills/bundles");
@@ -196,6 +207,66 @@ describe("red-setup docs", () => {
         encoding: "utf8",
       }).trim();
       expect(JSON.parse(cacheOutput)).toEqual({ label: "claude9", args: ["dashboard", "--json"] });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("installs an rsp shim that resolves without npm or network", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "red-rsp-shim-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "home");
+    const envRoot = join(tmp, "env-root");
+    const script = join(ROOT, "plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh");
+
+    try {
+      writeFakeRspBundle(envRoot, "env-rsp");
+      execFileSync("bash", [script], { env: { ...process.env, XDG_BIN_HOME: bin }, encoding: "utf8" });
+
+      const commandPath = execFileSync("bash", ["-lc", "command -v rsp"], {
+        env: shimEnv(home, {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RED_SKILLS_DEV_PLUGIN_ROOT: envRoot,
+        }),
+        encoding: "utf8",
+      }).trim();
+      expect(commandPath).toBe(join(bin, "rsp"));
+
+      const envOutput = execFileSync("rsp", ["git", "status"], {
+        env: shimEnv(home, {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RED_SKILLS_DEV_PLUGIN_ROOT: envRoot,
+        }),
+        encoding: "utf8",
+      }).trim();
+      expect(JSON.parse(envOutput)).toEqual({ label: "env-rsp", args: ["git", "status"] });
+
+      rmSync(home, { recursive: true, force: true });
+      writeFakeRspBundle(join(home, ".codex", "plugins", "cache", "red-skills", "dev", "1.0.0"), "codex-rsp");
+      writeFakeRspBundle(join(home, ".claude", "plugins", "cache", "red-skills", "dev", "9.0.0"), "claude-rsp");
+
+      const cacheOutput = execFileSync("rsp", ["show", "el:123"], {
+        env: shimEnv(home, { PATH: `${bin}:${process.env.PATH ?? ""}` }),
+        encoding: "utf8",
+      }).trim();
+      expect(JSON.parse(cacheOutput)).toEqual({ label: "claude-rsp", args: ["show", "el:123"] });
+
+      rmSync(home, { recursive: true, force: true });
+      const bundleRoot = join(tmp, "bundle-cache");
+      mkdirSync(bundleRoot, { recursive: true });
+      writeFileSync(
+        join(bundleRoot, "rsp-2.0.0.bundle.min.mjs"),
+        `#!/usr/bin/env node\nconsole.log(JSON.stringify({ label: "bundle-rsp", args: process.argv.slice(2) }));\n`,
+      );
+
+      const bundleOutput = execFileSync("rsp", ["gh", "pr", "list"], {
+        env: shimEnv(home, {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RED_SKILLS_CACHE_DIR: bundleRoot,
+        }),
+        encoding: "utf8",
+      }).trim();
+      expect(JSON.parse(bundleOutput)).toEqual({ label: "bundle-rsp", args: ["gh", "pr", "list"] });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
