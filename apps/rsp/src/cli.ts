@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from "node:fs";
 import type { RspElisionStore } from "./elision-store.js";
+import type { ResidentResponseMetrics } from "./resident-client.js";
 
 interface ParsedArgs {
   command?: string;
@@ -88,7 +89,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const { fileURLToPath } = await import("node:url");
   const residentPaths = resolveResidentPaths(process.cwd());
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
-    if (wrapperCommand) return await degradeToPassthrough("store not provisioned", args.positional);
+    if (wrapperCommand) return await degradeToPassthrough("store not provisioned", args.positional, undefined, residentPaths.rootDir);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
@@ -131,62 +132,47 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       try {
         await suppressRspStderr(warmResidentStore);
       } catch (err) {
-        return await degradeToPassthrough("resident unavailable", args.positional, err);
+        return await degradeToPassthrough("resident unavailable", args.positional, err, residentPaths.rootDir);
       }
       if (isFastGitStatus(args.positional)) return await runFastGitStatus();
       const { runGitWrapper } = await import("./git-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
+      const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
         level: args.level,
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
       }));
-      process.stdout.write(result.stdout);
-      process.stderr.write(result.stderr);
-      if (result.signal) {
-        process.kill(process.pid, result.signal);
-        return 128;
-      }
-      return result.status ?? 0;
+      return await emitWrappedResult(args, result, started, store);
     }
 
     if (args.command === "gh") {
       try {
         await suppressRspStderr(warmResidentStore);
       } catch (err) {
-        return await degradeToPassthrough("resident unavailable", args.positional, err);
+        return await degradeToPassthrough("resident unavailable", args.positional, err, residentPaths.rootDir);
       }
       const { runGhWrapper } = await import("./gh-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
+      const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
-      process.stdout.write(result.stdout);
-      process.stderr.write(result.stderr);
-      if (result.signal) {
-        process.kill(process.pid, result.signal);
-        return 128;
-      }
-      return result.status ?? 0;
+      return await emitWrappedResult(args, result, started, store);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
       try {
         await suppressRspStderr(warmResidentStore);
       } catch (err) {
-        return await degradeToPassthrough("resident unavailable", args.positional, err);
+        return await degradeToPassthrough("resident unavailable", args.positional, err, residentPaths.rootDir);
       }
       const { runTestWrapper } = await import("./test-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
+      const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
-      process.stdout.write(result.stdout);
-      process.stderr.write(result.stderr);
-      if (result.signal) {
-        process.kill(process.pid, result.signal);
-        return 128;
-      }
-      return result.status ?? 0;
+      return await emitWrappedResult(args, result, started, store);
     }
 
     if (args.command === "show" && args.handle) {
@@ -208,7 +194,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write("error: usage rsp show el:<id>\n");
     return 2;
   } catch (err) {
-    if (wrapperCommand) return await degradeToPassthrough("wrapper failed", args.positional, err);
+    if (wrapperCommand) return await degradeToPassthrough("wrapper failed", args.positional, err, residentPaths.rootDir);
     throw err;
   } finally {
     await closeStore?.();
@@ -268,15 +254,31 @@ function isEmptyUnbornGitRepo(cwd: string): boolean {
   }
 }
 
-type ElisionStoreLike = Pick<RspElisionStore, "mint" | "close">;
+type ElisionStoreLike = Pick<RspElisionStore, "mint" | "close"> & {
+  lastResponseMetrics?: () => ResidentResponseMetrics | undefined;
+};
+
+interface WrappedCommandResult {
+  stdout: Buffer;
+  stderr: Buffer;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  mintedHandle?: `el:${string}`;
+  bytesElided?: number;
+  rawOutput?: Buffer;
+}
 
 class LazyRspElisionStore implements ElisionStoreLike {
   private store?: Promise<ElisionStoreLike>;
+  private metrics?: ResidentResponseMetrics;
 
   constructor(private readonly openStore: () => Promise<ElisionStoreLike>) {}
 
   async mint(...args: Parameters<RspElisionStore["mint"]>): ReturnType<RspElisionStore["mint"]> {
-    return await (await this.open()).mint(...args);
+    const store = await this.open();
+    const handle = await store.mint(...args);
+    this.metrics = store.lastResponseMetrics?.();
+    return handle;
   }
 
   async close(): Promise<void> {
@@ -294,14 +296,71 @@ class LazyRspElisionStore implements ElisionStoreLike {
     this.store ??= this.openStore();
     return this.store;
   }
+
+  lastResponseMetrics(): ResidentResponseMetrics | undefined {
+    return this.metrics;
+  }
 }
 
-async function degradeToPassthrough(reason: string, argv: readonly string[], err?: unknown): Promise<number> {
+async function emitWrappedResult(
+  args: ParsedArgs,
+  result: WrappedCommandResult,
+  started: bigint,
+  store: LazyRspElisionStore,
+): Promise<number> {
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  await appendInvocationTelemetry(args, result, wrapperMs, store.lastResponseMetrics());
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+    return 128;
+  }
+  return result.status ?? 0;
+}
+
+async function appendInvocationTelemetry(
+  args: ParsedArgs,
+  result: WrappedCommandResult,
+  wrapperMs: number,
+  metrics?: ResidentResponseMetrics,
+): Promise<void> {
+  const emitted = Buffer.concat([result.stdout, result.stderr]);
+  const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
+  const { appendTelemetryEvent, RSP_TELEMETRY_INVOCATIONS_COLLECTION } = await import("./telemetry.js");
+  await appendTelemetryEvent(process.cwd(), {
+    collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+    ts: new Date().toISOString(),
+    command: args.positional.join(" "),
+    wrapper: args.command,
+    loss: args.level,
+    elided: Boolean(result.mintedHandle || result.bytesElided),
+    raw_bytes: raw.length,
+    emitted_bytes: emitted.length,
+    raw_text: raw.toString("utf8"),
+    emitted_text: emitted.toString("utf8"),
+    wrapper_ms: wrapperMs,
+    store_open_count: metrics?.storeOpenCount,
+    store_elapsed_ms: metrics?.storeElapsedMs,
+  });
+}
+
+async function degradeToPassthrough(reason: string, argv: readonly string[], err?: unknown, telemetryRoot?: string): Promise<number> {
   if (process.env.RSP_DEBUG === "1") {
     throw err instanceof Error ? err : new Error(reason);
   }
   process.stderr.write(`rsp: ${reason}, passing through\n`);
-  return await passthrough(argv);
+  const status = await passthrough(argv);
+  if (telemetryRoot) {
+    const { appendTelemetryEvent, RSP_TELEMETRY_DEGRADATIONS_COLLECTION } = await import("./telemetry.js");
+    await appendTelemetryEvent(telemetryRoot, {
+      collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+      ts: new Date().toISOString(),
+      command: argv.join(" "),
+      reason,
+    });
+  }
+  return status;
 }
 
 function rspDisabledReason(): string {
