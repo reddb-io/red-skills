@@ -19,6 +19,7 @@ import { reviewCommand } from "./commands/review.js";
 import { stopCommand } from "./commands/stop.js";
 import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
+import { rspInstructionsCommand } from "./commands/rsp-instructions.js";
 import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { triageCommand } from "./commands/triage.js";
@@ -47,6 +48,7 @@ export type CliCommand =
   | "codex-monitor-agent"
   | "codex-statusline"
   | "route-model-tier"
+  | "rsp-instructions"
   | "statusline"
   | "statusline-refresh-counts"
   | "inject-development-workflow"
@@ -90,6 +92,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "codex-monitor-agent": {},
     "codex-statusline": {},
     "route-model-tier": {},
+    "rsp-instructions": {},
     statusline: {},
     "statusline-refresh-counts": {},
     "inject-development-workflow": {},
@@ -142,6 +145,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "codex-monitor-agent") return codexMonitorAgentCommand(parsed.args);
   if (parsed.command === "codex-statusline") return codexStatuslineCommand(parsed.args);
   if (parsed.command === "route-model-tier") return routeModelTierCommand(parsed.args);
+  if (parsed.command === "rsp-instructions") return rspInstructionsCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
   if (parsed.command === "statusline-refresh-counts") return statuslineRefreshCountsCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
