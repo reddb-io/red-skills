@@ -21,6 +21,7 @@ export interface GhRenderResult {
   mintedHandle?: `el:${string}`;
   bytesElided?: number;
   rowsElided?: number;
+  rawOutput?: Buffer;
 }
 
 interface GhCommand {
@@ -143,6 +144,7 @@ export async function renderGhContract(
     mintedHandle: handle,
     bytesElided,
     rowsElided: terse.rowsElided,
+    rawOutput: Buffer.from(fullToon),
   };
 }
 
