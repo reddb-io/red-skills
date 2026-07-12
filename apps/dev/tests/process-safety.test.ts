@@ -7,6 +7,7 @@ import {
   fileSafetyLogger,
   getActiveSafety,
   installProcessSafety,
+  markProcessSafetyStep,
   noopSafetyLogger,
   safetyLogPath,
   setActiveClaimFinalizer,
@@ -162,6 +163,13 @@ describe("installProcessSafety — event log lines (via direct handler call)", (
     const line = log.find((l) => l.includes("event=exit"));
     expect(line).toBeDefined();
     expect(line).toMatch(/code=0/);
+  });
+
+  it("records the last AFK step on catchable death receipts", () => {
+    markProcessSafetyStep("post-barrier:feedback-start");
+    handlers.sigHup();
+    const line = log.find((l) => l.includes("event=SIGHUP"));
+    expect(line).toContain('last_step="post-barrier:feedback-start"');
   });
 
   it("exit handler records null exit code (process killed by signal)", () => {

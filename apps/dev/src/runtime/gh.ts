@@ -1046,23 +1046,25 @@ export async function issueClosed(ctx: GhContext, n: number): Promise<boolean> {
   return (await blockerState(ctx, n)) === "CLOSED";
 }
 
-/** List open issues labelled `blocked:stalled`, `blocked:crashed`, OR
- * `blocked:merge-conflict` — the parked-mechanical candidates the boot reconcile
+/** List open issues labelled `blocked:stalled`, `blocked:crashed`,
+ * `blocked:merge-conflict`, OR `running` — the mechanical candidates the boot reconcile
  * sweep processes (merge-conflict added in #1095: a land-time trunk conflict is
- * mechanical, not a human decision). The `gh issue list` calls run concurrently
+ * mechanical, not a human decision; running is filtered by the stale-claim sweep
+ * result before reconcile can run). The `gh issue list` calls run concurrently
  * and are de-duplicated by issue number. A failed probe for any label returns []
  * for that label; the surviving set is still processed. */
 export async function listParkedMechanicalCandidates(
   ctx: GhContext,
 ): Promise<ReconcileSweepCandidate[]> {
-  const [stalled, crashed, mergeConflict] = await Promise.all([
+  const [stalled, crashed, mergeConflict, running] = await Promise.all([
     listIssuesByLabel(ctx, LABEL_STALLED),
     listIssuesByLabel(ctx, LABEL_CRASHED),
     listIssuesByLabel(ctx, LABEL_MERGE_CONFLICT),
+    listIssuesByLabel(ctx, LABEL_RUNNING),
   ]);
   const seen = new Set<number>();
   const result: ReconcileSweepCandidate[] = [];
-  for (const c of [...stalled, ...crashed, ...mergeConflict]) {
+  for (const c of [...stalled, ...crashed, ...mergeConflict, ...running]) {
     if (seen.has(c.number)) continue;
     seen.add(c.number);
     result.push(c);

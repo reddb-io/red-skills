@@ -468,7 +468,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
   // ---- 7. reconcile sweep (ADR 0055) ----
-  const reconcileSweep = await runReconcileSweep(deps, options);
+  const reconcileSweep = await runReconcileSweep(deps, options, staleClaimSweep.released);
 
   // ---- 8. straggler check ----
   const straggler = await runStragglerCheck(deps);
@@ -739,7 +739,11 @@ async function runMixedBlockedNormalize(
  * agent. A no-op when no `reconcileRunner` is wired in or no candidates are
  * provided. Sequenced AFTER the unblock sweep so any dependency-promotion from
  * step 6 is already in place before we attempt to land dependents. */
-async function runReconcileSweep(deps: BootDeps, options: BootOptions): Promise<ReconcileSweepResult> {
+async function runReconcileSweep(
+  deps: BootDeps,
+  options: BootOptions,
+  staleReleasedRunningIssues: readonly number[] = [],
+): Promise<ReconcileSweepResult> {
   const result: ReconcileSweepResult = { landed: [], parked: [], skipped: [] };
   if (!deps.reconcileRunner) return result;
   const candidates = options.reconcileSweepCandidates ?? [];
@@ -748,7 +752,7 @@ async function runReconcileSweep(deps: BootDeps, options: BootOptions): Promise<
   // The remote live refs already list every `afk/{worker}/{N}-{slug}` branch
   // on origin — reuse them rather than fetching again. Extract the branch names.
   const remoteBranches = options.branches.remoteLiveRefs.map((r) => r.branch);
-  const plans = planReconcileSweep(candidates, remoteBranches);
+  const plans = planReconcileSweep(candidates, remoteBranches, staleReleasedRunningIssues);
 
   for (const plan of plans) {
     try {

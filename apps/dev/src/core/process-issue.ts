@@ -75,6 +75,7 @@ import type { LandLock } from "./land-lock.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
 import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "./exit-barrier.js";
+import { markProcessSafetyStep } from "./process-safety.js";
 import {
   emitEnvelope,
   type EmitEnvelopeDeps,
@@ -1915,8 +1916,11 @@ export async function processIssue(
     // (no-sentinel / budget-exceeded), whose barrier wiring is the follow-up slice.
     if (deps.exitBarrier && run.outcome === "done") {
       try {
+        markProcessSafetyStep("exit-barrier:start");
         exitReceipt = await deps.exitBarrier(workerBranch);
+        markProcessSafetyStep("exit-barrier:pushed");
       } catch (err) {
+        markProcessSafetyStep("exit-barrier:failed");
         if (err instanceof ExitBarrierError) {
           // The barrier could not push the attempt branch to origin after its
           // retry — "work is saved iff its branch ref is pushed" is NOT satisfied,
@@ -2189,6 +2193,7 @@ export async function processIssue(
     // first); if it is still absent, do NOT proceed to feedback/merge — route to the
     // merge-conflict / ready-for-human terminal path with a clear reason.
     if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(workerBranch))) {
+      markProcessSafetyStep("post-barrier:branch-present-failed");
       deps.appendIterLog(
         `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
       );
@@ -2205,6 +2210,7 @@ export async function processIssue(
     // hooks). Absent executor or empty command list → no-op.
     const postAttemptFormatCommands = deps.postAttemptFormatCommands ?? [];
     if (deps.postAttemptFormat && postAttemptFormatCommands.length > 0) {
+      markProcessSafetyStep("post-barrier:post-attempt-format");
       const pfmt = await runPostAttemptFormat(deps.postAttemptFormat, {
         worktree: workerBranch,
         commands: postAttemptFormatCommands,
@@ -2226,6 +2232,7 @@ export async function processIssue(
     // happy path costs nothing.
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
+    markProcessSafetyStep("post-barrier:feedback-start");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
     if (changedFiles.length === 0) {
       const validationText =
@@ -2274,6 +2281,7 @@ export async function processIssue(
       baselineWorktree: base,
       validationScope,
     });
+    markProcessSafetyStep("post-barrier:feedback-done");
     // on_baseline_probe (#832): the "already failing on main?" probe (ADR 0071)
     // runs ONLY when the gate failed AND a baseline worktree was supplied. Report
     // whether it downgraded any pre-existing-on-baseline failures.
@@ -2376,12 +2384,14 @@ export async function processIssue(
     const backpressureCommands = deps.backpressureCommands ?? [];
     let backpressureSidecar: string[] = [];
     if (deps.backpressure && backpressureCommands.length > 0) {
+      markProcessSafetyStep("post-barrier:backpressure-start");
       const backpressure = await runBackpressure(deps.backpressure, {
         worktree: workerBranch,
         commands: backpressureCommands,
         now: deps.nowEpoch,
       });
       backpressureSidecar = backpressure.sidecar;
+      markProcessSafetyStep("post-barrier:backpressure-done");
       // Capture the checks so the landing/handoff paths can render the
       // non-blocking evidence ledger (#1279) once the PR number is known. This is
       // observability only — the merge/park decision below stays owned by
@@ -2412,6 +2422,7 @@ export async function processIssue(
   }
 
   // ---- 6. push the worker branch, integrate, then land per the flag ----
+  markProcessSafetyStep("post-barrier:landing-start");
   // The entire flag-toggled landing (push → pre_merge → integrate → land →
   // direct conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
   // ADR 0030 amended by #842 / 0031). A non-ok result maps to the merge-conflict

@@ -130,6 +130,8 @@ export type DeathClass =
  * `null` when no handlers are installed (the default state). */
 let activeSafety: ProcessSafety | null = null;
 let activeClaimFinalizer: ActiveClaimFinalizer | null = null;
+let activeStepWriter: ((step: string) => void) | null = null;
+let activeLastStep = "startup";
 
 /** Return the active safety installation (or null). Useful for tests and for
  * code that wants to coordinate with the handlers (e.g. a graceful-shutdown
@@ -140,6 +142,14 @@ export function getActiveSafety(): ProcessSafety | null {
 
 export function setActiveClaimFinalizer(finalizer: ActiveClaimFinalizer | null): void {
   activeClaimFinalizer = finalizer;
+}
+
+/** Record the worker's current macro step in the process-safety diagnostic log.
+ * The value is intentionally short and local to AFK internals; public comments
+ * consume only the classified cause, not these raw breadcrumbs. */
+export function markProcessSafetyStep(step: string): void {
+  activeLastStep = step;
+  activeStepWriter?.(step);
 }
 
 function runActiveClaimFinalizer(): void {
@@ -181,28 +191,30 @@ export function installProcessSafety(
   const write = (event: string, detail: string): void => {
     logger.log(`pid=${pid} worker=${wid} event=${event} ${detail}`);
   };
+  activeLastStep = "startup";
+  activeStepWriter = (step) => write("step", `name=${JSON.stringify(step)}`);
 
   const onUncaught = (err: Error): void => {
-    write("uncaughtException", `message=${JSON.stringify(err.message)} stack=${JSON.stringify(err.stack ?? "")}`);
+    write("uncaughtException", `last_step=${JSON.stringify(activeLastStep)} message=${JSON.stringify(err.message)} stack=${JSON.stringify(err.stack ?? "")}`);
     runActiveClaimFinalizer();
   };
   const onUnhandled = (reason: unknown): void => {
     const r = reason instanceof Error
       ? `message=${JSON.stringify(reason.message)} stack=${JSON.stringify(reason.stack ?? "")}`
       : `value=${JSON.stringify(reason)}`;
-    write("unhandledRejection", r);
+    write("unhandledRejection", `last_step=${JSON.stringify(activeLastStep)} ${r}`);
     runActiveClaimFinalizer();
   };
   const onSigTerm = (): void => {
-    write("SIGTERM", "received");
+    write("SIGTERM", `last_step=${JSON.stringify(activeLastStep)} received`);
     runActiveClaimFinalizer();
   };
   const onSigInt = (): void => {
-    write("SIGINT", "received");
+    write("SIGINT", `last_step=${JSON.stringify(activeLastStep)} received`);
     runActiveClaimFinalizer();
   };
   const onSigHup = (): void => {
-    write("SIGHUP", "received");
+    write("SIGHUP", `last_step=${JSON.stringify(activeLastStep)} received`);
     runActiveClaimFinalizer();
   };
   const onExit = (code: number | null): void => {
@@ -210,7 +222,7 @@ export function installProcessSafety(
     // when this fires, so we use the synchronous file write and accept that
     // a hard kill may skip it. The other handlers above are the durable
     // signal; this one is the "we made it to a clean exit code N" notice.
-    write("exit", `code=${code ?? "null"}`);
+    write("exit", `last_step=${JSON.stringify(activeLastStep)} code=${code ?? "null"}`);
   };
   // The heartbeat is the SIGKILL counter-measure: a SIGKILL/OOM death fires no
   // handler, so the only forensic trace is "installed + heartbeats, then
@@ -218,7 +230,7 @@ export function installProcessSafety(
   // climbing toward the OOM wall before the silence.
   const onHeartbeat = (): void => {
     const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
-    write("alive", `rss_mb=${rssMb}`);
+    write("alive", `last_step=${JSON.stringify(activeLastStep)} rss_mb=${rssMb}`);
   };
 
   process.on("uncaughtException", onUncaught);
@@ -228,7 +240,7 @@ export function installProcessSafety(
   process.on("SIGHUP", onSigHup);
   process.on("exit", onExit);
 
-  write("installed", `node=${process.version} platform=${process.platform}`);
+  write("installed", `last_step=${JSON.stringify(activeLastStep)} node=${process.version} platform=${process.platform}`);
 
   let timer: { unref?: () => void } | null = null;
   if (heartbeatMs > 0) {
@@ -248,6 +260,8 @@ export function installProcessSafety(
       if (timer) clearIntervalFn(timer);
       timer = null;
       activeClaimFinalizer = null;
+      activeStepWriter = null;
+      activeLastStep = "startup";
       activeSafety = null;
     },
     handlers: {
