@@ -187,7 +187,7 @@ function machineArgs(subcommand: GitSubcommand, rest: readonly string[]): string
 }
 
 async function collectGitContract(subcommand: GitSubcommand, rest: readonly string[]): Promise<RecordedGitContract> {
-  const child = spawn("git", machineArgs(subcommand, [subcommand, ...rest]), { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("git", machineArgs(subcommand, rest), { stdio: ["ignore", "pipe", "pipe"] });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

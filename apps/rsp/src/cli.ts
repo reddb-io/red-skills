@@ -39,11 +39,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const wrapperCommand = isWrapperCommand(args.command);
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
-    if (wrapperCommand) return await passthrough(args.positional);
+    if (wrapperCommand) return await degradeToPassthrough("store not provisioned", args.positional);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  if (wrapperCommand && isUnreadableFileStore(config.storeUri)) return await passthrough(args.positional);
+  if (wrapperCommand && isUnreadableFileStore(config.storeUri)) return await degradeToPassthrough("store unreadable", args.positional);
   let store: RspElisionStore;
   try {
     const openStore = () => RspElisionStore.open({
@@ -53,7 +53,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     store = wrapperCommand ? await suppressRspStderr(openStore) : await openStore();
   } catch (err) {
-    if (wrapperCommand) return await passthrough(args.positional);
+    if (wrapperCommand) return await degradeToPassthrough("store open failed", args.positional, err);
     throw err;
   }
 
@@ -118,11 +118,19 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write("error: usage rsp show el:<id>\n");
     return 2;
   } catch (err) {
-    if (wrapperCommand) return await passthrough(args.positional);
+    if (wrapperCommand) return await degradeToPassthrough("wrapper failed", args.positional, err);
     throw err;
   } finally {
     await store.close();
   }
+}
+
+async function degradeToPassthrough(reason: string, argv: readonly string[], err?: unknown): Promise<number> {
+  if (process.env.RSP_DEBUG === "1") {
+    throw err instanceof Error ? err : new Error(reason);
+  }
+  process.stderr.write(`rsp: ${reason}, passing through\n`);
+  return await passthrough(argv);
 }
 
 async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
