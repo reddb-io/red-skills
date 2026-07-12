@@ -54,6 +54,18 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
   });
 }
 
+function timedStatus(command: () => ReturnType<typeof spawnSync>): { status: number | null; elapsedMs: number; stderr: Buffer } {
+  const started = process.hrtime.bigint();
+  const result = command();
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  return { status: result.status, elapsedMs, stderr: result.stderr as Buffer };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
 function buildBundleOnce() {
   if (bundleBuilt) return;
   const res = spawnSync("pnpm", ["-C", "apps/rsp", "build"], {
@@ -95,17 +107,64 @@ async function seedWarmRedCache(): Promise<string> {
 }
 
 describe("rsp cli", () => {
+  it("built bundle does not open the store for small git status output", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri });
+    await store.close();
+
+    const res = runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe("git empty\n");
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+  }, 120_000);
+
+  it("built bundle keeps small git status wrapper overhead under 100ms", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri });
+    await store.close();
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+
+    expect(runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], env).status).toBe(0);
+    expect(runGit(["-C", root, "status"]).status).toBe(0);
+
+    const rawSamples: number[] = [];
+    const wrappedSamples: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const raw = timedStatus(() => runGit(["-C", root, "status"]));
+      const wrapped = timedStatus(() => runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], env));
+      expect(raw.status).toBe(0);
+      expect(wrapped.status).toBe(0);
+      expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+      rawSamples.push(raw.elapsedMs);
+      wrappedSamples.push(wrapped.elapsedMs);
+    }
+
+    const rawMedian = median(rawSamples);
+    const wrappedMedian = median(wrappedSamples);
+    const overheadMs = wrappedMedian - rawMedian;
+    expect(overheadMs, `raw=${rawMedian.toFixed(1)}ms wrapped=${wrappedMedian.toFixed(1)}ms overhead=${overheadMs.toFixed(1)}ms`).toBeLessThanOrEqual(100);
+  }, 120_000);
+
   it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     await commitMany(root, 12);
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
-    const store = await RspElisionStore.open({ uri: storeUri });
-    await store.close();
     const raw = runGit(["-C", root, "log"]);
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
 
-    const compressed = runBundleFromCwd(root, ["--store-uri", storeUri, "git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(compressed.status).toBe(raw.status);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
@@ -114,7 +173,7 @@ describe("rsp cli", () => {
     const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
     expect(handle).toBeTruthy();
 
-    const shown = runBundleFromCwd(root, ["--store-uri", storeUri, "show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(shown.status).toBe(0);
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);

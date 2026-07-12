@@ -44,27 +44,25 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 1;
   }
   if (wrapperCommand && isUnreadableFileStore(config.storeUri)) return await degradeToPassthrough("store unreadable", args.positional);
-  let store: RspElisionStore;
-  try {
-    const openStore = () => RspElisionStore.open({
-      uri: config.storeUri,
-      ttlDays: config.ttlDays,
-      byteBudget: config.byteBudget,
-    });
-    store = wrapperCommand ? await suppressRspStderr(openStore) : await openStore();
-  } catch (err) {
-    if (wrapperCommand) return await degradeToPassthrough("store open failed", args.positional, err);
-    throw err;
-  }
 
+  const openStore = () => RspElisionStore.open({
+    uri: config.storeUri,
+    ttlDays: config.ttlDays,
+    byteBudget: config.byteBudget,
+  });
+  let closeStore: (() => Promise<void>) | undefined;
   try {
     if (!args.command) {
+      const store = await openStore();
+      closeStore = () => store.close();
       const stats = await store.stats();
       process.stdout.write(renderStats(stats));
       return 0;
     }
 
     if (args.command === "git") {
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      closeStore = () => store.close();
       const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
         level: args.level,
         store,
@@ -80,6 +78,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "gh") {
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      closeStore = () => store.close();
       const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
@@ -91,6 +91,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openStore));
+      closeStore = () => store.close();
       const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
@@ -102,6 +104,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "show" && args.handle) {
+      const store = await openStore();
+      closeStore = () => store.close();
       const record = await store.get(args.handle);
       if (record && "original" in record && record.original) {
         process.stdout.write(record.original);
@@ -121,7 +125,33 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     if (wrapperCommand) return await degradeToPassthrough("wrapper failed", args.positional, err);
     throw err;
   } finally {
+    await closeStore?.();
+  }
+}
+
+class LazyRspElisionStore implements Pick<RspElisionStore, "mint" | "close"> {
+  private store?: Promise<RspElisionStore>;
+
+  constructor(private readonly openStore: () => Promise<RspElisionStore>) {}
+
+  async mint(...args: Parameters<RspElisionStore["mint"]>): ReturnType<RspElisionStore["mint"]> {
+    return await (await this.open()).mint(...args);
+  }
+
+  async close(): Promise<void> {
+    if (!this.store) return;
+    let store: RspElisionStore;
+    try {
+      store = await this.store;
+    } catch {
+      return;
+    }
     await store.close();
+  }
+
+  private open(): Promise<RspElisionStore> {
+    this.store ??= this.openStore();
+    return this.store;
   }
 }
 
