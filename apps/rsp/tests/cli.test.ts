@@ -1,15 +1,20 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const packageRoot = join(import.meta.dirname, "..");
-const tsxLoader = createRequire(import.meta.url).resolve("tsx");
+const repoRoot = join(packageRoot, "..", "..");
+const bundle = join(repoRoot, "dist", "rsp.bundle.min.mjs");
+const require = createRequire(import.meta.url);
+const tsxLoader = require.resolve("tsx");
+let bundleBuilt = false;
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-cli-"));
@@ -41,14 +46,88 @@ function runGit(args: string[]) {
   return spawnSync("git", args, { encoding: "buffer" });
 }
 
+function runBundleFromCwd(cwd: string, args: string[], env: Record<string, string> = {}) {
+  return spawnSync(process.execPath, [bundle, ...args], {
+    cwd,
+    env: { ...process.env, ...env },
+    encoding: "buffer",
+  });
+}
+
+function buildBundleOnce() {
+  if (bundleBuilt) return;
+  const res = spawnSync("pnpm", ["-C", "apps/rsp", "build"], {
+    cwd: repoRoot,
+    encoding: "buffer",
+  });
+  expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+  bundleBuilt = true;
+}
+
 async function initGitRepo(): Promise<string> {
   const root = await tempRoot();
   const init = runGit(["-C", root, "init"]);
   expect(init.status).toBe(0);
+  expect(runGit(["-C", root, "config", "user.email", "rsp-test@example.invalid"]).status).toBe(0);
+  expect(runGit(["-C", root, "config", "user.name", "Rsp Test"]).status).toBe(0);
   return root;
 }
 
+async function commitMany(root: string, count: number): Promise<void> {
+  for (let i = 1; i <= count; i++) {
+    await writeFile(join(root, `file-${i}.txt`), `line ${i}\n`, "utf8");
+    expect(runGit(["-C", root, "add", `file-${i}.txt`]).status).toBe(0);
+    expect(runGit(["-C", root, "commit", "-m", `commit ${i}`]).status).toBe(0);
+  }
+}
+
+async function seedWarmRedCache(): Promise<string> {
+  const root = await tempRoot();
+  const cacheDir = join(root, "bundles");
+  const runtimeDir = join(cacheDir, "reddb", "1.7.0");
+  await mkdir(runtimeDir, { recursive: true });
+  const redPath = join(packageRoot, "node_modules", "@reddb-io", "sdk", "bin", process.platform === "win32" ? "red.exe" : "red");
+  const redBytes = await readFile(redPath);
+  await copyFile(redPath, join(runtimeDir, process.platform === "win32" ? "red.exe" : "red"));
+  const checksum = createHash("sha256").update(redBytes).digest("hex");
+  await writeFile(join(runtimeDir, `${process.platform === "win32" ? "red.exe" : "red"}.sha256`), `${checksum}  red\n`, "utf8");
+  return cacheDir;
+}
+
 describe("rsp cli", () => {
+  it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri });
+    await store.close();
+    const raw = runGit(["-C", root, "log"]);
+
+    const compressed = runBundleFromCwd(root, ["--store-uri", storeUri, "git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(compressed.status).toBe(raw.status);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.length).toBeLessThan(raw.stdout.length);
+    const text = compressed.stdout.toString("utf8");
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
+    expect(handle).toBeTruthy();
+
+    const shown = runBundleFromCwd(root, ["--store-uri", storeUri, "show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(shown.status).toBe(0);
+    expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
+    expect(shown.stderr).toEqual(Buffer.alloc(0));
+
+    const missingStoreUri = `file://${join(await tempRoot(), "missing.rdb")}`;
+    const degraded = runBundleFromCwd(root, ["--store-uri", missingStoreUri, "git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(degraded.status).toBe(raw.status);
+    expect(degraded.stdout).toEqual(raw.stdout);
+    expect(degraded.stderr.toString("utf8")).toBe("rsp: store unreadable, passing through\n");
+  }, 120_000);
+
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
@@ -70,7 +149,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr).toEqual(direct.stderr);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -84,7 +163,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr).toEqual(direct.stderr);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("passes through wrappers when the configured store is unreadable", async () => {
@@ -99,7 +178,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr).toEqual(direct.stderr);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: store unreadable, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
@@ -113,7 +192,11 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr).toEqual(direct.stderr);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
+
+    const debug = runRsp(root, ["git", "--version"], { RSP_STORE_URI: storeUri, RSP_DEBUG: "1" });
+    expect(debug.status).toBe(1);
+    expect(debug.stdout.toString("utf8")).toContain("error: unsupported git subcommand");
   });
 
   it("prints store stats instead of help when called without arguments", async () => {
