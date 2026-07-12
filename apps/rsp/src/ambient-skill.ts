@@ -5,6 +5,12 @@ import { RSP_WRAPPER_CAPABILITIES, type RspWrapperCapability } from "./intercept
 // so the source of truth for the file location lives in one place.
 export const AMBIENT_SKILL_RELATIVE_PATH = "generated/AMBIENT-SKILL.md";
 
+export type RspInstructionRunner = "claude" | "codex";
+
+export interface AmbientSkillRenderOptions {
+  runner?: RspInstructionRunner;
+}
+
 /**
  * Render the ambient-instruction surface (the RTK.md-replacement doc) FROM the
  * rsp wrapper capability table, so the ambient surface can never drift from the
@@ -14,12 +20,19 @@ export const AMBIENT_SKILL_RELATIVE_PATH = "generated/AMBIENT-SKILL.md";
  */
 export function renderAmbientSkill(
   capabilities: readonly RspWrapperCapability[] = RSP_WRAPPER_CAPABILITIES,
+  options: AmbientSkillRenderOptions = {},
 ): string {
   const rows = capabilities.map((capability) => {
     const command = capability.command.join(" ");
     const wrapper = ["rsp", ...capability.wrapper].join(" ");
     return `| \`${command}\` | \`${wrapper}\` |`;
   });
+  const preferences = capabilities.map((capability) => {
+    const wrapper = ["rsp", ...capability.wrapper].join(" ");
+    const command = capability.command.join(" ");
+    return `- For \`${command}\`, prefer \`${wrapper}\` when the summarized output is enough.`;
+  });
+  const runnerLines = renderRunnerLines(options.runner);
 
   return [
     "# rsp — token-efficient command wrappers",
@@ -33,6 +46,8 @@ export function renderAmbientSkill(
     "reversible elision store, so the agent reads a compact summary and can",
     "recover the original bytes on demand with `rsp show el:<id>`.",
     "",
+    ...runnerLines,
+    ...(runnerLines.length > 0 ? [""] : []),
     "## Wrapped commands",
     "",
     "When you would run one of these commands, run it through `rsp` instead:",
@@ -41,11 +56,54 @@ export function renderAmbientSkill(
     "| --- | --- |",
     ...rows,
     "",
+    "## When to prefer rsp",
+    "",
+    ...preferences,
+    "",
+    "Use raw commands when exact stdout/stderr is the behavior under test, when",
+    "a wrapper does not support the command shape, or when resolving low-level",
+    "git conflicts where every byte matters.",
+    "",
+    "## Loss levels",
+    "",
+    "Use `--brief` for compact summaries that keep enough inline context for",
+    "normal debugging. Use `--terse` for large or repetitive output; lossy output",
+    "mints an `el:<id>` handle, and `rsp show el:<id>` writes the original bytes",
+    "back to stdout. Use `--full` when exact inline output is required.",
+    "",
+    "Large `rsp git diff` and `rsp git log` output is threshold-gated and may",
+    "truncate by default; pass `--full` when exact inline output is required.",
+    "",
     "## Recovering elided output",
     "",
     "`rsp show el:<id>` writes the original bytes verbatim to stdout. Expired or",
     "evicted handles print `expired <ISO date> — re-run: <original command>` and",
     "exit 1, so the exact command to reproduce the output is always in reach.",
     "",
+    "## Failure behavior",
+    "",
+    "If an rsp wrapper is disabled, lacks its store, or fails, it passes through to the raw command",
+    "with the raw command's stdout, stderr, and exit status intact.",
+    "",
   ].join("\n");
+}
+
+function renderRunnerLines(runner: RspInstructionRunner | undefined): string[] {
+  if (runner === "codex") {
+    return [
+      "## Codex lane",
+      "",
+      "This ambient instruction is the primary Codex lane: call `rsp` directly",
+      "when one of the wrapped command forms applies.",
+    ];
+  }
+  if (runner === "claude") {
+    return [
+      "## Claude lane",
+      "",
+      "Claude Code pre-execution interception is available for simple wrapped",
+      "commands, and direct calls still help when composing commands deliberately.",
+    ];
+  }
+  return [];
 }

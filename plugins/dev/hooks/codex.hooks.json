@@ -10,6 +10,10 @@
           {
             "type": "command",
             "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; for f in \"$root/hooks/ensure-codex-statusline.mjs\" \"$root/dist/ensure-codex-statusline.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" </dev/null >/dev/null 2>&1 || true; break; }; done; printf \"{}\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" run dev rsp-instructions --runner codex --hook <\"$tmp\" 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
           }
         ]
       }
