@@ -384,6 +384,10 @@ describe("rsp cli", () => {
     const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
     expect(handle).toBeTruthy();
 
+    const stats = runBundleFromCwd(root, [], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(stats.status).toBe(0);
+    expect(stats.stdout.toString("utf8")).toContain("records: 1\n");
+
     const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(shown.status).toBe(0);
