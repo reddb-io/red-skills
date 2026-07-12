@@ -130,19 +130,40 @@ latest_bundle() {
   done | sort -V | tail -1 | cut -f2-
 }
 
+find_red_binary() {
+  local cache_root red version
+  cache_root="${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}"
+
+  for red in "$cache_root"/reddb/*/red "$cache_root"/reddb/*/red.exe; do
+    [ -x "$red" ] || continue
+    version="${red%/*}"
+    version="${version##*/}"
+    printf '%s\t%s\n' "$version" "$red"
+  done | sort -V | tail -1 | cut -f2-
+}
+
+with_red_binary() {
+  local red
+  red="$(find_red_binary || true)"
+  if [ -n "$red" ]; then
+    REDDB_BIN="$red" exec node "$@"
+  fi
+  exec node "$@"
+}
+
 bundle="$(env_bundle || true)"
 if [ -n "$bundle" ]; then
-  exec node "$bundle" "$@"
+  with_red_binary "$bundle" "$@"
 fi
 
 bundle="$(latest_cache_bundle || true)"
 if [ -n "$bundle" ]; then
-  exec node "$bundle" "$@"
+  with_red_binary "$bundle" "$@"
 fi
 
 bundle="$(latest_bundle || true)"
 if [ -n "$bundle" ]; then
-  exec node "$bundle" "$@"
+  with_red_binary "$bundle" "$@"
 fi
 
 cat >&2 <<'EOF'
