@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
@@ -96,6 +98,8 @@ interface TelemetryIndexDocument {
   records: TelemetryIndexEntry[];
 }
 
+const TOKENIZATION_CAP_BYTES = 256 * 1024;
+
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
 
@@ -131,7 +135,12 @@ class ResidentTelemetryDrain {
     const createdAt = typeof event.created_at === "string" ? event.created_at : now.toISOString();
     const expiresAt = new Date(Date.parse(createdAt) + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const key = typeof event.id === "string" && event.id.trim() !== "" ? event.id : randomUUID();
-    const record = { ...event, id: key, created_at: createdAt, expires_at: expiresAt };
+    const record = {
+      ...await enrichTelemetryEvent(event),
+      id: key,
+      created_at: createdAt,
+      expires_at: expiresAt,
+    };
     await db.kv(event.collection).put(key, record);
     return {
       collection: event.collection,
@@ -173,6 +182,59 @@ class ResidentTelemetryDrain {
     }
     await this.writeIndex(db, { version: 1, records: live });
   }
+}
+
+async function enrichTelemetryEvent(event: RspTelemetryEvent): Promise<RspTelemetryEvent> {
+  if (event.collection !== RSP_TELEMETRY_INVOCATIONS_COLLECTION) return event;
+  const raw = await tokenCount(event.raw_text, numericField(event.raw_bytes));
+  const emitted = await tokenCount(event.emitted_text, numericField(event.emitted_bytes));
+  const { raw_text: _rawText, emitted_text: _emittedText, ...persisted } = event;
+  return {
+    ...persisted,
+    tokens_raw: raw.tokens,
+    tokens_emitted: emitted.tokens,
+    estimated: raw.estimated || emitted.estimated,
+  };
+}
+
+async function tokenCount(text: unknown, fallbackBytes: number | undefined): Promise<{ tokens: number; estimated: boolean }> {
+  if (typeof text === "string") {
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes <= TOKENIZATION_CAP_BYTES) {
+      const getEncoding = await loadGetEncoding();
+      return { tokens: getEncoding("cl100k_base").encode(text).length, estimated: false };
+    }
+    return { tokens: Math.ceil(bytes / 4), estimated: true };
+  }
+  if (fallbackBytes != null) return { tokens: Math.ceil(fallbackBytes / 4), estimated: true };
+  return { tokens: 0, estimated: false };
+}
+
+type GetEncoding = (encoding: "cl100k_base") => { encode(text: string): number[] };
+let getEncodingLoader: Promise<GetEncoding> | undefined;
+
+async function loadGetEncoding(): Promise<GetEncoding> {
+  getEncodingLoader ??= import(pathToFileURL(resolveJsTiktoken()).href).then((module) => {
+    const getEncoding = (module as { getEncoding?: GetEncoding }).getEncoding;
+    if (!getEncoding) throw new Error("js-tiktoken getEncoding export not found");
+    return getEncoding;
+  });
+  return await getEncodingLoader;
+}
+
+function resolveJsTiktoken(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(here, "..", "node_modules", "js-tiktoken", "dist", "index.js"),
+    join(here, "..", "apps", "rsp", "node_modules", "js-tiktoken", "dist", "index.js"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) throw new Error("js-tiktoken dependency not found");
+  return found;
+}
+
+function numericField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function safeJson(value: string): unknown {
