@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { readFileSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -20,12 +21,15 @@ export interface RspResidentPaths {
   lockPath: string;
 }
 
+const UNIX_SOCKET_PATH_LIMIT = 108;
+
 export function resolveResidentPaths(cwd: string): RspResidentPaths {
   const rootDir = findRepoRoot(cwd) ?? resolve(cwd);
+  const socketDir = resolveRuntimeSocketDir(rootDir);
   return {
     rootDir,
-    socketPath: join(rootDir, ".red", "tmp", "rsp.sock"),
-    lockPath: join(rootDir, ".red", "tmp", "rsp.lock"),
+    socketPath: join(socketDir, "rsp.sock"),
+    lockPath: join(socketDir, "rsp.lock"),
   };
 }
 
@@ -82,7 +86,7 @@ type ResidentRequestWithoutId = RspResidentRequest extends infer Request
   : never;
 
 export async function ensureResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
-  await mkdir(dirname(paths.socketPath), { recursive: true });
+  await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   if (await ping(paths.socketPath)) return;
 
   const lock = await tryAcquireLock(paths.lockPath);
@@ -124,7 +128,7 @@ async function waitForServer(socketPath: string, child?: ChildProcess): Promise<
 }
 
 async function tryAcquireLock(lockPath: string) {
-  await mkdir(dirname(lockPath), { recursive: true });
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
   try {
     return await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR);
   } catch (err) {
@@ -155,6 +159,17 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
   });
   child.unref();
   return child;
+}
+
+function resolveRuntimeSocketDir(rootDir: string): string {
+  const hash = createHash("sha256").update(rootDir).digest("hex").slice(0, 20);
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  if (xdg) {
+    const candidate = join(xdg, "red-skills", hash);
+    if (join(candidate, "rsp.sock").length < UNIX_SOCKET_PATH_LIMIT) return candidate;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : "nouid";
+  return join(tmpdir(), `red-skills-${uid}`, hash);
 }
 
 function findRepoRoot(start: string): string | null {
