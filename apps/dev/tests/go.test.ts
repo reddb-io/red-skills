@@ -123,6 +123,12 @@ describe("buildGoEngineArgs", () => {
     expect(args).toContain("npm run test -- login");
   });
 
+  it("threads a per-dispatch request into the reused engine", () => {
+    const args = buildGoEngineArgs({ issue: 7, request: "inspect the actual diff before DONE" });
+    expect(args).toContain("--request");
+    expect(args).toContain("inspect the actual diff before DONE");
+  });
+
   it("tightens the iteration cap when no harness exists and no inline check was approved", () => {
     const args = buildGoEngineArgs({ issue: 7, hasHarness: false });
     expect(args).toContain("-n");
@@ -217,6 +223,23 @@ describe("dispatchGo", () => {
     expect(spec.body).toContain("Done when the approved acceptance statement is satisfied.");
     expect(runEngine).toHaveBeenCalledWith(
       buildGoEngineArgs({ issue: 77, verifyCommand: "npm run test -- go" }),
+    );
+  });
+
+  it("keeps --request out of the disposable issue while forwarding it to the reused engine", async () => {
+    const createIssue = vi.fn(async (_spec: DisposableIssueSpec) => 88);
+    const runEngine = vi.fn(async (_args: string[]) => 0);
+    await dispatchGo(
+      { ensureLabel: async () => {}, createIssue, runEngine },
+      "ship it",
+      { request: "inspect the actual diff before DONE" },
+    );
+
+    const spec = createIssue.mock.calls[0]![0];
+    expect(spec.body).toContain("ship it");
+    expect(spec.body).not.toContain("inspect the actual diff before DONE");
+    expect(runEngine).toHaveBeenCalledWith(
+      buildGoEngineArgs({ issue: 88, request: "inspect the actual diff before DONE" }),
     );
   });
 
