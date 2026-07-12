@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { connect, type RedDB } from "@reddb-io/sdk";
+import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./config.js";
 
 export const RSP_ELISION_COLLECTION = "rsp_elisions_v1";
 
-export const DEFAULT_RSP_TTL_DAYS = 7;
-export const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
+export { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS };
 
 export type RspLossLevel = "lossless" | "brief" | "terse" | (string & {});
 
@@ -48,6 +50,7 @@ export interface RspElisionStoreOptions {
   ttlDays?: number;
   byteBudget?: number;
   now?: () => Date;
+  allowResidentOpen?: boolean;
 }
 
 interface StoredRecord {
@@ -85,9 +88,12 @@ interface StoreDocument {
 
 export class RspElisionStore {
   private document!: StoreDocument;
+  private db?: RedDB;
   private readonly path: string;
 
-  private constructor(path: string, private readonly opts: Required<Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget">> & {
+  private constructor(path: string, private readonly opts: Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget"> & {
+    uri: string;
+    now: () => Date;
     ttlDays: number;
     byteBudget: number;
   }) {
@@ -95,7 +101,7 @@ export class RspElisionStore {
   }
 
   static async open(opts: RspElisionStoreOptions): Promise<RspElisionStore> {
-    if (process.env.RSP_FAIL_IF_STORE_OPEN === "1") {
+    if (process.env.RSP_FAIL_IF_STORE_OPEN === "1" && !opts.allowResidentOpen) {
       throw new Error("RSP_FAIL_IF_STORE_OPEN blocked store open");
     }
     const requestedPath = fileStorePath(opts.uri);
@@ -106,13 +112,22 @@ export class RspElisionStore {
       byteBudget: positiveNumber(opts.byteBudget, DEFAULT_RSP_BYTE_BUDGET),
       now: opts.now ?? (() => new Date()),
     });
-    store.document = await readStoreDocument(store.path);
+    if (usesEmbeddedRedDb(path)) {
+      await ensureReddbBinaryFromWarmCache();
+      store.db = await connect(`file://${path}`);
+      await store.ensureRedDbStore();
+    } else {
+      store.document = await readStoreDocument(store.path);
+    }
     return store;
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    await this.db?.close();
+  }
 
   async mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
+    if (this.db) return await this.mintRedDb(original, meta);
     const bytes = Buffer.from(original);
     const now = this.opts.now();
     const createdAt = now.toISOString();
@@ -148,6 +163,7 @@ export class RspElisionStore {
   }
 
   async get(handle: string): Promise<RspElisionRecord | RspExpiredHandle | null> {
+    if (this.db) return await this.getRedDb(handle);
     if (!isHandle(handle)) return null;
     const tombstone = this.tombstone(handle);
     if (tombstone) return tombstone;
@@ -183,6 +199,7 @@ export class RspElisionStore {
   }
 
   async stats(): Promise<RspStoreStats> {
+    if (this.db) return await this.statsRedDb();
     this.prune();
     await this.flush();
     const index = this.readIndex();
@@ -260,6 +277,137 @@ export class RspElisionStore {
   private async flush(): Promise<void> {
     await writeStoreDocument(this.path, this.document);
   }
+
+  private kv() {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    return this.db.kv(RSP_ELISION_COLLECTION);
+  }
+
+  private async ensureRedDbStore(): Promise<void> {
+    const index = await this.readRedDbIndex();
+    await this.writeRedDbIndex(index);
+  }
+
+  private async mintRedDb(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
+    const bytes = Buffer.from(original);
+    const now = this.opts.now();
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
+    const handle = contentHandle(bytes, meta);
+    const key = recordKey(handle);
+    const record: StoredRecord = {
+      collection: RSP_ELISION_COLLECTION,
+      handle,
+      original: bytes.toString("base64"),
+      original_encoding: "base64",
+      original_bytes: bytes.length,
+      command: meta.command,
+      created_at: createdAt,
+      expires_at: expiresAt,
+      loss: meta.loss,
+    };
+    await this.kv().delete(tombstoneKey(handle));
+    await this.kv().put(key, record);
+    const index = await this.readRedDbIndex();
+    const withoutExisting = index.records.filter((entry) => entry.handle !== handle);
+    withoutExisting.push({ handle, key, bytes: bytes.length, command: meta.command, created_at: createdAt, expires_at: expiresAt });
+    await this.pruneRedDb({ version: 1, records: withoutExisting });
+    return handle;
+  }
+
+  private async getRedDb(handle: string): Promise<RspElisionRecord | RspExpiredHandle | null> {
+    if (!isHandle(handle)) return null;
+    const tombstone = await this.kv().get(tombstoneKey(handle));
+    if (isExpiredHandle(tombstone)) return tombstone;
+    const raw = await this.kv().get(recordKey(handle));
+    if (!isStoredRecord(raw)) return null;
+    if (Date.parse(raw.expires_at) <= this.opts.now().getTime()) {
+      const expired = { status: "expired" as const, expired_at: raw.expires_at, command: raw.command };
+      await this.expireRedDbEntry({
+        handle: raw.handle,
+        key: recordKey(raw.handle),
+        bytes: raw.original_bytes,
+        command: raw.command,
+        created_at: raw.created_at,
+        expires_at: raw.expires_at,
+      }, raw.expires_at);
+      return expired;
+    }
+    const original = this.readOriginal(raw);
+    if (!original) return null;
+    return {
+      collection: RSP_ELISION_COLLECTION,
+      handle: raw.handle,
+      original,
+      command: raw.command,
+      created_at: raw.created_at,
+      loss: raw.loss,
+    };
+  }
+
+  private async statsRedDb(): Promise<RspStoreStats> {
+    const index = await this.pruneRedDb(await this.readRedDbIndex());
+    return {
+      records: index.records.length,
+      bytes: index.records.reduce((sum, entry) => sum + entry.bytes, 0),
+      oldest: index.records.reduce<string | null>((oldest, entry) => {
+        if (oldest == null) return entry.created_at;
+        return entry.created_at < oldest ? entry.created_at : oldest;
+      }, null),
+      budget: this.opts.byteBudget,
+    };
+  }
+
+  async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
+    if (action === "recall") {
+      return { status: "resident", action, payload };
+    }
+    if (action === "ingest") {
+      return { status: "resident", action, payload };
+    }
+    throw new Error(`unsupported memory action: ${action}`);
+  }
+
+  private async readRedDbIndex(): Promise<IndexDocument> {
+    const raw = await this.kv().get(indexKey());
+    return isIndexDocument(raw) ? raw : { version: 1, records: [] };
+  }
+
+  private async writeRedDbIndex(index: IndexDocument): Promise<void> {
+    await this.kv().put(indexKey(), index);
+  }
+
+  private async pruneRedDb(index: IndexDocument): Promise<IndexDocument> {
+    const nowMs = this.opts.now().getTime();
+    const nowIso = new Date(nowMs).toISOString();
+    const live: IndexEntry[] = [];
+    for (const entry of index.records) {
+      if (Date.parse(entry.expires_at) <= nowMs) {
+        await this.expireRedDbEntry(entry, entry.expires_at);
+      } else {
+        live.push(entry);
+      }
+    }
+    let bytes = live.reduce((sum, entry) => sum + entry.bytes, 0);
+    live.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    while (bytes > this.opts.byteBudget && live.length > 0) {
+      const evicted = live.shift()!;
+      bytes -= evicted.bytes;
+      await this.expireRedDbEntry(evicted, nowIso);
+    }
+    const next = { version: 1 as const, records: live };
+    await this.writeRedDbIndex(next);
+    return next;
+  }
+
+  private async expireRedDbEntry(entry: IndexEntry, expiredAt: string): Promise<void> {
+    await this.kv().delete(entry.key);
+    await this.kv().put(tombstoneKey(entry.handle), {
+      status: "expired",
+      expired_at: expiredAt,
+      command: entry.command,
+    });
+  }
 }
 
 function contentHandle(original: Buffer, meta: RspMintMeta): `el:${string}` {
@@ -279,6 +427,10 @@ function recordKey(handle: `el:${string}`): string {
 
 function tombstoneKey(handle: `el:${string}`): string {
   return `expired:${handle.slice(3)}`;
+}
+
+function indexKey(): string {
+  return "index:v1";
 }
 
 function isHandle(value: string): value is `el:${string}` {
@@ -369,6 +521,29 @@ function isLegacyRedDbStore(bytes: Buffer): boolean {
 function legacyRedDbFallbackPath(path: string): string {
   if (basename(path) === "red.rdb") return join(dirname(path), "tmp", "rsp-elisions.json");
   return `${path}.json`;
+}
+
+function usesEmbeddedRedDb(path: string): boolean {
+  return basename(path) === "red-skills.rdb";
+}
+
+async function ensureReddbBinaryFromWarmCache(): Promise<void> {
+  if (process.env.REDDB_BIN || !process.env.RED_SKILLS_CACHE_DIR) return;
+  const root = join(process.env.RED_SKILLS_CACHE_DIR, "reddb");
+  let versions: string[];
+  try {
+    versions = await readdir(root);
+  } catch {
+    return;
+  }
+  versions.sort().reverse();
+  for (const version of versions) {
+    const candidate = join(root, version, process.platform === "win32" ? "red.exe" : "red");
+    if (existsSync(candidate)) {
+      process.env.REDDB_BIN = candidate;
+      return;
+    }
+  }
 }
 
 async function writeStoreDocument(path: string, document: StoreDocument): Promise<void> {
