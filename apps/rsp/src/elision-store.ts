@@ -93,6 +93,9 @@ export class RspElisionStore {
   }) {}
 
   static async open(opts: RspElisionStoreOptions): Promise<RspElisionStore> {
+    if (process.env.RSP_FAIL_IF_STORE_OPEN === "1") {
+      throw new Error("RSP_FAIL_IF_STORE_OPEN blocked store open");
+    }
     const store = new RspElisionStore({
       uri: opts.uri,
       ttlDays: positiveNumber(opts.ttlDays, DEFAULT_RSP_TTL_DAYS),
