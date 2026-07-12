@@ -103,20 +103,12 @@ describe("claude rsp hooks", () => {
     }
   });
 
-  it.each(rspHookCases)("resolves the $name bundle from the warmed npm staging cache", (testCase) => {
+  it.each(rspHookCases)("resolves the $name bundle from the warmed bundle cache", (testCase) => {
     const tmp = mkdtempSync(join(tmpdir(), "claude-rsp-hook-"));
     try {
       const pluginRoot = join(tmp, "plugins", "dev");
       const cacheRoot = join(tmp, "red-skills-cache");
-      const bundle = join(
-        cacheRoot,
-        ".staging-rsp-2.32.0",
-        "node_modules",
-        "@reddb-io",
-        "red-skills",
-        "dist",
-        "rsp.bundle.min.mjs",
-      );
+      const bundle = join(cacheRoot, "rsp-2.32.0.bundle.min.mjs");
       const log = join(tmp, "rsp-hook.log");
       mkdirSync(pluginRoot, { recursive: true });
       writeRecordingRspBundle(bundle);

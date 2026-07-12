@@ -114,6 +114,18 @@ export function resolveBundle(input: ResolveBundleInput): string {
   return joinPath(cacheDir, bundleFileName(plugin, version, channel));
 }
 
+/**
+ * Bundles that ship under another plugin's warm path.
+ *
+ * `rsp` is part of the dev plugin surface: the PATH shim and shell hooks resolve
+ * it from the shared bundle cache, but no SessionStart hook invokes
+ * `red-fetch.mjs rsp <version>` directly. Warming `dev` must therefore warm the
+ * sibling `rsp` bundle from the same npm package materialization.
+ */
+export function companionBundlePlugins(plugin: string): readonly string[] {
+  return plugin === "dev" ? ["rsp"] : [];
+}
+
 /** Bundle filename inside the npm package tarball's `dist/`. */
 export function packagedBundleName(plugin: string): string {
   return `${plugin}.bundle.min.mjs`;
@@ -167,9 +179,19 @@ export async function ensureBundle(
 ): Promise<string> {
   const { plugin, version, cacheDir, channel = "stable" } = input;
   const dest = resolveBundle({ plugin, version, cacheDir, channel });
+  const companionPlugins = companionBundlePlugins(plugin);
+  const companionDests = companionPlugins.map((companion) =>
+    resolveBundle({ plugin: companion, version, cacheDir, channel }),
+  );
 
   // Stable is cache-first; canary is a floating npm dist-tag and must refresh.
-  if (channel !== "canary" && (await io.exists(dest))) return dest;
+  if (
+    channel !== "canary" &&
+    (await io.exists(dest)) &&
+    (await allExist(io, companionDests))
+  ) {
+    return dest;
+  }
 
   const spec = npmPackageSpec(version, channel);
   const stagingDir = joinPath(
@@ -184,18 +206,26 @@ export async function ensureBundle(
     throw classifyMaterializeError(err, spec);
   }
 
-  const src = joinPath(pkgRoot, packagedBundleRelPath(plugin));
-  if (!(await io.exists(src))) {
-    throw new BundleFetchError(
-      "bundle-missing",
-      `npm package ${spec} has no ${packagedBundleRelPath(plugin)}`,
-    );
+  for (const bundlePlugin of [plugin, ...companionPlugins]) {
+    const srcRel = packagedBundleRelPath(bundlePlugin);
+    const src = joinPath(pkgRoot, srcRel);
+    if (!(await io.exists(src))) {
+      throw new BundleFetchError("bundle-missing", `npm package ${spec} has no ${srcRel}`);
+    }
+    const bundleDest =
+      bundlePlugin === plugin
+        ? dest
+        : resolveBundle({ plugin: bundlePlugin, version, cacheDir, channel });
+    await io.writeFile(bundleDest, await io.readFile(src));
   }
-  const bytes = await io.readFile(src);
-
-  // Only reached on a resolved package + present bundle.
-  await io.writeFile(dest, bytes);
   return dest;
+}
+
+async function allExist(io: Pick<BundleIO, "exists">, paths: readonly string[]): Promise<boolean> {
+  for (const path of paths) {
+    if (!(await io.exists(path))) return false;
+  }
+  return true;
 }
 
 /**

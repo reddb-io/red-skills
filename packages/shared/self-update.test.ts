@@ -39,11 +39,12 @@ function registryMetadata(versions: string[]): string {
  * In-memory self-update IO backed by a fake npm registry + package store.
  *
  * `registryVersions` are the versions the registry advertises; `packageBundles`
- * maps a version -> the bundle bytes its `@reddb-io/red-skills@<version>` tarball
- * carries. Every fetch (registry query), materialize (npm install), write, and
- * rename is recorded so tests can assert ordering and that the cache stays
- * untouched on a no-op. There is NO download() and NO signature verify — the
- * transport is npm-only (ADR 0091).
+ * maps a version -> the dev bundle bytes its `@reddb-io/red-skills@<version>`
+ * tarball carries. The fake also stages the dev-owned rsp companion bundle,
+ * matching the published package contract. Every fetch (registry query),
+ * materialize (npm install), write, and rename is recorded so tests can assert
+ * ordering and that the cache stays untouched on a no-op. There is NO download()
+ * and NO signature verify — the transport is npm-only (ADR 0091).
  */
 function makeIO(opts: {
   files?: Record<string, Uint8Array>;
@@ -67,6 +68,7 @@ function makeIO(opts: {
       if (!bytes) throw new Error(`npm ERR! 404 '${spec}' is not in this registry`);
       const root = `${stagingDir}/node_modules/${NPM_PACKAGE}`;
       files[`${root}/${packagedBundleRelPath(PLUGIN)}`] = bytes;
+      files[`${root}/${packagedBundleRelPath("rsp")}`] = bundleBytesFor(`rsp-${version}`);
       return root;
     },
     async fetchText(url) {
@@ -234,7 +236,9 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     expect(materializes).toEqual([npmSpec(updated)]);
     // Bundle cached under the target version.
     const bundlePath = resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE });
+    const rspBundlePath = resolveBundle({ plugin: "rsp", version: updated, cacheDir: CACHE });
     expect(files[bundlePath]).toEqual(bundleBytesFor(updated));
+    expect(files[rspBundlePath]).toEqual(bundleBytesFor(`rsp-${updated}`));
     // Pointer now names the update, placed atomically (temp -> rename).
     const ptr = pointerPath(CACHE, PLUGIN);
     expect(JSON.parse(new TextDecoder().decode(files[ptr]))).toEqual({ version: updated });
