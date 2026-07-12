@@ -187,6 +187,82 @@ describe("rsp telemetry spool", () => {
     });
   }, 20_000);
 
+  it("serves telemetry stats from resident collections without mutating the spool", async () => {
+    const root = await tempRoot();
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "saved",
+      created_at: new Date().toISOString(),
+      command: "git log",
+      elided: true,
+      raw_bytes: 1000,
+      emitted_bytes: 100,
+      raw_text: "alpha ".repeat(100),
+      emitted_text: "alpha",
+      wrapper_ms: 12,
+      store_open_count: 1,
+      store_elapsed_ms: 4,
+      bytes: 200,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+      id: "degraded",
+      created_at: new Date().toISOString(),
+      command: "git --version",
+      reason: "wrapper failed",
+      bytes: 100,
+    });
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const server = runResidentServer({
+      rootDir: root,
+      socketPath: paths.socketPath,
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      telemetryTtlDays: 90,
+      telemetryByteBudget: 1_000,
+      idleMs: 100,
+    });
+    await waitForResident(paths.socketPath);
+
+    const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
+      id: "stats",
+      op: "telemetry-stats",
+      sinceDays: 7,
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.ok && response.value).toMatchObject({
+      window_days: 7,
+      empty: false,
+      savings: {
+        invocations: 1,
+        elided: 1,
+        raw_bytes: 1000,
+        emitted_bytes: 100,
+        bytes_saved: 900,
+        top_commands: [expect.objectContaining({ command: "git log", invocations: 1, bytes_saved: 900 })],
+      },
+      health: {
+        degradations: 1,
+        degradation_rate: 0.5,
+        by_reason: [{ reason: "wrapper failed", count: 1 }],
+        most_recent: expect.objectContaining({ reason: "wrapper failed", command: "git --version" }),
+      },
+      latency: {
+        wrapper_ms_p50: 12,
+        wrapper_ms_p95: 12,
+        store_open_count_sum: 1,
+        store_elapsed_ms_sum: 4,
+        store_elapsed_ms_avg: 4,
+      },
+    });
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    await server;
+  }, 20_000);
+
   it("drains a hand-written spool through the built bundle resident", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();

@@ -13,6 +13,7 @@ export interface RspResidentConfig {
 export type RspResidentRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "stats" }
+  | { id: string; op: "telemetry-stats"; sinceDays: number }
   | { id: string; op: "mint"; original: string; meta: unknown }
   | { id: string; op: "get"; handle: string }
   | { id: string; op: "memory"; action: "recall" | "ingest"; payload: unknown };

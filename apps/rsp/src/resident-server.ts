@@ -10,6 +10,7 @@ import { RspElisionStore } from "./elision-store.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
+  readTelemetryStats,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -298,6 +299,11 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
 async function handleRequest(store: RspElisionStore, request: RspResidentRequest): Promise<unknown> {
   if (request.op === "ping") return { pong: true };
   if (request.op === "stats") return await store.stats();
+  if (request.op === "telemetry-stats") {
+    const db = store.redDb();
+    if (!db) throw new Error("rsp telemetry stats require the shared RedDB store");
+    return await readTelemetryStats(db, request.sinceDays);
+  }
   if (request.op === "mint") {
     return {
       handle: await store.mint(Buffer.from(request.original, "base64"), request.meta as Parameters<RspElisionStore["mint"]>[1]),
