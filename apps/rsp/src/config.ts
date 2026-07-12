@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { findUp, flatConfigValue } from "@reddb-io/shared/plugin-gate.js";
 
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
 export const DEFAULT_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
@@ -15,10 +16,10 @@ export interface RspRuntimeConfig {
 }
 
 export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitStoreUri?: string): RspRuntimeConfig {
-  const configPath = findUp(cwd, join(".red", "config.yaml"));
+  const configPath = findUp(resolve(cwd), join(".red", "config.yaml"));
   const root = configPath ? dirname(dirname(configPath)) : cwd;
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
-  const enabled = readYamlPath(yaml, "rsp.enabled") === "true";
+  const enabled = flatConfigValue(yaml, "rsp.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
   const byteBudget = positiveNumber(readNumericYamlPath(yaml, "rsp.byteBudget"), DEFAULT_RSP_BYTE_BUDGET);
   const heavyGitByteThreshold = positiveNumber(
@@ -30,48 +31,11 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   return { enabled, storeUri, ttlDays, byteBudget, heavyGitByteThreshold };
 }
 
-function findUp(start: string, relativePath: string): string | null {
-  let dir = resolve(start);
-  for (let i = 0; i < 32; i++) {
-    const candidate = join(dir, relativePath);
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-  return null;
-}
-
 function readNumericYamlPath(yaml: string, dottedPath: string): number | undefined {
-  const value = readYamlPath(yaml, dottedPath);
+  const value = flatConfigValue(yaml, dottedPath);
   if (value == null) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
-}
-
-function readYamlPath(yaml: string, dottedPath: string): string | undefined {
-  const target = dottedPath.split(".");
-  const stack: Array<{ indent: number; key: string }> = [];
-  for (const rawLine of yaml.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const colon = line.indexOf(":");
-    if (colon < 0) continue;
-    const indent = line.length - line.trimStart().length;
-    const key = line.slice(0, colon).trim();
-    if (!key) continue;
-    const value = stripInlineComment(line.slice(colon + 1));
-    while (stack.length > 0 && stack[stack.length - 1]!.indent >= indent) stack.pop();
-    stack.push({ indent, key });
-    if (value !== "" && stack.map((entry) => entry.key).join(".") === target.join(".")) return value;
-  }
-  return undefined;
-}
-
-function stripInlineComment(value: string): string {
-  const hash = value.indexOf(" #");
-  return (hash >= 0 ? value.slice(0, hash) : value).trim();
 }
 
 function positiveNumber(value: number | undefined, fallback: number): number {
