@@ -57,6 +57,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       storeUri: serverConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
+      telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? serverConfig.telemetryTtlDays,
+      telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
     });
     return 0;
@@ -76,6 +78,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       storeUri: warmConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
+      telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? warmConfig.telemetryTtlDays,
+      telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
     });
     return 0;
   }
@@ -92,11 +96,15 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
+    telemetryTtlDays: config.telemetryTtlDays,
+    telemetryByteBudget: config.telemetryByteBudget,
   }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
+    telemetryTtlDays: config.telemetryTtlDays,
+    telemetryByteBudget: config.telemetryByteBudget,
   });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
     const { RspElisionStore } = await import("./elision-store.js");
