@@ -56,7 +56,7 @@ REQUIRED_KEYS=(
 QUALITY_GATE_REQUIRED_KEYS=(
   outcome checks_run discovered_commands stub_findings
   scope_drift_findings acceptance_verification
-  fixes_applied fixes_rejected rtk_used
+  fixes_applied fixes_rejected proxy_used
 )
 STATUS_ENUM='completed blocked escalation_needed'
 RUNNER_ENUM='claude codex hermes'
@@ -215,8 +215,8 @@ validate_file() {
       || fail "$file" "quality_gate.$qarr must be an array (use [] for empty)"
   done
 
-  jq -e '.quality_gate.rtk_used | type == "boolean"' "$file" >/dev/null \
-    || fail "$file" "quality_gate.rtk_used must be a boolean"
+  jq -e '.quality_gate.proxy_used | type == "boolean"' "$file" >/dev/null \
+    || fail "$file" "quality_gate.proxy_used must be a boolean"
 
   jq -e '
     .quality_gate.checks_run
@@ -227,10 +227,10 @@ validate_file() {
         and (has("exit_code")        and (.exit_code        | type == "number" and . == (. | floor)))
         and (has("duration_seconds") and (.duration_seconds | type == "number" and . >= 0))
         and (has("output_summary")   and (.output_summary   | type == "string"))
-        and (has("used_rtk")         and (.used_rtk         | type == "boolean"))
+        and (has("proxy_used")       and (.proxy_used       | type == "boolean"))
       )
   ' "$file" >/dev/null \
-    || fail "$file" "quality_gate.checks_run items must be {name, command, exit_code, duration_seconds, output_summary, used_rtk}"
+    || fail "$file" "quality_gate.checks_run items must be {name, command, exit_code, duration_seconds, output_summary, proxy_used}"
 
   cr_len=$(jq '.quality_gate.checks_run | length' "$file")
   [ "$cr_len" = "$vc_len" ] \

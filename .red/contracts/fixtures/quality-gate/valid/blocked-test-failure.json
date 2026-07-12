@@ -1,0 +1,62 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "codex",
+  "issue_number": 1556,
+  "scope_summary": "Validate a blocked quality gate.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "gate passes",
+      "result": "fail",
+      "evidence": "test command failed"
+    }
+  ],
+  "changed_files": [
+    "scripts/validate-quality-gate-contract.sh"
+  ],
+  "verification_commands": [
+    "scripts/test-validate-quality-gate-contract.sh"
+  ],
+  "verification_results": [
+    {
+      "command": "scripts/test-validate-quality-gate-contract.sh",
+      "exit_code": 1,
+      "summary": "fixture failure"
+    }
+  ],
+  "quality_gate_failures": [
+    "contract fixture failed"
+  ],
+  "blocker_reason": "test failure",
+  "next_human_action": "inspect the fixture failure",
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "blocked",
+    "checks_run": [
+      {
+        "name": "quality gate fixtures",
+        "command": "scripts/test-validate-quality-gate-contract.sh",
+        "exit_code": 1,
+        "duration_seconds": 1,
+        "output_summary": "fixture failure",
+        "proxy_used": true
+      }
+    ],
+    "discovered_commands": [],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "gate passes",
+        "verified": "by_command",
+        "evidence_source": "scripts/test-validate-quality-gate-contract.sh"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "proxy_used": true
+  }
+}

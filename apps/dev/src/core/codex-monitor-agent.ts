@@ -32,7 +32,7 @@ export interface CodexMonitorAgentPromptOptions {
 export const DEFAULT_CODEX_MONITOR_INTERVAL_SECONDS = 30;
 
 export const DEFAULT_CODEX_MONITOR_COMMAND =
-  "rtk env RED_AFK_RUNNER=codex red-skills-dev monitor --once";
+  "env RED_AFK_RUNNER=codex red-skills-dev monitor --once";
 
 function normalizedRunner(runner: string): string {
   return runner.trim().toLowerCase();

@@ -1,0 +1,73 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "codex",
+  "issue_number": 1556,
+  "scope_summary": "Validate scope drift plus stub detection.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "stay in scope",
+      "result": "fail",
+      "evidence": "unrelated file changed"
+    }
+  ],
+  "changed_files": [
+    "unrelated.txt"
+  ],
+  "verification_commands": [
+    "git diff --check"
+  ],
+  "verification_results": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "no whitespace errors"
+    }
+  ],
+  "quality_gate_failures": [
+    "scope drift"
+  ],
+  "blocker_reason": "scope drift",
+  "next_human_action": "remove unrelated changes",
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "stub_detected",
+    "checks_run": [
+      {
+        "name": "diff check",
+        "command": "git diff --check",
+        "exit_code": 0,
+        "duration_seconds": 1,
+        "output_summary": "no whitespace errors",
+        "proxy_used": false
+      }
+    ],
+    "discovered_commands": [],
+    "stub_findings": [
+      {
+        "kind": "placeholder_implementation",
+        "location": "unrelated.txt",
+        "evidence": "TODO placeholder"
+      }
+    ],
+    "scope_drift_findings": [
+      {
+        "file": "unrelated.txt",
+        "reason": "outside requested scope"
+      }
+    ],
+    "acceptance_verification": [
+      {
+        "criterion": "stay in scope",
+        "verified": "by_artifact",
+        "evidence_source": "changed_files"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "proxy_used": false
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "codex",
+  "issue_number": 1556,
+  "scope_summary": "Mismatched verification arrays.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "gate passes",
+      "result": "fail",
+      "evidence": "missing result"
+    }
+  ],
+  "changed_files": [
+    "scripts/validate-quality-gate-contract.sh"
+  ],
+  "verification_commands": [
+    "scripts/test-validate-quality-gate-contract.sh"
+  ],
+  "verification_results": [],
+  "quality_gate_failures": [
+    "missing result"
+  ],
+  "blocker_reason": "missing verification result",
+  "next_human_action": "record the command result",
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "blocked",
+    "checks_run": [],
+    "discovered_commands": [],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "gate passes",
+        "verified": "by_command",
+        "evidence_source": "scripts/test-validate-quality-gate-contract.sh"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "proxy_used": false
+  }
+}

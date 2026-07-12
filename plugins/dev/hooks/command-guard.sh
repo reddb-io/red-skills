@@ -430,8 +430,8 @@ is_gh_write_command() {
   [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+PR[[:space:]]+(COMMENT|CREATE|EDIT|REVIEW)([[:space:]]|$) ]] && return 0
   [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+RELEASE[[:space:]]+(CREATE|EDIT)([[:space:]]|$) ]] && return 0
   [[ "$upper" =~ (^|[[:space:]\;\&\|])GH[[:space:]]+GIST[[:space:]]+CREATE([[:space:]]|$) ]] && return 0
-  [[ "$upper" =~ (^|[[:space:]\;\&\|])RTK[[:space:]]+PROXY[[:space:]]+GH[[:space:]]+ISSUE[[:space:]]+(COMMENT|CREATE|EDIT)([[:space:]]|$) ]] && return 0
-  [[ "$upper" =~ (^|[[:space:]\;\&\|])RTK[[:space:]]+PROXY[[:space:]]+GH[[:space:]]+PR[[:space:]]+(COMMENT|CREATE|EDIT|REVIEW)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])RSP[[:space:]]+GH[[:space:]]+ISSUE[[:space:]]+(COMMENT|CREATE|EDIT)([[:space:]]|$) ]] && return 0
+  [[ "$upper" =~ (^|[[:space:]\;\&\|])RSP[[:space:]]+GH[[:space:]]+PR[[:space:]]+(COMMENT|CREATE|EDIT|REVIEW)([[:space:]]|$) ]] && return 0
   return 1
 }
 
