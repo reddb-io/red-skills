@@ -1,11 +1,12 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { connect } from "@reddb-io/sdk";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
 export const REPO_STORE_PATH = ".red/red.rdb";
+const LEGACY_MEMORY_STORE_PATH = ".red/memory/graph.rdb";
 
 export interface RspProvisionOptions {
   ttlDays?: number;
@@ -18,6 +19,7 @@ export interface RspProvisionResult {
   storePath: string;
   configChanged: boolean;
   storeCreated: boolean;
+  memoryStoreMigrated: boolean;
 }
 
 export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionOptions = {}): Promise<RspProvisionResult> {
@@ -34,12 +36,14 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
-  const next = mergeRspBlock(existing, {
+  let next = mergeRspBlock(existing, {
     enabled: true,
     ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
     byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
     heavyGitByteThreshold: opts.heavyGitByteThreshold ?? DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   });
+  const migration = await migrateLegacyMemoryStore(root, next);
+  next = migration.configText;
   const configChanged = next !== existing;
   if (configChanged) await writeFile(configPath, next, "utf8");
 
@@ -49,7 +53,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
     await db.close();
   }
 
-  return { configPath, storePath, configChanged, storeCreated };
+  return { configPath, storePath, configChanged, storeCreated, memoryStoreMigrated: migration.storeCopied };
 }
 
 export interface RspConfigBlock {
@@ -117,6 +121,62 @@ function topKey(line: string): string {
 
 function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+async function migrateLegacyMemoryStore(root: string, configText: string): Promise<{ configText: string; storeCopied: boolean }> {
+  const lines = configText.replace(/\n+$/, "").split("\n");
+  const memoryStart = findPluginsMemoryBlock(lines);
+  if (memoryStart === -1) return { configText, storeCopied: false };
+
+  const memoryEnd = findBlockEnd(lines, memoryStart, lineIndent(lines[memoryStart]!));
+  const memoryLines = lines.slice(memoryStart, memoryEnd);
+  const mode = readNestedValue(memoryLines, "mode");
+  const currentStorePath = readNestedValue(memoryLines, "storePath");
+  const pointsAtLegacy = currentStorePath === LEGACY_MEMORY_STORE_PATH || (currentStorePath == null && mode === "graph");
+  if (!pointsAtLegacy) return { configText, storeCopied: false };
+
+  const targetPath = join(root, REPO_STORE_PATH);
+  let storeCopied = false;
+  if ((await exists(join(root, LEGACY_MEMORY_STORE_PATH))) && !(await exists(targetPath))) {
+    await copyFile(join(root, LEGACY_MEMORY_STORE_PATH), targetPath);
+    storeCopied = true;
+  }
+
+  const next = upsertNestedValue(lines, memoryStart, memoryEnd, "storePath", REPO_STORE_PATH);
+  return { configText: `${next.join("\n")}\n`, storeCopied };
+}
+
+function findPluginsMemoryBlock(lines: string[]): number {
+  const pluginsStart = findTopLevelBlock(lines, "plugins");
+  if (pluginsStart === -1) return -1;
+  const pluginsEnd = findBlockEnd(lines, pluginsStart, 0);
+  for (let i = pluginsStart + 1; i < pluginsEnd; i++) {
+    const line = lines[i]!;
+    if (isStructural(line) && lineIndent(line) === 2 && topKey(line) === "memory") return i;
+  }
+  return -1;
+}
+
+function readNestedValue(lines: string[], key: string): string | undefined {
+  for (const line of lines.slice(1)) {
+    if (!isStructural(line) || lineIndent(line) !== 4 || topKey(line) !== key) continue;
+    return stripInlineComment(line.replace(/^ */, "").replace(/^[^:]+:/, "")).replace(/^["']|["']$/g, "");
+  }
+  return undefined;
+}
+
+function upsertNestedValue(lines: string[], start: number, end: number, key: string, value: string): string[] {
+  for (let i = start + 1; i < end; i++) {
+    if (isStructural(lines[i]!) && lineIndent(lines[i]!) === 4 && topKey(lines[i]!) === key) {
+      return [...lines.slice(0, i), `    ${key}: ${value}`, ...lines.slice(i + 1)];
+    }
+  }
+  return [...lines.slice(0, end), `    ${key}: ${value}`, ...lines.slice(end)];
+}
+
+function stripInlineComment(value: string): string {
+  const hash = value.indexOf(" #");
+  return (hash >= 0 ? value.slice(0, hash) : value).trim();
 }
 
 async function exists(path: string): Promise<boolean> {
