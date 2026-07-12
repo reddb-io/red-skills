@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RspElisionStore } from "./elision-store.js";
 import { resolveRspConfig } from "./config.js";
@@ -34,15 +35,25 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
+  const wrapperCommand = isWrapperCommand(args.command);
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
+    if (wrapperCommand) return await passthrough(args.positional);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  const store = await RspElisionStore.open({
-    uri: config.storeUri,
-    ttlDays: config.ttlDays,
-    byteBudget: config.byteBudget,
-  });
+  if (wrapperCommand && isUnreadableFileStore(config.storeUri)) return await passthrough(args.positional);
+  let store: RspElisionStore;
+  try {
+    const openStore = () => RspElisionStore.open({
+      uri: config.storeUri,
+      ttlDays: config.ttlDays,
+      byteBudget: config.byteBudget,
+    });
+    store = wrapperCommand ? await suppressRspStderr(openStore) : await openStore();
+  } catch (err) {
+    if (wrapperCommand) return await passthrough(args.positional);
+    throw err;
+  }
 
   try {
     if (!args.command) {
@@ -52,11 +63,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      const result = await runGitWrapper(args.positional, {
+      const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
         level: args.level,
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
-      });
+      }));
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       if (result.signal) {
@@ -67,7 +78,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "gh") {
-      const result = await runGhWrapper(args.positional, { level: args.level, store });
+      const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       if (result.signal) {
@@ -78,7 +89,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
-      const result = await runTestWrapper(args.positional, { level: args.level, store });
+      const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       if (result.signal) {
@@ -104,9 +115,61 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
 
     process.stdout.write("error: usage rsp show el:<id>\n");
     return 2;
+  } catch (err) {
+    if (wrapperCommand) return await passthrough(args.positional);
+    throw err;
   } finally {
     await store.close();
   }
+}
+
+async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
+  const write = process.stderr.write;
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  try {
+    return await fn();
+  } finally {
+    process.stderr.write = write;
+  }
+}
+
+function isWrapperCommand(command: string | undefined): boolean {
+  return command === "git" || command === "gh" || command === "vitest" || command === "cargo";
+}
+
+function isUnreadableFileStore(uri: string): boolean {
+  if (!uri.startsWith("file://")) return false;
+  let fd: number | undefined;
+  try {
+    fd = openSync(fileURLToPath(uri), "r");
+    const header = Buffer.alloc(64);
+    const bytesRead = readSync(fd, header, 0, header.length, 0);
+    return !header.subarray(0, bytesRead).includes("RDDB");
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+async function passthrough(argv: readonly string[]): Promise<number> {
+  const command = argv[0];
+  if (!command) return 2;
+  const child = spawn(command, argv.slice(1), { stdio: "inherit" });
+  return await new Promise((resolve) => {
+    child.on("error", (err) => {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      resolve(127);
+    });
+    child.on("close", (status, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        resolve(128);
+        return;
+      }
+      resolve(status ?? 0);
+    });
+  });
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
