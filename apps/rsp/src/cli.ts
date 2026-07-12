@@ -33,31 +33,39 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runRspMcpServer();
     return 0;
   }
+  const { resolveRspConfig } = await import("./config.js");
+  const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
+  const wrapperCommand = isWrapperCommand(args.command);
+  if (!config.enabled) {
+    if (wrapperCommand) return await degradeToPassthrough(rspDisabledReason(), args.positional);
+    process.stdout.write(`${rspDisabledReason()}\n`);
+    return 0;
+  }
   if (args.command === "git" && isFastGitStatus(args.positional) && residentSocketExists(process.cwd())) {
     return await runFastGitStatus();
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
     const { runResidentServer } = await import("./resident-server.js");
-    const { resolveRspConfig } = await import("./config.js");
     const socket = valueAfter(args.positional, "--socket") ?? resolveResidentPaths(process.cwd()).socketPath;
-    const config = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    const serverConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    if (!serverConfig.enabled) {
+      process.stdout.write(`${rspDisabledReason()}\n`);
+      return 0;
+    }
     await runResidentServer({
       socketPath: socket,
-      storeUri: config.storeUri,
-      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? config.ttlDays,
-      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? config.byteBudget,
+      storeUri: serverConfig.storeUri,
+      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
+      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
     });
     return 0;
   }
 
-  const { resolveRspConfig } = await import("./config.js");
   const { existsSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const residentPaths = resolveResidentPaths(process.cwd());
-  const wrapperCommand = isWrapperCommand(args.command);
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await degradeToPassthrough("store not provisioned", args.positional);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
@@ -292,6 +300,10 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   }
   process.stderr.write(`rsp: ${reason}, passing through\n`);
   return await passthrough(argv);
+}
+
+function rspDisabledReason(): string {
+  return "rsp is not enabled in this directory; run /red-setup";
 }
 
 async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
