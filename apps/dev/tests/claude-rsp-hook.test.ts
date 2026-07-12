@@ -64,7 +64,7 @@ function writeRecordingRspBundle(path: string): void {
       "process.stdin.setEncoding('utf8');",
       "process.stdin.on('data', (chunk) => { input += chunk; });",
       "process.stdin.on('end', () => {",
-      "  appendFileSync(process.env.RSP_HOOK_LOG, JSON.stringify({ args: process.argv.slice(2), input: JSON.parse(input) }) + '\\n');",
+      "  appendFileSync(process.env.RSP_HOOK_LOG, JSON.stringify({ args: process.argv.slice(2), input: JSON.parse(input), redBin: process.env.REDDB_BIN }) + '\\n');",
       "  process.stdout.write('{}');",
       "});",
       "",
@@ -125,6 +125,32 @@ describe("claude rsp hooks", () => {
         args: ["hook", testCase.subcommand],
         input: { hook_event_name: testCase.lifecycle },
       });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(rspHookCases)("sets REDDB_BIN from the warm runtime cache for $name", (testCase) => {
+    const tmp = mkdtempSync(join(tmpdir(), "claude-rsp-hook-"));
+    try {
+      const pluginRoot = join(tmp, "plugins", "dev");
+      const cacheRoot = join(tmp, "red-skills-cache");
+      const bundle = join(cacheRoot, "rsp-2.32.0.bundle.min.mjs");
+      const red = join(cacheRoot, "reddb", "1.7.0", process.platform === "win32" ? "red.exe" : "red");
+      const log = join(tmp, "rsp-hook.log");
+      mkdirSync(pluginRoot, { recursive: true });
+      mkdirSync(join(red, ".."), { recursive: true });
+      writeFileSync(red, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      writeRecordingRspBundle(bundle);
+
+      const result = runHook(claudeRspHookCommand(testCase), pluginRoot, testCase, {
+        RED_SKILLS_CACHE_DIR: cacheRoot,
+        RSP_HOOK_LOG: log,
+      });
+
+      expect(result.status).toBe(0);
+      const [line] = readFileSync(log, "utf8").trim().split("\n");
+      expect(JSON.parse(line)).toMatchObject({ redBin: red });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

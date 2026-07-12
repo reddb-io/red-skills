@@ -8,7 +8,7 @@ import { runGitWrapper } from "./git-wrapper.js";
 import { runGhWrapper } from "./gh-wrapper.js";
 import { runClaudePreExecHook } from "./intercept.js";
 import { runClaudePostExecHook } from "./normalize.js";
-import { provisionRspRepoStore } from "./setup.js";
+import { configureRspRedBinary, provisionRspRepoStore } from "./setup.js";
 import { runTestWrapper } from "./test-wrapper.js";
 
 interface ParsedArgs {
@@ -33,6 +33,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(renderSetupResult(result));
     return 0;
   }
+
+  await configureRspRedBinary({ mayFetch: false });
 
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const wrapperCommand = isWrapperCommand(args.command);

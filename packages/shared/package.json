@@ -11,6 +11,7 @@
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./channel.js": "./channel.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
+    "./red-runtime.js": "./red-runtime.ts",
     "./self-update.js": "./self-update.ts",
     "./log.js": "./log.ts",
     "./plugin-gate.js": "./plugin-gate.ts",

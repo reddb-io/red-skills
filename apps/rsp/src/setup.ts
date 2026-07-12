@@ -1,7 +1,13 @@
 import { constants } from "node:fs";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { join, resolve } from "node:path";
 import { connect } from "@reddb-io/sdk";
+import { readBuildInfo } from "@reddb-io/build-info";
+import { ensureRedBinary, type RedRuntimeIO } from "@reddb-io/shared/red-runtime.js";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
@@ -12,6 +18,7 @@ export interface RspProvisionOptions {
   ttlDays?: number;
   byteBudget?: number;
   heavyGitByteThreshold?: number;
+  redRuntime?: RspRedRuntimeOptions;
 }
 
 export interface RspProvisionResult {
@@ -20,6 +27,14 @@ export interface RspProvisionResult {
   configChanged: boolean;
   storeCreated: boolean;
   memoryStoreMigrated: boolean;
+  redBinaryPath?: string;
+}
+
+export interface RspRedRuntimeOptions {
+  mayFetch: boolean;
+  cacheDir?: string;
+  binaryTag?: string;
+  io?: RedRuntimeIO;
 }
 
 export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionOptions = {}): Promise<RspProvisionResult> {
@@ -48,12 +63,34 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   if (configChanged) await writeFile(configPath, next, "utf8");
 
   const storeCreated = !(await exists(storePath));
+  const redRuntime = await configureRspRedBinary({ mayFetch: true, ...(opts.redRuntime ?? {}) });
   if (storeCreated) {
     const db = await connect(`file://${storePath}`);
     await db.close();
   }
 
-  return { configPath, storePath, configChanged, storeCreated, memoryStoreMigrated: migration.storeCopied };
+  return {
+    configPath,
+    storePath,
+    configChanged,
+    storeCreated,
+    memoryStoreMigrated: migration.storeCopied,
+    redBinaryPath: redRuntime?.redPath,
+  };
+}
+
+export async function configureRspRedBinary(opts: RspRedRuntimeOptions): Promise<{ redPath: string } | null> {
+  if (process.env.REDDB_BIN) return { redPath: process.env.REDDB_BIN };
+  const binaryTag = opts.binaryTag ?? readBuildInfo("rsp").reddbBinaryTag;
+  if (!binaryTag) return null;
+  const runtime = await ensureRedBinary(opts.io ?? nodeRedRuntimeIO, {
+    cacheDir: opts.cacheDir ?? redSkillsCacheDir(),
+    binaryTag,
+    mayFetch: opts.mayFetch,
+  });
+  if (!runtime) return null;
+  process.env.REDDB_BIN = runtime.redPath;
+  return { redPath: runtime.redPath };
 }
 
 export interface RspConfigBlock {
@@ -187,3 +224,33 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+function redSkillsCacheDir(): string {
+  if (process.env.RED_SKILLS_CACHE_DIR) return process.env.RED_SKILLS_CACHE_DIR;
+  if (process.env.XDG_CACHE_HOME) return join(process.env.XDG_CACHE_HOME, "red-skills", "bundles");
+  return join(homedir(), ".cache", "red-skills", "bundles");
+}
+
+const nodeRedRuntimeIO: RedRuntimeIO = {
+  async exists(path) {
+    return exists(path);
+  },
+  async readFile(path) {
+    return new Uint8Array(await readFile(path));
+  },
+  async writeFile(path, bytes) {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, bytes);
+  },
+  async chmod(path, mode) {
+    await chmod(path, mode);
+  },
+  async fetchBuffer(url) {
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  },
+  sha256(bytes) {
+    return createHash("sha256").update(bytes).digest("hex");
+  },
+};
