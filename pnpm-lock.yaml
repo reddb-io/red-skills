@@ -301,6 +301,9 @@ importers:
       '@reddb-io/sdk':
         specifier: 1.7.0
         version: 1.7.0
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: workspace:*
         version: link:../../packages/toon
