@@ -33,13 +33,15 @@ import {
   formatCacheAge,
   humanizeCount,
   humanizeTokens,
-  renderStatuslineWithPreset,
   renderFleetBlock,
+  renderRspBlock,
+  renderStatuslineWithPreset,
   shortModel,
   type ClaudeInput,
   type FleetInput,
   type ProjectInput,
   type RepoInput,
+  type RspStatusInput,
   type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
@@ -54,6 +56,7 @@ const KEY = "\x1b[38;2;255;214;214m"; // transparent-zone KEY: very light red �
 const VAL = "\x1b[39m"; // transparent-zone VALUE: terminal default foreground
 const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a lighter red (runner, +/-/# sigils, ·phase)
 const DIM = "\x1b[38;2;201;150;158m"; // identity-zone branch/version
+const GREEN = "\x1b[38;2;96;214;128m"; // healthy rsp resident
 const GOLD = "\x1b[38;2;240;200;120m"; // » accent
 const BOLD = "\x1b[1m";
 const NOBOLD = "\x1b[22m";
@@ -191,6 +194,12 @@ function fleetKv(fleet: FleetInput | undefined): string[] {
   return block ? [block] : [];
 }
 
+function rspKv(rsp: RspStatusInput | undefined): string[] {
+  const block = renderRspBlock(rsp);
+  if (!block) return [];
+  return rsp === "on" ? [`${GREEN}${block}${SOFT}`] : [`${DIM}${block}${SOFT}`];
+}
+
 /** Line 1 — wine identity zone (project + model) then a transparent KPI tail. */
 export function renderHeaderLine(
   project: ProjectInput,
@@ -198,6 +207,7 @@ export function renderHeaderLine(
   repo: RepoInput | undefined,
   fleet?: FleetInput,
   preset: StatuslinePreset = "full",
+  rsp?: RspStatusInput,
 ): string {
   let s = `${WINE2}${WHITE} ${projectContent(project, preset === "full")} `;
   const model = modelContent(claude);
@@ -211,6 +221,7 @@ export function renderHeaderLine(
           ? kv("iss", String(repo.openIssues)) +
             (repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "")
           : null,
+        ...rspKv(rsp),
       ].filter((x): x is string => x !== null)
     : [
         ctxKv(claude),
@@ -218,6 +229,7 @@ export function renderHeaderLine(
         ...repoCountsKv(repo),
         ...localDiffKv(repo),
         ...fleetKv(fleet),
+        ...rspKv(rsp),
       ].filter((x): x is string => x !== null);
   if (tail.length) s += ` ${tail.join("  ")}`;
   return `${s}${RESET}`;
@@ -376,7 +388,7 @@ export interface StyleOptions {
  * → only the header line. */
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
   const preset = opts.preset ?? "full";
-  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet, preset)];
+  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet, preset, input.rsp)];
   const now = opts.now ?? 0;
   lines.push(...renderWorkerLines(opts.workers ?? [], now, preset));
   return lines.join("\n");

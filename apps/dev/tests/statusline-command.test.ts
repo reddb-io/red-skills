@@ -1,16 +1,19 @@
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   statuslineCommand,
   resolveRoot,
+  resolveStatuslineRsp,
   resolveStatuslinePreset,
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 import { loadConfig } from "../src/core/config.js";
+import { resolveResidentPaths } from "../../rsp/src/resident-client.js";
 
 /** Strip ANSI SGR escapes so assertions read the plain rendered text. The
  * command now themes the line (wine background + black-chipped KPI numbers);
@@ -114,6 +117,48 @@ async function writeFleetSnapshot(
     }),
     "utf8",
   );
+}
+
+async function listenRspSocket(root: string, mode: "reply" | "hang"): Promise<Server> {
+  const { socketPath } = resolveResidentPaths(root);
+  await mkdir(dirname(socketPath), { recursive: true });
+  await rm(socketPath, { force: true });
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    if (mode === "hang") return;
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      const raw = buffer.slice(0, newline);
+      const request = JSON.parse(raw) as { id: string };
+      socket.end(`${JSON.stringify({ id: request.id, ok: true, value: "pong" })}\n`);
+    });
+  });
+  (server as Server & { __sockets?: Set<Socket> }).__sockets = sockets;
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+async function closeServer(server: Server): Promise<void> {
+  for (const socket of (server as Server & { __sockets?: Set<Socket> }).__sockets ?? []) {
+    socket.destroy();
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
 }
 
 const PAYLOAD = JSON.stringify({
@@ -632,6 +677,68 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
     expect(out.text()).toBe("");
+  });
+
+  it("omits rsp when rsp.enabled is not true", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).not.toContain("rsp");
+    expect(await resolveStatuslineRsp(root, {})).toBeUndefined();
+  });
+
+  it("renders rsp warming quickly when enabled and no resident socket answers", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+
+    const started = Date.now();
+    const rsp = await resolveStatuslineRsp(root, {});
+    const elapsed = Date.now() - started;
+    expect(rsp).toBe("warming");
+    expect(elapsed).toBeLessThan(50);
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("rsp○");
+  });
+
+  it("renders rsp on when an enabled repo has a live resident socket", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    const server = await listenRspSocket(root, "reply");
+    try {
+      expect(await resolveStatuslineRsp(root, {})).toBe("on");
+
+      const out = sink();
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+      expect(stripAnsi(out.text())).toContain("rsp●");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("renders rsp warming after the ping cap when a resident socket hangs", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    const server = await listenRspSocket(root, "hang");
+    try {
+      const started = Date.now();
+      const rsp = await resolveStatuslineRsp(root, {});
+      const elapsed = Date.now() - started;
+      expect(rsp).toBe("warming");
+      expect(elapsed).toBeGreaterThanOrEqual(45);
+      expect(elapsed).toBeLessThan(120);
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it("local facts are read live: a mutated state file is reflected on the next render", async () => {
