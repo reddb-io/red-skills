@@ -86,6 +86,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-bump-kind.sh
 
+      - name: Test red-release reddb asset contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-red-release-reddb-assets-contract.sh
+
       - name: Test agent metadata fixtures
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-validate-agent-metadata.sh
@@ -346,6 +350,13 @@ jobs:
           writeFileSync('../../dist/brain-runtime-manifest.json', JSON.stringify(manifest, null, 2));
           console.log('brain runtime manifest:', JSON.stringify(manifest));
           EOF
+
+      - name: Verify reddb release assets
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        run: |
+          set -euo pipefail
+          node scripts/verify-reddb-release-assets.mjs dist/memory-runtime-manifest.json
+          node scripts/verify-reddb-release-assets.mjs dist/brain-runtime-manifest.json
 
       # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
       # the dev/memory runtimes. Its package lives under apps/code-nav.
