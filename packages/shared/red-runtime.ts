@@ -75,10 +75,25 @@ export function parseSha256File(body: Uint8Array | string): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+/**
+ * Resolve the cached red binary. Verifies the recorded checksum unless the
+ * caller opts out.
+ *
+ * Verification re-hashes a ~32MB native binary, so the hot path opts out: rsp
+ * fronts every wrapped command, and re-verifying per invocation would cost more
+ * than the wrapper itself spends. The bytes are checksum-verified at adoption
+ * time and a warm cache is trusted from then on, exactly as the memory/brain
+ * runtime bootstrap already does. A cache that rots anyway is caught twice over:
+ * the cold path re-verifies (and re-fetches on mismatch), and a corrupt binary
+ * that reaches a wrapper fails its spawn, which degrades to passthrough (#1522)
+ * instead of failing the user's command.
+ */
 export async function resolveCachedRedBinary(
   io: Pick<RedRuntimeIO, "exists" | "readFile" | "sha256">,
   input: Pick<EnsureRedBinaryInput, "cacheDir" | "binaryTag" | "platformKey" | "win32">,
+  opts: { verify?: boolean } = {},
 ): Promise<RedBinaryRuntime | null> {
+  const verify = opts.verify ?? true;
   const key = input.platformKey ?? redPlatformKey();
   if (!key) return null;
   const redPath = resolveRedBinaryPath(input.cacheDir, input.binaryTag, input.win32);
@@ -86,8 +101,10 @@ export async function resolveCachedRedBinary(
   if (!(await io.exists(redPath)) || !(await io.exists(checksumPath))) return null;
   const expected = parseSha256File(await io.readFile(checksumPath));
   if (!expected) return null;
-  const got = io.sha256(await io.readFile(redPath));
-  if (got !== expected) return null;
+  if (verify) {
+    const got = io.sha256(await io.readFile(redPath));
+    if (got !== expected) return null;
+  }
   return { redPath, checksumPath, assetName: redAssetName(key), sha256: expected };
 }
 
@@ -95,7 +112,9 @@ export async function ensureRedBinary(
   io: RedRuntimeIO,
   input: EnsureRedBinaryInput,
 ): Promise<RedBinaryRuntime | null> {
-  const cached = await resolveCachedRedBinary(io, input);
+  // Only the cold path (mayFetch) re-verifies, so a mismatch can re-fetch. The
+  // hot path trusts the warm cache — see resolveCachedRedBinary.
+  const cached = await resolveCachedRedBinary(io, input, { verify: input.mayFetch });
   if (cached) return cached;
   if (!input.mayFetch) return null;
 

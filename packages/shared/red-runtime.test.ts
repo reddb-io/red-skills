@@ -24,12 +24,14 @@ function makeIO(opts: {
   const files: Record<string, Uint8Array> = { ...(opts.files ?? {}) };
   const fetches: string[] = [];
   const writes: string[] = [];
+  const reads: string[] = [];
   const chmods: Array<{ path: string; mode: number }> = [];
   const io: RedRuntimeIO = {
     async exists(path) {
       return path in files;
     },
     async readFile(path) {
+      reads.push(path);
       const body = files[path];
       if (!body) throw new Error(`ENOENT ${path}`);
       return body;
@@ -49,7 +51,7 @@ function makeIO(opts: {
     },
     sha256,
   };
-  return { io, files, fetches, writes, chmods };
+  return { io, files, fetches, writes, reads, chmods };
 }
 
 describe("red runtime resolver", () => {
@@ -154,5 +156,54 @@ describe("red runtime resolver", () => {
       binaryTag: TAG,
       platformKey: KEY,
     })).resolves.toBeNull();
+  });
+
+  it("resolves a warm cache on the hot path without reading the binary", async () => {
+    const redPath = resolveRedBinaryPath(CACHE, TAG);
+    const { io, reads, fetches } = makeIO({
+      files: {
+        [redPath]: RED_BYTES,
+        [`${redPath}.sha256`]: new TextEncoder().encode(`${sha256(RED_BYTES)}  ${ASSET}\n`),
+      },
+    });
+
+    // The hot path fronts every wrapped command: it must not re-hash a ~32MB
+    // binary per invocation, so it reads the checksum record and nothing else.
+    const runtime = await ensureRedBinary(io, {
+      cacheDir: CACHE,
+      binaryTag: TAG,
+      platformKey: KEY,
+      mayFetch: false,
+    });
+
+    expect(runtime?.redPath).toBe(redPath);
+    expect(reads).toEqual([`${redPath}.sha256`]);
+    expect(fetches).toEqual([]);
+  });
+
+  it("re-fetches on the cold path when the warm cache is corrupt", async () => {
+    const redPath = resolveRedBinaryPath(CACHE, TAG);
+    const checksumUrl = redAssetUrl("reddb-io/reddb", TAG, `${ASSET}.sha256`);
+    const redUrl = redAssetUrl("reddb-io/reddb", TAG, ASSET);
+    const { io, files, fetches } = makeIO({
+      files: {
+        [redPath]: new TextEncoder().encode("tampered"),
+        [`${redPath}.sha256`]: new TextEncoder().encode(`${sha256(RED_BYTES)}  ${ASSET}\n`),
+      },
+      responses: {
+        [checksumUrl]: new TextEncoder().encode(`${sha256(RED_BYTES)}  ${ASSET}\n`),
+        [redUrl]: RED_BYTES,
+      },
+    });
+
+    const runtime = await ensureRedBinary(io, {
+      cacheDir: CACHE,
+      binaryTag: TAG,
+      platformKey: KEY,
+      mayFetch: true,
+    });
+
+    expect(fetches).toEqual([checksumUrl, redUrl]);
+    expect(files[runtime!.redPath]).toEqual(RED_BYTES);
   });
 });
