@@ -163,6 +163,8 @@ export interface FleetInput {
   parked?: number;
 }
 
+export type RspStatusInput = "warming" | "on";
+
 /** All the resolved inputs for one statusline render. */
 export interface StatuslineInput {
   project: ProjectInput;
@@ -170,6 +172,7 @@ export interface StatuslineInput {
   repo?: RepoInput;
   fleet?: FleetInput;
   afk?: AfkInput;
+  rsp?: RspStatusInput;
 }
 
 export type StatuslinePreset = "full" | "short";
@@ -425,6 +428,11 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   return parts.join(" · ");
 }
 
+export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
+  if (!rsp) return null;
+  return rsp === "on" ? "rsp●" : "rsp○";
+}
+
 /**
  * Block 4: the space-joined AFK token run in plain text. Null when there are no
  * live workers, matching the bash `(( total_workers > 0 ))` gate around the
@@ -473,6 +481,8 @@ export function renderStatuslineWithPreset(input: StatuslineInput, preset: Statu
     if (context !== null) sections.push(`ctx=${context}`);
     const repo = renderShortRepoBlock(input.repo);
     if (repo !== null) sections.push(repo);
+    const rsp = renderRspBlock(input.rsp);
+    if (rsp !== null) sections.push(rsp);
     return sections.join(" · ");
   }
 
@@ -487,6 +497,8 @@ export function renderStatuslineWithPreset(input: StatuslineInput, preset: Statu
   if (repo !== null) sections.push(repo);
   const fleet = renderFleetBlock(input.fleet);
   if (fleet !== null) sections.push(fleet);
+  const rsp = renderRspBlock(input.rsp);
+  if (rsp !== null) sections.push(rsp);
   const afk = renderAfkBlock(input.afk);
   if (afk !== null) sections.push(afk);
   return sections.join(" · ");
