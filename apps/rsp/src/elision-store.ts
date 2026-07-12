@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect, type RedDB } from "@reddb-io/sdk";
@@ -748,8 +749,15 @@ function usesEmbeddedRedDb(path: string): boolean {
 }
 
 async function ensureReddbBinaryFromWarmCache(): Promise<void> {
-  if (process.env.REDDB_BIN || !process.env.RED_SKILLS_CACHE_DIR) return;
-  const root = join(process.env.RED_SKILLS_CACHE_DIR, "reddb");
+  if (process.env.REDDB_BIN) return;
+  // Same default cascade as the launcher fetch: an unset RED_SKILLS_CACHE_DIR
+  // means the standard cache location, not "no cache".
+  const cacheDir =
+    process.env.RED_SKILLS_CACHE_DIR ??
+    (process.env.XDG_CACHE_HOME
+      ? join(process.env.XDG_CACHE_HOME, "red-skills", "bundles")
+      : join(homedir(), ".cache", "red-skills", "bundles"));
+  const root = join(cacheDir, "reddb");
   let versions: string[];
   try {
     versions = await readdir(root);

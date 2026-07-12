@@ -204,6 +204,20 @@ async function seedWarmRedCache(): Promise<string> {
   return cacheDir;
 }
 
+async function waitForGone(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await stat(path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`still present after ${timeoutMs}ms: ${path}`);
+}
+
 async function waitForResidentSocket(root: string): Promise<void> {
   const paths = trackedResidentPaths(root);
   const deadline = Date.now() + 5_000;
@@ -346,7 +360,9 @@ describe("rsp cli", () => {
     }
 
     await waitForResidentSocket(root);
-    await expect(stat(paths.wakeLockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    // The warmer removes the wake lock only after ensure returns, which is
+    // also the moment the socket starts answering — poll instead of racing it.
+    await waitForGone(paths.wakeLockPath);
 
     const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
 
