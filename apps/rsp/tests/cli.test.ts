@@ -181,6 +181,21 @@ describe("rsp cli", () => {
     expect(res.stderr.toString("utf8")).toBe(`rsp: store unreadable, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
+  it("accepts the current red store header instead of falling back to passthrough", async () => {
+    const root = await initGitRepo();
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "red.rdb");
+    const store = await RspElisionStore.open({ uri: `file://${storePath}` });
+    await store.close();
+    await writeFile(join(root, "toon.txt"), "toon\n", "utf8");
+
+    const res = runRspFromCwd(root, ["git", "status"], { RSP_STORE_URI: `file://${storePath}` });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toContain("git empty");
+    expect(res.stdout.toString("utf8")).not.toContain("On branch");
+  });
+
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
     const root = await tempRoot();
     const storeUri = `file://${join(root, "red.rdb")}`;
