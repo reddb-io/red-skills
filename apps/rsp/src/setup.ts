@@ -1,10 +1,10 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
 
-export const REPO_STORE_PATH = ".red/rsp-elisions.json";
+export const REPO_STORE_PATH = ".red/tmp/rsp-elisions.json";
 
 export interface RspProvisionOptions {
   ttlDays?: number;
@@ -26,6 +26,8 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   const configPath = join(redDir, "config.yaml");
   const storePath = join(root, REPO_STORE_PATH);
   await mkdir(redDir, { recursive: true });
+  // The store lives under .red/tmp/, which need not exist yet.
+  await mkdir(dirname(storePath), { recursive: true });
 
   let existing = "";
   try {
