@@ -1,7 +1,7 @@
 ---
 name: go
 description: Middle tier of the dispatch spectrum — `/goal` → `/go` → `/afk`. Use for genuinely untracked, ad-hoc, one-off demands only; anything that is or should be a tracked issue belongs to `/afk`. Mints a disposable issue, spins a dedicated worker, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing.
-argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--verify \"<cmd>\"] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
+argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
 disable-model-invocation: true
 ---
 
@@ -37,13 +37,13 @@ Invoke the dev CLI's `go` command with the demand as a single quoted argument:
 
 ```
 # Standard /go — ships a PR (direct-PR is the default mode)
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<approved-task>" --dod "<definition-of-done>" [--verify "<cmd>"] [--mode <mode>] [--runner <runner>] [+yolo]
+RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<approved-task>" --dod "<definition-of-done>" [--request "<inner-agent-instruction>"] [--verify "<cmd>"] [--mode <mode>] [--runner <runner>] [+yolo]
 
 # Scout mode — read-only investigation, posts a report comment, no branch/PR/merge
 RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go --scout "<question>" [--runner <runner>]
 ```
 
-Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex` from Codex). Use `--runner` only when the user explicitly pinned a backend.
+Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex` from Codex). Use `--runner` only when the user explicitly pinned a backend. `/go` does not accept a short `-r` form; use long `--runner` for backend pinning and long `--request` for per-dispatch inner-agent instructions.
 
 **Dispatch mode — `--mode {no-mistakes|direct-PR|local-only}`** selects HOW the reused engine finishes the run. Omit it and `/go` uses `direct-PR`:
 
@@ -54,6 +54,8 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 **`+yolo`** is an opt-in autonomy bump — pass the literal token to raise the engine's autonomy for this one dispatch. It composes with any mode.
 
 **`--dod "<condition>"`** records the approved semantic Definition of Done on the disposable issue and in the handoff. It is confirmation sugar only; it never bypasses the required approval turn.
+
+**`--request "<instruction>"`** forwards a special per-dispatch instruction block to the inner agent prompt, matching `/afk --request`. It is not part of the approved Task and is not recorded on the disposable `lane:go` issue.
 
 **`--verify "<cmd>"`** adds a one-off inline machine check for this dispatch. Use it only when the repo lacks a configured harness/backpressure and the maintainer approved the command during the confirmation gate.
 
