@@ -114,8 +114,8 @@ stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "dev worktree guard: blocks sibling worktree" "0" "$rc"
 expect_contains "dev worktree guard: explains allowed root" "agent-created git worktrees must live under .red/tmp" "$stderr"
 
-result="$(run_hook "$repo" "$(payload "$repo" "rtk proxy git worktree add ../feature-wt -b feat/outside origin/main")")"
-expect_eq "dev worktree guard: blocks rtk-wrapped sibling worktree" "0" "$(sed -n '1p' <<<"$result")"
+result="$(run_hook "$repo" "$(payload "$repo" "rsp git worktree add ../feature-wt -b feat/outside origin/main")")"
+expect_eq "dev worktree guard: blocks rsp-wrapped sibling worktree" "0" "$(sed -n '1p' <<<"$result")"
 
 result="$(run_hook "$repo" "$(payload "$repo" "git worktree add .red/tmp/work-feature -b feat/inside origin/main")")"
 expect_eq "dev worktree guard: allows .red/tmp worktree" "0" "$(sed -n '1p' <<<"$result")"
@@ -195,7 +195,7 @@ stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "glob rule: blocks full command" "0" "$rc"
 expect_contains "glob rule: names glob" "rm -rf *" "$stderr"
 
-result="$(run_hook "$repo" "$(payload "$repo" "rtk git reset --hard")")"
+result="$(run_hook "$repo" "$(payload "$repo" "rsp git reset --hard")")"
 expect_eq "explicit suffix rule: blocks wrapped command" "0" "$(sed -n '1p' <<<"$result")"
 
 result="$(run_hook "$repo" "$(payload "$repo" "echo ok;git reset --hard")")"
