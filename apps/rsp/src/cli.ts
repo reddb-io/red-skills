@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { RspElisionStore } from "./elision-store.js";
 
 interface ParsedArgs {
@@ -31,19 +33,21 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runRspMcpServer();
     return 0;
   }
-  if (args.command === "git" && isFastGitStatus(args.positional)) return await runFastGitStatus();
-
-  const { resolveResidentPaths, ResidentRspElisionStore } = await import("./resident-client.js");
+  if (args.command === "git" && isFastGitStatus(args.positional) && residentSocketExists(process.cwd())) {
+    return await runFastGitStatus();
+  }
+  const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
     const { runResidentServer } = await import("./resident-server.js");
+    const { resolveRspConfig } = await import("./config.js");
     const socket = valueAfter(args.positional, "--socket") ?? resolveResidentPaths(process.cwd()).socketPath;
-    const storeUri = args.storeUri ?? valueAfter(args.positional, "--store-uri");
-    if (!storeUri) throw new Error("rsp server requires --store-uri");
+    const config = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
     await runResidentServer({
       socketPath: socket,
-      storeUri,
-      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? 7,
-      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? 64 * 1024 * 1024,
+      storeUri: config.storeUri,
+      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? config.ttlDays,
+      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? config.byteBudget,
+      idleMs: numericValueAfter(args.positional, "--idle-ms"),
     });
     return 0;
   }
@@ -64,6 +68,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
   }));
+  const warmResidentStore = () => ensureResidentServer(residentPaths, {
+    storeUri: config.storeUri,
+    ttlDays: config.ttlDays,
+    byteBudget: config.byteBudget,
+  });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
     const { RspElisionStore } = await import("./elision-store.js");
     return await RspElisionStore.open({
@@ -86,6 +95,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
+      try {
+        await suppressRspStderr(warmResidentStore);
+      } catch (err) {
+        return await degradeToPassthrough("resident unavailable", args.positional, err);
+      }
+      if (isFastGitStatus(args.positional)) return await runFastGitStatus();
       const { runGitWrapper } = await import("./git-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
@@ -104,6 +119,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "gh") {
+      try {
+        await suppressRspStderr(warmResidentStore);
+      } catch (err) {
+        return await degradeToPassthrough("resident unavailable", args.positional, err);
+      }
       const { runGhWrapper } = await import("./gh-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
@@ -118,6 +138,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
+      try {
+        await suppressRspStderr(warmResidentStore);
+      } catch (err) {
+        return await degradeToPassthrough("resident unavailable", args.positional, err);
+      }
       const { runTestWrapper } = await import("./test-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
@@ -173,6 +198,14 @@ function isFastGitStatus(argv: readonly string[]): boolean {
   return argv.length === 2 && argv[0] === "git" && argv[1] === "status";
 }
 
+function residentSocketExists(cwd: string): boolean {
+  const direct = join(cwd, ".red", "tmp", "rsp.sock");
+  if (existsSync(direct)) return true;
+  const root = findRepoRoot(cwd) ?? resolve(cwd);
+  if (root === cwd) return false;
+  return existsSync(join(root, ".red", "tmp", "rsp.sock"));
+}
+
 async function runFastGitStatus(): Promise<number> {
   if (isEmptyUnbornGitRepo(process.cwd())) {
     process.stdout.write("git empty\n");
@@ -198,11 +231,30 @@ async function runFastGitStatus(): Promise<number> {
 
 function isEmptyUnbornGitRepo(cwd: string): boolean {
   try {
-    const { existsSync, readdirSync } = require("node:fs") as typeof import("node:fs");
     if (!existsSync(`${cwd}/.git`) || existsSync(`${cwd}/.git/index`)) return false;
     return readdirSync(cwd).every((entry) => entry === ".git");
   } catch {
     return false;
+  }
+}
+
+function findRepoRoot(start: string): string | null {
+  let dir = resolve(start);
+  for (let i = 0; i < 32; i++) {
+    if (readFileSyncSafe(join(dir, ".red", "config.yaml")) != null) return dir;
+    if (readFileSyncSafe(join(dir, ".git", "HEAD")) != null) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+function readFileSyncSafe(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
   }
 }
 
