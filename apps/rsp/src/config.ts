@@ -23,7 +23,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   );
-  const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), ".red", "rsp-elisions.json")}`;
+  const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), ".red", "tmp", "rsp-elisions.json")}`;
 
   return { enabled, storeUri, ttlDays, byteBudget, heavyGitByteThreshold };
 }

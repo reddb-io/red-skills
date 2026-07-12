@@ -367,7 +367,7 @@ function isLegacyRedDbStore(bytes: Buffer): boolean {
 }
 
 function legacyRedDbFallbackPath(path: string): string {
-  if (basename(path) === "red.rdb") return join(dirname(path), "rsp-elisions.json");
+  if (basename(path) === "red.rdb") return join(dirname(path), "tmp", "rsp-elisions.json");
   return `${path}.json`;
 }
 
