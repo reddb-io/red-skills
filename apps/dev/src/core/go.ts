@@ -107,6 +107,8 @@ export interface GoDodSpec {
   dod?: string;
   /** Optional one-shot machine gate appended to backpressure for this dispatch. */
   verifyCommand?: string;
+  /** Optional per-dispatch steering block forwarded to the inner agent prompt. */
+  request?: string;
   /** True when the repo already has a configured harness/backpressure gate. */
   hasHarness?: boolean;
 }
@@ -182,6 +184,7 @@ export function buildGoEngineArgs(opts: {
   mode?: GoMode;
   yolo?: boolean;
   verifyCommand?: string;
+  request?: string;
   hasHarness?: boolean;
   verifyRetries?: number;
 }): string[] {
@@ -204,6 +207,8 @@ export function buildGoEngineArgs(opts: {
   if (opts.yolo) args.push(GO_YOLO_FLAG);
   const verifyCommand = opts.verifyCommand?.trim();
   if (verifyCommand) args.push(GO_VERIFY_FLAG, verifyCommand);
+  const request = opts.request?.trim();
+  if (request) args.push("--request", request);
   if (opts.hasHarness === false && !verifyCommand) args.push("-n", String(GO_NO_HARNESS_ITER_CAP));
   if (opts.verifyRetries !== undefined) args.push("--go-verify-retries", String(opts.verifyRetries));
   if (opts.runner) args.push("--runner", opts.runner);
@@ -248,6 +253,7 @@ export async function dispatchGo(
       mode: opts.mode,
       yolo: opts.yolo,
       verifyCommand: opts.verifyCommand,
+      request: opts.request,
       hasHarness: opts.hasHarness,
     }),
   );

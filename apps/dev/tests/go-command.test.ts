@@ -11,6 +11,7 @@ describe("parseGoArgs", () => {
       scout: false,
       dod: undefined,
       verifyCommand: undefined,
+      request: undefined,
     });
   });
 
@@ -18,10 +19,24 @@ describe("parseGoArgs", () => {
     expect(parseGoArgs(["fix the flaky login test"]).demand).toBe("fix the flaky login test");
   });
 
-  it("extracts --runner / -r without folding it into the demand", () => {
+  it("extracts --runner without folding it into the demand", () => {
     expect(parseGoArgs(["do it", "--runner", "codex"])).toMatchObject({ demand: "do it", runner: "codex" });
-    expect(parseGoArgs(["-r", "claude", "do it"])).toMatchObject({ demand: "do it", runner: "claude" });
     expect(parseGoArgs(["--runner=codex", "do it"])).toMatchObject({ demand: "do it", runner: "codex" });
+  });
+
+  it("parses long-only --request without folding it into the demand", () => {
+    expect(parseGoArgs(["do it", "--request", "stay strict"])).toMatchObject({
+      demand: "do it",
+      request: "stay strict",
+    });
+    expect(parseGoArgs(["--request=stay strict", "do it"])).toMatchObject({
+      demand: "do it",
+      request: "stay strict",
+    });
+  });
+
+  it("does not bind -r to runner or request in /go", () => {
+    expect(() => parseGoArgs(["-r", "claude", "do it"])).toThrow(/unknown flag/);
   });
 
   it("passes a dashed demand through after --", () => {
@@ -61,9 +76,10 @@ describe("parseGoArgs", () => {
     });
   });
 
-  it("throws when --dod or --verify has no value", () => {
+  it("throws when --dod, --verify, or --request has no value", () => {
     expect(() => parseGoArgs(["do it", "--dod"])).toThrow(/requires a value/);
     expect(() => parseGoArgs(["do it", "--verify"])).toThrow(/requires a value/);
+    expect(() => parseGoArgs(["do it", "--request"])).toThrow(/requires a value/);
   });
 
   it("throws when --runner has no value", () => {
