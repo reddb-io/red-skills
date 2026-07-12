@@ -238,14 +238,18 @@ jobs:
             'macos-aarch64': 'red-macos-aarch64',
             'windows-x86_64': 'red-windows-x86_64.exe',
           };
+          // Checksums carried forward from the last manifest, usable only while the
+          // pin is unchanged. When the pin moves, the old checksums describe a
+          // different binary, so there is no fallback and every asset must resolve
+          // live from the new tag. Carrying them across a bump is how a dead pointer
+          // survived unnoticed: reddb aged out the pinned release, the live .sha256
+          // 404'd, and the stale checksums were copied forward release after release.
           async function previousRedAssets() {
             const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/memory-runtime-manifest.json';
             const response = await fetch(url, { redirect: 'follow' });
             if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
             const previous = await response.json();
-            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) {
-              throw new Error(`latest memory runtime manifest points at ${previous?.reddb?.tag ?? 'unknown'} / ${previous?.reddb?.sdk ?? 'unknown'}, expected ${reddb.tag} / ${sdk}`);
-            }
+            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
             return previous.reddb.assets ?? {};
           }
           const fallbackAssets = await previousRedAssets();
@@ -312,14 +316,13 @@ jobs:
             'macos-aarch64': 'red-macos-aarch64',
             'windows-x86_64': 'red-windows-x86_64.exe',
           };
+          // No fallback across a pin bump — see the memory manifest step above.
           async function previousRedAssets() {
             const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/brain-runtime-manifest.json';
             const response = await fetch(url, { redirect: 'follow' });
             if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
             const previous = await response.json();
-            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) {
-              throw new Error(`latest brain runtime manifest points at ${previous?.reddb?.tag ?? 'unknown'} / ${previous?.reddb?.sdk ?? 'unknown'}, expected ${reddb.tag} / ${sdk}`);
-            }
+            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
             return previous.reddb.assets ?? {};
           }
           const fallbackAssets = await previousRedAssets();
