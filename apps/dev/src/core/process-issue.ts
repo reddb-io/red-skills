@@ -1723,6 +1723,7 @@ export async function processIssue(
       systemPrompt: exitProtocolFor({
         runMode: input.runMode,
         structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(activeRunner)),
+        runner: activeRunner,
       }),
       branch,
       base: baseRef,
@@ -1851,6 +1852,7 @@ export async function processIssue(
         systemPrompt: exitProtocolFor({
           runMode: input.runMode,
           structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
+          runner: other,
         }),
         branch,
         base,
