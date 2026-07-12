@@ -1,28 +1,40 @@
+import { randomUUID } from "node:crypto";
 import type {
   RspElisionRecord,
   RspExpiredHandle,
   RspMintMeta,
   RspStoreStats,
 } from "./elision-store.js";
-import type { RspResidentConfig } from "./resident-protocol.js";
+import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
+import { sendResidentRequest } from "./resident-protocol.js";
 import {
-  ResidentRspClient,
   ensureResidentServer,
+  kickResidentServer,
+  pingResident,
   resolveResidentPaths,
+  warmResidentServer,
+  type ResidentRequestWithoutId,
   type RspResidentPaths,
 } from "@reddb-io/shared/resident-client.js";
 
-export { ensureResidentServer, resolveResidentPaths, type RspResidentPaths };
+export {
+  ensureResidentServer,
+  kickResidentServer,
+  pingResident,
+  resolveResidentPaths,
+  warmResidentServer,
+  type RspResidentPaths,
+};
 
+/** rsp-side adapter: the elision-store surface, served by the resident. */
 export class ResidentRspElisionStore {
-  private readonly client: ResidentRspClient;
-
-  constructor(paths: RspResidentPaths, config: RspResidentConfig) {
-    this.client = new ResidentRspClient(paths, config);
-  }
+  constructor(
+    private readonly paths: RspResidentPaths,
+    private readonly config: RspResidentConfig,
+  ) {}
 
   async mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
-    const response = await this.client.request({
+    const response = await this.request({
       op: "mint",
       original: Buffer.from(original).toString("base64"),
       meta,
@@ -33,7 +45,7 @@ export class ResidentRspElisionStore {
   }
 
   async get(handle: string): Promise<RspElisionRecord | RspExpiredHandle | null> {
-    const raw = await this.client.request({ op: "get", handle });
+    const raw = await this.request({ op: "get", handle });
     if (!raw) return null;
     if (isRecord(raw) && raw.status === "expired") return raw as unknown as RspExpiredHandle;
     if (!isRecord(raw) || typeof raw.original !== "string") return null;
@@ -44,14 +56,21 @@ export class ResidentRspElisionStore {
   }
 
   async stats(): Promise<RspStoreStats> {
-    return await this.client.request({ op: "stats" }) as RspStoreStats;
+    return await this.request({ op: "stats" }) as RspStoreStats;
   }
 
   async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
-    return await this.client.request({ op: "memory", action, payload });
+    return await this.request({ op: "memory", action, payload });
   }
 
   async close(): Promise<void> {}
+
+  private async request(request: ResidentRequestWithoutId): Promise<unknown> {
+    await ensureResidentServer(this.paths, this.config);
+    const response = await sendResidentRequest(this.paths, { ...request, id: randomUUID() } as RspResidentRequest);
+    if (!response.ok) throw new Error(response.error);
+    return response.value;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

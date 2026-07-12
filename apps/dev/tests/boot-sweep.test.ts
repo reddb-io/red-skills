@@ -539,6 +539,16 @@ describe("planReconcileSweep", () => {
     expect(planReconcileSweep(candidates, branches)).toEqual([]);
   });
 
+  it("plans a running issue only after the stale-claim sweep released it", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 101, title: "Add feature", body: "", labels: ["running"] },
+    ];
+    expect(planReconcileSweep(candidates, branches)).toEqual([]);
+    expect(planReconcileSweep(candidates, branches, [101])).toEqual([
+      { number: 101, title: "Add feature", body: "", labels: ["running"], branch: "afk/wA1B5/101-add-feature" },
+    ]);
+  });
+
   it("plans blocked:crashed candidates", () => {
     const candidates: ReconcileSweepCandidate[] = [
       { number: 202, title: "Fix bug", body: "", labels: ["blocked:crashed"] },

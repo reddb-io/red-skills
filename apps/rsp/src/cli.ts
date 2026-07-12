@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 import type { RspElisionStore } from "./elision-store.js";
 
 interface ParsedArgs {
@@ -41,7 +40,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(`${rspDisabledReason()}\n`);
     return 0;
   }
-  if (args.command === "git" && isFastGitStatus(args.positional) && residentSocketExists(process.cwd())) {
+  if (args.command === "git" && isFastGitStatus(args.positional) && await residentSocketExists(process.cwd())) {
     return await runFastGitStatus();
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
@@ -59,6 +58,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
+    });
+    return 0;
+  }
+  if (args.command === "warm-resident") {
+    const warmPaths = resolveResidentPaths(process.cwd());
+    const socket = valueAfter(args.positional, "--socket") ?? warmPaths.socketPath;
+    const wakeLock = valueAfter(args.positional, "--wake-lock") ?? warmPaths.wakeLockPath;
+    const warmConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    if (!warmConfig.enabled) return 0;
+    const { warmResidentServer } = await import("./resident-client.js");
+    await warmResidentServer({
+      ...warmPaths,
+      socketPath: socket,
+      wakeLockPath: wakeLock,
+    }, {
+      storeUri: warmConfig.storeUri,
+      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
+      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
     });
     return 0;
   }
@@ -206,12 +223,9 @@ function isFastGitStatus(argv: readonly string[]): boolean {
   return argv.length === 2 && argv[0] === "git" && argv[1] === "status";
 }
 
-function residentSocketExists(cwd: string): boolean {
-  const direct = join(cwd, ".red", "tmp", "rsp.sock");
-  if (existsSync(direct)) return true;
-  const root = findRepoRoot(cwd) ?? resolve(cwd);
-  if (root === cwd) return false;
-  return existsSync(join(root, ".red", "tmp", "rsp.sock"));
+async function residentSocketExists(cwd: string): Promise<boolean> {
+  const { resolveResidentPaths } = await import("./resident-client.js");
+  return existsSync(resolveResidentPaths(cwd).socketPath);
 }
 
 async function runFastGitStatus(): Promise<number> {
@@ -243,26 +257,6 @@ function isEmptyUnbornGitRepo(cwd: string): boolean {
     return readdirSync(cwd).every((entry) => entry === ".git");
   } catch {
     return false;
-  }
-}
-
-function findRepoRoot(start: string): string | null {
-  let dir = resolve(start);
-  for (let i = 0; i < 32; i++) {
-    if (readFileSyncSafe(join(dir, ".red", "config.yaml")) != null) return dir;
-    if (readFileSyncSafe(join(dir, ".git", "HEAD")) != null) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-  return null;
-}
-
-function readFileSyncSafe(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
   }
 }
 

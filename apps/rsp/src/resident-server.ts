@@ -13,7 +13,6 @@ export interface ResidentServerOptions extends RspResidentConfig {
 
 export async function runResidentServer(opts: ResidentServerOptions): Promise<void> {
   await mkdir(dirname(opts.socketPath), { recursive: true });
-  await rm(opts.socketPath, { force: true });
 
   const openedAt = process.hrtime.bigint();
   const store = await RspElisionStore.open({
