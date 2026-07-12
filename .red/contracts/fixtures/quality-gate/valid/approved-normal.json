@@ -1,0 +1,73 @@
+{
+  "status": "completed",
+  "phase": "verify_task",
+  "runner": "codex",
+  "issue_number": 1556,
+  "scope_summary": "Validate a completed quality gate.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "gate passes",
+      "result": "pass",
+      "evidence": "test command passed"
+    }
+  ],
+  "changed_files": [
+    "apps/dev/src/core/codex-monitor-agent.ts"
+  ],
+  "verification_commands": [
+    "pnpm --filter @reddb-io/dev test"
+  ],
+  "verification_results": [
+    {
+      "command": "pnpm --filter @reddb-io/dev test",
+      "exit_code": 0,
+      "summary": "passed"
+    }
+  ],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "high",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "approved",
+    "checks_run": [
+      {
+        "name": "dev tests",
+        "command": "pnpm --filter @reddb-io/dev test",
+        "exit_code": 0,
+        "duration_seconds": 1,
+        "output_summary": "passed",
+        "proxy_used": false
+      }
+    ],
+    "discovered_commands": [
+      {
+        "name": "dev tests",
+        "command": "pnpm --filter @reddb-io/dev test",
+        "reason_included": "touched package",
+        "reason_skipped": null
+      }
+    ],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "gate passes",
+        "verified": "by_command",
+        "evidence_source": "pnpm --filter @reddb-io/dev test"
+      }
+    ],
+    "fixes_applied": [
+      {
+        "file": "apps/dev/src/core/codex-monitor-agent.ts",
+        "description": "removed obsolete wrapper",
+        "in_scope_justification": "repo default cleanup"
+      }
+    ],
+    "fixes_rejected": [],
+    "proxy_used": false
+  }
+}
