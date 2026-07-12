@@ -1,16 +1,20 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import { type RedRuntimeIO, redAssetUrl, resolveRedBinaryPath } from "@reddb-io/shared/red-runtime.js";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "../src/config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
-import { mergeRspBlock, provisionRspRepoStore } from "../src/setup.js";
+import { configureRspRedBinary, mergeRspBlock, provisionRspRepoStore } from "../src/setup.js";
 
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const tsxLoader = createRequire(import.meta.url).resolve("tsx");
+const RED_BYTES = new TextEncoder().encode("#!/bin/sh\nexit 0\n");
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-setup-"));
@@ -20,7 +24,35 @@ async function tempRoot(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  delete process.env.REDDB_BIN;
 });
+
+function redRuntimeIO(opts: { files?: Record<string, Uint8Array>; responses?: Record<string, Uint8Array> }) {
+  const files: Record<string, Uint8Array> = { ...(opts.files ?? {}) };
+  const fetches: string[] = [];
+  const io: RedRuntimeIO = {
+    async exists(path) {
+      return path in files;
+    },
+    async readFile(path) {
+      const body = files[path];
+      if (!body) throw new Error(`ENOENT ${path}`);
+      return body;
+    },
+    async writeFile(path, bytes) {
+      files[path] = bytes;
+    },
+    async chmod() {},
+    async fetchBuffer(url) {
+      fetches.push(url);
+      const body = opts.responses?.[url];
+      if (!body) throw new Error(`GET ${url} -> 404`);
+      return body;
+    },
+    sha256,
+  };
+  return { io, files, fetches };
+}
 
 describe("mergeRspBlock", () => {
   it("adds an explicit rsp enablement block with retention defaults", () => {
@@ -110,6 +142,68 @@ describe("provisionRspRepoStore", () => {
     expect(result.memoryStoreMigrated).toBe(true);
     await expect(readFile(join(root, ".red", "red.rdb"), "utf8")).resolves.toBe("legacy graph data");
     await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("    storePath: .red/red.rdb");
+  });
+});
+
+describe("configureRspRedBinary", () => {
+  it("resolves a warm cached red binary without network and sets REDDB_BIN", async () => {
+    const cacheDir = "/cache/red-skills/bundles";
+    const binaryTag = "v1.7.0";
+    const redPath = resolveRedBinaryPath(cacheDir, binaryTag);
+    const { io, fetches } = redRuntimeIO({
+      files: {
+        [redPath]: RED_BYTES,
+        [`${redPath}.sha256`]: new TextEncoder().encode(`${sha256(RED_BYTES)}  red-linux-x86_64\n`),
+      },
+    });
+
+    const runtime = await configureRspRedBinary({
+      mayFetch: false,
+      cacheDir,
+      binaryTag,
+      io,
+    });
+
+    expect(runtime?.redPath).toBe(redPath);
+    expect(process.env.REDDB_BIN).toBe(redPath);
+    expect(fetches).toEqual([]);
+  });
+
+  it("cold setup path fetches and adopts the checksum-verified red binary", async () => {
+    const cacheDir = "/cache/red-skills/bundles";
+    const binaryTag = "v1.7.0";
+    const checksumUrl = redAssetUrl("reddb-io/reddb", binaryTag, "red-linux-x86_64.sha256");
+    const redUrl = redAssetUrl("reddb-io/reddb", binaryTag, "red-linux-x86_64");
+    const { io, files, fetches } = redRuntimeIO({
+      responses: {
+        [checksumUrl]: new TextEncoder().encode(`${sha256(RED_BYTES)}  red-linux-x86_64\n`),
+        [redUrl]: RED_BYTES,
+      },
+    });
+
+    const runtime = await configureRspRedBinary({
+      mayFetch: true,
+      cacheDir,
+      binaryTag,
+      io,
+    });
+
+    expect(fetches).toEqual([checksumUrl, redUrl]);
+    expect(files[runtime!.redPath]).toEqual(RED_BYTES);
+    expect(process.env.REDDB_BIN).toBe(runtime!.redPath);
+  });
+
+  it("does not set REDDB_BIN when a hot-path cache is missing", async () => {
+    const { io, fetches } = redRuntimeIO({});
+
+    await expect(configureRspRedBinary({
+      mayFetch: false,
+      cacheDir: "/cache/red-skills/bundles",
+      binaryTag: "v1.7.0",
+      io,
+    })).resolves.toBeNull();
+    expect(process.env.REDDB_BIN).toBeUndefined();
+    expect(fetches).toEqual([]);
   });
 });
 
