@@ -312,6 +312,7 @@ export class RspElisionStore {
     const withoutExisting = index.records.filter((entry) => entry.handle !== handle);
     withoutExisting.push({ handle, key, bytes: bytes.length, command: meta.command, created_at: createdAt, expires_at: expiresAt });
     await this.pruneRedDb({ version: 1, records: withoutExisting });
+    await this.assertRedDbMintPersisted(handle, bytes.length);
     return handle;
   }
 
@@ -407,6 +408,18 @@ export class RspElisionStore {
       expired_at: expiredAt,
       command: entry.command,
     });
+  }
+
+  private async assertRedDbMintPersisted(handle: `el:${string}`, bytes: number): Promise<void> {
+    const raw = await this.kv().get(recordKey(handle));
+    if (!isStoredRecord(raw)) {
+      throw new Error(`rsp resident failed to persist elision record ${handle}`);
+    }
+    const index = await this.readRedDbIndex();
+    const entry = index.records.find((candidate) => candidate.handle === handle);
+    if (!entry || entry.bytes !== bytes) {
+      throw new Error(`rsp resident failed to persist elision index ${handle}`);
+    }
   }
 }
 
