@@ -122,6 +122,8 @@ function toResidentConfig(config: RspRuntimeConfig) {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
+    telemetryTtlDays: config.telemetryTtlDays,
+    telemetryByteBudget: config.telemetryByteBudget,
   };
 }
 
