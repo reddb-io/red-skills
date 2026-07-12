@@ -19,7 +19,7 @@ export interface RecordedGitContract {
 
 export interface GitRenderOptions {
   level: RspLossLevel;
-  store?: RspElisionStore;
+  store?: Pick<RspElisionStore, "mint">;
   heavyGitByteThreshold?: number;
 }
 
