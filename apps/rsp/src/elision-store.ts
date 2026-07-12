@@ -127,6 +127,10 @@ export class RspElisionStore {
     await this.db?.close();
   }
 
+  redDb(): RedDB | undefined {
+    return this.db;
+  }
+
   async mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
     if (this.db) return await this.mintRedDb(original, meta);
     const bytes = Buffer.from(original);

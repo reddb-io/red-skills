@@ -104,6 +104,10 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     String(config.ttlDays),
     "--byte-budget",
     String(config.byteBudget),
+    "--telemetry-ttl-days",
+    String(config.telemetryTtlDays ?? 90),
+    "--telemetry-byte-budget",
+    String(config.telemetryByteBudget ?? config.byteBudget),
     "--wake-lock",
     paths.wakeLockPath,
   ], {
@@ -164,6 +168,10 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     String(config.ttlDays),
     "--byte-budget",
     String(config.byteBudget),
+    "--telemetry-ttl-days",
+    String(config.telemetryTtlDays ?? 90),
+    "--telemetry-byte-budget",
+    String(config.telemetryByteBudget ?? config.byteBudget),
   ], {
     cwd: paths.rootDir,
     detached: true,

@@ -4,6 +4,8 @@ export interface RspResidentConfig {
   storeUri: string;
   ttlDays: number;
   byteBudget: number;
+  telemetryTtlDays?: number;
+  telemetryByteBudget?: number;
   serverCommand?: string;
   serverArgs?: string[];
 }
