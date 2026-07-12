@@ -65,10 +65,14 @@ run_hook() {
 manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[] | select(.command | contains("command-guard.sh")) | .command' "$CLAUDE_MANIFEST")"
 expect_contains "claude manifest: wires command-guard.sh" "command-guard.sh" "$manifest_hook"
 expect_contains "claude manifest: wrapper drains stdin" 'cat >"$tmp"' "$manifest_hook"
+manifest_hook="$(jq -r '.hooks.SessionStart[0].hooks[] | select(.command | contains("rsp-instructions")) | .command' "$CLAUDE_MANIFEST")"
+expect_contains "claude manifest: wires rsp instructions" "rsp-instructions --runner claude --hook" "$manifest_hook"
 
 manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[] | select(.command | contains("command-guard.sh")) | .command' "$CODEX_MANIFEST")"
 expect_contains "codex manifest: wires command-guard.sh" "command-guard.sh" "$manifest_hook"
 expect_contains "codex manifest: wrapper drains stdin" 'cat >"$tmp"' "$manifest_hook"
+manifest_hook="$(jq -r '.hooks.SessionStart[0].hooks[] | select(.command | contains("rsp-instructions")) | .command' "$CODEX_MANIFEST")"
+expect_contains "codex manifest: wires rsp instructions" "rsp-instructions --runner codex --hook" "$manifest_hook"
 
 missing_root="$tmp/missing-plugin-root"
 mkdir -p "$missing_root"
