@@ -1140,6 +1140,39 @@ function appendGoVerifyRetryHandoff(
   ].join("\n");
 }
 
+const NON_SOURCE_EXTENSIONS = new Set([
+  ".adoc",
+  ".avif",
+  ".gif",
+  ".ico",
+  ".jpeg",
+  ".jpg",
+  ".md",
+  ".mdx",
+  ".pdf",
+  ".png",
+  ".rst",
+  ".svg",
+  ".txt",
+  ".webp",
+]);
+
+function pathExtension(path: string): string {
+  const leaf = path.split("/").pop() ?? path;
+  const idx = leaf.lastIndexOf(".");
+  return idx > 0 ? leaf.slice(idx).toLowerCase() : "";
+}
+
+function hasLikelySourceChanges(paths: readonly string[]): boolean {
+  return paths.some((path) => !NON_SOURCE_EXTENSIONS.has(pathExtension(path)));
+}
+
+function formatNoSourceChangeWarning(paths: readonly string[]): string {
+  const sample = paths.slice(0, 8).map((path) => `\`${path}\``).join(", ");
+  const suffix = paths.length > 8 ? `, and ${paths.length - 8} more` : "";
+  return `DONE diff warning: attempt changed no source files; changed files: ${sample}${suffix}.`;
+}
+
 interface UntrustedSandboxDecision {
   sandboxMode: SandboxMode;
   authorTrusted: boolean;
@@ -1617,6 +1650,7 @@ export async function processIssue(
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
+  let noSourceDiffWarning: string | undefined;
   let mainRed = false;
   let mainRedRepairSyncFailure: string | null = null;
   let currentHandoff = handoff;
@@ -2191,6 +2225,24 @@ export async function processIssue(
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
+    if (changedFiles.length === 0) {
+      const validationText =
+        "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
+      deps.appendIterLog(`🤖 /afk: ${validationText}`);
+      if (await retryGoMachineGate("feedback", validationText)) {
+        continue;
+      }
+      return await terminalFailure(common, "feedback-failed", "feedback", {
+        notes: "Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.",
+        validation: validationText,
+      }, { validationSummary: validationText });
+    }
+    noSourceDiffWarning = hasLikelySourceChanges(changedFiles)
+      ? undefined
+      : formatNoSourceChangeWarning(changedFiles);
+    if (noSourceDiffWarning) {
+      deps.appendIterLog(`🤖 /afk: ${noSourceDiffWarning}`);
+    }
     // Compute the validation scope: expand to the full dependency cone when a
     // workspace graph is injected, otherwise keep the directly-touched package
     // cone. Root-config and explicit core-module changes always escalate to
@@ -2548,7 +2600,7 @@ export async function processIssue(
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
-  const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope);
+  const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
   // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
   // (done) envelope. Best-effort, gated, no-op when memory is absent. The ADR 0083
   // §4 exit-barrier receipt (#1020), when present, rides the attempt record so the
@@ -2556,7 +2608,7 @@ export async function processIssue(
   await recordAttemptBestEffort(common, "done", {
     durationS,
     mergeSha,
-    validationSummary: validationSidecar.join("\n"),
+    validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
     notes: exitReceipt
       ? `exit-barrier receipt: branch \`${exitReceipt.branch}\` pushed to origin at ${exitReceipt.pushedAt} (head ${exitReceipt.head || "?"}, salvaged ${exitReceipt.salvagedFiles} file(s)).`
       : undefined,
@@ -3058,9 +3110,13 @@ async function emitDone(
   durationS: number,
   validationSidecar: string[],
   validationScope?: ValidationScope,
+  validationNotice?: string,
 ): Promise<boolean> {
   const { deps, input } = c;
   const scopeHeader = validationScope ? `${formatValidationScope(validationScope)}\n` : "";
+  const validationBody = [validationNotice, `${scopeHeader}${validationSidecar.join("\n")}`]
+    .filter((part) => part && part.trim().length > 0)
+    .join("\n");
   const result = await emitEnvelope(deps.envelope, {
     status: "done",
     issue: input.issue,
@@ -3071,7 +3127,7 @@ async function emitDone(
     mergeSha,
     diff: "merged",
     sections: {
-      validation: `${scopeHeader}${validationSidecar.join("\n")}`,
+      validation: validationBody,
       ...(c.resolvedBase ? { base: formatBaseResolution(c.resolvedBase) } : {}),
     },
     historyPath: deps.historyPath,
