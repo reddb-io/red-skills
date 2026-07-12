@@ -7,6 +7,7 @@ import { runGitWrapper } from "./git-wrapper.js";
 import { runGhWrapper } from "./gh-wrapper.js";
 import { runClaudePreExecHook } from "./intercept.js";
 import { runClaudePostExecHook } from "./normalize.js";
+import { provisionRspRepoStore } from "./setup.js";
 import { runTestWrapper } from "./test-wrapper.js";
 
 interface ParsedArgs {
@@ -25,6 +26,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (args.command === "hook" && args.positional[1] === "claude-post-exec") {
     return await runClaudePostExecHook();
+  }
+  if (args.command === "setup") {
+    const result = await provisionRspRepoStore(process.cwd());
+    process.stdout.write(renderSetupResult(result));
+    return 0;
   }
 
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
@@ -134,6 +140,14 @@ function renderStats(stats: { records: number; bytes: number; oldest: string | n
   ].join("\n");
 }
 
+function renderSetupResult(result: { configChanged: boolean; storeCreated: boolean }): string {
+  return [
+    `config: ${result.configChanged ? "updated" : "unchanged"}`,
+    `store: ${result.storeCreated ? "created" : "existing"}`,
+    "",
+  ].join("\n");
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().then((code) => process.exit(code), (err) => {
     process.stdout.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -141,4 +155,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { main, renderStats };
+export { main, renderSetupResult, renderStats };
