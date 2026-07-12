@@ -2,7 +2,7 @@
 
 This is the CLI-author-facing companion to [ADR 0089](../../adr/0089-axi-toon-doctrine-for-agent-facing-clis.md), which is the binding decision. This doc is the practical restatement: a checklist you run against a CLI whose primary reader is an agent, plus the concrete TOON line format and a contrast table showing why TOON beats JSON and prose for that reader.
 
-**AXI = Agent eXperience Interface** — the design-time contract for how a CLI *chooses* to emit output. **TOON = Token-Oriented Object Notation** — the compact serialization that contract mandates for structured data. AXI is the "why is this output big?" spec; output RedSkills does not control flows through the `rsp` elision layer (ADR 0095). RTK — the third-party proxy this doctrine once kept as its safety net — is retired by ADR 0089 Amendment 1.
+**AXI = Agent eXperience Interface** — the design-time contract for how a CLI *chooses* to emit output. **TOON = Token-Oriented Object Notation** — the compact serialization that contract mandates for structured data. AXI is the "why is this output big?" spec; output RedSkills does not control flows through the `rsp` elision layer (ADR 0095). The former third-party proxy safety net is retired by ADR 0089 Amendment 1.
 
 ## The 10 AXI principles — checklist
 
