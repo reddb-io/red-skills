@@ -179,12 +179,12 @@ describe("rsp cli", () => {
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
     expect(shown.stderr).toEqual(Buffer.alloc(0));
 
-    const missingStoreUri = `file://${join(await tempRoot(), "missing.rdb")}`;
-    const degraded = runBundleFromCwd(root, ["--store-uri", missingStoreUri, "git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    await rm(join(root, ".red", "red.rdb"));
+    const degraded = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(degraded.status).toBe(raw.status);
     expect(degraded.stdout).toEqual(raw.stdout);
-    expect(degraded.stderr.toString("utf8")).toBe("rsp: store unreadable, passing through\n");
+    expect(degraded.stderr.toString("utf8")).toBe("rsp: store not provisioned, passing through\n");
   }, 120_000);
 
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
@@ -237,22 +237,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr.toString("utf8")).toBe(`rsp: store unreadable, passing through\n${direct.stderr.toString("utf8")}`);
-  });
-
-  it("accepts the current red store header instead of falling back to passthrough", async () => {
-    const root = await initGitRepo();
-    const storeRoot = await tempRoot();
-    const storePath = join(storeRoot, "red.rdb");
-    const store = await RspElisionStore.open({ uri: `file://${storePath}` });
-    await store.close();
-    await writeFile(join(root, "toon.txt"), "toon\n", "utf8");
-
-    const res = runRspFromCwd(root, ["git", "status"], { RSP_STORE_URI: `file://${storePath}` });
-
-    expect(res.status).toBe(0);
-    expect(res.stdout.toString("utf8")).toContain("git empty");
-    expect(res.stdout.toString("utf8")).not.toContain("On branch");
+    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
