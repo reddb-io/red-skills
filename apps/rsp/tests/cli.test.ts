@@ -1,13 +1,15 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
+import { resolveResidentPaths } from "../src/resident-client.js";
 
 const roots: string[] = [];
+const residentDirs: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const packageRoot = join(import.meta.dirname, "..");
 const repoRoot = join(packageRoot, "..", "..");
@@ -24,7 +26,14 @@ async function tempRoot(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(residentDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
+
+function trackedResidentPaths(root: string) {
+  const paths = resolveResidentPaths(root);
+  residentDirs.push(dirname(paths.socketPath));
+  return paths;
+}
 
 function runRsp(root: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
@@ -278,11 +287,49 @@ describe("rsp cli", () => {
       RSP_FAIL_IF_STORE_OPEN: "1",
     });
     const direct = runGit(["-C", root, "status", "--porcelain=v1"]);
+    const paths = trackedResidentPaths(root);
 
     expect(res.status).toBe(0);
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr).toEqual(Buffer.alloc(0));
-    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+  }, 120_000);
+
+  it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {
+    buildBundleOnce();
+    const base = await tempRoot();
+    let root = base;
+    let segment = 0;
+    while (root.length <= 120) {
+      root = join(root, `deep-segment-${segment++}`);
+    }
+    await mkdir(root, { recursive: true });
+    const init = runGit(["-C", root, "init"]);
+    expect(init.status).toBe(0);
+    expect(runGit(["-C", root, "config", "user.email", "rsp-test@example.invalid"]).status).toBe(0);
+    expect(runGit(["-C", root, "config", "user.name", "Rsp Test"]).status).toBe(0);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const paths = trackedResidentPaths(root);
+    expect(join(root, ".red", "tmp", "rsp.sock").length).toBeGreaterThan(108);
+    expect(paths.socketPath.length).toBeLessThan(108);
+    expect(paths.socketPath).not.toBe(join(root, ".red", "tmp", "rsp.sock"));
+
+    const res = runBundleFromCwd(root, ["git", "status"], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+    });
+    const direct = runGit(["-C", root, "status", "--porcelain=v1"]);
+
+    expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    expect(((await stat(dirname(paths.socketPath))).mode & 0o777)).toBe(0o700);
+    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle keeps small git status wrapper work under 100ms", async () => {
@@ -339,7 +386,7 @@ describe("rsp cli", () => {
     expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
     expect(res.stdout).toEqual(Buffer.alloc(0));
     expect(res.stderr).toEqual(Buffer.alloc(0));
-    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(trackedResidentPaths(root).socketPath)).rejects.toMatchObject({ code: "ENOENT" });
   }, 120_000);
 
   it("built bundle handles concurrent cold wrappers with one resident socket and usable store", async () => {
@@ -358,8 +405,9 @@ describe("rsp cli", () => {
       expect(res.stdout.toString("utf8")).toBe("git empty\n");
       expect(res.stderr).toEqual(Buffer.alloc(0));
     }
-    await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).resolves.toMatchObject({ size: expect.any(Number) });
-    await expect(stat(join(root, ".red", "tmp", "rsp.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    const paths = trackedResidentPaths(root);
+    await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], env);
     expect(compressed.status).toBe(0);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
