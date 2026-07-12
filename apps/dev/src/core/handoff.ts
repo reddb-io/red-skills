@@ -22,6 +22,7 @@
 //   <prior-attempt-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
+import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/ambient-skill.js";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
 import { isTrustedSource, type SourceTrustLevel } from "./source-trust.js";
 
@@ -453,9 +454,21 @@ export const AGENT_OUTPUT_INSTRUCTION = [
  * clause spliced in before `</exit-protocol>`; a non-schema runner gets the
  * plain {@link EXIT_PROTOCOL} (text-sentinel-only) — the coexist fallback.
  */
-export function exitProtocolFor(opts: { runMode?: string; structuredOutput?: boolean }): string {
+export function rspInstructionRunner(runner: string | undefined): RspInstructionRunner | undefined {
+  if (runner === "codex") return "codex";
+  if (runner === "claude" || runner === "claude-minimax") return "claude";
+  return undefined;
+}
+
+function withRspInstructions(protocol: string, runner: string | undefined): string {
+  const instructionRunner = rspInstructionRunner(runner);
+  if (!instructionRunner) return protocol;
+  return `${protocol}\n\n${renderAmbientSkill(undefined, { runner: instructionRunner })}`;
+}
+
+export function exitProtocolFor(opts: { runMode?: string; structuredOutput?: boolean; runner?: string }): string {
   if (opts.runMode === "scout") return SCOUT_EXIT_PROTOCOL;
-  if (!opts.structuredOutput) return EXIT_PROTOCOL;
+  if (!opts.structuredOutput) return withRspInstructions(EXIT_PROTOCOL, opts.runner);
   const closing = "</exit-protocol>";
-  return EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`);
+  return withRspInstructions(EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`), opts.runner);
 }
