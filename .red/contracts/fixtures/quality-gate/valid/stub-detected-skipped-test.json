@@ -1,0 +1,68 @@
+{
+  "status": "escalation_needed",
+  "phase": "verify_task",
+  "runner": "codex",
+  "issue_number": 1556,
+  "scope_summary": "Validate skipped-test stub detection.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "tests prove behavior",
+      "result": "unverified",
+      "evidence": "test was skipped"
+    }
+  ],
+  "changed_files": [
+    "apps/dev/tests/codex-monitor-agent.test.ts"
+  ],
+  "verification_commands": [
+    "pnpm --filter @reddb-io/dev test"
+  ],
+  "verification_results": [
+    {
+      "command": "pnpm --filter @reddb-io/dev test",
+      "exit_code": 0,
+      "summary": "skipped assertion detected"
+    }
+  ],
+  "quality_gate_failures": [
+    "skipped test"
+  ],
+  "blocker_reason": null,
+  "next_human_action": "replace the skipped test",
+  "remaining_risks": [],
+  "confidence": "low",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "stub_detected",
+    "checks_run": [
+      {
+        "name": "dev tests",
+        "command": "pnpm --filter @reddb-io/dev test",
+        "exit_code": 0,
+        "duration_seconds": 1,
+        "output_summary": "skipped assertion detected",
+        "proxy_used": false
+      }
+    ],
+    "discovered_commands": [],
+    "stub_findings": [
+      {
+        "kind": "skipped_test",
+        "location": "apps/dev/tests/codex-monitor-agent.test.ts",
+        "evidence": "it.skip"
+      }
+    ],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "tests prove behavior",
+        "verified": "unverifiable_in_this_phase",
+        "evidence_source": "skipped assertion"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "proxy_used": false
+  }
+}
