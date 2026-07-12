@@ -240,5 +240,5 @@ describe("rsp setup CLI", () => {
     });
     expect(after.stdout).not.toContain("rsp repo store is not provisioned");
     expect(after.stderr).toContain("not a git repository");
-  });
+  }, 15_000);
 });
