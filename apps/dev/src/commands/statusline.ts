@@ -20,11 +20,13 @@ import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { resolveBase } from "../core/base-resolver.js";
-import { type ClaudeInput, type ProjectInput, type StatuslinePreset } from "../core/statusline.js";
+import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import { branchLockPath, readLockedBranch } from "../runtime/lock.js";
+import { resolveRspConfig } from "../../../rsp/src/config.js";
+import { pingResident, resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
   collectStatuslineAfk,
   collectStatuslineFleet,
@@ -137,6 +139,13 @@ export function resolveStatuslinePreset(cfg: ReturnType<typeof loadConfig>): Sta
   );
 }
 
+export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
+  const config = resolveRspConfig(root, env);
+  if (!config.enabled) return undefined;
+  const paths = resolveResidentPaths(root);
+  return await pingResident(paths.socketPath, 50) ? "on" : "warming";
+}
+
 /** The block-1 project input: basename, the resolved git ref (branch or detached
  * short sha), and the running `dev` plugin version (build-info → dim `v<version>`
  * tag on the themed header). */
@@ -230,11 +239,12 @@ export async function statuslineCommand(
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
-  const [repo, afk, fleet, workers] = await Promise.all([
+  const [repo, afk, fleet, workers, rsp] = await Promise.all([
     collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
     collectStatuslineFleet(repoCtx),
     collectStatuslineWorkers(repoCtx),
+    resolveStatuslineRsp(root),
   ]);
 
   // Theme on by default (the multi-line wine layout: a repo-global header line
@@ -244,7 +254,7 @@ export async function statuslineCommand(
   const color = !process.env.NO_COLOR;
   const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
   const nowS = Math.floor(Date.now() / 1000);
-  const line = renderStatuslineThemed({ project, claude, repo, fleet, afk }, color, {
+  const line = renderStatuslineThemed({ project, claude, repo, fleet, afk, rsp }, color, {
     columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
     workers,
     now: nowS,
