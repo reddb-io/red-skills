@@ -151,15 +151,15 @@ export function classifyIssueLifecycleState(labels: readonly string[]): IssueLif
   if (hasReady && hasRunning) return "illegal";
   // `landing:manual` is a MODE flag that must ride a real state: queued
   // (ready-for-agent), active (running, #1049 works the issue before parking it),
-  // or human-parked. Alone it is illegal.
-  if (hasManualLanding && !hasHuman && !hasReady && !hasRunning) return "illegal";
+  // or human-parked/blocked. Alone it is illegal.
+  if (hasManualLanding && !hasHuman && !hasReady && !hasRunning && !hasBlocked) return "illegal";
 
   if (hasContested) return "contested";
-  if (hasManualLanding && hasHuman) return "landing:manual";
   if (hasRunning) return "claimed/active";
   if (hasReady) return "ready-for-agent";
   if (blocked[0] === LABEL_DEPENDENCY) return "blocked:dependency";
   if (blocked[0] === LABEL_VALIDATION || blocked[0] === LABEL_VALIDATION_INFRA) return "blocked:validation";
+  if (hasManualLanding && hasHuman) return "landing:manual";
   if (hasHuman) return "ready-for-human";
   if (hasBlocked) return "ready-for-human";
   return "ready-for-human";
@@ -189,9 +189,10 @@ export function explainIllegalIssueLifecycleLabels(labels: readonly string[]): s
     labels.includes(LABEL_LANDING_MANUAL) &&
     !labels.includes(LABEL_HUMAN) &&
     !labels.includes(LABEL_READY) &&
-    !labels.includes(LABEL_RUNNING)
+    !labels.includes(LABEL_RUNNING) &&
+    blocked.length === 0
   ) {
-    return `${LABEL_LANDING_MANUAL} must ride a queued, active, or human-parked issue`;
+    return `${LABEL_LANDING_MANUAL} must ride a queued, active, human-parked, or blocked issue`;
   }
   return null;
 }
