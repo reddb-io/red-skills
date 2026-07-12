@@ -29,15 +29,26 @@ import { runCommand } from "./run.js";
 import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
 
+interface ParsedGoArgs {
+  demand: string;
+  runner?: string;
+  mode: GoMode;
+  yolo: boolean;
+  scout?: boolean;
+  dod?: string;
+  verifyCommand?: string;
+  request?: string;
+}
+
 /** Parse `/go` args: the demand is every non-flag token joined; `--runner X`
- * (or `-r X`) optionally pins the backend; `--mode {no-mistakes|direct-PR|
- * local-only}` selects the dispatch mode (default `direct-PR`); the opt-in
- * `+yolo` token bumps autonomy; `--scout` switches to read-only investigation
- * mode. A leading `--` is tolerated so `/go -- --literal` passes a dashed
- * demand through. */
+ * optionally pins the backend; `--request X` forwards per-dispatch steering to
+ * the inner agent prompt; `--mode {no-mistakes|direct-PR|local-only}` selects
+ * the dispatch mode (default `direct-PR`); the opt-in `+yolo` token bumps
+ * autonomy; `--scout` switches to read-only investigation mode. A leading `--`
+ * is tolerated so `/go -- --literal` passes a dashed demand through. */
 export function parseGoArgs(
   args: readonly string[],
-): { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean; dod?: string; verifyCommand?: string } {
+): ParsedGoArgs {
   const positional: string[] = [];
   let runner: string | undefined;
   let mode: GoMode = DEFAULT_GO_MODE;
@@ -45,11 +56,12 @@ export function parseGoArgs(
   let scout = false;
   let dod: string | undefined;
   let verifyCommand: string | undefined;
+  let request: string | undefined;
   let sawDoubleDash = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (!sawDoubleDash && arg === "--") { sawDoubleDash = true; continue; }
-    if (!sawDoubleDash && (arg === "--runner" || arg === "-r")) {
+    if (!sawDoubleDash && arg === "--runner") {
       runner = args[++i];
       if (runner === undefined) throw new Error(`${arg} requires a value`);
       continue;
@@ -88,24 +100,33 @@ export function parseGoArgs(
       verifyCommand = arg.slice("--verify=".length);
       continue;
     }
-    // Unknown `--flag` before the `--` separator is an error, never demand text
+    if (!sawDoubleDash && arg === "--request") {
+      request = args[++i];
+      if (request === undefined) throw new Error("--request requires a value");
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--request=")) {
+      request = arg.slice("--request=".length);
+      continue;
+    }
+    // Unknown flag before the `--` separator is an error, never demand text
     // (#1045): folding e.g. `--resume 1043` into the demand silently minted a
     // junk issue about a flag the user meant as a command. A literal dashed
     // demand still works via the `--` separator (`/go -- --literal`).
-    if (!sawDoubleDash && arg.startsWith("--")) {
+    if (!sawDoubleDash && arg.startsWith("-")) {
       throw new Error(
-        `unknown flag ${JSON.stringify(arg)}: expected --runner/-r, --mode, --scout, or +yolo. ` +
+        `unknown flag ${JSON.stringify(arg)}: expected --runner, --request, --mode, --scout, or +yolo. ` +
           `Also accepted for standard /go: --dod and --verify. ` +
           `Pass a literal dashed demand after a "--" separator.`,
       );
     }
     positional.push(arg);
   }
-  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand };
+  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand, request };
 }
 
 export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
-  let parsed: { demand: string; runner?: string; mode: GoMode; yolo: boolean; scout?: boolean; dod?: string; verifyCommand?: string };
+  let parsed: ParsedGoArgs;
   try {
     parsed = parseGoArgs(args);
   } catch (error) {
@@ -172,6 +193,7 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         task: parsed.demand,
         dod: parsed.dod,
         verifyCommand: parsed.verifyCommand,
+        request: parsed.request,
         hasHarness: configuredBackpressure.length > 0,
       } satisfies { runner?: string; mode: GoMode; yolo: boolean } & GoDodSpec,
     );
