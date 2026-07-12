@@ -1,10 +1,15 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
-import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./elision-store.js";
+import {
+  DEFAULT_RSP_BYTE_BUDGET,
+  DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
+  DEFAULT_RSP_STORE_PATH,
+  DEFAULT_RSP_TTL_DAYS,
+} from "./config.js";
 
-export const REPO_STORE_PATH = ".red/tmp/rsp-elisions.json";
+export const REPO_STORE_PATH = DEFAULT_RSP_STORE_PATH;
+const LEGACY_MEMORY_STORE_PATH = ".red/memory/graph.rdb";
 
 export interface RspProvisionOptions {
   ttlDays?: number;
@@ -46,16 +51,32 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   if (configChanged) await writeFile(configPath, next, "utf8");
 
   const storeCreated = !(await exists(storePath));
+  let memoryStoreMigrated = false;
   if (storeCreated) {
-    await writeFile(storePath, "", "utf8");
+    const legacyMemoryStore = join(root, LEGACY_MEMORY_STORE_PATH);
+    if (await exists(legacyMemoryStore)) {
+      await copyFile(legacyMemoryStore, storePath);
+      memoryStoreMigrated = true;
+    } else {
+      const { RspElisionStore } = await import("./elision-store.js");
+      const store = await RspElisionStore.open({
+        uri: `file://${storePath}`,
+        ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
+        byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
+        allowResidentOpen: true,
+      });
+      await store.close();
+    }
   }
+  const memoryConfig = repointMemoryStore(next, REPO_STORE_PATH);
+  if (memoryConfig !== next) await writeFile(configPath, memoryConfig, "utf8");
 
   return {
     configPath,
     storePath,
-    configChanged,
+    configChanged: configChanged || memoryConfig !== next,
     storeCreated,
-    memoryStoreMigrated: false,
+    memoryStoreMigrated,
   };
 }
 
@@ -124,6 +145,32 @@ function topKey(line: string): string {
 
 function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function repointMemoryStore(existingText: string, storePath: string): string {
+  const lines = existingText === "" ? [] : existingText.replace(/\n+$/, "").split("\n");
+  const plugins = findTopLevelBlock(lines, "plugins");
+  if (plugins === -1) return existingText;
+  const pluginsEnd = findBlockEnd(lines, plugins, 0);
+  const memory = findNestedBlock(lines, "memory", plugins + 1, pluginsEnd, 2);
+  if (memory === -1) return existingText;
+  const memoryEnd = findBlockEnd(lines, memory, 2);
+  const out = [...lines];
+  const existingStorePath = findNestedBlock(out, "storePath", memory + 1, memoryEnd, 4);
+  if (existingStorePath !== -1) {
+    out[existingStorePath] = `    storePath: ${storePath}`;
+  } else {
+    out.splice(memoryEnd, 0, `    storePath: ${storePath}`);
+  }
+  return `${out.join("\n")}\n`;
+}
+
+function findNestedBlock(lines: string[], key: string, start: number, end: number, indent: number): number {
+  for (let i = start; i < end; i++) {
+    const line = lines[i]!;
+    if (isStructural(line) && lineIndent(line) === indent && topKey(line) === key) return i;
+  }
+  return -1;
 }
 
 async function exists(path: string): Promise<boolean> {
