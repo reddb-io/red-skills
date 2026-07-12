@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
-import { resolveRspConfig } from "./config.js";
+import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import { ResidentRspElisionStore, resolveResidentPaths } from "./resident-client.js";
 
 interface JsonRpcRequest {
@@ -11,13 +11,14 @@ interface JsonRpcRequest {
 }
 
 export async function runRspMcpServer(): Promise<void> {
+  const config = resolveRspConfig(process.cwd(), process.env);
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line.trim()) continue;
     let request: JsonRpcRequest;
     try {
       request = JSON.parse(line) as JsonRpcRequest;
-      const result = await handle(request);
+      const result = await handle(request, config);
       write({ jsonrpc: "2.0", id: request.id ?? null, result });
     } catch (err) {
       write({
@@ -29,7 +30,7 @@ export async function runRspMcpServer(): Promise<void> {
   }
 }
 
-async function handle(request: JsonRpcRequest): Promise<unknown> {
+async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promise<unknown> {
   if (request.method === "initialize") {
     return {
       protocolVersion: "2024-11-05",
@@ -38,8 +39,24 @@ async function handle(request: JsonRpcRequest): Promise<unknown> {
     };
   }
   if (request.method === "tools/list") {
+    if (!config.enabled) {
+      return {
+        tools: [
+          {
+            name: "rsp_status",
+            description: "Explain whether rsp is enabled in this directory.",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      };
+    }
     return {
       tools: [
+        {
+          name: "rsp_status",
+          description: "Explain whether rsp is enabled in this directory.",
+          inputSchema: { type: "object", properties: {} },
+        },
         {
           name: "rsp_stats",
           description: "Read resident rsp elision store stats.",
@@ -59,7 +76,13 @@ async function handle(request: JsonRpcRequest): Promise<unknown> {
   }
   if (request.method === "tools/call") {
     const params = request.params as { name?: string; arguments?: Record<string, unknown> } | undefined;
-    const store = residentStore();
+    if (params?.name === "rsp_status") {
+      return { content: [{ type: "text", text: renderStatus(config) }] };
+    }
+    if (!config.enabled) {
+      return { content: [{ type: "text", text: renderStatus(config) }], isError: true };
+    }
+    const store = residentStore(config);
     if (params?.name === "rsp_stats") {
       return { content: [{ type: "text", text: JSON.stringify(await store.stats()) }] };
     }
@@ -74,13 +97,17 @@ async function handle(request: JsonRpcRequest): Promise<unknown> {
   return {};
 }
 
-function residentStore(): ResidentRspElisionStore {
-  const config = resolveRspConfig(process.cwd(), process.env);
+function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
   return new ResidentRspElisionStore(resolveResidentPaths(process.cwd()), {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
   });
+}
+
+function renderStatus(config: RspRuntimeConfig): string {
+  if (!config.enabled) return "rsp is not enabled in this directory; run /red-setup";
+  return "rsp is enabled in this directory";
 }
 
 function write(value: unknown): void {
