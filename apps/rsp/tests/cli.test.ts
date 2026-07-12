@@ -116,7 +116,7 @@ describe("rsp cli", () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
+    const storeUri = `file://${join(await tempRoot(), "rsp-elisions.json")}`;
     const store = await RspElisionStore.open({ uri: storeUri });
     await store.close();
 
@@ -134,7 +134,7 @@ describe("rsp cli", () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(await tempRoot(), "red.rdb")}`;
+    const storeUri = `file://${join(await tempRoot(), "rsp-elisions.json")}`;
     const store = await RspElisionStore.open({ uri: storeUri });
     await store.close();
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
@@ -184,7 +184,8 @@ describe("rsp cli", () => {
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
     expect(shown.stderr).toEqual(Buffer.alloc(0));
 
-    await rm(join(root, ".red", "red.rdb"));
+    await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await rm(join(root, ".red", "rsp-elisions.json"));
     const degraded = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(degraded.status).toBe(raw.status);
@@ -235,6 +236,7 @@ describe("rsp cli", () => {
     expect(res.status).toBe(1);
     expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "rsp-elisions.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a successful wrapper when the repo store has not been provisioned", async () => {
@@ -249,6 +251,7 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "rsp-elisions.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a failing wrapper with the underlying exit code and raw stderr when the store is absent", async () => {
@@ -264,10 +267,10 @@ describe("rsp cli", () => {
     expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
-  it("passes through wrappers when the configured store is unreadable", async () => {
+  it("passes through wrappers when the configured store is unreadable non-RedDB data", async () => {
     const root = await initGitRepo();
     const storeRoot = await tempRoot();
-    const storePath = join(storeRoot, "red.rdb");
+    const storePath = join(storeRoot, "rsp-elisions.json");
     await writeFile(storePath, "not a reddb store", "utf8");
     await writeFile(join(root, "raw.txt"), "raw\n", "utf8");
     const direct = runGit(["-C", root, "status", "--short"]);
@@ -278,6 +281,45 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
   });
+
+  it("built bundle never writes .red/red.rdb and preserves a RedDB-format file there", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const redBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from([0, 1, 2, 3])]);
+    await writeFile(join(root, ".red", "red.rdb"), redBytes);
+
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(compressed.status).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+    await expect(readFile(join(root, ".red", "red.rdb"))).resolves.toEqual(redBytes);
+    const storeText = await readFile(join(root, ".red", "rsp-elisions.json"), "utf8");
+    expect(JSON.parse(storeText)).toMatchObject({ version: 1 });
+  }, 120_000);
+
+  it("built bundle redirects a configured legacy RedDB store to JSON without mutating it", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const legacyPath = join(root, ".red", "red.rdb");
+    const legacyBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from("legacy graph bytes")]);
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(legacyPath, legacyBytes);
+
+    const compressed = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "git", "log", "--terse"]);
+
+    expect(compressed.status).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+    await expect(readFile(legacyPath)).resolves.toEqual(legacyBytes);
+    const storeText = await readFile(join(root, ".red", "rsp-elisions.json"), "utf8");
+    expect(JSON.parse(storeText)).toMatchObject({ version: 1 });
+  }, 120_000);
 
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
     const root = await tempRoot();
