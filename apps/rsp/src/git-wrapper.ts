@@ -33,6 +33,7 @@ export interface GitRenderResult {
   bytesElided?: number;
   rowsElided?: number;
   oneLine?: boolean;
+  rawOutput?: Buffer;
 }
 
 export async function runGitWrapper(argv: readonly string[], options: GitRenderOptions): Promise<GitRenderResult> {
@@ -119,6 +120,7 @@ export async function renderGitContract(
     mintedHandle: handle,
     bytesElided,
     rowsElided: terse.rowsElided,
+    rawOutput: Buffer.from(fullToon),
   };
 }
 
