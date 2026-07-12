@@ -79,35 +79,36 @@ Future RedSkills workflows land in this same step, following the same three-pref
 
 **Section E — Token efficiency (strongly recommended).**
 
-> Explainer: A huge fraction of an agent's token budget gets burned on noisy CLI output — `git status` on a dirty branch, `pnpm install` with hundreds of progress lines, `gh pr list` with verbose JSON, `ls` on a `node_modules` you forgot to ignore. [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk) is a transparent CLI proxy that rewrites those commands at the hook layer to return only what the agent actually needs. Typical savings: **60–90%** on routine dev operations, with no changes to how skills are written — the rewrite is invisible to Claude/Codex.
+> Explainer: A huge fraction of an agent's token budget gets burned on noisy CLI output — `git status` on a dirty branch, large `git diff` / `git log` output, verbose `gh` lists, and long test failures. `rsp` is the repo-owned token-efficiency surface: explicit wrappers for supported commands, reversible elision handles for lossy summaries, and an opt-in hook rewrite table that lives in the same binary as the wrappers.
 
-Strong recommendation: install before running `/afk` for any non-trivial backlog. A long `/afk` run on a busy repo can blow through a session's quota on `pnpm`/`git`/`gh` chatter alone. RTK pays for itself in the first hour.
+Strong recommendation: enable `rsp` whenever `dev` is enabled. The hook remains inert unless this repo's `.red/config.yaml` has `rsp.enabled: true`; absent that opt-in, agents can still call the explicit wrappers.
 
-Walk the user through the install and agent integration:
+Teach the user the wrapper surface:
+
 ```bash
-# install
-curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/main/install.sh | sh
-
-# verify (should print a version, NOT "command not found")
-rtk --version
-
-# install hook/instructions for the current assistant family when supported
-rtk init --show
-rtk init --hook-only --auto-patch        # Claude Code local hook only
-rtk init --codex                         # Codex/AGENTS.md + RTK.md integration
-
-# baseline analytics — run after a day of usage to see savings
-rtk gain
-rtk gain --history
+rsp git status
+rsp git diff --brief
+rsp git log --terse
+rsp gh pr list --query open
+rsp gh issue view 123
+rsp vitest --terse
+rsp cargo test --brief
+rsp show el:<id>
 ```
 
-Three things to verify after install:
+The loss levels are:
 
-1. **No name collision.** Another tool called `rtk` (Rust Type Kit, `reachingforthejack/rtk`) sometimes lands first on `PATH`. If `rtk gain` says "command not found" or prints unrelated output, fix `PATH` so `rtk-ai/rtk` wins.
-2. **Hook or instructions are active.** `rtk init --show` should report a configured hook/RTK.md for the active assistant. For Claude Code, confirm the hook by running `git status` once and checking `rtk gain --history` shows the call.
-3. **Fallback explicit mode works.** If the active agent cannot use RTK hooks, teach it to call `rtk git status`, `rtk vitest`, `rtk tsc`, `rtk pnpm`, `rtk test`, and `rtk err` directly for noisy commands.
+1. **Default/lossless.** Emit TOON summaries for supported commands. Large `git diff` and `git log` output is threshold-gated and truncates by default when it exceeds the configured byte threshold.
+2. **`--brief`.** Prefer a compact inline summary for normal debugging.
+3. **`--terse`.** Keep only the smallest useful inline view and mint an `el:<id>` handle for the omitted bytes. `rsp show el:<id>` writes the original bytes verbatim to stdout; expired handles print the original command to re-run.
 
-`rtk discover` scans recent transcripts for missed savings opportunities — useful periodically to spot commands the hook should be rewriting but isn't yet.
+Three things to verify after setup:
+
+1. **Repo store is provisioned.** `rsp` with no arguments should print store stats. If it says the repo store is not provisioned, finish `/red-setup` so `.red/red.rdb` exists.
+2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
+3. **Hook behavior is scoped.** In opted-in repos, the pre-exec hook may rewrite simple supported commands such as `git status`, `gh pr list`, `vitest`, and `cargo test` to their `rsp` forms. In non-opted-in repos, the hook is inert and agents should call `rsp` explicitly only when available.
+
+The per-host ambient instruction surface that replaces legacy host-local terminal guidance is tracked in #1415 and generated from `apps/rsp/generated/AMBIENT-SKILL.md`; do not block setup on it.
 
 **Section E1 — Runtime launcher (strongly recommended).**
 
