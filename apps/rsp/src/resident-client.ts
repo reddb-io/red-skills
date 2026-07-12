@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { readFileSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
@@ -89,8 +89,8 @@ export async function ensureResidentServer(paths: RspResidentPaths, config: RspR
   if (lock) {
     try {
       if (await ping(paths.socketPath)) return;
-      spawnResident(paths, config);
-      await waitForServer(paths.socketPath);
+      const child = spawnResident(paths, config);
+      await waitForServer(paths.socketPath, child);
       return;
     } finally {
       await lock.close();
@@ -110,11 +110,14 @@ async function ping(socketPath: string): Promise<boolean> {
   }
 }
 
-async function waitForServer(socketPath: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
+async function waitForServer(socketPath: string, child?: ChildProcess): Promise<void> {
+  const deadline = Date.now() + 5_000;
   let last: unknown;
   while (Date.now() < deadline) {
     if (await ping(socketPath)) return;
+    if (child && child.exitCode != null) {
+      throw new Error(`resident rsp server exited before ready (${child.exitCode})`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw last instanceof Error ? last : new Error("resident rsp server did not start");
@@ -130,7 +133,7 @@ async function tryAcquireLock(lockPath: string) {
   }
 }
 
-function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): void {
+function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ChildProcess {
   const entry = process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
   const child = spawn(process.execPath, [
     ...process.execArgv,
@@ -151,6 +154,7 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): void
     env: { ...process.env, RSP_RESIDENT_SERVER: "1" },
   });
   child.unref();
+  return child;
 }
 
 function findRepoRoot(start: string): string | null {
