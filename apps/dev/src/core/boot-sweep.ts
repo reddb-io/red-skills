@@ -453,8 +453,7 @@ export function findOwnedBranch(branches: readonly string[], issue: number): str
 const PARKED_MECHANICAL_LABELS = new Set([LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT]);
 
 /**
- * True when the label set carries a parked-mechanical routing label
- * (`blocked:stalled` or `blocked:crashed`). Pure.
+ * True when the label set carries a parked-mechanical routing label. Pure.
  */
 export function isParkedMechanical(labels: readonly string[]): boolean {
   return labels.some((l) => PARKED_MECHANICAL_LABELS.has(l));
@@ -493,10 +492,13 @@ export interface ReconcileSweepPlan {
 export function planReconcileSweep(
   candidates: readonly ReconcileSweepCandidate[],
   remoteBranches: readonly string[],
+  staleReleasedRunningIssues: readonly number[] = [],
 ): ReconcileSweepPlan[] {
   const plans: ReconcileSweepPlan[] = [];
+  const releasedRunning = new Set(staleReleasedRunningIssues);
   for (const c of candidates) {
-    if (!isParkedMechanical(c.labels)) continue;
+    const staleReleasedRunning = c.labels.includes(LABEL_RUNNING) && releasedRunning.has(c.number);
+    if (!isParkedMechanical(c.labels) && !staleReleasedRunning) continue;
     const branch = findOwnedBranch(remoteBranches, c.number);
     if (!branch) continue;
     plans.push({ number: c.number, title: c.title, body: c.body, labels: c.labels, branch });
