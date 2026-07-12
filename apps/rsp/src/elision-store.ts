@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const RSP_ELISION_COLLECTION = "rsp_elisions_v1";
@@ -87,18 +87,20 @@ export class RspElisionStore {
   private document!: StoreDocument;
   private readonly path: string;
 
-  private constructor(private readonly opts: Required<Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget">> & {
+  private constructor(path: string, private readonly opts: Required<Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget">> & {
     ttlDays: number;
     byteBudget: number;
   }) {
-    this.path = fileStorePath(opts.uri);
+    this.path = path;
   }
 
   static async open(opts: RspElisionStoreOptions): Promise<RspElisionStore> {
     if (process.env.RSP_FAIL_IF_STORE_OPEN === "1") {
       throw new Error("RSP_FAIL_IF_STORE_OPEN blocked store open");
     }
-    const store = new RspElisionStore({
+    const requestedPath = fileStorePath(opts.uri);
+    const path = await writableStorePath(requestedPath);
+    const store = new RspElisionStore(path, {
       uri: opts.uri,
       ttlDays: positiveNumber(opts.ttlDays, DEFAULT_RSP_TTL_DAYS),
       byteBudget: positiveNumber(opts.byteBudget, DEFAULT_RSP_BYTE_BUDGET),
@@ -347,6 +349,26 @@ async function readStoreDocument(path: string): Promise<StoreDocument> {
     throw err;
   }
   throw new Error("rsp elision store is unreadable");
+}
+
+async function writableStorePath(path: string): Promise<string> {
+  try {
+    const bytes = await readFile(path);
+    if (isLegacyRedDbStore(bytes)) return legacyRedDbFallbackPath(path);
+    return path;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return path;
+    throw err;
+  }
+}
+
+function isLegacyRedDbStore(bytes: Buffer): boolean {
+  return bytes.subarray(0, 8).toString("ascii") === "RDBSBLK1";
+}
+
+function legacyRedDbFallbackPath(path: string): string {
+  if (basename(path) === "red.rdb") return join(dirname(path), "rsp-elisions.json");
+  return `${path}.json`;
 }
 
 async function writeStoreDocument(path: string, document: StoreDocument): Promise<void> {

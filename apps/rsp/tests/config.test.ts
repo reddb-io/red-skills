@@ -25,7 +25,7 @@ describe("resolveRspConfig", () => {
 
     expect(resolveRspConfig(join(root, "nested"), {}, undefined)).toEqual({
       enabled: false,
-      storeUri: `file://${join(root, ".red", "red.rdb")}`,
+      storeUri: `file://${join(root, ".red", "rsp-elisions.json")}`,
       ttlDays: 3,
       byteBudget: 42,
       heavyGitByteThreshold: 99,
@@ -39,7 +39,7 @@ describe("resolveRspConfig", () => {
 
     expect(resolveRspConfig(root, {}, undefined)).toEqual({
       enabled: true,
-      storeUri: `file://${join(root, ".red", "red.rdb")}`,
+      storeUri: `file://${join(root, ".red", "rsp-elisions.json")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
@@ -53,7 +53,7 @@ describe("resolveRspConfig", () => {
     expect(config.heavyGitByteThreshold).toBe(123);
   });
 
-  it("does not create .red or red.rdb while resolving runtime config", async () => {
+  it("does not create .red or rsp-elisions.json while resolving runtime config", async () => {
     const root = await tempRoot();
     const config = resolveRspConfig(root, {}, undefined);
 

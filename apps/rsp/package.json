@@ -2,7 +2,7 @@
   "name": "@reddb-io/rsp",
   "version": "2.23.1",
   "private": true,
-  "description": "RedSkills neutral rsp binary: reversible elision store and retrieval over the repo RedDB store.",
+  "description": "RedSkills neutral rsp binary: reversible elision store and retrieval over an rsp-owned JSON store.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
