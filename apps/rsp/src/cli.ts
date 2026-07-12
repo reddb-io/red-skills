@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { RspElisionStore } from "./elision-store.js";
-import { resolveRspConfig } from "./config.js";
-import { ResidentRspElisionStore, resolveResidentPaths } from "./resident-client.js";
 
 interface ParsedArgs {
   command?: string;
@@ -36,6 +31,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runRspMcpServer();
     return 0;
   }
+  if (args.command === "git" && isFastGitStatus(args.positional)) return await runFastGitStatus();
+
+  const { resolveResidentPaths, ResidentRspElisionStore } = await import("./resident-client.js");
   if (args.command === "server") {
     const { runResidentServer } = await import("./resident-server.js");
     const socket = valueAfter(args.positional, "--socket") ?? resolveResidentPaths(process.cwd()).socketPath;
@@ -50,6 +48,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
 
+  const { resolveRspConfig } = await import("./config.js");
+  const { existsSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const residentPaths = resolveResidentPaths(process.cwd());
   const wrapperCommand = isWrapperCommand(args.command);
@@ -85,7 +86,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      if (isFastGitStatus(args.positional)) return await runFastGitStatus();
       const { runGitWrapper } = await import("./git-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
@@ -174,23 +174,36 @@ function isFastGitStatus(argv: readonly string[]): boolean {
 }
 
 async function runFastGitStatus(): Promise<number> {
-  const child = spawn("git", ["status", "--porcelain=v1"], { stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = Buffer.alloc(0);
-  let stderr = Buffer.alloc(0);
-  child.stdout.on("data", (chunk) => {
-    stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr = Buffer.concat([stderr, Buffer.from(chunk)]);
-  });
-  const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
-  if ((status ?? 0) !== 0) {
-    process.stdout.write(stdout);
-    process.stderr.write(stderr);
-    return status ?? 1;
+  if (isEmptyUnbornGitRepo(process.cwd())) {
+    process.stdout.write("git empty\n");
+    return 0;
   }
-  process.stdout.write(stdout.length === 0 ? "git empty\n" : stdout);
+
+  const { spawnSync } = await import("node:child_process");
+  const clean = spawnSync("git", ["diff-index", "--quiet", "HEAD", "--"], { stdio: "ignore" });
+  if (clean.status === 0) {
+    process.stdout.write("git empty\n");
+    return 0;
+  }
+
+  const status = spawnSync("git", ["status", "--porcelain=v1"], { encoding: "buffer" });
+  if ((status.status ?? 0) !== 0) {
+    process.stdout.write(status.stdout);
+    process.stderr.write(status.stderr);
+    return status.status ?? 1;
+  }
+  process.stdout.write(status.stdout.length === 0 ? "git empty\n" : status.stdout);
   return 0;
+}
+
+function isEmptyUnbornGitRepo(cwd: string): boolean {
+  try {
+    const { existsSync, readdirSync } = require("node:fs") as typeof import("node:fs");
+    if (!existsSync(`${cwd}/.git`) || existsSync(`${cwd}/.git/index`)) return false;
+    return readdirSync(cwd).every((entry) => entry === ".git");
+  } catch {
+    return false;
+  }
 }
 
 type ElisionStoreLike = Pick<RspElisionStore, "mint" | "close">;
@@ -246,6 +259,7 @@ function isWrapperCommand(command: string | undefined): boolean {
 async function passthrough(argv: readonly string[]): Promise<number> {
   const command = argv[0];
   if (!command) return 2;
+  const { spawn } = await import("node:child_process");
   const child = spawn(command, argv.slice(1), { stdio: "inherit" });
   return await new Promise((resolve) => {
     child.on("error", (err) => {
