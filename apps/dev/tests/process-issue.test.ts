@@ -129,6 +129,9 @@ interface HarnessOptions {
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
   preWorktreeEnv?: Record<string, string>;
   changedFiles?: string[];
+  /** Per-call changed-file results. Useful when a bounded retry changes whether
+   * the worker branch actually differs from base. */
+  changedFilesSequence?: string[][];
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
@@ -263,6 +266,7 @@ function harness(opts: HarnessOptions = {}): {
   // verification reads above key off it to model "the agent resolved the merge".
   let mergeResolved = false;
   let pnpmCalls = 0;
+  let changedFilesCalls = 0;
   let currentMainRedRepairIssue: { number: number; title?: string; body?: string; labels?: readonly string[] } | null =
     opts.mainRedRepairIssue ? { number: 123 } : null;
 
@@ -593,6 +597,11 @@ function harness(opts: HarnessOptions = {}): {
       },
       async changedFiles(branch, base) {
         trace.changedFileCalls.push({ branch, base });
+        const seq = opts.changedFilesSequence;
+        if (seq) {
+          const idx = changedFilesCalls++;
+          return seq[idx] ?? seq.at(-1) ?? [];
+        }
         return opts.changedFilesByBase?.[base] ?? opts.changedFiles ?? ["packages/x/src/a.ts"];
       },
       async diffstat() {
@@ -1732,6 +1741,59 @@ describe("processIssue — active Current blocker preflight", () => {
 });
 
 describe("processIssue — feedback fail", () => {
+  it("rejects a DONE attempt whose worker branch has no diff against base", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      changedFiles: [],
+      feedbackOk: true,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.closed).toEqual([]);
+    expect(trace.pnpmArgs).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("attempt branch has no diff against the merge-base");
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:validation"]);
+  });
+
+  it("/go retries a DONE empty-diff attempt under the existing machine-gate retry cap", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      changedFilesSequence: [[], ["packages/x/src/a.ts"]],
+      feedbackOk: true,
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<go-machine-gate-retry>");
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("attempt branch has no diff against the merge-base");
+    expect(trace.closed).toEqual([9]);
+  });
+
+  it("surfaces a docs-only DONE attempt as changed-no-source in the public envelope", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      changedFiles: ["README.md", "docs/setup.md"],
+      feedbackOk: true,
+      locked: false,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.iterLogs.some((line) => line.includes("changed no source files"))).toBe(true);
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("changed no source files");
+  });
+
   it("flips to ready-for-human with a failure envelope when validation fails", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: false });
     const result = await processIssue(deps, input);
