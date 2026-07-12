@@ -1,5 +1,5 @@
-import { constants } from "node:fs";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
@@ -12,6 +12,13 @@ export interface RspTelemetryEvent {
   id?: string;
   created_at?: string;
   bytes?: number;
+  raw_text?: string;
+  emitted_text?: string;
+  raw_bytes?: number;
+  emitted_bytes?: number;
+  tokens_raw?: number;
+  tokens_emitted?: number;
+  estimated?: boolean;
   [key: string]: unknown;
 }
 
@@ -22,13 +29,8 @@ export function telemetrySpoolPath(rootDir: string): string {
 export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryEvent): Promise<void> {
   try {
     const path = telemetrySpoolPath(rootDir);
-    await mkdir(dirname(path), { recursive: true });
-    const handle = await open(path, constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY, 0o600);
-    try {
-      await handle.write(`${JSON.stringify(event)}\n`, undefined, "utf8");
-    } finally {
-      await handle.close();
-    }
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
   } catch {}
 }
 
