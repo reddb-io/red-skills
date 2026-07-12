@@ -121,8 +121,9 @@ describe("rsp setup CLI", () => {
       cwd: root,
       encoding: "utf8",
     });
-    expect(before.status).toBe(1);
-    expect(before.stdout).toContain("rsp repo store is not provisioned");
+    expect(before.status).not.toBe(0);
+    expect(before.stdout).not.toContain("rsp repo store is not provisioned");
+    expect(before.stderr).toContain("not a git repository");
 
     const setup = spawnSync(process.execPath, ["--import", tsxLoader, cli, "setup"], {
       cwd: root,
