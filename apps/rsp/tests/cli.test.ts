@@ -28,7 +28,7 @@ afterEach(async () => {
 
 function runRsp(root: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
-    cwd: packageRoot,
+    cwd: root,
     env: { ...process.env, ...env },
     encoding: "buffer",
   });
@@ -110,12 +110,67 @@ async function initGitRepo(): Promise<string> {
   return root;
 }
 
+async function enableRsp(root: string): Promise<void> {
+  await mkdir(join(root, ".red"), { recursive: true });
+  await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+}
+
 async function commitMany(root: string, count: number): Promise<void> {
   for (let i = 1; i <= count; i++) {
     await writeFile(join(root, `file-${i}.txt`), `line ${i}\n`, "utf8");
     expect(runGit(["-C", root, "add", `file-${i}.txt`]).status).toBe(0);
     expect(runGit(["-C", root, "commit", "-m", `commit ${i}`]).status).toBe(0);
   }
+}
+
+async function runMcpRequests(cwd: string, requests: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", tsxLoader, cli, "mcp"], {
+      cwd,
+      env: { ...process.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const responses: Array<Record<string, unknown>> = [];
+    let stdout = "";
+    let stderr = "";
+    let buffer = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`timed out waiting for rsp mcp responses; stderr=${stderr}`));
+    }, 10_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      buffer += chunk;
+      let idx: number;
+      while ((idx = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        responses.push(JSON.parse(line) as Record<string, unknown>);
+        if (responses.length >= requests.filter((request) => "id" in request).length) {
+          clearTimeout(timeout);
+          child.kill();
+          resolve(responses);
+        }
+      }
+    });
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("close", (status) => {
+      if (responses.length < requests.filter((request) => "id" in request).length) {
+        clearTimeout(timeout);
+        reject(new Error(`rsp mcp exited early with ${status}; stdout=${stdout}; stderr=${stderr}`));
+      }
+    });
+    for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
+  });
 }
 
 async function seedWarmRedCache(): Promise<string> {
@@ -132,6 +187,85 @@ async function seedWarmRedCache(): Promise<string> {
 }
 
 describe("rsp cli", () => {
+  it("passes wrappers through without creating .red when rsp is not enabled", async () => {
+    const root = await initGitRepo();
+    await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
+    const direct = runGit(["-C", root, "status", "--short"]);
+
+    const res = runRspFromCwd(root, ["git", "status", "--short"], {});
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: rsp is not enabled in this directory; run /red-setup, passing through\n${direct.stderr.toString("utf8")}`);
+    await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("server exits inert without creating a socket when rsp is not enabled", async () => {
+    const root = await tempRoot();
+
+    const res = runRspFromCwd(root, ["server", "--idle-ms", "10"], {});
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe("rsp is not enabled in this directory; run /red-setup\n");
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("mcp boots inert with no config and answers status without side effects", async () => {
+    const root = await tempRoot();
+
+    const responses = await runMcpRequests(root, [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "rsp_status", arguments: {} } },
+    ]);
+
+    const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
+    const status = responses.find((response) => response.id === 3) as { result: { content: Array<{ text: string }> } };
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
+    expect(status.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("mcp stays inert when config lacks an rsp block or disables rsp", async () => {
+    const noRsp = await tempRoot();
+    await mkdir(join(noRsp, ".red"), { recursive: true });
+    await writeFile(join(noRsp, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n", "utf8");
+    const disabled = await tempRoot();
+    await mkdir(join(disabled, ".red"), { recursive: true });
+    await writeFile(join(disabled, ".red", "config.yaml"), "rsp:\n  enabled: false\n", "utf8");
+
+    for (const root of [noRsp, disabled]) {
+      const responses = await runMcpRequests(root, [
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      ]);
+      const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
+      expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
+      await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("mcp exposes resident tools when rsp is enabled", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+
+    const responses = await runMcpRequests(root, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    ]);
+
+    const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status", "rsp_stats", "rsp_show"]);
+  });
+
   it("built bundle starts the resident on cold small git status", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
@@ -154,6 +288,7 @@ describe("rsp cli", () => {
   it("built bundle keeps small git status wrapper work under 100ms", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
+    await enableRsp(root);
     await writeFile(join(root, ".gitignore"), ".red/\n", "utf8");
     expect(runGit(["-C", root, "add", ".gitignore"]).status).toBe(0);
     expect(runGit(["-C", root, "commit", "-m", "baseline"]).status).toBe(0);
@@ -300,7 +435,7 @@ describe("rsp cli", () => {
 
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
     const root = await tempRoot();
-    await mkdir(join(root, ".red"), { recursive: true });
+    await enableRsp(root);
 
     const res = runRspFromCwd(root, [], {});
 
@@ -312,7 +447,7 @@ describe("rsp cli", () => {
 
   it("passes through a successful wrapper when the repo store has not been provisioned", async () => {
     const root = await initGitRepo();
-    await mkdir(join(root, ".red"), { recursive: true });
+    await enableRsp(root);
     await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
     const direct = runGit(["-C", root, "status", "--short"]);
 
@@ -327,7 +462,7 @@ describe("rsp cli", () => {
 
   it("passes through a failing wrapper with the underlying exit code and raw stderr when the store is absent", async () => {
     const root = await initGitRepo();
-    await mkdir(join(root, ".red"), { recursive: true });
+    await enableRsp(root);
     const args = ["-C", root, "definitely-not-a-git-subcommand"];
     const direct = runGit(args);
 
@@ -340,6 +475,7 @@ describe("rsp cli", () => {
 
   it("passes through wrappers when the configured store is unreadable non-RedDB data", async () => {
     const root = await initGitRepo();
+    await enableRsp(root);
     const storeRoot = await tempRoot();
     const storePath = join(storeRoot, "rsp-elisions.json");
     await writeFile(storePath, "not a reddb store", "utf8");
@@ -376,9 +512,9 @@ describe("rsp cli", () => {
     buildBundleOnce();
     const root = await initGitRepo();
     await commitMany(root, 12);
+    await enableRsp(root);
     const legacyPath = join(root, ".red", "red.rdb");
     const legacyBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from("legacy graph bytes")]);
-    await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(legacyPath, legacyBytes);
 
     const compressed = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "git", "log", "--terse"]);
@@ -392,6 +528,7 @@ describe("rsp cli", () => {
 
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {
     const root = await tempRoot();
+    await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
     const store = await RspElisionStore.open({ uri: storeUri });
     await store.close();
@@ -410,6 +547,7 @@ describe("rsp cli", () => {
 
   it("prints store stats instead of help when called without arguments", async () => {
     const root = await tempRoot();
+    await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
     const store = await RspElisionStore.open({
       uri: storeUri,
@@ -433,6 +571,7 @@ describe("rsp cli", () => {
 
   it("rsp show prints original bytes verbatim on hit", async () => {
     const root = await tempRoot();
+    await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
     const original = Buffer.from([0x1b, 0x5b, 0x33, 0x32, 0x6d, 0x00, 0x62, 0xff]);
     const store = await RspElisionStore.open({ uri: storeUri });
@@ -455,6 +594,7 @@ describe("rsp cli", () => {
 
   it("rsp show prints structured expiry with the original command and exits 1", async () => {
     const root = await tempRoot();
+    await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
     let now = new Date("2026-07-10T12:00:00.000Z");
     const store = await RspElisionStore.open({ uri: storeUri, ttlDays: 1, now: () => now });
