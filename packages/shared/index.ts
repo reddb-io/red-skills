@@ -66,4 +66,22 @@ export {
   type EnsureBundleInput,
   type ResolveBundleInput,
 } from "./bundle-fetch.js";
+export {
+  REDDB_REPO,
+  RED_RELEASE_BASE,
+  RED_RUNTIME_DIR,
+  RedRuntimeError,
+  ensureRedBinary,
+  parseSha256File,
+  redAssetName,
+  redAssetUrl,
+  redBinaryFileName,
+  redPlatformKey,
+  redRuntimeDir,
+  resolveCachedRedBinary,
+  resolveRedBinaryPath,
+  type EnsureRedBinaryInput,
+  type RedBinaryRuntime,
+  type RedRuntimeIO,
+} from "./red-runtime.js";
 export * from "./outcome-event.js";
