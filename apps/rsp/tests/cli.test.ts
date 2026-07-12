@@ -623,6 +623,27 @@ describe("rsp cli", () => {
       command: "git --version",
       reason: "wrapper failed",
     }));
+
+    const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const statsText = stats.stdout.toString("utf8");
+    expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
+    expect(statsText).toContain("records: 1\n");
+    expect(statsText).toContain("savings:\n");
+    expect(statsText).toContain("  window_days: 7\n");
+    expect(statsText).toMatch(/  invocations: [1-9]\d*\n/);
+    expect(statsText).toContain("  elided: 1\n");
+    expect(statsText).toMatch(/  raw_bytes: [1-9]\d*\n/);
+    expect(statsText).toMatch(/  emitted_bytes: [1-9]\d*\n/);
+    expect(statsText).toMatch(/  tokens_saved: [1-9]\d*\n/);
+    expect(statsText).toContain("  top_commands:\n");
+    expect(statsText).toContain("command: git log");
+    expect(statsText).toContain("health:\n");
+    expect(statsText).toContain("  degradations: 1\n");
+    expect(statsText).toContain("  degradation_rate: 0.5\n");
+    expect(statsText).toContain("  most_recent_degradation_reason: wrapper failed\n");
+    expect(statsText).toContain("latency:\n");
+    expect(statsText).toMatch(/  wrapper_ms_p50: [0-9.]+\n/);
+    expect(statsText).toMatch(/  wrapper_ms_p95: [0-9.]+\n/);
   }, 120_000);
 
   it("built bundle keeps git log terse elision latency under budget", async () => {
@@ -791,7 +812,31 @@ describe("rsp cli", () => {
     const res = runRsp(root, [], { RSP_STORE_URI: storeUri });
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(Buffer.from("records: 1\nbytes: 3\noldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n"));
+    const text = res.stdout.toString("utf8");
+    expect(text).toContain("records: 1\nbytes: 3\noldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n");
+    expect(text).toContain("savings:\n  window_days: 30\n  empty: true\n  invocations: 0\n");
+    expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
+    expect(text).toContain("latency:\n  wrapper_ms_p50: none\n");
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+  });
+
+  it("prints a definitive empty telemetry state through rsp stats", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+    const storeUri = `file://${join(root, "red.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri });
+    await store.close();
+
+    const res = runRsp(root, ["stats", "--since=7d"], { RSP_STORE_URI: storeUri });
+    const text = res.stdout.toString("utf8");
+
+    expect(res.status).toBe(0);
+    expect(text).toContain("records: 0\nbytes: 0\noldest: none\n");
+    expect(text).toContain("savings:\n  window_days: 7\n  empty: true\n  invocations: 0\n");
+    expect(text).toContain("  top_commands:\n    empty: true\n");
+    expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
+    expect(text).toContain("  most_recent_degradation_at: none\n");
+    expect(text).toContain("latency:\n  wrapper_ms_p50: none\n  wrapper_ms_p95: none\n");
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 
