@@ -66,7 +66,7 @@ describe("mergeRspBlock", () => {
 });
 
 describe("provisionRspRepoStore", () => {
-  it("creates .red/tmp/rsp-elisions.json and is idempotent on rerun", async () => {
+  it("creates .red/tmp/red-skills.rdb and is idempotent on rerun", async () => {
     const root = await tempRoot();
     const first = await provisionRspRepoStore(root);
     const firstStat = await stat(first.storePath);
@@ -77,7 +77,7 @@ describe("provisionRspRepoStore", () => {
     expect(first.storeCreated).toBe(true);
     expect(second.storeCreated).toBe(false);
     expect(firstStat.mtimeMs).toBe(secondStat.mtimeMs);
-    expect(first.storePath).toBe(join(root, ".red", "tmp", "rsp-elisions.json"));
+    expect(first.storePath).toBe(join(root, ".red", "tmp", "red-skills.rdb"));
     await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("rsp:\n  enabled: true");
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -86,15 +86,15 @@ describe("provisionRspRepoStore", () => {
     const root = await tempRoot();
     await provisionRspRepoStore(root);
     const marker = Buffer.from("existing store marker");
-    await writeFile(join(root, ".red", "tmp", "rsp-elisions.json"), marker);
+    await writeFile(join(root, ".red", "tmp", "red-skills.rdb"), marker);
 
     const result = await provisionRspRepoStore(root);
 
     expect(result.storeCreated).toBe(false);
-    await expect(readFile(join(root, ".red", "tmp", "rsp-elisions.json"))).resolves.toEqual(marker);
+    await expect(readFile(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toEqual(marker);
   });
 
-  it("does not migrate or repoint the memory graph store", async () => {
+  it("copies and repoints the memory graph store into the shared rsp store", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red", "memory"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), [
@@ -110,9 +110,10 @@ describe("provisionRspRepoStore", () => {
     const result = await provisionRspRepoStore(root);
 
     expect(result.storeCreated).toBe(true);
-    expect(result.memoryStoreMigrated).toBe(false);
+    expect(result.memoryStoreMigrated).toBe(true);
     await expect(readFile(join(root, ".red", "memory", "graph.rdb"), "utf8")).resolves.toBe("legacy graph data");
-    await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("    storePath: .red/memory/graph.rdb");
+    await expect(readFile(join(root, ".red", "tmp", "red-skills.rdb"), "utf8")).resolves.toBe("legacy graph data");
+    await expect(readFile(join(root, ".red", "config.yaml"), "utf8")).resolves.toContain("    storePath: .red/tmp/red-skills.rdb");
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
