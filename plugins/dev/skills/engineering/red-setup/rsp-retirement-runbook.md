@@ -19,7 +19,7 @@ After editing settings, open a fresh agent session and confirm routine commands 
 Remove the retired binary from the operator-managed bin directory or package manager that installed it. Verify that the shell no longer resolves it:
 
 ```bash
-command -v rtk
+command -v <retired-binary>
 ```
 
 If another unrelated tool with the same executable name remains on `PATH`, leave that tool alone and document the distinction in local operator notes rather than changing repo guidance.
