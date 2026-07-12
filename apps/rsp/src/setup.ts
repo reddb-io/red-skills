@@ -5,7 +5,6 @@ import { chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { join, resolve } from "node:path";
-import { connect } from "@reddb-io/sdk";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { ensureRedBinary, type RedRuntimeIO } from "@reddb-io/shared/red-runtime.js";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
@@ -65,8 +64,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   const storeCreated = !(await exists(storePath));
   const redRuntime = await configureRspRedBinary({ mayFetch: true, ...(opts.redRuntime ?? {}) });
   if (storeCreated) {
-    const db = await connect(`file://${storePath}`);
-    await db.close();
+    await writeFile(storePath, "", "utf8");
   }
 
   return {

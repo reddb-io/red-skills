@@ -72,6 +72,31 @@ describe("RspElisionStore", () => {
     }
   });
 
+  it("opens and writes without a RedDB subprocess", async () => {
+    const root = await tempRoot();
+    const previous = process.env.REDDB_BIN;
+    process.env.REDDB_BIN = join(root, "missing-red-binary");
+    try {
+      const store = await RspElisionStore.open({
+        uri: `file://${join(root, "red.rdb")}`,
+        now: () => new Date("2026-07-10T12:00:00.000Z"),
+      });
+      try {
+        const handle = await store.mint(Buffer.from("fast local write"), {
+          command: "git log --terse",
+          loss: { level: "terse", bytes_elided: 16 },
+        });
+
+        expect((await store.get(handle))?.original).toEqual(Buffer.from("fast local write"));
+      } finally {
+        await store.close();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.REDDB_BIN;
+      else process.env.REDDB_BIN = previous;
+    }
+  });
+
   it("expires records by TTL on amortized write and reports the original command", async () => {
     let now = new Date("2026-07-10T12:00:00.000Z");
     const root = await tempRoot();

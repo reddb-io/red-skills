@@ -54,11 +54,16 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
   });
 }
 
-function timedStatus(command: () => ReturnType<typeof spawnSync>): { status: number | null; elapsedMs: number; stderr: Buffer } {
+function timedStatus(command: () => ReturnType<typeof spawnSync>): {
+  status: number | null;
+  elapsedMs: number;
+  stdout: Buffer;
+  stderr: Buffer;
+} {
   const started = process.hrtime.bigint();
   const result = command();
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-  return { status: result.status, elapsedMs, stderr: result.stderr as Buffer };
+  return { status: result.status, elapsedMs, stdout: result.stdout as Buffer, stderr: result.stderr as Buffer };
 }
 
 function median(values: number[]): number {
@@ -185,6 +190,40 @@ describe("rsp cli", () => {
     expect(degraded.status).toBe(raw.status);
     expect(degraded.stdout).toEqual(raw.stdout);
     expect(degraded.stderr.toString("utf8")).toBe("rsp: store not provisioned, passing through\n");
+  }, 120_000);
+
+  it("built bundle keeps git log terse elision latency under budget", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+
+    expect(runBundleFromCwd(root, ["git", "log", "--terse"], env).status).toBe(0);
+    expect(runGit(["-C", root, "log"]).status).toBe(0);
+
+    const rawSamples: number[] = [];
+    const wrappedSamples: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const raw = timedStatus(() => runGit(["-C", root, "log"]));
+      const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], env));
+      expect(raw.status).toBe(0);
+      expect(wrapped.status).toBe(0);
+      expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+      expect(wrapped.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+      rawSamples.push(raw.elapsedMs);
+      wrappedSamples.push(wrapped.elapsedMs);
+    }
+
+    const rawMedian = median(rawSamples);
+    const wrappedMedian = median(wrappedSamples);
+    const overheadMs = wrappedMedian - rawMedian;
+    expect(
+      wrappedMedian,
+      `raw=${rawMedian.toFixed(1)}ms wrapped=${wrappedMedian.toFixed(1)}ms overhead=${overheadMs.toFixed(1)}ms`,
+    ).toBeLessThanOrEqual(750);
   }, 120_000);
 
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
