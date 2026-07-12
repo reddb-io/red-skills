@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; ver=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.claude-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; out=\"\"; for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { out=\"$(timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-30s}\" node \"$f\" run dev rsp-instructions --runner claude --hook 2>/dev/null)\"; break; }; done; if [ -n \"$out\" ]; then printf \"%s\" \"$out\"; else printf \"{}\"; fi'"
           }
         ]
       }
