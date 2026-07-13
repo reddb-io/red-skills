@@ -18,6 +18,7 @@
     "./skills/engineering/diagnose",
     "./skills/engineering/ground-truth",
     "./skills/engineering/red-doctor",
+    "./skills/engineering/red-gains",
     "./skills/engineering/review-adrs",
     "./skills/engineering/start",
     "./skills/engineering/triage",
