@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { createServer, type Server, type Socket } from "node:net";
 import { connect } from "@reddb-io/sdk";
 import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
+import { sendResidentRequest } from "../src/resident-protocol.js";
 import {
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -279,6 +281,55 @@ async function waitForResidentSocket(root: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   await stat(paths.socketPath);
+}
+
+async function readResidentVersion(root: string): Promise<string | undefined> {
+  const socketPath = trackedResidentPaths(root).socketPath;
+  const deadline = Date.now() + 5_000;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const response = await sendResidentRequest(
+        { socketPath, timeoutMs: 500 },
+        { id: "version", op: "ping" },
+      );
+      const value = response.ok && isRecord(response.value) ? response.value : {};
+      return typeof value.version === "string" ? value.version : undefined;
+    } catch (err) {
+      last = err;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  throw last instanceof Error ? last : new Error("resident version probe failed");
+}
+
+async function startHungOldResident(socketPath: string, version: string): Promise<Server> {
+  await mkdir(dirname(socketPath), { recursive: true });
+  const server = createServer((socket) => handleHungOldResidentSocket(socket, version));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+function handleHungOldResidentSocket(socket: Socket, version: string): void {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("error", () => {});
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    const newline = buffer.indexOf("\n");
+    if (newline < 0) return;
+    const request = JSON.parse(buffer.slice(0, newline)) as { id?: string; op?: string };
+    if (request.op === "ping") {
+      socket.write(`${JSON.stringify({ id: request.id, ok: true, value: { pong: true, version } })}\n`, () => {});
+      socket.end();
+    }
+  });
 }
 
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
@@ -659,6 +710,60 @@ describe("rsp cli", () => {
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
     await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  }, 120_000);
+
+  it("built bundle hands over from an older live resident and keeps serving requests", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const oldVersion = "2.23.0";
+    const oldResident = runBundleFromCwdAsync(
+      root,
+      ["server", "--idle-ms", "10000", "--resident-version", oldVersion],
+      { RED_SKILLS_CACHE_DIR: cacheDir },
+    );
+    await waitForResidentSocket(root);
+    expect(await readResidentVersion(root)).toBe(oldVersion);
+
+    const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(compressed.status, `${compressed.stdout.toString("utf8")}${compressed.stderr.toString("utf8")}`).toBe(0);
+    expect(compressed.stderr).toEqual(Buffer.alloc(0));
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(compressed.stdout.toString("utf8"))?.[1];
+    expect(handle).toBeTruthy();
+    const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
+    expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
+    expect(await readResidentVersion(root)).not.toBe(oldVersion);
+    expect(await oldResident).toMatchObject({ status: 0 });
+  }, 120_000);
+
+  it("built bundle removes a hung old resident socket after handover timeout", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const oldVersion = "2.23.0";
+    const hung = await startHungOldResident(paths.socketPath, oldVersion);
+    try {
+      expect(await readResidentVersion(root)).toBe(oldVersion);
+
+      const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+      expect(compressed.status, `${compressed.stdout.toString("utf8")}${compressed.stderr.toString("utf8")}`).toBe(0);
+      expect(compressed.stderr).toEqual(Buffer.alloc(0));
+      expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+      expect(await readResidentVersion(root)).not.toBe(oldVersion);
+      await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      hung.close();
+    }
   }, 120_000);
 
   it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
