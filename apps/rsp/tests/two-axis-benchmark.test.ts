@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildTwoAxisBenchmarkReport, renderTwoAxisSummary, writeTwoAxisBenchmarkReport } from "../src/two-axis-benchmark.js";
+import { buildTwoAxisBenchmarkReport, renderTwoAxisSummary, writeTwoAxisBenchmarkReport, type TwoAxisBenchmarkReport } from "../src/two-axis-benchmark.js";
+import { compareTwoAxisBenchmarkReports, TWO_AXIS_TOKEN_REGRESSION_THRESHOLD_PCT } from "../src/two-axis-thresholds.js";
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures");
@@ -95,5 +96,21 @@ describe("rsp two-axis benchmark report", () => {
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
+  });
+
+  it("flags synthetic shipped token regressions beyond the threshold", async () => {
+    const baseline = await buildTwoAxisBenchmarkReport({ fixtureRoot });
+    const current = structuredClone(baseline) as TwoAxisBenchmarkReport;
+    const row = current.filters.find((candidate) => candidate.filter === "vitest:run");
+    expect(row).toBeDefined();
+    row!.brief.median_delta_pct -= TWO_AXIS_TOKEN_REGRESSION_THRESHOLD_PCT + 0.1;
+
+    expect(compareTwoAxisBenchmarkReports(baseline, current)).toEqual([
+      expect.objectContaining({
+        kind: "token-regression",
+        filter: "vitest:run",
+        axis: "brief",
+      }),
+    ]);
   });
 });
