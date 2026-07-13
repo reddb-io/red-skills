@@ -62,7 +62,7 @@ export function renderAmbientSkill(
     "## When to prefer rsp",
     "",
     "- For deterministic file reads, prefer `rsp cat <file>`; code files render an outline plus bounded content, text/config files are threshold-gated, and binary files pass through untouched.",
-    "- For simple file dumps, Claude pre-exec may rewrite bare `cat <file>`, `head <file>`, `head -n N <file>`, `tail <file>`, and `tail -n N <file>` when the path is an unquoted single file token.",
+    "- For simple file dumps, the host pre-exec hook may rewrite bare `cat <file>`, `head <file>`, `head -n N <file>`, `tail <file>`, and `tail -n N <file>` when the path is an unquoted single file token.",
     ...preferences,
     "",
     "For arbitrary shell pipelines or compound commands where only final stdout",
@@ -119,8 +119,12 @@ function renderRunnerLines(runner: RspInstructionRunner | undefined): string[] {
     return [
       "## Codex lane",
       "",
-      "This ambient instruction is the primary Codex lane: call `rsp` directly",
-      "when one of the wrapped command forms applies.",
+      "Codex pre-execution rewrite hook is available for simple wrapped",
+      "commands when the repo opts into `rsp.enabled`; direct `rsp` calls still",
+      "help when composing commands deliberately. Codex PostToolUse cannot",
+      "replace completed Bash output, so post-exec output normalization remains",
+      "a Claude-only hook gap; invocation accounting comes from the rewritten",
+      "`rsp` command's telemetry event.",
     ];
   }
   if (runner === "claude") {
