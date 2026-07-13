@@ -1,2 +1,7 @@
 # oracle: preserves decision-relevant rows and columns from push-porcelain; keep as compact TOON, not a scalar verdict.
-value: "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits\n"
+command: git push
+remote: github.com:reddb-io/red-skills.git
+refs[2]{flag,from,to,summary}:
+  "=",refs/heads/main,refs/heads/main,[up to date]
+  " ",refs/heads/feature/rsp,refs/heads/feature/rsp,1111111..2222222
+summary: "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits"
