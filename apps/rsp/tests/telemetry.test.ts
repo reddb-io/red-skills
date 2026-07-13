@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,6 +113,7 @@ describe("rsp telemetry spool", () => {
 
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const server = runResidentServer({
       rootDir: root,
       socketPath: paths.socketPath,
@@ -121,10 +122,10 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000,
-      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
       idleMs: 100,
     });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
 
     await appendTelemetryEvent(root, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
@@ -146,7 +147,7 @@ describe("rsp telemetry spool", () => {
       id: "idle-event",
       reason: "resident unavailable",
     });
-  }, 20_000);
+  }, 60_000);
 
   it("computes telemetry tokens at drain time and estimates oversized payloads", async () => {
     const root = await tempRoot();
@@ -168,6 +169,7 @@ describe("rsp telemetry spool", () => {
 
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const server = runResidentServer({
       rootDir: root,
       socketPath: paths.socketPath,
@@ -176,10 +178,10 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000_000,
-      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
       idleMs: 100,
     });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await server;
 
     await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "exact")).resolves.toMatchObject({
@@ -193,7 +195,7 @@ describe("rsp telemetry spool", () => {
       tokens_emitted: Math.ceil(Buffer.byteLength(huge, "utf8") / 4),
       estimated: true,
     });
-  }, 20_000);
+  }, 60_000);
 
   it("enforces telemetry ttl and byte budget without pruning elisions", async () => {
     const root = await tempRoot();
@@ -218,6 +220,7 @@ describe("rsp telemetry spool", () => {
 
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const server = runResidentServer({
       rootDir: root,
       socketPath: paths.socketPath,
@@ -226,10 +229,10 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 1,
       telemetryByteBudget: 75,
-      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
       idleMs: 100,
     });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await server;
 
     await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "expired")).resolves.toBeNull();
@@ -237,7 +240,7 @@ describe("rsp telemetry spool", () => {
     await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "newest")).resolves.toMatchObject({
       id: "newest",
     });
-  }, 20_000);
+  }, 60_000);
 
   it("serves telemetry stats from resident collections without mutating the spool", async () => {
     const root = await tempRoot();
@@ -267,6 +270,7 @@ describe("rsp telemetry spool", () => {
 
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const server = runResidentServer({
       rootDir: root,
       socketPath: paths.socketPath,
@@ -275,10 +279,10 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000,
-      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
       idleMs: 100,
     });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
 
     const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
       id: "stats",
@@ -314,7 +318,7 @@ describe("rsp telemetry spool", () => {
     });
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
     await server;
-  }, 20_000);
+  }, 60_000);
 
   it("drains a hand-written spool through the built bundle resident", async () => {
     const root = await tempRoot();
@@ -327,6 +331,7 @@ describe("rsp telemetry spool", () => {
 
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const child = execFile(process.execPath, [
       bundle,
       "server",
@@ -339,11 +344,11 @@ describe("rsp telemetry spool", () => {
       "--byte-budget",
       String(DEFAULT_RSP_BYTE_BUDGET),
       "--telemetry-drain-timeout-ms",
-      String(await calibratedTelemetryDrainTimeoutMs(root)),
+      String(timing.drainTimeoutMs),
       "--idle-ms",
       "100",
     ], { cwd: root });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await new Promise<void>((resolve, reject) => {
       child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`bundle resident exited ${code}`)));
       child.once("error", reject);
@@ -394,6 +399,7 @@ describe("rsp telemetry spool", () => {
     })}\n`, "utf8");
 
     const paths = resolveResidentPaths(root);
+    const timing = await calibratedTelemetryTiming(root);
     const child = execFile(process.execPath, [
       bundle,
       "server",
@@ -406,11 +412,11 @@ describe("rsp telemetry spool", () => {
       "--byte-budget",
       String(DEFAULT_RSP_BYTE_BUDGET),
       "--telemetry-drain-timeout-ms",
-      String(await calibratedTelemetryDrainTimeoutMs(root)),
+      String(timing.drainTimeoutMs),
       "--idle-ms",
       "100",
     ], { cwd: root });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
     await expect(sendResidentRequest(
       { socketPath: paths.socketPath, timeoutMs: 1_000 },
       { id: "recover-legacy-elision", op: "get", handle: legacyHandle },
@@ -453,6 +459,7 @@ describe("rsp telemetry spool", () => {
     const bundle = await ensureRspBundle();
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const child = execFile(process.execPath, [
       bundle,
       "server",
@@ -465,13 +472,13 @@ describe("rsp telemetry spool", () => {
       "--byte-budget",
       String(DEFAULT_RSP_BYTE_BUDGET),
       "--telemetry-drain-timeout-ms",
-      String(await calibratedTelemetryDrainTimeoutMs(root)),
+      String(timing.drainTimeoutMs),
       "--idle-ms",
       "2000",
       "--telemetry-drain-interval-ms",
       "50",
     ], { cwd: root });
-    await waitForResident(paths.socketPath);
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
 
     await appendTelemetryEvent(root, {
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -483,7 +490,7 @@ describe("rsp telemetry spool", () => {
       wrapper_ms: 5,
     });
 
-    await waitForResidentTelemetry(paths.socketPath, "git log --terse");
+    await waitForResidentTelemetry(paths.socketPath, "git log --terse", timing.waitTimeoutMs);
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
 
     const { stdout } = await execFileAsync(process.execPath, [
@@ -510,7 +517,9 @@ describe("rsp telemetry spool", () => {
     const bundle = await ensureRspBundle();
     const paths = resolveResidentPaths(root);
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
     const staleCreatedAt = new Date(Date.now() - 60_000).toISOString();
+    const summaryMtimeBefore = await fileMtimeMs(paths.summaryPath);
     await writeFile(telemetrySpoolPath(root), `${JSON.stringify({
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
       id: "stale-cold-event",
@@ -535,14 +544,14 @@ describe("rsp telemetry spool", () => {
           ...process.env,
           RSP_STORE_URI: storeUri,
           RSP_TELEMETRY_DRAIN_INTERVAL_MS: "50",
-          RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(await calibratedTelemetryDrainTimeoutMs(root)),
+          RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(timing.drainTimeoutMs),
         },
       });
       expect(stdout).toContain("rsp:");
 
-      await waitForResidentTelemetry(paths.socketPath, "git log --terse");
+      await waitForResidentTelemetry(paths.socketPath, "git log --terse", timing.waitTimeoutMs);
       await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-      await waitForStatusSummary(paths.summaryPath);
+      await waitForStatusSummary(paths.summaryPath, summaryMtimeBefore, timing.waitTimeoutMs);
     } finally {
       await shutdownResident(paths.socketPath);
     }
@@ -714,8 +723,28 @@ async function readTelemetryCollectionModels(storeUri: string): Promise<Record<s
   }
 }
 
-async function waitForResident(socketPath: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+interface TelemetryTiming {
+  drainTimeoutMs: number;
+  waitTimeoutMs: number;
+}
+
+const BASELINE_STORE_OPEN_MS = 100;
+
+async function calibratedTelemetryTiming(root: string): Promise<TelemetryTiming> {
+  const baselineUri = `file://${join(root, ".red", "tmp", `telemetry-baseline-${process.pid}-${Date.now()}.rdb`)}`;
+  const started = process.hrtime.bigint();
+  const db = await connect(baselineUri);
+  await db.close();
+  const storeOpenMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  const scale = Math.min(4, Math.max(1, Math.ceil(Math.max(1, storeOpenMs) / BASELINE_STORE_OPEN_MS)));
+  return {
+    drainTimeoutMs: Math.min(20_000, Math.max(2_000, Math.ceil(storeOpenMs * 8), 2_000 * scale)),
+    waitTimeoutMs: 5_000 * scale,
+  };
+}
+
+async function waitForResident(socketPath: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   let attempt = 0;
   while (Date.now() < deadline) {
     try {
@@ -727,17 +756,8 @@ async function waitForResident(socketPath: string): Promise<void> {
   throw new Error("resident did not start");
 }
 
-async function calibratedTelemetryDrainTimeoutMs(root: string): Promise<number> {
-  const baselineUri = `file://${join(root, ".red", "tmp", `telemetry-baseline-${process.pid}.rdb`)}`;
-  const started = process.hrtime.bigint();
-  const db = await connect(baselineUri);
-  await db.close();
-  const storeOpenMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-  return Math.max(2_000, Math.ceil(Math.max(1, storeOpenMs) * 6));
-}
-
-async function waitForResidentTelemetry(socketPath: string, command: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+async function waitForResidentTelemetry(socketPath: string, command: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   let attempt = 0;
   while (Date.now() < deadline) {
     const response = await sendResidentRequest({ socketPath, timeoutMs: 200 }, {
@@ -757,14 +777,21 @@ async function waitForResidentTelemetry(socketPath: string, command: string): Pr
   throw new Error(`telemetry ${command} did not drain`);
 }
 
-async function waitForStatusSummary(summaryPath: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+async function waitForStatusSummary(summaryPath: string, minMtimeMs = 0, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const summary = await readFile(summaryPath, "utf8").catch(() => "");
-    if (summary.includes("tokens_saved_today")) return;
+    const [summary, mtimeMs] = await Promise.all([
+      readFile(summaryPath, "utf8").catch(() => ""),
+      fileMtimeMs(summaryPath),
+    ]);
+    if (summary.includes("tokens_saved_today") && mtimeMs > minMtimeMs) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("rsp status summary did not refresh");
+}
+
+async function fileMtimeMs(path: string): Promise<number> {
+  return await stat(path).then((s) => s.mtimeMs, () => 0);
 }
 
 async function shutdownResident(socketPath: string): Promise<void> {
