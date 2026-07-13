@@ -140,7 +140,6 @@ export function resolveStatuslinePreset(cfg: ReturnType<typeof loadConfig>): Sta
 }
 
 const RSP_WARMUP_GRACE_MS = 15_000;
-const RSP_MIN_SUMMARY_FRESH_MS = 90_000;
 
 interface RspSummaryFile {
   version: number;
@@ -172,21 +171,38 @@ function isRecentFile(path: string, nowMs: number, maxAgeMs: number): boolean {
   }
 }
 
+function fileExists(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function utcDay(iso: string): string | undefined {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function tokensSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): number {
+  if (utcDay(summary.updated_at) !== new Date(nowMs).toISOString().slice(0, 10)) return 0;
+  return Math.max(0, Math.floor(summary.tokens_saved_today));
+}
+
 export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
   const config = resolveRspConfig(root, env);
   if (!config.enabled) return undefined;
   const paths = resolveResidentPaths(root);
   const nowMs = Date.now();
-  const summaryFreshMs = Math.max(RSP_MIN_SUMMARY_FRESH_MS, config.telemetryDrainIntervalMs * 3);
   const summary = parseRspSummary(paths.summaryPath);
   if (summary) {
-    const updatedAtMs = Date.parse(summary.updated_at);
-    if (Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= summaryFreshMs) {
-      return { state: "ready", tokensSavedToday: Math.max(0, Math.floor(summary.tokens_saved_today)) };
-    }
+    return { state: "ready", tokensSavedToday: tokensSavedForCurrentDay(summary, nowMs) };
   }
   if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };
-  return { state: "error" };
+  if (fileExists(paths.wakeLockPath)) return { state: "error" };
+  return undefined;
 }
 
 /** The block-1 project input: basename, the resolved git ref (branch or detached
