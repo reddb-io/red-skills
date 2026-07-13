@@ -125,6 +125,7 @@ function toResidentConfig(config: RspRuntimeConfig) {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
   };
 }
 
