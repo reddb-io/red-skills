@@ -1,6 +1,9 @@
 {
   "name": "cargo-compile-error",
-  "command": ["cargo", "test"],
+  "command": [
+    "cargo",
+    "test"
+  ],
   "recorded": {
     "stdout": "{\"reason\":\"compiler-message\",\"package_id\":\"red-skills 0.1.0\",\"target\":{\"name\":\"red_skills\"},\"message\":{\"rendered\":\"error[E0425]: cannot find value `missing_symbol` in this scope\\n --> src/lib.rs:9:5\\n  |\\n9 |     missing_symbol\\n  |     ^^^^^^^^^^^^^^ not found in this scope\\n\"}}\n{\"reason\":\"build-finished\",\"success\":false}\n",
     "stderr": "",
@@ -19,8 +22,40 @@
     ]
   },
   "assertions": [
-    { "question": "how many failed?", "path": "summary", "expected": "1/1 failed · 1 suites · 0s" },
-    { "question": "which test names failed?", "path": "failures.0.name", "expected": "compile-error" },
-    { "question": "what was the exit code?", "path": "exit_code", "expected": 101 }
+    {
+      "question": "what was the exit code?",
+      "path": "exit_code",
+      "expected": 101
+    },
+    {
+      "question": "how many failed?",
+      "path": "summary",
+      "expected": "1/1 failed · 1 suites · 0s"
+    },
+    {
+      "question": "oracle preserves failures.length",
+      "path": "failures.length",
+      "expected": 1
+    },
+    {
+      "question": "oracle preserves failures.0.length",
+      "path": "failures.0.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.0.suite",
+      "path": "failures.0.suite",
+      "expected": "cargo check"
+    },
+    {
+      "question": "which test names failed?",
+      "path": "failures.0.name",
+      "expected": "compile-error"
+    },
+    {
+      "question": "oracle preserves failures.0.excerpt",
+      "path": "failures.0.excerpt",
+      "expected": "error[E0425]: cannot find value `missing_symbol` in this scope\n --> src/lib.rs:9:5\n  |\n9 |     missing_symbol\n  |     ^^^^^^^^^^^^^^ not found in this scope\n"
+    }
   ]
 }
