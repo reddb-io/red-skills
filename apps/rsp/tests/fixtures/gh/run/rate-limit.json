@@ -1,6 +1,10 @@
 {
   "name": "run-list-rate-limit",
-  "command": ["gh", "run", "list"],
+  "command": [
+    "gh",
+    "run",
+    "list"
+  ],
   "catalog_prior_art": "official catalog GitHub wrapper leaves gh rate-limit errors untouched.",
   "recorded": {
     "stdout": "",
