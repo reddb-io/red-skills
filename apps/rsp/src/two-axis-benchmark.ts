@@ -80,6 +80,13 @@ export interface TwoAxisParityRow {
   parity_gate: "pass" | "fail";
 }
 
+export interface AntiSuppressionAuditRow {
+  filter: string;
+  level: "brief" | "terse";
+  audited: "ok" | "fixed" | "justified";
+  note: string;
+}
+
 export interface TwoAxisBenchmarkReport {
   benchmark: "rsp-two-axis";
   corpus: {
@@ -102,6 +109,7 @@ export interface TwoAxisBenchmarkReport {
   filters: TwoAxisFilterRow[];
   aggregate: OracleCaptureRow & { fixture_count: number };
   parity: TwoAxisParityRow[];
+  anti_suppression_audit: AntiSuppressionAuditRow[];
   summary: string;
   toon: string;
 }
@@ -203,6 +211,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     filterRow(filter, rows, admissionByFilter.get(filter))
   );
   const parity = buildParity(rows);
+  const antiSuppressionAudit = buildAntiSuppressionAudit(rows);
   const payload = {
     benchmark: "rsp-two-axis",
     corpus: {
@@ -225,6 +234,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     filters: rows,
     aggregate: aggregateOracleCapture(measurements),
     parity,
+    anti_suppression_audit: antiSuppressionAudit,
     summary: `${measurements.length} fixtures, ${rows.length} filters; shipped modes apply admission threshold ${ADMISSION_THRESHOLD_PCT}%`,
   } satisfies Omit<TwoAxisBenchmarkReport, "toon">;
 
@@ -264,6 +274,12 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
       `| ${row.domain} | ${row.filter} | ${row.parity_gate} | ${fmt(row.rsp_fidelity_pass_rate_pct)}% | ${fmt(row.rtk_fidelity_pass_rate_pct)}% |`
     ),
     "",
+    "| Anti-suppression audit | Level | Verdict | Note |",
+    "| --- | --- | --- | --- |",
+    ...report.anti_suppression_audit.map((row) =>
+      `| ${row.filter} | ${row.level} | audited: ${row.audited} | ${row.note} |`
+    ),
+    "",
     "RTK baseline is replayed from checked-in recorded fixtures only; RTK is not executed by this command.",
     "External context-optimization claims are cited literature only and were not locally reproduced.",
     "",
@@ -297,6 +313,42 @@ function buildParity(rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow[] {
     parityRow("cargo-test", "cargo:test", rows),
     parityRow("git-commit", "git:commit", rows),
   ];
+}
+
+function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppressionAuditRow[] {
+  return rows.flatMap((row) => (["brief", "terse"] as const).map((level) => {
+    const verdict = antiSuppressionVerdict(row.filter);
+    return {
+      filter: row.filter,
+      level,
+      audited: verdict.audited,
+      note: verdict.note,
+    };
+  }));
+}
+
+function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
+  switch (filter) {
+    case "git:commit":
+      return { audited: "fixed", note: "success output now renders commit id, branch, subject, and change counts as compact TOON" };
+    case "git:push":
+      return { audited: "fixed", note: "success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults" };
+    case "git:status":
+      return { audited: "justified", note: "clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON" };
+    case "gh:pr":
+      return { audited: "justified", note: "empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON" };
+    case "git:diff":
+    case "git:log":
+      return { audited: "ok", note: "large row sets keep compact TOON plus an elision handle for full detail" };
+    case "gh:issue":
+    case "gh:run":
+      return { audited: "ok", note: "successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough" };
+    case "cargo:test":
+    case "vitest:run":
+      return { audited: "ok", note: "test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail" };
+    default:
+      throw new Error(`missing anti-suppression audit verdict for ${filter}`);
+  }
 }
 
 function parityRow(domain: TwoAxisParityRow["domain"], filter: string, rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow {
