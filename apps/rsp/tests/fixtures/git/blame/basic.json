@@ -1,0 +1,59 @@
+{
+  "name": "blame-basic",
+  "command": [
+    "git",
+    "blame"
+  ],
+  "recorded": {
+    "stdout": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 2\nauthor Ada Lovelace\nfilename src/app.ts\n\tconst one = 1;\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2 2\nauthor Ada Lovelace\nfilename src/app.ts\n\tconst two = 2;\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 3 3 1\nauthor Grace Hopper\nfilename src/app.ts\n\tconst three = 3;\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git blame",
+    "ranges": [
+      {
+        "line_start": 1,
+        "line_end": 2,
+        "author": "Ada Lovelace",
+        "commit": "aaaaaaaaaaaa",
+        "path": "src/app.ts"
+      },
+      {
+        "line_start": 3,
+        "line_end": 3,
+        "author": "Grace Hopper",
+        "commit": "bbbbbbbbbbbb",
+        "path": "src/app.ts"
+      }
+    ],
+    "authors": {
+      "Ada Lovelace": 1,
+      "Grace Hopper": 1
+    },
+    "summary": "2 ranges, 2 authors"
+  },
+  "assertions": [
+    {
+      "question": "oracle preserves blame range count",
+      "path": "ranges.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle compacts contiguous lines by author and commit",
+      "path": "ranges.0.line_end",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves the first blame author",
+      "path": "ranges.0.author",
+      "expected": "Ada Lovelace"
+    },
+    {
+      "question": "oracle preserves the second blame commit",
+      "path": "ranges.1.commit",
+      "expected": "bbbbbbbbbbbb"
+    }
+  ]
+}
