@@ -35,7 +35,10 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("Use `--brief` for compact summaries");
     expect(markdown).toContain("Use `--terse` for large or repetitive output");
     expect(markdown).toContain("Use `--full` when exact inline output is required");
-    expect(markdown).toContain("Large `rsp git diff` and `rsp git log` output is threshold-gated");
+    expect(markdown).toContain("| `cat <file>` | `rsp cat <file>` |");
+    expect(markdown).toContain("code files render an outline plus bounded content");
+    expect(markdown).toContain("Claude pre-exec may rewrite bare `cat <file>`");
+    expect(markdown).toContain("`rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may");
     expect(markdown).toContain("call `rsp exec -- \"<command line>\"` directly");
     expect(markdown).toContain("Bytes inside pipes remain untouched");
     expect(markdown).toContain("If an rsp wrapper is disabled, lacks its store, or fails, it passes through to the raw command");

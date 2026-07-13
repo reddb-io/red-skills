@@ -5,6 +5,7 @@ import { encodingForModel } from "js-tiktoken";
 import { renderGitContract, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
 import { renderGhContract } from "./gh-wrapper.js";
 import { renderTestContract } from "./test-wrapper.js";
+import { renderCatContract } from "./cat-wrapper.js";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 
 export interface FidelityAssertion {
@@ -69,6 +70,7 @@ export async function renderFixture(
   if (fixture.command[0] === "vitest" || fixture.command[0] === "cargo") {
     return await renderTestContract(fixture.command, fixture.recorded, options);
   }
+  if (fixture.command[0] === "cat") return await renderCatContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] === "gh") return await renderGhContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] !== "git") throw new Error(`unsupported fixture command: ${fixture.command.join(" ")}`);
   return await renderGitContract(fixture.command, fixture.recorded, options);

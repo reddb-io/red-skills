@@ -48,12 +48,25 @@ describe("rsp interception pure rewrite table", () => {
   });
 
   it.each([
+    ["cat-simple-file", "cat apps/rsp/src/cli.ts", "rsp cat apps/rsp/src/cli.ts", "cat:file"],
+    ["head-default-file", "head apps/rsp/src/cli.ts", "rsp cat --head 10 apps/rsp/src/cli.ts", "cat:head"],
+    ["head-n-file", "head -n 25 apps/rsp/src/cli.ts", "rsp cat --head 25 apps/rsp/src/cli.ts", "cat:head"],
+    ["tail-default-file", "tail apps/rsp/src/cli.ts", "rsp cat --tail 10 apps/rsp/src/cli.ts", "cat:tail"],
+    ["tail-n-file", "tail -n 25 apps/rsp/src/cli.ts", "rsp cat --tail 25 apps/rsp/src/cli.ts", "cat:tail"],
+  ])("rewrites conservative file dump shape %s", (_name, command, rewritten, capabilityId) => {
+    expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it.each([
     ["upstream-subcommand-identity-not-dropped", "git -C repo status"],
     ["upstream-space-arg-not-skipped-into-rewrite", "gh issue view \"two words\""],
     ["upstream-paren-arg-not-skipped-into-rewrite", "gh issue view 'needs (triage)'"],
     ["env-prefix-is-ambiguous", "GIT_DIR=.git git status"],
     ["silent-predicate-grep-q", "grep -q needle file"],
     ["redirection-is-ambiguous", "git status > status.txt"],
+    ["cat-space-path-is-ambiguous", "cat \"two words.txt\""],
+    ["cat-multiple-files-is-ambiguous", "cat a.txt b.txt"],
+    ["head-option-shape-is-ambiguous", "head -c 20 file.txt"],
     ["subshell-is-ambiguous", "$(git status)"],
     ["quoted-command-name-is-ambiguous", "\"git\" status"],
   ])("passes through adversarial fixture %s", (_name, command) => {

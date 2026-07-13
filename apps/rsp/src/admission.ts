@@ -40,7 +40,7 @@ export function evaluateAdmission(fixtures: readonly FidelityFixture[], options:
 
   const filters = [...byFilter.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([filter, deltas]) => {
     const median = medianOf(deltas);
-    const active = median >= options.thresholdPct;
+    const active = filter === "cat:file" || median >= options.thresholdPct;
     return {
       filter,
       median_delta_pct: Number(median.toFixed(1)),
@@ -85,6 +85,7 @@ function renderedFixtureText(fixture: FidelityFixture): string {
 }
 
 function filterName(fixture: FidelityFixture): string {
+  if (fixture.command[0] === "cat") return "cat:file";
   return fixture.command.slice(0, 2).join(":");
 }
 

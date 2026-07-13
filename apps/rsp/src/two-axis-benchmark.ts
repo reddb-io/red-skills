@@ -334,7 +334,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
 }
 
 async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityFixture[]> {
-  const roots = [join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
+  const roots = [join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
   const groups = await Promise.all(roots.map((root) => discoverFidelityFixtures(root)));
   return groups.flat().sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -381,6 +381,8 @@ function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppr
 
 function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
   switch (filter) {
+    case "cat:file":
+      return { audited: "ok", note: "file reads keep code outlines or bounded text plus an elision handle for original bytes; binary output passes through" };
     case "git:commit":
       return { audited: "fixed", note: "success output now renders commit id, branch, subject, and change counts as compact TOON" };
     case "git:push":
@@ -563,6 +565,7 @@ function coveredComparatorAxis(label: string, filter: string, value: ComparatorA
 }
 
 function filterName(fixture: FidelityFixture): string {
+  if (fixture.command[0] === "cat") return "cat:file";
   return fixture.command.slice(0, 2).join(":");
 }
 
