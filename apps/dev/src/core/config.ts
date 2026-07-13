@@ -195,6 +195,12 @@ export const CONFIG_DEFAULTS = {
   "afk.notes_loop.inner_max_iterations": "0",
   "afk.notes_loop.token_budget": "0",
   "afk.notes_loop.wall_clock_s": "0",
+  // Output shaping A/B measurement (#1638). OFF by default. When enabled, AFK
+  // alternates by issue number: even issues receive a terse, phrasing-only
+  // steering block; odd issues are the holdout. The assignment is stamped into
+  // worker state beside the existing heartbeat output-token counters so the
+  // report can compare steered vs unsteered output without changing semantics.
+  "afk.output_shaping.terse_steering": "false",
   // Spec cascade rebase (issue #1007). After a successful DONE landing, rebase
   // every open sibling branch (same spec:N, not held by a live worker) onto the
   // new base HEAD so the next worker to pick up a sibling starts from a
