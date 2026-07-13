@@ -1,0 +1,7 @@
+# oracle: preserves decision-relevant rows and columns from diff-numstat; keep as compact TOON, not a scalar verdict.
+command: git diff
+files[3]{path,added,deleted}:
+  apps/rsp/src/cli.ts,3,1
+  old.txt,0,12
+  assets/logo.bin,null,null
+summary: "3 files, +3 -13"
