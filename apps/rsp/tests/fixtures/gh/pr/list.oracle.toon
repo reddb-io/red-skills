@@ -1,0 +1,6 @@
+# oracle: preserves decision-relevant rows and columns from pr-list-default; keep as compact TOON, not a scalar verdict.
+command: gh pr list
+prs[2]{number,title,state,draft}:
+  42,Add rsp gh wrapper,open,false
+  41,Draft docs,open,true
+summary: 2 open PRs
