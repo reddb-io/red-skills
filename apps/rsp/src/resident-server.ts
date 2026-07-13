@@ -27,6 +27,7 @@ export interface ResidentServerOptions extends RspResidentConfig {
   idleMs?: number;
   residentVersion?: string;
   telemetryDrainIntervalMs?: number;
+  telemetryDrainTimeoutMs?: number;
 }
 
 export async function runResidentServer(opts: ResidentServerOptions): Promise<void> {
@@ -46,13 +47,14 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
     byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
   });
-  await safeDrainTelemetry(telemetry);
+  const telemetryDrainTimeoutMs = opts.telemetryDrainTimeoutMs ?? TELEMETRY_DRAIN_TIMEOUT_MS;
+  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
 
   const idleMs = opts.idleMs ?? 30_000;
   let idleTimer: NodeJS.Timeout | undefined;
   const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
   const telemetryTimer = setInterval(() => {
-    void safeDrainTelemetry(telemetry);
+    void safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
   }, telemetryDrainIntervalMs);
   telemetryTimer.unref();
   const server = createServer((socket) => {
@@ -87,7 +89,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   storeOpenCount = 0;
   if (idleTimer) clearTimeout(idleTimer);
   clearInterval(telemetryTimer);
-  await safeDrainTelemetry(telemetry);
+  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
   await store.close();
   await rm(opts.socketPath, { force: true });
 }
@@ -261,9 +263,9 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
   await rename(tmp, path);
 }
 
-async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain): Promise<void> {
+async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain, timeoutMs = TELEMETRY_DRAIN_TIMEOUT_MS): Promise<void> {
   try {
-    await withTimeout(telemetry.drainAndSweep(), TELEMETRY_DRAIN_TIMEOUT_MS, "telemetry drain timed out");
+    await withTimeout(telemetry.drainAndSweep(), timeoutMs, "telemetry drain timed out");
   } catch (err) {
     process.stderr.write(`rsp resident: telemetry drain failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
