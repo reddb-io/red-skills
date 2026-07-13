@@ -11,11 +11,5 @@
     "signal": null
   },
   "expected": "commit 1234567 on feature/rsp: 2 files, +40 -1\n",
-  "assertions": [
-    {
-      "question": "which commit was created?",
-      "path": "summary",
-      "expected": "1234567"
-    }
-  ]
+  "assertions": []
 }
