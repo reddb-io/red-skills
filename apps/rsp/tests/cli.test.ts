@@ -1062,6 +1062,44 @@ describe("rsp cli", () => {
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain(`"command":"${command}"`);
   }, 120_000);
 
+  it("built bundle renders rsp cat code outlines and recovers original file bytes", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const source = [
+      "export function greet(name: string): string {",
+      "  return `hello ${name}`;",
+      "}",
+      "",
+      "class Greeter {",
+      "  run(name: string): string {",
+      "    return greet(name);",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    await writeFile(join(root, "sample.ts"), source, "utf8");
+
+    const rendered = runBundleFromCwd(root, ["cat", "--terse", "sample.ts"], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(rendered.status, `${rendered.stdout.toString("utf8")}${rendered.stderr.toString("utf8")}`).toBe(0);
+    expect(rendered.stderr).toEqual(Buffer.alloc(0));
+    const text = rendered.stdout.toString("utf8");
+    expect(text).toContain("kind: code");
+    expect(text).toContain("greet");
+    expect(text).toContain("Greeter");
+    expect(text).toMatch(/rsp show el:[a-f0-9]{12}/);
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
+    expect(handle).toBeTruthy();
+
+    const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(shown.status).toBe(0);
+    expect(shown.stdout.toString("utf8")).toBe(source);
+    expect(shown.stderr).toEqual(Buffer.alloc(0));
+  }, 120_000);
+
   it("built bundle preserves rsp exec redirects, stderr, and exit code", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
