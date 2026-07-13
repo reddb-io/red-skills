@@ -64,6 +64,14 @@ function runGit(args: string[]) {
   return spawnSync("git", args, { encoding: "buffer" });
 }
 
+function runShellFromCwd(cwd: string, command: string) {
+  return spawnSync(command, {
+    cwd,
+    shell: true,
+    encoding: "buffer",
+  });
+}
+
 function runNodeNoop() {
   return spawnSync(process.execPath, ["-e", ""], { encoding: "buffer" });
 }
@@ -189,6 +197,10 @@ async function commitMany(root: string, count: number): Promise<void> {
     expect(runGit(["-C", root, "add", `file-${i}.txt`]).status).toBe(0);
     expect(runGit(["-C", root, "commit", "-m", `commit ${i}`]).status).toBe(0);
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function runMcpRequests(cwd: string, requests: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
@@ -974,6 +986,59 @@ describe("rsp cli", () => {
     expect(coldText).toContain("recovery unavailable (cold store) — re-run: git log");
     expect(coldText).not.toMatch(/rsp show el:[a-f0-9]{12}/);
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"command":"git log"');
+  }, 120_000);
+
+  it("built bundle elides final stdout from rsp exec pipelines and recovers original bytes", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 80);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const command = "git log | head -c 400000";
+    const direct = runShellFromCwd(root, command);
+
+    const compressed = runBundleFromCwd(root, ["exec", "--", command], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(compressed.status).toBe(direct.status);
+    expect(compressed.stderr).toEqual(direct.stderr);
+    expect(compressed.stdout.length).toBeLessThan(direct.stdout.length);
+    const text = compressed.stdout.toString("utf8");
+    expect(text).toContain("stdout summary");
+    expect(text).toContain("rsp show el:");
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
+    expect(handle).toBeTruthy();
+
+    const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toEqual(direct.stdout);
+    expect(shown.stderr).toEqual(Buffer.alloc(0));
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain(`"command":"${command}"`);
+  }, 120_000);
+
+  it("built bundle preserves rsp exec redirects, stderr, and exit code", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const redirected = runBundleFromCwd(root, ["exec", "--", "printf 'redirected\\n' > out.txt"], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+    });
+
+    expect(redirected.status).toBe(0);
+    expect(redirected.stdout).toEqual(Buffer.alloc(0));
+    expect(redirected.stderr).toEqual(Buffer.alloc(0));
+    await expect(readFile(join(root, "out.txt"), "utf8")).resolves.toBe("redirected\n");
+
+    const failingCommand = `${shellQuote(process.execPath)} -e "process.stderr.write('bad\\\\n'); process.exit(7)"`;
+    const direct = runShellFromCwd(root, failingCommand);
+    const failing = runBundleFromCwd(root, ["exec", "--", failingCommand], { RED_SKILLS_CACHE_DIR: cacheDir });
+
+    expect(failing.status).toBe(direct.status);
+    expect(failing.stderr).toEqual(direct.stderr);
+    expect(failing.stdout).toEqual(direct.stdout);
   }, 120_000);
 
   it("built bundle records invocation and degradation telemetry through the resident", async () => {
