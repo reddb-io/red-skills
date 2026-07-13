@@ -1,12 +1,16 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject } from "@reddb-io/toon";
-import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
-import type { GitRenderResult, RecordedGitContract } from "./git-wrapper.js";
+import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
+import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
 import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export interface TestRenderOptions {
   level: RspLossLevel;
-  store?: Pick<RspElisionStore, "mint">;
+  store?: RspMintStore;
+}
+
+interface RspMintStore {
+  mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<string>;
 }
 
 interface TestFailure extends JsonObject {
@@ -74,7 +78,7 @@ export async function renderTestContract(
   }
 
   const failures: TestFailure[] = [];
-  let mintedHandle: `el:${string}` | undefined;
+  let mintedHandle: string | undefined;
   let bytesElided = 0;
 
   for (const failure of filteredFailures) {
@@ -155,7 +159,7 @@ async function renderTerse(
   if (!handle) throw new Error("terse test output requires an elision store");
 
   const label = elidedFailures > 0 ? `${elidedFailures} failures` : "full detail";
-  const marker = `… elided ${label} (+${bytesElided}) — rsp show ${handle}`;
+  const marker = `… elided ${label} (+${bytesElided}) — ${recoveryInstruction(handle)}`;
   return {
     stdout: Buffer.from(`${terseToon}\n${marker}`),
     stderr: Buffer.from(contract.stderr),
@@ -330,8 +334,8 @@ function parseCargoTest(stdout: string): ParsedTestRun | null {
 async function renderExcerpt(
   excerpt: string,
   command: string,
-  store?: Pick<RspElisionStore, "mint">,
-): Promise<{ text: string; handle?: `el:${string}`; bytesElided: number }> {
+  store?: RspMintStore,
+): Promise<{ text: string; handle?: string; bytesElided: number }> {
   const bytes = Buffer.from(excerpt);
   if (bytes.length <= EXCERPT_LIMIT_BYTES) return { text: excerpt, bytesElided: 0 };
   if (!store) throw new Error("over-limit test failure excerpt requires an elision store");
@@ -343,7 +347,7 @@ async function renderExcerpt(
   const head = bytes.subarray(0, EXCERPT_LIMIT_BYTES).toString("utf8").replace(/\uFFFD$/, "");
   const omitted = bytes.length - Buffer.byteLength(head);
   return {
-    text: `${head}\n… elided ${omitted} bytes (+${bytes.length}) — rsp show ${handle}`,
+    text: `${head}\n… elided ${omitted} bytes (+${bytes.length}) — ${recoveryInstruction(handle)}`,
     handle,
     bytesElided: bytes.length,
   };

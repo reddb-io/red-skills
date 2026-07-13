@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
-import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
+import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
@@ -19,8 +19,12 @@ export interface RecordedGitContract {
 
 export interface GitRenderOptions {
   level: RspLossLevel;
-  store?: Pick<RspElisionStore, "mint">;
+  store?: RspMintStore;
   heavyGitByteThreshold?: number;
+}
+
+export interface RspMintStore {
+  mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<string>;
 }
 
 export interface GitRenderResult {
@@ -29,7 +33,7 @@ export interface GitRenderResult {
   status: number | null;
   signal: NodeJS.Signals | null;
   payload?: JsonObject;
-  mintedHandle?: `el:${string}`;
+  mintedHandle?: string;
   bytesElided?: number;
   rowsElided?: number;
   oneLine?: boolean;
@@ -98,7 +102,7 @@ export async function renderGitContract(
   });
   if (!handle) throw new Error("terse git output requires an elision store");
 
-  const marker = `… elided ${terse.rowsElided} rows (+${bytesElided}) — rsp show ${handle}\n`;
+  const marker = `… elided ${terse.rowsElided} rows (+${bytesElided}) — ${recoveryInstruction(handle)}\n`;
   return {
     stdout: Buffer.from(`${encode(terse.payload)}\n${marker}`),
     stderr: Buffer.from(contract.stderr),
@@ -110,6 +114,10 @@ export async function renderGitContract(
     rowsElided: terse.rowsElided,
     rawOutput: Buffer.from(fullToon),
   };
+}
+
+export function recoveryInstruction(handle: string): string {
+  return handle.startsWith("el:") ? `rsp show ${handle}` : handle;
 }
 
 interface ParsedGitRenderCommand {
