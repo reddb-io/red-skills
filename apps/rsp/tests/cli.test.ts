@@ -102,6 +102,15 @@ function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, 
   });
 }
 
+function runBundleCodexHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
+  return spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
+    cwd,
+    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    input: Buffer.from(JSON.stringify({ cwd, tool_name: "bash", tool_input: { command } })),
+    encoding: "buffer",
+  });
+}
+
 function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, string> = {}) {
   return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
@@ -1059,6 +1068,54 @@ describe("rsp cli", () => {
     expect(expired.status).toBe(1);
     expect(expired.stdout).toEqual(Buffer.alloc(0));
     expect(expired.stderr).toEqual(Buffer.alloc(0));
+  }, 120_000);
+
+  it("built bundle Codex pre-exec rewrite records telemetry when the rewritten command runs", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], env);
+    await waitForResidentSocket(root);
+
+    const hook = runBundleCodexHookFromCwd(root, "git status", env);
+    expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
+    expect(hook.stderr).toEqual(Buffer.alloc(0));
+    expect(JSON.parse(hook.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
+
+    const rewritten = runBundleFromCwd(root, ["git", "status"], env);
+    expect(rewritten.status).toBe(0);
+    expect(rewritten.stderr).toEqual(Buffer.alloc(0));
+    const residentResult = await resident;
+    expect(residentResult.status, `${residentResult.stdout.toString("utf8")}${residentResult.stderr.toString("utf8")}`).toBe(0);
+
+    const invocations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    expect(invocations).toContainEqual(expect.objectContaining({
+      command: "git status",
+      wrapper: "git",
+      loss: "lossless",
+      elided: false,
+    }));
+
+    const disabledRoot = await initGitRepo();
+    const disabledHook = runBundleCodexHookFromCwd(disabledRoot, "git status", env);
+    expect(disabledHook.status).toBe(0);
+    expect(disabledHook.stdout).toEqual(Buffer.alloc(0));
+    expect(disabledHook.stderr).toEqual(Buffer.alloc(0));
+    const direct = runGit(["-C", disabledRoot, "status"]);
+    const disabled = runBundleFromCwd(disabledRoot, ["git", "status"], env);
+    expect(disabled.status).toBe(direct.status);
+    expect(disabled.stdout).toEqual(direct.stdout);
+    expect(disabled.stderr).toEqual(direct.stderr);
   }, 120_000);
 
   it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {

@@ -61,7 +61,7 @@ payload() {
     '{hook_event_name:"PreToolUse", cwd:$cwd, tool_input:{cmd:$cmd}}'
 }
 
-manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$MANIFEST")"
+manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[] | select(.command | contains("branch-lock-codex.sh")) | .command' "$MANIFEST")"
 expect_contains "manifest: wires branch-lock-codex.sh" "branch-lock-codex.sh" "$manifest_hook"
 expect_contains "manifest: wrapper drains stdin before hook" 'cat >"$tmp"' "$manifest_hook"
 

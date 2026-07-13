@@ -9,10 +9,11 @@ describe("rsp instruction session content", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("pre-execution interception is available");
   });
 
-  it("emits Codex session content without interception claims", () => {
+  it("emits Codex session content with rewrite guidance and the post-exec gap", () => {
     const parsed = JSON.parse(renderRspInstructionsHookOutput("codex"));
     expect(parsed.systemMessage).toContain("Codex lane");
     expect(parsed.systemMessage).toContain("rsp show el:<id>");
-    expect(parsed.systemMessage.toLowerCase()).not.toContain("interception");
+    expect(parsed.systemMessage).toContain("pre-execution rewrite hook is available");
+    expect(parsed.systemMessage).toContain("Codex PostToolUse cannot");
   });
 });

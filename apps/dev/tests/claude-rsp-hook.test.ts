@@ -6,28 +6,29 @@ import { describe, expect, it } from "vitest";
 
 const here = new URL(import.meta.url).pathname;
 const repoRoot = here.slice(0, here.indexOf("/apps/dev/"));
-const manifestPath = join(repoRoot, "plugins", "dev", "hooks", "claude.hooks.json");
 
 type RspHookCase = {
   name: string;
+  runner: "claude" | "codex";
   lifecycle: "PreToolUse" | "PostToolUse";
-  subcommand: "claude-pre-exec" | "claude-post-exec";
+  subcommand: "claude-pre-exec" | "claude-post-exec" | "codex-pre-exec" | "codex-post-exec";
 };
 
 const rspHookCases: RspHookCase[] = [
-  { name: "pre-exec", lifecycle: "PreToolUse", subcommand: "claude-pre-exec" },
-  { name: "post-exec", lifecycle: "PostToolUse", subcommand: "claude-post-exec" },
+  { name: "claude pre-exec", runner: "claude", lifecycle: "PreToolUse", subcommand: "claude-pre-exec" },
+  { name: "claude post-exec", runner: "claude", lifecycle: "PostToolUse", subcommand: "claude-post-exec" },
+  { name: "codex pre-exec", runner: "codex", lifecycle: "PreToolUse", subcommand: "codex-pre-exec" },
+  { name: "codex post-exec", runner: "codex", lifecycle: "PostToolUse", subcommand: "codex-post-exec" },
 ];
 
 function claudeRspHookCommand(testCase: RspHookCase): string {
+  const manifestPath = join(repoRoot, "plugins", "dev", "hooks", `${testCase.runner}.hooks.json`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const bashHooks = manifest.hooks[testCase.lifecycle].find(
-    (entry: { matcher?: string }) => entry.matcher === "Bash",
-  );
-  const hook = bashHooks.hooks.find((entry: { command?: string }) =>
-    entry.command?.includes(`hook ${testCase.subcommand}`),
-  );
-  if (!hook?.command) throw new Error(`claude rsp ${testCase.name} hook command not found`);
+  const groups = manifest.hooks[testCase.lifecycle] ?? [];
+  const hook = groups
+    .flatMap((entry: { hooks?: Array<{ command?: string }> }) => entry.hooks ?? [])
+    .find((entry: { command?: string }) => entry.command?.includes(`hook ${testCase.subcommand}`));
+  if (!hook?.command) throw new Error(`${testCase.runner} rsp ${testCase.name} hook command not found`);
   return hook.command;
 }
 
@@ -47,6 +48,7 @@ function runHook(
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       CLAUDE_PLUGIN_ROOT: pluginRoot,
+      CODEX_PLUGIN_ROOT: pluginRoot,
       RED_SKILLS_HOOK_TIMEOUT_S: "2s",
       RED_SKILLS_HOOK_STDIN_TIMEOUT_S: "2s",
       ...extraEnv,
@@ -72,7 +74,7 @@ function writeRecordingRspBundle(path: string): void {
   );
 }
 
-describe("claude rsp hooks", () => {
+describe("rsp host hooks", () => {
   it.each(rspHookCases)("exits 0 when the $name rsp bundle is absent", (testCase) => {
     const tmp = mkdtempSync(join(tmpdir(), "claude-rsp-hook-"));
     try {

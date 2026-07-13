@@ -37,7 +37,7 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("Use `--full` when exact inline output is required");
     expect(markdown).toContain("| `cat <file>` | `rsp cat <file>` |");
     expect(markdown).toContain("code files render an outline plus bounded content");
-    expect(markdown).toContain("Claude pre-exec may rewrite bare `cat <file>`");
+    expect(markdown).toContain("host pre-exec hook may rewrite bare `cat <file>`");
     expect(markdown).toContain("`rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may");
     expect(markdown).toContain("call `rsp exec -- \"<command line>\"` directly");
     expect(markdown).toContain("Bytes inside pipes remain untouched");
@@ -45,12 +45,13 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("`rsp show el:<id>` writes the original bytes verbatim to stdout");
   });
 
-  it("renders runner-specific guidance without claiming interception for Codex", () => {
+  it("renders runner-specific guidance for Claude and Codex interception", () => {
     const codex = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "codex" });
     const claude = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "claude" });
 
     expect(codex).toContain("Codex lane");
-    expect(codex.toLowerCase()).not.toContain("interception");
+    expect(codex).toContain("pre-execution rewrite hook is available");
+    expect(codex).toContain("Codex PostToolUse cannot");
     expect(claude).toContain("Claude lane");
     expect(claude).toContain("pre-execution interception is available");
   });

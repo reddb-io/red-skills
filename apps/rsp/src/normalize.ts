@@ -180,6 +180,20 @@ export async function hookDecisionFromClaudePostExecJson(
   raw: string,
   options: NormalizeHookOptions,
 ): Promise<NormalizeDecision> {
+  return await hookDecisionFromPostExecJson(raw, options);
+}
+
+export async function hookDecisionFromCodexPostExecJson(
+  raw: string,
+  options: NormalizeHookOptions,
+): Promise<NormalizeDecision> {
+  return await hookDecisionFromPostExecJson(raw, options);
+}
+
+async function hookDecisionFromPostExecJson(
+  raw: string,
+  options: NormalizeHookOptions,
+): Promise<NormalizeDecision> {
   const payload = parseJsonRecord(raw);
   const cwd = stringAt(payload, ["cwd"]) || options.cwd;
   const enabled = await (options.isEnabled ?? isRspNormalizeEnabled)(cwd);
@@ -204,10 +218,22 @@ export function formatNormalizeDecision(decision: NormalizeDecision): { stdout: 
   return { stdout: "", status: 0 };
 }
 
+export function formatCodexNormalizeDecision(_decision: NormalizeDecision): { stdout: string; status: number } {
+  return { stdout: "", status: 0 };
+}
+
 export async function runClaudePostExecHook(stdinPath?: string): Promise<number> {
   const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
   const decision = await hookDecisionFromClaudePostExecJson(raw, { cwd: process.cwd() });
   const formatted = formatNormalizeDecision(decision);
+  if (formatted.stdout) process.stdout.write(formatted.stdout);
+  return formatted.status;
+}
+
+export async function runCodexPostExecHook(stdinPath?: string): Promise<number> {
+  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+  const decision = await hookDecisionFromCodexPostExecJson(raw, { cwd: process.cwd() });
+  const formatted = formatCodexNormalizeDecision(decision);
   if (formatted.stdout) process.stdout.write(formatted.stdout);
   return formatted.status;
 }
