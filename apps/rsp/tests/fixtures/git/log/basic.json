@@ -30,14 +30,64 @@
   },
   "assertions": [
     {
+      "question": "oracle preserves commits.length",
+      "path": "commits.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves commits.0.length",
+      "path": "commits.0.length",
+      "expected": 4
+    },
+    {
       "question": "what is the newest short hash?",
       "path": "commits.0.short",
       "expected": "1111111"
     },
     {
+      "question": "oracle preserves commits.0.author",
+      "path": "commits.0.author",
+      "expected": "Ada"
+    },
+    {
       "question": "what is the newest short author date?",
       "path": "commits.0.date",
       "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.0.subject",
+      "path": "commits.0.subject",
+      "expected": "Add rsp wrapper"
+    },
+    {
+      "question": "oracle preserves commits.1.length",
+      "path": "commits.1.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.1.short",
+      "path": "commits.1.short",
+      "expected": "2222222"
+    },
+    {
+      "question": "oracle preserves commits.1.author",
+      "path": "commits.1.author",
+      "expected": "Ben"
+    },
+    {
+      "question": "oracle preserves commits.1.date",
+      "path": "commits.1.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.1.subject",
+      "path": "commits.1.subject",
+      "expected": "Scaffold elision store"
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "2 commits"
     }
   ]
 }
