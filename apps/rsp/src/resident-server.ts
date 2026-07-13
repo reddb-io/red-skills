@@ -252,12 +252,16 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
   const stats = await readTelemetryStats(db, 1, now);
   const today = now.toISOString().slice(0, 10);
   const tokensSavedToday = stats.savings.daily_tokens_saved.find((row) => row.date === today)?.tokens_saved ?? 0;
+  const dollarsSavedToday = stats.savings.tokens_saved > 0
+    ? (tokensSavedToday / stats.savings.tokens_saved) * stats.savings.dollars_saved_estimate_usd
+    : 0;
   const path = join(rootDir, RSP_STATUS_SUMMARY);
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   await mkdir(dirname(path), { recursive: true });
   await writeFile(tmp, JSON.stringify({
     version: 1,
     tokens_saved_today: tokensSavedToday,
+    dollars_saved_today_usd: Math.round(dollarsSavedToday * 1_000_000) / 1_000_000,
     updated_at: now.toISOString(),
   }), { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
