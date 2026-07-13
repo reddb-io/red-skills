@@ -127,7 +127,7 @@ export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
 
   try {
     await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
-    const text = await readFile(drainingPath, "utf8").catch(() => "");
+    const text = await readSettledFile(drainingPath);
     return text.split(/\r?\n/).filter((line) => line.trim() !== "");
   } finally {
     await rm(drainingPath, { force: true });
@@ -151,7 +151,7 @@ export async function drainTelemetrySpool(
   const retryLines: string[] = [];
   try {
     await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
-    const text = await readFile(drainingPath, "utf8").catch(() => "");
+    const text = await readSettledFile(drainingPath);
     const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
     for (const line of lines) {
       try {
@@ -174,6 +174,17 @@ function safeReadFileSync(path: string): string {
   } catch {
     return "";
   }
+}
+
+async function readSettledFile(path: string): Promise<string> {
+  let text = "";
+  for (let i = 0; i < 5; i++) {
+    const next = await readFile(path, "utf8").catch(() => "");
+    if (next === text) return next;
+    text = next;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  return text;
 }
 
 export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
