@@ -105,6 +105,7 @@ function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
   });
 }
 
