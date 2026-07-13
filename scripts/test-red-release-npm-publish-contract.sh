@@ -95,6 +95,27 @@ else
   fail "publish must no-op when the version is already on the registry (resumable release tail)"
 fi
 
+if grep -q '^  workflow_dispatch:$' "$WORKFLOW" &&
+   grep -q '^  schedule:$' "$WORKFLOW" &&
+   grep -q 'cron:' "$WORKFLOW"; then
+  pass "release workflow has manual and scheduled retry triggers"
+else
+  fail "release workflow must expose workflow_dispatch and schedule retry triggers"
+fi
+
+if grep -qF "github.event_name != 'push'" "$WORKFLOW" &&
+   grep -qF "contains(github.event.head_commit.message, '[skip release]')" "$WORKFLOW"; then
+  pass "skip-release guard only suppresses push-triggered release commits"
+else
+  fail "release workflow retry events must not depend on github.event.head_commit"
+fi
+
+if grep -qF 'scheduled red-release retry' "$WORKFLOW"; then
+  pass "fleet deferral notice names the scheduled retry path"
+else
+  fail "fleet deferral notice must tell operators the scheduled retry will resume publication"
+fi
+
 if grep -qF 'for attempt in 1 2 3 4 5 6 7 8 9 10' "$WORKFLOW" &&
    grep -qF 'sleep $((attempt * 15))' "$WORKFLOW"; then
   pass "registry smoke budget covers multi-minute registry propagation lag"
