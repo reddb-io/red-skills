@@ -53,11 +53,11 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
 
 export function rewriteCommand(command: string): RewriteDecision {
   const tokens = tokenizeCertainSimpleCommand(command);
-  if (!tokens) return { kind: "passthrough" };
-  if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return { kind: "passthrough" };
+  if (!tokens) return rewriteCompoundCommand(command);
+  if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command);
 
   const rewritten = DEFAULT_REWRITE_TABLE.get(commandKey(tokens));
-  if (!rewritten) return { kind: "passthrough" };
+  if (!rewritten) return rewriteCompoundCommand(command);
   const capability = RSP_WRAPPER_CAPABILITIES.find((entry) => commandKey(entry.command) === commandKey(tokens));
   return {
     kind: "rewrite",
@@ -161,6 +161,101 @@ function tokenizeCertainSimpleCommand(command: string): string[] | null {
   if (tokens.length === 0) return null;
   if (tokens.some((token) => token.includes("=") && isEnvAssignment(token))) return null;
   return tokens;
+}
+
+function rewriteCompoundCommand(command: string): RewriteDecision {
+  const trimmed = command.trim();
+  if (!isSafeNoisyCompoundCommand(trimmed)) return { kind: "passthrough" };
+  return {
+    kind: "rewrite",
+    command: `rsp exec -- ${shellSingleQuote(trimmed)}`,
+    capabilityId: "exec:compound",
+  };
+}
+
+function isSafeNoisyCompoundCommand(command: string): boolean {
+  if (!command) return false;
+  if (!hasCompoundOperator(command)) return false;
+  if (!hasKnownNoisyFamily(command)) return false;
+  if (hasSingleAmpersand(command)) return false;
+  if (/<<-?/.test(command)) return false;
+  if (/\$\(|`/.test(command)) return false;
+  if (/[<>]/.test(command)) return false;
+  if (containsCommandWord(command, "rsp")) return false;
+  if (containsAnyCommandWord(command, INTERACTIVE_COMMANDS)) return false;
+  if (containsQuietGrep(command)) return false;
+  return true;
+}
+
+const INTERACTIVE_COMMANDS = new Set([
+  "bash",
+  "fish",
+  "htop",
+  "less",
+  "more",
+  "nano",
+  "node",
+  "python",
+  "python3",
+  "ssh",
+  "top",
+  "vi",
+  "vim",
+  "zsh",
+]);
+
+function hasCompoundOperator(command: string): boolean {
+  return /&&|[;|]/.test(command);
+}
+
+function hasSingleAmpersand(command: string): boolean {
+  for (let index = 0; index < command.length; index += 1) {
+    if (command[index] !== "&") continue;
+    if (command[index - 1] === "&" || command[index + 1] === "&") continue;
+    return true;
+  }
+  return false;
+}
+
+function hasKnownNoisyFamily(command: string): boolean {
+  return commandSegments(command).some((segment) => {
+    const tokens = shellishWords(segment);
+    if (tokens.length === 0) return false;
+    if (tokens[0] === "git") return ["log", "diff", "show", "blame"].includes(tokens[1] ?? "");
+    if (tokens[0] === "gh") return tokens.some((token, index) => index > 0 && (token === "list" || token === "view"));
+    if (tokens[0] === "vitest") return true;
+    return tokens[0] === "cargo" && tokens[1] === "test";
+  });
+}
+
+function containsAnyCommandWord(command: string, words: ReadonlySet<string>): boolean {
+  return commandSegments(command).some((segment) => {
+    const first = shellishWords(segment)[0];
+    return first ? words.has(first) : false;
+  });
+}
+
+function containsCommandWord(command: string, word: string): boolean {
+  return containsAnyCommandWord(command, new Set([word]));
+}
+
+function containsQuietGrep(command: string): boolean {
+  return commandSegments(command).some((segment) => {
+    const tokens = shellishWords(segment);
+    return tokens[0] === "grep" && tokens.includes("-q");
+  });
+}
+
+function commandSegments(command: string): string[] {
+  return command.split(/&&|[;|]/).map((segment) => segment.trim()).filter(Boolean);
+}
+
+function shellishWords(segment: string): string[] {
+  return segment.split(/[ \t]+/).filter(Boolean).map((token) => token.replace(/^env$/, ""));
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function isEnvAssignment(token: string): boolean {
