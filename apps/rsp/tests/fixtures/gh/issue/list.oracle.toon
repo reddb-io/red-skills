@@ -1,0 +1,12 @@
+# oracle: preserves decision-relevant rows and columns from issue-list-default; keep as compact TOON, not a scalar verdict.
+command: gh issue list
+issues[2]:
+  - number: 1414
+    title: rsp gh wrapper
+    state: open
+    labels[1]: ready-for-agent
+  - number: 1412
+    title: rsp git wrapper
+    state: closed
+    labels[1]: "type:ticket"
+summary: 2 returned issues

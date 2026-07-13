@@ -1,6 +1,9 @@
 {
   "name": "status-clean",
-  "command": ["git", "status"],
+  "command": [
+    "git",
+    "status"
+  ],
   "recorded": {
     "stdout": "# branch.oid abc123\u0000# branch.head main\u0000",
     "stderr": "",

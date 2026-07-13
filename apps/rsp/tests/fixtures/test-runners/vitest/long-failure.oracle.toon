@@ -1,0 +1,5 @@
+# oracle: preserves decision-relevant rows and columns from vitest-long-failure; keep as compact TOON, not a scalar verdict.
+exit_code: 1
+summary: 1/1 failed · 1 suites · 4.1s
+failures[1]{suite,name,excerpt}:
+  apps/rsp/tests/snapshot.test.ts,snapshot matches large diff,truncated

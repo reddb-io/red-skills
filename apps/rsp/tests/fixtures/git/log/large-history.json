@@ -1219,9 +1219,14 @@
   },
   "assertions": [
     {
-      "question": "how many commits?",
+      "question": "oracle preserves commits.length",
       "path": "commits.length",
       "expected": 200
+    },
+    {
+      "question": "oracle preserves commits.0.length",
+      "path": "commits.0.length",
+      "expected": 4
     },
     {
       "question": "what is the newest short hash?",
@@ -1229,9 +1234,4999 @@
       "expected": "0000001"
     },
     {
+      "question": "oracle preserves commits.0.author",
+      "path": "commits.0.author",
+      "expected": "Author 001"
+    },
+    {
       "question": "what is the newest short author date?",
       "path": "commits.0.date",
       "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.0.subject",
+      "path": "commits.0.subject",
+      "expected": "Recorded benchmark commit 001"
+    },
+    {
+      "question": "oracle preserves commits.1.length",
+      "path": "commits.1.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.1.short",
+      "path": "commits.1.short",
+      "expected": "0000002"
+    },
+    {
+      "question": "oracle preserves commits.1.author",
+      "path": "commits.1.author",
+      "expected": "Author 002"
+    },
+    {
+      "question": "oracle preserves commits.1.date",
+      "path": "commits.1.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.1.subject",
+      "path": "commits.1.subject",
+      "expected": "Recorded benchmark commit 002"
+    },
+    {
+      "question": "oracle preserves commits.2.length",
+      "path": "commits.2.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.2.short",
+      "path": "commits.2.short",
+      "expected": "0000003"
+    },
+    {
+      "question": "oracle preserves commits.2.author",
+      "path": "commits.2.author",
+      "expected": "Author 003"
+    },
+    {
+      "question": "oracle preserves commits.2.date",
+      "path": "commits.2.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.2.subject",
+      "path": "commits.2.subject",
+      "expected": "Recorded benchmark commit 003"
+    },
+    {
+      "question": "oracle preserves commits.3.length",
+      "path": "commits.3.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.3.short",
+      "path": "commits.3.short",
+      "expected": "0000004"
+    },
+    {
+      "question": "oracle preserves commits.3.author",
+      "path": "commits.3.author",
+      "expected": "Author 004"
+    },
+    {
+      "question": "oracle preserves commits.3.date",
+      "path": "commits.3.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.3.subject",
+      "path": "commits.3.subject",
+      "expected": "Recorded benchmark commit 004"
+    },
+    {
+      "question": "oracle preserves commits.4.length",
+      "path": "commits.4.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.4.short",
+      "path": "commits.4.short",
+      "expected": "0000005"
+    },
+    {
+      "question": "oracle preserves commits.4.author",
+      "path": "commits.4.author",
+      "expected": "Author 005"
+    },
+    {
+      "question": "oracle preserves commits.4.date",
+      "path": "commits.4.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.4.subject",
+      "path": "commits.4.subject",
+      "expected": "Recorded benchmark commit 005"
+    },
+    {
+      "question": "oracle preserves commits.5.length",
+      "path": "commits.5.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.5.short",
+      "path": "commits.5.short",
+      "expected": "0000006"
+    },
+    {
+      "question": "oracle preserves commits.5.author",
+      "path": "commits.5.author",
+      "expected": "Author 006"
+    },
+    {
+      "question": "oracle preserves commits.5.date",
+      "path": "commits.5.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.5.subject",
+      "path": "commits.5.subject",
+      "expected": "Recorded benchmark commit 006"
+    },
+    {
+      "question": "oracle preserves commits.6.length",
+      "path": "commits.6.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.6.short",
+      "path": "commits.6.short",
+      "expected": "0000007"
+    },
+    {
+      "question": "oracle preserves commits.6.author",
+      "path": "commits.6.author",
+      "expected": "Author 007"
+    },
+    {
+      "question": "oracle preserves commits.6.date",
+      "path": "commits.6.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.6.subject",
+      "path": "commits.6.subject",
+      "expected": "Recorded benchmark commit 007"
+    },
+    {
+      "question": "oracle preserves commits.7.length",
+      "path": "commits.7.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.7.short",
+      "path": "commits.7.short",
+      "expected": "0000008"
+    },
+    {
+      "question": "oracle preserves commits.7.author",
+      "path": "commits.7.author",
+      "expected": "Author 008"
+    },
+    {
+      "question": "oracle preserves commits.7.date",
+      "path": "commits.7.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.7.subject",
+      "path": "commits.7.subject",
+      "expected": "Recorded benchmark commit 008"
+    },
+    {
+      "question": "oracle preserves commits.8.length",
+      "path": "commits.8.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.8.short",
+      "path": "commits.8.short",
+      "expected": "0000009"
+    },
+    {
+      "question": "oracle preserves commits.8.author",
+      "path": "commits.8.author",
+      "expected": "Author 009"
+    },
+    {
+      "question": "oracle preserves commits.8.date",
+      "path": "commits.8.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.8.subject",
+      "path": "commits.8.subject",
+      "expected": "Recorded benchmark commit 009"
+    },
+    {
+      "question": "oracle preserves commits.9.length",
+      "path": "commits.9.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.9.short",
+      "path": "commits.9.short",
+      "expected": "000000a"
+    },
+    {
+      "question": "oracle preserves commits.9.author",
+      "path": "commits.9.author",
+      "expected": "Author 010"
+    },
+    {
+      "question": "oracle preserves commits.9.date",
+      "path": "commits.9.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.9.subject",
+      "path": "commits.9.subject",
+      "expected": "Recorded benchmark commit 010"
+    },
+    {
+      "question": "oracle preserves commits.10.length",
+      "path": "commits.10.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.10.short",
+      "path": "commits.10.short",
+      "expected": "000000b"
+    },
+    {
+      "question": "oracle preserves commits.10.author",
+      "path": "commits.10.author",
+      "expected": "Author 011"
+    },
+    {
+      "question": "oracle preserves commits.10.date",
+      "path": "commits.10.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.10.subject",
+      "path": "commits.10.subject",
+      "expected": "Recorded benchmark commit 011"
+    },
+    {
+      "question": "oracle preserves commits.11.length",
+      "path": "commits.11.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.11.short",
+      "path": "commits.11.short",
+      "expected": "000000c"
+    },
+    {
+      "question": "oracle preserves commits.11.author",
+      "path": "commits.11.author",
+      "expected": "Author 012"
+    },
+    {
+      "question": "oracle preserves commits.11.date",
+      "path": "commits.11.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.11.subject",
+      "path": "commits.11.subject",
+      "expected": "Recorded benchmark commit 012"
+    },
+    {
+      "question": "oracle preserves commits.12.length",
+      "path": "commits.12.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.12.short",
+      "path": "commits.12.short",
+      "expected": "000000d"
+    },
+    {
+      "question": "oracle preserves commits.12.author",
+      "path": "commits.12.author",
+      "expected": "Author 013"
+    },
+    {
+      "question": "oracle preserves commits.12.date",
+      "path": "commits.12.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.12.subject",
+      "path": "commits.12.subject",
+      "expected": "Recorded benchmark commit 013"
+    },
+    {
+      "question": "oracle preserves commits.13.length",
+      "path": "commits.13.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.13.short",
+      "path": "commits.13.short",
+      "expected": "000000e"
+    },
+    {
+      "question": "oracle preserves commits.13.author",
+      "path": "commits.13.author",
+      "expected": "Author 014"
+    },
+    {
+      "question": "oracle preserves commits.13.date",
+      "path": "commits.13.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.13.subject",
+      "path": "commits.13.subject",
+      "expected": "Recorded benchmark commit 014"
+    },
+    {
+      "question": "oracle preserves commits.14.length",
+      "path": "commits.14.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.14.short",
+      "path": "commits.14.short",
+      "expected": "000000f"
+    },
+    {
+      "question": "oracle preserves commits.14.author",
+      "path": "commits.14.author",
+      "expected": "Author 015"
+    },
+    {
+      "question": "oracle preserves commits.14.date",
+      "path": "commits.14.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.14.subject",
+      "path": "commits.14.subject",
+      "expected": "Recorded benchmark commit 015"
+    },
+    {
+      "question": "oracle preserves commits.15.length",
+      "path": "commits.15.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.15.short",
+      "path": "commits.15.short",
+      "expected": "0000010"
+    },
+    {
+      "question": "oracle preserves commits.15.author",
+      "path": "commits.15.author",
+      "expected": "Author 016"
+    },
+    {
+      "question": "oracle preserves commits.15.date",
+      "path": "commits.15.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.15.subject",
+      "path": "commits.15.subject",
+      "expected": "Recorded benchmark commit 016"
+    },
+    {
+      "question": "oracle preserves commits.16.length",
+      "path": "commits.16.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.16.short",
+      "path": "commits.16.short",
+      "expected": "0000011"
+    },
+    {
+      "question": "oracle preserves commits.16.author",
+      "path": "commits.16.author",
+      "expected": "Author 017"
+    },
+    {
+      "question": "oracle preserves commits.16.date",
+      "path": "commits.16.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.16.subject",
+      "path": "commits.16.subject",
+      "expected": "Recorded benchmark commit 017"
+    },
+    {
+      "question": "oracle preserves commits.17.length",
+      "path": "commits.17.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.17.short",
+      "path": "commits.17.short",
+      "expected": "0000012"
+    },
+    {
+      "question": "oracle preserves commits.17.author",
+      "path": "commits.17.author",
+      "expected": "Author 018"
+    },
+    {
+      "question": "oracle preserves commits.17.date",
+      "path": "commits.17.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.17.subject",
+      "path": "commits.17.subject",
+      "expected": "Recorded benchmark commit 018"
+    },
+    {
+      "question": "oracle preserves commits.18.length",
+      "path": "commits.18.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.18.short",
+      "path": "commits.18.short",
+      "expected": "0000013"
+    },
+    {
+      "question": "oracle preserves commits.18.author",
+      "path": "commits.18.author",
+      "expected": "Author 019"
+    },
+    {
+      "question": "oracle preserves commits.18.date",
+      "path": "commits.18.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.18.subject",
+      "path": "commits.18.subject",
+      "expected": "Recorded benchmark commit 019"
+    },
+    {
+      "question": "oracle preserves commits.19.length",
+      "path": "commits.19.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.19.short",
+      "path": "commits.19.short",
+      "expected": "0000014"
+    },
+    {
+      "question": "oracle preserves commits.19.author",
+      "path": "commits.19.author",
+      "expected": "Author 020"
+    },
+    {
+      "question": "oracle preserves commits.19.date",
+      "path": "commits.19.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.19.subject",
+      "path": "commits.19.subject",
+      "expected": "Recorded benchmark commit 020"
+    },
+    {
+      "question": "oracle preserves commits.20.length",
+      "path": "commits.20.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.20.short",
+      "path": "commits.20.short",
+      "expected": "0000015"
+    },
+    {
+      "question": "oracle preserves commits.20.author",
+      "path": "commits.20.author",
+      "expected": "Author 021"
+    },
+    {
+      "question": "oracle preserves commits.20.date",
+      "path": "commits.20.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.20.subject",
+      "path": "commits.20.subject",
+      "expected": "Recorded benchmark commit 021"
+    },
+    {
+      "question": "oracle preserves commits.21.length",
+      "path": "commits.21.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.21.short",
+      "path": "commits.21.short",
+      "expected": "0000016"
+    },
+    {
+      "question": "oracle preserves commits.21.author",
+      "path": "commits.21.author",
+      "expected": "Author 022"
+    },
+    {
+      "question": "oracle preserves commits.21.date",
+      "path": "commits.21.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.21.subject",
+      "path": "commits.21.subject",
+      "expected": "Recorded benchmark commit 022"
+    },
+    {
+      "question": "oracle preserves commits.22.length",
+      "path": "commits.22.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.22.short",
+      "path": "commits.22.short",
+      "expected": "0000017"
+    },
+    {
+      "question": "oracle preserves commits.22.author",
+      "path": "commits.22.author",
+      "expected": "Author 023"
+    },
+    {
+      "question": "oracle preserves commits.22.date",
+      "path": "commits.22.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.22.subject",
+      "path": "commits.22.subject",
+      "expected": "Recorded benchmark commit 023"
+    },
+    {
+      "question": "oracle preserves commits.23.length",
+      "path": "commits.23.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.23.short",
+      "path": "commits.23.short",
+      "expected": "0000018"
+    },
+    {
+      "question": "oracle preserves commits.23.author",
+      "path": "commits.23.author",
+      "expected": "Author 024"
+    },
+    {
+      "question": "oracle preserves commits.23.date",
+      "path": "commits.23.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.23.subject",
+      "path": "commits.23.subject",
+      "expected": "Recorded benchmark commit 024"
+    },
+    {
+      "question": "oracle preserves commits.24.length",
+      "path": "commits.24.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.24.short",
+      "path": "commits.24.short",
+      "expected": "0000019"
+    },
+    {
+      "question": "oracle preserves commits.24.author",
+      "path": "commits.24.author",
+      "expected": "Author 025"
+    },
+    {
+      "question": "oracle preserves commits.24.date",
+      "path": "commits.24.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.24.subject",
+      "path": "commits.24.subject",
+      "expected": "Recorded benchmark commit 025"
+    },
+    {
+      "question": "oracle preserves commits.25.length",
+      "path": "commits.25.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.25.short",
+      "path": "commits.25.short",
+      "expected": "000001a"
+    },
+    {
+      "question": "oracle preserves commits.25.author",
+      "path": "commits.25.author",
+      "expected": "Author 026"
+    },
+    {
+      "question": "oracle preserves commits.25.date",
+      "path": "commits.25.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.25.subject",
+      "path": "commits.25.subject",
+      "expected": "Recorded benchmark commit 026"
+    },
+    {
+      "question": "oracle preserves commits.26.length",
+      "path": "commits.26.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.26.short",
+      "path": "commits.26.short",
+      "expected": "000001b"
+    },
+    {
+      "question": "oracle preserves commits.26.author",
+      "path": "commits.26.author",
+      "expected": "Author 027"
+    },
+    {
+      "question": "oracle preserves commits.26.date",
+      "path": "commits.26.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.26.subject",
+      "path": "commits.26.subject",
+      "expected": "Recorded benchmark commit 027"
+    },
+    {
+      "question": "oracle preserves commits.27.length",
+      "path": "commits.27.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.27.short",
+      "path": "commits.27.short",
+      "expected": "000001c"
+    },
+    {
+      "question": "oracle preserves commits.27.author",
+      "path": "commits.27.author",
+      "expected": "Author 028"
+    },
+    {
+      "question": "oracle preserves commits.27.date",
+      "path": "commits.27.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.27.subject",
+      "path": "commits.27.subject",
+      "expected": "Recorded benchmark commit 028"
+    },
+    {
+      "question": "oracle preserves commits.28.length",
+      "path": "commits.28.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.28.short",
+      "path": "commits.28.short",
+      "expected": "000001d"
+    },
+    {
+      "question": "oracle preserves commits.28.author",
+      "path": "commits.28.author",
+      "expected": "Author 029"
+    },
+    {
+      "question": "oracle preserves commits.28.date",
+      "path": "commits.28.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.28.subject",
+      "path": "commits.28.subject",
+      "expected": "Recorded benchmark commit 029"
+    },
+    {
+      "question": "oracle preserves commits.29.length",
+      "path": "commits.29.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.29.short",
+      "path": "commits.29.short",
+      "expected": "000001e"
+    },
+    {
+      "question": "oracle preserves commits.29.author",
+      "path": "commits.29.author",
+      "expected": "Author 030"
+    },
+    {
+      "question": "oracle preserves commits.29.date",
+      "path": "commits.29.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.29.subject",
+      "path": "commits.29.subject",
+      "expected": "Recorded benchmark commit 030"
+    },
+    {
+      "question": "oracle preserves commits.30.length",
+      "path": "commits.30.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.30.short",
+      "path": "commits.30.short",
+      "expected": "000001f"
+    },
+    {
+      "question": "oracle preserves commits.30.author",
+      "path": "commits.30.author",
+      "expected": "Author 031"
+    },
+    {
+      "question": "oracle preserves commits.30.date",
+      "path": "commits.30.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.30.subject",
+      "path": "commits.30.subject",
+      "expected": "Recorded benchmark commit 031"
+    },
+    {
+      "question": "oracle preserves commits.31.length",
+      "path": "commits.31.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.31.short",
+      "path": "commits.31.short",
+      "expected": "0000020"
+    },
+    {
+      "question": "oracle preserves commits.31.author",
+      "path": "commits.31.author",
+      "expected": "Author 032"
+    },
+    {
+      "question": "oracle preserves commits.31.date",
+      "path": "commits.31.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.31.subject",
+      "path": "commits.31.subject",
+      "expected": "Recorded benchmark commit 032"
+    },
+    {
+      "question": "oracle preserves commits.32.length",
+      "path": "commits.32.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.32.short",
+      "path": "commits.32.short",
+      "expected": "0000021"
+    },
+    {
+      "question": "oracle preserves commits.32.author",
+      "path": "commits.32.author",
+      "expected": "Author 033"
+    },
+    {
+      "question": "oracle preserves commits.32.date",
+      "path": "commits.32.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.32.subject",
+      "path": "commits.32.subject",
+      "expected": "Recorded benchmark commit 033"
+    },
+    {
+      "question": "oracle preserves commits.33.length",
+      "path": "commits.33.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.33.short",
+      "path": "commits.33.short",
+      "expected": "0000022"
+    },
+    {
+      "question": "oracle preserves commits.33.author",
+      "path": "commits.33.author",
+      "expected": "Author 034"
+    },
+    {
+      "question": "oracle preserves commits.33.date",
+      "path": "commits.33.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.33.subject",
+      "path": "commits.33.subject",
+      "expected": "Recorded benchmark commit 034"
+    },
+    {
+      "question": "oracle preserves commits.34.length",
+      "path": "commits.34.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.34.short",
+      "path": "commits.34.short",
+      "expected": "0000023"
+    },
+    {
+      "question": "oracle preserves commits.34.author",
+      "path": "commits.34.author",
+      "expected": "Author 035"
+    },
+    {
+      "question": "oracle preserves commits.34.date",
+      "path": "commits.34.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.34.subject",
+      "path": "commits.34.subject",
+      "expected": "Recorded benchmark commit 035"
+    },
+    {
+      "question": "oracle preserves commits.35.length",
+      "path": "commits.35.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.35.short",
+      "path": "commits.35.short",
+      "expected": "0000024"
+    },
+    {
+      "question": "oracle preserves commits.35.author",
+      "path": "commits.35.author",
+      "expected": "Author 036"
+    },
+    {
+      "question": "oracle preserves commits.35.date",
+      "path": "commits.35.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.35.subject",
+      "path": "commits.35.subject",
+      "expected": "Recorded benchmark commit 036"
+    },
+    {
+      "question": "oracle preserves commits.36.length",
+      "path": "commits.36.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.36.short",
+      "path": "commits.36.short",
+      "expected": "0000025"
+    },
+    {
+      "question": "oracle preserves commits.36.author",
+      "path": "commits.36.author",
+      "expected": "Author 037"
+    },
+    {
+      "question": "oracle preserves commits.36.date",
+      "path": "commits.36.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.36.subject",
+      "path": "commits.36.subject",
+      "expected": "Recorded benchmark commit 037"
+    },
+    {
+      "question": "oracle preserves commits.37.length",
+      "path": "commits.37.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.37.short",
+      "path": "commits.37.short",
+      "expected": "0000026"
+    },
+    {
+      "question": "oracle preserves commits.37.author",
+      "path": "commits.37.author",
+      "expected": "Author 038"
+    },
+    {
+      "question": "oracle preserves commits.37.date",
+      "path": "commits.37.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.37.subject",
+      "path": "commits.37.subject",
+      "expected": "Recorded benchmark commit 038"
+    },
+    {
+      "question": "oracle preserves commits.38.length",
+      "path": "commits.38.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.38.short",
+      "path": "commits.38.short",
+      "expected": "0000027"
+    },
+    {
+      "question": "oracle preserves commits.38.author",
+      "path": "commits.38.author",
+      "expected": "Author 039"
+    },
+    {
+      "question": "oracle preserves commits.38.date",
+      "path": "commits.38.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.38.subject",
+      "path": "commits.38.subject",
+      "expected": "Recorded benchmark commit 039"
+    },
+    {
+      "question": "oracle preserves commits.39.length",
+      "path": "commits.39.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.39.short",
+      "path": "commits.39.short",
+      "expected": "0000028"
+    },
+    {
+      "question": "oracle preserves commits.39.author",
+      "path": "commits.39.author",
+      "expected": "Author 040"
+    },
+    {
+      "question": "oracle preserves commits.39.date",
+      "path": "commits.39.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.39.subject",
+      "path": "commits.39.subject",
+      "expected": "Recorded benchmark commit 040"
+    },
+    {
+      "question": "oracle preserves commits.40.length",
+      "path": "commits.40.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.40.short",
+      "path": "commits.40.short",
+      "expected": "0000029"
+    },
+    {
+      "question": "oracle preserves commits.40.author",
+      "path": "commits.40.author",
+      "expected": "Author 041"
+    },
+    {
+      "question": "oracle preserves commits.40.date",
+      "path": "commits.40.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.40.subject",
+      "path": "commits.40.subject",
+      "expected": "Recorded benchmark commit 041"
+    },
+    {
+      "question": "oracle preserves commits.41.length",
+      "path": "commits.41.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.41.short",
+      "path": "commits.41.short",
+      "expected": "000002a"
+    },
+    {
+      "question": "oracle preserves commits.41.author",
+      "path": "commits.41.author",
+      "expected": "Author 042"
+    },
+    {
+      "question": "oracle preserves commits.41.date",
+      "path": "commits.41.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.41.subject",
+      "path": "commits.41.subject",
+      "expected": "Recorded benchmark commit 042"
+    },
+    {
+      "question": "oracle preserves commits.42.length",
+      "path": "commits.42.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.42.short",
+      "path": "commits.42.short",
+      "expected": "000002b"
+    },
+    {
+      "question": "oracle preserves commits.42.author",
+      "path": "commits.42.author",
+      "expected": "Author 043"
+    },
+    {
+      "question": "oracle preserves commits.42.date",
+      "path": "commits.42.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.42.subject",
+      "path": "commits.42.subject",
+      "expected": "Recorded benchmark commit 043"
+    },
+    {
+      "question": "oracle preserves commits.43.length",
+      "path": "commits.43.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.43.short",
+      "path": "commits.43.short",
+      "expected": "000002c"
+    },
+    {
+      "question": "oracle preserves commits.43.author",
+      "path": "commits.43.author",
+      "expected": "Author 044"
+    },
+    {
+      "question": "oracle preserves commits.43.date",
+      "path": "commits.43.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.43.subject",
+      "path": "commits.43.subject",
+      "expected": "Recorded benchmark commit 044"
+    },
+    {
+      "question": "oracle preserves commits.44.length",
+      "path": "commits.44.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.44.short",
+      "path": "commits.44.short",
+      "expected": "000002d"
+    },
+    {
+      "question": "oracle preserves commits.44.author",
+      "path": "commits.44.author",
+      "expected": "Author 045"
+    },
+    {
+      "question": "oracle preserves commits.44.date",
+      "path": "commits.44.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.44.subject",
+      "path": "commits.44.subject",
+      "expected": "Recorded benchmark commit 045"
+    },
+    {
+      "question": "oracle preserves commits.45.length",
+      "path": "commits.45.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.45.short",
+      "path": "commits.45.short",
+      "expected": "000002e"
+    },
+    {
+      "question": "oracle preserves commits.45.author",
+      "path": "commits.45.author",
+      "expected": "Author 046"
+    },
+    {
+      "question": "oracle preserves commits.45.date",
+      "path": "commits.45.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.45.subject",
+      "path": "commits.45.subject",
+      "expected": "Recorded benchmark commit 046"
+    },
+    {
+      "question": "oracle preserves commits.46.length",
+      "path": "commits.46.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.46.short",
+      "path": "commits.46.short",
+      "expected": "000002f"
+    },
+    {
+      "question": "oracle preserves commits.46.author",
+      "path": "commits.46.author",
+      "expected": "Author 047"
+    },
+    {
+      "question": "oracle preserves commits.46.date",
+      "path": "commits.46.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.46.subject",
+      "path": "commits.46.subject",
+      "expected": "Recorded benchmark commit 047"
+    },
+    {
+      "question": "oracle preserves commits.47.length",
+      "path": "commits.47.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.47.short",
+      "path": "commits.47.short",
+      "expected": "0000030"
+    },
+    {
+      "question": "oracle preserves commits.47.author",
+      "path": "commits.47.author",
+      "expected": "Author 048"
+    },
+    {
+      "question": "oracle preserves commits.47.date",
+      "path": "commits.47.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.47.subject",
+      "path": "commits.47.subject",
+      "expected": "Recorded benchmark commit 048"
+    },
+    {
+      "question": "oracle preserves commits.48.length",
+      "path": "commits.48.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.48.short",
+      "path": "commits.48.short",
+      "expected": "0000031"
+    },
+    {
+      "question": "oracle preserves commits.48.author",
+      "path": "commits.48.author",
+      "expected": "Author 049"
+    },
+    {
+      "question": "oracle preserves commits.48.date",
+      "path": "commits.48.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.48.subject",
+      "path": "commits.48.subject",
+      "expected": "Recorded benchmark commit 049"
+    },
+    {
+      "question": "oracle preserves commits.49.length",
+      "path": "commits.49.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.49.short",
+      "path": "commits.49.short",
+      "expected": "0000032"
+    },
+    {
+      "question": "oracle preserves commits.49.author",
+      "path": "commits.49.author",
+      "expected": "Author 050"
+    },
+    {
+      "question": "oracle preserves commits.49.date",
+      "path": "commits.49.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.49.subject",
+      "path": "commits.49.subject",
+      "expected": "Recorded benchmark commit 050"
+    },
+    {
+      "question": "oracle preserves commits.50.length",
+      "path": "commits.50.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.50.short",
+      "path": "commits.50.short",
+      "expected": "0000033"
+    },
+    {
+      "question": "oracle preserves commits.50.author",
+      "path": "commits.50.author",
+      "expected": "Author 051"
+    },
+    {
+      "question": "oracle preserves commits.50.date",
+      "path": "commits.50.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.50.subject",
+      "path": "commits.50.subject",
+      "expected": "Recorded benchmark commit 051"
+    },
+    {
+      "question": "oracle preserves commits.51.length",
+      "path": "commits.51.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.51.short",
+      "path": "commits.51.short",
+      "expected": "0000034"
+    },
+    {
+      "question": "oracle preserves commits.51.author",
+      "path": "commits.51.author",
+      "expected": "Author 052"
+    },
+    {
+      "question": "oracle preserves commits.51.date",
+      "path": "commits.51.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.51.subject",
+      "path": "commits.51.subject",
+      "expected": "Recorded benchmark commit 052"
+    },
+    {
+      "question": "oracle preserves commits.52.length",
+      "path": "commits.52.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.52.short",
+      "path": "commits.52.short",
+      "expected": "0000035"
+    },
+    {
+      "question": "oracle preserves commits.52.author",
+      "path": "commits.52.author",
+      "expected": "Author 053"
+    },
+    {
+      "question": "oracle preserves commits.52.date",
+      "path": "commits.52.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.52.subject",
+      "path": "commits.52.subject",
+      "expected": "Recorded benchmark commit 053"
+    },
+    {
+      "question": "oracle preserves commits.53.length",
+      "path": "commits.53.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.53.short",
+      "path": "commits.53.short",
+      "expected": "0000036"
+    },
+    {
+      "question": "oracle preserves commits.53.author",
+      "path": "commits.53.author",
+      "expected": "Author 054"
+    },
+    {
+      "question": "oracle preserves commits.53.date",
+      "path": "commits.53.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.53.subject",
+      "path": "commits.53.subject",
+      "expected": "Recorded benchmark commit 054"
+    },
+    {
+      "question": "oracle preserves commits.54.length",
+      "path": "commits.54.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.54.short",
+      "path": "commits.54.short",
+      "expected": "0000037"
+    },
+    {
+      "question": "oracle preserves commits.54.author",
+      "path": "commits.54.author",
+      "expected": "Author 055"
+    },
+    {
+      "question": "oracle preserves commits.54.date",
+      "path": "commits.54.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.54.subject",
+      "path": "commits.54.subject",
+      "expected": "Recorded benchmark commit 055"
+    },
+    {
+      "question": "oracle preserves commits.55.length",
+      "path": "commits.55.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.55.short",
+      "path": "commits.55.short",
+      "expected": "0000038"
+    },
+    {
+      "question": "oracle preserves commits.55.author",
+      "path": "commits.55.author",
+      "expected": "Author 056"
+    },
+    {
+      "question": "oracle preserves commits.55.date",
+      "path": "commits.55.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.55.subject",
+      "path": "commits.55.subject",
+      "expected": "Recorded benchmark commit 056"
+    },
+    {
+      "question": "oracle preserves commits.56.length",
+      "path": "commits.56.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.56.short",
+      "path": "commits.56.short",
+      "expected": "0000039"
+    },
+    {
+      "question": "oracle preserves commits.56.author",
+      "path": "commits.56.author",
+      "expected": "Author 057"
+    },
+    {
+      "question": "oracle preserves commits.56.date",
+      "path": "commits.56.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.56.subject",
+      "path": "commits.56.subject",
+      "expected": "Recorded benchmark commit 057"
+    },
+    {
+      "question": "oracle preserves commits.57.length",
+      "path": "commits.57.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.57.short",
+      "path": "commits.57.short",
+      "expected": "000003a"
+    },
+    {
+      "question": "oracle preserves commits.57.author",
+      "path": "commits.57.author",
+      "expected": "Author 058"
+    },
+    {
+      "question": "oracle preserves commits.57.date",
+      "path": "commits.57.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.57.subject",
+      "path": "commits.57.subject",
+      "expected": "Recorded benchmark commit 058"
+    },
+    {
+      "question": "oracle preserves commits.58.length",
+      "path": "commits.58.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.58.short",
+      "path": "commits.58.short",
+      "expected": "000003b"
+    },
+    {
+      "question": "oracle preserves commits.58.author",
+      "path": "commits.58.author",
+      "expected": "Author 059"
+    },
+    {
+      "question": "oracle preserves commits.58.date",
+      "path": "commits.58.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.58.subject",
+      "path": "commits.58.subject",
+      "expected": "Recorded benchmark commit 059"
+    },
+    {
+      "question": "oracle preserves commits.59.length",
+      "path": "commits.59.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.59.short",
+      "path": "commits.59.short",
+      "expected": "000003c"
+    },
+    {
+      "question": "oracle preserves commits.59.author",
+      "path": "commits.59.author",
+      "expected": "Author 060"
+    },
+    {
+      "question": "oracle preserves commits.59.date",
+      "path": "commits.59.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.59.subject",
+      "path": "commits.59.subject",
+      "expected": "Recorded benchmark commit 060"
+    },
+    {
+      "question": "oracle preserves commits.60.length",
+      "path": "commits.60.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.60.short",
+      "path": "commits.60.short",
+      "expected": "000003d"
+    },
+    {
+      "question": "oracle preserves commits.60.author",
+      "path": "commits.60.author",
+      "expected": "Author 061"
+    },
+    {
+      "question": "oracle preserves commits.60.date",
+      "path": "commits.60.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.60.subject",
+      "path": "commits.60.subject",
+      "expected": "Recorded benchmark commit 061"
+    },
+    {
+      "question": "oracle preserves commits.61.length",
+      "path": "commits.61.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.61.short",
+      "path": "commits.61.short",
+      "expected": "000003e"
+    },
+    {
+      "question": "oracle preserves commits.61.author",
+      "path": "commits.61.author",
+      "expected": "Author 062"
+    },
+    {
+      "question": "oracle preserves commits.61.date",
+      "path": "commits.61.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.61.subject",
+      "path": "commits.61.subject",
+      "expected": "Recorded benchmark commit 062"
+    },
+    {
+      "question": "oracle preserves commits.62.length",
+      "path": "commits.62.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.62.short",
+      "path": "commits.62.short",
+      "expected": "000003f"
+    },
+    {
+      "question": "oracle preserves commits.62.author",
+      "path": "commits.62.author",
+      "expected": "Author 063"
+    },
+    {
+      "question": "oracle preserves commits.62.date",
+      "path": "commits.62.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.62.subject",
+      "path": "commits.62.subject",
+      "expected": "Recorded benchmark commit 063"
+    },
+    {
+      "question": "oracle preserves commits.63.length",
+      "path": "commits.63.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.63.short",
+      "path": "commits.63.short",
+      "expected": "0000040"
+    },
+    {
+      "question": "oracle preserves commits.63.author",
+      "path": "commits.63.author",
+      "expected": "Author 064"
+    },
+    {
+      "question": "oracle preserves commits.63.date",
+      "path": "commits.63.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.63.subject",
+      "path": "commits.63.subject",
+      "expected": "Recorded benchmark commit 064"
+    },
+    {
+      "question": "oracle preserves commits.64.length",
+      "path": "commits.64.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.64.short",
+      "path": "commits.64.short",
+      "expected": "0000041"
+    },
+    {
+      "question": "oracle preserves commits.64.author",
+      "path": "commits.64.author",
+      "expected": "Author 065"
+    },
+    {
+      "question": "oracle preserves commits.64.date",
+      "path": "commits.64.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.64.subject",
+      "path": "commits.64.subject",
+      "expected": "Recorded benchmark commit 065"
+    },
+    {
+      "question": "oracle preserves commits.65.length",
+      "path": "commits.65.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.65.short",
+      "path": "commits.65.short",
+      "expected": "0000042"
+    },
+    {
+      "question": "oracle preserves commits.65.author",
+      "path": "commits.65.author",
+      "expected": "Author 066"
+    },
+    {
+      "question": "oracle preserves commits.65.date",
+      "path": "commits.65.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.65.subject",
+      "path": "commits.65.subject",
+      "expected": "Recorded benchmark commit 066"
+    },
+    {
+      "question": "oracle preserves commits.66.length",
+      "path": "commits.66.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.66.short",
+      "path": "commits.66.short",
+      "expected": "0000043"
+    },
+    {
+      "question": "oracle preserves commits.66.author",
+      "path": "commits.66.author",
+      "expected": "Author 067"
+    },
+    {
+      "question": "oracle preserves commits.66.date",
+      "path": "commits.66.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.66.subject",
+      "path": "commits.66.subject",
+      "expected": "Recorded benchmark commit 067"
+    },
+    {
+      "question": "oracle preserves commits.67.length",
+      "path": "commits.67.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.67.short",
+      "path": "commits.67.short",
+      "expected": "0000044"
+    },
+    {
+      "question": "oracle preserves commits.67.author",
+      "path": "commits.67.author",
+      "expected": "Author 068"
+    },
+    {
+      "question": "oracle preserves commits.67.date",
+      "path": "commits.67.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.67.subject",
+      "path": "commits.67.subject",
+      "expected": "Recorded benchmark commit 068"
+    },
+    {
+      "question": "oracle preserves commits.68.length",
+      "path": "commits.68.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.68.short",
+      "path": "commits.68.short",
+      "expected": "0000045"
+    },
+    {
+      "question": "oracle preserves commits.68.author",
+      "path": "commits.68.author",
+      "expected": "Author 069"
+    },
+    {
+      "question": "oracle preserves commits.68.date",
+      "path": "commits.68.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.68.subject",
+      "path": "commits.68.subject",
+      "expected": "Recorded benchmark commit 069"
+    },
+    {
+      "question": "oracle preserves commits.69.length",
+      "path": "commits.69.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.69.short",
+      "path": "commits.69.short",
+      "expected": "0000046"
+    },
+    {
+      "question": "oracle preserves commits.69.author",
+      "path": "commits.69.author",
+      "expected": "Author 070"
+    },
+    {
+      "question": "oracle preserves commits.69.date",
+      "path": "commits.69.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.69.subject",
+      "path": "commits.69.subject",
+      "expected": "Recorded benchmark commit 070"
+    },
+    {
+      "question": "oracle preserves commits.70.length",
+      "path": "commits.70.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.70.short",
+      "path": "commits.70.short",
+      "expected": "0000047"
+    },
+    {
+      "question": "oracle preserves commits.70.author",
+      "path": "commits.70.author",
+      "expected": "Author 071"
+    },
+    {
+      "question": "oracle preserves commits.70.date",
+      "path": "commits.70.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.70.subject",
+      "path": "commits.70.subject",
+      "expected": "Recorded benchmark commit 071"
+    },
+    {
+      "question": "oracle preserves commits.71.length",
+      "path": "commits.71.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.71.short",
+      "path": "commits.71.short",
+      "expected": "0000048"
+    },
+    {
+      "question": "oracle preserves commits.71.author",
+      "path": "commits.71.author",
+      "expected": "Author 072"
+    },
+    {
+      "question": "oracle preserves commits.71.date",
+      "path": "commits.71.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.71.subject",
+      "path": "commits.71.subject",
+      "expected": "Recorded benchmark commit 072"
+    },
+    {
+      "question": "oracle preserves commits.72.length",
+      "path": "commits.72.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.72.short",
+      "path": "commits.72.short",
+      "expected": "0000049"
+    },
+    {
+      "question": "oracle preserves commits.72.author",
+      "path": "commits.72.author",
+      "expected": "Author 073"
+    },
+    {
+      "question": "oracle preserves commits.72.date",
+      "path": "commits.72.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.72.subject",
+      "path": "commits.72.subject",
+      "expected": "Recorded benchmark commit 073"
+    },
+    {
+      "question": "oracle preserves commits.73.length",
+      "path": "commits.73.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.73.short",
+      "path": "commits.73.short",
+      "expected": "000004a"
+    },
+    {
+      "question": "oracle preserves commits.73.author",
+      "path": "commits.73.author",
+      "expected": "Author 074"
+    },
+    {
+      "question": "oracle preserves commits.73.date",
+      "path": "commits.73.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.73.subject",
+      "path": "commits.73.subject",
+      "expected": "Recorded benchmark commit 074"
+    },
+    {
+      "question": "oracle preserves commits.74.length",
+      "path": "commits.74.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.74.short",
+      "path": "commits.74.short",
+      "expected": "000004b"
+    },
+    {
+      "question": "oracle preserves commits.74.author",
+      "path": "commits.74.author",
+      "expected": "Author 075"
+    },
+    {
+      "question": "oracle preserves commits.74.date",
+      "path": "commits.74.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.74.subject",
+      "path": "commits.74.subject",
+      "expected": "Recorded benchmark commit 075"
+    },
+    {
+      "question": "oracle preserves commits.75.length",
+      "path": "commits.75.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.75.short",
+      "path": "commits.75.short",
+      "expected": "000004c"
+    },
+    {
+      "question": "oracle preserves commits.75.author",
+      "path": "commits.75.author",
+      "expected": "Author 076"
+    },
+    {
+      "question": "oracle preserves commits.75.date",
+      "path": "commits.75.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.75.subject",
+      "path": "commits.75.subject",
+      "expected": "Recorded benchmark commit 076"
+    },
+    {
+      "question": "oracle preserves commits.76.length",
+      "path": "commits.76.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.76.short",
+      "path": "commits.76.short",
+      "expected": "000004d"
+    },
+    {
+      "question": "oracle preserves commits.76.author",
+      "path": "commits.76.author",
+      "expected": "Author 077"
+    },
+    {
+      "question": "oracle preserves commits.76.date",
+      "path": "commits.76.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.76.subject",
+      "path": "commits.76.subject",
+      "expected": "Recorded benchmark commit 077"
+    },
+    {
+      "question": "oracle preserves commits.77.length",
+      "path": "commits.77.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.77.short",
+      "path": "commits.77.short",
+      "expected": "000004e"
+    },
+    {
+      "question": "oracle preserves commits.77.author",
+      "path": "commits.77.author",
+      "expected": "Author 078"
+    },
+    {
+      "question": "oracle preserves commits.77.date",
+      "path": "commits.77.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.77.subject",
+      "path": "commits.77.subject",
+      "expected": "Recorded benchmark commit 078"
+    },
+    {
+      "question": "oracle preserves commits.78.length",
+      "path": "commits.78.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.78.short",
+      "path": "commits.78.short",
+      "expected": "000004f"
+    },
+    {
+      "question": "oracle preserves commits.78.author",
+      "path": "commits.78.author",
+      "expected": "Author 079"
+    },
+    {
+      "question": "oracle preserves commits.78.date",
+      "path": "commits.78.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.78.subject",
+      "path": "commits.78.subject",
+      "expected": "Recorded benchmark commit 079"
+    },
+    {
+      "question": "oracle preserves commits.79.length",
+      "path": "commits.79.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.79.short",
+      "path": "commits.79.short",
+      "expected": "0000050"
+    },
+    {
+      "question": "oracle preserves commits.79.author",
+      "path": "commits.79.author",
+      "expected": "Author 080"
+    },
+    {
+      "question": "oracle preserves commits.79.date",
+      "path": "commits.79.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.79.subject",
+      "path": "commits.79.subject",
+      "expected": "Recorded benchmark commit 080"
+    },
+    {
+      "question": "oracle preserves commits.80.length",
+      "path": "commits.80.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.80.short",
+      "path": "commits.80.short",
+      "expected": "0000051"
+    },
+    {
+      "question": "oracle preserves commits.80.author",
+      "path": "commits.80.author",
+      "expected": "Author 081"
+    },
+    {
+      "question": "oracle preserves commits.80.date",
+      "path": "commits.80.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.80.subject",
+      "path": "commits.80.subject",
+      "expected": "Recorded benchmark commit 081"
+    },
+    {
+      "question": "oracle preserves commits.81.length",
+      "path": "commits.81.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.81.short",
+      "path": "commits.81.short",
+      "expected": "0000052"
+    },
+    {
+      "question": "oracle preserves commits.81.author",
+      "path": "commits.81.author",
+      "expected": "Author 082"
+    },
+    {
+      "question": "oracle preserves commits.81.date",
+      "path": "commits.81.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.81.subject",
+      "path": "commits.81.subject",
+      "expected": "Recorded benchmark commit 082"
+    },
+    {
+      "question": "oracle preserves commits.82.length",
+      "path": "commits.82.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.82.short",
+      "path": "commits.82.short",
+      "expected": "0000053"
+    },
+    {
+      "question": "oracle preserves commits.82.author",
+      "path": "commits.82.author",
+      "expected": "Author 083"
+    },
+    {
+      "question": "oracle preserves commits.82.date",
+      "path": "commits.82.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.82.subject",
+      "path": "commits.82.subject",
+      "expected": "Recorded benchmark commit 083"
+    },
+    {
+      "question": "oracle preserves commits.83.length",
+      "path": "commits.83.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.83.short",
+      "path": "commits.83.short",
+      "expected": "0000054"
+    },
+    {
+      "question": "oracle preserves commits.83.author",
+      "path": "commits.83.author",
+      "expected": "Author 084"
+    },
+    {
+      "question": "oracle preserves commits.83.date",
+      "path": "commits.83.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.83.subject",
+      "path": "commits.83.subject",
+      "expected": "Recorded benchmark commit 084"
+    },
+    {
+      "question": "oracle preserves commits.84.length",
+      "path": "commits.84.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.84.short",
+      "path": "commits.84.short",
+      "expected": "0000055"
+    },
+    {
+      "question": "oracle preserves commits.84.author",
+      "path": "commits.84.author",
+      "expected": "Author 085"
+    },
+    {
+      "question": "oracle preserves commits.84.date",
+      "path": "commits.84.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.84.subject",
+      "path": "commits.84.subject",
+      "expected": "Recorded benchmark commit 085"
+    },
+    {
+      "question": "oracle preserves commits.85.length",
+      "path": "commits.85.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.85.short",
+      "path": "commits.85.short",
+      "expected": "0000056"
+    },
+    {
+      "question": "oracle preserves commits.85.author",
+      "path": "commits.85.author",
+      "expected": "Author 086"
+    },
+    {
+      "question": "oracle preserves commits.85.date",
+      "path": "commits.85.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.85.subject",
+      "path": "commits.85.subject",
+      "expected": "Recorded benchmark commit 086"
+    },
+    {
+      "question": "oracle preserves commits.86.length",
+      "path": "commits.86.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.86.short",
+      "path": "commits.86.short",
+      "expected": "0000057"
+    },
+    {
+      "question": "oracle preserves commits.86.author",
+      "path": "commits.86.author",
+      "expected": "Author 087"
+    },
+    {
+      "question": "oracle preserves commits.86.date",
+      "path": "commits.86.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.86.subject",
+      "path": "commits.86.subject",
+      "expected": "Recorded benchmark commit 087"
+    },
+    {
+      "question": "oracle preserves commits.87.length",
+      "path": "commits.87.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.87.short",
+      "path": "commits.87.short",
+      "expected": "0000058"
+    },
+    {
+      "question": "oracle preserves commits.87.author",
+      "path": "commits.87.author",
+      "expected": "Author 088"
+    },
+    {
+      "question": "oracle preserves commits.87.date",
+      "path": "commits.87.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.87.subject",
+      "path": "commits.87.subject",
+      "expected": "Recorded benchmark commit 088"
+    },
+    {
+      "question": "oracle preserves commits.88.length",
+      "path": "commits.88.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.88.short",
+      "path": "commits.88.short",
+      "expected": "0000059"
+    },
+    {
+      "question": "oracle preserves commits.88.author",
+      "path": "commits.88.author",
+      "expected": "Author 089"
+    },
+    {
+      "question": "oracle preserves commits.88.date",
+      "path": "commits.88.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.88.subject",
+      "path": "commits.88.subject",
+      "expected": "Recorded benchmark commit 089"
+    },
+    {
+      "question": "oracle preserves commits.89.length",
+      "path": "commits.89.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.89.short",
+      "path": "commits.89.short",
+      "expected": "000005a"
+    },
+    {
+      "question": "oracle preserves commits.89.author",
+      "path": "commits.89.author",
+      "expected": "Author 090"
+    },
+    {
+      "question": "oracle preserves commits.89.date",
+      "path": "commits.89.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.89.subject",
+      "path": "commits.89.subject",
+      "expected": "Recorded benchmark commit 090"
+    },
+    {
+      "question": "oracle preserves commits.90.length",
+      "path": "commits.90.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.90.short",
+      "path": "commits.90.short",
+      "expected": "000005b"
+    },
+    {
+      "question": "oracle preserves commits.90.author",
+      "path": "commits.90.author",
+      "expected": "Author 091"
+    },
+    {
+      "question": "oracle preserves commits.90.date",
+      "path": "commits.90.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.90.subject",
+      "path": "commits.90.subject",
+      "expected": "Recorded benchmark commit 091"
+    },
+    {
+      "question": "oracle preserves commits.91.length",
+      "path": "commits.91.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.91.short",
+      "path": "commits.91.short",
+      "expected": "000005c"
+    },
+    {
+      "question": "oracle preserves commits.91.author",
+      "path": "commits.91.author",
+      "expected": "Author 092"
+    },
+    {
+      "question": "oracle preserves commits.91.date",
+      "path": "commits.91.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.91.subject",
+      "path": "commits.91.subject",
+      "expected": "Recorded benchmark commit 092"
+    },
+    {
+      "question": "oracle preserves commits.92.length",
+      "path": "commits.92.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.92.short",
+      "path": "commits.92.short",
+      "expected": "000005d"
+    },
+    {
+      "question": "oracle preserves commits.92.author",
+      "path": "commits.92.author",
+      "expected": "Author 093"
+    },
+    {
+      "question": "oracle preserves commits.92.date",
+      "path": "commits.92.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.92.subject",
+      "path": "commits.92.subject",
+      "expected": "Recorded benchmark commit 093"
+    },
+    {
+      "question": "oracle preserves commits.93.length",
+      "path": "commits.93.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.93.short",
+      "path": "commits.93.short",
+      "expected": "000005e"
+    },
+    {
+      "question": "oracle preserves commits.93.author",
+      "path": "commits.93.author",
+      "expected": "Author 094"
+    },
+    {
+      "question": "oracle preserves commits.93.date",
+      "path": "commits.93.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.93.subject",
+      "path": "commits.93.subject",
+      "expected": "Recorded benchmark commit 094"
+    },
+    {
+      "question": "oracle preserves commits.94.length",
+      "path": "commits.94.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.94.short",
+      "path": "commits.94.short",
+      "expected": "000005f"
+    },
+    {
+      "question": "oracle preserves commits.94.author",
+      "path": "commits.94.author",
+      "expected": "Author 095"
+    },
+    {
+      "question": "oracle preserves commits.94.date",
+      "path": "commits.94.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.94.subject",
+      "path": "commits.94.subject",
+      "expected": "Recorded benchmark commit 095"
+    },
+    {
+      "question": "oracle preserves commits.95.length",
+      "path": "commits.95.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.95.short",
+      "path": "commits.95.short",
+      "expected": "0000060"
+    },
+    {
+      "question": "oracle preserves commits.95.author",
+      "path": "commits.95.author",
+      "expected": "Author 096"
+    },
+    {
+      "question": "oracle preserves commits.95.date",
+      "path": "commits.95.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.95.subject",
+      "path": "commits.95.subject",
+      "expected": "Recorded benchmark commit 096"
+    },
+    {
+      "question": "oracle preserves commits.96.length",
+      "path": "commits.96.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.96.short",
+      "path": "commits.96.short",
+      "expected": "0000061"
+    },
+    {
+      "question": "oracle preserves commits.96.author",
+      "path": "commits.96.author",
+      "expected": "Author 097"
+    },
+    {
+      "question": "oracle preserves commits.96.date",
+      "path": "commits.96.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.96.subject",
+      "path": "commits.96.subject",
+      "expected": "Recorded benchmark commit 097"
+    },
+    {
+      "question": "oracle preserves commits.97.length",
+      "path": "commits.97.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.97.short",
+      "path": "commits.97.short",
+      "expected": "0000062"
+    },
+    {
+      "question": "oracle preserves commits.97.author",
+      "path": "commits.97.author",
+      "expected": "Author 098"
+    },
+    {
+      "question": "oracle preserves commits.97.date",
+      "path": "commits.97.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.97.subject",
+      "path": "commits.97.subject",
+      "expected": "Recorded benchmark commit 098"
+    },
+    {
+      "question": "oracle preserves commits.98.length",
+      "path": "commits.98.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.98.short",
+      "path": "commits.98.short",
+      "expected": "0000063"
+    },
+    {
+      "question": "oracle preserves commits.98.author",
+      "path": "commits.98.author",
+      "expected": "Author 099"
+    },
+    {
+      "question": "oracle preserves commits.98.date",
+      "path": "commits.98.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.98.subject",
+      "path": "commits.98.subject",
+      "expected": "Recorded benchmark commit 099"
+    },
+    {
+      "question": "oracle preserves commits.99.length",
+      "path": "commits.99.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.99.short",
+      "path": "commits.99.short",
+      "expected": "0000064"
+    },
+    {
+      "question": "oracle preserves commits.99.author",
+      "path": "commits.99.author",
+      "expected": "Author 100"
+    },
+    {
+      "question": "oracle preserves commits.99.date",
+      "path": "commits.99.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.99.subject",
+      "path": "commits.99.subject",
+      "expected": "Recorded benchmark commit 100"
+    },
+    {
+      "question": "oracle preserves commits.100.length",
+      "path": "commits.100.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.100.short",
+      "path": "commits.100.short",
+      "expected": "0000065"
+    },
+    {
+      "question": "oracle preserves commits.100.author",
+      "path": "commits.100.author",
+      "expected": "Author 101"
+    },
+    {
+      "question": "oracle preserves commits.100.date",
+      "path": "commits.100.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.100.subject",
+      "path": "commits.100.subject",
+      "expected": "Recorded benchmark commit 101"
+    },
+    {
+      "question": "oracle preserves commits.101.length",
+      "path": "commits.101.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.101.short",
+      "path": "commits.101.short",
+      "expected": "0000066"
+    },
+    {
+      "question": "oracle preserves commits.101.author",
+      "path": "commits.101.author",
+      "expected": "Author 102"
+    },
+    {
+      "question": "oracle preserves commits.101.date",
+      "path": "commits.101.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.101.subject",
+      "path": "commits.101.subject",
+      "expected": "Recorded benchmark commit 102"
+    },
+    {
+      "question": "oracle preserves commits.102.length",
+      "path": "commits.102.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.102.short",
+      "path": "commits.102.short",
+      "expected": "0000067"
+    },
+    {
+      "question": "oracle preserves commits.102.author",
+      "path": "commits.102.author",
+      "expected": "Author 103"
+    },
+    {
+      "question": "oracle preserves commits.102.date",
+      "path": "commits.102.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.102.subject",
+      "path": "commits.102.subject",
+      "expected": "Recorded benchmark commit 103"
+    },
+    {
+      "question": "oracle preserves commits.103.length",
+      "path": "commits.103.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.103.short",
+      "path": "commits.103.short",
+      "expected": "0000068"
+    },
+    {
+      "question": "oracle preserves commits.103.author",
+      "path": "commits.103.author",
+      "expected": "Author 104"
+    },
+    {
+      "question": "oracle preserves commits.103.date",
+      "path": "commits.103.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.103.subject",
+      "path": "commits.103.subject",
+      "expected": "Recorded benchmark commit 104"
+    },
+    {
+      "question": "oracle preserves commits.104.length",
+      "path": "commits.104.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.104.short",
+      "path": "commits.104.short",
+      "expected": "0000069"
+    },
+    {
+      "question": "oracle preserves commits.104.author",
+      "path": "commits.104.author",
+      "expected": "Author 105"
+    },
+    {
+      "question": "oracle preserves commits.104.date",
+      "path": "commits.104.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.104.subject",
+      "path": "commits.104.subject",
+      "expected": "Recorded benchmark commit 105"
+    },
+    {
+      "question": "oracle preserves commits.105.length",
+      "path": "commits.105.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.105.short",
+      "path": "commits.105.short",
+      "expected": "000006a"
+    },
+    {
+      "question": "oracle preserves commits.105.author",
+      "path": "commits.105.author",
+      "expected": "Author 106"
+    },
+    {
+      "question": "oracle preserves commits.105.date",
+      "path": "commits.105.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.105.subject",
+      "path": "commits.105.subject",
+      "expected": "Recorded benchmark commit 106"
+    },
+    {
+      "question": "oracle preserves commits.106.length",
+      "path": "commits.106.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.106.short",
+      "path": "commits.106.short",
+      "expected": "000006b"
+    },
+    {
+      "question": "oracle preserves commits.106.author",
+      "path": "commits.106.author",
+      "expected": "Author 107"
+    },
+    {
+      "question": "oracle preserves commits.106.date",
+      "path": "commits.106.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.106.subject",
+      "path": "commits.106.subject",
+      "expected": "Recorded benchmark commit 107"
+    },
+    {
+      "question": "oracle preserves commits.107.length",
+      "path": "commits.107.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.107.short",
+      "path": "commits.107.short",
+      "expected": "000006c"
+    },
+    {
+      "question": "oracle preserves commits.107.author",
+      "path": "commits.107.author",
+      "expected": "Author 108"
+    },
+    {
+      "question": "oracle preserves commits.107.date",
+      "path": "commits.107.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.107.subject",
+      "path": "commits.107.subject",
+      "expected": "Recorded benchmark commit 108"
+    },
+    {
+      "question": "oracle preserves commits.108.length",
+      "path": "commits.108.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.108.short",
+      "path": "commits.108.short",
+      "expected": "000006d"
+    },
+    {
+      "question": "oracle preserves commits.108.author",
+      "path": "commits.108.author",
+      "expected": "Author 109"
+    },
+    {
+      "question": "oracle preserves commits.108.date",
+      "path": "commits.108.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.108.subject",
+      "path": "commits.108.subject",
+      "expected": "Recorded benchmark commit 109"
+    },
+    {
+      "question": "oracle preserves commits.109.length",
+      "path": "commits.109.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.109.short",
+      "path": "commits.109.short",
+      "expected": "000006e"
+    },
+    {
+      "question": "oracle preserves commits.109.author",
+      "path": "commits.109.author",
+      "expected": "Author 110"
+    },
+    {
+      "question": "oracle preserves commits.109.date",
+      "path": "commits.109.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.109.subject",
+      "path": "commits.109.subject",
+      "expected": "Recorded benchmark commit 110"
+    },
+    {
+      "question": "oracle preserves commits.110.length",
+      "path": "commits.110.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.110.short",
+      "path": "commits.110.short",
+      "expected": "000006f"
+    },
+    {
+      "question": "oracle preserves commits.110.author",
+      "path": "commits.110.author",
+      "expected": "Author 111"
+    },
+    {
+      "question": "oracle preserves commits.110.date",
+      "path": "commits.110.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.110.subject",
+      "path": "commits.110.subject",
+      "expected": "Recorded benchmark commit 111"
+    },
+    {
+      "question": "oracle preserves commits.111.length",
+      "path": "commits.111.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.111.short",
+      "path": "commits.111.short",
+      "expected": "0000070"
+    },
+    {
+      "question": "oracle preserves commits.111.author",
+      "path": "commits.111.author",
+      "expected": "Author 112"
+    },
+    {
+      "question": "oracle preserves commits.111.date",
+      "path": "commits.111.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.111.subject",
+      "path": "commits.111.subject",
+      "expected": "Recorded benchmark commit 112"
+    },
+    {
+      "question": "oracle preserves commits.112.length",
+      "path": "commits.112.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.112.short",
+      "path": "commits.112.short",
+      "expected": "0000071"
+    },
+    {
+      "question": "oracle preserves commits.112.author",
+      "path": "commits.112.author",
+      "expected": "Author 113"
+    },
+    {
+      "question": "oracle preserves commits.112.date",
+      "path": "commits.112.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.112.subject",
+      "path": "commits.112.subject",
+      "expected": "Recorded benchmark commit 113"
+    },
+    {
+      "question": "oracle preserves commits.113.length",
+      "path": "commits.113.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.113.short",
+      "path": "commits.113.short",
+      "expected": "0000072"
+    },
+    {
+      "question": "oracle preserves commits.113.author",
+      "path": "commits.113.author",
+      "expected": "Author 114"
+    },
+    {
+      "question": "oracle preserves commits.113.date",
+      "path": "commits.113.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.113.subject",
+      "path": "commits.113.subject",
+      "expected": "Recorded benchmark commit 114"
+    },
+    {
+      "question": "oracle preserves commits.114.length",
+      "path": "commits.114.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.114.short",
+      "path": "commits.114.short",
+      "expected": "0000073"
+    },
+    {
+      "question": "oracle preserves commits.114.author",
+      "path": "commits.114.author",
+      "expected": "Author 115"
+    },
+    {
+      "question": "oracle preserves commits.114.date",
+      "path": "commits.114.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.114.subject",
+      "path": "commits.114.subject",
+      "expected": "Recorded benchmark commit 115"
+    },
+    {
+      "question": "oracle preserves commits.115.length",
+      "path": "commits.115.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.115.short",
+      "path": "commits.115.short",
+      "expected": "0000074"
+    },
+    {
+      "question": "oracle preserves commits.115.author",
+      "path": "commits.115.author",
+      "expected": "Author 116"
+    },
+    {
+      "question": "oracle preserves commits.115.date",
+      "path": "commits.115.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.115.subject",
+      "path": "commits.115.subject",
+      "expected": "Recorded benchmark commit 116"
+    },
+    {
+      "question": "oracle preserves commits.116.length",
+      "path": "commits.116.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.116.short",
+      "path": "commits.116.short",
+      "expected": "0000075"
+    },
+    {
+      "question": "oracle preserves commits.116.author",
+      "path": "commits.116.author",
+      "expected": "Author 117"
+    },
+    {
+      "question": "oracle preserves commits.116.date",
+      "path": "commits.116.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.116.subject",
+      "path": "commits.116.subject",
+      "expected": "Recorded benchmark commit 117"
+    },
+    {
+      "question": "oracle preserves commits.117.length",
+      "path": "commits.117.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.117.short",
+      "path": "commits.117.short",
+      "expected": "0000076"
+    },
+    {
+      "question": "oracle preserves commits.117.author",
+      "path": "commits.117.author",
+      "expected": "Author 118"
+    },
+    {
+      "question": "oracle preserves commits.117.date",
+      "path": "commits.117.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.117.subject",
+      "path": "commits.117.subject",
+      "expected": "Recorded benchmark commit 118"
+    },
+    {
+      "question": "oracle preserves commits.118.length",
+      "path": "commits.118.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.118.short",
+      "path": "commits.118.short",
+      "expected": "0000077"
+    },
+    {
+      "question": "oracle preserves commits.118.author",
+      "path": "commits.118.author",
+      "expected": "Author 119"
+    },
+    {
+      "question": "oracle preserves commits.118.date",
+      "path": "commits.118.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.118.subject",
+      "path": "commits.118.subject",
+      "expected": "Recorded benchmark commit 119"
+    },
+    {
+      "question": "oracle preserves commits.119.length",
+      "path": "commits.119.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.119.short",
+      "path": "commits.119.short",
+      "expected": "0000078"
+    },
+    {
+      "question": "oracle preserves commits.119.author",
+      "path": "commits.119.author",
+      "expected": "Author 120"
+    },
+    {
+      "question": "oracle preserves commits.119.date",
+      "path": "commits.119.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.119.subject",
+      "path": "commits.119.subject",
+      "expected": "Recorded benchmark commit 120"
+    },
+    {
+      "question": "oracle preserves commits.120.length",
+      "path": "commits.120.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.120.short",
+      "path": "commits.120.short",
+      "expected": "0000079"
+    },
+    {
+      "question": "oracle preserves commits.120.author",
+      "path": "commits.120.author",
+      "expected": "Author 121"
+    },
+    {
+      "question": "oracle preserves commits.120.date",
+      "path": "commits.120.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.120.subject",
+      "path": "commits.120.subject",
+      "expected": "Recorded benchmark commit 121"
+    },
+    {
+      "question": "oracle preserves commits.121.length",
+      "path": "commits.121.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.121.short",
+      "path": "commits.121.short",
+      "expected": "000007a"
+    },
+    {
+      "question": "oracle preserves commits.121.author",
+      "path": "commits.121.author",
+      "expected": "Author 122"
+    },
+    {
+      "question": "oracle preserves commits.121.date",
+      "path": "commits.121.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.121.subject",
+      "path": "commits.121.subject",
+      "expected": "Recorded benchmark commit 122"
+    },
+    {
+      "question": "oracle preserves commits.122.length",
+      "path": "commits.122.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.122.short",
+      "path": "commits.122.short",
+      "expected": "000007b"
+    },
+    {
+      "question": "oracle preserves commits.122.author",
+      "path": "commits.122.author",
+      "expected": "Author 123"
+    },
+    {
+      "question": "oracle preserves commits.122.date",
+      "path": "commits.122.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.122.subject",
+      "path": "commits.122.subject",
+      "expected": "Recorded benchmark commit 123"
+    },
+    {
+      "question": "oracle preserves commits.123.length",
+      "path": "commits.123.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.123.short",
+      "path": "commits.123.short",
+      "expected": "000007c"
+    },
+    {
+      "question": "oracle preserves commits.123.author",
+      "path": "commits.123.author",
+      "expected": "Author 124"
+    },
+    {
+      "question": "oracle preserves commits.123.date",
+      "path": "commits.123.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.123.subject",
+      "path": "commits.123.subject",
+      "expected": "Recorded benchmark commit 124"
+    },
+    {
+      "question": "oracle preserves commits.124.length",
+      "path": "commits.124.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.124.short",
+      "path": "commits.124.short",
+      "expected": "000007d"
+    },
+    {
+      "question": "oracle preserves commits.124.author",
+      "path": "commits.124.author",
+      "expected": "Author 125"
+    },
+    {
+      "question": "oracle preserves commits.124.date",
+      "path": "commits.124.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.124.subject",
+      "path": "commits.124.subject",
+      "expected": "Recorded benchmark commit 125"
+    },
+    {
+      "question": "oracle preserves commits.125.length",
+      "path": "commits.125.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.125.short",
+      "path": "commits.125.short",
+      "expected": "000007e"
+    },
+    {
+      "question": "oracle preserves commits.125.author",
+      "path": "commits.125.author",
+      "expected": "Author 126"
+    },
+    {
+      "question": "oracle preserves commits.125.date",
+      "path": "commits.125.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.125.subject",
+      "path": "commits.125.subject",
+      "expected": "Recorded benchmark commit 126"
+    },
+    {
+      "question": "oracle preserves commits.126.length",
+      "path": "commits.126.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.126.short",
+      "path": "commits.126.short",
+      "expected": "000007f"
+    },
+    {
+      "question": "oracle preserves commits.126.author",
+      "path": "commits.126.author",
+      "expected": "Author 127"
+    },
+    {
+      "question": "oracle preserves commits.126.date",
+      "path": "commits.126.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.126.subject",
+      "path": "commits.126.subject",
+      "expected": "Recorded benchmark commit 127"
+    },
+    {
+      "question": "oracle preserves commits.127.length",
+      "path": "commits.127.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.127.short",
+      "path": "commits.127.short",
+      "expected": "0000080"
+    },
+    {
+      "question": "oracle preserves commits.127.author",
+      "path": "commits.127.author",
+      "expected": "Author 128"
+    },
+    {
+      "question": "oracle preserves commits.127.date",
+      "path": "commits.127.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.127.subject",
+      "path": "commits.127.subject",
+      "expected": "Recorded benchmark commit 128"
+    },
+    {
+      "question": "oracle preserves commits.128.length",
+      "path": "commits.128.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.128.short",
+      "path": "commits.128.short",
+      "expected": "0000081"
+    },
+    {
+      "question": "oracle preserves commits.128.author",
+      "path": "commits.128.author",
+      "expected": "Author 129"
+    },
+    {
+      "question": "oracle preserves commits.128.date",
+      "path": "commits.128.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.128.subject",
+      "path": "commits.128.subject",
+      "expected": "Recorded benchmark commit 129"
+    },
+    {
+      "question": "oracle preserves commits.129.length",
+      "path": "commits.129.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.129.short",
+      "path": "commits.129.short",
+      "expected": "0000082"
+    },
+    {
+      "question": "oracle preserves commits.129.author",
+      "path": "commits.129.author",
+      "expected": "Author 130"
+    },
+    {
+      "question": "oracle preserves commits.129.date",
+      "path": "commits.129.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.129.subject",
+      "path": "commits.129.subject",
+      "expected": "Recorded benchmark commit 130"
+    },
+    {
+      "question": "oracle preserves commits.130.length",
+      "path": "commits.130.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.130.short",
+      "path": "commits.130.short",
+      "expected": "0000083"
+    },
+    {
+      "question": "oracle preserves commits.130.author",
+      "path": "commits.130.author",
+      "expected": "Author 131"
+    },
+    {
+      "question": "oracle preserves commits.130.date",
+      "path": "commits.130.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.130.subject",
+      "path": "commits.130.subject",
+      "expected": "Recorded benchmark commit 131"
+    },
+    {
+      "question": "oracle preserves commits.131.length",
+      "path": "commits.131.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.131.short",
+      "path": "commits.131.short",
+      "expected": "0000084"
+    },
+    {
+      "question": "oracle preserves commits.131.author",
+      "path": "commits.131.author",
+      "expected": "Author 132"
+    },
+    {
+      "question": "oracle preserves commits.131.date",
+      "path": "commits.131.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.131.subject",
+      "path": "commits.131.subject",
+      "expected": "Recorded benchmark commit 132"
+    },
+    {
+      "question": "oracle preserves commits.132.length",
+      "path": "commits.132.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.132.short",
+      "path": "commits.132.short",
+      "expected": "0000085"
+    },
+    {
+      "question": "oracle preserves commits.132.author",
+      "path": "commits.132.author",
+      "expected": "Author 133"
+    },
+    {
+      "question": "oracle preserves commits.132.date",
+      "path": "commits.132.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.132.subject",
+      "path": "commits.132.subject",
+      "expected": "Recorded benchmark commit 133"
+    },
+    {
+      "question": "oracle preserves commits.133.length",
+      "path": "commits.133.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.133.short",
+      "path": "commits.133.short",
+      "expected": "0000086"
+    },
+    {
+      "question": "oracle preserves commits.133.author",
+      "path": "commits.133.author",
+      "expected": "Author 134"
+    },
+    {
+      "question": "oracle preserves commits.133.date",
+      "path": "commits.133.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.133.subject",
+      "path": "commits.133.subject",
+      "expected": "Recorded benchmark commit 134"
+    },
+    {
+      "question": "oracle preserves commits.134.length",
+      "path": "commits.134.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.134.short",
+      "path": "commits.134.short",
+      "expected": "0000087"
+    },
+    {
+      "question": "oracle preserves commits.134.author",
+      "path": "commits.134.author",
+      "expected": "Author 135"
+    },
+    {
+      "question": "oracle preserves commits.134.date",
+      "path": "commits.134.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.134.subject",
+      "path": "commits.134.subject",
+      "expected": "Recorded benchmark commit 135"
+    },
+    {
+      "question": "oracle preserves commits.135.length",
+      "path": "commits.135.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.135.short",
+      "path": "commits.135.short",
+      "expected": "0000088"
+    },
+    {
+      "question": "oracle preserves commits.135.author",
+      "path": "commits.135.author",
+      "expected": "Author 136"
+    },
+    {
+      "question": "oracle preserves commits.135.date",
+      "path": "commits.135.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.135.subject",
+      "path": "commits.135.subject",
+      "expected": "Recorded benchmark commit 136"
+    },
+    {
+      "question": "oracle preserves commits.136.length",
+      "path": "commits.136.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.136.short",
+      "path": "commits.136.short",
+      "expected": "0000089"
+    },
+    {
+      "question": "oracle preserves commits.136.author",
+      "path": "commits.136.author",
+      "expected": "Author 137"
+    },
+    {
+      "question": "oracle preserves commits.136.date",
+      "path": "commits.136.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.136.subject",
+      "path": "commits.136.subject",
+      "expected": "Recorded benchmark commit 137"
+    },
+    {
+      "question": "oracle preserves commits.137.length",
+      "path": "commits.137.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.137.short",
+      "path": "commits.137.short",
+      "expected": "000008a"
+    },
+    {
+      "question": "oracle preserves commits.137.author",
+      "path": "commits.137.author",
+      "expected": "Author 138"
+    },
+    {
+      "question": "oracle preserves commits.137.date",
+      "path": "commits.137.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.137.subject",
+      "path": "commits.137.subject",
+      "expected": "Recorded benchmark commit 138"
+    },
+    {
+      "question": "oracle preserves commits.138.length",
+      "path": "commits.138.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.138.short",
+      "path": "commits.138.short",
+      "expected": "000008b"
+    },
+    {
+      "question": "oracle preserves commits.138.author",
+      "path": "commits.138.author",
+      "expected": "Author 139"
+    },
+    {
+      "question": "oracle preserves commits.138.date",
+      "path": "commits.138.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.138.subject",
+      "path": "commits.138.subject",
+      "expected": "Recorded benchmark commit 139"
+    },
+    {
+      "question": "oracle preserves commits.139.length",
+      "path": "commits.139.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.139.short",
+      "path": "commits.139.short",
+      "expected": "000008c"
+    },
+    {
+      "question": "oracle preserves commits.139.author",
+      "path": "commits.139.author",
+      "expected": "Author 140"
+    },
+    {
+      "question": "oracle preserves commits.139.date",
+      "path": "commits.139.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.139.subject",
+      "path": "commits.139.subject",
+      "expected": "Recorded benchmark commit 140"
+    },
+    {
+      "question": "oracle preserves commits.140.length",
+      "path": "commits.140.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.140.short",
+      "path": "commits.140.short",
+      "expected": "000008d"
+    },
+    {
+      "question": "oracle preserves commits.140.author",
+      "path": "commits.140.author",
+      "expected": "Author 141"
+    },
+    {
+      "question": "oracle preserves commits.140.date",
+      "path": "commits.140.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.140.subject",
+      "path": "commits.140.subject",
+      "expected": "Recorded benchmark commit 141"
+    },
+    {
+      "question": "oracle preserves commits.141.length",
+      "path": "commits.141.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.141.short",
+      "path": "commits.141.short",
+      "expected": "000008e"
+    },
+    {
+      "question": "oracle preserves commits.141.author",
+      "path": "commits.141.author",
+      "expected": "Author 142"
+    },
+    {
+      "question": "oracle preserves commits.141.date",
+      "path": "commits.141.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.141.subject",
+      "path": "commits.141.subject",
+      "expected": "Recorded benchmark commit 142"
+    },
+    {
+      "question": "oracle preserves commits.142.length",
+      "path": "commits.142.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.142.short",
+      "path": "commits.142.short",
+      "expected": "000008f"
+    },
+    {
+      "question": "oracle preserves commits.142.author",
+      "path": "commits.142.author",
+      "expected": "Author 143"
+    },
+    {
+      "question": "oracle preserves commits.142.date",
+      "path": "commits.142.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.142.subject",
+      "path": "commits.142.subject",
+      "expected": "Recorded benchmark commit 143"
+    },
+    {
+      "question": "oracle preserves commits.143.length",
+      "path": "commits.143.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.143.short",
+      "path": "commits.143.short",
+      "expected": "0000090"
+    },
+    {
+      "question": "oracle preserves commits.143.author",
+      "path": "commits.143.author",
+      "expected": "Author 144"
+    },
+    {
+      "question": "oracle preserves commits.143.date",
+      "path": "commits.143.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.143.subject",
+      "path": "commits.143.subject",
+      "expected": "Recorded benchmark commit 144"
+    },
+    {
+      "question": "oracle preserves commits.144.length",
+      "path": "commits.144.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.144.short",
+      "path": "commits.144.short",
+      "expected": "0000091"
+    },
+    {
+      "question": "oracle preserves commits.144.author",
+      "path": "commits.144.author",
+      "expected": "Author 145"
+    },
+    {
+      "question": "oracle preserves commits.144.date",
+      "path": "commits.144.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.144.subject",
+      "path": "commits.144.subject",
+      "expected": "Recorded benchmark commit 145"
+    },
+    {
+      "question": "oracle preserves commits.145.length",
+      "path": "commits.145.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.145.short",
+      "path": "commits.145.short",
+      "expected": "0000092"
+    },
+    {
+      "question": "oracle preserves commits.145.author",
+      "path": "commits.145.author",
+      "expected": "Author 146"
+    },
+    {
+      "question": "oracle preserves commits.145.date",
+      "path": "commits.145.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.145.subject",
+      "path": "commits.145.subject",
+      "expected": "Recorded benchmark commit 146"
+    },
+    {
+      "question": "oracle preserves commits.146.length",
+      "path": "commits.146.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.146.short",
+      "path": "commits.146.short",
+      "expected": "0000093"
+    },
+    {
+      "question": "oracle preserves commits.146.author",
+      "path": "commits.146.author",
+      "expected": "Author 147"
+    },
+    {
+      "question": "oracle preserves commits.146.date",
+      "path": "commits.146.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.146.subject",
+      "path": "commits.146.subject",
+      "expected": "Recorded benchmark commit 147"
+    },
+    {
+      "question": "oracle preserves commits.147.length",
+      "path": "commits.147.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.147.short",
+      "path": "commits.147.short",
+      "expected": "0000094"
+    },
+    {
+      "question": "oracle preserves commits.147.author",
+      "path": "commits.147.author",
+      "expected": "Author 148"
+    },
+    {
+      "question": "oracle preserves commits.147.date",
+      "path": "commits.147.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.147.subject",
+      "path": "commits.147.subject",
+      "expected": "Recorded benchmark commit 148"
+    },
+    {
+      "question": "oracle preserves commits.148.length",
+      "path": "commits.148.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.148.short",
+      "path": "commits.148.short",
+      "expected": "0000095"
+    },
+    {
+      "question": "oracle preserves commits.148.author",
+      "path": "commits.148.author",
+      "expected": "Author 149"
+    },
+    {
+      "question": "oracle preserves commits.148.date",
+      "path": "commits.148.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.148.subject",
+      "path": "commits.148.subject",
+      "expected": "Recorded benchmark commit 149"
+    },
+    {
+      "question": "oracle preserves commits.149.length",
+      "path": "commits.149.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.149.short",
+      "path": "commits.149.short",
+      "expected": "0000096"
+    },
+    {
+      "question": "oracle preserves commits.149.author",
+      "path": "commits.149.author",
+      "expected": "Author 150"
+    },
+    {
+      "question": "oracle preserves commits.149.date",
+      "path": "commits.149.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.149.subject",
+      "path": "commits.149.subject",
+      "expected": "Recorded benchmark commit 150"
+    },
+    {
+      "question": "oracle preserves commits.150.length",
+      "path": "commits.150.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.150.short",
+      "path": "commits.150.short",
+      "expected": "0000097"
+    },
+    {
+      "question": "oracle preserves commits.150.author",
+      "path": "commits.150.author",
+      "expected": "Author 151"
+    },
+    {
+      "question": "oracle preserves commits.150.date",
+      "path": "commits.150.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.150.subject",
+      "path": "commits.150.subject",
+      "expected": "Recorded benchmark commit 151"
+    },
+    {
+      "question": "oracle preserves commits.151.length",
+      "path": "commits.151.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.151.short",
+      "path": "commits.151.short",
+      "expected": "0000098"
+    },
+    {
+      "question": "oracle preserves commits.151.author",
+      "path": "commits.151.author",
+      "expected": "Author 152"
+    },
+    {
+      "question": "oracle preserves commits.151.date",
+      "path": "commits.151.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.151.subject",
+      "path": "commits.151.subject",
+      "expected": "Recorded benchmark commit 152"
+    },
+    {
+      "question": "oracle preserves commits.152.length",
+      "path": "commits.152.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.152.short",
+      "path": "commits.152.short",
+      "expected": "0000099"
+    },
+    {
+      "question": "oracle preserves commits.152.author",
+      "path": "commits.152.author",
+      "expected": "Author 153"
+    },
+    {
+      "question": "oracle preserves commits.152.date",
+      "path": "commits.152.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.152.subject",
+      "path": "commits.152.subject",
+      "expected": "Recorded benchmark commit 153"
+    },
+    {
+      "question": "oracle preserves commits.153.length",
+      "path": "commits.153.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.153.short",
+      "path": "commits.153.short",
+      "expected": "000009a"
+    },
+    {
+      "question": "oracle preserves commits.153.author",
+      "path": "commits.153.author",
+      "expected": "Author 154"
+    },
+    {
+      "question": "oracle preserves commits.153.date",
+      "path": "commits.153.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.153.subject",
+      "path": "commits.153.subject",
+      "expected": "Recorded benchmark commit 154"
+    },
+    {
+      "question": "oracle preserves commits.154.length",
+      "path": "commits.154.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.154.short",
+      "path": "commits.154.short",
+      "expected": "000009b"
+    },
+    {
+      "question": "oracle preserves commits.154.author",
+      "path": "commits.154.author",
+      "expected": "Author 155"
+    },
+    {
+      "question": "oracle preserves commits.154.date",
+      "path": "commits.154.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.154.subject",
+      "path": "commits.154.subject",
+      "expected": "Recorded benchmark commit 155"
+    },
+    {
+      "question": "oracle preserves commits.155.length",
+      "path": "commits.155.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.155.short",
+      "path": "commits.155.short",
+      "expected": "000009c"
+    },
+    {
+      "question": "oracle preserves commits.155.author",
+      "path": "commits.155.author",
+      "expected": "Author 156"
+    },
+    {
+      "question": "oracle preserves commits.155.date",
+      "path": "commits.155.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.155.subject",
+      "path": "commits.155.subject",
+      "expected": "Recorded benchmark commit 156"
+    },
+    {
+      "question": "oracle preserves commits.156.length",
+      "path": "commits.156.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.156.short",
+      "path": "commits.156.short",
+      "expected": "000009d"
+    },
+    {
+      "question": "oracle preserves commits.156.author",
+      "path": "commits.156.author",
+      "expected": "Author 157"
+    },
+    {
+      "question": "oracle preserves commits.156.date",
+      "path": "commits.156.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.156.subject",
+      "path": "commits.156.subject",
+      "expected": "Recorded benchmark commit 157"
+    },
+    {
+      "question": "oracle preserves commits.157.length",
+      "path": "commits.157.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.157.short",
+      "path": "commits.157.short",
+      "expected": "000009e"
+    },
+    {
+      "question": "oracle preserves commits.157.author",
+      "path": "commits.157.author",
+      "expected": "Author 158"
+    },
+    {
+      "question": "oracle preserves commits.157.date",
+      "path": "commits.157.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.157.subject",
+      "path": "commits.157.subject",
+      "expected": "Recorded benchmark commit 158"
+    },
+    {
+      "question": "oracle preserves commits.158.length",
+      "path": "commits.158.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.158.short",
+      "path": "commits.158.short",
+      "expected": "000009f"
+    },
+    {
+      "question": "oracle preserves commits.158.author",
+      "path": "commits.158.author",
+      "expected": "Author 159"
+    },
+    {
+      "question": "oracle preserves commits.158.date",
+      "path": "commits.158.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.158.subject",
+      "path": "commits.158.subject",
+      "expected": "Recorded benchmark commit 159"
+    },
+    {
+      "question": "oracle preserves commits.159.length",
+      "path": "commits.159.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.159.short",
+      "path": "commits.159.short",
+      "expected": "00000a0"
+    },
+    {
+      "question": "oracle preserves commits.159.author",
+      "path": "commits.159.author",
+      "expected": "Author 160"
+    },
+    {
+      "question": "oracle preserves commits.159.date",
+      "path": "commits.159.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.159.subject",
+      "path": "commits.159.subject",
+      "expected": "Recorded benchmark commit 160"
+    },
+    {
+      "question": "oracle preserves commits.160.length",
+      "path": "commits.160.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.160.short",
+      "path": "commits.160.short",
+      "expected": "00000a1"
+    },
+    {
+      "question": "oracle preserves commits.160.author",
+      "path": "commits.160.author",
+      "expected": "Author 161"
+    },
+    {
+      "question": "oracle preserves commits.160.date",
+      "path": "commits.160.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.160.subject",
+      "path": "commits.160.subject",
+      "expected": "Recorded benchmark commit 161"
+    },
+    {
+      "question": "oracle preserves commits.161.length",
+      "path": "commits.161.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.161.short",
+      "path": "commits.161.short",
+      "expected": "00000a2"
+    },
+    {
+      "question": "oracle preserves commits.161.author",
+      "path": "commits.161.author",
+      "expected": "Author 162"
+    },
+    {
+      "question": "oracle preserves commits.161.date",
+      "path": "commits.161.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.161.subject",
+      "path": "commits.161.subject",
+      "expected": "Recorded benchmark commit 162"
+    },
+    {
+      "question": "oracle preserves commits.162.length",
+      "path": "commits.162.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.162.short",
+      "path": "commits.162.short",
+      "expected": "00000a3"
+    },
+    {
+      "question": "oracle preserves commits.162.author",
+      "path": "commits.162.author",
+      "expected": "Author 163"
+    },
+    {
+      "question": "oracle preserves commits.162.date",
+      "path": "commits.162.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.162.subject",
+      "path": "commits.162.subject",
+      "expected": "Recorded benchmark commit 163"
+    },
+    {
+      "question": "oracle preserves commits.163.length",
+      "path": "commits.163.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.163.short",
+      "path": "commits.163.short",
+      "expected": "00000a4"
+    },
+    {
+      "question": "oracle preserves commits.163.author",
+      "path": "commits.163.author",
+      "expected": "Author 164"
+    },
+    {
+      "question": "oracle preserves commits.163.date",
+      "path": "commits.163.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.163.subject",
+      "path": "commits.163.subject",
+      "expected": "Recorded benchmark commit 164"
+    },
+    {
+      "question": "oracle preserves commits.164.length",
+      "path": "commits.164.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.164.short",
+      "path": "commits.164.short",
+      "expected": "00000a5"
+    },
+    {
+      "question": "oracle preserves commits.164.author",
+      "path": "commits.164.author",
+      "expected": "Author 165"
+    },
+    {
+      "question": "oracle preserves commits.164.date",
+      "path": "commits.164.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.164.subject",
+      "path": "commits.164.subject",
+      "expected": "Recorded benchmark commit 165"
+    },
+    {
+      "question": "oracle preserves commits.165.length",
+      "path": "commits.165.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.165.short",
+      "path": "commits.165.short",
+      "expected": "00000a6"
+    },
+    {
+      "question": "oracle preserves commits.165.author",
+      "path": "commits.165.author",
+      "expected": "Author 166"
+    },
+    {
+      "question": "oracle preserves commits.165.date",
+      "path": "commits.165.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.165.subject",
+      "path": "commits.165.subject",
+      "expected": "Recorded benchmark commit 166"
+    },
+    {
+      "question": "oracle preserves commits.166.length",
+      "path": "commits.166.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.166.short",
+      "path": "commits.166.short",
+      "expected": "00000a7"
+    },
+    {
+      "question": "oracle preserves commits.166.author",
+      "path": "commits.166.author",
+      "expected": "Author 167"
+    },
+    {
+      "question": "oracle preserves commits.166.date",
+      "path": "commits.166.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.166.subject",
+      "path": "commits.166.subject",
+      "expected": "Recorded benchmark commit 167"
+    },
+    {
+      "question": "oracle preserves commits.167.length",
+      "path": "commits.167.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.167.short",
+      "path": "commits.167.short",
+      "expected": "00000a8"
+    },
+    {
+      "question": "oracle preserves commits.167.author",
+      "path": "commits.167.author",
+      "expected": "Author 168"
+    },
+    {
+      "question": "oracle preserves commits.167.date",
+      "path": "commits.167.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.167.subject",
+      "path": "commits.167.subject",
+      "expected": "Recorded benchmark commit 168"
+    },
+    {
+      "question": "oracle preserves commits.168.length",
+      "path": "commits.168.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.168.short",
+      "path": "commits.168.short",
+      "expected": "00000a9"
+    },
+    {
+      "question": "oracle preserves commits.168.author",
+      "path": "commits.168.author",
+      "expected": "Author 169"
+    },
+    {
+      "question": "oracle preserves commits.168.date",
+      "path": "commits.168.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.168.subject",
+      "path": "commits.168.subject",
+      "expected": "Recorded benchmark commit 169"
+    },
+    {
+      "question": "oracle preserves commits.169.length",
+      "path": "commits.169.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.169.short",
+      "path": "commits.169.short",
+      "expected": "00000aa"
+    },
+    {
+      "question": "oracle preserves commits.169.author",
+      "path": "commits.169.author",
+      "expected": "Author 170"
+    },
+    {
+      "question": "oracle preserves commits.169.date",
+      "path": "commits.169.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.169.subject",
+      "path": "commits.169.subject",
+      "expected": "Recorded benchmark commit 170"
+    },
+    {
+      "question": "oracle preserves commits.170.length",
+      "path": "commits.170.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.170.short",
+      "path": "commits.170.short",
+      "expected": "00000ab"
+    },
+    {
+      "question": "oracle preserves commits.170.author",
+      "path": "commits.170.author",
+      "expected": "Author 171"
+    },
+    {
+      "question": "oracle preserves commits.170.date",
+      "path": "commits.170.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.170.subject",
+      "path": "commits.170.subject",
+      "expected": "Recorded benchmark commit 171"
+    },
+    {
+      "question": "oracle preserves commits.171.length",
+      "path": "commits.171.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.171.short",
+      "path": "commits.171.short",
+      "expected": "00000ac"
+    },
+    {
+      "question": "oracle preserves commits.171.author",
+      "path": "commits.171.author",
+      "expected": "Author 172"
+    },
+    {
+      "question": "oracle preserves commits.171.date",
+      "path": "commits.171.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.171.subject",
+      "path": "commits.171.subject",
+      "expected": "Recorded benchmark commit 172"
+    },
+    {
+      "question": "oracle preserves commits.172.length",
+      "path": "commits.172.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.172.short",
+      "path": "commits.172.short",
+      "expected": "00000ad"
+    },
+    {
+      "question": "oracle preserves commits.172.author",
+      "path": "commits.172.author",
+      "expected": "Author 173"
+    },
+    {
+      "question": "oracle preserves commits.172.date",
+      "path": "commits.172.date",
+      "expected": "2026-07-06"
+    },
+    {
+      "question": "oracle preserves commits.172.subject",
+      "path": "commits.172.subject",
+      "expected": "Recorded benchmark commit 173"
+    },
+    {
+      "question": "oracle preserves commits.173.length",
+      "path": "commits.173.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.173.short",
+      "path": "commits.173.short",
+      "expected": "00000ae"
+    },
+    {
+      "question": "oracle preserves commits.173.author",
+      "path": "commits.173.author",
+      "expected": "Author 174"
+    },
+    {
+      "question": "oracle preserves commits.173.date",
+      "path": "commits.173.date",
+      "expected": "2026-07-07"
+    },
+    {
+      "question": "oracle preserves commits.173.subject",
+      "path": "commits.173.subject",
+      "expected": "Recorded benchmark commit 174"
+    },
+    {
+      "question": "oracle preserves commits.174.length",
+      "path": "commits.174.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.174.short",
+      "path": "commits.174.short",
+      "expected": "00000af"
+    },
+    {
+      "question": "oracle preserves commits.174.author",
+      "path": "commits.174.author",
+      "expected": "Author 175"
+    },
+    {
+      "question": "oracle preserves commits.174.date",
+      "path": "commits.174.date",
+      "expected": "2026-07-08"
+    },
+    {
+      "question": "oracle preserves commits.174.subject",
+      "path": "commits.174.subject",
+      "expected": "Recorded benchmark commit 175"
+    },
+    {
+      "question": "oracle preserves commits.175.length",
+      "path": "commits.175.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.175.short",
+      "path": "commits.175.short",
+      "expected": "00000b0"
+    },
+    {
+      "question": "oracle preserves commits.175.author",
+      "path": "commits.175.author",
+      "expected": "Author 176"
+    },
+    {
+      "question": "oracle preserves commits.175.date",
+      "path": "commits.175.date",
+      "expected": "2026-07-09"
+    },
+    {
+      "question": "oracle preserves commits.175.subject",
+      "path": "commits.175.subject",
+      "expected": "Recorded benchmark commit 176"
+    },
+    {
+      "question": "oracle preserves commits.176.length",
+      "path": "commits.176.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.176.short",
+      "path": "commits.176.short",
+      "expected": "00000b1"
+    },
+    {
+      "question": "oracle preserves commits.176.author",
+      "path": "commits.176.author",
+      "expected": "Author 177"
+    },
+    {
+      "question": "oracle preserves commits.176.date",
+      "path": "commits.176.date",
+      "expected": "2026-07-10"
+    },
+    {
+      "question": "oracle preserves commits.176.subject",
+      "path": "commits.176.subject",
+      "expected": "Recorded benchmark commit 177"
+    },
+    {
+      "question": "oracle preserves commits.177.length",
+      "path": "commits.177.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.177.short",
+      "path": "commits.177.short",
+      "expected": "00000b2"
+    },
+    {
+      "question": "oracle preserves commits.177.author",
+      "path": "commits.177.author",
+      "expected": "Author 178"
+    },
+    {
+      "question": "oracle preserves commits.177.date",
+      "path": "commits.177.date",
+      "expected": "2026-07-11"
+    },
+    {
+      "question": "oracle preserves commits.177.subject",
+      "path": "commits.177.subject",
+      "expected": "Recorded benchmark commit 178"
+    },
+    {
+      "question": "oracle preserves commits.178.length",
+      "path": "commits.178.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.178.short",
+      "path": "commits.178.short",
+      "expected": "00000b3"
+    },
+    {
+      "question": "oracle preserves commits.178.author",
+      "path": "commits.178.author",
+      "expected": "Author 179"
+    },
+    {
+      "question": "oracle preserves commits.178.date",
+      "path": "commits.178.date",
+      "expected": "2026-07-12"
+    },
+    {
+      "question": "oracle preserves commits.178.subject",
+      "path": "commits.178.subject",
+      "expected": "Recorded benchmark commit 179"
+    },
+    {
+      "question": "oracle preserves commits.179.length",
+      "path": "commits.179.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.179.short",
+      "path": "commits.179.short",
+      "expected": "00000b4"
+    },
+    {
+      "question": "oracle preserves commits.179.author",
+      "path": "commits.179.author",
+      "expected": "Author 180"
+    },
+    {
+      "question": "oracle preserves commits.179.date",
+      "path": "commits.179.date",
+      "expected": "2026-07-13"
+    },
+    {
+      "question": "oracle preserves commits.179.subject",
+      "path": "commits.179.subject",
+      "expected": "Recorded benchmark commit 180"
+    },
+    {
+      "question": "oracle preserves commits.180.length",
+      "path": "commits.180.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.180.short",
+      "path": "commits.180.short",
+      "expected": "00000b5"
+    },
+    {
+      "question": "oracle preserves commits.180.author",
+      "path": "commits.180.author",
+      "expected": "Author 181"
+    },
+    {
+      "question": "oracle preserves commits.180.date",
+      "path": "commits.180.date",
+      "expected": "2026-07-14"
+    },
+    {
+      "question": "oracle preserves commits.180.subject",
+      "path": "commits.180.subject",
+      "expected": "Recorded benchmark commit 181"
+    },
+    {
+      "question": "oracle preserves commits.181.length",
+      "path": "commits.181.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.181.short",
+      "path": "commits.181.short",
+      "expected": "00000b6"
+    },
+    {
+      "question": "oracle preserves commits.181.author",
+      "path": "commits.181.author",
+      "expected": "Author 182"
+    },
+    {
+      "question": "oracle preserves commits.181.date",
+      "path": "commits.181.date",
+      "expected": "2026-07-15"
+    },
+    {
+      "question": "oracle preserves commits.181.subject",
+      "path": "commits.181.subject",
+      "expected": "Recorded benchmark commit 182"
+    },
+    {
+      "question": "oracle preserves commits.182.length",
+      "path": "commits.182.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.182.short",
+      "path": "commits.182.short",
+      "expected": "00000b7"
+    },
+    {
+      "question": "oracle preserves commits.182.author",
+      "path": "commits.182.author",
+      "expected": "Author 183"
+    },
+    {
+      "question": "oracle preserves commits.182.date",
+      "path": "commits.182.date",
+      "expected": "2026-07-16"
+    },
+    {
+      "question": "oracle preserves commits.182.subject",
+      "path": "commits.182.subject",
+      "expected": "Recorded benchmark commit 183"
+    },
+    {
+      "question": "oracle preserves commits.183.length",
+      "path": "commits.183.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.183.short",
+      "path": "commits.183.short",
+      "expected": "00000b8"
+    },
+    {
+      "question": "oracle preserves commits.183.author",
+      "path": "commits.183.author",
+      "expected": "Author 184"
+    },
+    {
+      "question": "oracle preserves commits.183.date",
+      "path": "commits.183.date",
+      "expected": "2026-07-17"
+    },
+    {
+      "question": "oracle preserves commits.183.subject",
+      "path": "commits.183.subject",
+      "expected": "Recorded benchmark commit 184"
+    },
+    {
+      "question": "oracle preserves commits.184.length",
+      "path": "commits.184.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.184.short",
+      "path": "commits.184.short",
+      "expected": "00000b9"
+    },
+    {
+      "question": "oracle preserves commits.184.author",
+      "path": "commits.184.author",
+      "expected": "Author 185"
+    },
+    {
+      "question": "oracle preserves commits.184.date",
+      "path": "commits.184.date",
+      "expected": "2026-07-18"
+    },
+    {
+      "question": "oracle preserves commits.184.subject",
+      "path": "commits.184.subject",
+      "expected": "Recorded benchmark commit 185"
+    },
+    {
+      "question": "oracle preserves commits.185.length",
+      "path": "commits.185.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.185.short",
+      "path": "commits.185.short",
+      "expected": "00000ba"
+    },
+    {
+      "question": "oracle preserves commits.185.author",
+      "path": "commits.185.author",
+      "expected": "Author 186"
+    },
+    {
+      "question": "oracle preserves commits.185.date",
+      "path": "commits.185.date",
+      "expected": "2026-07-19"
+    },
+    {
+      "question": "oracle preserves commits.185.subject",
+      "path": "commits.185.subject",
+      "expected": "Recorded benchmark commit 186"
+    },
+    {
+      "question": "oracle preserves commits.186.length",
+      "path": "commits.186.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.186.short",
+      "path": "commits.186.short",
+      "expected": "00000bb"
+    },
+    {
+      "question": "oracle preserves commits.186.author",
+      "path": "commits.186.author",
+      "expected": "Author 187"
+    },
+    {
+      "question": "oracle preserves commits.186.date",
+      "path": "commits.186.date",
+      "expected": "2026-07-20"
+    },
+    {
+      "question": "oracle preserves commits.186.subject",
+      "path": "commits.186.subject",
+      "expected": "Recorded benchmark commit 187"
+    },
+    {
+      "question": "oracle preserves commits.187.length",
+      "path": "commits.187.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.187.short",
+      "path": "commits.187.short",
+      "expected": "00000bc"
+    },
+    {
+      "question": "oracle preserves commits.187.author",
+      "path": "commits.187.author",
+      "expected": "Author 188"
+    },
+    {
+      "question": "oracle preserves commits.187.date",
+      "path": "commits.187.date",
+      "expected": "2026-07-21"
+    },
+    {
+      "question": "oracle preserves commits.187.subject",
+      "path": "commits.187.subject",
+      "expected": "Recorded benchmark commit 188"
+    },
+    {
+      "question": "oracle preserves commits.188.length",
+      "path": "commits.188.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.188.short",
+      "path": "commits.188.short",
+      "expected": "00000bd"
+    },
+    {
+      "question": "oracle preserves commits.188.author",
+      "path": "commits.188.author",
+      "expected": "Author 189"
+    },
+    {
+      "question": "oracle preserves commits.188.date",
+      "path": "commits.188.date",
+      "expected": "2026-07-22"
+    },
+    {
+      "question": "oracle preserves commits.188.subject",
+      "path": "commits.188.subject",
+      "expected": "Recorded benchmark commit 189"
+    },
+    {
+      "question": "oracle preserves commits.189.length",
+      "path": "commits.189.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.189.short",
+      "path": "commits.189.short",
+      "expected": "00000be"
+    },
+    {
+      "question": "oracle preserves commits.189.author",
+      "path": "commits.189.author",
+      "expected": "Author 190"
+    },
+    {
+      "question": "oracle preserves commits.189.date",
+      "path": "commits.189.date",
+      "expected": "2026-07-23"
+    },
+    {
+      "question": "oracle preserves commits.189.subject",
+      "path": "commits.189.subject",
+      "expected": "Recorded benchmark commit 190"
+    },
+    {
+      "question": "oracle preserves commits.190.length",
+      "path": "commits.190.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.190.short",
+      "path": "commits.190.short",
+      "expected": "00000bf"
+    },
+    {
+      "question": "oracle preserves commits.190.author",
+      "path": "commits.190.author",
+      "expected": "Author 191"
+    },
+    {
+      "question": "oracle preserves commits.190.date",
+      "path": "commits.190.date",
+      "expected": "2026-07-24"
+    },
+    {
+      "question": "oracle preserves commits.190.subject",
+      "path": "commits.190.subject",
+      "expected": "Recorded benchmark commit 191"
+    },
+    {
+      "question": "oracle preserves commits.191.length",
+      "path": "commits.191.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.191.short",
+      "path": "commits.191.short",
+      "expected": "00000c0"
+    },
+    {
+      "question": "oracle preserves commits.191.author",
+      "path": "commits.191.author",
+      "expected": "Author 192"
+    },
+    {
+      "question": "oracle preserves commits.191.date",
+      "path": "commits.191.date",
+      "expected": "2026-07-25"
+    },
+    {
+      "question": "oracle preserves commits.191.subject",
+      "path": "commits.191.subject",
+      "expected": "Recorded benchmark commit 192"
+    },
+    {
+      "question": "oracle preserves commits.192.length",
+      "path": "commits.192.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.192.short",
+      "path": "commits.192.short",
+      "expected": "00000c1"
+    },
+    {
+      "question": "oracle preserves commits.192.author",
+      "path": "commits.192.author",
+      "expected": "Author 193"
+    },
+    {
+      "question": "oracle preserves commits.192.date",
+      "path": "commits.192.date",
+      "expected": "2026-07-26"
+    },
+    {
+      "question": "oracle preserves commits.192.subject",
+      "path": "commits.192.subject",
+      "expected": "Recorded benchmark commit 193"
+    },
+    {
+      "question": "oracle preserves commits.193.length",
+      "path": "commits.193.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.193.short",
+      "path": "commits.193.short",
+      "expected": "00000c2"
+    },
+    {
+      "question": "oracle preserves commits.193.author",
+      "path": "commits.193.author",
+      "expected": "Author 194"
+    },
+    {
+      "question": "oracle preserves commits.193.date",
+      "path": "commits.193.date",
+      "expected": "2026-07-27"
+    },
+    {
+      "question": "oracle preserves commits.193.subject",
+      "path": "commits.193.subject",
+      "expected": "Recorded benchmark commit 194"
+    },
+    {
+      "question": "oracle preserves commits.194.length",
+      "path": "commits.194.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.194.short",
+      "path": "commits.194.short",
+      "expected": "00000c3"
+    },
+    {
+      "question": "oracle preserves commits.194.author",
+      "path": "commits.194.author",
+      "expected": "Author 195"
+    },
+    {
+      "question": "oracle preserves commits.194.date",
+      "path": "commits.194.date",
+      "expected": "2026-07-28"
+    },
+    {
+      "question": "oracle preserves commits.194.subject",
+      "path": "commits.194.subject",
+      "expected": "Recorded benchmark commit 195"
+    },
+    {
+      "question": "oracle preserves commits.195.length",
+      "path": "commits.195.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.195.short",
+      "path": "commits.195.short",
+      "expected": "00000c4"
+    },
+    {
+      "question": "oracle preserves commits.195.author",
+      "path": "commits.195.author",
+      "expected": "Author 196"
+    },
+    {
+      "question": "oracle preserves commits.195.date",
+      "path": "commits.195.date",
+      "expected": "2026-07-01"
+    },
+    {
+      "question": "oracle preserves commits.195.subject",
+      "path": "commits.195.subject",
+      "expected": "Recorded benchmark commit 196"
+    },
+    {
+      "question": "oracle preserves commits.196.length",
+      "path": "commits.196.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.196.short",
+      "path": "commits.196.short",
+      "expected": "00000c5"
+    },
+    {
+      "question": "oracle preserves commits.196.author",
+      "path": "commits.196.author",
+      "expected": "Author 197"
+    },
+    {
+      "question": "oracle preserves commits.196.date",
+      "path": "commits.196.date",
+      "expected": "2026-07-02"
+    },
+    {
+      "question": "oracle preserves commits.196.subject",
+      "path": "commits.196.subject",
+      "expected": "Recorded benchmark commit 197"
+    },
+    {
+      "question": "oracle preserves commits.197.length",
+      "path": "commits.197.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.197.short",
+      "path": "commits.197.short",
+      "expected": "00000c6"
+    },
+    {
+      "question": "oracle preserves commits.197.author",
+      "path": "commits.197.author",
+      "expected": "Author 198"
+    },
+    {
+      "question": "oracle preserves commits.197.date",
+      "path": "commits.197.date",
+      "expected": "2026-07-03"
+    },
+    {
+      "question": "oracle preserves commits.197.subject",
+      "path": "commits.197.subject",
+      "expected": "Recorded benchmark commit 198"
+    },
+    {
+      "question": "oracle preserves commits.198.length",
+      "path": "commits.198.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.198.short",
+      "path": "commits.198.short",
+      "expected": "00000c7"
+    },
+    {
+      "question": "oracle preserves commits.198.author",
+      "path": "commits.198.author",
+      "expected": "Author 199"
+    },
+    {
+      "question": "oracle preserves commits.198.date",
+      "path": "commits.198.date",
+      "expected": "2026-07-04"
+    },
+    {
+      "question": "oracle preserves commits.198.subject",
+      "path": "commits.198.subject",
+      "expected": "Recorded benchmark commit 199"
+    },
+    {
+      "question": "oracle preserves commits.199.length",
+      "path": "commits.199.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves commits.199.short",
+      "path": "commits.199.short",
+      "expected": "00000c8"
+    },
+    {
+      "question": "oracle preserves commits.199.author",
+      "path": "commits.199.author",
+      "expected": "Author 200"
+    },
+    {
+      "question": "oracle preserves commits.199.date",
+      "path": "commits.199.date",
+      "expected": "2026-07-05"
+    },
+    {
+      "question": "oracle preserves commits.199.subject",
+      "path": "commits.199.subject",
+      "expected": "Recorded benchmark commit 200"
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "200 commits"
     }
   ]
 }

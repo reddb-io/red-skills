@@ -1,0 +1,5 @@
+# oracle: preserves decision-relevant rows and columns from vitest-mixed; keep as compact TOON, not a scalar verdict.
+exit_code: 1
+summary: 1/4 failed · 2 suites · 2.5s
+failures[1]{suite,name,excerpt}:
+  apps/rsp/tests/math.test.ts,math divides by zero,"AssertionError: expected Infinity to equal 0\n- Expected: 0\n+ Received: Infinity\n    at math.test.ts:14:12"

@@ -1,0 +1,3 @@
+# oracle: preserves decision-relevant rows and columns from vitest-fault-green-nonzero; keep as compact TOON, not a scalar verdict.
+exit_code: 1
+summary: fault passthrough

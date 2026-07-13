@@ -1,0 +1,5 @@
+# oracle: preserves decision-relevant rows and columns from cargo-red; keep as compact TOON, not a scalar verdict.
+exit_code: 101
+summary: 1/3 failed · 1 suites · 1.8s
+failures[1]{suite,name,excerpt}:
+  replication,"replication::rejects_stale_ack","thread 'replication::rejects_stale_ack' panicked at src/replication.rs:42:9:\nassertion failed: left == right\n  left: 7\n right: 8"

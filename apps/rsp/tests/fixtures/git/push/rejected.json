@@ -1,6 +1,9 @@
 {
   "name": "push-rejected",
-  "command": ["git", "push"],
+  "command": [
+    "git",
+    "push"
+  ],
   "recorded": {
     "stdout": "",
     "stderr": "fatal: unable to access 'https://example.invalid/repo.git/': denied\n",

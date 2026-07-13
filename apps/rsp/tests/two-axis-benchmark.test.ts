@@ -40,6 +40,7 @@ describe("rsp two-axis benchmark report", () => {
       "vitest:run",
     ]);
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
+    expect(report.method.oracle_ceiling_source).toBe("fixture-adjacent hand-reviewed compact TOON renderings");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
 
@@ -56,12 +57,19 @@ describe("rsp two-axis benchmark report", () => {
       brief: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       terse: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       rtk: { fidelity_pass_rate_pct: 100, source: "recorded" },
+      oracle_capture: {
+        raw: { source: "recorded" },
+        rsp: { source: "measured" },
+        oracle_ceiling: { source: "fixture-oracle", capture_pct: 100 },
+      },
       hypothetical_active: {
         brief: { source: "measured" },
         terse: { source: "measured" },
       },
     });
     expect(typeof gitCommit?.brief.median_delta_pct).toBe("number");
+    expect(gitCommit?.oracle_capture.oracle_ceiling.token_count).toBeGreaterThan(1);
+    expect(gitCommit?.oracle_capture.rsp.capture_pct).toBeLessThanOrEqual(100);
 
     const vitest = report.filters.find((row) => row.filter === "vitest:run");
     expect(vitest).toMatchObject({
@@ -81,7 +89,13 @@ describe("rsp two-axis benchmark report", () => {
     ]));
 
     const decoded = decode(report.toon);
-    expect(decoded).toMatchObject({ benchmark: "rsp-two-axis", corpus: { fixture_count: report.corpus.fixture_count } });
+    expect(decoded).toMatchObject({
+      benchmark: "rsp-two-axis",
+      corpus: { fixture_count: report.corpus.fixture_count },
+      aggregate: { fixture_count: report.corpus.fixture_count },
+    });
+    expect(report.aggregate.oracle_ceiling.capture_pct).toBe(100);
+    expect(report.aggregate.raw.token_count).toBeGreaterThan(report.aggregate.oracle_ceiling.token_count);
   });
 
   it("writes a reproducible TOON artifact and matching human summary", async () => {
@@ -93,9 +107,10 @@ describe("rsp two-axis benchmark report", () => {
 
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
-    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | oracle tokens | rsp capture | RTK capture | brief shipped delta | brief fidelity | terse shipped delta | terse fidelity |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("Aggregate oracle ceiling:");
   });
 
   it("flags synthetic shipped token regressions beyond the threshold", async () => {

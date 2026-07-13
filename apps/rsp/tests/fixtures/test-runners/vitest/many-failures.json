@@ -1,6 +1,9 @@
 {
   "name": "vitest-many-failures",
-  "command": ["vitest", "run"],
+  "command": [
+    "vitest",
+    "run"
+  ],
   "large_output": true,
   "recorded": {
     "stdout": "{\"numTotalTests\":8,\"numPassedTests\":3,\"numFailedTests\":5,\"startTime\":1783695600000,\"endTime\":1783695603200,\"testResults\":[{\"name\":\"apps/rsp/tests/alpha.test.ts\",\"assertionResults\":[{\"fullName\":\"alpha passes\",\"title\":\"passes\",\"status\":\"passed\",\"duration\":2},{\"fullName\":\"alpha case one\",\"title\":\"case one\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: case one failed\\n- Expected: 1\\n+ Received: 2\\n    at alpha.test.ts:11:5\"],\"duration\":3},{\"fullName\":\"alpha case two\",\"title\":\"case two\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: case two failed\\n- Expected: 3\\n+ Received: 4\\n    at alpha.test.ts:19:5\"],\"duration\":3},{\"fullName\":\"alpha case three\",\"title\":\"case three\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: case three failed\\n- Expected: 5\\n+ Received: 6\\n    at alpha.test.ts:27:5\"],\"duration\":3}]},{\"name\":\"apps/rsp/tests/beta.test.ts\",\"assertionResults\":[{\"fullName\":\"beta passes twice\",\"title\":\"passes twice\",\"status\":\"passed\",\"duration\":2},{\"fullName\":\"beta stays green\",\"title\":\"stays green\",\"status\":\"passed\",\"duration\":2},{\"fullName\":\"beta case four\",\"title\":\"case four\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: case four failed\\n- Expected: 7\\n+ Received: 8\\n    at beta.test.ts:14:5\"],\"duration\":3},{\"fullName\":\"beta case five\",\"title\":\"case five\",\"status\":\"failed\",\"failureMessages\":[\"AssertionError: case five failed\\n- Expected: 9\\n+ Received: 10\\n    at beta.test.ts:22:5\"],\"duration\":3}]}]}",
@@ -40,7 +43,120 @@
     ]
   },
   "assertions": [
-    { "question": "how many failed?", "path": "summary", "expected": "5/8 failed · 2 suites · 3.2s" },
-    { "question": "what was the exit code?", "path": "exit_code", "expected": 1 }
+    {
+      "question": "what was the exit code?",
+      "path": "exit_code",
+      "expected": 1
+    },
+    {
+      "question": "how many failed?",
+      "path": "summary",
+      "expected": "5/8 failed · 2 suites · 3.2s"
+    },
+    {
+      "question": "oracle preserves failures.length",
+      "path": "failures.length",
+      "expected": 5
+    },
+    {
+      "question": "oracle preserves failures.0.length",
+      "path": "failures.0.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.0.suite",
+      "path": "failures.0.suite",
+      "expected": "apps/rsp/tests/alpha.test.ts"
+    },
+    {
+      "question": "oracle preserves failures.0.name",
+      "path": "failures.0.name",
+      "expected": "alpha case one"
+    },
+    {
+      "question": "oracle preserves failures.0.excerpt",
+      "path": "failures.0.excerpt",
+      "expected": "AssertionError: case one failed\n- Expected: 1\n+ Received: 2\n    at alpha.test.ts:11:5"
+    },
+    {
+      "question": "oracle preserves failures.1.length",
+      "path": "failures.1.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.1.suite",
+      "path": "failures.1.suite",
+      "expected": "apps/rsp/tests/alpha.test.ts"
+    },
+    {
+      "question": "oracle preserves failures.1.name",
+      "path": "failures.1.name",
+      "expected": "alpha case two"
+    },
+    {
+      "question": "oracle preserves failures.1.excerpt",
+      "path": "failures.1.excerpt",
+      "expected": "AssertionError: case two failed\n- Expected: 3\n+ Received: 4\n    at alpha.test.ts:19:5"
+    },
+    {
+      "question": "oracle preserves failures.2.length",
+      "path": "failures.2.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.2.suite",
+      "path": "failures.2.suite",
+      "expected": "apps/rsp/tests/alpha.test.ts"
+    },
+    {
+      "question": "oracle preserves failures.2.name",
+      "path": "failures.2.name",
+      "expected": "alpha case three"
+    },
+    {
+      "question": "oracle preserves failures.2.excerpt",
+      "path": "failures.2.excerpt",
+      "expected": "AssertionError: case three failed\n- Expected: 5\n+ Received: 6\n    at alpha.test.ts:27:5"
+    },
+    {
+      "question": "oracle preserves failures.3.length",
+      "path": "failures.3.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.3.suite",
+      "path": "failures.3.suite",
+      "expected": "apps/rsp/tests/beta.test.ts"
+    },
+    {
+      "question": "oracle preserves failures.3.name",
+      "path": "failures.3.name",
+      "expected": "beta case four"
+    },
+    {
+      "question": "oracle preserves failures.3.excerpt",
+      "path": "failures.3.excerpt",
+      "expected": "AssertionError: case four failed\n- Expected: 7\n+ Received: 8\n    at beta.test.ts:14:5"
+    },
+    {
+      "question": "oracle preserves failures.4.length",
+      "path": "failures.4.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves failures.4.suite",
+      "path": "failures.4.suite",
+      "expected": "apps/rsp/tests/beta.test.ts"
+    },
+    {
+      "question": "oracle preserves failures.4.name",
+      "path": "failures.4.name",
+      "expected": "beta case five"
+    },
+    {
+      "question": "oracle preserves failures.4.excerpt",
+      "path": "failures.4.excerpt",
+      "expected": "AssertionError: case five failed\n- Expected: 9\n+ Received: 10\n    at beta.test.ts:22:5"
+    }
   ]
 }

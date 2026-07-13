@@ -1,0 +1,6 @@
+# oracle: preserves decision-relevant rows and columns from log-contract; keep as compact TOON, not a scalar verdict.
+command: git log
+commits[2]{short,author,date,subject}:
+  "1111111",Ada,2026-07-10,Add rsp wrapper
+  "2222222",Ben,2026-07-09,Scaffold elision store
+summary: 2 commits

@@ -1,0 +1,5 @@
+# oracle: preserves decision-relevant rows and columns from cargo-compile-error; keep as compact TOON, not a scalar verdict.
+exit_code: 101
+summary: 1/1 failed · 1 suites · 0s
+failures[1]{suite,name,excerpt}:
+  cargo check,compile-error,"error[E0425]: cannot find value `missing_symbol` in this scope\n --> src/lib.rs:9:5\n  |\n9 |     missing_symbol\n  |     ^^^^^^^^^^^^^^ not found in this scope\n"

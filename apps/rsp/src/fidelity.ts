@@ -15,6 +15,7 @@ export interface FidelityAssertion {
 
 export interface FidelityFixture {
   name: string;
+  file: string;
   command: string[];
   large_output?: boolean;
   recorded: RecordedGitContract;
@@ -141,7 +142,7 @@ async function discoverJsonFiles(root: string): Promise<string[]> {
 function parseFixture(raw: string, file: string): FidelityFixture {
   const parsed = JSON.parse(raw) as unknown;
   if (!isFixture(parsed)) throw new Error(`invalid fidelity fixture: ${file}`);
-  return parsed;
+  return { ...parsed, file };
 }
 
 function isFixture(value: unknown): value is FidelityFixture {
