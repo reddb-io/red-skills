@@ -1,0 +1,2 @@
+# oracle: preserves decision-relevant rows and columns from commit-created; keep as compact TOON, not a scalar verdict.
+value: "commit 1234567 on feature/rsp: 2 files, +40 -1\n"
