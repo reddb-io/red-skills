@@ -34,6 +34,7 @@ import {
   humanizeCount,
   humanizeTokens,
   renderFleetBlock,
+  renderProjectVersionLabel,
   renderRspBlock,
   renderStatuslineWithPreset,
   shortModel,
@@ -124,7 +125,8 @@ function projectContent(project: ProjectInput, includeVersion = true): string {
   } else if (project.detachedSha) {
     ref = ` ${DIM}(detached ${project.detachedSha})${WHITE}`;
   }
-  const ver = includeVersion && project.version ? ` ${DIM}v${project.version}${WHITE}` : "";
+  const version = includeVersion ? renderProjectVersionLabel(project, "always") : null;
+  const ver = version ? ` ${DIM}${version}${WHITE}` : "";
   return `${GOLD}»${WHITE} ${BOLD}${project.basename}${NOBOLD}${ref}${ver}`;
 }
 
