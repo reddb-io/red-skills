@@ -4,6 +4,7 @@ import {
   runBoot,
   type BootDeps,
   type BootOptions,
+  BootHaltError,
   type OrphanDir,
   type PrecheckFacts,
   type ReconcileBootRunner,
@@ -169,6 +170,7 @@ function makeDeps(over: Partial<{
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
+  docsSweepLander: BootDeps["docsSweepLander"];
 }> = {}) {
   const calls: string[] = [];
   const fsCalls = {
@@ -250,6 +252,7 @@ function makeDeps(over: Partial<{
     env: over.env ?? {},
     config: over.config ?? {},
     ...(over.reconcileRunner ? { reconcileRunner: over.reconcileRunner } : {}),
+    ...(over.docsSweepLander ? { docsSweepLander: over.docsSweepLander } : {}),
   };
 
   return { deps, calls, fsCalls, ghCalls, gitCalls };
@@ -286,6 +289,69 @@ describe("runBoot precheck short-circuit", () => {
     expect(result.bootstrap).toBeUndefined();
     expect(result.orphanCleanup).toBeUndefined();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("runBoot Docs Sweep", () => {
+  it("lands stranded docs before the unblock sweep", async () => {
+    const blockerState: BootDeps["lookups"]["blockerState"] = async () => "CLOSED";
+    const { deps, calls } = makeDeps({
+      blockerState,
+      docsSweepLander: async (plan) => {
+        calls.push(`docs.land:${plan.files.map((f) => f.path).join(",")}`);
+        return { ok: true };
+      },
+    });
+
+    await runBoot(
+      deps,
+      options({
+        docsSweep: {
+          base: "main",
+          files: [
+            {
+              path: ".red/CONTEXT-MAP.md",
+              state: "modified",
+              group: "glossary",
+              ignored: false,
+              trackedPrecedent: true,
+            },
+          ],
+        },
+        unblockCandidates: [
+          { number: 100, labels: ["blocked:dependency"], body: "## Blocked by\n\n- [ ] #10\n" },
+        ],
+      }),
+    );
+
+    expect(calls.indexOf("docs.land:.red/CONTEXT-MAP.md")).toBeLessThan(calls.indexOf("gh.editLabels:100"));
+  });
+
+  it("halts before worker-consumable sweeps when stranded docs cannot land", async () => {
+    const { deps, calls } = makeDeps();
+    await expect(
+      runBoot(
+        deps,
+        options({
+          docsSweep: {
+            base: "main",
+            files: [
+              {
+                path: ".red/adr/0097-docs-sweep.md",
+                state: "untracked",
+                group: "adr",
+                ignored: true,
+                trackedPrecedent: false,
+              },
+            ],
+          },
+          unblockCandidates: [
+            { number: 100, labels: ["blocked:dependency"], body: "## Blocked by\n\n- [ ] #10\n" },
+          ],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(BootHaltError);
+    expect(calls).not.toContain("gh.editLabels:100");
   });
 });
 
