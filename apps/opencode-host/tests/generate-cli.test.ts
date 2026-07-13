@@ -8,13 +8,49 @@
  * half in provider-block.test.ts).
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO = resolve(__dirname, "../../..");
 const GENERATE_ENTRY = resolve(REPO, "apps/opencode-host/src/generate.ts");
+
+function writeFixturePlugins(root: string): void {
+  const dev = join(root, "dev");
+  mkdirSync(join(dev, ".claude-plugin"), { recursive: true });
+  mkdirSync(join(dev, "hooks"), { recursive: true });
+  writeFileSync(join(dev, ".claude-plugin", "plugin.json"), "{}\n", "utf8");
+  writeFileSync(
+    join(dev, "hooks", "claude.hooks.json"),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "sh -c 'red-fetch.mjs run dev rsp-instructions --runner claude --hook'",
+              },
+            ],
+          },
+        ],
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/../../dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+    "utf8",
+  );
+}
 
 function runGenerate(args: string[], env: Record<string, string | undefined>): {
   status: number;
@@ -69,7 +105,7 @@ describe("opencode-host generate (CLI smoke)", () => {
     writeFileSync(config, "plugins:\n  dev:\n    enabled: false\n", "utf8");
     const out = join(dir, "opencode.json");
     try {
-      const r = runGenerate(["--config", config, "--out", out], {});
+      const r = runGenerate(["--config", config, "--out", out, "--no-slice-2"], {});
       expect(r.status).toBe(1);
       expect(r.stderr).toMatch(/refusing to emit/);
       expect(r.stderr).toMatch(/plugins\.dev\.enabled/);
@@ -84,7 +120,7 @@ describe("opencode-host generate (CLI smoke)", () => {
     writeFileSync(config, "plugins:\n  dev:\n    enabled: true\n", "utf8");
     const out = join(dir, "opencode.json");
     try {
-      const r = runGenerate(["--config", config, "--out", out], {});
+      const r = runGenerate(["--config", config, "--out", out, "--no-slice-2"], {});
       expect(r.status).toBe(0);
       const written = readFileSync(out, "utf8");
       const jsonStart = written.indexOf("{");
@@ -120,7 +156,7 @@ describe("opencode-host generate (CLI smoke)", () => {
     );
     const out = join(dir, "opencode.json");
     try {
-      const r = runGenerate(["--config", config, "--out", out], { MINIMAX_API_KEY: "mn-test" });
+      const r = runGenerate(["--config", config, "--out", out, "--no-slice-2"], { MINIMAX_API_KEY: "mn-test" });
       expect(r.status).toBe(0);
       const written = readFileSync(out, "utf8");
       expect(written).toContain("\"model\": \"minimax/MiniMax-M3\"");
@@ -153,6 +189,41 @@ describe("opencode-host generate (CLI smoke)", () => {
       const jsonStart = r.stdout.indexOf("{");
       const parsed = JSON.parse(r.stdout.slice(jsonStart)) as { model: string };
       expect(parsed.model).toBe("openrouter/anthropic/claude-3.5-sonnet");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits the Slice 2 dist tree by default and allows opting out", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-host-"));
+    const config = join(dir, "config.yaml");
+    const plugins = join(dir, "plugins");
+    const out = join(dir, "opencode.json");
+    const outDir = join(dir, "dist", "opencode");
+    writeFileSync(config, "plugins:\n  dev:\n    enabled: true\n", "utf8");
+    writeFixturePlugins(plugins);
+    try {
+      const defaultRun = runGenerate(["--config", config, "--plugins-root", plugins, "--out", out, "--out-dir", outDir], {});
+      expect(defaultRun.status).toBe(0);
+      const preToolUse = readFileSync(join(outDir, "dev", ".opencode", "plugin", "pre-tool-use.ts"), "utf8");
+      const sessionStart = readFileSync(join(outDir, "dev", ".opencode", "plugin", "session-start.ts"), "utf8");
+      expect(preToolUse).toContain("__runRspRewrite");
+      expect(sessionStart).toContain("--runner opencode --hook");
+
+      rmSync(outDir, { recursive: true, force: true });
+      const optOutRun = runGenerate([
+        "--config",
+        config,
+        "--plugins-root",
+        plugins,
+        "--out",
+        out,
+        "--out-dir",
+        outDir,
+        "--no-slice-2",
+      ], {});
+      expect(optOutRun.status).toBe(0);
+      expect(() => readFileSync(join(outDir, "dev", ".opencode", "plugin", "pre-tool-use.ts"), "utf8")).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
