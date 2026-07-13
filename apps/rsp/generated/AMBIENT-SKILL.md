@@ -67,6 +67,22 @@ Use raw commands when exact stdout/stderr is the behavior under test, when
 a wrapper does not support the command shape, or when resolving low-level
 git conflicts where every byte matters.
 
+## Standardized Waiting
+
+Never hand-write sleep polling loops; run `rsp wait` in a background shell - process exit IS the signal.
+
+Examples:
+
+- `rsp wait pr 123 --reason "before merge"` waits for a GitHub PR's checks and reports pass/fail plus mergeable state.
+- `rsp wait run 987654321` waits for a GitHub Actions run conclusion.
+- `rsp wait run --branch feature/wait --latest` waits for the latest run on a branch.
+- `rsp wait release --tag "v2.*"` waits for the next matching release to publish.
+- `rsp wait cmd -- "pnpm -C apps/rsp build"` runs a local async command and waits for its exit.
+- `rsp wait ls` lists active waits from `.red/tmp/waits/`.
+
+Exit codes: `0` = success verdict, `1` = failure verdict, `2` = timeout/indeterminate.
+Every wait writes a live registry entry under `.red/tmp/waits/` with its target, reason, pid, started time, poll tier, and status, then removes that entry on every exit path.
+
 ## Loss levels
 
 Use `--brief` for compact summaries that keep enough inline context for

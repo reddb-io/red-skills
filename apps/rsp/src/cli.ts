@@ -40,6 +40,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runRspMcpServer();
     return 0;
   }
+  if (args.command === "wait") {
+    const { runWait } = await import("./wait.js");
+    return await runWait(args.positional);
+  }
   if (args.command === "shell-init") {
     const shell = args.positional[1];
     if (shell !== "fish" && shell !== "bash" && shell !== "zsh") {
