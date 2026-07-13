@@ -22,6 +22,11 @@ name: red-release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Retry deferred releases after /afk running labels drain. The job's bump
+    # decider still requires main to be ahead of the latest vX.Y.Z tag.
+    - cron: "17 * * * *"
 
 permissions:
   contents: write
@@ -35,7 +40,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip release]') }}
     # Repository settings protect the red-release environment with required
     # reviewers. Approval happens before this job can build, publish assets, or
     # move the matching major tag.
@@ -61,7 +66,7 @@ jobs:
           running=$(gh issue list --label running --state open --json number --jq 'length' 2>/dev/null || echo "0")
           echo "running=$running" >> "$GITHUB_OUTPUT"
           if [ "$running" -gt 0 ]; then
-            echo "::notice::🛑 fleet active — $running issue(s) carry the 'running' label. Release deferred; the fleet's next push to main after the running issues drain will retry."
+            echo "::notice::🛑 fleet active — $running issue(s) carry the 'running' label. Release deferred; the scheduled red-release retry will publish after the running issues drain if main remains ahead of the latest tag."
           else
             echo "no running issues — proceeding"
           fi
