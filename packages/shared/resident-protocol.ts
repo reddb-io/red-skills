@@ -4,6 +4,7 @@ export interface RspResidentConfig {
   storeUri: string;
   ttlDays: number;
   byteBudget: number;
+  clientVersion?: string;
   telemetryTtlDays?: number;
   telemetryByteBudget?: number;
   telemetryDrainIntervalMs?: number;
@@ -13,6 +14,7 @@ export interface RspResidentConfig {
 
 export type RspResidentRequest =
   | { id: string; op: "ping" }
+  | { id: string; op: "handover"; clientVersion: string }
   | { id: string; op: "stats" }
   | { id: string; op: "telemetry-stats"; sinceDays: number }
   | { id: string; op: "telemetry-gains"; sinceDays: number }
