@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { connect } from "@reddb-io/sdk";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
@@ -659,6 +660,66 @@ describe("rsp cli", () => {
     expect(statsText).toContain("latency:\n");
     expect(statsText).toMatch(/  wrapper_ms_p50: [0-9.]+\n/);
     expect(statsText).toMatch(/  wrapper_ms_p95: [0-9.]+\n/);
+  }, 120_000);
+
+  it("built bundle renders rsp gains TOON from synthetic telemetry", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const db = await connect(storeUri);
+    try {
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("big", {
+        created_at: "2026-07-05T12:00:00.000Z",
+        command: "git log --terse",
+        elided: true,
+        raw_bytes: 8000,
+        emitted_bytes: 800,
+        tokens_raw: 2000,
+        tokens_emitted: 200,
+        wrapper_ms: 15,
+        store_open_count: 1,
+      });
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("small", {
+        created_at: "2026-07-06T13:30:00.000Z",
+        command: "gh pr list --brief",
+        elided: false,
+        raw_bytes: 200,
+        emitted_bytes: 200,
+        tokens_raw: 50,
+        tokens_emitted: 50,
+        wrapper_ms: 40,
+        store_open_count: 0,
+      });
+      await db.kv(RSP_TELEMETRY_DEGRADATIONS_COLLECTION).put("down", {
+        created_at: "2026-07-06T14:00:00.000Z",
+        command: "git --version",
+        reason: "store not provisioned",
+      });
+    } finally {
+      await db.close();
+    }
+
+    const res = runBundleFromCwd(root, ["gains", "--since", "28d"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const text = res.stdout.toString("utf8");
+    expect(res.status, `${text}${res.stderr.toString("utf8")}`).toBe(0);
+    expect(text).toContain("schema_version: red.rsp.gains.v1");
+    expect(text).toContain("latency:");
+    expect(text).toContain("throughput:");
+    expect(text).toContain("savings:");
+    expect(text).toContain("health:");
+    expect(text).toContain("top_commands_by_tokens_saved");
+    expect(text).not.toContain("{\n");
+    const decoded = decode(text) as {
+      window: { requested_days: number; invocations: number; degradations: number };
+      savings: { single_biggest_elision: { command_family: string; tokens_saved: number } };
+    };
+    expect(decoded.window.requested_days).toBe(28);
+    expect(decoded.window.invocations).toBe(2);
+    expect(decoded.window.degradations).toBe(1);
+    expect(decoded.savings.single_biggest_elision).toMatchObject({ command_family: "git log", tokens_saved: 1800 });
   }, 120_000);
 
   it("built bundle keeps git log terse elision latency under budget", async () => {
