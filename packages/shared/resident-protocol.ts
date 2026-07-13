@@ -20,7 +20,25 @@ export type RspResidentRequest =
   | { id: string; op: "telemetry-gains"; sinceDays: number }
   | { id: string; op: "mint"; original: string; meta: unknown }
   | { id: string; op: "get"; handle: string }
-  | { id: string; op: "memory"; action: "recall" | "ingest"; payload: unknown };
+  | { id: string; op: "memory"; action: "recall" | "ingest"; payload: unknown }
+  | { id: string; op: "brain"; action: BrainResidentAction; payload?: unknown };
+
+export type BrainResidentAction =
+  | "status"
+  | "capture"
+  | "getArtifact"
+  | "listArtifacts"
+  | "search"
+  | "think"
+  | "link"
+  | "backlinks"
+  | "listConnections"
+  | "eventKpis"
+  | "appendOutcomeEvent"
+  | "replayOutcomeEvents"
+  | "loadModelTierBanditDocument"
+  | "saveModelTierBanditDocument"
+  | "refreshModelTierBanditDocument";
 
 export type RspResidentResponse =
   | { id: string; ok: true; value: unknown; storeOpenCount?: number; storeElapsedMs?: number }

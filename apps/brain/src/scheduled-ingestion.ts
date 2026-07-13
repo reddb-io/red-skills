@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ChannelBridge } from "./channel-bridge.js";
 import { ingestEvents } from "./ingest-events.js";
-import type { BrainStore } from "./store.js";
+import type { BrainStoreLike } from "./store.js";
 
 export interface IngestionState {
   cursor?: number | string;
@@ -11,7 +11,7 @@ export interface IngestionState {
 
 export interface ScheduledIngestInput {
   bridge: ChannelBridge;
-  store: BrainStore;
+  store: BrainStoreLike;
   state: IngestionState;
   sessionKey?: string;
   limit?: number;

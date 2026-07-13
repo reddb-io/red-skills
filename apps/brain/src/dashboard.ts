@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { KpiResult } from "./kpi-query.js";
 import type { StoredBrainArtifact, StoredBrainConnection } from "./schema.js";
-import type { BrainStore } from "./store.js";
+import type { BrainStoreLike } from "./store.js";
 
 export interface BrainDashboardOptions {
   project: string;
@@ -71,7 +71,7 @@ export interface BrainDashboardArtifact {
 }
 
 export async function buildBrainDashboard(
-  store: BrainStore,
+  store: BrainStoreLike,
   options: BrainDashboardOptions,
 ): Promise<BrainDashboard> {
   const artifacts = await store.listArtifacts();

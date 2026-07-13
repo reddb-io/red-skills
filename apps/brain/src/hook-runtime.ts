@@ -1,19 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveBrainConfig } from "./config.js";
-import { BrainStore } from "./store.js";
+import { withBrainRuntime } from "./runtime.js";
 
 export type Runner = "codex" | "claude" | "hermes" | "unknown";
 
 export async function handleHook(lifecycle: string, runner: Runner): Promise<Record<string, unknown>> {
   if (lifecycle !== "SessionStart") return {};
-  const config = await resolveBrainConfig(process.cwd());
-  const store = await BrainStore.open({ uri: config.connectionString });
-  try {
+  const config = await withBrainRuntime(async ({ config, store }) => {
     await store.status();
-  } finally {
-    await store.close();
-  }
+    return config;
+  });
   const stateDir = join(config.rootDir, ".red", "brain", "sessions");
   await mkdir(stateDir, { recursive: true });
   await writeFile(
