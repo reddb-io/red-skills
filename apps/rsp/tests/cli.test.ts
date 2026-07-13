@@ -316,6 +316,20 @@ async function waitForGone(path: string, timeoutMs = normalizedDurationMs(5_000)
   throw new Error(`still present after ${timeoutMs}ms: ${path}`);
 }
 
+async function waitForActiveWait(root: string, reason: string): Promise<Record<string, unknown>> {
+  const deadline = normalizedDeadlineMs();
+  let last: unknown[] = [];
+  while (Date.now() < deadline) {
+    const listed = runRsp(root, ["wait", "ls"], {});
+    expect(listed.status).toBe(0);
+    last = (decode(listed.stdout.toString("utf8")) as { waits: unknown[] }).waits;
+    const match = last.find((entry) => isRecord(entry) && entry.reason === reason);
+    if (isRecord(match)) return match;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`active wait not found for ${reason}; last=${JSON.stringify(last)}`);
+}
+
 async function closeWithTimeout(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<number | null> {
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -1928,6 +1942,67 @@ describe("rsp cli", () => {
     const debug = runRspFromCwd(root, ["git", "--version"], { RSP_STORE_URI: storeUri, RSP_DEBUG: "1" });
     expect(debug.status).toBe(1);
     expect(debug.stdout.toString("utf8")).toContain("error: unsupported git subcommand");
+  });
+
+  it("prints rsp wait help with the standardized waiting contract", async () => {
+    const root = await tempRoot();
+    const actual = runRsp(root, ["wait", "--help"], {});
+
+    expect(actual.status).toBe(0);
+    const stdout = actual.stdout.toString("utf8");
+    expect(stdout).toContain("usage: rsp wait <subcommand> [options]");
+    expect(stdout).toContain("rsp wait pr 123");
+    expect(stdout).toContain("rsp wait run --branch feature/wait --latest");
+    expect(stdout).toContain("rsp wait release --tag \"v2.*\"");
+    expect(stdout).toContain("rsp wait cmd -- \"pnpm -C apps/rsp build\"");
+    expect(stdout).toContain("Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.");
+  });
+
+  it("wait cmd exits with TOON success and removes its registry entry", async () => {
+    const root = await tempRoot();
+    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 120)"`;
+    const actual = timedStatus(() => runRsp(root, ["wait", "cmd", "--timeout", "5s", "--reason", "test wait", "--", command], {}));
+
+    expect(actual.status).toBe(0);
+    expect(actual.elapsedMs).toBeGreaterThanOrEqual(normalizedDurationMs(80));
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { target: string; status: string; reason: string };
+      verdict: { exit_code: number };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.wait.reason).toBe("test wait");
+    expect(decoded.wait.target).toContain("cmd:");
+    expect(decoded.verdict.exit_code).toBe(0);
+
+    const listed = runRsp(root, ["wait", "ls"], {});
+    expect(listed.status).toBe(0);
+    expect((decode(listed.stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
+  });
+
+  it("wait ls shows a live registry entry while a command wait is active", async () => {
+    const root = await tempRoot();
+    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 700)"`;
+    const child = spawn(process.execPath, ["--import", tsxLoader, cli, "wait", "cmd", "--reason", "registry probe", "--", command], {
+      cwd: root,
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+
+    const listed = await waitForActiveWait(root, "registry probe");
+    expect(listed.target).toContain("cmd:");
+    expect(listed.status).toBe("running");
+    expect(listed.poll_tier).toBe("local-cmd:2-5s");
+
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000));
+    expect(status, Buffer.concat(stderr).toString("utf8")).toBe(0);
+    const decoded = decode(Buffer.concat(stdout).toString("utf8")) as { wait: { status: string } };
+    expect(decoded.wait.status).toBe("success");
+    const after = runRsp(root, ["wait", "ls"], {});
+    expect((decode(after.stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
   });
 
   it("prints store stats instead of help when called without arguments", async () => {
