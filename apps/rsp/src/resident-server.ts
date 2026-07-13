@@ -10,6 +10,7 @@ import { RspElisionStore } from "./elision-store.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
+  readTelemetryGainsReport,
   readTelemetryStats,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
@@ -319,6 +320,11 @@ async function handleRequest(store: RspElisionStore, request: RspResidentRequest
     const db = store.redDb();
     if (!db) throw new Error("rsp telemetry stats require the shared RedDB store");
     return await readTelemetryStats(db, request.sinceDays);
+  }
+  if (request.op === "telemetry-gains") {
+    const db = store.redDb();
+    if (!db) throw new Error("rsp telemetry gains require the shared RedDB store");
+    return await readTelemetryGainsReport(db, request.sinceDays);
   }
   if (request.op === "mint") {
     return {
