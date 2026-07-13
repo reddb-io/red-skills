@@ -1,6 +1,10 @@
 {
   "name": "issue-list-default",
-  "command": ["gh", "issue", "list"],
+  "command": [
+    "gh",
+    "issue",
+    "list"
+  ],
   "catalog_prior_art": "official catalog GitHub wrapper field choice mined for issue list: number,title,state,labels.",
   "recorded": {
     "stdout": "[{\"number\":1414,\"title\":\"rsp gh wrapper\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"ready-for-agent\"}]},{\"number\":1412,\"title\":\"rsp git wrapper\",\"state\":\"CLOSED\",\"labels\":[{\"name\":\"type:ticket\"}]}]",
@@ -11,13 +15,95 @@
   "expected": {
     "command": "gh issue list",
     "issues": [
-      { "number": 1414, "title": "rsp gh wrapper", "state": "open", "labels": ["ready-for-agent"] },
-      { "number": 1412, "title": "rsp git wrapper", "state": "closed", "labels": ["type:ticket"] }
+      {
+        "number": 1414,
+        "title": "rsp gh wrapper",
+        "state": "open",
+        "labels": [
+          "ready-for-agent"
+        ]
+      },
+      {
+        "number": 1412,
+        "title": "rsp git wrapper",
+        "state": "closed",
+        "labels": [
+          "type:ticket"
+        ]
+      }
     ],
     "summary": "2 returned issues"
   },
   "assertions": [
-    { "question": "how many fields are in a default issue row?", "path": "issues.0.length", "expected": 4 },
-    { "question": "which issue is first?", "path": "issues.0.number", "expected": 1414 }
+    {
+      "question": "oracle preserves issues.length",
+      "path": "issues.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves issues.0.length",
+      "path": "issues.0.length",
+      "expected": 4
+    },
+    {
+      "question": "which issue is first?",
+      "path": "issues.0.number",
+      "expected": 1414
+    },
+    {
+      "question": "oracle preserves issues.0.title",
+      "path": "issues.0.title",
+      "expected": "rsp gh wrapper"
+    },
+    {
+      "question": "oracle preserves issues.0.state",
+      "path": "issues.0.state",
+      "expected": "open"
+    },
+    {
+      "question": "oracle preserves issues.0.labels.length",
+      "path": "issues.0.labels.length",
+      "expected": 1
+    },
+    {
+      "question": "oracle preserves issues.0.labels.0",
+      "path": "issues.0.labels.0",
+      "expected": "ready-for-agent"
+    },
+    {
+      "question": "oracle preserves issues.1.length",
+      "path": "issues.1.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves issues.1.number",
+      "path": "issues.1.number",
+      "expected": 1412
+    },
+    {
+      "question": "oracle preserves issues.1.title",
+      "path": "issues.1.title",
+      "expected": "rsp git wrapper"
+    },
+    {
+      "question": "oracle preserves issues.1.state",
+      "path": "issues.1.state",
+      "expected": "closed"
+    },
+    {
+      "question": "oracle preserves issues.1.labels.length",
+      "path": "issues.1.labels.length",
+      "expected": 1
+    },
+    {
+      "question": "oracle preserves issues.1.labels.0",
+      "path": "issues.1.labels.0",
+      "expected": "type:ticket"
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "2 returned issues"
+    }
   ]
 }
