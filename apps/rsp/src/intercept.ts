@@ -100,6 +100,20 @@ export async function hookDecisionFromClaudePreExecJson(
   raw: string,
   options: HookDecisionOptions,
 ): Promise<RewriteDecision> {
+  return await hookDecisionFromPreExecJson(raw, options);
+}
+
+export async function hookDecisionFromCodexPreExecJson(
+  raw: string,
+  options: HookDecisionOptions,
+): Promise<RewriteDecision> {
+  return await hookDecisionFromPreExecJson(raw, options);
+}
+
+async function hookDecisionFromPreExecJson(
+  raw: string,
+  options: HookDecisionOptions,
+): Promise<RewriteDecision> {
   const payload = parseJsonRecord(raw);
   const cwd = stringAt(payload, ["cwd"]) || stringAt(payload, ["tool_input", "cwd"]) || options.cwd;
   const enabled = await (options.isEnabled ?? isRspHookEnabled)(cwd);
@@ -122,10 +136,32 @@ export function formatHookDecision(decision: RewriteDecision): { stdout: string;
   return { stdout: "", status: 1 };
 }
 
+export function formatCodexHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
+  if (decision.kind !== "rewrite") return { stdout: "", status: 0 };
+  return {
+    stdout: `${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: decision.command },
+      },
+    })}\n`,
+    status: 0,
+  };
+}
+
 export async function runClaudePreExecHook(stdinPath?: string): Promise<number> {
   const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
   const decision = await hookDecisionFromClaudePreExecJson(raw, { cwd: process.cwd() });
   const formatted = formatHookDecision(decision);
+  if (formatted.stdout) process.stdout.write(formatted.stdout);
+  return formatted.status;
+}
+
+export async function runCodexPreExecHook(stdinPath?: string): Promise<number> {
+  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+  const decision = await hookDecisionFromCodexPreExecJson(raw, { cwd: process.cwd() });
+  const formatted = formatCodexHookDecision(decision);
   if (formatted.stdout) process.stdout.write(formatted.stdout);
   return formatted.status;
 }
