@@ -144,6 +144,7 @@ const RSP_WARMUP_GRACE_MS = 15_000;
 interface RspSummaryFile {
   version: number;
   tokens_saved_today: number;
+  dollars_saved_today_usd?: number;
   updated_at: string;
 }
 
@@ -191,6 +192,12 @@ function tokensSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): numbe
   return Math.max(0, Math.floor(summary.tokens_saved_today));
 }
 
+function dollarsSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): number | undefined {
+  if (utcDay(summary.updated_at) !== new Date(nowMs).toISOString().slice(0, 10)) return undefined;
+  if (typeof summary.dollars_saved_today_usd !== "number") return undefined;
+  return Math.max(0, summary.dollars_saved_today_usd);
+}
+
 export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
   const config = resolveRspConfig(root, env);
   if (!config.enabled) return undefined;
@@ -198,7 +205,11 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
   const nowMs = Date.now();
   const summary = parseRspSummary(paths.summaryPath);
   if (summary) {
-    return { state: "ready", tokensSavedToday: tokensSavedForCurrentDay(summary, nowMs) };
+    return {
+      state: "ready",
+      tokensSavedToday: tokensSavedForCurrentDay(summary, nowMs),
+      dollarsSavedTodayUsd: dollarsSavedForCurrentDay(summary, nowMs),
+    };
   }
   if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };
   if (fileExists(paths.wakeLockPath)) return { state: "error" };

@@ -718,14 +718,15 @@ describe("statusline command — rendered line", () => {
     await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
       version: 1,
       tokens_saved_today: 1300000,
+      dollars_saved_today_usd: 1.625,
       updated_at: new Date().toISOString(),
     }), "utf8");
-    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 1300000 });
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 1300000, dollarsSavedTodayUsd: 1.625 });
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp ↓1.3M");
+    expect(stripAnsi(out.text())).toContain("rsp ↓1.3M $1.63");
   });
 
   it("renders rsp savings from an old summary when the resident is idle", async () => {

@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
+import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
 export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
@@ -33,6 +34,16 @@ export interface RspTelemetryStats {
     emitted_bytes: number;
     bytes_saved: number;
     tokens_saved: number;
+    tokens_saved_estimated: boolean;
+    token_estimate_range_pct: number | null;
+    tokens_saved_low: number | null;
+    tokens_saved_high: number | null;
+    dollars_saved_estimate_usd: number;
+    dollars_saved_low_usd: number | null;
+    dollars_saved_high_usd: number | null;
+    pricing_model_family: string;
+    pricing_input_usd_per_million_tokens: number;
+    pricing_note: string;
     daily_tokens_saved: Array<{ date: string; tokens_saved: number }>;
     top_commands: Array<{ command: string; invocations: number; bytes_saved: number; tokens_saved: number }>;
   };
@@ -74,6 +85,7 @@ export interface RspTelemetryGainsReport {
     hour_weekday_heatmap: Array<{ weekday: string; hour: number; requests: number }>;
   };
   savings: {
+    tokens: TokenSavingsEstimate;
     weekly_tokens_saved: Array<{ week_start: string; tokens_saved: number; wow_delta_pct: number | null }>;
     elision_rate: number;
     top_commands_by_tokens_saved: Array<{ command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>;
@@ -213,6 +225,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   let rawBytes = 0;
   let emittedBytes = 0;
   let tokensSaved = 0;
+  let tokensEstimated = false;
   const byDay = new Map<string, number>();
   const byCommand = new Map<string, { command: string; invocations: number; bytes_saved: number; tokens_saved: number }>();
   const wrapperMs: number[] = [];
@@ -226,6 +239,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
     const emitted = numeric(record.emitted_bytes);
     const bytesSaved = Math.max(0, raw - emitted);
     const tokenDelta = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
+    tokensEstimated ||= record.estimated === true && tokenDelta > 0;
     rawBytes += raw;
     emittedBytes += emitted;
     tokensSaved += tokenDelta;
@@ -263,6 +277,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   }
 
   const totalAttempts = invocations.length + degradations.length;
+  const savingsEstimate = tokenSavingsEstimate(tokensSaved, tokensEstimated);
   return {
     window_days: windowDays,
     empty: invocations.length === 0 && degradations.length === 0,
@@ -273,6 +288,16 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
       emitted_bytes: emittedBytes,
       bytes_saved: Math.max(0, rawBytes - emittedBytes),
       tokens_saved: tokensSaved,
+      tokens_saved_estimated: savingsEstimate.tokens_saved_estimated,
+      token_estimate_range_pct: savingsEstimate.token_estimate_range_pct,
+      tokens_saved_low: savingsEstimate.tokens_saved_low,
+      tokens_saved_high: savingsEstimate.tokens_saved_high,
+      dollars_saved_estimate_usd: savingsEstimate.dollars_saved_estimate_usd,
+      dollars_saved_low_usd: savingsEstimate.dollars_saved_low_usd,
+      dollars_saved_high_usd: savingsEstimate.dollars_saved_high_usd,
+      pricing_model_family: savingsEstimate.pricing_model_family,
+      pricing_input_usd_per_million_tokens: savingsEstimate.pricing_input_usd_per_million_tokens,
+      pricing_note: savingsEstimate.pricing_note,
       daily_tokens_saved: [...byDay.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([date, saved]) => ({ date, tokens_saved: saved })),
@@ -319,6 +344,8 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
   const heatmap = new Map<string, number>();
   const weeklyTokens = new Map<string, number>();
   const commandTotals = new Map<string, { command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>();
+  let totalTokensSaved = 0;
+  let tokensEstimated = false;
   let elided = 0;
   let biggest: RspTelemetryGainsReport["savings"]["single_biggest_elision"] = null;
   let recordsWithStoreMetric = 0;
@@ -330,6 +357,8 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     const minute = timestamp.slice(0, 16);
     const family = commandFamily(stringField(record.command));
     const tokensSaved = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
+    totalTokensSaved += tokensSaved;
+    tokensEstimated ||= record.estimated === true && tokensSaved > 0;
     const bytesSaved = Math.max(0, numeric(record.raw_bytes) - numeric(record.emitted_bytes));
     const latency = optionalNumeric(record.wrapper_ms);
     if (latency != null) {
@@ -402,6 +431,7 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
       hour_weekday_heatmap: renderHeatmapRows(heatmap),
     },
     savings: {
+      tokens: tokenSavingsEstimate(totalTokensSaved, tokensEstimated),
       weekly_tokens_saved: weeklySeries(weeklyTokens),
       elision_rate: invocations.length === 0 ? 0 : round(elided / invocations.length),
       top_commands_by_tokens_saved: [...commandTotals.values()]

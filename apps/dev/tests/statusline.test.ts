@@ -505,6 +505,10 @@ describe("statusline — full assembly", () => {
     };
     expect(renderStatusline(input)).toBe("red-skills (main) · rsp ↓847");
     expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp ↓847");
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: { state: "ready", tokensSavedToday: 2000, dollarsSavedTodayUsd: 0.0025 },
+    })).toBe("red-skills (main) · rsp ↓2k $0.002500");
   });
 
   it("renders rsp warming and error states without ambiguous on/off glyphs", () => {

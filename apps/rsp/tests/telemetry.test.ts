@@ -15,6 +15,7 @@ import {
   telemetrySpoolPath,
 } from "../src/telemetry.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/config.js";
+import { tokenSavingsEstimate } from "../src/pricing.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
 import { runResidentServer } from "../src/resident-server.js";
@@ -35,6 +36,27 @@ afterEach(async () => {
 });
 
 describe("rsp telemetry spool", () => {
+  it("prices estimated token savings with a documented confidence range", () => {
+    expect(tokenSavingsEstimate(1000, true, "gpt-5")).toMatchObject({
+      tokens_saved: 1000,
+      tokens_saved_estimated: true,
+      token_estimate_range_pct: 0.25,
+      tokens_saved_low: 750,
+      tokens_saved_high: 1250,
+      dollars_saved_estimate_usd: 0.00125,
+      dollars_saved_low_usd: 0.000938,
+      dollars_saved_high_usd: 0.001563,
+      pricing_model_family: "gpt-5",
+    });
+    expect(tokenSavingsEstimate(1000, false, "gpt-5")).toMatchObject({
+      tokens_saved: 1000,
+      tokens_saved_estimated: false,
+      tokens_saved_low: null,
+      tokens_saved_high: null,
+      dollars_saved_estimate_usd: 0.00125,
+    });
+  });
+
   it("appends JSONL without throwing when the target is unavailable", async () => {
     const root = await tempRoot();
     await appendTelemetryEvent(root, {
@@ -419,6 +441,7 @@ describe("rsp telemetry spool", () => {
         emitted_bytes: 1000,
         tokens_raw: 500,
         tokens_emitted: 250,
+        estimated: true,
         wrapper_ms: 100,
         store_open_count: 0,
       });
@@ -461,6 +484,13 @@ describe("rsp telemetry spool", () => {
         { week_start: "2026-06-29", tokens_saved: 900, wow_delta_pct: null },
         { week_start: "2026-07-06", tokens_saved: 250, wow_delta_pct: -72.22 },
       ]);
+      expect(report.savings.tokens).toMatchObject({
+        tokens_saved: 1150,
+        tokens_saved_estimated: true,
+        tokens_saved_low: 862,
+        tokens_saved_high: 1438,
+        dollars_saved_estimate_usd: 0.001438,
+      });
       expect(report.savings.elision_rate).toBe(0.67);
       expect(report.savings.top_commands_by_tokens_saved[0]).toMatchObject({ command_family: "git log", invocations: 2, tokens_saved: 1150 });
       expect(report.savings.top_commands_by_invocation_count[0]).toMatchObject({ command_family: "git log", invocations: 2 });
