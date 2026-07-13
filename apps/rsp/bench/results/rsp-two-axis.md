@@ -2,23 +2,23 @@ rsp two-axis benchmark: 30 fixtures across 13 filters
 
 Production mode uses admission threshold 60%; passthrough filters count as 0% token delta because rsp returns the original command output.
 
-| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | oracle tokens | rsp capture | RTK capture | brief shipped delta | brief fidelity | terse shipped delta | terse fidelity |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| cargo:test | active | 3 | 478 | 202 | 132 | 203 | 99.5% | 65% | 61.9/84.2% | 100% | 57.7/84.2% | 100% |
-| gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 80 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 64 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| gh:run | passthrough | 3 | 121 | 121 | rtk: not-covered | 49 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| git:blame | passthrough | 1 | 88 | 88 | rtk: not-covered | 83 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| git:branch | passthrough | 1 | 64 | 64 | rtk: not-covered | 100 | 64% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| git:commit | passthrough | 1 | 33 | 33 | 59 | 69 | 47.8% | 85.5% | 0/0% | 100% | 0/0% | 100% |
-| git:diff | passthrough | 2 | 7526 | 7526 | 62 | 7584 | 99.2% | 0.8% | 0/0% | 100% | 0/0% | 100% |
-| git:log | passthrough | 2 | 4467 | 4467 | 68 | 4717 | 94.7% | 1.4% | 0/0% | 100% | 0/0% | 100% |
-| git:push | passthrough | 2 | 58 | 58 | 63 | 102 | 56.9% | 61.8% | 0/0% | 100% | 0/0% | 100% |
-| git:show | passthrough | 1 | 98 | 98 | rtk: not-covered | 132 | 74.2% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
-| git:status | active | 2 | 153 | 79 | 54 | 83 | 95.2% | 65.1% | 60.5/75% | 100% | 60.5/75% | 50% |
-| vitest:run | active | 6 | 51368 | 654 | 208 | 442 | 99.6% | 47.1% | 58.8/100% | 100% | 70/100% | 100% |
+| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cargo:test | active | 3 | 478 | 202 | 132 | 468 | 203 | 99.5% | 65% | 3.6% | 61.9/84.2% | 100% | 57.7/84.2% | 100% | 100% | 100% |
+| gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 123 | 80 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 108 | 64 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| gh:run | passthrough | 3 | 121 | 121 | rtk: not-covered | 121 | 49 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| git:blame | passthrough | 1 | 88 | 88 | rtk: not-covered | 88 | 83 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| git:branch | passthrough | 1 | 64 | 64 | rtk: not-covered | 64 | 100 | 64% | rtk: not-covered | 64% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| git:commit | passthrough | 1 | 33 | 33 | 59 | 33 | 69 | 47.8% | 85.5% | 47.8% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
+| git:diff | passthrough | 2 | 7526 | 7526 | 62 | 7526 | 7584 | 99.2% | 0.8% | 99.2% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
+| git:log | passthrough | 2 | 4467 | 4467 | 68 | 4467 | 4717 | 94.7% | 1.4% | 94.7% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
+| git:push | passthrough | 2 | 58 | 58 | 63 | 58 | 102 | 56.9% | 61.8% | 56.9% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
+| git:show | passthrough | 1 | 98 | 98 | rtk: not-covered | 98 | 132 | 74.2% | rtk: not-covered | 74.2% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| git:status | active | 2 | 153 | 79 | 54 | 153 | 83 | 95.2% | 65.1% | 0% | 60.5/75% | 100% | 60.5/75% | 50% | 100% | 100% |
+| vitest:run | active | 6 | 51368 | 654 | 208 | 51060 | 442 | 99.6% | 47.1% | 0.6% | 58.8/100% | 100% | 70/100% | 100% | 100% | 83.3% |
 
-Aggregate oracle ceiling: raw 64685 tokens (0% capture), rsp 13621 tokens (99.4% capture), RTK 646 tokens (4.9% capture), oracle 13708 tokens.
+Aggregate oracle ceiling: raw 64685 tokens (0% capture), rsp 13621 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 13708 tokens.
 
 Large-output filters: git:diff, git:log, vitest:run.
 
@@ -57,4 +57,5 @@ Large-output filters: git:diff, git:log, vitest:run.
 | vitest:run | terse | audited: ok | test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail |
 
 RTK baseline is replayed from checked-in recorded fixtures only; RTK is not executed by this command.
+Headroom baseline is replayed from checked-in recorded fixtures only; headroom-ai is only installed by the explicit capture script.
 External context-optimization claims are cited literature only and were not locally reproduced.
