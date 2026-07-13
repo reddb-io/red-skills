@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
@@ -455,7 +455,7 @@ class ColdRspElisionStore implements ElisionStoreLike {
 
 async function runColdWrappedCommand(
   args: ParsedArgs,
-  config: Pick<RspRuntimeConfig, "heavyGitByteThreshold">,
+  config: RspRuntimeConfig,
   telemetryRoot: string,
   err?: unknown,
 ): Promise<number> {
@@ -468,7 +468,7 @@ async function runColdWrappedCommand(
   try {
     if (args.command === "git") {
       if (isFastGitStatus(args.positional)) {
-        return await emitWrappedResult(args, await runFastGitStatus(), started, store, telemetryRoot);
+        return await emitWrappedResult(args, await runFastGitStatus(), started, store, telemetryRoot, config);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
       const result = await runGitWrapper(args.positional, {
@@ -476,19 +476,19 @@ async function runColdWrappedCommand(
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store, telemetryRoot);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot, config);
     }
 
     if (args.command === "gh") {
       const { runGhWrapper } = await import("./gh-wrapper.js");
       const result = await runGhWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store, telemetryRoot);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot, config);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
       const { runTestWrapper } = await import("./test-wrapper.js");
       const result = await runTestWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store, telemetryRoot);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot, config);
     }
 
     if (args.command === "cat") {
@@ -498,7 +498,7 @@ async function runColdWrappedCommand(
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store, telemetryRoot);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot, config);
     }
 
     if (args.command === "exec") {
@@ -525,12 +525,14 @@ async function emitWrappedResult(
   started: bigint,
   store?: InvocationTelemetryStore,
   telemetryRoot = process.cwd(),
+  coldNudgeConfig?: RspRuntimeConfig,
 ): Promise<number> {
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (store) {
     await appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics());
+    if (coldNudgeConfig) await nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
   } else {
     appendFastInvocationTelemetry(telemetryRoot, args, result, wrapperMs);
   }
@@ -539,6 +541,44 @@ async function emitWrappedResult(
     return 128;
   }
   return result.status ?? 0;
+}
+
+async function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): Promise<void> {
+  try {
+    const spoolPath = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
+    const stat = statSync(spoolPath);
+    const staleMs = config.telemetryDrainIntervalMs * 2;
+    if (stat.size < config.telemetryByteBudget && !spoolHasEventOlderThan(spoolPath, Date.now() - staleMs)) return;
+    const { kickResidentServer, resolveResidentPaths } = await import("./resident-client.js");
+    await kickResidentServer(resolveResidentPaths(telemetryRoot), {
+      storeUri: config.storeUri,
+      ttlDays: config.ttlDays,
+      byteBudget: config.byteBudget,
+      telemetryTtlDays: config.telemetryTtlDays,
+      telemetryByteBudget: config.telemetryByteBudget,
+      telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+      telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
+      idleMs: config.idleMs,
+    });
+  } catch {}
+}
+
+function spoolHasEventOlderThan(path: string, cutoffMs: number): boolean {
+  try {
+    const text = readFileSync(path, "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { created_at?: unknown; ts?: unknown };
+        const timestamp = typeof parsed.created_at === "string" ? parsed.created_at : parsed.ts;
+        if (typeof timestamp === "string") {
+          const ms = Date.parse(timestamp);
+          if (Number.isFinite(ms) && ms <= cutoffMs) return true;
+        }
+      } catch {}
+    }
+  } catch {}
+  return false;
 }
 
 async function appendInvocationTelemetry(
