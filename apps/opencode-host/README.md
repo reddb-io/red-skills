@@ -15,7 +15,12 @@ serves Claude Code, Codex, and OpenCode through this single generator.
   with the OpenRouter-shaped default as a back-compat fallback.
 - **Slice 2 (ADR 0076 + 0077)** — `.opencode/skills/<name>/SKILL.md`
   (flat-symlinked) and `.opencode/plugin/<event>.ts` (one TS module per
-  Claude/Codex event class).
+  Claude/Codex event class). Supported lifecycle mappings are:
+  `SessionStart → config` plus `experimental.chat.system.transform`,
+  `PreToolUse → tool.execute.before`, `PostToolUse → tool.execute.after`,
+  `Stop → session.idle`, `PreCompact → experimental.session.compacting`,
+  and `UserPromptSubmit → chat.message`. Events without an OpenCode plugin
+  equivalent are warned and skipped.
 - **Slice 3 (ADR 0079)** — MCP passthrough. The per-plugin `.mcp.json`
   is rewritten into opencode's `mcp: { <name>: { type: "local",
   command, environment, cwd? } }` shape and merged into the Slice 1
@@ -131,7 +136,11 @@ dist/opencode/
 │   └── .opencode/
 │       ├── plugin/
 │       │   ├── session-start.ts   ← SessionStart → config
-│       │   └── pre-tool-use.ts    ← PreToolUse → tool.execute.before
+│       │   ├── pre-tool-use.ts    ← PreToolUse → tool.execute.before
+│       │   ├── post-tool-use.ts   ← PostToolUse → tool.execute.after
+│       │   ├── stop.ts            ← Stop → session.idle
+│       │   ├── pre-compact.ts     ← PreCompact → experimental.session.compacting
+│       │   └── user-prompt-submit.ts ← UserPromptSubmit → chat.message
 │       └── skills/
 │           ├── afk/SKILL.md       ← symlink → plugins/dev/.../afk/SKILL.md
 │           ├── ship/SKILL.md
@@ -148,6 +157,19 @@ config for the **developer-facing opencode TUI**. ADR 0076 + 0077
 extend the same source-of-truth to skills and hooks, so a user running
 `opencode .` on a reddb.io repo sees the same model, the same 56
 skills, and the same lifecycle hooks Claude Code and Codex see.
+
+## Hook coverage notes
+
+OpenCode does not expose a Claude-style `SubagentStop` event in the plugin
+surface, so the adapter reports a warning and emits no module for that hook.
+`Stop` uses `session.idle`, which is OpenCode's turn-finished signal; when
+available, the generated module reads session messages through the OpenCode SDK
+and passes them to hooks as `transcript_text`. `PreCompact` uses
+`experimental.session.compacting`, the pre-compaction hook that can add context
+to the compaction prompt. Session-start hook output such as rsp ambient
+instructions is parsed from `systemMessage` or
+`hookSpecificOutput.additionalContext` and forwarded through
+`experimental.chat.system.transform`.
 
 ## Testing
 
