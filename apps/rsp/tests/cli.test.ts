@@ -12,6 +12,7 @@ import { resolveResidentPaths } from "../src/resident-client.js";
 import {
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  telemetrySpoolPath,
 } from "../src/telemetry.js";
 
 const roots: string[] = [];
@@ -222,6 +223,23 @@ async function waitForGone(path: string, timeoutMs = 5_000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`still present after ${timeoutMs}ms: ${path}`);
+}
+
+async function closeWithTimeout(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<number | null> {
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`process did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.once("close", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
 }
 
 async function waitForResidentSocket(root: string): Promise<void> {
@@ -720,6 +738,112 @@ describe("rsp cli", () => {
     expect(decoded.window.invocations).toBe(2);
     expect(decoded.window.degradations).toBe(1);
     expect(decoded.savings.single_biggest_elision).toMatchObject({ command_family: "git log", tokens_saved: 1800 });
+  }, 120_000);
+
+  it("built bundle drains raw-text telemetry without losing the trailing event", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await enableRsp(root);
+    const cacheDir = await seedWarmRedCache();
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+    const setup = runBundleFromCwd(root, ["setup"], env);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const now = new Date().toISOString();
+    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    await writeFile(telemetrySpoolPath(root), [
+      JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "leading",
+        created_at: now,
+        command: "git status",
+        elided: false,
+        raw_bytes: 80,
+        emitted_bytes: 80,
+        wrapper_ms: 1,
+      }),
+      "{not-json",
+      JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "raw-text",
+        created_at: now,
+        command: "git log --terse",
+        elided: true,
+        raw_bytes: 1200,
+        emitted_bytes: 120,
+        raw_text: "alpha beta gamma delta epsilon zeta eta theta iota kappa",
+        emitted_text: "alpha beta",
+        wrapper_ms: 2,
+      }),
+      JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "trailing",
+        created_at: now,
+        command: "gh pr list",
+        elided: false,
+        raw_bytes: 200,
+        emitted_bytes: 200,
+        wrapper_ms: 3,
+      }),
+      "",
+    ].join("\n"), "utf8");
+
+    const child = spawn(process.execPath, [
+      bundle,
+      "server",
+      "--idle-ms",
+      "250",
+      "--telemetry-drain-interval-ms",
+      "50",
+    ], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    const status = await closeWithTimeout(child, 5_000);
+    expect(status, `${Buffer.concat(stdout).toString("utf8")}${Buffer.concat(stderr).toString("utf8")}`).toBe(0);
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const invocations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    expect(invocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "leading", command: "git status" }),
+      expect.objectContaining({
+        id: "raw-text",
+        command: "git log --terse",
+        tokens_raw: expect.any(Number),
+        tokens_emitted: expect.any(Number),
+      }),
+      expect.objectContaining({ id: "trailing", command: "gh pr list" }),
+    ]));
+    const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
+    expect(degradations).toContainEqual(expect.objectContaining({ reason: "telemetry parse failed" }));
+
+    const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], env);
+    const statsText = stats.stdout.toString("utf8");
+    expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
+    expect(statsText).toContain("invocations: 3\n");
+    expect(statsText).toMatch(/tokens_saved: [1-9]\d*\n/);
+    expect(statsText).toContain("command: git log --terse invocations: 1");
+    expect(statsText).toContain("command: gh pr list invocations: 1");
+    expect(statsText).toContain("degradations: 1\n");
+
+    const gains = runBundleFromCwd(root, ["gains", "--since", "7d"], env);
+    const gainsText = gains.stdout.toString("utf8");
+    expect(gains.status, `${gainsText}${gains.stderr.toString("utf8")}`).toBe(0);
+    const decoded = decode(gainsText) as {
+      window: { invocations: number; degradations: number };
+      savings: { single_biggest_elision: { command_family: string; tokens_saved: number } | null };
+    };
+    expect(decoded.window).toMatchObject({ invocations: 3, degradations: 1 });
+    expect(decoded.savings.single_biggest_elision).toMatchObject({
+      command_family: "git log",
+      tokens_saved: expect.any(Number),
+    });
   }, 120_000);
 
   it("built bundle keeps git log terse elision latency under budget", async () => {

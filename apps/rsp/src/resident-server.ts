@@ -15,7 +15,7 @@ import {
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-  takeTelemetrySpool,
+  drainTelemetrySpool,
   type RspTelemetryEvent,
 } from "./telemetry.js";
 import { DEFAULT_RSP_TELEMETRY_BYTE_BUDGET, DEFAULT_RSP_TELEMETRY_TTL_DAYS } from "./config.js";
@@ -109,6 +109,8 @@ interface TelemetryIndexDocument {
 }
 
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
+const TOKENIZATION_TIMEOUT_MS = 500;
+const TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
@@ -128,15 +130,36 @@ class ResidentTelemetryDrain {
   private async drainAndSweepOnce(): Promise<void> {
     const db = this.store.redDb();
     if (!db) return;
-    const lines = await takeTelemetrySpool(this.opts.rootDir);
     const index = await this.readIndex(db);
     const nextRecords = [...index.records];
-    for (const line of lines) {
+    await drainTelemetrySpool(this.opts.rootDir, async (line) => {
       const event = parseTelemetryEvent(line);
-      if (!event) continue;
-      const entry = await this.writeEvent(db, event);
-      nextRecords.push(entry);
-    }
+      if (!event) {
+        const entry = await this.writeDrainDegradation(db, {
+          reason: "telemetry parse failed",
+          command: "unknown",
+          bytes: Buffer.byteLength(line, "utf8"),
+        });
+        nextRecords.push(entry);
+        return true;
+      }
+      try {
+        const entry = await this.writeEvent(db, event);
+        nextRecords.push(entry);
+        return true;
+      } catch (err) {
+        const entry = await this.writeDrainDegradation(db, {
+          reason: "telemetry event dropped",
+          command: stringField(event.command) || "unknown",
+          source_id: stringField(event.id),
+          source_collection: stringField(event.collection),
+          error: err instanceof Error ? err.message : String(err),
+          bytes: Buffer.byteLength(line, "utf8"),
+        });
+        nextRecords.push(entry);
+        return true;
+      }
+    });
     await this.prune(db, { version: 1, records: nextRecords });
   }
 
@@ -161,6 +184,30 @@ class ResidentTelemetryDrain {
         ? Math.max(0, event.bytes)
         : Buffer.byteLength(JSON.stringify(record), "utf8"),
     };
+  }
+
+  private async writeDrainDegradation(
+    db: RedDB,
+    event: {
+      reason: string;
+      command: string;
+      bytes: number;
+      source_id?: string;
+      source_collection?: string;
+      error?: string;
+    },
+  ): Promise<TelemetryIndexEntry> {
+    return await this.writeEvent(db, {
+      collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+      id: randomUUID(),
+      created_at: new Date().toISOString(),
+      reason: event.reason,
+      command: event.command,
+      bytes: event.bytes,
+      source_id: event.source_id,
+      source_collection: event.source_collection,
+      error: event.error,
+    });
   }
 
   private async readIndex(db: RedDB): Promise<TelemetryIndexDocument> {
@@ -196,7 +243,7 @@ class ResidentTelemetryDrain {
 
 async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain): Promise<void> {
   try {
-    await telemetry.drainAndSweep();
+    await withTimeout(telemetry.drainAndSweep(), TELEMETRY_DRAIN_TIMEOUT_MS, "telemetry drain timed out");
   } catch (err) {
     process.stderr.write(`rsp resident: telemetry drain failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
@@ -219,8 +266,14 @@ async function tokenCount(text: unknown, fallbackBytes: number | undefined): Pro
   if (typeof text === "string") {
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes <= TOKENIZATION_CAP_BYTES) {
-      const getEncoding = await loadGetEncoding();
-      return { tokens: getEncoding("cl100k_base").encode(text).length, estimated: false };
+      try {
+        return await withTimeout((async () => {
+          const getEncoding = await loadGetEncoding();
+          return { tokens: getEncoding("cl100k_base").encode(text).length, estimated: false };
+        })(), TOKENIZATION_TIMEOUT_MS, "telemetry tokenization timed out");
+      } catch {
+        return { tokens: Math.ceil(bytes / 4), estimated: true };
+      }
     }
     return { tokens: Math.ceil(bytes / 4), estimated: true };
   }
@@ -253,6 +306,25 @@ function resolveJsTiktoken(): string {
 
 function numericField(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function safeJson(value: string): unknown {
