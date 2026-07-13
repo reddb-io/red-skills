@@ -8,6 +8,7 @@ import { connect } from "@reddb-io/sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTelemetryEvent,
+  drainTelemetrySpool,
   readTelemetryGainsReport,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -48,6 +49,26 @@ describe("rsp telemetry spool", () => {
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
       id: "lost",
     })).resolves.toBeUndefined();
+  });
+
+  it("keeps spool lines that do not drain durably", async () => {
+    const root = await tempRoot();
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "retry-me",
+      command: "git log",
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "ok",
+      command: "git status",
+    });
+
+    await drainTelemetrySpool(root, async (line) => !line.includes("retry-me"));
+
+    const spool = await readFile(telemetrySpoolPath(root), "utf8");
+    expect(spool).toContain('"id":"retry-me"');
+    expect(spool).not.toContain('"id":"ok"');
   });
 
   it("drains boot and idle telemetry into RedDB while skipping malformed lines", async () => {
