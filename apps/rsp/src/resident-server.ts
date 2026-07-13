@@ -23,6 +23,7 @@ export interface ResidentServerOptions extends RspResidentConfig {
   socketPath: string;
   rootDir?: string;
   idleMs?: number;
+  telemetryDrainIntervalMs?: number;
 }
 
 export async function runResidentServer(opts: ResidentServerOptions): Promise<void> {
@@ -42,10 +43,15 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
     byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
   });
-  await telemetry.drainAndSweep();
+  await safeDrainTelemetry(telemetry);
 
   const idleMs = opts.idleMs ?? 30_000;
   let idleTimer: NodeJS.Timeout | undefined;
+  const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
+  const telemetryTimer = setInterval(() => {
+    void safeDrainTelemetry(telemetry);
+  }, telemetryDrainIntervalMs);
+  telemetryTimer.unref();
   const server = createServer((socket) => {
     touch();
     handleSocket(socket, async (request) => {
@@ -59,7 +65,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   function touch(): void {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      void telemetry.drainAndSweep().finally(() => server.close());
+      server.close();
     }, idleMs);
     idleTimer.unref();
   }
@@ -76,6 +82,8 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   await new Promise<void>((resolve) => server.once("close", resolve));
   storeOpenCount = 0;
   if (idleTimer) clearTimeout(idleTimer);
+  clearInterval(telemetryTimer);
+  await safeDrainTelemetry(telemetry);
   await store.close();
   await rm(opts.socketPath, { force: true });
 }
@@ -182,6 +190,14 @@ class ResidentTelemetryDrain {
       await db.kv(evicted.collection).delete(evicted.key);
     }
     await this.writeIndex(db, { version: 1, records: live });
+  }
+}
+
+async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain): Promise<void> {
+  try {
+    await telemetry.drainAndSweep();
+  } catch (err) {
+    process.stderr.write(`rsp resident: telemetry drain failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { RspElisionStore } from "./elision-store.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
 import type { RspTelemetryStats } from "./telemetry.js";
@@ -43,7 +44,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
   if (args.command === "git" && isFastGitStatus(args.positional) && await residentSocketExists(process.cwd())) {
-    return await runFastGitStatus();
+    const started = process.hrtime.bigint();
+    return await emitWrappedResult(args, await runFastGitStatus(), started);
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
@@ -61,6 +63,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? serverConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
+      telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
+        serverConfig.telemetryDrainIntervalMs,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
     });
     return 0;
@@ -82,6 +86,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? warmConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
+      telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
+        warmConfig.telemetryDrainIntervalMs,
     });
     return 0;
   }
@@ -100,6 +106,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
+    telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
   }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
@@ -107,6 +114,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
+    telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
   });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
     const { RspElisionStore } = await import("./elision-store.js");
@@ -138,7 +146,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       } catch (err) {
         return await degradeToPassthrough("resident unavailable", args.positional, err, residentPaths.rootDir);
       }
-      if (isFastGitStatus(args.positional)) return await runFastGitStatus();
+      if (isFastGitStatus(args.positional)) {
+        const started = process.hrtime.bigint();
+        return await emitWrappedResult(args, await runFastGitStatus(), started);
+      }
       const { runGitWrapper } = await import("./git-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
       closeStore = () => store.close();
@@ -226,27 +237,44 @@ async function residentSocketExists(cwd: string): Promise<boolean> {
   return existsSync(resolveResidentPaths(cwd).socketPath);
 }
 
-async function runFastGitStatus(): Promise<number> {
+async function runFastGitStatus(): Promise<WrappedCommandResult> {
   if (isEmptyUnbornGitRepo(process.cwd())) {
-    process.stdout.write("git empty\n");
-    return 0;
+    return {
+      stdout: Buffer.from("git empty\n"),
+      stderr: Buffer.alloc(0),
+      status: 0,
+      signal: null,
+    };
   }
 
   const { spawnSync } = await import("node:child_process");
   const clean = spawnSync("git", ["diff-index", "--quiet", "HEAD", "--"], { stdio: "ignore" });
   if (clean.status === 0) {
-    process.stdout.write("git empty\n");
-    return 0;
+    return {
+      stdout: Buffer.from("git empty\n"),
+      stderr: Buffer.alloc(0),
+      status: 0,
+      signal: null,
+    };
   }
 
   const status = spawnSync("git", ["status", "--porcelain=v1"], { encoding: "buffer" });
   if ((status.status ?? 0) !== 0) {
-    process.stdout.write(status.stdout);
-    process.stderr.write(status.stderr);
-    return status.status ?? 1;
+    return {
+      stdout: status.stdout,
+      stderr: status.stderr,
+      status: status.status ?? 1,
+      signal: status.signal,
+    };
   }
-  process.stdout.write(status.stdout.length === 0 ? "git empty\n" : status.stdout);
-  return 0;
+  const stdout = status.stdout.length === 0 ? Buffer.from("git empty\n") : status.stdout;
+  return {
+    stdout,
+    stderr: status.stderr,
+    status: 0,
+    signal: status.signal,
+    rawOutput: stdout,
+  };
 }
 
 function isEmptyUnbornGitRepo(cwd: string): boolean {
@@ -321,12 +349,16 @@ async function emitWrappedResult(
   args: ParsedArgs,
   result: WrappedCommandResult,
   started: bigint,
-  store: LazyRspElisionStore,
+  store?: LazyRspElisionStore,
 ): Promise<number> {
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-  await appendInvocationTelemetry(args, result, wrapperMs, store.lastResponseMetrics());
+  if (store) {
+    await appendInvocationTelemetry(args, result, wrapperMs, store.lastResponseMetrics());
+  } else {
+    appendFastInvocationTelemetry(args, result, wrapperMs);
+  }
   if (result.signal) {
     process.kill(process.pid, result.signal);
     return 128;
@@ -358,6 +390,36 @@ async function appendInvocationTelemetry(
     store_open_count: metrics?.storeOpenCount,
     store_elapsed_ms: metrics?.storeElapsedMs,
   });
+}
+
+function appendFastInvocationTelemetry(
+  args: ParsedArgs,
+  result: WrappedCommandResult,
+  wrapperMs: number,
+): void {
+  try {
+    const emitted = Buffer.concat([result.stdout, result.stderr]);
+    const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
+    const path = join(process.cwd(), ".red", "tmp", "rsp-telemetry.spool.jsonl");
+    const line = `${JSON.stringify({
+      collection: "rsp_telemetry_invocations_v1",
+      ts: new Date().toISOString(),
+      command: args.positional.join(" "),
+      wrapper: args.command,
+      loss: args.level,
+      elided: Boolean(result.mintedHandle || result.bytesElided),
+      raw_bytes: raw.length,
+      emitted_bytes: emitted.length,
+      wrapper_ms: wrapperMs,
+    })}\n`;
+    try {
+      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
+      mkdirSync(dirname(path), { recursive: true });
+      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
+    }
+  } catch {}
 }
 
 async function degradeToPassthrough(reason: string, argv: readonly string[], err?: unknown, telemetryRoot?: string): Promise<number> {

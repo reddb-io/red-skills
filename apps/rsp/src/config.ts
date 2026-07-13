@@ -8,6 +8,7 @@ export const DEFAULT_RSP_TTL_DAYS = 7;
 export const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 export const DEFAULT_RSP_TELEMETRY_TTL_DAYS = 90;
 export const DEFAULT_RSP_TELEMETRY_BYTE_BUDGET = 4 * 1024 * 1024;
+export const DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS = 30_000;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
@@ -16,6 +17,7 @@ export interface RspRuntimeConfig {
   byteBudget: number;
   telemetryTtlDays: number;
   telemetryByteBudget: number;
+  telemetryDrainIntervalMs: number;
   heavyGitByteThreshold: number;
 }
 
@@ -34,13 +36,26 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     readNumericYamlPath(yaml, "rsp.telemetryByteBudget") ?? readNumericYamlPath(yaml, "rsp.byteBudget"),
     DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
   );
+  const telemetryDrainIntervalMs = positiveNumber(
+    numericEnv(env.RSP_TELEMETRY_DRAIN_INTERVAL_MS) ?? readNumericYamlPath(yaml, "rsp.telemetryDrainIntervalMs"),
+    DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
+  );
   const heavyGitByteThreshold = positiveNumber(
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   );
   const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), DEFAULT_RSP_STORE_PATH)}`;
 
-  return { enabled, storeUri, ttlDays, byteBudget, telemetryTtlDays, telemetryByteBudget, heavyGitByteThreshold };
+  return {
+    enabled,
+    storeUri,
+    ttlDays,
+    byteBudget,
+    telemetryTtlDays,
+    telemetryByteBudget,
+    telemetryDrainIntervalMs,
+    heavyGitByteThreshold,
+  };
 }
 
 function readNumericYamlPath(yaml: string, dottedPath: string): number | undefined {

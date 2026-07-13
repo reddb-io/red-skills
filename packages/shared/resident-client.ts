@@ -108,6 +108,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     String(config.telemetryTtlDays ?? 90),
     "--telemetry-byte-budget",
     String(config.telemetryByteBudget ?? config.byteBudget),
+    "--telemetry-drain-interval-ms",
+    String(config.telemetryDrainIntervalMs ?? 30_000),
     "--wake-lock",
     paths.wakeLockPath,
   ], {
@@ -172,6 +174,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     String(config.telemetryTtlDays ?? 90),
     "--telemetry-byte-budget",
     String(config.telemetryByteBudget ?? config.byteBudget),
+    "--telemetry-drain-interval-ms",
+    String(config.telemetryDrainIntervalMs ?? 30_000),
   ], {
     cwd: paths.rootDir,
     detached: true,
