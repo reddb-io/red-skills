@@ -12,8 +12,10 @@ import {
   NORMALIZE_CR_PROGRESS,
   NORMALIZE_JSON_TOON,
   NORMALIZE_TRAILING_WHITESPACE,
+  formatCodexNormalizeDecision,
   formatNormalizeDecision,
   hookDecisionFromClaudePostExecJson,
+  hookDecisionFromCodexPostExecJson,
   normalizeOutput,
   renderGenericJsonLane,
   transcodeJsonToToon,
@@ -459,5 +461,39 @@ describe("rsp Claude post-execution hook integration", () => {
 
     expect(res.status).toBe(0);
     expect(res.stdout).toEqual(Buffer.alloc(0));
+  });
+});
+
+describe("rsp Codex post-execution hook integration", () => {
+  it("runs the same gate but emits no output mutation because Codex PostToolUse cannot replace Bash output", async () => {
+    const root = await tempRoot();
+    const decision = await hookDecisionFromCodexPostExecJson(
+      JSON.stringify({ cwd: root, tool_response: { output: "\x1b[32mhello\x1b[0m" } }),
+      { cwd: root, isEnabled: () => true },
+    );
+
+    expect(decision).toEqual({ kind: "normalized", output: "hello" });
+    expect(formatCodexNormalizeDecision(decision)).toEqual({ stdout: "", status: 0 });
+  });
+
+  it("accepts Codex PostToolUse JSON on stdin through the CLI without changing output", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const payload = JSON.stringify({
+      cwd: root,
+      tool_response: { output: "\x1b[32mhello\x1b[0m", error: "", exitCode: 0 },
+    });
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-post-exec"], {
+      cwd: root,
+      input: Buffer.from(payload),
+      encoding: "buffer",
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 });
