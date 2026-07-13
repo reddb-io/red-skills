@@ -41,10 +41,10 @@ describe("end-to-end against the real source tree", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("plans the dev plugin's hooks (SessionStart + PreToolUse)", () => {
+  it("plans the dev plugin's hooks (SessionStart + PreToolUse + PostToolUse)", () => {
     const plans = planPluginHooks(PLUGINS_ROOT, "dev");
     const events = plans.map((p) => p.opencodeEvent).sort();
-    expect(events).toEqual(["config", "tool.execute.before"]);
+    expect(events).toEqual(["config", "tool.execute.after", "tool.execute.before"]);
   });
 
   it("emits a full plan with skills and hooks for every plugin", () => {
@@ -56,8 +56,15 @@ describe("end-to-end against the real source tree", () => {
     });
     expect(plan.byPlugin.length).toBe(3);
     const dev = plan.byPlugin.find((p) => p.plugin === "dev")!;
+    const memory = plan.byPlugin.find((p) => p.plugin === "memory")!;
     expect(dev.skills.plans.length).toBeGreaterThan(30);
-    expect(dev.hooks.length).toBe(2);
+    expect(dev.hooks.length).toBe(3);
+    expect(memory.hooks.map((p) => p.opencodeEvent).sort()).toEqual([
+      "config",
+      "experimental.session.compacting",
+      "session.idle",
+      "tool.execute.after",
+    ]);
     expect(dev.provider.model).toBe("openrouter/anthropic/claude-3.5-sonnet");
     expect(dev.provider.provider.openrouter).toBeDefined();
   });

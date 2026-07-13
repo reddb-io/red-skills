@@ -83,6 +83,30 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     expect(session!.source).toMatch(/return \{\s+config: async/s);
   });
 
+  it("preserves every SessionStart command and forwards hook output into chat system context", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              { type: "command", command: "sh -c 'red-fetch.mjs dev'" },
+              { type: "command", command: "sh -c 'red-fetch.mjs run dev rsp-instructions --runner claude --hook'" },
+              { type: "command", command: "sh -c 'ensure-codex-statusline.mjs'" },
+            ],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const session = plans.find((p) => p.opencodeEvent === "config")!;
+    expect(session.source).toContain("red-fetch.mjs dev");
+    expect(session.source).toContain("rsp-instructions");
+    expect(session.source).toContain("ensure-codex-statusline");
+    expect(session.source).toContain('"experimental.chat.system.transform"');
+    expect(session.source).toContain("hookSpecificOutput?.additionalContext");
+    expect(session.source).toContain("systemMessage");
+  });
+
   it("emits one tool.execute.before module for PreToolUse, branching on input.tool", () => {
     writeHookFile("claude.hooks.json", {
       hooks: {
@@ -162,17 +186,100 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     expect(plans.map((p) => p.opencodeEvent).sort()).toEqual(["config", "tool.execute.before"]);
   });
 
-  it("warns (and continues) for an unknown event class", () => {
+  it("maps PostToolUse to tool.execute.after with tool response payload", () => {
     writeHookFile("claude.hooks.json", {
       hooks: {
-        UserPromptSubmit: [
-          { hooks: [{ type: "command", command: "sh -c 'echo hi'" }] },
+        PostToolUse: [
+          {
+            matcher: "Edit|Write",
+            hooks: [{ type: "command", command: "sh -c 'post-tool.sh'" }],
+          },
         ],
       },
     });
     const plans = planPluginHooks(root, "dev");
-    // No module emitted, but the warning is captured
-    expect(plans).toEqual([]);
+    const post = plans.find((p) => p.opencodeEvent === "tool.execute.after")!;
+    expect(post).toBeDefined();
+    expect(post.sourceEvent).toBe("PostToolUse");
+    expect(post.target).toBe("plugin/post-tool-use.ts");
+    expect(post.source).toContain('"tool.execute.after"');
+    expect(post.source).toContain('const __sourceEvent = "PostToolUse"');
+    expect(post.source).toContain("hook_event_name: __sourceEvent");
+    expect(post.source).toContain("tool_response");
+    expect(post.source).toContain("Edit|Write");
+  });
+
+  it("maps Stop to session.idle and includes best-effort session transcript text", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        Stop: [
+          { hooks: [{ type: "command", command: "sh -c 'memory-stop.sh'" }] },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const stop = plans.find((p) => p.opencodeEvent === "session.idle")!;
+    expect(stop).toBeDefined();
+    expect(stop.sourceEvent).toBe("Stop");
+    expect(stop.target).toBe("plugin/stop.ts");
+    expect(stop.source).toContain('"session.idle"');
+    expect(stop.source).toContain('const __sourceEvent = "Stop"');
+    expect(stop.source).toContain("hook_event_name: __sourceEvent");
+    expect(stop.source).toContain("transcript_text");
+    expect(stop.source).toContain("sessionApi.messages");
+  });
+
+  it("maps PreCompact to experimental.session.compacting", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreCompact: [
+          { hooks: [{ type: "command", command: "sh -c 'memory-precompact.sh'" }] },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const preCompact = plans.find((p) => p.opencodeEvent === "experimental.session.compacting")!;
+    expect(preCompact).toBeDefined();
+    expect(preCompact.sourceEvent).toBe("PreCompact");
+    expect(preCompact.target).toBe("plugin/pre-compact.ts");
+    expect(preCompact.source).toContain('"experimental.session.compacting"');
+    expect(preCompact.source).toContain('const __sourceEvent = "PreCompact"');
+    expect(preCompact.source).toContain("hook_event_name: __sourceEvent");
+  });
+
+  it("maps UserPromptSubmit to chat.message when a hook file declares it", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        UserPromptSubmit: [
+          { hooks: [{ type: "command", command: "sh -c 'prompt-hook.sh'" }] },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const prompt = plans.find((p) => p.opencodeEvent === "chat.message")!;
+    expect(prompt).toBeDefined();
+    expect(prompt.sourceEvent).toBe("UserPromptSubmit");
+    expect(prompt.target).toBe("plugin/user-prompt-submit.ts");
+    expect(prompt.source).toContain('"chat.message"');
+    expect(prompt.source).toContain('const __sourceEvent = "UserPromptSubmit"');
+    expect(prompt.source).toContain("hook_event_name: __sourceEvent");
+  });
+
+  it("warns (and continues) for an event class OpenCode cannot express", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        SubagentStop: [
+          { hooks: [{ type: "command", command: "sh -c 'echo hi'" }] },
+        ],
+        PreToolUse: [
+          { hooks: [{ type: "command", command: "sh -c 'branch-lock.sh'" }] },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    expect(plans.map((p) => p.opencodeEvent)).toEqual(["tool.execute.before"]);
+    expect(plans[0]!.warnings.join("\n")).toContain("SubagentStop");
+    expect(plans[0]!.warnings.join("\n")).toContain("OpenCode plugin event equivalent");
   });
 
   it("returns no plans when no hook files exist", () => {

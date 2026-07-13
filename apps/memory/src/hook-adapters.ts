@@ -10,6 +10,10 @@ function str(payload: RawPayload, key: string): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
+function transcriptText(payload: RawPayload): string | undefined {
+  return str(payload, "transcript_text") ?? str(payload, "transcriptText");
+}
+
 /** Read a transcript file into raw text for the extractor; absent/unreadable
  *  → undefined (the flush handler then no-ops rather than throwing). */
 async function readTranscript(path: string | undefined): Promise<string | undefined> {
@@ -60,6 +64,7 @@ export async function parseClaudeInput(
 ): Promise<NormalizedInput> {
   const cwd = str(payload, "cwd");
   const transcriptPath = str(payload, "transcript_path");
+  const inlineTranscript = transcriptText(payload);
   return {
     event,
     runner: "claude",
@@ -71,7 +76,7 @@ export async function parseClaudeInput(
     changedFiles: event === "PostToolUse" ? changedFilesFrom(payload, cwd) : [],
     transcriptText:
       event === "Stop" || event === "PreCompact"
-        ? await readTranscript(transcriptPath)
+        ? inlineTranscript ?? await readTranscript(transcriptPath)
         : undefined,
   };
 }
@@ -90,6 +95,7 @@ export async function parseCodexInput(
 ): Promise<NormalizedInput> {
   const cwd = str(payload, "cwd");
   const transcriptPath = str(payload, "transcript_path");
+  const inlineTranscript = transcriptText(payload);
   return {
     event,
     runner: "codex",
@@ -101,7 +107,7 @@ export async function parseCodexInput(
     changedFiles: event === "PostToolUse" ? changedFilesFrom(payload, cwd) : [],
     transcriptText:
       event === "Stop" || event === "PreCompact"
-        ? await readTranscript(transcriptPath)
+        ? inlineTranscript ?? await readTranscript(transcriptPath)
         : undefined,
   };
 }
