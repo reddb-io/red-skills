@@ -14,6 +14,7 @@ export interface RspResidentPaths {
   socketPath: string;
   lockPath: string;
   wakeLockPath: string;
+  summaryPath: string;
 }
 
 const UNIX_SOCKET_PATH_LIMIT = 108;
@@ -25,7 +26,8 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
     rootDir,
     socketPath: join(socketDir, "rsp.sock"),
     lockPath: join(socketDir, "rsp.lock"),
-    wakeLockPath: join(socketDir, "rsp.wake.lock"),
+    wakeLockPath: join(rootDir, ".red", "tmp", "rsp.wake.lock"),
+    summaryPath: join(rootDir, ".red", "tmp", "rsp-status-summary.json"),
   };
 }
 

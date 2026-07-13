@@ -689,56 +689,67 @@ describe("statusline command — rendered line", () => {
     expect(await resolveStatuslineRsp(root, {})).toBeUndefined();
   });
 
-  it("renders rsp warming quickly when enabled and no resident socket answers", async () => {
+  it("renders rsp warming quickly when enabled and the warmup marker is recent", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await mkdir(dirname(resolveResidentPaths(root).wakeLockPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).wakeLockPath, "", "utf8");
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 0, 0);
 
     const started = Date.now();
     const rsp = await resolveStatuslineRsp(root, {});
     const elapsed = Date.now() - started;
-    expect(rsp).toBe("warming");
+    expect(rsp).toEqual({ state: "warming" });
     expect(elapsed).toBeLessThan(50);
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp○");
+    expect(stripAnsi(out.text())).toContain("rsp …");
   });
 
-  it("renders rsp on when an enabled repo has a live resident socket", async () => {
+  it("renders rsp savings when an enabled repo has a fresh resident summary", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 0, 0);
-    const server = await listenRspSocket(root, "reply");
-    try {
-      expect(await resolveStatuslineRsp(root, {})).toBe("on");
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
+      version: 1,
+      tokens_saved_today: 1300000,
+      updated_at: new Date().toISOString(),
+    }), "utf8");
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 1300000 });
 
-      const out = sink();
-      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
-      expect(code).toBe(0);
-      expect(stripAnsi(out.text())).toContain("rsp●");
-    } finally {
-      await closeServer(server);
-    }
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("rsp ↓1.3M");
   });
 
-  it("renders rsp warming after the ping cap when a resident socket hangs", async () => {
+  it("renders rsp error when enabled and no fresh summary or warmup marker exists", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
-    const server = await listenRspSocket(root, "hang");
-    try {
-      const started = Date.now();
-      const rsp = await resolveStatuslineRsp(root, {});
-      const elapsed = Date.now() - started;
-      expect(rsp).toBe("warming");
-      expect(elapsed).toBeGreaterThanOrEqual(45);
-      expect(elapsed).toBeLessThan(120);
-    } finally {
-      await closeServer(server);
-    }
+    const started = Date.now();
+    const rsp = await resolveStatuslineRsp(root, {});
+    const elapsed = Date.now() - started;
+    expect(rsp).toEqual({ state: "error" });
+    expect(elapsed).toBeLessThan(50);
+  });
+
+  it("renders rsp warming when the summary is stale but the warmup marker is recent", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
+      version: 1,
+      tokens_saved_today: 1200,
+      updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    }), "utf8");
+    await writeFile(resolveResidentPaths(root).wakeLockPath, "", "utf8");
+
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "warming" });
   });
 
   it("local facts are read live: a mutated state file is reflected on the next render", async () => {

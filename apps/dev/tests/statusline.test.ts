@@ -491,20 +491,44 @@ describe("statusline — full assembly", () => {
       project: { basename: "red-skills", branch: "main" },
       claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 23, usage7d: 41 },
       repo: { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 },
-      rsp: "on",
+      rsp: { state: "ready", tokensSavedToday: 1200 },
       fleet: { runner: "codex", busy: 1, total: 4, queue: 9 },
       afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
     };
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp●");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp ↓1.2k");
   });
 
-  it("renders rsp as one optional token in full and short presets", () => {
+  it("renders rsp healthy savings as one optional token in full and short presets", () => {
     const input: StatuslineInput = {
       project: { basename: "red-skills", branch: "main" },
-      rsp: "warming",
+      rsp: { state: "ready", tokensSavedToday: 847 },
     };
-    expect(renderStatusline(input)).toBe("red-skills (main) · rsp○");
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp○");
+    expect(renderStatusline(input)).toBe("red-skills (main) · rsp ↓847");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp ↓847");
+  });
+
+  it("renders rsp warming and error states without ambiguous on/off glyphs", () => {
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: { state: "warming" },
+    })).toBe("red-skills (main) · rsp …");
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: { state: "error" },
+    })).toBe("red-skills (main) · rsp !");
+  });
+
+  it("formats rsp savings with compact count tiers", () => {
+    const rendered = [0, 847, 1200, 124000, 1300000].map((tokensSavedToday) =>
+      renderStatusline({ project: { basename: "red-skills" }, rsp: { state: "ready", tokensSavedToday } })
+    );
+    expect(rendered).toEqual([
+      "red-skills · rsp ↓0",
+      "red-skills · rsp ↓847",
+      "red-skills · rsp ↓1.2k",
+      "red-skills · rsp ↓124k",
+      "red-skills · rsp ↓1.3M",
+    ]);
   });
 
   it("omits rsp when the gather side leaves the status absent", () => {

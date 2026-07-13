@@ -21,6 +21,9 @@ const WINE2 = "\x1b[48;2;88;36;42m";
 const NOBG = "\x1b[49m";
 const SOFT = "\x1b[38;2;224;138;148m";
 const KEY = "\x1b[38;2;255;214;214m";
+const DIM = "\x1b[38;2;201;150;158m";
+const GREEN = "\x1b[38;2;96;214;128m";
+const RED = "\x1b[38;2;255;95;95m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
@@ -152,6 +155,23 @@ describe("statusline style — header line", () => {
     expect(t).not.toContain("7d=");
     expect(t).not.toContain("prs=");
     expect(t).not.toContain("loc=+142 -36");
+  });
+
+  it("styles rsp states from the shared render model", () => {
+    const healthy = renderHeaderLine(input.project, claude, repo, undefined, "full", {
+      state: "ready",
+      tokensSavedToday: 124000,
+    });
+    expect(healthy).toContain(`${GREEN}rsp ↓124k${SOFT}`);
+    expect(stripAnsi(healthy)).toContain("rsp ↓124k");
+
+    const warming = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "warming" });
+    expect(warming).toContain(`${DIM}rsp …${SOFT}`);
+    expect(stripAnsi(warming)).toContain("rsp …");
+
+    const error = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "error" });
+    expect(error).toContain(`${RED}rsp !${SOFT}`);
+    expect(stripAnsi(error)).toContain("rsp !");
   });
 });
 

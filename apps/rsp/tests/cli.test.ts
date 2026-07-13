@@ -1041,6 +1041,14 @@ describe("rsp cli", () => {
     expect(statsText).toContain("command: git log --terse invocations: 1");
     expect(statsText).toContain("command: gh pr list invocations: 1");
     expect(statsText).toContain("degradations: 1\n");
+    const summary = JSON.parse(await readFile(resolveResidentPaths(root).summaryPath, "utf8")) as {
+      version: number;
+      tokens_saved_today: number;
+      updated_at: string;
+    };
+    expect(summary.version).toBe(1);
+    expect(summary.tokens_saved_today).toBeGreaterThan(0);
+    expect(Date.parse(summary.updated_at)).not.toBeNaN();
 
     const gains = runBundleFromCwd(root, ["gains", "--since", "7d"], env);
     const gainsText = gains.stdout.toString("utf8");

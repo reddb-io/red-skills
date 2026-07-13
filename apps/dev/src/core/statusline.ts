@@ -163,7 +163,10 @@ export interface FleetInput {
   parked?: number;
 }
 
-export type RspStatusInput = "warming" | "on";
+export type RspStatusInput =
+  | { state: "ready"; tokensSavedToday: number }
+  | { state: "warming" }
+  | { state: "error" };
 
 /** All the resolved inputs for one statusline render. */
 export interface StatuslineInput {
@@ -430,7 +433,9 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
 
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
-  return rsp === "on" ? "rsp●" : "rsp○";
+  if (rsp.state === "ready") return `rsp ↓${humanizeCount(rsp.tokensSavedToday)}`;
+  if (rsp.state === "warming") return "rsp …";
+  return "rsp !";
 }
 
 /**

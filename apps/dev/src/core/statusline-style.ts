@@ -57,6 +57,7 @@ const VAL = "\x1b[39m"; // transparent-zone VALUE: terminal default foreground
 const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a lighter red (runner, +/-/# sigils, ·phase)
 const DIM = "\x1b[38;2;201;150;158m"; // identity-zone branch/version
 const GREEN = "\x1b[38;2;96;214;128m"; // healthy rsp resident
+const RED = "\x1b[38;2;255;95;95m"; // unreachable rsp resident
 const GOLD = "\x1b[38;2;240;200;120m"; // » accent
 const BOLD = "\x1b[1m";
 const NOBOLD = "\x1b[22m";
@@ -196,8 +197,10 @@ function fleetKv(fleet: FleetInput | undefined): string[] {
 
 function rspKv(rsp: RspStatusInput | undefined): string[] {
   const block = renderRspBlock(rsp);
-  if (!block) return [];
-  return rsp === "on" ? [`${GREEN}${block}${SOFT}`] : [`${DIM}${block}${SOFT}`];
+  if (!rsp || !block) return [];
+  if (rsp.state === "ready") return [`${GREEN}${block}${SOFT}`];
+  if (rsp.state === "error") return [`${RED}${block}${SOFT}`];
+  return [`${DIM}${block}${SOFT}`];
 }
 
 /** Line 1 — wine identity zone (project + model) then a transparent KPI tail. */
