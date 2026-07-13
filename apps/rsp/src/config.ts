@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { findUp, flatConfigValue } from "@reddb-io/shared/plugin-gate.js";
+import { resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
 
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
 export const DEFAULT_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
@@ -28,7 +29,6 @@ export interface RspRuntimeConfig {
 
 export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitStoreUri?: string): RspRuntimeConfig {
   const configPath = findUp(resolve(cwd), join(".red", "config.yaml"));
-  const root = configPath ? dirname(dirname(configPath)) : cwd;
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
   const enabled = flatConfigValue(yaml, "rsp.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
@@ -58,7 +58,8 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   );
-  const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(root), DEFAULT_RSP_STORE_PATH)}`;
+  const storeRoot = resolveResidentPaths(cwd).rootDir;
+  const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(storeRoot), DEFAULT_RSP_STORE_PATH)}`;
 
   return {
     enabled,
