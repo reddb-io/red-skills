@@ -55,9 +55,34 @@ describe("rsp interception pure rewrite table", () => {
     ["silent-predicate-grep-q", "grep -q needle file"],
     ["redirection-is-ambiguous", "git status > status.txt"],
     ["subshell-is-ambiguous", "$(git status)"],
-    ["compound-command-is-ambiguous", "git status && echo done"],
     ["quoted-command-name-is-ambiguous", "\"git\" status"],
   ])("passes through adversarial fixture %s", (_name, command) => {
+    expect(rewriteCommand(command)).toEqual({ kind: "passthrough" });
+  });
+
+  it.each([
+    ["chained-cd-git-log", "cd apps && git log --oneline"],
+    ["piped-git-log-tail", "git log | tail -5"],
+    ["semicolon-gh-list", "cd apps; gh pr list --limit 5"],
+    ["piped-vitest", "vitest run | tail -20"],
+    ["chained-cargo-test", "cd crates/core && cargo test"],
+  ])("rewrites safe compound noisy command %s through rsp exec", (_name, command) => {
+    expect(rewriteCommand(command)).toEqual({
+      kind: "rewrite",
+      command: `rsp exec -- '${command}'`,
+      capabilityId: "exec:compound",
+    });
+  });
+
+  it.each([
+    ["interactive-editor", "vim ."],
+    ["background-process", "sleep 10 &"],
+    ["command-substitution-capture", "foo $(git log)"],
+    ["already-rsp", "cd apps && rsp git log"],
+    ["here-doc", "cat <<EOF"],
+    ["single-noisy-command-with-args", "git log --oneline"],
+    ["silent-predicate", "git log | grep -q fix"],
+  ])("passes through unsafe compound fixture %s", (_name, command) => {
     expect(rewriteCommand(command)).toEqual({ kind: "passthrough" });
   });
 });
@@ -101,6 +126,23 @@ describe("rsp Claude pre-execution hook integration", () => {
     expect(formatHookDecision(result)).toEqual({ stdout: "rsp git status\n", status: 0 });
     expect(healthCalls).toBe(1);
     expect(wakeCalls).toBe(0);
+  });
+
+  it("prints a shell-safe rsp exec rewrite for compound noisy commands when the resident is healthy", async () => {
+    const root = await tempRoot();
+    const result = await hookDecisionFromClaudePreExecJson(
+      JSON.stringify({ cwd: root, tool_input: { command: "cd apps && git log --oneline" } }),
+      {
+        cwd: root,
+        isEnabled: () => true,
+        isResidentHealthy: async () => true,
+      },
+    );
+
+    expect(formatHookDecision(result)).toEqual({
+      stdout: "rsp exec -- 'cd apps && git log --oneline'\n",
+      status: 0,
+    });
   });
 
   it("prints nothing and exits non-zero on passthrough", async () => {
