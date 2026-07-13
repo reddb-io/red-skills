@@ -222,6 +222,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
+    if (args.command === "exec") {
+      try {
+        await suppressRspStderr(warmResidentStore);
+      } catch (err) {
+        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
+      }
+      const { runExecWrapper } = await import("./exec-wrapper.js");
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      closeStore = () => store.close();
+      const started = process.hrtime.bigint();
+      const result = await suppressRspStderr(() => runExecWrapper(args.positional, {
+        level: args.level,
+        store,
+        heavyByteThreshold: config.heavyGitByteThreshold,
+      }));
+      return await emitWrappedResult(args, result, started, store);
+    }
+
     if (args.command === "show" && args.handle) {
       const store = await openReadStore();
       closeStore = () => store.close();
@@ -443,6 +461,16 @@ async function runColdWrappedCommand(
       const result = await runTestWrapper(args.positional, { level: args.level, store });
       return await emitWrappedResult(args, result, started, store, telemetryRoot);
     }
+
+    if (args.command === "exec") {
+      const { runExecWrapper } = await import("./exec-wrapper.js");
+      const result = await runExecWrapper(args.positional, {
+        level: args.level,
+        store,
+        heavyByteThreshold: config.heavyGitByteThreshold,
+      });
+      return await emitWrappedResult(args, result, started, store);
+    }
   } catch (coldErr) {
     return await degradeToPassthrough("wrapper failed", args.positional, coldErr, telemetryRoot);
   } finally {
@@ -487,7 +515,7 @@ async function appendInvocationTelemetry(
   await appendTelemetryEvent(telemetryRoot, {
     collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
     ts: new Date().toISOString(),
-    command: args.positional.join(" "),
+    command: telemetryCommand(args),
     wrapper: args.command,
     loss: args.level,
     elided: Boolean(result.mintedHandle || result.bytesElided),
@@ -514,7 +542,7 @@ function appendFastInvocationTelemetry(
     const line = `${JSON.stringify({
       collection: "rsp_telemetry_invocations_v1",
       ts: new Date().toISOString(),
-      command: args.positional.join(" "),
+      command: telemetryCommand(args),
       wrapper: args.command,
       loss: args.level,
       elided: Boolean(result.mintedHandle || result.bytesElided),
@@ -543,7 +571,7 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
     await appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
-      command: argv.join(" "),
+      command: passthroughTelemetryCommand(argv),
       reason,
     });
   }
@@ -565,10 +593,11 @@ async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function isWrapperCommand(command: string | undefined): boolean {
-  return command === "git" || command === "gh" || command === "vitest" || command === "cargo";
+  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "exec";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
+  if (argv[0] === "exec") return await passthroughShell(argv);
   const command = argv[0];
   if (!command) return 2;
   const { spawn } = await import("node:child_process");
@@ -587,6 +616,48 @@ async function passthrough(argv: readonly string[]): Promise<number> {
       resolve(status ?? 0);
     });
   });
+}
+
+async function passthroughShell(argv: readonly string[]): Promise<number> {
+  let commandLine: string;
+  try {
+    const { parseExecCommandLine } = await import("./exec-wrapper.js");
+    commandLine = parseExecCommandLine(argv);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
+  const { spawn } = await import("node:child_process");
+  const child = spawn(commandLine, { shell: true, stdio: "inherit" });
+  return await new Promise((resolve) => {
+    child.on("error", (err) => {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      resolve(127);
+    });
+    child.on("close", (status, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        resolve(128);
+        return;
+      }
+      resolve(status ?? 0);
+    });
+  });
+}
+
+function telemetryCommand(args: ParsedArgs): string {
+  return passthroughTelemetryCommand(args.positional);
+}
+
+function passthroughTelemetryCommand(argv: readonly string[]): string {
+  if (argv[0] !== "exec") return argv.join(" ");
+  try {
+    const separator = argv.indexOf("--");
+    const parts = separator >= 0 ? argv.slice(separator + 1) : argv.slice(1);
+    return parts.length === 1 ? parts[0]! : parts.join(" ");
+  } catch {
+    return argv.join(" ");
+  }
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
