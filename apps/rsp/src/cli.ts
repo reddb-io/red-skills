@@ -47,9 +47,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(`${rspDisabledReason()}\n`);
     return 0;
   }
-  if (args.command === "git" && isFastGitStatus(args.positional) && await residentSocketExists(process.cwd())) {
+  const fastResidentPaths = args.command === "git" && isFastGitStatus(args.positional)
+    ? await residentPathsIfSocketExists(process.cwd())
+    : null;
+  if (fastResidentPaths) {
     const started = process.hrtime.bigint();
-    return await emitWrappedResult(args, await runFastGitStatus(), started);
+    return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, fastResidentPaths.rootDir);
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
@@ -177,7 +180,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       }
       if (isFastGitStatus(args.positional)) {
         const started = process.hrtime.bigint();
-        return await emitWrappedResult(args, await runFastGitStatus(), started);
+        return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
       const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
@@ -188,7 +191,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
       }));
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "gh") {
@@ -202,7 +205,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
@@ -216,7 +219,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "show" && args.handle) {
@@ -261,9 +264,10 @@ function isFastGitStatus(argv: readonly string[]): boolean {
   return argv.length === 2 && argv[0] === "git" && argv[1] === "status";
 }
 
-async function residentSocketExists(cwd: string): Promise<boolean> {
+async function residentPathsIfSocketExists(cwd: string): Promise<{ rootDir: string; socketPath: string } | null> {
   const { resolveResidentPaths } = await import("./resident-client.js");
-  return existsSync(resolveResidentPaths(cwd).socketPath);
+  const paths = resolveResidentPaths(cwd);
+  return existsSync(paths.socketPath) ? paths : null;
 }
 
 async function runFastGitStatus(): Promise<WrappedCommandResult> {
@@ -417,7 +421,7 @@ async function runColdWrappedCommand(
   try {
     if (args.command === "git") {
       if (isFastGitStatus(args.positional)) {
-        return await emitWrappedResult(args, await runFastGitStatus(), started, store);
+        return await emitWrappedResult(args, await runFastGitStatus(), started, store, telemetryRoot);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
       const result = await runGitWrapper(args.positional, {
@@ -425,19 +429,19 @@ async function runColdWrappedCommand(
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot);
     }
 
     if (args.command === "gh") {
       const { runGhWrapper } = await import("./gh-wrapper.js");
       const result = await runGhWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
       const { runTestWrapper } = await import("./test-wrapper.js");
       const result = await runTestWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, telemetryRoot);
     }
   } catch (coldErr) {
     return await degradeToPassthrough("wrapper failed", args.positional, coldErr, telemetryRoot);
@@ -453,14 +457,15 @@ async function emitWrappedResult(
   result: WrappedCommandResult,
   started: bigint,
   store?: InvocationTelemetryStore,
+  telemetryRoot = process.cwd(),
 ): Promise<number> {
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (store) {
-    await appendInvocationTelemetry(args, result, wrapperMs, store.lastResponseMetrics());
+    await appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics());
   } else {
-    appendFastInvocationTelemetry(args, result, wrapperMs);
+    appendFastInvocationTelemetry(telemetryRoot, args, result, wrapperMs);
   }
   if (result.signal) {
     process.kill(process.pid, result.signal);
@@ -470,6 +475,7 @@ async function emitWrappedResult(
 }
 
 async function appendInvocationTelemetry(
+  telemetryRoot: string,
   args: ParsedArgs,
   result: WrappedCommandResult,
   wrapperMs: number,
@@ -478,7 +484,7 @@ async function appendInvocationTelemetry(
   const emitted = Buffer.concat([result.stdout, result.stderr]);
   const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
   const { appendTelemetryEvent, RSP_TELEMETRY_INVOCATIONS_COLLECTION } = await import("./telemetry.js");
-  await appendTelemetryEvent(process.cwd(), {
+  await appendTelemetryEvent(telemetryRoot, {
     collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
     ts: new Date().toISOString(),
     command: args.positional.join(" "),
@@ -496,6 +502,7 @@ async function appendInvocationTelemetry(
 }
 
 function appendFastInvocationTelemetry(
+  telemetryRoot: string,
   args: ParsedArgs,
   result: WrappedCommandResult,
   wrapperMs: number,
@@ -503,7 +510,7 @@ function appendFastInvocationTelemetry(
   try {
     const emitted = Buffer.concat([result.stdout, result.stderr]);
     const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
-    const path = join(process.cwd(), ".red", "tmp", "rsp-telemetry.spool.jsonl");
+    const path = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
     const line = `${JSON.stringify({
       collection: "rsp_telemetry_invocations_v1",
       ts: new Date().toISOString(),
