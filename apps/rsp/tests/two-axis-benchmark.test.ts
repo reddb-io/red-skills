@@ -24,7 +24,7 @@ describe("rsp two-axis benchmark report", () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
     expect(report.corpus).toMatchObject({
-      fixture_count: 27,
+      fixture_count: 30,
       large_output_filters: ["git:diff", "git:log", "vitest:run"],
     });
     expect(report.corpus.filters).toEqual([
@@ -32,10 +32,13 @@ describe("rsp two-axis benchmark report", () => {
       "gh:issue",
       "gh:pr",
       "gh:run",
+      "git:blame",
+      "git:branch",
       "git:commit",
       "git:diff",
       "git:log",
       "git:push",
+      "git:show",
       "git:status",
       "vitest:run",
     ]);
@@ -82,6 +85,9 @@ describe("rsp two-axis benchmark report", () => {
 
     expect(report.filters.find((row) => row.filter === "git:diff")).toMatchObject({ fixture_count: 2 });
     expect(report.filters.find((row) => row.filter === "git:log")).toMatchObject({ fixture_count: 2 });
+    expect(report.filters.find((row) => row.filter === "git:blame")).toMatchObject({ fixture_count: 1 });
+    expect(report.filters.find((row) => row.filter === "git:branch")).toMatchObject({ fixture_count: 1 });
+    expect(report.filters.find((row) => row.filter === "git:show")).toMatchObject({ fixture_count: 1 });
 
     expect(report.parity).toEqual(expect.arrayContaining([
       expect.objectContaining({ domain: "cargo-test", filter: "cargo:test", rsp_fidelity_pass_rate_pct: 100 }),
