@@ -15,6 +15,7 @@ import {
   formatNormalizeDecision,
   hookDecisionFromClaudePostExecJson,
   normalizeOutput,
+  renderGenericJsonLane,
   transcodeJsonToToon,
 } from "../src/normalize.js";
 
@@ -215,13 +216,73 @@ describe("NORMALIZE_JSON_TOON / transcodeJsonToToon — fixtures", () => {
   });
 });
 
+describe("generic JSON lane — detection, selection, encoding, reversibility", () => {
+  it("leaves non-JSON output untouched", async () => {
+    const result = await renderGenericJsonLane("plain text\nnot json");
+    expect(result).toEqual({ output: "plain text\nnot json", detected: false, lossy: false });
+  });
+
+  it("detects NDJSON as an array of JSON lines", async () => {
+    const result = await renderGenericJsonLane('{"id":1}\n{"id":2}\n', { minTokens: 999 });
+    expect(result.detected).toBe(true);
+    expect(result.lossy).toBe(false);
+    expect(result.output).toBe("[2]{id}:\n  1\n  2");
+  });
+
+  it("encodes empty arrays and mixed arrays losslessly below threshold", async () => {
+    expect((await renderGenericJsonLane("[]")).output).toBe("[]");
+    expect((await renderGenericJsonLane('[{"id":1},"two",3]', { minTokens: 999 })).output).toContain("- two");
+  });
+
+  it("encodes deep nested objects through the workspace TOON encoder", async () => {
+    const result = await renderGenericJsonLane('{"outer":{"inner":{"value":3}}}');
+    expect(result.output).toBe("outer:\n  inner:\n    value: 3");
+  });
+
+  it("keeps boundary rows, error-shaped rows, anomalies, and emits an explicit marker", async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      id: i,
+      status: i === 12 ? 500 : 200,
+      latency: i === 21 ? 1000 : i,
+      phase: i < 25 ? "steady" : "changed",
+    }));
+    const result = await renderGenericJsonLane(JSON.stringify(rows), { level: "terse", minTokens: 1, maxItems: 8 });
+    expect(result.lossy).toBe(true);
+    expect(result.output).toContain("items: 8 of 40 kept");
+    expect(result.output).toContain("items[8]{id,status,latency,phase}");
+    expect(result.output).toContain("original: unavailable - re-run: command");
+    expect(result.output).toContain("12,500,12,steady");
+    expect(result.output).toContain("21,200,1000,steady");
+    expect(result.output).toContain("39,200,39,changed");
+  });
+
+  it("mints a handle to original bytes for lossy output", async () => {
+    const minted = new Map<string, Buffer>();
+    const original = JSON.stringify(Array.from({ length: 25 }, (_, i) => ({ id: i, value: i, error: i === 9 ? "boom" : "" })));
+    const result = await renderGenericJsonLane(original, {
+      level: "brief",
+      minTokens: 1,
+      maxItems: 6,
+      command: "gh api /repos/example/items",
+      store: {
+        async mint(bytes) {
+          minted.set("el:test", Buffer.from(bytes));
+          return "el:test";
+        },
+      },
+    });
+    expect(result.handle).toBe("el:test");
+    expect(result.output).toContain("original: rsp show el:test");
+    expect(minted.get("el:test")?.toString("utf8")).toBe(original);
+  });
+});
+
 // ─── Structural invariant ─────────────────────────────────────────────────────
 
 describe("structural invariant: no mint API access", () => {
-  it("normalize module source does not import from the elision store (cannot reach mint)", () => {
+  it("lossless JSON normalizer remains round-trip guarded", () => {
     const src = readFileSync(join(import.meta.dirname, "..", "src", "normalize.ts"), "utf8");
-    expect(src).not.toMatch(/elision-store/);
-    expect(src).not.toMatch(/RspElisionStore/);
+    expect(src).toMatch(/deepEqual\(parsed, roundTripped\)/);
   });
 
   it("normalization allowlist has exactly five entries with the expected ids", () => {
