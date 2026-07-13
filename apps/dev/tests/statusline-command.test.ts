@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile, utimes } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -728,9 +728,53 @@ describe("statusline command — rendered line", () => {
     expect(stripAnsi(out.text())).toContain("rsp ↓1.3M");
   });
 
-  it("renders rsp error when enabled and no fresh summary or warmup marker exists", async () => {
+  it("renders rsp savings from an old summary when the resident is idle", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
+      version: 1,
+      tokens_saved_today: 4242,
+      updated_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    }), "utf8");
+
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 4242 });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("rsp ↓4.2k");
+  });
+
+  it("renders rsp savings as zero when the newest summary belongs to yesterday", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
+      version: 1,
+      tokens_saved_today: 4242,
+      updated_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    }), "utf8");
+
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 0 });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("rsp ↓0");
+  });
+
+  it("renders rsp error when enabled and a stale wake marker produced no summary", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await mkdir(dirname(resolveResidentPaths(root).wakeLockPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).wakeLockPath, "", "utf8");
+    const stale = new Date(Date.now() - 60 * 1000);
+    await utimes(resolveResidentPaths(root).wakeLockPath, stale, stale);
     const started = Date.now();
     const rsp = await resolveStatuslineRsp(root, {});
     const elapsed = Date.now() - started;
@@ -738,15 +782,10 @@ describe("statusline command — rendered line", () => {
     expect(elapsed).toBeLessThan(50);
   });
 
-  it("renders rsp warming when the summary is stale but the warmup marker is recent", async () => {
+  it("renders rsp warming when a recent wake marker has no summary yet", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
-    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
-    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
-      version: 1,
-      tokens_saved_today: 1200,
-      updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    }), "utf8");
+    await mkdir(dirname(resolveResidentPaths(root).wakeLockPath), { recursive: true });
     await writeFile(resolveResidentPaths(root).wakeLockPath, "", "utf8");
 
     expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "warming" });
