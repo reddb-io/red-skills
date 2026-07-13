@@ -56,12 +56,12 @@ export type ResidentRequestWithoutId = RspResidentRequest extends infer Request
 
 export async function ensureResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
-  if (await pingResident(paths.socketPath)) return;
+  if (await isResidentUsable(paths.socketPath, config)) return;
 
   const lock = await tryAcquireLock(paths.lockPath);
   if (lock) {
     try {
-      if (await pingResident(paths.socketPath)) return;
+      if (await isResidentUsable(paths.socketPath, config)) return;
       await removeUnresponsiveSocket(paths.socketPath);
       const child = spawnResident(paths, config);
       await waitForServer(paths.socketPath, child);
@@ -77,11 +77,20 @@ export async function ensureResidentServer(paths: RspResidentPaths, config: RspR
 
 export async function pingResident(socketPath: string, timeoutMs = 200): Promise<boolean> {
   try {
-    const response = await sendResidentRequest({ socketPath, timeoutMs }, { id: randomUUID(), op: "ping" });
-    return response.ok;
+    return await pingResidentHello(socketPath, timeoutMs) != null;
   } catch {
     return false;
   }
+}
+
+export interface ResidentHello {
+  version?: string;
+}
+
+export async function pingResidentHello(socketPath: string, timeoutMs = 200): Promise<ResidentHello | null> {
+  const response = await sendResidentRequest({ socketPath, timeoutMs }, { id: randomUUID(), op: "ping" });
+  if (!response.ok) return null;
+  return isRecord(response.value) ? { version: stringValue(response.value.version) } : {};
 }
 
 export async function kickResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<boolean> {
@@ -110,6 +119,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     String(config.telemetryByteBudget ?? config.byteBudget),
     "--telemetry-drain-interval-ms",
     String(config.telemetryDrainIntervalMs ?? 30_000),
+    "--resident-version",
+    config.clientVersion ?? "0.0.0-dev",
     "--wake-lock",
     paths.wakeLockPath,
   ], {
@@ -176,6 +187,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     String(config.telemetryByteBudget ?? config.byteBudget),
     "--telemetry-drain-interval-ms",
     String(config.telemetryDrainIntervalMs ?? 30_000),
+    "--resident-version",
+    config.clientVersion ?? "0.0.0-dev",
   ], {
     cwd: paths.rootDir,
     detached: true,
@@ -222,5 +235,58 @@ function readFileSyncSafe(path: string): string | null {
     return readFileSync(path, "utf8");
   } catch {
     return null;
+  }
+}
+
+async function isResidentUsable(socketPath: string, config: RspResidentConfig): Promise<boolean> {
+  const hello = await pingResidentHello(socketPath).catch(() => null);
+  if (!hello) return false;
+  if (!shouldHandover(config.clientVersion, hello.version)) return true;
+
+  await requestResidentHandover(socketPath, config.clientVersion!);
+  await waitForResidentExit(socketPath);
+  return false;
+}
+
+async function requestResidentHandover(socketPath: string, clientVersion: string): Promise<void> {
+  try {
+    await sendResidentRequest({ socketPath, timeoutMs: 200 }, { id: randomUUID(), op: "handover", clientVersion });
+  } catch {
+    // A hung or pre-handover resident should fall through to the existing
+    // unresponsive-socket removal path under the spawn lock.
+  }
+}
+
+function shouldHandover(clientVersion: string | undefined, residentVersion: string | undefined): boolean {
+  if (!clientVersion || !residentVersion) return false;
+  return compareSemver(clientVersion, residentVersion) > 0;
+}
+
+function compareSemver(a: string, b: string): number {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return 0;
+  return pa.major - pb.major || pa.minor - pb.minor || pa.patch - pb.patch;
+}
+
+function parseSemver(version: string): { major: number; minor: number; patch: number } | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version).trim());
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+async function waitForResidentExit(socketPath: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (!await pingResident(socketPath, 50)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

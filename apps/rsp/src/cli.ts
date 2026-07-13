@@ -2,6 +2,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encode, type JsonObject } from "@reddb-io/toon";
+import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspElisionStore } from "./elision-store.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
 import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
@@ -16,6 +17,7 @@ interface ParsedArgs {
 }
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
+  const buildInfo = readBuildInfo("rsp");
   const args = parseArgs(argv);
   if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
     const { runClaudePreExecHook } = await import("./intercept.js");
@@ -67,6 +69,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
         serverConfig.telemetryDrainIntervalMs,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
+      residentVersion: valueAfter(args.positional, "--resident-version") ?? buildInfo.version,
     });
     return 0;
   }
@@ -89,6 +92,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
       telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
         warmConfig.telemetryDrainIntervalMs,
+      clientVersion: buildInfo.version,
     });
     return 0;
   }
@@ -108,6 +112,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    clientVersion: buildInfo.version,
   }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
@@ -116,6 +121,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    clientVersion: buildInfo.version,
   });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
     const { RspElisionStore } = await import("./elision-store.js");
