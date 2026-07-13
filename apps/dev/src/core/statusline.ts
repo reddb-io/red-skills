@@ -458,17 +458,10 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
   if (rsp.state === "ready") {
-    const dollars = rsp.dollarsSavedTodayUsd && rsp.dollarsSavedTodayUsd > 0
-      ? ` ${formatRspDollars(rsp.dollarsSavedTodayUsd)}`
-      : "";
-    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}${dollars}`;
+    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}`;
   }
   if (rsp.state === "warming") return "rsp=…";
   return "rsp=!";
-}
-
-function formatRspDollars(value: number): string {
-  return `$${formatThreeSigValue(value)}`;
 }
 
 /**
