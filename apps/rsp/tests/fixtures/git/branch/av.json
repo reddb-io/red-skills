@@ -1,0 +1,66 @@
+{
+  "name": "branch-av",
+  "command": [
+    "git",
+    "branch",
+    "-av"
+  ],
+  "recorded": {
+    "stdout": "*\u0000main\u00001111111\u0000origin/main\u0000\u0000Refs #1600 baseline landed\n \u0000feature/rsp\u00002222222\u0000origin/feature/rsp\u0000../wt\u0000Refs #1616 wrapper corpus\n \u0000remotes/origin/main\u00001111111\u0000\u0000\u0000Refs #1600 baseline landed\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git branch -av",
+    "branches": [
+      {
+        "current": true,
+        "name": "main",
+        "commit": "1111111",
+        "upstream": "origin/main",
+        "worktree": null,
+        "subject": "Refs #1600 baseline landed"
+      },
+      {
+        "current": false,
+        "name": "feature/rsp",
+        "commit": "2222222",
+        "upstream": "origin/feature/rsp",
+        "worktree": "../wt",
+        "subject": "Refs #1616 wrapper corpus"
+      },
+      {
+        "current": false,
+        "name": "remotes/origin/main",
+        "commit": "1111111",
+        "upstream": null,
+        "worktree": null,
+        "subject": "Refs #1600 baseline landed"
+      }
+    ],
+    "summary": "3 branches, current main"
+  },
+  "assertions": [
+    {
+      "question": "oracle preserves branch row count",
+      "path": "branches.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves current branch",
+      "path": "branches.0.current",
+      "expected": true
+    },
+    {
+      "question": "oracle preserves branch history subject",
+      "path": "branches.1.subject",
+      "expected": "Refs #1616 wrapper corpus"
+    },
+    {
+      "question": "oracle preserves remote branch row",
+      "path": "branches.2.name",
+      "expected": "remotes/origin/main"
+    }
+  ]
+}
