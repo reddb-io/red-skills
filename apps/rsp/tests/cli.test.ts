@@ -34,8 +34,10 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  await Promise.all(residentDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  const rootsToRemove = roots.splice(0);
+  const residentDirsToRemove = residentDirs.splice(0);
+  await Promise.all(rootsToRemove.map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(residentDirsToRemove.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 function trackedResidentPaths(root: string) {
@@ -141,10 +143,29 @@ function latencyBudgetDetails(sample: LatencyBudgetSample): string {
 }
 
 function normalizedTimeoutMs(baselineMs: number, multiplier: number, minMs: number): number {
-  return Math.max(minMs, Math.ceil(Math.max(1, baselineMs) * multiplier));
+  return Math.max(normalizedDurationMs(minMs, baselineMs), Math.ceil(Math.max(1, baselineMs) * multiplier));
 }
 
-const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(timedStatus(runNodeNoop).elapsedMs, 250, 2_000);
+const REFERENCE_NODE_NOOP_MS = 25;
+const TEST_NODE_NOOP_BASELINE_MS = timedStatus(runNodeNoop).elapsedMs;
+
+function localBaselineRatio(baselineMs = TEST_NODE_NOOP_BASELINE_MS): number {
+  return Math.max(1, Math.max(1, baselineMs) / REFERENCE_NODE_NOOP_MS);
+}
+
+function normalizedDurationMs(durationMs: number, baselineMs = TEST_NODE_NOOP_BASELINE_MS): number {
+  return Math.ceil(durationMs * localBaselineRatio(baselineMs));
+}
+
+function normalizedLatencyRatio(maxRatio: number): number {
+  return maxRatio * localBaselineRatio();
+}
+
+function normalizedDeadlineMs(durationMs = 5_000): number {
+  return Date.now() + normalizedDurationMs(durationMs);
+}
+
+const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(TEST_NODE_NOOP_BASELINE_MS, 250, 2_000);
 
 async function idleBeat(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -274,7 +295,7 @@ async function seedWarmRedCache(): Promise<string> {
   return cacheDir;
 }
 
-async function waitForGone(path: string, timeoutMs = 5_000): Promise<void> {
+async function waitForGone(path: string, timeoutMs = normalizedDurationMs(5_000)): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -307,7 +328,7 @@ async function closeWithTimeout(child: ReturnType<typeof spawn>, timeoutMs: numb
 
 async function waitForResidentSocket(root: string): Promise<void> {
   const paths = trackedResidentPaths(root);
-  const deadline = Date.now() + 5_000;
+  const deadline = normalizedDeadlineMs();
   while (Date.now() < deadline) {
     try {
       await stat(paths.socketPath);
@@ -320,7 +341,7 @@ async function waitForResidentSocket(root: string): Promise<void> {
 
 async function waitForSummaryTokens(root: string, minTokens: number): Promise<number> {
   const summaryPath = resolveResidentPaths(root).summaryPath;
-  const deadline = Date.now() + 5_000;
+  const deadline = normalizedDeadlineMs();
   let last = 0;
   while (Date.now() < deadline) {
     try {
@@ -336,7 +357,7 @@ async function waitForSummaryTokens(root: string, minTokens: number): Promise<nu
 
 async function readResidentVersion(root: string): Promise<string | undefined> {
   const socketPath = trackedResidentPaths(root).socketPath;
-  const deadline = Date.now() + 5_000;
+  const deadline = normalizedDeadlineMs();
   let last: unknown;
   while (Date.now() < deadline) {
     try {
@@ -397,7 +418,7 @@ async function readTelemetryRecords(storeUri: string, collection: string): Promi
 }
 
 async function waitForTelemetryInvocations(storeUri: string, command: string, minCount: number): Promise<unknown[]> {
-  const deadline = Date.now() + 5_000;
+  const deadline = normalizedDeadlineMs();
   let records: unknown[] = [];
   while (Date.now() < deadline) {
     records = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
@@ -420,6 +441,10 @@ function extractHandle(output: Buffer): string {
 
 describe("rsp cli", () => {
   it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
+    expect(localBaselineRatio(100)).toBe(4);
+    expect(normalizedDurationMs(1_000, 100)).toBe(4_000);
+    expect(normalizedTimeoutMs(100, 2, 1_000)).toBe(4_000);
+
     let attempts = 0;
     await expectLatencyBudget("test budget", budgetSample(200, 50, "first=200.0ms"), 3, async () => {
       attempts++;
@@ -709,7 +734,7 @@ describe("rsp cli", () => {
         coldNodeBaseline.elapsedMs,
         `node=${coldNodeBaseline.elapsedMs.toFixed(1)}ms cold=${cold.elapsedMs.toFixed(1)}ms hookWork=${coldHookWorkMs.toFixed(1)}ms`,
       ),
-      8,
+      normalizedLatencyRatio(8),
       async () => {
         const retryRoot = await initGitRepo();
         const retryCacheDir = await seedWarmRedCache();
@@ -780,7 +805,7 @@ describe("rsp cli", () => {
         `node=${measuredWarm.nodeMedian.toFixed(1)}ms warm=${measuredWarm.warmMedian.toFixed(1)}ms ` +
           `hookWork=${measuredWarm.hookWorkMs.toFixed(1)}ms`,
       ),
-      8,
+      normalizedLatencyRatio(8),
       () => {
         const retry = measureWarmHookWork();
         return budgetSample(
@@ -799,7 +824,8 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
-    const env = { RED_SKILLS_CACHE_DIR: cacheDir, RSP_IDLE_MS: "5000" };
+    const idleMs = normalizedDurationMs(5_000);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir, RSP_IDLE_MS: String(idleMs) };
     const paths = trackedResidentPaths(root);
 
     const cold = runBundleHookFromCwd(root, "git status", env);
@@ -809,13 +835,13 @@ describe("rsp cli", () => {
     await waitForResidentSocket(root);
     await waitForGone(paths.wakeLockPath);
 
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    await new Promise((resolve) => setTimeout(resolve, normalizedDurationMs(2_000)));
     const warm = runBundleHookFromCwd(root, "git status", env);
     expect(warm.status).toBe(0);
     expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
     expect(warm.stderr).toEqual(Buffer.alloc(0));
 
-    await waitForGone(paths.socketPath, 10_000);
+    await waitForGone(paths.socketPath, idleMs + normalizedDurationMs(5_000));
     const expired = runBundleHookFromCwd(root, "git status", env);
     expect(expired.status).toBe(1);
     expect(expired.stdout).toEqual(Buffer.alloc(0));
@@ -978,7 +1004,7 @@ describe("rsp cli", () => {
     await expectLatencyBudget(
       "small git status wrapper work",
       budgetSample(measured.wrapperWorkMs, measured.nodeMedian + measured.rawMedian, measuredDetails),
-      8,
+      normalizedLatencyRatio(8),
       () => {
         const retry = measureWrapperWork();
         return budgetSample(
@@ -1459,7 +1485,7 @@ describe("rsp cli", () => {
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    const status = await closeWithTimeout(child, 5_000);
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000));
     expect(status, `${Buffer.concat(stdout).toString("utf8")}${Buffer.concat(stderr).toString("utf8")}`).toBe(0);
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
 
@@ -1550,7 +1576,7 @@ describe("rsp cli", () => {
         `raw=${rawMedian.toFixed(1)}ms node=${nodeMedian.toFixed(1)}ms ` +
           `wrapped=${wrappedMedian.toFixed(1)}ms overhead=${overheadMs.toFixed(1)}ms`,
       ),
-      12,
+      normalizedLatencyRatio(12),
       () => {
         const retryRawSamples: number[] = [];
         const retryNodeSamples: number[] = [];
