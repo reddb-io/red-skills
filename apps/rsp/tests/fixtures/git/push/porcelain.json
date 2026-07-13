@@ -10,6 +10,45 @@
     "status": 0,
     "signal": null
   },
-  "expected": "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits\n",
-  "assertions": []
+  "expected": {
+    "command": "git push",
+    "remote": "github.com:reddb-io/red-skills.git",
+    "refs": [
+      {
+        "flag": "=",
+        "from": "refs/heads/main",
+        "to": "refs/heads/main",
+        "summary": "[up to date]"
+      },
+      {
+        "flag": " ",
+        "from": "refs/heads/feature/rsp",
+        "to": "refs/heads/feature/rsp",
+        "summary": "1111111..2222222"
+      }
+    ],
+    "summary": "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits"
+  },
+  "assertions": [
+    {
+      "question": "which branch was pushed?",
+      "path": "refs.1.to",
+      "expected": "refs/heads/feature/rsp"
+    },
+    {
+      "question": "which ref range was pushed?",
+      "path": "refs.1.summary",
+      "expected": "1111111..2222222"
+    },
+    {
+      "question": "which refs are present in the porcelain output?",
+      "path": "refs.length",
+      "expected": 2
+    },
+    {
+      "question": "which remote received the push?",
+      "path": "remote",
+      "expected": "github.com:reddb-io/red-skills.git"
+    }
+  ]
 }
