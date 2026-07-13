@@ -247,6 +247,17 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
     });
     expect(getConfig(values, "dev.triage.external_pr_surface.enabled")).toBe("true");
   });
+
+  it("defaults AFK output shaping off and reads the namespaced terse-steering toggle", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "afk.output_shaping.terse_steering")).toBe("false");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    afk:\n      output_shaping:\n        terse_steering: true\n",
+    });
+    expect(getConfig(values, "afk.output_shaping.terse_steering")).toBe("true");
+  });
 });
 
 describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
