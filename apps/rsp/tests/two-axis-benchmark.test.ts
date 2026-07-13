@@ -45,12 +45,18 @@ describe("rsp two-axis benchmark report", () => {
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.oracle_ceiling_source).toBe("fixture-adjacent hand-reviewed compact TOON renderings");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
+    expect(report.method.headroom_source).toMatchObject({
+      kind: "recorded-fixtures",
+      version: "headroom-ai 0.31.0",
+      captured_at: expect.stringMatching(/^2026-07-13T/),
+    });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
 
     const ghPr = report.filters.find((row) => row.filter === "gh:pr");
     expect(ghPr).toMatchObject({
       fixture_count: 3,
       rtk: { coverage: "not-covered", label: "rtk: not-covered" },
+      headroom: { fidelity_pass_rate_pct: 100, source: "recorded" },
     });
 
     const gitCommit = report.filters.find((row) => row.filter === "git:commit");
@@ -60,9 +66,11 @@ describe("rsp two-axis benchmark report", () => {
       brief: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       terse: { median_delta_pct: 0, p90_delta_pct: 0, fidelity_pass_rate_pct: 100 },
       rtk: { fidelity_pass_rate_pct: 100, source: "recorded" },
+      headroom: { fidelity_pass_rate_pct: 100, source: "recorded" },
       oracle_capture: {
         raw: { source: "recorded" },
         rsp: { source: "measured" },
+        headroom: { source: "recorded" },
         oracle_ceiling: { source: "fixture-oracle", capture_pct: 100 },
       },
       hypothetical_active: {
@@ -80,6 +88,7 @@ describe("rsp two-axis benchmark report", () => {
       fixture_count: 6,
       brief: { fidelity_pass_rate_pct: 100 },
       terse: { fidelity_pass_rate_pct: 100 },
+      headroom: { fidelity_pass_rate_pct: 83.3, source: "recorded" },
     });
     expect(vitest?.terse.median_delta_pct).toBeGreaterThanOrEqual(vitest?.brief.median_delta_pct ?? 0);
 
@@ -114,6 +123,7 @@ describe("rsp two-axis benchmark report", () => {
     });
     expect(report.aggregate.oracle_ceiling.capture_pct).toBe(100);
     expect(report.aggregate.raw.token_count).toBeGreaterThan(report.aggregate.oracle_ceiling.token_count);
+    expect(report.aggregate.headroom.source).toBe("recorded");
   });
 
   it("writes a reproducible TOON artifact and matching human summary", async () => {
@@ -125,9 +135,10 @@ describe("rsp two-axis benchmark report", () => {
 
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
-    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | oracle tokens | rsp capture | RTK capture | brief shipped delta | brief fidelity | terse shipped delta | terse fidelity |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("Headroom baseline is replayed from checked-in recorded fixtures only");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("Aggregate oracle ceiling:");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Anti-suppression audit | Level | Verdict | Note |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:commit | brief | audited: fixed |");
