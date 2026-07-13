@@ -384,6 +384,35 @@ describe("statusline command — rendered line", () => {
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
 
+  it("surfaces a newer locally cached dev bundle without network discovery", async () => {
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+    const cache = await mkdtemp(join(tmpdir(), "red-skills-cache-"));
+    await writeFile(join(cache, "dev-1.2.4.bundle.min.mjs"), "// cached newer bundle\n", "utf8");
+
+    const out = sink();
+    const oldVersion = process.env.RED_BUILD_VERSION;
+    const oldCache = process.env.RED_SKILLS_CACHE_DIR;
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.RED_BUILD_VERSION = "1.2.3";
+    process.env.RED_SKILLS_CACHE_DIR = cache;
+    process.env.NO_COLOR = "1";
+    try {
+      const code = await withFakeGh(() => statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD)));
+      expect(code).toBe(0);
+    } finally {
+      if (oldVersion === undefined) delete process.env.RED_BUILD_VERSION;
+      else process.env.RED_BUILD_VERSION = oldVersion;
+      if (oldCache === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
+      else process.env.RED_SKILLS_CACHE_DIR = oldCache;
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+      await rm(cache, { recursive: true, force: true });
+    }
+
+    expect(stripAnsi(out.text())).toContain("v1.2.3*");
+  });
+
   it("shows only the live successor attempt, not a finished/retained pid=0 sibling (issue #1177)", async () => {
     // One worker `wELLN` that finished #1766 (attempt marked pid:0, dir retained
     // for post-mortem, its liveness lane still fresh) and moved to a LIVE #1767.
