@@ -1,6 +1,10 @@
 {
   "name": "pr-list-empty",
-  "command": ["gh", "pr", "list"],
+  "command": [
+    "gh",
+    "pr",
+    "list"
+  ],
   "catalog_prior_art": "official catalog GitHub wrapper returns definitive empty states instead of an empty JSON array.",
   "recorded": {
     "stdout": "[]",
