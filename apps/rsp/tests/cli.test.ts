@@ -203,10 +203,17 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-async function runMcpRequests(cwd: string, requests: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
+async function runMcpRequests(
+  cwd: string,
+  requests: Array<Record<string, unknown>>,
+  entry: "source" | "bundle" = "source",
+): Promise<Array<Record<string, unknown>>> {
   return await new Promise((resolve, reject) => {
     const timeoutMs = normalizedTimeoutMs(timedStatus(runNodeNoop).elapsedMs, 250, 10_000);
-    const child = spawn(process.execPath, ["--import", tsxLoader, cli, "mcp"], {
+    const expectedResponses = requests.filter((request) => "id" in request).length;
+    if (entry === "bundle") buildBundleOnce();
+    const childArgs = entry === "bundle" ? [bundle, "mcp"] : ["--import", tsxLoader, cli, "mcp"];
+    const child = spawn(process.execPath, childArgs, {
       cwd,
       env: { ...process.env },
       stdio: ["pipe", "pipe", "pipe"],
@@ -233,7 +240,7 @@ async function runMcpRequests(cwd: string, requests: Array<Record<string, unknow
         buffer = buffer.slice(idx + 1);
         if (!line) continue;
         responses.push(JSON.parse(line) as Record<string, unknown>);
-        if (responses.length >= requests.filter((request) => "id" in request).length) {
+        if (responses.filter((response) => response.id != null).length >= expectedResponses) {
           clearTimeout(timeout);
           child.kill();
           resolve(responses);
@@ -245,7 +252,7 @@ async function runMcpRequests(cwd: string, requests: Array<Record<string, unknow
       reject(err);
     });
     child.on("close", (status) => {
-      if (responses.length < requests.filter((request) => "id" in request).length) {
+      if (responses.filter((response) => response.id != null).length < expectedResponses) {
         clearTimeout(timeout);
         reject(new Error(`rsp mcp exited early with ${status}; stdout=${stdout}; stderr=${stderr}`));
       }
@@ -508,12 +515,23 @@ describe("rsp cli", () => {
       { jsonrpc: "2.0", method: "notifications/initialized" },
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "rsp_status", arguments: {} } },
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "rsp_compress", arguments: { payload: Array.from({ length: 30 }, (_, i) => ({ id: i })) } },
+      },
     ]);
 
     const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
     const status = responses.find((response) => response.id === 3) as { result: { content: Array<{ text: string }> } };
+    const compress = responses.find((response) => response.id === 4) as {
+      result: { content: Array<{ text: string }>; isError?: boolean };
+    };
     expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
     expect(status.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    expect(compress.result.isError).toBe(true);
+    expect(compress.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
     await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -547,8 +565,106 @@ describe("rsp cli", () => {
     ]);
 
     const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status", "rsp_stats", "rsp_show"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status", "rsp_stats", "rsp_show", "rsp_compress"]);
   });
+
+  it("mcp compresses large JSON and rsp_show round-trips the elided original", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+    const payload = Array.from({ length: 60 }, (_, i) => ({
+      id: i,
+      status: i === 27 ? 500 : 200,
+      latency: i === 33 ? 4_500 : i,
+      label: `row-${i}`,
+    }));
+    const original = JSON.stringify(payload);
+
+    const compressedResponses = await runMcpRequests(root, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rsp_compress", arguments: { payload: original, level: "terse" } },
+      },
+    ]);
+
+    const compressed = compressedResponses.find((response) => response.id === 2) as {
+      result: { content: Array<{ text: string }> };
+    };
+    const text = compressed.result.content[0]!.text;
+    expect(text).toContain("items: 15 of 60 kept");
+    expect(text).toContain("items[15]{id,status,latency,label}");
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
+    expect(handle).toBeTruthy();
+
+    const shownResponses = await runMcpRequests(root, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rsp_show", arguments: { handle } },
+      },
+    ]);
+
+    const shown = shownResponses.find((response) => response.id === 2) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(shown.result.content[0]!.text).toBe(original);
+  });
+
+  it("built bundle mcp compress honors disabled gates and round-trips large JSON", async () => {
+    const disabledRoot = await tempRoot();
+    const disabledResponses = await runMcpRequests(disabledRoot, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rsp_compress", arguments: { payload: [{ id: 1 }], level: "brief" } },
+      },
+    ], "bundle");
+    const disabled = disabledResponses.find((response) => response.id === 2) as {
+      result: { content: Array<{ text: string }>; isError?: boolean };
+    };
+    expect(disabled.result.isError).toBe(true);
+    expect(disabled.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    await expect(stat(join(disabledRoot, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    const root = await tempRoot();
+    await enableRsp(root);
+    const payload = Array.from({ length: 60 }, (_, i) => ({ id: i, value: i, error: i === 41 ? "boom" : "" }));
+    const original = JSON.stringify(payload);
+    const compressedResponses = await runMcpRequests(root, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rsp_compress", arguments: { payload: original, level: "terse" } },
+      },
+    ], "bundle");
+    const compressed = compressedResponses.find((response) => response.id === 2) as {
+      result: { content: Array<{ text: string }> };
+    };
+    const handle = /rsp show (el:[a-f0-9]{12})/.exec(compressed.result.content[0]!.text)?.[1];
+    expect(handle).toBeTruthy();
+
+    const shownResponses = await runMcpRequests(root, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rsp_show", arguments: { handle } },
+      },
+    ], "bundle");
+    const shown = shownResponses.find((response) => response.id === 2) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(shown.result.content[0]!.text).toBe(original);
+  }, 120_000);
 
   it("built bundle starts the resident on cold small git status", async () => {
     buildBundleOnce();
