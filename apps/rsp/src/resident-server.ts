@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
+import { createResidentBrainStore } from "./resident-brain.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
@@ -58,7 +59,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     touch();
     handleSocket(socket, async (request) => {
       touch();
-      const value = await handleRequest(store, request, opts.residentVersion ?? "0.0.0-dev");
+      const value = await handleRequest(store, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
       const response: RspResidentResponse = { id: request.id, ok: true, value, storeOpenCount, storeElapsedMs };
       socket.write(`${JSON.stringify(response)}\n`);
       if (request.op === "handover") setImmediate(() => server.close());
@@ -404,7 +405,12 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
   });
 }
 
-async function handleRequest(store: RspElisionStore, request: RspResidentRequest, residentVersion: string): Promise<unknown> {
+async function handleRequest(
+  store: RspElisionStore,
+  request: RspResidentRequest,
+  storeUri: string,
+  residentVersion: string,
+): Promise<unknown> {
   if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "handover") return { handover: true, version: residentVersion, clientVersion: request.clientVersion };
   if (request.op === "stats") return await store.stats();
@@ -425,7 +431,19 @@ async function handleRequest(store: RspElisionStore, request: RspResidentRequest
   }
   if (request.op === "get") return encodeRecord(await store.get(request.handle));
   if (request.op === "memory") return await store.memory(request.action, request.payload);
+  if (request.op === "brain") return await handleBrainRequest(store, storeUri, request.action, request.payload);
   throw new Error(`unsupported resident op: ${(request as { op?: string }).op ?? "unknown"}`);
+}
+
+async function handleBrainRequest(
+  store: RspElisionStore,
+  storeUri: string,
+  action: Extract<RspResidentRequest, { op: "brain" }>["action"],
+  payload: unknown,
+): Promise<unknown> {
+  const db = store.redDb();
+  if (!db) throw new Error("resident brain operations require the shared RedDB store");
+  return await createResidentBrainStore(db, storeUri).request(action, payload);
 }
 
 function encodeRecord(record: RspElisionRecord | RspExpiredHandle | null): unknown {
