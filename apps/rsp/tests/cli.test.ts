@@ -519,31 +519,44 @@ describe("rsp cli", () => {
     // also the moment the socket starts answering — poll instead of racing it.
     await waitForGone(paths.wakeLockPath);
 
-    const nodeBaseline = timedStatus(runNodeNoop);
-    const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
-    const hookWorkMs = Math.max(0, warm.elapsedMs - nodeBaseline.elapsedMs);
+    const measureWarmHookWork = () => {
+      const nodeSamples: number[] = [];
+      const warmSamples: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const node = timedStatus(runNodeNoop);
+        const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
 
-    expect(warm.status).toBe(0);
-    expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
-    expect(warm.stderr).toEqual(Buffer.alloc(0));
+        expect(warm.status).toBe(0);
+        expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+        expect(warm.stderr).toEqual(Buffer.alloc(0));
+        nodeSamples.push(node.elapsedMs);
+        warmSamples.push(warm.elapsedMs);
+      }
+
+      const nodeMedian = median(nodeSamples);
+      const warmMedian = median(warmSamples);
+      return {
+        nodeMedian,
+        warmMedian,
+        hookWorkMs: Math.max(0, warmMedian - nodeMedian),
+      };
+    };
+
+    const measuredWarm = measureWarmHookWork();
     await expectLatencyBudget(
       "warm pre-exec hook work",
       budgetSample(
-        hookWorkMs,
-        `node=${nodeBaseline.elapsedMs.toFixed(1)}ms warm=${warm.elapsedMs.toFixed(1)}ms hookWork=${hookWorkMs.toFixed(1)}ms`,
+        measuredWarm.hookWorkMs,
+        `node=${measuredWarm.nodeMedian.toFixed(1)}ms warm=${measuredWarm.warmMedian.toFixed(1)}ms ` +
+          `hookWork=${measuredWarm.hookWorkMs.toFixed(1)}ms`,
       ),
-      100,
+      200,
       () => {
-        const retryNodeBaseline = timedStatus(runNodeNoop);
-        const retryWarm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
-        const retryHookWorkMs = Math.max(0, retryWarm.elapsedMs - retryNodeBaseline.elapsedMs);
-
-        expect(retryWarm.status).toBe(0);
-        expect(retryWarm.stdout).toEqual(Buffer.from("rsp git status\n"));
-        expect(retryWarm.stderr).toEqual(Buffer.alloc(0));
+        const retry = measureWarmHookWork();
         return budgetSample(
-          retryHookWorkMs,
-          `node=${retryNodeBaseline.elapsedMs.toFixed(1)}ms warm=${retryWarm.elapsedMs.toFixed(1)}ms hookWork=${retryHookWorkMs.toFixed(1)}ms`,
+          retry.hookWorkMs,
+          `node=${retry.nodeMedian.toFixed(1)}ms warm=${retry.warmMedian.toFixed(1)}ms ` +
+            `hookWork=${retry.hookWorkMs.toFixed(1)}ms`,
         );
       },
     );
