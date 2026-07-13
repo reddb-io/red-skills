@@ -160,18 +160,18 @@ describe("statusline style — header line", () => {
   it("styles rsp states from the shared render model", () => {
     const healthy = renderHeaderLine(input.project, claude, repo, undefined, "full", {
       state: "ready",
-      tokensSavedToday: 124000,
+      tokensSavedToday: 1320000,
     });
-    expect(healthy).toContain(`${GREEN}rsp ↓124k${SOFT}`);
-    expect(stripAnsi(healthy)).toContain("rsp ↓124k");
+    expect(healthy).toContain(`${GREEN}rsp=↓1.32M${SOFT}`);
+    expect(stripAnsi(healthy)).toContain("rsp=↓1.32M");
 
     const warming = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "warming" });
-    expect(warming).toContain(`${DIM}rsp …${SOFT}`);
-    expect(stripAnsi(warming)).toContain("rsp …");
+    expect(warming).toContain(`${DIM}rsp=…${SOFT}`);
+    expect(stripAnsi(warming)).toContain("rsp=…");
 
     const error = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "error" });
-    expect(error).toContain(`${RED}rsp !${SOFT}`);
-    expect(stripAnsi(error)).toContain("rsp !");
+    expect(error).toContain(`${RED}rsp=!${SOFT}`);
+    expect(stripAnsi(error)).toContain("rsp=!");
   });
 });
 
