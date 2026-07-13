@@ -39,7 +39,7 @@ When you would run one of these commands, run it through `rsp` instead:
 ## When to prefer rsp
 
 - For deterministic file reads, prefer `rsp cat <file>`; code files render an outline plus bounded content, text/config files are threshold-gated, and binary files pass through untouched.
-- For simple file dumps, Claude pre-exec may rewrite bare `cat <file>`, `head <file>`, `head -n N <file>`, `tail <file>`, and `tail -n N <file>` when the path is an unquoted single file token.
+- For simple file dumps, the host pre-exec hook may rewrite bare `cat <file>`, `head <file>`, `head -n N <file>`, `tail <file>`, and `tail -n N <file>` when the path is an unquoted single file token.
 - For `git status`, prefer `rsp git status` when the summarized output is enough.
 - For `git log`, prefer `rsp git log` when the summarized output is enough.
 - For `git diff`, prefer `rsp git diff` when the summarized output is enough.
