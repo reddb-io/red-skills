@@ -87,6 +87,18 @@ describe("rsp two-axis benchmark report", () => {
       expect.objectContaining({ domain: "cargo-test", filter: "cargo:test", rsp_fidelity_pass_rate_pct: 100 }),
       expect.objectContaining({ domain: "git-commit", filter: "git:commit", rsp_fidelity_pass_rate_pct: 100 }),
     ]));
+    expect(report.anti_suppression_audit).toHaveLength(report.corpus.filters.length * 2);
+    expect(report.anti_suppression_audit.map((row) => `${row.filter}:${row.level}`).sort()).toEqual(
+      report.corpus.filters.flatMap((filter) => [`${filter}:brief`, `${filter}:terse`]).sort(),
+    );
+    expect(report.anti_suppression_audit).toEqual(expect.arrayContaining([
+      expect.objectContaining({ filter: "git:commit", level: "brief", audited: "fixed" }),
+      expect.objectContaining({ filter: "git:commit", level: "terse", audited: "fixed" }),
+      expect.objectContaining({ filter: "git:push", level: "brief", audited: "fixed" }),
+      expect.objectContaining({ filter: "git:push", level: "terse", audited: "fixed" }),
+      expect.objectContaining({ filter: "gh:pr", level: "brief", audited: "justified" }),
+      expect.objectContaining({ filter: "git:status", level: "terse", audited: "justified" }),
+    ]));
 
     const decoded = decode(report.toon);
     expect(decoded).toMatchObject({
@@ -111,6 +123,9 @@ describe("rsp two-axis benchmark report", () => {
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("Aggregate oracle ceiling:");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Anti-suppression audit | Level | Verdict | Note |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:commit | brief | audited: fixed |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:push | terse | audited: fixed |");
   });
 
   it("flags synthetic shipped token regressions beyond the threshold", async () => {
