@@ -12,6 +12,7 @@ import { sendResidentRequest } from "./resident-protocol.js";
 export interface RspResidentPaths {
   rootDir: string;
   socketPath: string;
+  pidPath: string;
   lockPath: string;
   wakeLockPath: string;
   summaryPath: string;
@@ -25,6 +26,7 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
   return {
     rootDir,
     socketPath: join(socketDir, "rsp.sock"),
+    pidPath: join(socketDir, "rsp.pid"),
     lockPath: join(socketDir, "rsp.lock"),
     wakeLockPath: join(rootDir, ".red", "tmp", "rsp.wake.lock"),
     summaryPath: join(rootDir, ".red", "tmp", "rsp-status-summary.json"),
@@ -109,6 +111,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     "warm-resident",
     "--socket",
     paths.socketPath,
+    "--pid-file",
+    paths.pidPath,
     "--store-uri",
     config.storeUri,
     "--ttl-days",
@@ -181,6 +185,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     "server",
     "--socket",
     paths.socketPath,
+    "--pid-file",
+    paths.pidPath,
     "--store-uri",
     config.storeUri,
     "--ttl-days",

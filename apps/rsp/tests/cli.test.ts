@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { connect } from "@reddb-io/sdk";
 import { decode } from "@reddb-io/toon";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
@@ -19,6 +19,7 @@ import {
 
 const roots: string[] = [];
 const residentDirs: string[] = [];
+const residentPathsBySocket = new Map<string, ReturnType<typeof resolveResidentPaths>>();
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 const packageRoot = join(import.meta.dirname, "..");
 const repoRoot = join(packageRoot, "..", "..");
@@ -35,13 +36,19 @@ async function tempRoot(): Promise<string> {
 
 afterEach(async () => {
   const rootsToRemove = roots.splice(0);
+  await stopTrackedResidents(rootsToRemove);
   const residentDirsToRemove = residentDirs.splice(0);
   await Promise.all(rootsToRemove.map((root) => rm(root, { recursive: true, force: true })));
   await Promise.all(residentDirsToRemove.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+afterAll(async () => {
+  await stopTrackedResidents([]);
+});
+
 function trackedResidentPaths(root: string) {
   const paths = resolveResidentPaths(root);
+  residentPathsBySocket.set(paths.socketPath, paths);
   residentDirs.push(dirname(paths.socketPath));
   return paths;
 }
@@ -439,6 +446,93 @@ function extractHandle(output: Buffer): string {
   return match![1];
 }
 
+async function stopTrackedResidents(extraRoots: string[]): Promise<void> {
+  const paths = uniqueResidentPaths(extraRoots);
+  residentPathsBySocket.clear();
+  await Promise.all(paths.map((path) => stopResident(path)));
+}
+
+function uniqueResidentPaths(extraRoots: string[]): Array<ReturnType<typeof resolveResidentPaths>> {
+  const paths = new Map(residentPathsBySocket);
+  for (const root of extraRoots) {
+    const resolved = resolveResidentPaths(root);
+    paths.set(resolved.socketPath, resolved);
+  }
+  return [...paths.values()];
+}
+
+async function countTrackedResidentProcesses(extraRoots: string[] = []): Promise<number> {
+  let count = 0;
+  for (const paths of uniqueResidentPaths(extraRoots)) {
+    const pid = await readPid(paths.pidPath);
+    if (pid != null && isPidAlive(pid)) count++;
+  }
+  return count;
+}
+
+async function stopResident(paths: ReturnType<typeof resolveResidentPaths>): Promise<void> {
+  const pid = await readPid(paths.pidPath);
+  if (await pathExists(paths.socketPath)) {
+    await sendResidentRequest(
+      { socketPath: paths.socketPath, timeoutMs: 500 },
+      { id: randomUUID(), op: "handover", clientVersion: "9999.0.0" },
+    ).catch(() => undefined);
+    await waitForGone(paths.socketPath, normalizedDurationMs(2_000)).catch(() => undefined);
+  }
+  if (pid != null && pid !== process.pid && isPidAlive(pid)) {
+    killResidentPid(pid, "SIGTERM");
+    await waitForPidGone(pid, normalizedDurationMs(1_000)).catch(() => {
+      killResidentPid(pid, "SIGKILL");
+    });
+    await waitForPidGone(pid, normalizedDurationMs(1_000)).catch(() => undefined);
+  }
+  await rm(paths.socketPath, { force: true });
+  await rm(paths.pidPath, { force: true });
+}
+
+async function readPid(path: string): Promise<number | null> {
+  const text = await readFile(path, "utf8").catch(() => "");
+  const pid = Number(text.trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killResidentPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(process.platform === "win32" ? pid : -pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {}
+  }
+}
+
+async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (isPidAlive(pid)) throw new Error(`process ${pid} still alive after ${timeoutMs}ms`);
+}
+
 describe("rsp cli", () => {
   it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
     expect(localBaselineRatio(100)).toBe(4);
@@ -709,6 +803,69 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+  }, 120_000);
+
+  it("built bundle teardown stops every spawned resident process", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+
+    const res = runBundleFromCwd(root, ["git", "status"], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+      RSP_IDLE_MS: String(normalizedDurationMs(30_000)),
+    });
+
+    expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+    await waitForResidentSocket(root);
+    await expect(readPid(paths.pidPath)).resolves.toEqual(expect.any(Number));
+    expect(await countTrackedResidentProcesses()).toBe(1);
+
+    await stopTrackedResidents([]);
+
+    expect(await countTrackedResidentProcesses([root])).toBe(0);
+  }, 120_000);
+
+  it("built bundle idle resident exits even when final telemetry drain hangs", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    const started = Date.now();
+    const child = spawn(process.execPath, [
+      bundle,
+      "server",
+      "--idle-ms",
+      "100",
+      "--telemetry-drain-timeout-ms",
+      "60000",
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_TELEMETRY_DRAIN: "1",
+        RSP_TEST_IDLE_SHUTDOWN_WATCHDOG_MS: String(normalizedDurationMs(500)),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+
+    await waitForResidentSocket(root);
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000));
+
+    expect(status, `${Buffer.concat(stdout).toString("utf8")}${Buffer.concat(stderr).toString("utf8")}`).toBe(0);
+    expect(Date.now() - started).toBeLessThan(normalizedDurationMs(10_000));
+    await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await countTrackedResidentProcesses()).toBe(0);
   }, 120_000);
 
   it("built bundle pre-exec hook passes through while cold, warms once, then rewrites when healthy", async () => {

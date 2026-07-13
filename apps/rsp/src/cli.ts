@@ -76,6 +76,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     await runResidentServer({
       socketPath: socket,
+      pidPath: valueAfter(args.positional, "--pid-file") ?? resolveResidentPaths(process.cwd()).pidPath,
       storeUri: serverConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
