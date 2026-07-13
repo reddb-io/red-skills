@@ -434,9 +434,55 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
+    expect(res.stderr).toEqual(direct.stderr);
+    await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("restores the disabled passthrough notice under RSP_DEBUG", async () => {
+    const root = await initGitRepo();
+    await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
+    const direct = runGit(["-C", root, "status", "--short"]);
+
+    const res = runRspFromCwd(root, ["git", "status", "--short"], { RSP_DEBUG: "1" });
+
+    expect(res.status).toBe(direct.status);
+    expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: rsp is not enabled in this directory; run /red-setup, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("built bundle keeps disabled passthrough silent, debuggable, and distinct from enabled degradation", async () => {
+    buildBundleOnce();
+    const disabledRoot = await initGitRepo();
+    await writeFile(join(disabledRoot, "untracked.txt"), "raw stdout\n", "utf8");
+    const disabledDirect = runGit(["-C", disabledRoot, "status"]);
+
+    const disabled = runBundleFromCwd(disabledRoot, ["git", "status"], { RSP_DEBUG: "0" });
+
+    expect(disabled.status).toBe(disabledDirect.status);
+    expect(disabled.stdout).toEqual(disabledDirect.stdout);
+    expect(disabled.stderr).toEqual(disabledDirect.stderr);
+    await expect(stat(join(disabledRoot, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    const debug = runBundleFromCwd(disabledRoot, ["git", "status"], { RSP_DEBUG: "1" });
+
+    expect(debug.status).toBe(disabledDirect.status);
+    expect(debug.stdout).toEqual(disabledDirect.stdout);
+    expect(debug.stderr.toString("utf8")).toBe(`rsp: rsp is not enabled in this directory; run /red-setup, passing through\n${disabledDirect.stderr.toString("utf8")}`);
+
+    const degradedRoot = await initGitRepo();
+    await enableRsp(degradedRoot);
+    await writeFile(join(degradedRoot, "untracked.txt"), "raw stdout\n", "utf8");
+    const degradedDirect = runGit(["-C", degradedRoot, "status", "--short"]);
+
+    const degraded = runBundleFromCwd(degradedRoot, ["git", "-C", degradedRoot, "status", "--short"], {
+      RSP_DEBUG: "0",
+    });
+
+    expect(degraded.status).toBe(degradedDirect.status);
+    expect(degraded.stdout).toEqual(degradedDirect.stdout);
+    expect(degraded.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${degradedDirect.stderr.toString("utf8")}`);
+  }, 120_000);
 
   it("server exits inert without creating a socket when rsp is not enabled", async () => {
     const root = await tempRoot();
