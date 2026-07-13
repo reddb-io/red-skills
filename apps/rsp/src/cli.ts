@@ -58,12 +58,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(`${rspDisabledReason()}\n`);
     return 0;
   }
-  const fastResidentPaths = args.command === "git" && isFastGitStatus(args.positional)
-    ? await residentPathsIfSocketExists(process.cwd())
-    : null;
-  if (fastResidentPaths) {
+  if (args.command === "git" && isFastGitStatus(args.positional)) {
     const started = process.hrtime.bigint();
-    return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, fastResidentPaths.rootDir);
+    return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, await fastTelemetryRoot(process.cwd()));
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
@@ -323,12 +320,6 @@ function isFastGitStatus(argv: readonly string[]): boolean {
   return argv.length === 2 && argv[0] === "git" && argv[1] === "status";
 }
 
-async function residentPathsIfSocketExists(cwd: string): Promise<{ rootDir: string; socketPath: string } | null> {
-  const { resolveResidentPaths } = await import("./resident-client.js");
-  const paths = resolveResidentPaths(cwd);
-  return existsSync(paths.socketPath) ? paths : null;
-}
-
 async function runFastGitStatus(): Promise<WrappedCommandResult> {
   if (isEmptyUnbornGitRepo(process.cwd())) {
     return {
@@ -367,6 +358,15 @@ async function runFastGitStatus(): Promise<WrappedCommandResult> {
     signal: status.signal,
     rawOutput: stdout,
   };
+}
+
+async function fastTelemetryRoot(cwd: string): Promise<string> {
+  try {
+    const { resolveResidentPaths } = await import("./resident-client.js");
+    return resolveResidentPaths(cwd).rootDir;
+  } catch {
+    return cwd;
+  }
 }
 
 function isEmptyUnbornGitRepo(cwd: string): boolean {

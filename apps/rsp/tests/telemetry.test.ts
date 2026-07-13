@@ -99,6 +99,29 @@ describe("rsp telemetry spool", () => {
     expect(spool).not.toContain('"id":"ok"');
   });
 
+  it("keeps oversized raw and emitted text out of the spool while preserving byte estimates", async () => {
+    const root = await tempRoot();
+    const huge = "x".repeat(300 * 1024);
+
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "oversized",
+      command: "git log",
+      raw_text: huge,
+      emitted_text: huge,
+    });
+
+    const spool = await readFile(telemetrySpoolPath(root), "utf8");
+    expect(spool).not.toContain(huge);
+    expect(JSON.parse(spool)).toMatchObject({
+      id: "oversized",
+      command: "git log",
+      raw_bytes: Buffer.byteLength(huge, "utf8"),
+      emitted_bytes: Buffer.byteLength(huge, "utf8"),
+      estimated: true,
+    });
+  });
+
   it("drains boot and idle telemetry into RedDB while skipping malformed lines", async () => {
     const root = await tempRoot();
     await appendTelemetryEvent(root, {

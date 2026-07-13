@@ -62,6 +62,8 @@ export interface RspTelemetryStats {
   };
 }
 
+const SPOOL_TEXT_INLINE_CAP_BYTES = 64 * 1024;
+
 export interface RspTelemetryGainsReport {
   schema_version: "red.rsp.gains.v1";
   window: {
@@ -120,8 +122,28 @@ export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryE
   try {
     const path = telemetrySpoolPath(rootDir);
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
+    appendFileSync(path, `${JSON.stringify(compactTelemetryEventForSpool(event))}\n`, { encoding: "utf8", mode: 0o600 });
   } catch {}
+}
+
+function compactTelemetryEventForSpool(event: RspTelemetryEvent): RspTelemetryEvent {
+  return compactTextField(compactTextField(event, "raw_text", "raw_bytes"), "emitted_text", "emitted_bytes");
+}
+
+function compactTextField(
+  event: RspTelemetryEvent,
+  textField: "raw_text" | "emitted_text",
+  bytesField: "raw_bytes" | "emitted_bytes",
+): RspTelemetryEvent {
+  const text = event[textField];
+  if (typeof text !== "string") return event;
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= SPOOL_TEXT_INLINE_CAP_BYTES) return event;
+  const next = { ...event };
+  delete next[textField];
+  if (numeric(next[bytesField]) === 0) next[bytesField] = bytes;
+  next.estimated = true;
+  return next;
 }
 
 export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
