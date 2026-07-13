@@ -68,7 +68,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
   if (args.command === "server") {
     const { runResidentServer } = await import("./resident-server.js");
-    const socket = valueAfter(args.positional, "--socket") ?? resolveResidentPaths(process.cwd()).socketPath;
+    const serverPaths = resolveResidentPaths(process.cwd());
+    const socket = valueAfter(args.positional, "--socket") ?? serverPaths.socketPath;
     const serverConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
     if (!serverConfig.enabled) {
       process.stdout.write(`${rspDisabledReason()}\n`);
@@ -77,6 +78,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runResidentServer({
       socketPath: socket,
       pidPath: valueAfter(args.positional, "--pid-file") ?? resolveResidentPaths(process.cwd()).pidPath,
+      rootDir: serverPaths.rootDir,
       storeUri: serverConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
@@ -88,6 +90,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         serverConfig.telemetryDrainTimeoutMs,
       idleMs: numericValueAfter(args.positional, "--idle-ms") ?? serverConfig.idleMs,
       residentVersion: valueAfter(args.positional, "--resident-version") ?? buildInfo.version,
+      registryPath: valueAfter(args.positional, "--registry") ?? serverPaths.registryPath,
     });
     return 0;
   }
@@ -121,6 +124,14 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const { existsSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
   const residentPaths = resolveResidentPaths(process.cwd());
+  if (args.command === "status" || args.command === "sweep") {
+    const { residentRegistryStatus, sweepResidentRegistry } = await import("./resident-client.js");
+    const status = args.command === "sweep"
+      ? await sweepResidentRegistry(residentPaths)
+      : await residentRegistryStatus(residentPaths);
+    process.stdout.write(`${encode(status as unknown as JsonObject)}\n`);
+    return 0;
+  }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await runColdWrappedCommand(args, config, residentPaths.rootDir);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
