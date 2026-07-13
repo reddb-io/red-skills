@@ -1,0 +1,9 @@
+# oracle: preserves decision-relevant rows and columns from blame-basic; keep as compact TOON, not a scalar verdict.
+command: git blame
+ranges[2]{line_start,line_end,author,commit,path}:
+  1,2,Ada Lovelace,aaaaaaaaaaaa,src/app.ts
+  3,3,Grace Hopper,bbbbbbbbbbbb,src/app.ts
+authors:
+  Ada Lovelace: 1
+  Grace Hopper: 1
+summary: "2 ranges, 2 authors"

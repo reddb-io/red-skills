@@ -1,0 +1,12 @@
+# oracle: preserves decision-relevant rows and columns from show-basic; keep as compact TOON, not a scalar verdict.
+command: git show
+commit: abcdef1234567890abcdef1234567890abcdef12
+short: abcdef1
+author: Ada Lovelace
+date: 2026-07-13T07:30:00+00:00
+subject: "Refs #1616 add wrappers"
+body_lines: 2
+files[2]{path,changed,added,deleted,binary}:
+  apps/rsp/src/git-wrapper.ts,5,3,2,false
+  apps/rsp/src/intercept.ts,3,3,0,false
+summary: "2 files, 8 changed, +6 -2"

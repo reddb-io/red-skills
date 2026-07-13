@@ -29,6 +29,8 @@ describe("rsp git fidelity fixtures", () => {
     const fixtureNames = (await discoverFidelityFixtures(fixtureRoot)).map((fixture) => fixture.name).sort();
 
     expect(fixtureNames).toEqual([
+      "blame-basic",
+      "branch-av",
       "commit-created",
       "diff-large-numstat",
       "diff-numstat",
@@ -36,12 +38,13 @@ describe("rsp git fidelity fixtures", () => {
       "log-large-history",
       "push-porcelain",
       "push-rejected",
+      "show-basic",
       "status-clean",
       "status-working-tree",
     ]);
   });
 
-  it("renders five git subcommands from recorded machine contracts as decodable TOON", async () => {
+  it("renders git subcommands from recorded machine contracts as decodable TOON", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
@@ -251,7 +254,7 @@ describe("rsp git admission harness", () => {
     const commitRow = report.filters.find((row) => row.filter === "git:commit")!;
     const pushRow = report.filters.find((row) => row.filter === "git:push")!;
 
-    expect(report.summary).toBe("1/5 filters active at threshold 60%");
+    expect(report.summary).toBe("1/8 filters active at threshold 60%");
     // git:commit's compact TOON rendering stays below the admission threshold.
     expect(commitRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
     // git:push also stays passthrough when preserving pushed-ref rows would be a token regression.

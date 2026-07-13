@@ -1,0 +1,61 @@
+{
+  "name": "show-basic",
+  "command": [
+    "git",
+    "show"
+  ],
+  "recorded": {
+    "stdout": "\u001eabcdef1234567890abcdef1234567890abcdef12\u001fabcdef1\u001fAda Lovelace\u001f2026-07-13T07:30:00+00:00\u001fRefs #1616 add wrappers\u001fBody line one\nBody line two\u001e\n apps/rsp/src/git-wrapper.ts | 5 +++--\n apps/rsp/src/intercept.ts   | 3 +++\n 2 files changed, 6 insertions(+), 2 deletions(-)\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git show",
+    "commit": "abcdef1234567890abcdef1234567890abcdef12",
+    "short": "abcdef1",
+    "author": "Ada Lovelace",
+    "date": "2026-07-13T07:30:00+00:00",
+    "subject": "Refs #1616 add wrappers",
+    "body_lines": 2,
+    "files": [
+      {
+        "path": "apps/rsp/src/git-wrapper.ts",
+        "changed": 5,
+        "added": 3,
+        "deleted": 2,
+        "binary": false
+      },
+      {
+        "path": "apps/rsp/src/intercept.ts",
+        "changed": 3,
+        "added": 3,
+        "deleted": 0,
+        "binary": false
+      }
+    ],
+    "summary": "2 files, 8 changed, +6 -2"
+  },
+  "assertions": [
+    {
+      "question": "oracle preserves shown commit",
+      "path": "commit",
+      "expected": "abcdef1234567890abcdef1234567890abcdef12"
+    },
+    {
+      "question": "oracle preserves commit subject",
+      "path": "subject",
+      "expected": "Refs #1616 add wrappers"
+    },
+    {
+      "question": "oracle preserves diffstat row count",
+      "path": "files.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves first diffstat deletions",
+      "path": "files.0.deleted",
+      "expected": 2
+    }
+  ]
+}

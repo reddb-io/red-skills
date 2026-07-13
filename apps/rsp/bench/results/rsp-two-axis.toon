@@ -1,7 +1,7 @@
 benchmark: rsp-two-axis
 corpus:
-  fixture_count: 27
-  filters[10]: "cargo:test","gh:issue","gh:pr","gh:run","git:commit","git:diff","git:log","git:push","git:status","vitest:run"
+  fixture_count: 30
+  filters[13]: "cargo:test","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
   large_output_filters[3]: "git:diff","git:log","vitest:run"
 method:
   tokenizer: "js-tiktoken:gpt-4o"
@@ -14,7 +14,7 @@ method:
     captured_at: "2026-07-10T00:00:00.000Z"
   external_claims[1]{layer,claim,status,measured_locally,note}:
     external-context-optimization,Host/provider conversation-history optimization and cache-prefix alignment can reduce repeated context spend.,cited_unverified,false,The rsp benchmark measures shell-output fixtures only; external history-layer claims are not reproduced here.
-filters[10]:
+filters[13]:
   - filter: "cargo:test"
     mode: active
     fixture_count: 3
@@ -231,6 +231,114 @@ filters[10]:
         median_delta_pct: -34.1
         p90_delta_pct: 0
         fidelity_pass_rate_pct: 66.7
+        source: measured
+  - filter: "git:blame"
+    mode: passthrough
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    brief:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    terse:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      coverage: not-covered
+      label: "rtk: not-covered"
+      source: not-covered
+    oracle_capture:
+      raw:
+        token_count: 88
+        capture_pct: 0
+        source: recorded
+      rsp:
+        token_count: 88
+        capture_pct: 0
+        source: measured
+      terse:
+        token_count: 88
+        capture_pct: 0
+        source: measured
+      rtk:
+        coverage: not-covered
+        label: "rtk: not-covered"
+        source: not-covered
+      oracle_ceiling:
+        token_count: 83
+        capture_pct: 100
+        source: fixture-oracle
+    hypothetical_active:
+      brief:
+        median_delta_pct: 3.4
+        p90_delta_pct: 3.4
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: -1.1
+        p90_delta_pct: -1.1
+        fidelity_pass_rate_pct: 0
+        source: measured
+  - filter: "git:branch"
+    mode: passthrough
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    brief:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    terse:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      coverage: not-covered
+      label: "rtk: not-covered"
+      source: not-covered
+    oracle_capture:
+      raw:
+        token_count: 64
+        capture_pct: 64
+        source: recorded
+      rsp:
+        token_count: 64
+        capture_pct: 64
+        source: measured
+      terse:
+        token_count: 64
+        capture_pct: 64
+        source: measured
+      rtk:
+        coverage: not-covered
+        label: "rtk: not-covered"
+        source: not-covered
+      oracle_ceiling:
+        token_count: 100
+        capture_pct: 100
+        source: fixture-oracle
+    hypothetical_active:
+      brief:
+        median_delta_pct: -62.5
+        p90_delta_pct: -62.5
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: -17.2
+        p90_delta_pct: -17.2
+        fidelity_pass_rate_pct: 0
         source: measured
   - filter: "git:commit"
     mode: passthrough
@@ -452,6 +560,60 @@ filters[10]:
         p90_delta_pct: 0
         fidelity_pass_rate_pct: 50
         source: measured
+  - filter: "git:show"
+    mode: passthrough
+    fixture_count: 1
+    raw:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: recorded
+    brief:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    terse:
+      median_delta_pct: 0
+      p90_delta_pct: 0
+      fidelity_pass_rate_pct: 100
+      source: measured
+    rtk:
+      coverage: not-covered
+      label: "rtk: not-covered"
+      source: not-covered
+    oracle_capture:
+      raw:
+        token_count: 98
+        capture_pct: 74.2
+        source: recorded
+      rsp:
+        token_count: 98
+        capture_pct: 74.2
+        source: measured
+      terse:
+        token_count: 98
+        capture_pct: 74.2
+        source: measured
+      rtk:
+        coverage: not-covered
+        label: "rtk: not-covered"
+        source: not-covered
+      oracle_ceiling:
+        token_count: 132
+        capture_pct: 100
+        source: fixture-oracle
+    hypothetical_active:
+      brief:
+        median_delta_pct: -34.7
+        p90_delta_pct: -34.7
+        fidelity_pass_rate_pct: 100
+        source: measured
+      terse:
+        median_delta_pct: -39.8
+        p90_delta_pct: -39.8
+        fidelity_pass_rate_pct: 0
+        source: measured
   - filter: "git:status"
     mode: active
     fixture_count: 2
@@ -563,31 +725,31 @@ filters[10]:
         fidelity_pass_rate_pct: 100
         source: measured
 aggregate:
-  fixture_count: 27
+  fixture_count: 30
   raw:
-    token_count: 64435
+    token_count: 64685
     capture_pct: 0
     source: recorded
   rsp:
-    token_count: 13371
-    capture_pct: 99.8
+    token_count: 13621
+    capture_pct: 99.4
     source: measured
   terse:
-    token_count: 13187
-    capture_pct: 98.5
+    token_count: 13437
+    capture_pct: 98
     source: measured
   rtk:
     token_count: 646
     capture_pct: 4.9
     source: recorded
   oracle_ceiling:
-    token_count: 13393
+    token_count: 13708
     capture_pct: 100
     source: fixture-oracle
 parity[2]{domain,filter,rsp_median_delta_pct,rtk_median_delta_pct,rsp_fidelity_pass_rate_pct,rtk_fidelity_pass_rate_pct,parity_gate}:
   cargo-test,"cargo:test",61.9,67.8,100,100,fail
   git-commit,"git:commit",0,-78.8,100,100,pass
-anti_suppression_audit[20]{filter,level,audited,note}:
+anti_suppression_audit[26]{filter,level,audited,note}:
   "cargo:test",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "cargo:test",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "gh:issue",brief,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
@@ -596,6 +758,10 @@ anti_suppression_audit[20]{filter,level,audited,note}:
   "gh:pr",terse,justified,empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON
   "gh:run",brief,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
   "gh:run",terse,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
+  "git:blame",brief,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:blame",terse,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:branch",brief,ok,"branch history output keeps current marker, branch names, upstreams, commits, worktrees, and subjects as compact TOON"
+  "git:branch",terse,ok,"branch history output keeps current marker, branch names, upstreams, commits, worktrees, and subjects as compact TOON"
   "git:commit",brief,fixed,"success output now renders commit id, branch, subject, and change counts as compact TOON"
   "git:commit",terse,fixed,"success output now renders commit id, branch, subject, and change counts as compact TOON"
   "git:diff",brief,ok,large row sets keep compact TOON plus an elision handle for full detail
@@ -604,8 +770,10 @@ anti_suppression_audit[20]{filter,level,audited,note}:
   "git:log",terse,ok,large row sets keep compact TOON plus an elision handle for full detail
   "git:push",brief,fixed,success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults
   "git:push",terse,fixed,success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults
+  "git:show",brief,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:show",terse,ok,large row sets keep compact TOON plus an elision handle for full detail
   "git:status",brief,justified,clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON
   "git:status",terse,justified,clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON
   "vitest:run",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
   "vitest:run",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
-summary: "27 fixtures, 10 filters; shipped modes apply admission threshold 60%"
+summary: "30 fixtures, 13 filters; shipped modes apply admission threshold 60%"

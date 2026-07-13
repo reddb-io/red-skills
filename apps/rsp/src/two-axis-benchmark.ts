@@ -339,7 +339,11 @@ function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "
       return { audited: "justified", note: "empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON" };
     case "git:diff":
     case "git:log":
+    case "git:blame":
+    case "git:show":
       return { audited: "ok", note: "large row sets keep compact TOON plus an elision handle for full detail" };
+    case "git:branch":
+      return { audited: "ok", note: "branch history output keeps current marker, branch names, upstreams, commits, worktrees, and subjects as compact TOON" };
     case "gh:issue":
     case "gh:run":
       return { audited: "ok", note: "successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough" };
