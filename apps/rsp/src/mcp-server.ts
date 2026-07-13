@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
+import type { RspLossLevel } from "./elision-store.js";
+import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
 import { ResidentRspElisionStore, resolveResidentPaths } from "./resident-client.js";
 
 interface JsonRpcRequest {
@@ -71,6 +73,24 @@ async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promis
             required: ["handle"],
           },
         },
+        {
+          name: "rsp_compress",
+          description: "Compress arbitrary text or JSON through rsp normalization, JSON selection, TOON rendering, and reversible elision.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              payload: {
+                description: "Text, JSON value, or JSON-serializable payload to compress.",
+              },
+              level: {
+                type: "string",
+                enum: ["brief", "terse"],
+                description: "Compression level. Defaults to brief.",
+              },
+            },
+            required: ["payload"],
+          },
+        },
       ],
     };
   }
@@ -93,8 +113,82 @@ async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promis
       if ("status" in record) return { content: [{ type: "text", text: JSON.stringify(record) }], isError: true };
       return { content: [{ type: "text", text: record.original.toString("utf8") }] };
     }
+    if (params?.name === "rsp_compress") {
+      return { content: [{ type: "text", text: await compressPayloadForMcp(params.arguments, store) }] };
+    }
   }
   return {};
+}
+
+async function compressPayloadForMcp(
+  args: Record<string, unknown> | undefined,
+  store: Pick<ResidentRspElisionStore, "mint">,
+): Promise<string> {
+  const input = payloadToText(args?.payload);
+  const level = mcpCompressLevel(args?.level);
+  const jsonLane = await renderGenericJsonLane(input, {
+    level,
+    command: "rsp mcp compress",
+    store,
+  });
+  if (jsonLane.detected) return ensureTrailingNewline(jsonLane.output);
+
+  const normalized = normalizeOutput(input);
+  if (level === "brief" && Buffer.byteLength(normalized) <= 2 * 1024) {
+    return ensureTrailingNewline(normalized);
+  }
+
+  const bytes = Buffer.from(input);
+  const handle = await store.mint(bytes, {
+    command: "rsp mcp compress",
+    loss: { level, bytes_elided: bytes.length },
+  });
+  return renderTextSummary(normalized, bytes.length, handle, level);
+}
+
+function payloadToText(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+  if (payload == null) return "";
+  return JSON.stringify(payload);
+}
+
+function mcpCompressLevel(value: unknown): Extract<RspLossLevel, "brief" | "terse"> {
+  return value === "terse" ? "terse" : "brief";
+}
+
+function renderTextSummary(text: string, rawBytes: number, handle: string, level: "brief" | "terse"): string {
+  const inlineBytes = level === "terse" ? 1024 : 2 * 1024;
+  const bytes = Buffer.from(text);
+  const half = Math.max(1, Math.floor(inlineBytes / 2));
+  const head = truncateUtf8(bytes.subarray(0, half));
+  const tail = truncateUtf8(bytes.subarray(Math.max(0, bytes.length - half)));
+  const parts = [
+    "payload summary",
+    `bytes: ${rawBytes}`,
+    `lines: ${countLines(bytes)}`,
+    "head:",
+    head,
+  ];
+  if (tail && tail !== head) parts.push("tail:", tail);
+  parts.push(`… elided payload (+${rawBytes}) — rsp show ${handle}`);
+  return `${parts.join("\n")}\n`;
+}
+
+function ensureTrailingNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function truncateUtf8(bytes: Buffer): string {
+  return bytes.toString("utf8").replace(/�$/g, "");
+}
+
+function countLines(bytes: Buffer): number {
+  if (bytes.length === 0) return 0;
+  let lines = 0;
+  for (const byte of bytes) {
+    if (byte === 0x0a) lines++;
+  }
+  return bytes[bytes.length - 1] === 0x0a ? lines : lines + 1;
 }
 
 function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
