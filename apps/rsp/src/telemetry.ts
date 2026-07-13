@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
@@ -131,6 +131,48 @@ export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
     return text.split(/\r?\n/).filter((line) => line.trim() !== "");
   } finally {
     await rm(drainingPath, { force: true });
+  }
+}
+
+export async function drainTelemetrySpool(
+  rootDir: string,
+  drainLine: (line: string) => Promise<boolean>,
+): Promise<void> {
+  const path = telemetrySpoolPath(rootDir);
+  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await rename(path, drainingPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    return;
+  }
+
+  const retryLines: string[] = [];
+  try {
+    await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+    const text = await readFile(drainingPath, "utf8").catch(() => "");
+    const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
+    for (const line of lines) {
+      try {
+        if (await drainLine(line)) continue;
+      } catch {}
+      retryLines.push(line);
+    }
+  } finally {
+    if (retryLines.length > 0) {
+      const current = safeReadFileSync(path);
+      await writeFile(path, `${retryLines.join("\n")}\n${current}`, "utf8");
+    }
+    await rm(drainingPath, { force: true });
+  }
+}
+
+function safeReadFileSync(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
   }
 }
 
