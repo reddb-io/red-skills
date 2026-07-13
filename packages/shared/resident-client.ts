@@ -121,6 +121,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     String(config.telemetryByteBudget ?? config.byteBudget),
     "--telemetry-drain-interval-ms",
     String(config.telemetryDrainIntervalMs ?? 30_000),
+    "--telemetry-drain-timeout-ms",
+    String(config.telemetryDrainTimeoutMs ?? 2_000),
     "--resident-version",
     config.clientVersion ?? "0.0.0-dev",
     "--wake-lock",
@@ -189,6 +191,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     String(config.telemetryByteBudget ?? config.byteBudget),
     "--telemetry-drain-interval-ms",
     String(config.telemetryDrainIntervalMs ?? 30_000),
+    "--telemetry-drain-timeout-ms",
+    String(config.telemetryDrainTimeoutMs ?? 2_000),
     "--resident-version",
     config.clientVersion ?? "0.0.0-dev",
   ], {
