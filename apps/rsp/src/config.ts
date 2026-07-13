@@ -9,6 +9,7 @@ export const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 export const DEFAULT_RSP_TELEMETRY_TTL_DAYS = 90;
 export const DEFAULT_RSP_TELEMETRY_BYTE_BUDGET = 4 * 1024 * 1024;
 export const DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS = 30_000;
+export const DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
@@ -18,6 +19,7 @@ export interface RspRuntimeConfig {
   telemetryTtlDays: number;
   telemetryByteBudget: number;
   telemetryDrainIntervalMs: number;
+  telemetryDrainTimeoutMs: number;
   heavyGitByteThreshold: number;
 }
 
@@ -40,6 +42,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_TELEMETRY_DRAIN_INTERVAL_MS) ?? readNumericYamlPath(yaml, "rsp.telemetryDrainIntervalMs"),
     DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
   );
+  const telemetryDrainTimeoutMs = positiveNumber(
+    numericEnv(env.RSP_TELEMETRY_DRAIN_TIMEOUT_MS) ?? readNumericYamlPath(yaml, "rsp.telemetryDrainTimeoutMs"),
+    DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
+  );
   const heavyGitByteThreshold = positiveNumber(
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
@@ -54,6 +60,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     telemetryTtlDays,
     telemetryByteBudget,
     telemetryDrainIntervalMs,
+    telemetryDrainTimeoutMs,
     heavyGitByteThreshold,
   };
 }
