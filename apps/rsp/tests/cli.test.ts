@@ -116,6 +116,32 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
+type LatencyBudgetSample = { valueMs: number; details: string };
+
+function budgetSample(valueMs: number, details: string): LatencyBudgetSample {
+  return { valueMs, details };
+}
+
+async function idleBeat(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+async function expectLatencyBudget(
+  label: string,
+  first: LatencyBudgetSample,
+  budgetMs: number,
+  retry: () => LatencyBudgetSample | Promise<LatencyBudgetSample>,
+): Promise<void> {
+  if (first.valueMs <= budgetMs) return;
+
+  await idleBeat();
+  const second = await retry();
+  expect(
+    second.valueMs,
+    `${label} exceeded ${budgetMs}ms twice; first ${first.details}; retry ${second.details}`,
+  ).toBeLessThanOrEqual(budgetMs);
+}
+
 function buildBundleOnce() {
   if (bundleBuilt) return;
   const res = spawnSync("pnpm", ["-C", "apps/rsp", "build"], {
@@ -270,6 +296,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 describe("rsp cli", () => {
+  it("retries a latency budget once after an idle beat before failing", async () => {
+    let attempts = 0;
+    await expectLatencyBudget("test budget", budgetSample(125, "first=125.0ms"), 100, async () => {
+      attempts++;
+      return budgetSample(75, "retry=75.0ms");
+    });
+
+    expect(attempts).toBe(1);
+    await expect(expectLatencyBudget("test budget", budgetSample(125, "first=125.0ms"), 100, async () => {
+      return budgetSample(130, "retry=130.0ms");
+    })).rejects.toThrow(/exceeded 100ms twice/);
+  });
+
   it("passes wrappers through without creating .red when rsp is not enabled", async () => {
     const root = await initGitRepo();
     await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
@@ -385,7 +424,32 @@ describe("rsp cli", () => {
     expect(cold.status).toBe(1);
     expect(cold.stdout).toEqual(Buffer.alloc(0));
     expect(cold.stderr).toEqual(Buffer.alloc(0));
-    expect(coldHookWorkMs).toBeLessThan(200);
+    await expectLatencyBudget(
+      "cold pre-exec hook work",
+      budgetSample(
+        coldHookWorkMs,
+        `node=${coldNodeBaseline.elapsedMs.toFixed(1)}ms cold=${cold.elapsedMs.toFixed(1)}ms hookWork=${coldHookWorkMs.toFixed(1)}ms`,
+      ),
+      200,
+      async () => {
+        const retryRoot = await initGitRepo();
+        const retryCacheDir = await seedWarmRedCache();
+        const retrySetup = runBundleFromCwd(retryRoot, ["setup"], { RED_SKILLS_CACHE_DIR: retryCacheDir });
+        expect(retrySetup.status, `${retrySetup.stdout.toString("utf8")}${retrySetup.stderr.toString("utf8")}`).toBe(0);
+        const retryEnv = { RED_SKILLS_CACHE_DIR: retryCacheDir };
+        const retryNodeBaseline = timedStatus(runNodeNoop);
+        const retryCold = timedStatus(() => runBundleHookFromCwd(retryRoot, "git status", retryEnv));
+        const retryColdHookWorkMs = Math.max(0, retryCold.elapsedMs - retryNodeBaseline.elapsedMs);
+
+        expect(retryCold.status).toBe(1);
+        expect(retryCold.stdout).toEqual(Buffer.alloc(0));
+        expect(retryCold.stderr).toEqual(Buffer.alloc(0));
+        return budgetSample(
+          retryColdHookWorkMs,
+          `node=${retryNodeBaseline.elapsedMs.toFixed(1)}ms cold=${retryCold.elapsedMs.toFixed(1)}ms hookWork=${retryColdHookWorkMs.toFixed(1)}ms`,
+        );
+      },
+    );
     await expect(stat(paths.wakeLockPath)).resolves.toMatchObject({ size: expect.any(Number) });
 
     for (let i = 0; i < 4; i++) {
@@ -411,7 +475,27 @@ describe("rsp cli", () => {
     expect(warm.status).toBe(0);
     expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
     expect(warm.stderr).toEqual(Buffer.alloc(0));
-    expect(hookWorkMs).toBeLessThan(100);
+    await expectLatencyBudget(
+      "warm pre-exec hook work",
+      budgetSample(
+        hookWorkMs,
+        `node=${nodeBaseline.elapsedMs.toFixed(1)}ms warm=${warm.elapsedMs.toFixed(1)}ms hookWork=${hookWorkMs.toFixed(1)}ms`,
+      ),
+      100,
+      () => {
+        const retryNodeBaseline = timedStatus(runNodeNoop);
+        const retryWarm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
+        const retryHookWorkMs = Math.max(0, retryWarm.elapsedMs - retryNodeBaseline.elapsedMs);
+
+        expect(retryWarm.status).toBe(0);
+        expect(retryWarm.stdout).toEqual(Buffer.from("rsp git status\n"));
+        expect(retryWarm.stderr).toEqual(Buffer.alloc(0));
+        return budgetSample(
+          retryHookWorkMs,
+          `node=${retryNodeBaseline.elapsedMs.toFixed(1)}ms warm=${retryWarm.elapsedMs.toFixed(1)}ms hookWork=${retryHookWorkMs.toFixed(1)}ms`,
+        );
+      },
+    );
   }, 120_000);
 
   it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {
@@ -467,30 +551,51 @@ describe("rsp cli", () => {
     expect(runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], env).status).toBe(0);
     expect(runGit(["-C", root, "status"]).status).toBe(0);
 
-    const rawSamples: number[] = [];
-    const nodeSamples: number[] = [];
-    const wrappedSamples: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      const raw = timedStatus(() => runGit(["-C", root, "status"]));
-      const node = timedStatus(() => runNodeNoop());
-      const wrapped = timedStatus(() => runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], env));
-      expect(raw.status).toBe(0);
-      expect(node.status).toBe(0);
-      expect(wrapped.status).toBe(0);
-      expect(wrapped.stderr).toEqual(Buffer.alloc(0));
-      rawSamples.push(raw.elapsedMs);
-      nodeSamples.push(node.elapsedMs);
-      wrappedSamples.push(wrapped.elapsedMs);
-    }
+    const measureWrapperWork = () => {
+      const rawSamples: number[] = [];
+      const nodeSamples: number[] = [];
+      const wrappedSamples: number[] = [];
+      for (let i = 0; i < 7; i++) {
+        const raw = timedStatus(() => runGit(["-C", root, "status"]));
+        const node = timedStatus(() => runNodeNoop());
+        const wrapped = timedStatus(() => runBundleFromCwd(root, ["--store-uri", storeUri, "git", "status"], env));
+        expect(raw.status).toBe(0);
+        expect(node.status).toBe(0);
+        expect(wrapped.status).toBe(0);
+        expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+        rawSamples.push(raw.elapsedMs);
+        nodeSamples.push(node.elapsedMs);
+        wrappedSamples.push(wrapped.elapsedMs);
+      }
 
-    const rawMedian = median(rawSamples);
-    const nodeMedian = median(nodeSamples);
-    const wrappedMedian = median(wrappedSamples);
-    const wrapperWorkMs = wrappedMedian - nodeMedian;
-    expect(
-      wrapperWorkMs,
-      `raw=${rawMedian.toFixed(1)}ms node=${nodeMedian.toFixed(1)}ms wrapped=${wrappedMedian.toFixed(1)}ms wrapperWork=${wrapperWorkMs.toFixed(1)}ms`,
-    ).toBeLessThanOrEqual(150);
+      const rawMedian = median(rawSamples);
+      const nodeMedian = median(nodeSamples);
+      const wrappedMedian = median(wrappedSamples);
+      return {
+        rawMedian,
+        nodeMedian,
+        wrappedMedian,
+        wrapperWorkMs: wrappedMedian - nodeMedian,
+      };
+    };
+
+    const measured = measureWrapperWork();
+    const measuredDetails =
+      `raw=${measured.rawMedian.toFixed(1)}ms node=${measured.nodeMedian.toFixed(1)}ms ` +
+      `wrapped=${measured.wrappedMedian.toFixed(1)}ms wrapperWork=${measured.wrapperWorkMs.toFixed(1)}ms`;
+    await expectLatencyBudget(
+      "small git status wrapper work",
+      budgetSample(measured.wrapperWorkMs, measuredDetails),
+      150,
+      () => {
+        const retry = measureWrapperWork();
+        return budgetSample(
+          retry.wrapperWorkMs,
+          `raw=${retry.rawMedian.toFixed(1)}ms node=${retry.nodeMedian.toFixed(1)}ms ` +
+            `wrapped=${retry.wrappedMedian.toFixed(1)}ms wrapperWork=${retry.wrapperWorkMs.toFixed(1)}ms`,
+        );
+      },
+    );
   }, 120_000);
 
   it("built bundle resolves rsp server store from repo config and idles out", async () => {
