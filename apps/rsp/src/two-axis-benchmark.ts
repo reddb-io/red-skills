@@ -27,6 +27,7 @@ export interface BaselineAxis {
 export interface NotCoveredAxis {
   coverage: "not-covered";
   label: string;
+  reason?: string;
   source: "not-covered";
 }
 
@@ -41,6 +42,7 @@ export interface TokenCaptureAxis {
 export interface NotCoveredTokenCaptureAxis {
   coverage: "not-covered";
   label: string;
+  reason?: string;
   source: "not-covered";
 }
 
@@ -51,6 +53,7 @@ export interface OracleCaptureRow {
   rsp: TokenCaptureAxis;
   terse: TokenCaptureAxis;
   rtk: ComparatorTokenCaptureAxis;
+  headroom: ComparatorTokenCaptureAxis;
   oracle_ceiling: TokenCaptureAxis;
 }
 
@@ -62,6 +65,7 @@ export interface TwoAxisFilterRow {
   brief: BaselineAxis;
   terse: BaselineAxis;
   rtk: ComparatorAxis;
+  headroom: ComparatorAxis;
   oracle_capture: OracleCaptureRow;
   /** Measured delta if this filter were forced active; equals brief/terse for active filters, non-zero for passthrough. */
   hypothetical_active: {
@@ -104,6 +108,11 @@ export interface TwoAxisBenchmarkReport {
       version: string;
       captured_at: string;
     };
+    headroom_source: {
+      kind: "recorded-fixtures";
+      version: string;
+      captured_at: string;
+    };
     external_claims: ExternalClaim[];
   };
   filters: TwoAxisFilterRow[];
@@ -134,6 +143,22 @@ interface RtkBaselines {
   fixtures: RtkBaselineFixture[];
 }
 
+interface HeadroomBaselineFixture {
+  name: string;
+  coverage: "covered" | "not-covered";
+  stdout?: string;
+  fidelity_assertions_passed?: boolean;
+  not_covered_reason?: string;
+  transforms_applied?: string[];
+}
+
+interface HeadroomBaselines {
+  version: string;
+  captured_at: string;
+  capture_script: string;
+  fixtures: HeadroomBaselineFixture[];
+}
+
 interface FixtureMeasurement {
   fixture: FidelityFixture;
   filter: string;
@@ -145,10 +170,14 @@ interface FixtureMeasurement {
   terseFidelity: boolean;
   rtkDelta?: number;
   rtkFidelity?: boolean;
+  headroomDelta?: number;
+  headroomFidelity?: boolean;
+  headroomNotCoveredReason?: string;
   rawTokens: number;
   rspTokens: number;
   terseTokens: number;
   rtkTokens?: number;
+  headroomTokens?: number;
   oracleTokens: number;
 }
 
@@ -171,13 +200,16 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
   const admission = evaluateAdmission(fixtures, { thresholdPct: ADMISSION_THRESHOLD_PCT });
   const admissionByFilter = new Map(admission.filters.map((row) => [row.filter, row]));
   const rtk = await readRtkBaselines(join(fixtureRoot, "rtk", "baselines.json"));
-  const byName = new Map(rtk.fixtures.map((fixture) => [fixture.name, fixture]));
+  const rtkByName = new Map(rtk.fixtures.map((fixture) => [fixture.name, fixture]));
+  const headroom = await readHeadroomBaselines(join(fixtureRoot, "headroom", "baselines.json"));
+  const headroomByName = new Map(headroom.fixtures.map((fixture) => [fixture.name, fixture]));
   const measurements: FixtureMeasurement[] = [];
   const tempRoot = await mkdtemp(join(tmpdir(), "rsp-two-axis-store-"));
   const store = await RspElisionStore.open({ uri: `file://${join(tempRoot, "red.rdb")}` });
   try {
     for (const fixture of fixtures) {
-      const rtkFixture = byName.get(fixture.name);
+      const rtkFixture = rtkByName.get(fixture.name);
+      const headroomFixture = headroomByName.get(fixture.name);
       const brief = await runFidelityFixture(fixture, { level: "lossless", store });
       const terse = await runFidelityFixture(fixture, { level: "terse", store });
       const active = admissionByFilter.get(filterName(fixture))?.mode === "active";
@@ -195,10 +227,18 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
         terseFidelity: terse.status === fixture.recorded.status && terse.assertionFailures.length === 0,
         rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
         rtkFidelity: rtkFixture?.fidelity_assertions_passed,
+        headroomDelta: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
+          ? tokenDelta(fixture.recorded.stdout, headroomFixture.stdout)
+          : undefined,
+        headroomFidelity: headroomFixture?.coverage === "covered" ? headroomFixture.fidelity_assertions_passed : undefined,
+        headroomNotCoveredReason: headroomFixture?.coverage === "not-covered" ? headroomFixture.not_covered_reason : undefined,
         rawTokens,
         rspTokens: active ? briefTokens : rawTokens,
         terseTokens: active ? terseTokens : rawTokens,
         rtkTokens: rtkFixture ? tokenCount(rtkFixture.stdout) : undefined,
+        headroomTokens: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
+          ? tokenCount(headroomFixture.stdout)
+          : undefined,
         oracleTokens: await oracleTokenCount(fixture),
       });
     }
@@ -229,6 +269,11 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
         version: rtk.version,
         captured_at: rtk.captured_at,
       },
+      headroom_source: {
+        kind: "recorded-fixtures",
+        version: headroom.version,
+        captured_at: headroom.captured_at,
+      },
       external_claims: externalClaims(),
     },
     filters: rows,
@@ -258,13 +303,13 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     "",
     `Production mode uses admission threshold ${ADMISSION_THRESHOLD_PCT}%; passthrough filters count as 0% token delta because rsp returns the original command output.`,
     "",
-    "| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | oracle tokens | rsp capture | RTK capture | brief shipped delta | brief fidelity | terse shipped delta | terse fidelity |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.filters.map((row) =>
-      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${row.oracle_capture.raw.token_count} | ${row.oracle_capture.rsp.token_count} | ${fmtComparatorTokenCount(row.oracle_capture.rtk)} | ${row.oracle_capture.oracle_ceiling.token_count} | ${fmt(row.oracle_capture.rsp.capture_pct)}% | ${fmtComparatorCapture(row.oracle_capture.rtk)} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% |`
+      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${row.oracle_capture.raw.token_count} | ${row.oracle_capture.rsp.token_count} | ${fmtComparatorTokenCount(row.oracle_capture.rtk)} | ${fmtComparatorTokenCount(row.oracle_capture.headroom)} | ${row.oracle_capture.oracle_ceiling.token_count} | ${fmt(row.oracle_capture.rsp.capture_pct)}% | ${fmtComparatorCapture(row.oracle_capture.rtk)} | ${fmtComparatorCapture(row.oracle_capture.headroom)} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmtComparatorFidelity(row.rtk)} | ${fmtComparatorFidelity(row.headroom)} |`
     ),
     "",
-    `Aggregate oracle ceiling: raw ${report.aggregate.raw.token_count} tokens (${fmt(report.aggregate.raw.capture_pct)}% capture), rsp ${report.aggregate.rsp.token_count} tokens (${fmt(report.aggregate.rsp.capture_pct)}% capture), RTK ${fmtComparatorTokenCount(report.aggregate.rtk)} tokens (${fmtComparatorCapture(report.aggregate.rtk)} capture), oracle ${report.aggregate.oracle_ceiling.token_count} tokens.`,
+    `Aggregate oracle ceiling: raw ${report.aggregate.raw.token_count} tokens (${fmt(report.aggregate.raw.capture_pct)}% capture), rsp ${report.aggregate.rsp.token_count} tokens (${fmt(report.aggregate.rsp.capture_pct)}% capture), RTK ${fmtComparatorTokenCount(report.aggregate.rtk)} tokens (${fmtComparatorCapture(report.aggregate.rtk)} capture), Headroom ${fmtComparatorTokenCount(report.aggregate.headroom)} tokens (${fmtComparatorCapture(report.aggregate.headroom)} capture), oracle ${report.aggregate.oracle_ceiling.token_count} tokens.`,
     "",
     `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
     "",
@@ -281,6 +326,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     ),
     "",
     "RTK baseline is replayed from checked-in recorded fixtures only; RTK is not executed by this command.",
+    "Headroom baseline is replayed from checked-in recorded fixtures only; headroom-ai is only installed by the explicit capture script.",
     "External context-optimization claims are cited literature only and were not locally reproduced.",
     "",
   ];
@@ -305,6 +351,12 @@ function assertRequiredLargeOutputFixtures(fixtures: readonly FidelityFixture[])
 async function readRtkBaselines(path: string): Promise<RtkBaselines> {
   const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
   if (!isRtkBaselines(parsed)) throw new Error(`invalid RTK baseline fixture: ${path}`);
+  return parsed;
+}
+
+async function readHeadroomBaselines(path: string): Promise<HeadroomBaselines> {
+  const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+  if (!isHeadroomBaselines(parsed)) throw new Error(`invalid Headroom baseline fixture: ${path}`);
   return parsed;
 }
 
@@ -385,6 +437,10 @@ function filterRow(filter: string, rows: readonly FixtureMeasurement[], admissio
     brief: active ? measuredBrief : passthroughAxis(rows.length),
     terse: active ? measuredTerse : passthroughAxis(rows.length),
     rtk: comparatorAxis("rtk", rows.map((row) => ({ delta: row.rtkDelta, fidelity: row.rtkFidelity }))),
+    headroom: comparatorAxis(
+      "headroom",
+      rows.map((row) => ({ delta: row.headroomDelta, fidelity: row.headroomFidelity, reason: row.headroomNotCoveredReason })),
+    ),
     oracle_capture: oracleCapture(rows),
     hypothetical_active: { brief: measuredBrief, terse: measuredTerse },
   };
@@ -421,12 +477,12 @@ function axis(deltas: readonly number[], fidelity: readonly boolean[], source: B
 
 function comparatorAxis(
   label: string,
-  rows: readonly { delta?: number; fidelity?: boolean }[],
+  rows: readonly { delta?: number; fidelity?: boolean; reason?: string }[],
 ): ComparatorAxis {
   const covered = rows.filter((row): row is { delta: number; fidelity: boolean } =>
     typeof row.delta === "number" && typeof row.fidelity === "boolean"
   );
-  if (covered.length === 0) return notCoveredAxis(label);
+  if (covered.length === 0) return notCoveredAxis(label, notCoveredReason(rows));
   return axis(covered.map((row) => row.delta), covered.map((row) => row.fidelity), "recorded");
 }
 
@@ -438,6 +494,10 @@ function oracleCapture(rows: readonly FixtureMeasurement[]): OracleCaptureRow {
     rsp: tokenCapture(sum(rows.map((row) => row.rspTokens)), rawTokens, oracleTokens, "measured"),
     terse: tokenCapture(sum(rows.map((row) => row.terseTokens)), rawTokens, oracleTokens, "measured"),
     rtk: comparatorTokenCapture("rtk", rows.map((row) => ({ rawTokens: row.rawTokens, tokens: row.rtkTokens, oracleTokens: row.oracleTokens }))),
+    headroom: comparatorTokenCapture(
+      "headroom",
+      rows.map((row) => ({ rawTokens: row.rawTokens, tokens: row.headroomTokens, oracleTokens: row.oracleTokens, reason: row.headroomNotCoveredReason })),
+    ),
     oracle_ceiling: tokenCapture(oracleTokens, rawTokens, oracleTokens, "fixture-oracle"),
   };
 }
@@ -461,10 +521,10 @@ function tokenCapture(
 
 function comparatorTokenCapture(
   label: string,
-  rows: readonly { rawTokens: number; tokens?: number; oracleTokens: number }[],
+  rows: readonly { rawTokens: number; tokens?: number; oracleTokens: number; reason?: string }[],
 ): ComparatorTokenCaptureAxis {
   const covered = rows.filter((row): row is { rawTokens: number; tokens: number; oracleTokens: number } => typeof row.tokens === "number");
-  if (covered.length === 0) return notCoveredTokenCaptureAxis(label);
+  if (covered.length === 0) return notCoveredTokenCaptureAxis(label, notCoveredReason(rows));
   return tokenCapture(
     sum(covered.map((row) => row.tokens)),
     sum(covered.map((row) => row.rawTokens)),
@@ -473,20 +533,28 @@ function comparatorTokenCapture(
   );
 }
 
-function notCoveredTokenCaptureAxis(label: string): NotCoveredTokenCaptureAxis {
+function notCoveredTokenCaptureAxis(label: string, reason?: string): NotCoveredTokenCaptureAxis {
   return {
     coverage: "not-covered",
     label: `${label}: not-covered`,
+    ...(reason ? { reason } : {}),
     source: "not-covered",
   };
 }
 
-function notCoveredAxis(label: string): NotCoveredAxis {
+function notCoveredAxis(label: string, reason?: string): NotCoveredAxis {
   return {
     coverage: "not-covered",
     label: `${label}: not-covered`,
+    ...(reason ? { reason } : {}),
     source: "not-covered",
   };
+}
+
+function notCoveredReason(rows: readonly { reason?: string }[]): string | undefined {
+  const reasons = [...new Set(rows.map((row) => row.reason).filter((reason): reason is string => Boolean(reason)))];
+  if (reasons.length === 0) return undefined;
+  return reasons.join("; ");
 }
 
 function coveredComparatorAxis(label: string, filter: string, value: ComparatorAxis): BaselineAxis {
@@ -590,6 +658,27 @@ function isRtkBaselines(value: unknown): value is RtkBaselines {
       typeof fixture.stdout === "string" &&
       typeof fixture.fidelity_assertions_passed === "boolean"
     );
+}
+
+function isHeadroomBaselines(value: unknown): value is HeadroomBaselines {
+  return isRecord(value) &&
+    typeof value.version === "string" &&
+    typeof value.captured_at === "string" &&
+    typeof value.capture_script === "string" &&
+    Array.isArray(value.fixtures) &&
+    value.fixtures.every(isHeadroomBaselineFixture);
+}
+
+function isHeadroomBaselineFixture(value: unknown): value is HeadroomBaselineFixture {
+  if (!isRecord(value) || typeof value.name !== "string") return false;
+  if (value.coverage === "covered") {
+    return typeof value.stdout === "string" &&
+      typeof value.fidelity_assertions_passed === "boolean" &&
+      (!Object.prototype.hasOwnProperty.call(value, "transforms_applied") ||
+        (Array.isArray(value.transforms_applied) && value.transforms_applied.every((item) => typeof item === "string")));
+  }
+  if (value.coverage === "not-covered") return typeof value.not_covered_reason === "string";
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, JsonValue> {
