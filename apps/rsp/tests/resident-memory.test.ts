@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { graphRecall } from "../../memory/src/graph-recall.js";
 import { MemoryStore } from "../../memory/src/graph-store.js";
+import { withBrainRuntime } from "../../brain/src/runtime.js";
+import { BrainStore } from "../../brain/src/store.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/config.js";
 import { ResidentRspElisionStore, resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
@@ -64,6 +66,81 @@ describe("resident memory transport", () => {
     } finally {
       await store.close();
     }
+  }, 20_000);
+
+  it("shares one resident-owned RedDB store across rsp, memory, and brain clients", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red", "brain"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await writeFile(
+      join(root, ".red", "brain", "config.yaml"),
+      "connection_string: file://./.red/tmp/red-skills.rdb\n",
+      "utf8",
+    );
+    const docs = join(root, "docs");
+    await mkdir(docs, { recursive: true });
+    await writeFile(join(docs, "memory.md"), "memory-shared-resident-token\n", "utf8");
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const server = runResidentServer({
+      socketPath: paths.socketPath,
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      idleMs: 5_000,
+    });
+    await waitForResident(paths.socketPath);
+    const client = new ResidentRspElisionStore(paths, {
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+    });
+
+    const handle = await client.mint(Buffer.from("rsp-shared-resident-token"), {
+      command: "rsp test",
+      loss: { level: "brief", bytes_elided: 25 },
+    });
+    await client.memory("ingest", { cwd: docs });
+
+    const openSpy = vi.spyOn(BrainStore, "open");
+    try {
+      await withBrainRuntime(async ({ store }) => {
+        await store.capture({
+          title: "Brain shared resident note",
+          content: "brain-shared-resident-token cites memory-shared-resident-token and rsp-shared-resident-token",
+          kind: "note",
+          tags: ["shared-resident"],
+        });
+        await expect(store.search("brain-shared-resident-token", 5)).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              artifact: expect.objectContaining({
+                properties: expect.objectContaining({
+                  content: expect.stringContaining("brain-shared-resident-token"),
+                }),
+              }),
+            }),
+          ]),
+        );
+      }, root);
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      openSpy.mockRestore();
+    }
+
+    await expect(client.get(handle)).resolves.toEqual(
+      expect.objectContaining({ original: Buffer.from("rsp-shared-resident-token") }),
+    );
+    await expect(client.memory("recall", { query: "memory-shared-resident-token", limit: 5 })).resolves.toEqual(
+      expect.objectContaining({
+        hits: expect.arrayContaining([
+          expect.objectContaining({ excerpt: expect.stringContaining("memory-shared-resident-token") }),
+        ]),
+      }),
+    );
+
+    await server;
   }, 20_000);
 });
 
