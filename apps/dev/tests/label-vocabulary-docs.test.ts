@@ -283,25 +283,34 @@ describe("red-setup docs", () => {
 describe("wayfinder docs", () => {
   it("pins the map shape, routing classes, and no-fog exit", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+    const tracker = await readRepoFile("plugins/dev/skills/engineering/red-setup/issue-tracker-github.md");
     const labels = await readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md");
 
     expect(skill).toContain("## Destination");
+    expect(skill).toContain("## Notes");
     expect(skill).toContain("## Decisions so far");
     expect(skill).toContain("## Not yet specified");
     expect(skill).toContain("## Out of scope");
-    expect(skill).toContain("## Notes");
     expect(skill).toContain("wayfinder:map");
-    expect(skill).toContain("wayfinder:research");
-    expect(skill).toContain("wayfinder:grilling");
-    expect(skill).toContain("wayfinder:prototype");
-    expect(skill).toContain("wayfinder:task");
-    expect(skill).toContain("index, not a store");
-    expect(skill).toContain("AFK-typed");
-    expect(skill).toContain("ready-for-agent");
-    expect(skill).toContain("HITL-typed");
+    expect(skill).toContain("wayfinder:<type>");
+    expect(skill).toContain("index");
+    expect(skill).toContain("not a store");
+    expect(skill).toContain("no fog");
+    expect(skill).toContain("Fire the research subagents");
+
+    expect(tracker).toContain("## Wayfinding operations");
+    expect(tracker).toContain("wayfinder:research");
+    expect(tracker).toContain("wayfinder:grilling");
+    expect(tracker).toContain("wayfinder:prototype");
+    expect(tracker).toContain("wayfinder:task");
+    expect(skill).toContain("**AFK**");
+    expect(skill).toContain("**HITL**");
+    expect(tracker).toContain("ready-for-agent");
+    expect(tracker).toContain("ready-for-human");
+    expect(tracker).toContain("req:N");
+    expect(tracker).toContain("## Blocked by");
     expect(skill).toContain("/start");
     expect(skill).toContain("/prototype");
-    expect(skill).toContain("no-fog early exit");
 
     for (const label of [
       "wayfinder:map",
@@ -319,25 +328,23 @@ describe("wayfinder docs", () => {
 
     // Decisions so far is load-bearing: step 5 records gists there
     expect(skill).toContain("## Decisions so far");
-    expect(skill).toContain("into `## Decisions so far`");
+    expect(skill).toContain("append a context pointer");
 
     // Notes carries standing preferences and skills to consult
     expect(skill).toContain("## Notes");
-    expect(skill).toContain("Standing preferences");
+    expect(skill).toContain("standing preferences");
 
     // Refer-by-name rule: title with embedded link, never bare #N
     expect(skill).toContain("Refer by name");
-    expect(skill).toContain("never a bare `#N`");
+    expect(skill).toContain("never by a bare id");
 
     // One-ticket-per-session discipline for HITL children and charting
-    expect(skill).toContain("One-ticket-per-session discipline");
-    expect(skill).toContain("resolves exactly one HITL child and stops");
-    expect(skill).toContain("Charting the map is itself one session");
+    expect(skill).toContain("never resolve more than one ticket per session");
+    expect(skill).toContain("charting is one session's work");
 
     // Zoom-as-needed loading
-    expect(skill).toContain("Zoom-as-needed loading");
-    expect(skill).toContain("low resolution");
-    expect(skill).toContain("fetch the full body of a specific child only when");
+    expect(skill).toContain("low-res view");
+    expect(skill).toContain("fetch the full body of any related or closed ticket on demand");
   });
 });
 
