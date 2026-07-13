@@ -1,0 +1,62 @@
+{
+  "name": "log-node-recent",
+  "command": [
+    "git",
+    "log"
+  ],
+  "provenance": "Machine-formatted git log from public nodejs/node history captured on 2026-07-13.",
+  "recorded": {
+    "stdout": "\u001eace91de6\u001fMatteo Collina\u001f2026-07-13\u001fstream: use the ring buffer for WHATWG stream request queues\u0000\u001ee84b517d\u001fEfe Karasakal\u001f2026-07-13\u001fdoc: document net Socket server property\u0000\u001ee7864e60\u001fSamuel Kapust\u001f2026-07-13\u001fsrc: zero-initialize cap_data in node_credentials.cc\u0000\u001efc92e911\u001fFilip Skokan\u001f2026-07-13\u001fdoc: update a Dispatcher undici doc link\u0000\u001e8c6cbb8e\u001fJoyee Cheung\u001f2026-07-13\u001finspector: add --cond to node inspect probe mode\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git log",
+    "commits": [
+      {
+        "short": "ace91de6",
+        "author": "Matteo Collina",
+        "date": "2026-07-13",
+        "subject": "stream: use the ring buffer for WHATWG stream request queues"
+      },
+      {
+        "short": "e84b517d",
+        "author": "Efe Karasakal",
+        "date": "2026-07-13",
+        "subject": "doc: document net Socket server property"
+      },
+      {
+        "short": "e7864e60",
+        "author": "Samuel Kapust",
+        "date": "2026-07-13",
+        "subject": "src: zero-initialize cap_data in node_credentials.cc"
+      },
+      {
+        "short": "fc92e911",
+        "author": "Filip Skokan",
+        "date": "2026-07-13",
+        "subject": "doc: update a Dispatcher undici doc link"
+      },
+      {
+        "short": "8c6cbb8e",
+        "author": "Joyee Cheung",
+        "date": "2026-07-13",
+        "subject": "inspector: add --cond to node inspect probe mode"
+      }
+    ],
+    "summary": "5 commits"
+  },
+  "assertions": [
+    {
+      "question": "how many commits were preserved?",
+      "path": "commits.length",
+      "expected": 5
+    },
+    {
+      "question": "which subject is first?",
+      "path": "commits.0.subject",
+      "expected": "stream: use the ring buffer for WHATWG stream request queues"
+    }
+  ]
+}
