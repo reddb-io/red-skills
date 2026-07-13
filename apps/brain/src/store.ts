@@ -37,6 +37,32 @@ export interface BrainStoreOptions {
   autoLinkErrors?: "ignore" | "throw";
 }
 
+export interface BrainStoreLike {
+  close(): Promise<void>;
+  status(): Promise<Record<string, unknown>>;
+  capture(input: CaptureInput): Promise<StoredBrainArtifact>;
+  getArtifact(ridOrId: number | string): Promise<StoredBrainArtifact | null>;
+  listArtifacts(): Promise<StoredBrainArtifact[]>;
+  search(query: string, limit?: number, options?: SearchOptions): Promise<SearchHit[]>;
+  think(query: string, limit?: number, options?: ThinkOptions): Promise<BrainThinkResult>;
+  link(input: {
+    from: number | string;
+    to: number | string;
+    kind?: string;
+    reason?: string;
+    confidence?: "explicit" | "derived" | "inferred";
+    metadata?: Record<string, unknown>;
+  }): Promise<StoredBrainConnection>;
+  backlinks(target: number | string): Promise<StoredBrainConnection[]>;
+  listConnections(): Promise<StoredBrainConnection[]>;
+  eventKpis(input?: KpiQueryInput): Promise<KpiResult>;
+  appendOutcomeEvent(event: OutcomeEvent): Promise<OutcomeEvent>;
+  replayOutcomeEvents(): Promise<OutcomeEvent[]>;
+  loadModelTierBanditDocument(): Promise<ModelTierBanditDocument | null>;
+  saveModelTierBanditDocument(document: ModelTierBanditDocument): Promise<ModelTierBanditDocument>;
+  refreshModelTierBanditDocument(): Promise<ModelTierBanditDocument>;
+}
+
 export interface CaptureInput {
   title: string;
   content: string;
