@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -113,6 +113,7 @@ interface TelemetryIndexDocument {
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
 const TOKENIZATION_TIMEOUT_MS = 500;
 const TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
+const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
@@ -163,6 +164,7 @@ class ResidentTelemetryDrain {
       }
     });
     await this.prune(db, { version: 1, records: nextRecords });
+    await writeStatusSummary(db, this.opts.rootDir);
   }
 
   private async writeEvent(db: RedDB, event: RspTelemetryEvent): Promise<TelemetryIndexEntry> {
@@ -241,6 +243,21 @@ class ResidentTelemetryDrain {
     }
     await this.writeIndex(db, { version: 1, records: live });
   }
+}
+
+async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()): Promise<void> {
+  const stats = await readTelemetryStats(db, 1, now);
+  const today = now.toISOString().slice(0, 10);
+  const tokensSavedToday = stats.savings.daily_tokens_saved.find((row) => row.date === today)?.tokens_saved ?? 0;
+  const path = join(rootDir, RSP_STATUS_SUMMARY);
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(tmp, JSON.stringify({
+    version: 1,
+    tokens_saved_today: tokensSavedToday,
+    updated_at: now.toISOString(),
+  }), { encoding: "utf8", mode: 0o600 });
+  await rename(tmp, path);
 }
 
 async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain): Promise<void> {
