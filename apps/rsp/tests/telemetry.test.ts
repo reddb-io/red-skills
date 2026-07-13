@@ -15,7 +15,7 @@ import {
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
 } from "../src/telemetry.js";
-import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/config.js";
+import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS, RSP_ELISION_COLLECTION } from "../src/elision-store.js";
 import { tokenSavingsEstimate } from "../src/pricing.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
@@ -356,12 +356,30 @@ describe("rsp telemetry spool", () => {
     });
   }, 40_000);
 
-  it("self-heals old-model telemetry collections in the built bundle resident", async () => {
+  it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const legacyHandle = "el:123456789abc";
+    const legacyRecord = {
+      collection: RSP_ELISION_COLLECTION,
+      handle: legacyHandle,
+      original: Buffer.from("legacy recoverable elision").toString("base64"),
+      original_encoding: "base64",
+      original_bytes: Buffer.byteLength("legacy recoverable elision"),
+      command: "git diff --stat",
+      created_at: "2026-07-13T12:00:00.000Z",
+      expires_at: "2026-07-20T12:00:00.000Z",
+      loss: { level: "terse", bytes_elided: 27 },
+    };
     const seeded = await connect(storeUri);
     try {
+      await seeded.query(`CREATE TABLE ${RSP_ELISION_COLLECTION} (record_key TEXT, value JSON)`);
+      await seeded.query(
+        `INSERT INTO ${RSP_ELISION_COLLECTION} (record_key, value) VALUES ($1, $2)`,
+        "record:123456789abc",
+        legacyRecord,
+      );
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INVOCATIONS_COLLECTION} (id TEXT)`);
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_DEGRADATIONS_COLLECTION} (id TEXT)`);
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INDEX_COLLECTION} (id TEXT)`);
@@ -393,6 +411,17 @@ describe("rsp telemetry spool", () => {
       "100",
     ], { cwd: root });
     await waitForResident(paths.socketPath);
+    await expect(sendResidentRequest(
+      { socketPath: paths.socketPath, timeoutMs: 1_000 },
+      { id: "recover-legacy-elision", op: "get", handle: legacyHandle },
+    )).resolves.toMatchObject({
+      ok: true,
+      value: expect.objectContaining({
+        handle: legacyHandle,
+        original: Buffer.from("legacy recoverable elision").toString("base64"),
+        original_encoding: "base64",
+      }),
+    });
     await new Promise<void>((resolve, reject) => {
       child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`bundle resident exited ${code}`)));
       child.once("error", reject);
@@ -412,6 +441,7 @@ describe("rsp telemetry spool", () => {
       ]),
     );
     await expect(readTelemetryCollectionModels(storeUri)).resolves.toMatchObject({
+      [RSP_ELISION_COLLECTION]: "kv",
       [RSP_TELEMETRY_INVOCATIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_DEGRADATIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_INDEX_COLLECTION]: "kv",
@@ -512,7 +542,7 @@ describe("rsp telemetry spool", () => {
 
       await waitForResidentTelemetry(paths.socketPath, "git log --terse");
       await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
-      await expect(readFile(paths.summaryPath, "utf8")).resolves.toContain("tokens_saved_today");
+      await waitForStatusSummary(paths.summaryPath);
     } finally {
       await shutdownResident(paths.socketPath);
     }
@@ -672,6 +702,7 @@ async function readTelemetryCollectionModels(storeUri: string): Promise<Record<s
     return Object.fromEntries(
       (await db.list())
         .filter((entry) => [
+          RSP_ELISION_COLLECTION,
           RSP_TELEMETRY_INVOCATIONS_COLLECTION,
           RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
           RSP_TELEMETRY_INDEX_COLLECTION,
@@ -724,6 +755,16 @@ async function waitForResidentTelemetry(socketPath: string, command: string): Pr
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`telemetry ${command} did not drain`);
+}
+
+async function waitForStatusSummary(summaryPath: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const summary = await readFile(summaryPath, "utf8").catch(() => "");
+    if (summary.includes("tokens_saved_today")) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("rsp status summary did not refresh");
 }
 
 async function shutdownResident(socketPath: string): Promise<void> {
