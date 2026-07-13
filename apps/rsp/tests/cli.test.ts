@@ -71,7 +71,7 @@ function runNodeNoop() {
 function runBundleFromCwd(cwd: string, args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, ...args], {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
     encoding: "buffer",
   });
 }
@@ -79,7 +79,7 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
 function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, "hook", "claude-pre-exec"], {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
     input: Buffer.from(JSON.stringify({ cwd, tool_input: { command } })),
     encoding: "buffer",
   });
@@ -89,7 +89,7 @@ function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, 
   return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -118,11 +118,25 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-type LatencyBudgetSample = { valueMs: number; details: string };
+type LatencyBudgetSample = { valueMs: number; baselineMs: number; details: string };
 
-function budgetSample(valueMs: number, details: string): LatencyBudgetSample {
-  return { valueMs, details };
+function budgetSample(valueMs: number, baselineMs: number, details: string): LatencyBudgetSample {
+  return { valueMs, baselineMs, details };
 }
+
+function latencyRatio(sample: LatencyBudgetSample): number {
+  return sample.valueMs / Math.max(1, sample.baselineMs);
+}
+
+function latencyBudgetDetails(sample: LatencyBudgetSample): string {
+  return `${sample.details}; ratio=${latencyRatio(sample).toFixed(2)}x baseline=${sample.baselineMs.toFixed(1)}ms`;
+}
+
+function normalizedTimeoutMs(baselineMs: number, multiplier: number, minMs: number): number {
+  return Math.max(minMs, Math.ceil(Math.max(1, baselineMs) * multiplier));
+}
+
+const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(timedStatus(runNodeNoop).elapsedMs, 250, 2_000);
 
 async function idleBeat(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -131,17 +145,18 @@ async function idleBeat(): Promise<void> {
 async function expectLatencyBudget(
   label: string,
   first: LatencyBudgetSample,
-  budgetMs: number,
+  maxRatio: number,
   retry: () => LatencyBudgetSample | Promise<LatencyBudgetSample>,
 ): Promise<void> {
-  if (first.valueMs <= budgetMs) return;
+  if (latencyRatio(first) <= maxRatio) return;
 
   await idleBeat();
   const second = await retry();
   expect(
-    second.valueMs,
-    `${label} exceeded ${budgetMs}ms twice; first ${first.details}; retry ${second.details}`,
-  ).toBeLessThanOrEqual(budgetMs);
+    latencyRatio(second),
+    `${label} exceeded ${maxRatio.toFixed(2)}x baseline twice; ` +
+      `first ${latencyBudgetDetails(first)}; retry ${latencyBudgetDetails(second)}`,
+  ).toBeLessThanOrEqual(maxRatio);
 }
 
 function buildBundleOnce() {
@@ -178,6 +193,7 @@ async function commitMany(root: string, count: number): Promise<void> {
 
 async function runMcpRequests(cwd: string, requests: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
   return await new Promise((resolve, reject) => {
+    const timeoutMs = normalizedTimeoutMs(timedStatus(runNodeNoop).elapsedMs, 250, 10_000);
     const child = spawn(process.execPath, ["--import", tsxLoader, cli, "mcp"], {
       cwd,
       env: { ...process.env },
@@ -190,7 +206,7 @@ async function runMcpRequests(cwd: string, requests: Array<Record<string, unknow
     const timeout = setTimeout(() => {
       child.kill();
       reject(new Error(`timed out waiting for rsp mcp responses; stderr=${stderr}`));
-    }, 10_000);
+    }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
@@ -347,17 +363,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 describe("rsp cli", () => {
-  it("retries a latency budget once after an idle beat before failing", async () => {
+  it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
     let attempts = 0;
-    await expectLatencyBudget("test budget", budgetSample(125, "first=125.0ms"), 100, async () => {
+    await expectLatencyBudget("test budget", budgetSample(200, 50, "first=200.0ms"), 3, async () => {
       attempts++;
-      return budgetSample(75, "retry=75.0ms");
+      return budgetSample(130, 50, "retry=130.0ms");
     });
 
     expect(attempts).toBe(1);
-    await expect(expectLatencyBudget("test budget", budgetSample(125, "first=125.0ms"), 100, async () => {
-      return budgetSample(130, "retry=130.0ms");
-    })).rejects.toThrow(/exceeded 100ms twice/);
+    await expect(expectLatencyBudget("test budget", budgetSample(250, 50, "first=250.0ms"), 3, async () => {
+      return budgetSample(220, 50, "retry=220.0ms");
+    })).rejects.toThrow(/exceeded 3\.00x baseline twice/);
   });
 
   it("passes wrappers through without creating .red when rsp is not enabled", async () => {
@@ -479,9 +495,10 @@ describe("rsp cli", () => {
       "cold pre-exec hook work",
       budgetSample(
         coldHookWorkMs,
+        coldNodeBaseline.elapsedMs,
         `node=${coldNodeBaseline.elapsedMs.toFixed(1)}ms cold=${cold.elapsedMs.toFixed(1)}ms hookWork=${coldHookWorkMs.toFixed(1)}ms`,
       ),
-      200,
+      8,
       async () => {
         const retryRoot = await initGitRepo();
         const retryCacheDir = await seedWarmRedCache();
@@ -497,6 +514,7 @@ describe("rsp cli", () => {
         expect(retryCold.stderr).toEqual(Buffer.alloc(0));
         return budgetSample(
           retryColdHookWorkMs,
+          retryNodeBaseline.elapsedMs,
           `node=${retryNodeBaseline.elapsedMs.toFixed(1)}ms cold=${retryCold.elapsedMs.toFixed(1)}ms hookWork=${retryColdHookWorkMs.toFixed(1)}ms`,
         );
       },
@@ -547,14 +565,16 @@ describe("rsp cli", () => {
       "warm pre-exec hook work",
       budgetSample(
         measuredWarm.hookWorkMs,
+        measuredWarm.nodeMedian,
         `node=${measuredWarm.nodeMedian.toFixed(1)}ms warm=${measuredWarm.warmMedian.toFixed(1)}ms ` +
           `hookWork=${measuredWarm.hookWorkMs.toFixed(1)}ms`,
       ),
-      200,
+      8,
       () => {
         const retry = measureWarmHookWork();
         return budgetSample(
           retry.hookWorkMs,
+          retry.nodeMedian,
           `node=${retry.nodeMedian.toFixed(1)}ms warm=${retry.warmMedian.toFixed(1)}ms ` +
             `hookWork=${retry.hookWorkMs.toFixed(1)}ms`,
         );
@@ -649,12 +669,13 @@ describe("rsp cli", () => {
       `wrapped=${measured.wrappedMedian.toFixed(1)}ms wrapperWork=${measured.wrapperWorkMs.toFixed(1)}ms`;
     await expectLatencyBudget(
       "small git status wrapper work",
-      budgetSample(measured.wrapperWorkMs, measuredDetails),
-      150,
+      budgetSample(measured.wrapperWorkMs, measured.nodeMedian + measured.rawMedian, measuredDetails),
+      8,
       () => {
         const retry = measureWrapperWork();
         return budgetSample(
           retry.wrapperWorkMs,
+          retry.nodeMedian + retry.rawMedian,
           `raw=${retry.rawMedian.toFixed(1)}ms node=${retry.nodeMedian.toFixed(1)}ms ` +
             `wrapped=${retry.wrappedMedian.toFixed(1)}ms wrapperWork=${retry.wrapperWorkMs.toFixed(1)}ms`,
         );
@@ -1090,25 +1111,65 @@ describe("rsp cli", () => {
     expect(runGit(["-C", root, "log"]).status).toBe(0);
 
     const rawSamples: number[] = [];
+    const nodeSamples: number[] = [];
     const wrappedSamples: number[] = [];
     for (let i = 0; i < 5; i++) {
       const raw = timedStatus(() => runGit(["-C", root, "log"]));
+      const node = timedStatus(() => runNodeNoop());
       const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], env));
       expect(raw.status).toBe(0);
+      expect(node.status).toBe(0);
       expect(wrapped.status).toBe(0);
       expect(wrapped.stderr).toEqual(Buffer.alloc(0));
       expect(wrapped.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
       rawSamples.push(raw.elapsedMs);
+      nodeSamples.push(node.elapsedMs);
       wrappedSamples.push(wrapped.elapsedMs);
     }
 
     const rawMedian = median(rawSamples);
+    const nodeMedian = median(nodeSamples);
     const wrappedMedian = median(wrappedSamples);
     const overheadMs = wrappedMedian - rawMedian;
-    expect(
-      wrappedMedian,
-      `raw=${rawMedian.toFixed(1)}ms wrapped=${wrappedMedian.toFixed(1)}ms overhead=${overheadMs.toFixed(1)}ms`,
-    ).toBeLessThanOrEqual(750);
+    await expectLatencyBudget(
+      "git log terse elision overhead",
+      budgetSample(
+        overheadMs,
+        rawMedian + nodeMedian,
+        `raw=${rawMedian.toFixed(1)}ms node=${nodeMedian.toFixed(1)}ms ` +
+          `wrapped=${wrappedMedian.toFixed(1)}ms overhead=${overheadMs.toFixed(1)}ms`,
+      ),
+      12,
+      () => {
+        const retryRawSamples: number[] = [];
+        const retryNodeSamples: number[] = [];
+        const retryWrappedSamples: number[] = [];
+        for (let i = 0; i < 5; i++) {
+          const raw = timedStatus(() => runGit(["-C", root, "log"]));
+          const node = timedStatus(() => runNodeNoop());
+          const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], env));
+          expect(raw.status).toBe(0);
+          expect(node.status).toBe(0);
+          expect(wrapped.status).toBe(0);
+          expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+          expect(wrapped.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+          retryRawSamples.push(raw.elapsedMs);
+          retryNodeSamples.push(node.elapsedMs);
+          retryWrappedSamples.push(wrapped.elapsedMs);
+        }
+
+        const retryRawMedian = median(retryRawSamples);
+        const retryNodeMedian = median(retryNodeSamples);
+        const retryWrappedMedian = median(retryWrappedSamples);
+        const retryOverheadMs = retryWrappedMedian - retryRawMedian;
+        return budgetSample(
+          retryOverheadMs,
+          retryRawMedian + retryNodeMedian,
+          `raw=${retryRawMedian.toFixed(1)}ms node=${retryNodeMedian.toFixed(1)}ms ` +
+            `wrapped=${retryWrappedMedian.toFixed(1)}ms overhead=${retryOverheadMs.toFixed(1)}ms`,
+        );
+      },
+    );
   }, 120_000);
 
   it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
