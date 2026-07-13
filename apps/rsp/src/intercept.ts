@@ -126,6 +126,7 @@ function toResidentConfig(config: RspRuntimeConfig) {
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
     telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
+    idleMs: config.idleMs,
   };
 }
 

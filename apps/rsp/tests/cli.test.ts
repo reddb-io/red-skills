@@ -582,6 +582,35 @@ describe("rsp cli", () => {
     );
   }, 120_000);
 
+  it("built bundle keeps the warmed resident alive until the configured idle timeout", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const env = { RED_SKILLS_CACHE_DIR: cacheDir, RSP_IDLE_MS: "5000" };
+    const paths = trackedResidentPaths(root);
+
+    const cold = runBundleHookFromCwd(root, "git status", env);
+    expect(cold.status).toBe(1);
+    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.stderr).toEqual(Buffer.alloc(0));
+    await waitForResidentSocket(root);
+    await waitForGone(paths.wakeLockPath);
+
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const warm = runBundleHookFromCwd(root, "git status", env);
+    expect(warm.status).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
+
+    await waitForGone(paths.socketPath, 10_000);
+    const expired = runBundleHookFromCwd(root, "git status", env);
+    expect(expired.status).toBe(1);
+    expect(expired.stdout).toEqual(Buffer.alloc(0));
+    expect(expired.stderr).toEqual(Buffer.alloc(0));
+  }, 120_000);
+
   it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {
     buildBundleOnce();
     const base = await tempRoot();

@@ -9,6 +9,7 @@ export interface RspResidentConfig {
   telemetryByteBudget?: number;
   telemetryDrainIntervalMs?: number;
   telemetryDrainTimeoutMs?: number;
+  idleMs?: number;
   serverCommand?: string;
   serverArgs?: string[];
 }

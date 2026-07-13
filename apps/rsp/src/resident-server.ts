@@ -19,7 +19,7 @@ import {
   drainTelemetrySpool,
   type RspTelemetryEvent,
 } from "./telemetry.js";
-import { DEFAULT_RSP_TELEMETRY_BYTE_BUDGET, DEFAULT_RSP_TELEMETRY_TTL_DAYS } from "./config.js";
+import { DEFAULT_RSP_IDLE_MS, DEFAULT_RSP_TELEMETRY_BYTE_BUDGET, DEFAULT_RSP_TELEMETRY_TTL_DAYS } from "./config.js";
 
 export interface ResidentServerOptions extends RspResidentConfig {
   socketPath: string;
@@ -50,7 +50,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   const telemetryDrainTimeoutMs = opts.telemetryDrainTimeoutMs ?? TELEMETRY_DRAIN_TIMEOUT_MS;
   await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
 
-  const idleMs = opts.idleMs ?? 30_000;
+  const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
   const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
   const telemetryTimer = setInterval(() => {

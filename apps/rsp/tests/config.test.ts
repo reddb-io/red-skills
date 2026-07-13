@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_RSP_IDLE_MS,
   DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
   DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
   DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
   DEFAULT_RSP_TELEMETRY_TTL_DAYS,
+  MIN_RSP_IDLE_MS,
   resolveRspConfig,
 } from "../src/config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
@@ -30,7 +32,7 @@ describe("resolveRspConfig", () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(
       join(root, ".red", "config.yaml"),
-      "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  telemetryDrainTimeoutMs: 456\n  heavyGitByteThreshold: 99\n",
+      "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  telemetryDrainTimeoutMs: 456\n  idleMs: 10000\n  heavyGitByteThreshold: 99\n",
       "utf8",
     );
 
@@ -43,6 +45,7 @@ describe("resolveRspConfig", () => {
       telemetryByteBudget: 100,
       telemetryDrainIntervalMs: DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
       telemetryDrainTimeoutMs: 456,
+      idleMs: 10_000,
       heavyGitByteThreshold: 99,
     });
   });
@@ -61,6 +64,7 @@ describe("resolveRspConfig", () => {
       telemetryByteBudget: DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
       telemetryDrainIntervalMs: DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
       telemetryDrainTimeoutMs: DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
+      idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     });
   });
@@ -84,6 +88,22 @@ describe("resolveRspConfig", () => {
     const config = resolveRspConfig(root, { RSP_TELEMETRY_DRAIN_TIMEOUT_MS: "456" }, undefined);
 
     expect(config.telemetryDrainTimeoutMs).toBe(456);
+  });
+
+  it("lets env override the resident idle timeout", async () => {
+    const root = await tempRoot();
+    const config = resolveRspConfig(root, { RSP_IDLE_MS: "6000" }, undefined);
+
+    expect(config.idleMs).toBe(6_000);
+  });
+
+  it("floors configured resident idle timeout at five seconds", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  idleMs: 1000\n", "utf8");
+
+    expect(resolveRspConfig(root, {}, undefined).idleMs).toBe(MIN_RSP_IDLE_MS);
+    expect(resolveRspConfig(root, { RSP_IDLE_MS: "2000" }, undefined).idleMs).toBe(MIN_RSP_IDLE_MS);
   });
 
   it("does not create .red or red-skills.rdb while resolving runtime config", async () => {

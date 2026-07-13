@@ -71,7 +71,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         serverConfig.telemetryDrainIntervalMs,
       telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
         serverConfig.telemetryDrainTimeoutMs,
-      idleMs: numericValueAfter(args.positional, "--idle-ms"),
+      idleMs: numericValueAfter(args.positional, "--idle-ms") ?? serverConfig.idleMs,
       residentVersion: valueAfter(args.positional, "--resident-version") ?? buildInfo.version,
     });
     return 0;
@@ -97,6 +97,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         warmConfig.telemetryDrainIntervalMs,
       telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
         warmConfig.telemetryDrainTimeoutMs,
+      idleMs: numericValueAfter(args.positional, "--idle-ms") ?? warmConfig.idleMs,
       clientVersion: buildInfo.version,
     });
     return 0;
@@ -118,6 +119,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
     telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
+    idleMs: config.idleMs,
     clientVersion: buildInfo.version,
   }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
@@ -128,6 +130,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
     telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
+    idleMs: config.idleMs,
     clientVersion: buildInfo.version,
   });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
