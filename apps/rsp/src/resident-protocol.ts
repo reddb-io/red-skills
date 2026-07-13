@@ -1,4 +1,5 @@
 export type {
+  BrainResidentAction,
   RspResidentClientOptions,
   RspResidentConfig,
   RspResidentRequest,
