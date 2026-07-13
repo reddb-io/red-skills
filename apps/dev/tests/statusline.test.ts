@@ -181,6 +181,24 @@ describe("statusline — project block", () => {
     );
   });
 
+  it("marks the session version when a newer cached bundle is available", () => {
+    expect(renderProjectBlock({
+      basename: "red-skills",
+      branch: "main",
+      version: "1.2.3",
+      latestCachedVersion: "1.2.4",
+    })).toBe("red-skills (main) v1.2.3*");
+  });
+
+  it("does not mark the session version for older cached bundles", () => {
+    expect(renderProjectBlock({
+      basename: "red-skills",
+      branch: "main",
+      version: "1.2.3",
+      latestCachedVersion: "1.2.2",
+    })).toBe("red-skills (main)");
+  });
+
   it("truncates a long branch to 27 chars plus an ellipsis", () => {
     const long = "afk/wFABQ/9-some-very-long-branch-name";
     const out = renderProjectBlock({ basename: "red-skills", branch: long });
