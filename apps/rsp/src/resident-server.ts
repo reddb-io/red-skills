@@ -46,10 +46,12 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   });
   const storeElapsedMs = Number(process.hrtime.bigint() - openedAt) / 1_000_000;
   let storeOpenCount = 1;
+  const bootTelemetryHeals = store.redDb() ? await ensureTelemetryKvCollections(store.redDb()!) : [];
   const telemetry = new ResidentTelemetryDrain(store, {
     rootDir: opts.rootDir ?? process.cwd(),
     ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
     byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
+    bootHeals: bootTelemetryHeals,
   });
   const telemetryDrainTimeoutMs = opts.telemetryDrainTimeoutMs ?? TELEMETRY_DRAIN_TIMEOUT_MS;
   await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
@@ -134,6 +136,7 @@ interface ResidentTelemetryOptions {
   rootDir: string;
   ttlDays: number;
   byteBudget: number;
+  bootHeals?: TelemetryCollectionHeal[];
 }
 
 interface TelemetryIndexEntry {
@@ -170,11 +173,14 @@ const TELEMETRY_KV_COLLECTIONS = [
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
+  private pendingHeals: TelemetryCollectionHeal[];
 
   constructor(
     private readonly store: RspElisionStore,
     private readonly opts: ResidentTelemetryOptions,
-  ) {}
+  ) {
+    this.pendingHeals = [...(opts.bootHeals ?? [])];
+  }
 
   async drainAndSweep(): Promise<void> {
     this.running ??= this.drainAndSweepOnce().finally(() => {
@@ -187,6 +193,8 @@ class ResidentTelemetryDrain {
     const db = this.store.redDb();
     if (!db) return;
     const healed = await ensureTelemetryKvCollections(db);
+    healed.unshift(...this.pendingHeals);
+    this.pendingHeals = [];
     const index = await this.readIndex(db);
     const nextRecords = [...index.records];
     for (const entry of healed) {
