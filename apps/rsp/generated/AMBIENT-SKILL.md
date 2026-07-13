@@ -47,6 +47,11 @@ When you would run one of these commands, run it through `rsp` instead:
 - For `vitest run`, prefer `rsp vitest run` when the summarized output is enough.
 - For `cargo test`, prefer `rsp cargo test` when the summarized output is enough.
 
+For arbitrary shell pipelines or compound commands where only final stdout
+should enter the agent context, call `rsp exec -- "<command line>"` directly.
+Bytes inside pipes remain untouched; stderr and exit status follow the raw
+shell command.
+
 Use raw commands when exact stdout/stderr is the behavior under test, when
 a wrapper does not support the command shape, or when resolving low-level
 git conflicts where every byte matters.
