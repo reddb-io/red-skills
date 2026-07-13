@@ -5,6 +5,7 @@ import { encode, type JsonObject } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta } from "./elision-store.js";
+import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
 import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
 
@@ -724,7 +725,11 @@ function renderStats(
     `  raw_bytes: ${telemetry.savings.raw_bytes}`,
     `  emitted_bytes: ${telemetry.savings.emitted_bytes}`,
     `  bytes_saved: ${telemetry.savings.bytes_saved}`,
-    `  tokens_saved: ${telemetry.savings.tokens_saved}`,
+    `  tokens_saved: ${formatTokensSaved(telemetry.savings)}`,
+    `  dollars_saved_estimate_usd: ${formatDollarsSaved(telemetry.savings)}`,
+    `  pricing_model_family: ${telemetry.savings.pricing_model_family}`,
+    `  pricing_input_usd_per_million_tokens: ${telemetry.savings.pricing_input_usd_per_million_tokens}`,
+    `  pricing_note: ${telemetry.savings.pricing_note}`,
     "  daily_tokens_saved:",
     ...renderDaily(daily),
     ...(!full && telemetry.savings.daily_tokens_saved.length > daily.length
@@ -751,6 +756,18 @@ function renderStats(
 
 function renderGainsReportToon(report: RspTelemetryGainsReport): string {
   return `${encode(report as unknown as JsonObject)}\n`;
+}
+
+function formatTokensSaved(savings: RspTelemetryStats["savings"]): string {
+  if (!savings.tokens_saved_estimated) return String(savings.tokens_saved);
+  return `${savings.tokens_saved_low}-${savings.tokens_saved_high} (estimate_midpoint: ${savings.tokens_saved}, range_pct: ${savings.token_estimate_range_pct})`;
+}
+
+function formatDollarsSaved(savings: RspTelemetryStats["savings"]): string {
+  if (savings.dollars_saved_low_usd == null || savings.dollars_saved_high_usd == null) {
+    return formatUsd(savings.dollars_saved_estimate_usd);
+  }
+  return `${formatUsd(savings.dollars_saved_low_usd)}-${formatUsd(savings.dollars_saved_high_usd)} (estimate_midpoint: ${formatUsd(savings.dollars_saved_estimate_usd)})`;
 }
 
 function renderDaily(series: Array<{ date: string; tokens_saved: number }>): string[] {
@@ -789,6 +806,16 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       emitted_bytes: 0,
       bytes_saved: 0,
       tokens_saved: 0,
+      tokens_saved_estimated: false,
+      token_estimate_range_pct: null,
+      tokens_saved_low: null,
+      tokens_saved_high: null,
+      dollars_saved_estimate_usd: 0,
+      dollars_saved_low_usd: null,
+      dollars_saved_high_usd: null,
+      pricing_model_family: "gpt-5",
+      pricing_input_usd_per_million_tokens: 1.25,
+      pricing_note: "estimate derived from byte-based token estimate when token counts are estimated",
       daily_tokens_saved: [],
       top_commands: [],
     },
