@@ -5,7 +5,7 @@ import { RSP_WRAPPER_CAPABILITIES, type RspWrapperCapability } from "./intercept
 // so the source of truth for the file location lives in one place.
 export const AMBIENT_SKILL_RELATIVE_PATH = "generated/AMBIENT-SKILL.md";
 
-export type RspInstructionRunner = "claude" | "codex";
+export type RspInstructionRunner = "claude" | "codex" | "opencode";
 
 export interface AmbientSkillRenderOptions {
   runner?: RspInstructionRunner;
@@ -133,6 +133,15 @@ function renderRunnerLines(runner: RspInstructionRunner | undefined): string[] {
       "",
       "Claude Code pre-execution interception is available for simple wrapped",
       "commands, and direct calls still help when composing commands deliberately.",
+    ];
+  }
+  if (runner === "opencode") {
+    return [
+      "## OpenCode lane",
+      "",
+      "OpenCode receives this guidance through the generated opencode plugin surface.",
+      "The plugin can rewrite simple shell-tool commands before execution, and direct",
+      "`rsp` calls still help when composing commands deliberately.",
     ];
   }
   return [];

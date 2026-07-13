@@ -58,6 +58,7 @@ DRY_RUN="false"
 CONFIG_PATH="$REPO_ROOT/.red/config.yaml"
 PLUGINS_ROOT="$REPO_ROOT/plugins"
 OUT_DIR="$REPO_ROOT/dist/opencode"
+PREGENERATED_TREE_MARKER="$OUT_DIR/.release-generated"
 MANIFEST_FILE=""
 MANIFEST_TMP=""
 
@@ -307,15 +308,21 @@ else
   GENERATOR="node $BUNDLE"
 fi
 
-# 2. generate the dist tree
-GEN_ARGS=(--config "$CONFIG_PATH" --with-slice-2 --plugins-root "$PLUGINS_ROOT" --out-dir "$OUT_DIR")
-[ "$COPY" = "true" ] && GEN_ARGS+=(--copy)
-
-log "generating dist tree under $OUT_DIR"
-if [ "$DRY_RUN" = "true" ]; then
-  log "(dry-run) $GENERATOR ${GEN_ARGS[*]}"
+# 2. prepare the dist tree. Release installs prefer the pre-generated tree
+# extracted by scripts/install.sh; source checkouts regenerate from the current
+# tree so local development stays fresh.
+if [ -f "$PREGENERATED_TREE_MARKER" ]; then
+  log "using release-generated dist tree under $OUT_DIR"
 else
-  (cd "$REPO_ROOT" && $GENERATOR "${GEN_ARGS[@]}")
+  GEN_ARGS=(--config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out-dir "$OUT_DIR")
+  [ "$COPY" = "true" ] && GEN_ARGS+=(--copy)
+
+  log "generating dist tree under $OUT_DIR"
+  if [ "$DRY_RUN" = "true" ]; then
+    log "(dry-run) $GENERATOR ${GEN_ARGS[*]}"
+  else
+    (cd "$REPO_ROOT" && $GENERATOR "${GEN_ARGS[@]}")
+  fi
 fi
 
 # 3. discover the plugins that have a dist subtree

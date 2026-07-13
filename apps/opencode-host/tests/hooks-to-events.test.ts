@@ -101,6 +101,8 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     const session = plans.find((p) => p.opencodeEvent === "config")!;
     expect(session.source).toContain("red-fetch.mjs dev");
     expect(session.source).toContain("rsp-instructions");
+    expect(session.source).toContain("--runner opencode --hook");
+    expect(session.source).not.toContain("--runner claude --hook");
     expect(session.source).toContain("ensure-codex-statusline");
     expect(session.source).toContain('"experimental.chat.system.transform"');
     expect(session.source).toContain("hookSpecificOutput?.additionalContext");

@@ -83,7 +83,8 @@ export function rewritePluginRoot(command: string, plugin: string): string {
   // JS template that uses the surrounding function's `directory` arg.
   return command
     .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, `\${__pluginRoot}`)
-    .replace(/\$\{CODEX_PLUGIN_ROOT\}/g, `\${__pluginRoot}`);
+    .replace(/\$\{CODEX_PLUGIN_ROOT\}/g, `\${__pluginRoot}`)
+    .replace(/\brsp-instructions --runner (claude|codex) --hook\b/g, "rsp-instructions --runner opencode --hook");
 }
 
 /** The TypeScript template for a single `tool.execute.before` module. */
@@ -146,7 +147,7 @@ function toolExecuteBeforeTemplate(input: {
   const rspRewriteHelper = hasRspHook
     ? [
         "      const __runRspRewrite = async (inner: string): Promise<string | null> => {",
-        "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
+        "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot, OPENCODE_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
         "        const writer = proc.stdin.getWriter();",
         "        await writer.write(__encoder.encode(__payload));",
         "        await writer.close();",
@@ -182,7 +183,7 @@ function toolExecuteBeforeTemplate(input: {
     "      const __shellQuote = (value: string): string => `'${value.replaceAll(\"'\", \"'\\\\''\")}'`;",
     "      const __denyCommand = (reason: string, code: number): string => `printf '%s\\\\n' ${__shellQuote(reason)} >&2; exit ${code}`;",
     "      const __runHook = async (inner: string): Promise<boolean> => {",
-    "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
+    "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot, OPENCODE_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
     "        const writer = proc.stdin.getWriter();",
     "        await writer.write(__encoder.encode(__payload));",
     "        await writer.close();",

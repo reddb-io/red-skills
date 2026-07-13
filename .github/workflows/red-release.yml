@@ -431,6 +431,14 @@ jobs:
         run: |
           set -euo pipefail
           pnpm build
+          node ../../dist/opencode-host.bundle.min.mjs \
+            --config ../../.red/config.yaml \
+            --plugins-root ../../plugins \
+            --out ../../dist/opencode.json \
+            --out-dir ../../dist/opencode \
+            --copy
+          touch ../../dist/opencode/.release-generated
+          tar -czf ../../dist/opencode-host.generated.tgz -C ../.. dist/opencode
 
       - name: Build benchmark-code-understanding bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -688,6 +696,7 @@ jobs:
             dist/benchmark-memory.bundle.min.mjs \
             dist/benchmark-memory.manifest.json \
             dist/opencode-host.bundle.min.mjs \
+            dist/opencode-host.generated.tgz \
             dist/benchmark-code-understanding.bundle.min.mjs \
             dist/benchmark-code-understanding.manifest.json \
             dist/memory.bundle.min.mjs \
@@ -722,6 +731,7 @@ jobs:
             dist/benchmark-memory.bundle.min.mjs
             dist/benchmark-memory.manifest.json
             dist/opencode-host.bundle.min.mjs
+            dist/opencode-host.generated.tgz
             dist/benchmark-code-understanding.bundle.min.mjs
             dist/benchmark-code-understanding.manifest.json
             dist/memory.bundle.min.mjs
