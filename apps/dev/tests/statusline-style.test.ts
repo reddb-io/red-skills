@@ -99,6 +99,16 @@ describe("statusline style — header line", () => {
     expect(t).not.toContain("7d=");
   });
 
+  it("stars the themed session version when a newer cached bundle is available", () => {
+    const t = stripAnsi(renderHeaderLine({
+      basename: "red-skills",
+      branch: "main",
+      version: "1.2.3",
+      latestCachedVersion: "1.2.4",
+    }, claude, repo));
+    expect(t).toContain("v1.2.3*");
+  });
+
   it("drops the usage tokens entirely for a non-Pro/Max session", () => {
     const t = stripAnsi(
       renderHeaderLine(input.project, { ...claude, usage5h: undefined, usage7d: undefined }, repo),
