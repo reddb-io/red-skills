@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { decode, encode } from "@reddb-io/toon";
+import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { resolveRspConfig } from "./config.js";
+import type { RspElisionStore, RspLossLevel } from "./elision-store.js";
 
 export interface NormalizeEntry {
   readonly id: string;
@@ -83,6 +84,71 @@ export const NORMALIZE_JSON_TOON: NormalizeEntry = {
   id: "json-to-toon",
   apply: (input) => transcodeJsonToToon(input),
 };
+
+export interface GenericJsonLaneOptions {
+  level?: RspLossLevel;
+  minTokens?: number;
+  maxItems?: number;
+  command?: string;
+  store?: Pick<RspElisionStore, "mint">;
+}
+
+export interface GenericJsonLaneResult {
+  output: string;
+  detected: boolean;
+  lossy: boolean;
+  totalItems?: number;
+  keptItems?: number;
+  handle?: `el:${string}`;
+}
+
+const DEFAULT_JSON_MIN_TOKENS = 200;
+const DEFAULT_JSON_MAX_ITEMS = 15;
+
+export async function renderGenericJsonLane(
+  input: string,
+  options: GenericJsonLaneOptions = {},
+): Promise<GenericJsonLaneResult> {
+  const parsed = parseJsonOrNdjson(input);
+  if (!parsed) return { output: input, detected: false, lossy: false };
+
+  const value = parsed.value;
+  if (!Array.isArray(value)) {
+    return { output: encode(value as JsonValue), detected: true, lossy: false };
+  }
+
+  const total = value.length;
+  const minTokens = positiveInteger(options.minTokens, DEFAULT_JSON_MIN_TOKENS);
+  const maxItems = positiveInteger(options.maxItems, DEFAULT_JSON_MAX_ITEMS);
+  const shouldSelect = total > maxItems && estimateTokens(input) >= minTokens;
+  if (!shouldSelect) {
+    return { output: encode(value as JsonValue), detected: true, lossy: false, totalItems: total, keptItems: total };
+  }
+
+  const kept = selectJsonItems(value, maxItems);
+  const payload = {
+    items: kept as JsonValue,
+  } satisfies JsonObject;
+  const marker = `items: ${kept.length} of ${total} kept`;
+  let handle: `el:${string}` | undefined;
+  if (options.level && options.level !== "lossless") {
+    handle = await options.store?.mint(Buffer.from(input), {
+      command: options.command ?? "rsp json",
+      loss: { level: options.level, bytes_elided: Buffer.byteLength(input) },
+    });
+  }
+  const handleLine = handle
+    ? `original: rsp show ${handle}`
+    : `original: unavailable - re-run: ${options.command ?? "command"}`;
+  return {
+    output: [marker, handleLine, encode(payload)].filter(Boolean).join("\n"),
+    detected: true,
+    lossy: true,
+    totalItems: total,
+    keptItems: kept.length,
+    handle,
+  };
+}
 
 export const NORMALIZATION_ALLOWLIST: readonly NormalizeEntry[] = [
   NORMALIZE_ANSI,
@@ -206,6 +272,111 @@ function parseJsonRecord(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function parseJsonOrNdjson(input: string): { value: JsonObject | JsonValue[] } | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (isRecord(parsed) || Array.isArray(parsed)) return { value: parsed as JsonObject | JsonValue[] };
+    return null;
+  } catch {}
+
+  const rows: JsonValue[] = [];
+  for (const line of input.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line) as JsonValue);
+    } catch {
+      return null;
+    }
+  }
+  return rows.length > 0 ? { value: rows } : null;
+}
+
+function selectJsonItems(items: readonly JsonValue[], maxItems: number): JsonValue[] {
+  if (items.length <= maxItems) return [...items];
+  const keep = new Set<number>();
+  const edge = Math.max(1, Math.floor(maxItems * 0.2));
+  for (let i = 0; i < edge; i++) {
+    keep.add(i);
+    keep.add(items.length - 1 - i);
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    if (isErrorShaped(items[i])) keep.add(i);
+  }
+
+  for (const i of numericAnomalyIndexes(items)) keep.add(i);
+  for (const i of changePointIndexes(items)) keep.add(i);
+
+  const stride = Math.max(1, Math.floor(items.length / Math.max(1, maxItems - keep.size)));
+  for (let offset = 0; keep.size < maxItems && offset < stride; offset++) {
+    for (let i = offset; keep.size < maxItems && i < items.length; i += stride) keep.add(i);
+  }
+
+  return [...keep].sort((a, b) => a - b).slice(0, maxItems).map((i) => items[i] as JsonValue);
+}
+
+function isErrorShaped(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const level = value.level;
+  if (typeof level === "string" && level.toLowerCase() === "error") return true;
+  if (Object.prototype.hasOwnProperty.call(value, "error") && value.error) return true;
+  const status = value.status;
+  return typeof status === "number" && status >= 400;
+}
+
+function numericAnomalyIndexes(items: readonly JsonValue[]): number[] {
+  const numbersByField = new Map<string, Array<{ index: number; value: number }>>();
+  items.forEach((item, index) => {
+    if (!isRecord(item)) return;
+    for (const [key, value] of Object.entries(item)) {
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const rows = numbersByField.get(key) ?? [];
+      rows.push({ index, value });
+      numbersByField.set(key, rows);
+    }
+  });
+
+  const indexes = new Set<number>();
+  for (const rows of numbersByField.values()) {
+    if (rows.length < 3) continue;
+    const mean = rows.reduce((sum, row) => sum + row.value, 0) / rows.length;
+    const variance = rows.reduce((sum, row) => sum + Math.pow(row.value - mean, 2), 0) / rows.length;
+    const stddev = Math.sqrt(variance);
+    if (stddev === 0) continue;
+    for (const row of rows) {
+      if (Math.abs(row.value - mean) > stddev * 2) indexes.add(row.index);
+    }
+  }
+  return [...indexes];
+}
+
+function changePointIndexes(items: readonly JsonValue[]): number[] {
+  const indexes = new Set<number>();
+  for (let i = 1; i < items.length; i++) {
+    const before = items[i - 1];
+    const after = items[i];
+    if (!isRecord(before) || !isRecord(after)) continue;
+    for (const [key, value] of Object.entries(after)) {
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const previous = before[key];
+      if (typeof previous !== "number" || !Number.isFinite(previous)) continue;
+      if (previous === 0 ? Math.abs(value) > 10 : Math.abs((value - previous) / previous) >= 2) indexes.add(i);
+    }
+  }
+  return [...indexes];
+}
+
+function estimateTokens(input: string): number {
+  return Math.ceil(input.length / 4);
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  if (value == null) return fallback;
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function stringAt(record: Record<string, unknown>, path: readonly string[]): string {
