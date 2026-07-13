@@ -40,9 +40,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
   pair it with `/ground-truth`.
-- **Operations state** -> `/dashboard`, `/daily-review`, `/audit-skills`, or
+- **Operations state** -> `/dashboard`, `/daily-review`, `/red-gains`, `/audit-skills`, or
   `/context` depending on whether the question is queue health, period review,
-  skill quality, or repository context.
+  rsp usage gains, skill quality, or repository context.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
 - **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
@@ -77,7 +77,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
 `/ground-truth`, `/red-doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
-`/red-setup`, `/red-statusline`, `/implement`, `/tdd`, `/to-tickets`,
+`/red-setup`, `/red-gains`, `/red-statusline`, `/implement`, `/tdd`, `/to-tickets`,
 `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
@@ -97,6 +97,8 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set.
+- `/red-gains` reports whether rsp is paying for itself: latency, throughput,
+  token savings, command-family winners, and degradation health from telemetry.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes.
 - `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,

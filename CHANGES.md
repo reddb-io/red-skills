@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## red-gains (engineering) — added (issue #1583)
+
+- **status**: added
+- **upstream**: —
+- **why**: Original reddb.io skill for reading rsp usage-gains telemetry and explaining whether the wrapper is paying for itself.
+- **what changed**: Added `/red-gains`, registered it in the dev skill manifests and inventories, routed it through `/ask-red`, and paired it with the new `rsp gains` report surface.
+
+---
+
 ## doctor (engineering) — renamed to red-doctor (issue #1480)
 
 - **status**: renamed-from-doctor

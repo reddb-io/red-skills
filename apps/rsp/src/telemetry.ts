@@ -51,6 +51,55 @@ export interface RspTelemetryStats {
   };
 }
 
+export interface RspTelemetryGainsReport {
+  schema_version: "red.rsp.gains.v1";
+  window: {
+    requested_days: number;
+    data_days: number;
+    since: string;
+    until: string;
+    label: string;
+    empty: boolean;
+    invocations: number;
+    degradations: number;
+  };
+  latency: {
+    global: LatencyPercentiles;
+    by_command_family: Array<{ command_family: string; count: number } & LatencyPercentiles>;
+  };
+  throughput: {
+    requests_per_day: Array<{ date: string; requests: number }>;
+    active_minute_avg: number | null;
+    peak_minute: { minute: string; requests: number } | null;
+    hour_weekday_heatmap: Array<{ weekday: string; hour: number; requests: number }>;
+  };
+  savings: {
+    weekly_tokens_saved: Array<{ week_start: string; tokens_saved: number; wow_delta_pct: number | null }>;
+    elision_rate: number;
+    top_commands_by_tokens_saved: Array<{ command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>;
+    top_commands_by_invocation_count: Array<{ command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>;
+    single_biggest_elision: {
+      timestamp: string;
+      command_family: string;
+      tokens_saved: number;
+      bytes_saved: number;
+    } | null;
+  };
+  health: {
+    degradation_timeline: Array<{ timestamp: string; command_family: string; reason: string }>;
+    degradations_by_reason: Array<{ reason: string; count: number }>;
+    cold_boots: number | null;
+    warm_hits: number | null;
+  };
+}
+
+export interface LatencyPercentiles {
+  wrapper_ms_p50: number | null;
+  wrapper_ms_p90: number | null;
+  wrapper_ms_p95: number | null;
+  wrapper_ms_p99: number | null;
+}
+
 export function telemetrySpoolPath(rootDir: string): string {
   return join(rootDir, RSP_TELEMETRY_SPOOL);
 }
@@ -195,6 +244,132 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   };
 }
 
+export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now = new Date()): Promise<RspTelemetryGainsReport> {
+  const windowDays = Number.isFinite(sinceDays) && sinceDays > 0 ? sinceDays : 28;
+  const until = now.toISOString();
+  const since = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const sinceMs = Date.parse(since);
+  const invocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs);
+  const degradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs);
+  const allTimestamps = [...invocations, ...degradations]
+    .map(timestampMs)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const oldestMs = allTimestamps.length === 0 ? null : Math.min(...allTimestamps);
+  const dataDays = oldestMs == null ? 0 : Math.max(1, Math.min(windowDays, Math.ceil((now.getTime() - oldestMs) / dayMs())));
+
+  const globalLatencies: number[] = [];
+  const latencyByFamily = new Map<string, number[]>();
+  const requestsByDay = new Map<string, number>();
+  const requestsByMinute = new Map<string, number>();
+  const heatmap = new Map<string, number>();
+  const weeklyTokens = new Map<string, number>();
+  const commandTotals = new Map<string, { command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>();
+  let elided = 0;
+  let biggest: RspTelemetryGainsReport["savings"]["single_biggest_elision"] = null;
+  let recordsWithStoreMetric = 0;
+  let coldBoots = 0;
+
+  for (const record of invocations) {
+    const timestamp = timestampString(record);
+    const date = timestamp.slice(0, 10);
+    const minute = timestamp.slice(0, 16);
+    const family = commandFamily(stringField(record.command));
+    const tokensSaved = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
+    const bytesSaved = Math.max(0, numeric(record.raw_bytes) - numeric(record.emitted_bytes));
+    const latency = optionalNumeric(record.wrapper_ms);
+    if (latency != null) {
+      globalLatencies.push(latency);
+      const familyLatencies = latencyByFamily.get(family) ?? [];
+      familyLatencies.push(latency);
+      latencyByFamily.set(family, familyLatencies);
+    }
+    if (date) requestsByDay.set(date, (requestsByDay.get(date) ?? 0) + 1);
+    if (minute) requestsByMinute.set(minute, (requestsByMinute.get(minute) ?? 0) + 1);
+    const heatmapKey = heatmapKeyFor(timestamp);
+    if (heatmapKey) heatmap.set(heatmapKey, (heatmap.get(heatmapKey) ?? 0) + 1);
+    const week = weekStartDate(timestamp);
+    if (week) weeklyTokens.set(week, (weeklyTokens.get(week) ?? 0) + tokensSaved);
+    const totals = commandTotals.get(family) ?? { command_family: family, invocations: 0, tokens_saved: 0, bytes_saved: 0 };
+    totals.invocations++;
+    totals.tokens_saved += tokensSaved;
+    totals.bytes_saved += bytesSaved;
+    commandTotals.set(family, totals);
+    if (record.elided === true) elided++;
+    if (record.store_open_count != null || record.store_elapsed_ms != null) {
+      recordsWithStoreMetric++;
+      if (numeric(record.store_open_count) > 0) coldBoots++;
+    }
+    if (tokensSaved > 0 && (!biggest || tokensSaved > biggest.tokens_saved || (tokensSaved === biggest.tokens_saved && bytesSaved > biggest.bytes_saved))) {
+      biggest = { timestamp, command_family: family, tokens_saved: tokensSaved, bytes_saved: bytesSaved };
+    }
+  }
+
+  const degradationTimeline = degradations
+    .map((record) => ({
+      timestamp: timestampString(record),
+      command_family: commandFamily(stringField(record.command)),
+      reason: stringField(record.reason) || "unknown",
+    }))
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const byReason = new Map<string, number>();
+  for (const entry of degradationTimeline) {
+    byReason.set(entry.reason, (byReason.get(entry.reason) ?? 0) + 1);
+  }
+  const peakMinute = [...requestsByMinute.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+
+  return {
+    schema_version: "red.rsp.gains.v1",
+    window: {
+      requested_days: windowDays,
+      data_days: dataDays,
+      since,
+      until,
+      label: `window: ${windowDays}d, data: ${dataDays}d`,
+      empty: invocations.length === 0 && degradations.length === 0,
+      invocations: invocations.length,
+      degradations: degradations.length,
+    },
+    latency: {
+      global: latencyPercentiles(globalLatencies),
+      by_command_family: [...latencyByFamily.entries()]
+        .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+        .map(([command_family, values]) => ({ command_family, count: values.length, ...latencyPercentiles(values) })),
+    },
+    throughput: {
+      requests_per_day: [...requestsByDay.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, requests]) => ({ date, requests })),
+      active_minute_avg: requestsByMinute.size === 0
+        ? null
+        : round([...requestsByMinute.values()].reduce((sum, value) => sum + value, 0) / requestsByMinute.size),
+      peak_minute: peakMinute ? { minute: peakMinute[0], requests: peakMinute[1] } : null,
+      hour_weekday_heatmap: renderHeatmapRows(heatmap),
+    },
+    savings: {
+      weekly_tokens_saved: weeklySeries(weeklyTokens),
+      elision_rate: invocations.length === 0 ? 0 : round(elided / invocations.length),
+      top_commands_by_tokens_saved: [...commandTotals.values()]
+        .sort((a, b) => b.tokens_saved - a.tokens_saved || b.bytes_saved - a.bytes_saved || a.command_family.localeCompare(b.command_family))
+        .slice(0, 10),
+      top_commands_by_invocation_count: [...commandTotals.values()]
+        .sort((a, b) => b.invocations - a.invocations || b.tokens_saved - a.tokens_saved || a.command_family.localeCompare(b.command_family))
+        .slice(0, 10),
+      single_biggest_elision: biggest,
+    },
+    health: {
+      degradation_timeline: degradationTimeline,
+      degradations_by_reason: [...byReason.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([reason, count]) => ({ reason, count })),
+      cold_boots: recordsWithStoreMetric === 0 ? null : coldBoots,
+      warm_hits: recordsWithStoreMetric === 0 ? null : Math.max(0, recordsWithStoreMetric - coldBoots),
+    },
+  };
+}
+
 async function readCollection(db: RedDB, collection: string): Promise<Array<Record<string, unknown>>> {
   const listed = await db.kv(collection).list({ limit: 10_000 }).catch((err: unknown) => {
     if (err instanceof Error && /\bnot found\b/i.test(err.message)) return { items: [] };
@@ -242,8 +417,73 @@ function percentile(values: number[], p: number): number | null {
   return round(sorted[index]!);
 }
 
+function latencyPercentiles(values: number[]): LatencyPercentiles {
+  return {
+    wrapper_ms_p50: percentile(values, 0.5),
+    wrapper_ms_p90: percentile(values, 0.9),
+    wrapper_ms_p95: percentile(values, 0.95),
+    wrapper_ms_p99: percentile(values, 0.99),
+  };
+}
+
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function commandFamily(command: string): string {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "unknown";
+  if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
+  if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
+  if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
+  if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
+  if (parts[0] === "vitest") return "vitest";
+  return parts[0]!;
+}
+
+function heatmapKeyFor(timestamp: string): string | null {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${weekdayName(date.getUTCDay())}:${date.getUTCHours()}`;
+}
+
+function renderHeatmapRows(heatmap: Map<string, number>): Array<{ weekday: string; hour: number; requests: number }> {
+  const rows: Array<{ weekday: string; hour: number; requests: number }> = [];
+  for (const weekday of ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]) {
+    for (let hour = 0; hour < 24; hour++) {
+      const requests = heatmap.get(`${weekday}:${hour}`) ?? 0;
+      if (requests > 0) rows.push({ weekday, hour, requests });
+    }
+  }
+  return rows;
+}
+
+function weekdayName(day: number): string {
+  return ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][day] ?? "unknown";
+}
+
+function weekStartDate(timestamp: string): string | null {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + mondayOffset));
+  return start.toISOString().slice(0, 10);
+}
+
+function weeklySeries(weeklyTokens: Map<string, number>): Array<{ week_start: string; tokens_saved: number; wow_delta_pct: number | null }> {
+  let previous: number | null = null;
+  return [...weeklyTokens.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([week_start, tokens_saved]) => {
+      const wow_delta_pct = previous == null || previous === 0 ? null : round(((tokens_saved - previous) / previous) * 100);
+      previous = tokens_saved;
+      return { week_start, tokens_saved, wow_delta_pct };
+    });
+}
+
+function dayMs(): number {
+  return 24 * 60 * 60 * 1000;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

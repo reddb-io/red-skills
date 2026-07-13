@@ -5,7 +5,7 @@ import type {
   RspMintMeta,
   RspStoreStats,
 } from "./elision-store.js";
-import type { RspTelemetryStats } from "./telemetry.js";
+import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 import {
@@ -73,6 +73,10 @@ export class ResidentRspElisionStore {
 
   async telemetryStats(sinceDays: number): Promise<RspTelemetryStats> {
     return await this.request({ op: "telemetry-stats", sinceDays }) as RspTelemetryStats;
+  }
+
+  async telemetryGains(sinceDays: number): Promise<RspTelemetryGainsReport> {
+    return await this.request({ op: "telemetry-gains", sinceDays }) as RspTelemetryGainsReport;
   }
 
   async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
