@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { connect } from "@reddb-io/sdk";
 import { decode } from "@reddb-io/toon";
@@ -299,6 +299,22 @@ async function waitForResidentSocket(root: string): Promise<void> {
   await stat(paths.socketPath);
 }
 
+async function waitForSummaryTokens(root: string, minTokens: number): Promise<number> {
+  const summaryPath = resolveResidentPaths(root).summaryPath;
+  const deadline = Date.now() + 5_000;
+  let last = 0;
+  while (Date.now() < deadline) {
+    try {
+      const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { tokens_saved_today?: unknown };
+      last = typeof summary.tokens_saved_today === "number" ? summary.tokens_saved_today : 0;
+      if (last > minTokens) return last;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(last).toBeGreaterThan(minTokens);
+  return last;
+}
+
 async function readResidentVersion(root: string): Promise<string | undefined> {
   const socketPath = trackedResidentPaths(root).socketPath;
   const deadline = Date.now() + 5_000;
@@ -351,15 +367,36 @@ function handleHungOldResidentSocket(socket: Socket, version: string): void {
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
   const db = await connect(storeUri);
   try {
-    const raw = await db.kv(collection).list({ limit: 1000 });
+    const raw = await db.kv(collection).list({ limit: 1000 }).catch((err) => {
+      if (err instanceof Error && /\bnot found\b/i.test(err.message)) return { items: [] };
+      throw err;
+    });
     return raw.items.map((entry) => typeof entry.value === "string" ? JSON.parse(entry.value) as unknown : entry.value);
   } finally {
     await db.close();
   }
 }
 
+async function waitForTelemetryInvocations(storeUri: string, command: string, minCount: number): Promise<unknown[]> {
+  const deadline = Date.now() + 5_000;
+  let records: unknown[] = [];
+  while (Date.now() < deadline) {
+    records = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    if (records.filter((entry) => isRecord(entry) && entry.command === command).length >= minCount) return records;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(records.filter((entry) => isRecord(entry) && entry.command === command).length).toBeGreaterThanOrEqual(minCount);
+  return records;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractHandle(output: Buffer): string {
+  const match = /rsp show (el:[a-f0-9]{12})/.exec(output.toString("utf8"));
+  expect(match?.[1]).toBeTruthy();
+  return match![1];
 }
 
 describe("rsp cli", () => {
@@ -646,6 +683,74 @@ describe("rsp cli", () => {
     expect(((await stat(dirname(paths.socketPath))).mode & 0o777)).toBe(0o700);
     await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+  }, 120_000);
+
+  it("built bundle uses the primary resident and store from linked worktrees", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await enableRsp(root);
+    await writeFile(join(root, ".gitignore"), ".red/tmp/\n", "utf8");
+    expect(runGit(["-C", root, "add", ".red/config.yaml", ".gitignore"]).status).toBe(0);
+    expect(runGit(["-C", root, "commit", "-m", "baseline"]).status).toBe(0);
+    await commitMany(root, 12);
+    const cacheDir = await seedWarmRedCache();
+    const env = {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_HEAVY_GIT_BYTE_THRESHOLD: "1",
+      RSP_TELEMETRY_DRAIN_INTERVAL_MS: "50",
+    };
+    const setup = runBundleFromCwd(root, ["setup"], env);
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const worktreeA = join(root, ".red", "tmp", "linked-a");
+    const worktreeB = join(root, ".red", "tmp", "linked-b");
+    expect(runGit(["-C", root, "worktree", "add", worktreeA, "-b", `rsp-linked-a-${randomUUID()}`, "HEAD"]).status).toBe(0);
+    expect(runGit(["-C", root, "worktree", "add", worktreeB, "-b", `rsp-linked-b-${randomUUID()}`, "HEAD"]).status).toBe(0);
+
+    const primaryPaths = trackedResidentPaths(root);
+    const worktreePaths = resolveResidentPaths(worktreeA);
+    expect(worktreePaths.rootDir).toBe(primaryPaths.rootDir);
+    expect(worktreePaths.socketPath).toBe(primaryPaths.socketPath);
+    expect(worktreePaths.summaryPath).toBe(primaryPaths.summaryPath);
+
+    const primaryWarm = runBundleFromCwd(root, ["git", "log", "--terse"], env);
+    expect(primaryWarm.status, `${primaryWarm.stdout.toString("utf8")}${primaryWarm.stderr.toString("utf8")}`).toBe(0);
+    extractHandle(primaryWarm.stdout);
+    const beforeWorktree = await waitForSummaryTokens(root, 0);
+
+    const fromWorktree = runBundleFromCwd(worktreeA, ["git", "log", "--terse"], env);
+    expect(fromWorktree.status, `${fromWorktree.stdout.toString("utf8")}${fromWorktree.stderr.toString("utf8")}`).toBe(0);
+    const handle = extractHandle(fromWorktree.stdout);
+    await expect(stat(primaryPaths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await waitForSummaryTokens(root, beforeWorktree);
+
+    const concurrent = await Promise.all([
+      runBundleFromCwdAsync(root, ["git", "status"], env),
+      runBundleFromCwdAsync(worktreeA, ["git", "status"], env),
+      runBundleFromCwdAsync(worktreeB, ["git", "status"], env),
+    ]);
+    for (const res of concurrent) {
+      expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+      expect(res.stderr).toEqual(Buffer.alloc(0));
+    }
+
+    expect(runGit(["-C", root, "worktree", "remove", "--force", worktreeA]).status).toBe(0);
+    await rm(worktreeA, { recursive: true, force: true });
+    const shown = runBundleFromCwd(root, ["show", handle], env);
+    expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
+    expect(shown.stdout.toString("utf8")).toContain("commit ");
+
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    await waitForTelemetryInvocations(storeUri, "git log", 2);
+    const invocations = await waitForTelemetryInvocations(storeUri, "git status", 3);
+    const stats = runBundleFromCwd(root, ["stats", "--since", "7d"], env);
+    const statsText = stats.stdout.toString("utf8");
+    expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
+    expect(statsText).toContain("command: git log invocations:");
+
+    expect(invocations.filter((entry) => isRecord(entry) && entry.command === "git status").length)
+      .toBeGreaterThanOrEqual(3);
   }, 120_000);
 
   it("built bundle keeps small git status wrapper work under 100ms", async () => {

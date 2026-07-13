@@ -230,14 +230,24 @@ function findRepoRoot(start: string): string | null {
   let dir = resolve(start);
   for (let i = 0; i < 32; i++) {
     try {
-      if (readFileSyncSafe(join(dir, ".red", "config.yaml")) != null) return dir;
+      const gitFile = readFileSyncSafe(join(dir, ".git"));
+      if (gitFile != null) return linkedWorktreePrimaryRoot(dir, gitFile) ?? dir;
       if (readFileSyncSafe(join(dir, ".git", "HEAD")) != null) return dir;
+      if (readFileSyncSafe(join(dir, ".red", "config.yaml")) != null) return dir;
     } catch {}
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
   return null;
+}
+
+function linkedWorktreePrimaryRoot(worktreeRoot: string, gitFile: string): string | null {
+  const match = /^gitdir:\s*(.+?)\s*$/m.exec(gitFile);
+  if (!match) return null;
+  const gitDir = resolve(worktreeRoot, match[1]);
+  if (!/[/\\]worktrees[/\\][^/\\]+$/.test(gitDir)) return null;
+  return dirname(dirname(dirname(gitDir)));
 }
 
 function readFileSyncSafe(path: string): string | null {
