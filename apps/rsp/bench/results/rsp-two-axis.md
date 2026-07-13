@@ -1,4 +1,4 @@
-rsp two-axis benchmark: 27 fixtures across 10 filters
+rsp two-axis benchmark: 30 fixtures across 13 filters
 
 Production mode uses admission threshold 60%; passthrough filters count as 0% token delta because rsp returns the original command output.
 
@@ -8,14 +8,17 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 80 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
 | gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 64 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
 | gh:run | passthrough | 3 | 121 | 121 | rtk: not-covered | 49 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
+| git:blame | passthrough | 1 | 88 | 88 | rtk: not-covered | 83 | 0% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
+| git:branch | passthrough | 1 | 64 | 64 | rtk: not-covered | 100 | 64% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
 | git:commit | passthrough | 1 | 33 | 33 | 59 | 69 | 47.8% | 85.5% | 0/0% | 100% | 0/0% | 100% |
 | git:diff | passthrough | 2 | 7526 | 7526 | 62 | 7584 | 99.2% | 0.8% | 0/0% | 100% | 0/0% | 100% |
 | git:log | passthrough | 2 | 4467 | 4467 | 68 | 4717 | 94.7% | 1.4% | 0/0% | 100% | 0/0% | 100% |
 | git:push | passthrough | 2 | 58 | 58 | 63 | 102 | 56.9% | 61.8% | 0/0% | 100% | 0/0% | 100% |
+| git:show | passthrough | 1 | 98 | 98 | rtk: not-covered | 132 | 74.2% | rtk: not-covered | 0/0% | 100% | 0/0% | 100% |
 | git:status | active | 2 | 153 | 79 | 54 | 83 | 95.2% | 65.1% | 60.5/75% | 100% | 60.5/75% | 50% |
 | vitest:run | active | 6 | 51368 | 654 | 208 | 442 | 99.6% | 47.1% | 58.8/100% | 100% | 70/100% | 100% |
 
-Aggregate oracle ceiling: raw 64435 tokens (0% capture), rsp 13371 tokens (99.8% capture), RTK 646 tokens (4.9% capture), oracle 13393 tokens.
+Aggregate oracle ceiling: raw 64685 tokens (0% capture), rsp 13621 tokens (99.4% capture), RTK 646 tokens (4.9% capture), oracle 13708 tokens.
 
 Large-output filters: git:diff, git:log, vitest:run.
 
@@ -34,6 +37,10 @@ Large-output filters: git:diff, git:log, vitest:run.
 | gh:pr | terse | audited: justified | empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON |
 | gh:run | brief | audited: ok | successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough |
 | gh:run | terse | audited: ok | successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough |
+| git:blame | brief | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
+| git:blame | terse | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
+| git:branch | brief | audited: ok | branch history output keeps current marker, branch names, upstreams, commits, worktrees, and subjects as compact TOON |
+| git:branch | terse | audited: ok | branch history output keeps current marker, branch names, upstreams, commits, worktrees, and subjects as compact TOON |
 | git:commit | brief | audited: fixed | success output now renders commit id, branch, subject, and change counts as compact TOON |
 | git:commit | terse | audited: fixed | success output now renders commit id, branch, subject, and change counts as compact TOON |
 | git:diff | brief | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
@@ -42,6 +49,8 @@ Large-output filters: git:diff, git:log, vitest:run.
 | git:log | terse | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
 | git:push | brief | audited: fixed | success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults |
 | git:push | terse | audited: fixed | success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults |
+| git:show | brief | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
+| git:show | terse | audited: ok | large row sets keep compact TOON plus an elision handle for full detail |
 | git:status | brief | audited: justified | clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON |
 | git:status | terse | audited: justified | clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON |
 | vitest:run | brief | audited: ok | test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail |
