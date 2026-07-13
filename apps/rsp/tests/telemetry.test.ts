@@ -8,6 +8,7 @@ import { connect } from "@reddb-io/sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTelemetryEvent,
+  readTelemetryGainsReport,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
@@ -354,6 +355,124 @@ describe("rsp telemetry spool", () => {
       child.once("error", reject);
     });
   }, 40_000);
+  it("aggregates rsp gains percentiles, buckets, rankings, and health", async () => {
+    const root = await tempRoot();
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const db = await connect(storeUri);
+    try {
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("one", {
+        created_at: "2026-07-01T10:00:05.000Z",
+        command: "git log --terse",
+        elided: true,
+        raw_bytes: 4000,
+        emitted_bytes: 400,
+        tokens_raw: 1000,
+        tokens_emitted: 100,
+        wrapper_ms: 10,
+        store_open_count: 1,
+      });
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("two", {
+        created_at: "2026-07-01T10:00:30.000Z",
+        command: "git status",
+        elided: false,
+        raw_bytes: 100,
+        emitted_bytes: 100,
+        tokens_raw: 25,
+        tokens_emitted: 25,
+        wrapper_ms: 20,
+        store_open_count: 0,
+      });
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("three", {
+        created_at: "2026-07-08T12:15:00.000Z",
+        command: "git log --brief",
+        elided: true,
+        raw_bytes: 2000,
+        emitted_bytes: 1000,
+        tokens_raw: 500,
+        tokens_emitted: 250,
+        wrapper_ms: 100,
+        store_open_count: 0,
+      });
+      await db.kv(RSP_TELEMETRY_DEGRADATIONS_COLLECTION).put("degraded", {
+        created_at: "2026-07-08T12:16:00.000Z",
+        command: "git --version",
+        reason: "wrapper failed",
+      });
+
+      const report = await readTelemetryGainsReport(db, 28, new Date("2026-07-10T00:00:00.000Z"));
+
+      expect(report.window).toMatchObject({
+        requested_days: 28,
+        data_days: 9,
+        label: "window: 28d, data: 9d",
+        empty: false,
+        invocations: 3,
+        degradations: 1,
+      });
+      expect(report.latency.global).toEqual({
+        wrapper_ms_p50: 20,
+        wrapper_ms_p90: 100,
+        wrapper_ms_p95: 100,
+        wrapper_ms_p99: 100,
+      });
+      expect(report.latency.by_command_family).toContainEqual(expect.objectContaining({
+        command_family: "git log",
+        count: 2,
+        wrapper_ms_p50: 10,
+        wrapper_ms_p90: 100,
+      }));
+      expect(report.throughput.requests_per_day).toEqual([
+        { date: "2026-07-01", requests: 2 },
+        { date: "2026-07-08", requests: 1 },
+      ]);
+      expect(report.throughput.active_minute_avg).toBe(1.5);
+      expect(report.throughput.peak_minute).toEqual({ minute: "2026-07-01T10:00", requests: 2 });
+      expect(report.throughput.hour_weekday_heatmap).toContainEqual({ weekday: "wed", hour: 10, requests: 2 });
+      expect(report.savings.weekly_tokens_saved).toEqual([
+        { week_start: "2026-06-29", tokens_saved: 900, wow_delta_pct: null },
+        { week_start: "2026-07-06", tokens_saved: 250, wow_delta_pct: -72.22 },
+      ]);
+      expect(report.savings.elision_rate).toBe(0.67);
+      expect(report.savings.top_commands_by_tokens_saved[0]).toMatchObject({ command_family: "git log", invocations: 2, tokens_saved: 1150 });
+      expect(report.savings.top_commands_by_invocation_count[0]).toMatchObject({ command_family: "git log", invocations: 2 });
+      expect(report.savings.single_biggest_elision).toMatchObject({ command_family: "git log", tokens_saved: 900 });
+      expect(report.health.degradation_timeline).toEqual([
+        { timestamp: "2026-07-08T12:16:00.000Z", command_family: "git --version", reason: "wrapper failed" },
+      ]);
+      expect(report.health.degradations_by_reason).toEqual([{ reason: "wrapper failed", count: 1 }]);
+      expect(report.health).toMatchObject({ cold_boots: 1, warm_hits: 2 });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("renders definitive empty and short-window rsp gains states", async () => {
+    const root = await tempRoot();
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const db = await connect(storeUri);
+    try {
+      await expect(readTelemetryGainsReport(db, 28, new Date("2026-07-10T00:00:00.000Z"))).resolves.toMatchObject({
+        window: { requested_days: 28, data_days: 0, label: "window: 28d, data: 0d", empty: true },
+        latency: { by_command_family: [] },
+        throughput: { requests_per_day: [], active_minute_avg: null, peak_minute: null, hour_weekday_heatmap: [] },
+        savings: { weekly_tokens_saved: [], top_commands_by_tokens_saved: [], top_commands_by_invocation_count: [], single_biggest_elision: null },
+        health: { degradation_timeline: [], cold_boots: null, warm_hits: null },
+      });
+
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("fresh", {
+        created_at: "2026-07-09T23:00:00.000Z",
+        command: "gh pr list",
+        raw_bytes: 40,
+        emitted_bytes: 40,
+        tokens_raw: 10,
+        tokens_emitted: 10,
+      });
+      const short = await readTelemetryGainsReport(db, 28, new Date("2026-07-10T00:00:00.000Z"));
+      expect(short.window).toMatchObject({ requested_days: 28, data_days: 1, label: "window: 28d, data: 1d", empty: false });
+    } finally {
+      await db.close();
+    }
+  });
 });
 
 async function readTelemetry(storeUri: string, collection: string, key: string): Promise<unknown> {
