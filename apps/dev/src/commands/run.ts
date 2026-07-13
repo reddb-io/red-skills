@@ -54,6 +54,7 @@ import { execTool, type ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
+import { resolveOutputShapingConfig } from "../core/output-shaping.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -842,6 +843,7 @@ export function buildProcessDeps(
   // call. When enabled, processIssue wraps the inner invocation in a bounded
   // outer loop carrying an accumulated `notes.md` between iterations.
   const notesLoop = resolveNotesLoopConfig(config);
+  const outputShaping = resolveOutputShapingConfig(config);
 
   const backpressureCommands = readBackpressure(config);
   const mergedBackpressureCommands =
@@ -1003,6 +1005,7 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: mergedBackpressureCommands,
+    outputShaping,
     // Non-blocking backpressure evidence review (#1279): render the executed
     // backpressure checks as ONE aggregated `event: COMMENT` review on the PR.
     // Reuses ReviewGh.postReview (COMMENT-only, no APPROVE/REQUEST_CHANGES) with

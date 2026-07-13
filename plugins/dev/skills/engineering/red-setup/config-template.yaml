@@ -118,6 +118,12 @@ rsp:
 #                                 # blocks the merge and parks to ready-for-human,
 #                                 # exactly like a feedback failure. Optional;
 #                                 # absent/empty = no-op. (#430 / PRD #429)
+#   output_shaping:
+#     terse_steering: false       # default OFF. When true, even-numbered issues
+#                                 # get a phrasing-only terse steering block;
+#                                 # odd-numbered issues are the holdout. The arm
+#                                 # is stamped next to heartbeat output-token
+#                                 # counters and reported by `afk-output-shaping`.
 #   test:
 #     quarantine:                 # config-declared flaky-test quarantine lane (issue #1035).
 #                                 # Each entry excludes a known-flaky test file from the

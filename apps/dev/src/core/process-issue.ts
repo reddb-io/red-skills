@@ -28,6 +28,7 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, exitProtocolFor, type HandoffComment } from "./handoff.js";
+import { assignOutputShaping, type OutputShapingConfig } from "./output-shaping.js";
 import { evaluateGoalPredicate } from "./goal-predicate.js";
 import {
   type AgentOutcome,
@@ -415,6 +416,8 @@ export interface ProcessIssueDeps {
    * scope-derived feedback gate; it does not replace it.
    */
   backpressureCommands?: readonly string[];
+  /** Config-gated terse output-shaping A/B assignment (#1638). */
+  outputShaping?: OutputShapingConfig;
   /**
    * Non-blocking backpressure evidence review seam (issue #1279). When present,
    * the engine posts ONE aggregated `event: COMMENT` PR review rendering the
@@ -1524,6 +1527,7 @@ export async function processIssue(
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
   const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
+  const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
   const handoff = buildHandoff({
     issue,
     title: input.title,
@@ -1540,6 +1544,11 @@ export async function processIssue(
     // orchestrator enforces after DONE, instead of bouncing as
     // blocked:validation off a narrower touched-package check (issue #849).
     mergeGateCommands: deps.backpressureCommands ?? [],
+    outputShaping,
+  });
+  deps.markState?.({
+    "current.output_shaping_enabled": outputShaping.enabled,
+    "current.output_shaping_variant": outputShaping.variant,
   });
   const handoffPath = `${input.attemptDir}/handoff.md`;
   await deps.fs.writeHandoff(handoffPath, handoff);

@@ -27,4 +27,11 @@ describe("cli parser", () => {
       args: ["--runner", "codex", "--hook"],
     });
   });
+
+  it("routes afk-output-shaping as a dev report command", () => {
+    expect(parseCli(["afk-output-shaping", "--human"])).toEqual({
+      command: "afk-output-shaping",
+      args: ["--human"],
+    });
+  });
 });

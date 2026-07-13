@@ -2,6 +2,7 @@
 import { fleetCommand } from "./commands/fleet.js";
 import { goCommand } from "./commands/go.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
+import { afkOutputShapingCommand } from "./commands/afk-output-shaping.js";
 import { auditSkillsCommand } from "./commands/audit-skills.js";
 import { hitlCardCommand } from "./commands/hitl-card.js";
 import { codexMonitorAgentCommand } from "./commands/codex-monitor-agent.js";
@@ -34,6 +35,7 @@ export type CliCommand =
   | "go"
   | "dashboard"
   | "audit-skills"
+  | "afk-output-shaping"
   | "daily-review"
   | "weekly-review"
   | "reap"
@@ -78,6 +80,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     go: {},
     dashboard: {},
     "audit-skills": {},
+    "afk-output-shaping": {},
     "daily-review": {},
     "weekly-review": {},
     reap: {},
@@ -131,6 +134,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "go") return goCommand(parsed.args);
   if (parsed.command === "dashboard") return dashboardCommand(parsed.args);
   if (parsed.command === "audit-skills") return auditSkillsCommand(parsed.args);
+  if (parsed.command === "afk-output-shaping") return afkOutputShapingCommand(parsed.args);
   if (parsed.command === "daily-review") return activityReviewCommand("daily", parsed.args);
   if (parsed.command === "weekly-review") return activityReviewCommand("weekly", parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);

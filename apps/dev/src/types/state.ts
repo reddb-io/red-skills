@@ -95,6 +95,11 @@ export const AfkCurrentSchema = z.object({
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
   cost_usd: z.number().default(0),
+  /** Output-shaping measurement arm (#1638). `steered` attempts receive only
+   * phrasing constraints; `holdout` attempts receive no steering. Paired with
+   * the existing `output_tokens` heartbeat counter for the report surface. */
+  output_shaping_variant: z.string().default(""),
+  output_shaping_enabled: z.boolean().default(false),
 });
 
 export const AfkStateSchema = z.object({

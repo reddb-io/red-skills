@@ -637,6 +637,38 @@ describe("buildHandoff merge-gate", () => {
     });
     expect(explicitEmpty).not.toContain("<merge-gate>");
   });
+
+  it("emits terse output-shaping only for the steered arm", () => {
+    const out = buildHandoff({
+      issue: 2,
+      title: "Shape output",
+      body: "## Agent brief\nDo it.",
+      runner: "codex",
+      started: "2026-07-13T00:00:00Z",
+      attempt: 1,
+      url: "https://github.com/o/r/issues/2",
+      comments: [],
+      outputShaping: { enabled: true, variant: "steered" },
+    });
+    expect(out).toContain("<output-shaping>");
+    expect(out).toContain("Phrasing-only steering");
+    expect(out).toContain("Preserve every task requirement");
+  });
+
+  it("omits output-shaping for the holdout arm", () => {
+    const out = buildHandoff({
+      issue: 1,
+      title: "Holdout",
+      body: "## Agent brief\nDo it.",
+      runner: "codex",
+      started: "2026-07-13T00:00:00Z",
+      attempt: 1,
+      url: "https://github.com/o/r/issues/1",
+      comments: [],
+      outputShaping: { enabled: true, variant: "holdout" },
+    });
+    expect(out).not.toContain("<output-shaping>");
+  });
 });
 
 // ---------- injection safety (issue #914) ----------

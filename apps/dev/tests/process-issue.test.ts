@@ -99,6 +99,7 @@ interface HarnessOptions {
   /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
    * the backpressure gate runs after feedback against the worker branch. */
   backpressureCommands?: string[];
+  outputShaping?: { terseSteering: boolean };
   /** When false, the backpressure exec returns a non-zero code (a failing gate).
    * Defaults to passing. Only consulted when `backpressureCommands` is set. */
   backpressureOk?: boolean;
@@ -493,6 +494,7 @@ function harness(opts: HarnessOptions = {}): {
       stderr: "",
     }),
     backpressureCommands: opts.backpressureCommands,
+    outputShaping: opts.outputShaping,
     // Non-blocking backpressure evidence review seam (#1279): record every
     // aggregated COMMENT review the engine posts once the PR number is known.
     postBackpressureReview: async (pr, body) => {
@@ -1492,6 +1494,26 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
+  });
+
+  it("alternates output-shaping steering by issue and stamps the measurement arm (#1638)", async () => {
+    const steered = harness({ outcome: "done", outputShaping: { terseSteering: true } });
+    steered.input.issue = 10;
+    await processIssue(steered.deps, steered.input);
+    expect(steered.trace.runAgentCalls[0]?.handoffContent ?? "").toContain("<output-shaping>");
+    expect(steered.trace.statePatches).toContainEqual({
+      "current.output_shaping_enabled": true,
+      "current.output_shaping_variant": "steered",
+    });
+
+    const holdout = harness({ outcome: "done", outputShaping: { terseSteering: true } });
+    holdout.input.issue = 9;
+    await processIssue(holdout.deps, holdout.input);
+    expect(holdout.trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<output-shaping>");
+    expect(holdout.trace.statePatches).toContainEqual({
+      "current.output_shaping_enabled": true,
+      "current.output_shaping_variant": "holdout",
+    });
   });
 
   it("posts ONE aggregated non-blocking backpressure review on the PR, the merge/close unchanged (#1279)", async () => {
