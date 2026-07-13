@@ -1,8 +1,10 @@
 benchmark: rsp-two-axis
 corpus:
+  label: home
   fixture_count: 31
   filters[14]: "cargo:test","cat:file","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
   large_output_filters[4]: "cat:file","git:diff","git:log","vitest:run"
+  provenance[1]: Repo-authored rsp benchmark fixtures under apps/rsp/tests/fixtures.
 method:
   tokenizer: "js-tiktoken:gpt-4o"
   raw_source: recorded-command-output
