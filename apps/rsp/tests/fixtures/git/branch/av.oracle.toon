@@ -1,0 +1,7 @@
+# oracle: preserves decision-relevant rows and columns from branch-av; keep as compact TOON, not a scalar verdict.
+command: git branch -av
+branches[3]{current,name,commit,upstream,worktree,subject}:
+  true,main,1111111,origin/main,,Refs #1600 baseline landed
+  false,feature/rsp,2222222,origin/feature/rsp,../wt,Refs #1616 wrapper corpus
+  false,remotes/origin/main,1111111,,,Refs #1600 baseline landed
+summary: "3 branches, current main"
