@@ -20,6 +20,9 @@ When you would run one of these commands, run it through `rsp` instead:
 | `git diff` | `rsp git diff` |
 | `git commit` | `rsp git commit` |
 | `git push` | `rsp git push` |
+| `git blame` | `rsp git blame` |
+| `git branch -av` | `rsp git branch -av` |
+| `git show` | `rsp git show` |
 | `gh pr list` | `rsp gh pr list` |
 | `gh pr view` | `rsp gh pr view` |
 | `gh issue list` | `rsp gh issue list` |
@@ -37,6 +40,9 @@ When you would run one of these commands, run it through `rsp` instead:
 - For `git diff`, prefer `rsp git diff` when the summarized output is enough.
 - For `git commit`, prefer `rsp git commit` when the summarized output is enough.
 - For `git push`, prefer `rsp git push` when the summarized output is enough.
+- For `git blame`, prefer `rsp git blame` when the summarized output is enough.
+- For `git branch -av`, prefer `rsp git branch -av` when the summarized output is enough.
+- For `git show`, prefer `rsp git show` when the summarized output is enough.
 - For `gh pr list`, prefer `rsp gh pr list` when the summarized output is enough.
 - For `gh pr view`, prefer `rsp gh pr view` when the summarized output is enough.
 - For `gh issue list`, prefer `rsp gh issue list` when the summarized output is enough.
