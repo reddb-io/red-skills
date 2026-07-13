@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
@@ -23,6 +24,7 @@ import { DEFAULT_RSP_IDLE_MS, DEFAULT_RSP_TELEMETRY_BYTE_BUDGET, DEFAULT_RSP_TEL
 
 export interface ResidentServerOptions extends RspResidentConfig {
   socketPath: string;
+  pidPath?: string;
   rootDir?: string;
   idleMs?: number;
   residentVersion?: string;
@@ -32,6 +34,8 @@ export interface ResidentServerOptions extends RspResidentConfig {
 
 export async function runResidentServer(opts: ResidentServerOptions): Promise<void> {
   await mkdir(dirname(opts.socketPath), { recursive: true });
+  const redRpcGuard = startRedRpcParentDeathGuard();
+  installRedRpcExitCleanup();
 
   const openedAt = process.hrtime.bigint();
   const store = await RspElisionStore.open({
@@ -52,29 +56,53 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
 
   const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
+  let idleShutdownWatchdog: NodeJS.Timeout | undefined;
+  let idleShutdownStarted = false;
+  const activeSockets = new Set<Socket>();
   const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
   const telemetryTimer = setInterval(() => {
     void safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
   }, telemetryDrainIntervalMs);
   telemetryTimer.unref();
   const server = createServer((socket) => {
+    activeSockets.add(socket);
+    socket.once("close", () => activeSockets.delete(socket));
     touch();
     handleSocket(socket, async (request) => {
       touch();
       const value = await handleRequest(store, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
       const response: RspResidentResponse = { id: request.id, ok: true, value, storeOpenCount, storeElapsedMs };
       socket.write(`${JSON.stringify(response)}\n`);
-      if (request.op === "handover") setImmediate(() => server.close());
+      if (request.op === "handover") setImmediate(() => beginShutdown());
     });
   });
+
+  function beginShutdown(): void {
+    idleShutdownStarted = true;
+    idleShutdownWatchdog = armIdleShutdownWatchdog(idleShutdownWatchdog);
+    server.close();
+    for (const socket of activeSockets) socket.destroy();
+  }
 
   function touch(): void {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      server.close();
+      beginShutdown();
     }, idleMs);
     idleTimer.unref();
   }
+
+  const shutdownSignals = ["SIGINT", "SIGTERM"] as const;
+  const signalHandlers = shutdownSignals.map((signal) => {
+    const handler = () => {
+      cleanupRedRpcChildrenSync();
+      server.close();
+      for (const socket of activeSockets) socket.destroy();
+      setTimeout(() => process.exit(0), 1_000);
+    };
+    process.once(signal, handler);
+    return { signal, handler };
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -83,15 +111,23 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
       resolve();
     });
   });
+  if (opts.pidPath) {
+    await writeFile(opts.pidPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
+  }
   touch();
 
   await new Promise<void>((resolve) => server.once("close", resolve));
   storeOpenCount = 0;
   if (idleTimer) clearTimeout(idleTimer);
   clearInterval(telemetryTimer);
-  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
-  await store.close();
   await rm(opts.socketPath, { force: true });
+  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs, idleShutdownStarted);
+  await store.close();
+  if (idleShutdownWatchdog) clearTimeout(idleShutdownWatchdog);
+  for (const { signal, handler } of signalHandlers) process.off(signal, handler);
+  redRpcGuard?.kill("SIGTERM");
+  cleanupRedRpcChildrenSync();
+  if (opts.pidPath) await rm(opts.pidPath, { force: true });
 }
 
 interface ResidentTelemetryOptions {
@@ -121,6 +157,10 @@ interface TelemetryCollectionHeal {
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
 const TOKENIZATION_TIMEOUT_MS = 500;
 const TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
+const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
+  1,
+  Number(process.env.RSP_TEST_IDLE_SHUTDOWN_WATCHDOG_MS ?? "10000"),
+);
 const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
 const TELEMETRY_KV_COLLECTIONS = [
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -287,8 +327,15 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
   await rename(tmp, path);
 }
 
-async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain, timeoutMs = TELEMETRY_DRAIN_TIMEOUT_MS): Promise<void> {
+async function safeDrainTelemetry(
+  telemetry: ResidentTelemetryDrain,
+  timeoutMs = TELEMETRY_DRAIN_TIMEOUT_MS,
+  allowTestHang = false,
+): Promise<void> {
   try {
+    if (allowTestHang && process.env.RSP_TEST_HANG_TELEMETRY_DRAIN === "1") {
+      await new Promise(() => undefined);
+    }
     await withTimeout(telemetry.drainAndSweep(), timeoutMs, "telemetry drain timed out");
   } catch (err) {
     process.stderr.write(`rsp resident: telemetry drain failed: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -347,6 +394,102 @@ function ddlKind(model: string): string | null {
 function sqlIdentifier(value: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`invalid telemetry collection name: ${value}`);
   return value;
+}
+
+function armIdleShutdownWatchdog(existing: NodeJS.Timeout | undefined): NodeJS.Timeout {
+  if (existing) clearTimeout(existing);
+  return setTimeout(() => {
+    cleanupRedRpcChildrenSync();
+    process.exit(0);
+  }, IDLE_SHUTDOWN_WATCHDOG_MS);
+}
+
+let redRpcExitCleanupInstalled = false;
+
+function installRedRpcExitCleanup(): void {
+  if (redRpcExitCleanupInstalled) return;
+  redRpcExitCleanupInstalled = true;
+  process.on("exit", () => cleanupRedRpcChildrenSync());
+}
+
+function startRedRpcParentDeathGuard(): ReturnType<typeof spawn> | undefined {
+  if (process.platform === "win32") return undefined;
+  const script = `
+const { execFileSync } = require("node:child_process");
+const parentPid = Number(process.argv[1]);
+const known = new Set();
+function rows() {
+  try {
+    return String(execFileSync("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" }))
+      .split(/\\n/)
+      .map((line) => /^\\s*(\\d+)\\s+(\\d+)\\s+([\\s\\S]*)$/.exec(line))
+      .filter(Boolean)
+      .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3] || "" }));
+  } catch {
+    return [];
+  }
+}
+function isRedRpc(args) {
+  return /(^|\\s)\\S*red(?:\\.exe)?\\s+rpc\\s+--stdio(\\s|$)/.test(args);
+}
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const timer = setInterval(() => {
+  const parentAlive = alive(parentPid);
+  const snapshot = rows();
+  for (const row of snapshot) {
+    if (row.ppid === parentPid && isRedRpc(row.args)) known.add(row.pid);
+  }
+  if (parentAlive) return;
+  for (const row of snapshot) {
+    if (known.has(row.pid) && isRedRpc(row.args)) {
+      try { process.kill(row.pid, "SIGKILL"); } catch {}
+    }
+  }
+  clearInterval(timer);
+  process.exit(0);
+}, 500);
+`;
+  const child = spawn(process.execPath, ["-e", script, String(process.pid)], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  return child;
+}
+
+function cleanupRedRpcChildrenSync(): void {
+  for (const pid of redRpcChildPidsSync()) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  }
+}
+
+function redRpcChildPidsSync(): number[] {
+  if (process.platform === "win32") return [];
+  let output = "";
+  try {
+    output = execFileSync("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" });
+  } catch {
+    return [];
+  }
+  const pids: number[] = [];
+  for (const line of output.split(/\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s+([\s\S]*)$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    const args = match[3] ?? "";
+    if (ppid === process.pid && /(^|\s)\S*red(?:\.exe)?\s+rpc\s+--stdio(\s|$)/.test(args)) pids.push(pid);
+  }
+  return pids;
 }
 
 async function enrichTelemetryEvent(event: RspTelemetryEvent): Promise<RspTelemetryEvent> {
