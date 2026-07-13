@@ -1,0 +1,2 @@
+# oracle: preserves decision-relevant rows and columns from pr-list-empty; keep as compact TOON, not a scalar verdict.
+value: "0 open PRs — try: rsp gh issue list\n"
