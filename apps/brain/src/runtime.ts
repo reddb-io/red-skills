@@ -1,16 +1,30 @@
 import { basename } from "node:path";
+import { pingResident, resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
 import { createConfiguredAfkHeadlessAutoLinkProvider } from "./auto-linker.js";
 import { resolveBrainConfig, type ResolvedBrainConfig } from "./config.js";
-import { BrainStore } from "./store.js";
+import { openResidentBrainStore, shouldUseResidentBrain } from "./resident-brain.js";
+import { BrainStore, type BrainStoreLike } from "./store.js";
 
 export interface BrainRuntime {
   config: ResolvedBrainConfig;
-  store: BrainStore;
+  store: BrainStoreLike;
   project: string;
 }
 
 export async function openBrainRuntime(startDir = process.cwd()): Promise<BrainRuntime> {
   const config = await resolveBrainConfig(startDir);
+  if (shouldUseResidentBrain(config)) {
+    try {
+      return {
+        config,
+        store: await openResidentBrainStore(config),
+        project: basename(config.rootDir),
+      };
+    } catch (err) {
+      const paths = resolveResidentPaths(config.rootDir);
+      if (await pingResident(paths.socketPath, 50)) throw err;
+    }
+  }
   const store = await BrainStore.open({
     uri: config.connectionString,
     autoLinker: createConfiguredAfkHeadlessAutoLinkProvider(),
