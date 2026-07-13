@@ -1,0 +1,3 @@
+# oracle: preserves decision-relevant rows and columns from vitest-large-green; keep as compact TOON, not a scalar verdict.
+exit_code: 0
+summary: 0/2000 failed · 1 suites · 25s
