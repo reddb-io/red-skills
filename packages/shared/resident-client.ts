@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { readFileSync } from "node:fs";
-import { mkdir, open, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,9 +16,32 @@ export interface RspResidentPaths {
   lockPath: string;
   wakeLockPath: string;
   summaryPath: string;
+  registryPath: string;
 }
 
 const UNIX_SOCKET_PATH_LIMIT = 108;
+const RESIDENT_REGISTRY_VERSION = 1;
+
+export interface RspResidentRegistryEntry {
+  version: typeof RESIDENT_REGISTRY_VERSION;
+  pid: number;
+  socket_path: string;
+  store_uri: string;
+  resident_version: string;
+  started_at: string;
+}
+
+export interface RspResidentRegistryStatus {
+  registry_path: string;
+  state:
+    | "missing"
+    | "registered-alive-socket-healthy"
+    | "registered-alive-socket-dead"
+    | "registered-alive-store-missing"
+    | "registered-dead"
+    | "invalid";
+  entry?: RspResidentRegistryEntry;
+}
 
 export function resolveResidentPaths(cwd: string): RspResidentPaths {
   const rootDir = findRepoRoot(cwd) ?? resolve(cwd);
@@ -30,6 +53,7 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
     lockPath: join(socketDir, "rsp.lock"),
     wakeLockPath: join(rootDir, ".red", "tmp", "rsp.wake.lock"),
     summaryPath: join(rootDir, ".red", "tmp", "rsp-status-summary.json"),
+    registryPath: join(rootDir, ".red", "tmp", "rsp-resident.pid.json"),
   };
 }
 
@@ -61,11 +85,13 @@ export type ResidentRequestWithoutId = RspResidentRequest extends infer Request
 export async function ensureResidentServer(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   if (await isResidentUsable(paths.socketPath, config)) return;
+  await reconcileResidentRegistry(paths, config);
 
   const lock = await tryAcquireLock(paths.lockPath);
   if (lock) {
     try {
       if (await isResidentUsable(paths.socketPath, config)) return;
+      await reconcileResidentRegistry(paths, config);
       await removeUnresponsiveSocket(paths.socketPath);
       const child = spawnResident(paths, config);
       await waitForServer(paths.socketPath, child);
@@ -131,6 +157,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     String(config.idleMs ?? 300_000),
     "--resident-version",
     config.clientVersion ?? "0.0.0-dev",
+    "--registry",
+    paths.registryPath,
     "--wake-lock",
     paths.wakeLockPath,
   ], {
@@ -149,6 +177,84 @@ export async function warmResidentServer(paths: RspResidentPaths, config: RspRes
   } finally {
     await rm(paths.wakeLockPath, { force: true });
   }
+}
+
+export async function readResidentRegistry(path: string): Promise<RspResidentRegistryEntry | null> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    return isResidentRegistryEntry(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeResidentRegistry(
+  path: string,
+  entry: Omit<RspResidentRegistryEntry, "version" | "pid" | "started_at"> & {
+    pid?: number;
+    started_at?: string;
+  },
+): Promise<void> {
+  const payload: RspResidentRegistryEntry = {
+    version: RESIDENT_REGISTRY_VERSION,
+    pid: entry.pid ?? process.pid,
+    socket_path: entry.socket_path,
+    store_uri: entry.store_uri,
+    resident_version: entry.resident_version,
+    started_at: entry.started_at ?? new Date().toISOString(),
+  };
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+  await rename(tmp, path);
+}
+
+export async function removeResidentRegistry(path: string, pid = process.pid): Promise<void> {
+  try {
+    const entry = await readResidentRegistry(path);
+    if (entry && entry.pid !== pid) return;
+    await rm(path, { force: true });
+  } catch {}
+}
+
+export async function residentRegistryStatus(paths: RspResidentPaths): Promise<RspResidentRegistryStatus> {
+  const entry = await readResidentRegistry(paths.registryPath);
+  if (!entry) {
+    try {
+      await readFile(paths.registryPath, "utf8");
+      return { registry_path: paths.registryPath, state: "invalid" };
+    } catch {
+      return { registry_path: paths.registryPath, state: "missing" };
+    }
+  }
+  if (!isPidAlive(entry.pid)) return { registry_path: paths.registryPath, state: "registered-dead", entry };
+  const socketHealthy = await pingResident(entry.socket_path, 100);
+  if (socketHealthy && await isStorePathMissing(entry.store_uri)) {
+    return { registry_path: paths.registryPath, state: "registered-alive-store-missing", entry };
+  }
+  return {
+    registry_path: paths.registryPath,
+    state: socketHealthy ? "registered-alive-socket-healthy" : "registered-alive-socket-dead",
+    entry,
+  };
+}
+
+export async function sweepResidentRegistry(paths: RspResidentPaths): Promise<RspResidentRegistryStatus> {
+  const status = await residentRegistryStatus(paths);
+  if (status.state === "registered-dead" || status.state === "invalid") {
+    await rm(paths.registryPath, { force: true });
+    return await residentRegistryStatus(paths);
+  }
+  if (
+    (status.state === "registered-alive-socket-dead" || status.state === "registered-alive-store-missing") &&
+    status.entry
+  ) {
+    await terminatePid(status.entry.pid);
+    await rm(paths.registryPath, { force: true });
+    await rm(status.entry.socket_path, { force: true });
+    return await residentRegistryStatus(paths);
+  }
+  return status;
 }
 
 async function waitForServer(socketPath: string, child?: ChildProcess): Promise<void> {
@@ -205,6 +311,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     String(config.idleMs ?? 300_000),
     "--resident-version",
     config.clientVersion ?? "0.0.0-dev",
+    "--registry",
+    paths.registryPath,
   ], {
     cwd: paths.rootDir,
     detached: true,
@@ -213,6 +321,73 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
   });
   child.unref();
   return child;
+}
+
+async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
+  try {
+    const entry = await readResidentRegistry(paths.registryPath);
+    if (!entry) return;
+    if (entry.socket_path !== paths.socketPath || entry.store_uri !== config.storeUri) return;
+    if (!isPidAlive(entry.pid)) {
+      await rm(paths.registryPath, { force: true });
+      return;
+    }
+    if (await pingResident(entry.socket_path, 100)) return;
+    if (shouldHandover(config.clientVersion, entry.resident_version)) {
+      await waitForPidExit(entry.pid, 1_500);
+      if (!isPidAlive(entry.pid)) {
+        await rm(paths.registryPath, { force: true });
+        return;
+      }
+    }
+    await terminatePid(entry.pid);
+    await rm(paths.registryPath, { force: true });
+  } catch {}
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminatePid(pid: number): Promise<void> {
+  if (!isPidAlive(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function isStorePathMissing(storeUri: string): Promise<boolean> {
+  if (!storeUri.startsWith("file://")) return false;
+  try {
+    await stat(fileURLToPath(storeUri));
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT";
+  }
 }
 
 function spawnTarget(config: RspResidentConfig): [string, string[]] {
@@ -307,6 +482,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isResidentRegistryEntry(value: unknown): value is RspResidentRegistryEntry {
+  return isRecord(value) &&
+    value.version === RESIDENT_REGISTRY_VERSION &&
+    Number.isInteger(value.pid) &&
+    typeof value.socket_path === "string" &&
+    typeof value.store_uri === "string" &&
+    typeof value.resident_version === "string" &&
+    typeof value.started_at === "string";
 }
 
 async function waitForResidentExit(socketPath: string): Promise<void> {
