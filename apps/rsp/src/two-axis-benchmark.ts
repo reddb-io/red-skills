@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
@@ -32,6 +32,28 @@ export interface NotCoveredAxis {
 
 export type ComparatorAxis = BaselineAxis | NotCoveredAxis;
 
+export interface TokenCaptureAxis {
+  token_count: number;
+  capture_pct: number;
+  source: "recorded" | "measured" | "fixture-oracle";
+}
+
+export interface NotCoveredTokenCaptureAxis {
+  coverage: "not-covered";
+  label: string;
+  source: "not-covered";
+}
+
+export type ComparatorTokenCaptureAxis = TokenCaptureAxis | NotCoveredTokenCaptureAxis;
+
+export interface OracleCaptureRow {
+  raw: TokenCaptureAxis;
+  rsp: TokenCaptureAxis;
+  terse: TokenCaptureAxis;
+  rtk: ComparatorTokenCaptureAxis;
+  oracle_ceiling: TokenCaptureAxis;
+}
+
 export interface TwoAxisFilterRow {
   filter: string;
   mode: "active" | "passthrough";
@@ -40,6 +62,7 @@ export interface TwoAxisFilterRow {
   brief: BaselineAxis;
   terse: BaselineAxis;
   rtk: ComparatorAxis;
+  oracle_capture: OracleCaptureRow;
   /** Measured delta if this filter were forced active; equals brief/terse for active filters, non-zero for passthrough. */
   hypothetical_active: {
     brief: BaselineAxis;
@@ -68,6 +91,7 @@ export interface TwoAxisBenchmarkReport {
     tokenizer: "js-tiktoken:gpt-4o";
     raw_source: "recorded-command-output";
     rsp_source: "fixture-renderer";
+    oracle_ceiling_source: "fixture-adjacent hand-reviewed compact TOON renderings";
     rtk_source: {
       kind: "recorded-fixtures";
       version: string;
@@ -76,6 +100,7 @@ export interface TwoAxisBenchmarkReport {
     external_claims: ExternalClaim[];
   };
   filters: TwoAxisFilterRow[];
+  aggregate: OracleCaptureRow & { fixture_count: number };
   parity: TwoAxisParityRow[];
   summary: string;
   toon: string;
@@ -112,6 +137,11 @@ interface FixtureMeasurement {
   terseFidelity: boolean;
   rtkDelta?: number;
   rtkFidelity?: boolean;
+  rawTokens: number;
+  rspTokens: number;
+  terseTokens: number;
+  rtkTokens?: number;
+  oracleTokens: number;
 }
 
 const tokenizer = encodingForModel("gpt-4o");
@@ -142,6 +172,10 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
       const rtkFixture = byName.get(fixture.name);
       const brief = await runFidelityFixture(fixture, { level: "lossless", store });
       const terse = await runFidelityFixture(fixture, { level: "terse", store });
+      const active = admissionByFilter.get(filterName(fixture))?.mode === "active";
+      const rawTokens = tokenCount(fixture.recorded.stdout);
+      const briefTokens = tokenCount(brief.stdout.toString("utf8"));
+      const terseTokens = tokenCount(terse.stdout.toString("utf8"));
       measurements.push({
         fixture,
         filter: filterName(fixture),
@@ -153,6 +187,11 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
         terseFidelity: terse.status === fixture.recorded.status && terse.assertionFailures.length === 0,
         rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
         rtkFidelity: rtkFixture?.fidelity_assertions_passed,
+        rawTokens,
+        rspTokens: active ? briefTokens : rawTokens,
+        terseTokens: active ? terseTokens : rawTokens,
+        rtkTokens: rtkFixture ? tokenCount(rtkFixture.stdout) : undefined,
+        oracleTokens: await oracleTokenCount(fixture),
       });
     }
   } finally {
@@ -175,6 +214,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
       tokenizer: "js-tiktoken:gpt-4o",
       raw_source: "recorded-command-output",
       rsp_source: "fixture-renderer",
+      oracle_ceiling_source: "fixture-adjacent hand-reviewed compact TOON renderings",
       rtk_source: {
         kind: "recorded-fixtures",
         version: rtk.version,
@@ -183,6 +223,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
       external_claims: externalClaims(),
     },
     filters: rows,
+    aggregate: aggregateOracleCapture(measurements),
     parity,
     summary: `${measurements.length} fixtures, ${rows.length} filters; shipped modes apply admission threshold ${ADMISSION_THRESHOLD_PCT}%`,
   } satisfies Omit<TwoAxisBenchmarkReport, "toon">;
@@ -207,11 +248,13 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     "",
     `Production mode uses admission threshold ${ADMISSION_THRESHOLD_PCT}%; passthrough filters count as 0% token delta because rsp returns the original command output.`,
     "",
-    "| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | oracle tokens | rsp capture | RTK capture | brief shipped delta | brief fidelity | terse shipped delta | terse fidelity |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.filters.map((row) =>
-      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.brief.median_delta_pct)}/${fmt(row.hypothetical_active.brief.p90_delta_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.terse.median_delta_pct)}/${fmt(row.hypothetical_active.terse.p90_delta_pct)}% | ${fmtComparatorDelta(row.rtk)} | ${fmtComparatorFidelity(row.rtk)} |`
+      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${row.oracle_capture.raw.token_count} | ${row.oracle_capture.rsp.token_count} | ${fmtComparatorTokenCount(row.oracle_capture.rtk)} | ${row.oracle_capture.oracle_ceiling.token_count} | ${fmt(row.oracle_capture.rsp.capture_pct)}% | ${fmtComparatorCapture(row.oracle_capture.rtk)} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% |`
     ),
+    "",
+    `Aggregate oracle ceiling: raw ${report.aggregate.raw.token_count} tokens (${fmt(report.aggregate.raw.capture_pct)}% capture), rsp ${report.aggregate.rsp.token_count} tokens (${fmt(report.aggregate.rsp.capture_pct)}% capture), RTK ${fmtComparatorTokenCount(report.aggregate.rtk)} tokens (${fmtComparatorCapture(report.aggregate.rtk)} capture), oracle ${report.aggregate.oracle_ceiling.token_count} tokens.`,
     "",
     `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
     "",
@@ -286,6 +329,7 @@ function filterRow(filter: string, rows: readonly FixtureMeasurement[], admissio
     brief: active ? measuredBrief : passthroughAxis(rows.length),
     terse: active ? measuredTerse : passthroughAxis(rows.length),
     rtk: comparatorAxis("rtk", rows.map((row) => ({ delta: row.rtkDelta, fidelity: row.rtkFidelity }))),
+    oracle_capture: oracleCapture(rows),
     hypothetical_active: { brief: measuredBrief, terse: measuredTerse },
   };
 }
@@ -330,6 +374,57 @@ function comparatorAxis(
   return axis(covered.map((row) => row.delta), covered.map((row) => row.fidelity), "recorded");
 }
 
+function oracleCapture(rows: readonly FixtureMeasurement[]): OracleCaptureRow {
+  const rawTokens = sum(rows.map((row) => row.rawTokens));
+  const oracleTokens = sum(rows.map((row) => row.oracleTokens));
+  return {
+    raw: tokenCapture(rawTokens, rawTokens, oracleTokens, "recorded"),
+    rsp: tokenCapture(sum(rows.map((row) => row.rspTokens)), rawTokens, oracleTokens, "measured"),
+    terse: tokenCapture(sum(rows.map((row) => row.terseTokens)), rawTokens, oracleTokens, "measured"),
+    rtk: comparatorTokenCapture("rtk", rows.map((row) => ({ rawTokens: row.rawTokens, tokens: row.rtkTokens, oracleTokens: row.oracleTokens }))),
+    oracle_ceiling: tokenCapture(oracleTokens, rawTokens, oracleTokens, "fixture-oracle"),
+  };
+}
+
+function aggregateOracleCapture(rows: readonly FixtureMeasurement[]): OracleCaptureRow & { fixture_count: number } {
+  return { fixture_count: rows.length, ...oracleCapture(rows) };
+}
+
+function tokenCapture(
+  token_count: number,
+  rawTokens: number,
+  oracleTokens: number,
+  source: TokenCaptureAxis["source"],
+): TokenCaptureAxis {
+  return {
+    token_count,
+    capture_pct: capturePct(rawTokens, oracleTokens, token_count),
+    source,
+  };
+}
+
+function comparatorTokenCapture(
+  label: string,
+  rows: readonly { rawTokens: number; tokens?: number; oracleTokens: number }[],
+): ComparatorTokenCaptureAxis {
+  const covered = rows.filter((row): row is { rawTokens: number; tokens: number; oracleTokens: number } => typeof row.tokens === "number");
+  if (covered.length === 0) return notCoveredTokenCaptureAxis(label);
+  return tokenCapture(
+    sum(covered.map((row) => row.tokens)),
+    sum(covered.map((row) => row.rawTokens)),
+    sum(covered.map((row) => row.oracleTokens)),
+    "recorded",
+  );
+}
+
+function notCoveredTokenCaptureAxis(label: string): NotCoveredTokenCaptureAxis {
+  return {
+    coverage: "not-covered",
+    label: `${label}: not-covered`,
+    source: "not-covered",
+  };
+}
+
 function notCoveredAxis(label: string): NotCoveredAxis {
   return {
     coverage: "not-covered",
@@ -348,10 +443,32 @@ function filterName(fixture: FidelityFixture): string {
 }
 
 function tokenDelta(original: string, filtered: string): number {
-  const before = tokenizer.encode(original).length;
-  const after = tokenizer.encode(filtered).length;
+  const before = tokenCount(original);
+  const after = tokenCount(filtered);
   if (before === 0) return 0;
   return ((before - after) / before) * 100;
+}
+
+async function oracleTokenCount(fixture: FidelityFixture): Promise<number> {
+  const path = join(dirname(fixture.file), `${basename(fixture.file, ".json")}.oracle.toon`);
+  const text = await readFile(path, "utf8");
+  if (!text.startsWith("# oracle: ")) throw new Error(`oracle ceiling fixture missing preservation comment: ${path}`);
+  return tokenCount(text.split("\n").slice(1).join("\n"));
+}
+
+function tokenCount(text: string): number {
+  return tokenizer.encode(text).length;
+}
+
+function capturePct(rawTokens: number, oracleTokens: number, outputTokens: number): number {
+  if (oracleTokens === 0) return outputTokens === 0 ? 100 : 0;
+  if (outputTokens <= oracleTokens) return round((outputTokens / oracleTokens) * 100);
+  if (rawTokens <= oracleTokens) return 0;
+  return Math.max(0, round(((rawTokens - outputTokens) / (rawTokens - oracleTokens)) * 100));
+}
+
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function median(values: readonly number[]): number {
@@ -384,6 +501,16 @@ function fmtComparatorDelta(value: ComparatorAxis): string {
 function fmtComparatorFidelity(value: ComparatorAxis): string {
   if (value.source === "not-covered") return value.label;
   return `${fmt(value.fidelity_pass_rate_pct)}%`;
+}
+
+function fmtComparatorTokenCount(value: ComparatorTokenCaptureAxis): string {
+  if (value.source === "not-covered") return value.label;
+  return String(value.token_count);
+}
+
+function fmtComparatorCapture(value: ComparatorTokenCaptureAxis): string {
+  if (value.source === "not-covered") return value.label;
+  return `${fmt(value.capture_pct)}%`;
 }
 
 function externalClaims(): ExternalClaim[] {
