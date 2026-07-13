@@ -709,7 +709,7 @@ describe("statusline command — rendered line", () => {
     expect(stripAnsi(out.text())).toContain("rsp=…");
   });
 
-  it("renders rsp savings when an enabled repo has a fresh resident summary", async () => {
+  it("renders rsp token savings without dollars when an enabled repo has a fresh resident summary", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
     await seedFreshRepoCache(root, 0, 0);
@@ -726,7 +726,8 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M $1.63");
+    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M");
+    expect(stripAnsi(out.text())).not.toContain("$1.63");
   });
 
   it("renders rsp savings from an old summary when the resident is idle", async () => {

@@ -520,7 +520,7 @@ describe("statusline — full assembly", () => {
     expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp=↓1.2k");
   });
 
-  it("renders rsp healthy savings as one optional token in full and short presets", () => {
+  it("renders rsp healthy token savings without the dollar segment in full and short presets", () => {
     const input: StatuslineInput = {
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "ready", tokensSavedToday: 847 },
@@ -530,7 +530,7 @@ describe("statusline — full assembly", () => {
     expect(renderStatusline({
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "ready", tokensSavedToday: 2000, dollarsSavedTodayUsd: 0.0025 },
-    })).toBe("red-skills (main) · rsp=↓2.0k $0.00250");
+    })).toBe("red-skills (main) · rsp=↓2.0k");
   });
 
   it("renders rsp warming and error states without ambiguous on/off glyphs", () => {

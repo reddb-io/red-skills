@@ -161,9 +161,11 @@ describe("statusline style — header line", () => {
     const healthy = renderHeaderLine(input.project, claude, repo, undefined, "full", {
       state: "ready",
       tokensSavedToday: 1320000,
+      dollarsSavedTodayUsd: 1.625,
     });
     expect(healthy).toContain(`${GREEN}rsp=↓1.32M${SOFT}`);
     expect(stripAnsi(healthy)).toContain("rsp=↓1.32M");
+    expect(stripAnsi(healthy)).not.toContain("$1.63");
 
     const warming = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "warming" });
     expect(warming).toContain(`${DIM}rsp=…${SOFT}`);
