@@ -1,10 +1,10 @@
 import type { ChannelBridge } from "./channel-bridge.js";
 import { EventArtifactMapper } from "./event-artifact-mapper.js";
-import type { BrainStore } from "./store.js";
+import type { BrainStoreLike } from "./store.js";
 
 export interface IngestEventsInput {
   bridge: ChannelBridge;
-  store: BrainStore;
+  store: BrainStoreLike;
   afterCursor?: number | string;
   sessionKey?: string;
   limit?: number;
