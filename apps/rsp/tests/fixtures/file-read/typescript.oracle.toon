@@ -1,0 +1,20 @@
+# oracle: preserves file-read outline, symbol names, symbol lines, and bounded content from cat-typescript-outline; keep as compact TOON, not a scalar verdict.
+command: cat src/user.ts
+file: src/user.ts
+kind: code
+outline_source: regex
+bytes: 8911
+lines: 94
+symbols[4]{kind,name,line,signature}:
+  interface,User,1,export interface User {
+  function,loadUser,5,export async function loadUser(id: string): Promise<User> {
+  class,UserCache,9,class UserCache {
+  method,get,10,get(id: string): User {
+content:
+  head[2]:
+    export interface User {
+      id: string;
+  tail[2]:
+    // benchmark filler 79: deterministic file-read content keeps raw cat output large while preserving outline.
+    // benchmark filler 80: deterministic file-read content keeps raw cat output large while preserving outline.
+  truncated: true
