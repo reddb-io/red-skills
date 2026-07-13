@@ -68,6 +68,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
       telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
         serverConfig.telemetryDrainIntervalMs,
+      telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
+        serverConfig.telemetryDrainTimeoutMs,
       idleMs: numericValueAfter(args.positional, "--idle-ms"),
       residentVersion: valueAfter(args.positional, "--resident-version") ?? buildInfo.version,
     });
@@ -92,6 +94,8 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
       telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
         warmConfig.telemetryDrainIntervalMs,
+      telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
+        warmConfig.telemetryDrainTimeoutMs,
       clientVersion: buildInfo.version,
     });
     return 0;
@@ -112,6 +116,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
     clientVersion: buildInfo.version,
   }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
@@ -121,6 +126,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
     telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
+    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
     clientVersion: buildInfo.version,
   });
   const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {

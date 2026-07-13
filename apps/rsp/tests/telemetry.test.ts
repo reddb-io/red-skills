@@ -93,6 +93,7 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000,
+      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
       idleMs: 100,
     });
     await waitForResident(paths.socketPath);
@@ -147,6 +148,7 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000_000,
+      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
       idleMs: 100,
     });
     await waitForResident(paths.socketPath);
@@ -196,6 +198,7 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 1,
       telemetryByteBudget: 75,
+      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
       idleMs: 100,
     });
     await waitForResident(paths.socketPath);
@@ -244,6 +247,7 @@ describe("rsp telemetry spool", () => {
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: 90,
       telemetryByteBudget: 1_000,
+      telemetryDrainTimeoutMs: await calibratedTelemetryDrainTimeoutMs(root),
       idleMs: 100,
     });
     await waitForResident(paths.socketPath);
@@ -306,6 +310,8 @@ describe("rsp telemetry spool", () => {
       String(DEFAULT_RSP_TTL_DAYS),
       "--byte-budget",
       String(DEFAULT_RSP_BYTE_BUDGET),
+      "--telemetry-drain-timeout-ms",
+      String(await calibratedTelemetryDrainTimeoutMs(root)),
       "--idle-ms",
       "100",
     ], { cwd: root });
@@ -338,6 +344,8 @@ describe("rsp telemetry spool", () => {
       String(DEFAULT_RSP_TTL_DAYS),
       "--byte-budget",
       String(DEFAULT_RSP_BYTE_BUDGET),
+      "--telemetry-drain-timeout-ms",
+      String(await calibratedTelemetryDrainTimeoutMs(root)),
       "--idle-ms",
       "2000",
       "--telemetry-drain-interval-ms",
@@ -517,6 +525,15 @@ async function waitForResident(socketPath: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("resident did not start");
+}
+
+async function calibratedTelemetryDrainTimeoutMs(root: string): Promise<number> {
+  const baselineUri = `file://${join(root, ".red", "tmp", `telemetry-baseline-${process.pid}.rdb`)}`;
+  const started = process.hrtime.bigint();
+  const db = await connect(baselineUri);
+  await db.close();
+  const storeOpenMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  return Math.max(2_000, Math.ceil(Math.max(1, storeOpenMs) * 6));
 }
 
 async function waitForResidentTelemetry(socketPath: string, command: string): Promise<void> {

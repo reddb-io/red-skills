@@ -6,6 +6,7 @@ import {
   DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
   DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
+  DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
   DEFAULT_RSP_TELEMETRY_TTL_DAYS,
   resolveRspConfig,
 } from "../src/config.js";
@@ -29,7 +30,7 @@ describe("resolveRspConfig", () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(
       join(root, ".red", "config.yaml"),
-      "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  heavyGitByteThreshold: 99\n",
+      "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  telemetryDrainTimeoutMs: 456\n  heavyGitByteThreshold: 99\n",
       "utf8",
     );
 
@@ -41,6 +42,7 @@ describe("resolveRspConfig", () => {
       telemetryTtlDays: 11,
       telemetryByteBudget: 100,
       telemetryDrainIntervalMs: DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
+      telemetryDrainTimeoutMs: 456,
       heavyGitByteThreshold: 99,
     });
   });
@@ -58,6 +60,7 @@ describe("resolveRspConfig", () => {
       telemetryTtlDays: DEFAULT_RSP_TELEMETRY_TTL_DAYS,
       telemetryByteBudget: DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
       telemetryDrainIntervalMs: DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
+      telemetryDrainTimeoutMs: DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     });
   });
@@ -74,6 +77,13 @@ describe("resolveRspConfig", () => {
     const config = resolveRspConfig(root, { RSP_TELEMETRY_DRAIN_INTERVAL_MS: "123" }, undefined);
 
     expect(config.telemetryDrainIntervalMs).toBe(123);
+  });
+
+  it("lets env override the telemetry drain timeout", async () => {
+    const root = await tempRoot();
+    const config = resolveRspConfig(root, { RSP_TELEMETRY_DRAIN_TIMEOUT_MS: "456" }, undefined);
+
+    expect(config.telemetryDrainTimeoutMs).toBe(456);
   });
 
   it("does not create .red or red-skills.rdb while resolving runtime config", async () => {
