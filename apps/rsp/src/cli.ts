@@ -25,9 +25,17 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     const { runClaudePreExecHook } = await import("./intercept.js");
     return await runClaudePreExecHook();
   }
+  if (args.command === "hook" && args.positional[1] === "codex-pre-exec") {
+    const { runCodexPreExecHook } = await import("./intercept.js");
+    return await runCodexPreExecHook();
+  }
   if (args.command === "hook" && args.positional[1] === "claude-post-exec") {
     const { runClaudePostExecHook } = await import("./normalize.js");
     return await runClaudePostExecHook();
+  }
+  if (args.command === "hook" && args.positional[1] === "codex-post-exec") {
+    const { runCodexPostExecHook } = await import("./normalize.js");
+    return await runCodexPostExecHook();
   }
   if (args.command === "setup") {
     const { provisionRspRepoStore } = await import("./setup.js");
