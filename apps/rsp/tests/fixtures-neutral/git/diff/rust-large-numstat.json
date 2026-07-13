@@ -1,0 +1,53 @@
+{
+  "name": "diff-rust-large-numstat",
+  "large_output": true,
+  "command": [
+    "git",
+    "diff"
+  ],
+  "provenance": "Machine-formatted git diff --numstat -z from public rust-lang/rust history captured on 2026-07-13.",
+  "recorded": {
+    "stdout": "38\t32\tcompiler/rustc_borrowck/src/diagnostics/conflict_errors.rs\u000010\t17\tcompiler/rustc_borrowck/src/diagnostics/explain_borrow.rs\u000010\t11\tcompiler/rustc_borrowck/src/diagnostics/region_errors.rs\u000033\t30\tcompiler/rustc_borrowck/src/region_infer/mod.rs\u000012\t4\tcompiler/rustc_hir_typeck/src/method/probe.rs\u00003\t3\tcompiler/rustc_middle/src/ty/generic_args.rs\u000023\t0\tcompiler/rustc_middle/src/ty/print/pretty.rs\u00006\t18\tcompiler/rustc_middle/src/ty/typeck_results.rs\u000024\t2\tcompiler/rustc_mir_dataflow/src/impls/storage_liveness.rs\u000046\t1\tcompiler/rustc_mir_transform/src/coroutine/mod.rs\u00001\t1\tcompiler/rustc_parse/src/parser/diagnostics.rs\u000090\t22\tcompiler/rustc_resolve/src/diagnostics/impls.rs\u00001\t1\tcompiler/rustc_target/src/target_features.rs\u00002\t2\tlibrary/core/src/num/nonzero.rs\u00006\t1\tlibrary/core/src/ptr/non_null.rs\u00001\t2\tsrc/bootstrap/src/core/build_steps/clean.rs\u00003\t8\tsrc/bootstrap/src/core/build_steps/compile.rs\u000018\t10\tsrc/bootstrap/src/core/builder/mod.rs\u00003\t1\tsrc/bootstrap/src/lib.rs\u00005\t7\tsrc/tools/rust-analyzer/Cargo.lock\u0000",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git diff",
+    "files": [
+      {
+        "path": "compiler/rustc_borrowck/src/diagnostics/conflict_errors.rs",
+        "added": 38,
+        "deleted": 32
+      },
+      {
+        "path": "compiler/rustc_borrowck/src/diagnostics/explain_borrow.rs",
+        "added": 10,
+        "deleted": 17
+      },
+      {
+        "path": "compiler/rustc_borrowck/src/diagnostics/region_errors.rs",
+        "added": 10,
+        "deleted": 11
+      }
+    ],
+    "summary": "20 files, +335 -173"
+  },
+  "assertions": [
+    {
+      "question": "how many files changed?",
+      "path": "files.length",
+      "expected": 20
+    },
+    {
+      "question": "which file is first?",
+      "path": "files.0.path",
+      "expected": "compiler/rustc_borrowck/src/diagnostics/conflict_errors.rs"
+    },
+    {
+      "question": "what is the rollup?",
+      "path": "summary",
+      "expected": "20 files, +335 -173"
+    }
+  ]
+}

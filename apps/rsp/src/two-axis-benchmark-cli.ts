@@ -11,13 +11,24 @@ import {
 interface Args {
   out?: string;
   summary?: string;
+  fixtureRoot?: string;
+  corpusLabel?: string;
+  corpusProvenance: string[];
+  requireLargeOutputFixtures?: boolean;
   check: boolean;
 }
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   const baseline = args.check && args.out ? await readBenchmarkReport(args.out) : undefined;
-  const report = await writeTwoAxisBenchmarkReport({ toonPath: args.out, summaryPath: args.summary });
+  const report = await writeTwoAxisBenchmarkReport({
+    fixtureRoot: args.fixtureRoot,
+    corpusLabel: args.corpusLabel,
+    corpusProvenance: args.corpusProvenance.length > 0 ? args.corpusProvenance : undefined,
+    requireLargeOutputFixtures: args.requireLargeOutputFixtures,
+    toonPath: args.out,
+    summaryPath: args.summary,
+  });
   process.stdout.write(report.toon);
   if (!report.toon.endsWith("\n")) process.stdout.write("\n");
   if (baseline) {
@@ -31,11 +42,16 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const out: Args = { check: false };
+  const out: Args = { check: false, corpusProvenance: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--out") out.out = argv[++i];
     else if (arg === "--summary") out.summary = argv[++i];
+    else if (arg === "--fixture-root") out.fixtureRoot = argv[++i];
+    else if (arg === "--corpus-label") out.corpusLabel = argv[++i];
+    else if (arg === "--corpus-provenance") out.corpusProvenance.push(argv[++i] ?? "");
+    else if (arg === "--require-large-output-fixtures") out.requireLargeOutputFixtures = true;
+    else if (arg === "--no-require-large-output-fixtures") out.requireLargeOutputFixtures = false;
     else if (arg === "--check") out.check = true;
     else throw new Error(`unknown argument: ${arg}`);
   }

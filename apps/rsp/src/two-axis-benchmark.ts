@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,9 @@ import { evaluateAdmission, type AdmissionFilterReport } from "./admission.js";
 
 export interface TwoAxisBenchmarkOptions {
   fixtureRoot?: string;
+  corpusLabel?: string;
+  corpusProvenance?: string[];
+  requireLargeOutputFixtures?: boolean;
 }
 
 export interface WriteTwoAxisBenchmarkOptions extends TwoAxisBenchmarkOptions {
@@ -94,9 +97,11 @@ export interface AntiSuppressionAuditRow {
 export interface TwoAxisBenchmarkReport {
   benchmark: "rsp-two-axis";
   corpus: {
+    label: string;
     fixture_count: number;
     filters: string[];
     large_output_filters: string[];
+    provenance: string[];
   };
   method: {
     tokenizer: "js-tiktoken:gpt-4o";
@@ -196,7 +201,9 @@ const REQUIRED_LARGE_OUTPUT_FIXTURES = [
 export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptions = {}): Promise<TwoAxisBenchmarkReport> {
   const fixtureRoot = options.fixtureRoot ?? DEFAULT_FIXTURE_ROOT;
   const fixtures = await discoverBenchmarkFixtures(fixtureRoot);
-  assertRequiredLargeOutputFixtures(fixtures);
+  if (options.requireLargeOutputFixtures ?? fixtureRoot === DEFAULT_FIXTURE_ROOT) {
+    assertRequiredLargeOutputFixtures(fixtures);
+  }
   const admission = evaluateAdmission(fixtures, { thresholdPct: ADMISSION_THRESHOLD_PCT });
   const admissionByFilter = new Map(admission.filters.map((row) => [row.filter, row]));
   const rtk = await readRtkBaselines(join(fixtureRoot, "rtk", "baselines.json"));
@@ -255,9 +262,11 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
   const payload = {
     benchmark: "rsp-two-axis",
     corpus: {
+      label: options.corpusLabel ?? "home",
       fixture_count: measurements.length,
       filters: rows.map((row) => row.filter),
       large_output_filters: largeOutputFilters(measurements),
+      provenance: options.corpusProvenance ?? ["Repo-authored rsp benchmark fixtures under apps/rsp/tests/fixtures."],
     },
     method: {
       tokenizer: "js-tiktoken:gpt-4o",
@@ -300,6 +309,10 @@ export async function writeTwoAxisBenchmarkReport(options: WriteTwoAxisBenchmark
 export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
   const lines = [
     `rsp two-axis benchmark: ${report.corpus.fixture_count} fixtures across ${report.filters.length} filters`,
+    `Corpus: ${report.corpus.label}`,
+    "",
+    "Corpus provenance:",
+    ...report.corpus.provenance.map((note) => `- ${note}`),
     "",
     `Production mode uses admission threshold ${ADMISSION_THRESHOLD_PCT}%; passthrough filters count as 0% token delta because rsp returns the original command output.`,
     "",
@@ -335,8 +348,21 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
 
 async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityFixture[]> {
   const roots = [join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
-  const groups = await Promise.all(roots.map((root) => discoverFidelityFixtures(root)));
+  const existingRoots = [];
+  for (const root of roots) {
+    if (await pathExists(root)) existingRoots.push(root);
+  }
+  const groups = await Promise.all(existingRoots.map((root) => discoverFidelityFixtures(root)));
   return groups.flat().sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function assertRequiredLargeOutputFixtures(fixtures: readonly FidelityFixture[]): void {

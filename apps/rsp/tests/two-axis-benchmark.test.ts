@@ -8,6 +8,7 @@ import { compareTwoAxisBenchmarkReports, TWO_AXIS_TOKEN_REGRESSION_THRESHOLD_PCT
 
 const roots: string[] = [];
 const fixtureRoot = join(import.meta.dirname, "fixtures");
+const neutralFixtureRoot = join(import.meta.dirname, "fixtures-neutral");
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-two-axis-"));
@@ -24,9 +25,11 @@ describe("rsp two-axis benchmark report", () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
     expect(report.corpus).toMatchObject({
+      label: "home",
       fixture_count: 31,
       large_output_filters: ["cat:file", "git:diff", "git:log", "vitest:run"],
     });
+    expect(report.corpus.provenance[0]).toContain("Repo-authored");
     expect(report.corpus.filters).toEqual([
       "cargo:test",
       "cat:file",
@@ -144,6 +147,8 @@ describe("rsp two-axis benchmark report", () => {
 
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("Corpus: home");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("Corpus provenance:");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
@@ -152,6 +157,41 @@ describe("rsp two-axis benchmark report", () => {
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Anti-suppression audit | Level | Verdict | Note |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:commit | brief | audited: fixed |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:push | terse | audited: fixed |");
+  });
+
+  it("can generate an additive neutral third-party corpus without default home-corpus large-output requirements", async () => {
+    const report = await buildTwoAxisBenchmarkReport({
+      fixtureRoot: neutralFixtureRoot,
+      corpusLabel: "neutral-third-party",
+      corpusProvenance: [
+        "Public run metadata from vitest-dev/vitest Actions run 29274168273 and rust-lang/cargo Actions run 29195830177.",
+        "Git machine output from public nodejs/node and rust-lang/rust repository history captured on 2026-07-13.",
+        "Cargo JSON message output follows the published --message-format=json contract with third-party crate-style test names.",
+      ],
+      requireLargeOutputFixtures: false,
+    });
+
+    expect(report.corpus).toMatchObject({
+      label: "neutral-third-party",
+      fixture_count: 5,
+      large_output_filters: ["git:diff"],
+    });
+    expect(report.corpus.filters).toEqual(["cargo:test", "gh:run", "git:commit", "git:diff", "git:log"]);
+    expect(report.corpus.provenance).toHaveLength(3);
+    expect(report.filters.find((row) => row.filter === "gh:run")).toMatchObject({
+      fixture_count: 1,
+      headroom: { fidelity_pass_rate_pct: 100, source: "recorded" },
+    });
+    expect(report.filters.find((row) => row.filter === "git:diff")).toMatchObject({
+      fixture_count: 1,
+      rtk: { fidelity_pass_rate_pct: 100, source: "recorded" },
+    });
+    expect(report.parity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ domain: "cargo-test", filter: "cargo:test" }),
+      expect.objectContaining({ domain: "git-commit", filter: "git:commit" }),
+    ]));
+    expect(renderTwoAxisSummary(report)).toContain("Corpus: neutral-third-party");
+    expect(renderTwoAxisSummary(report)).toContain("vitest-dev/vitest Actions run 29274168273");
   });
 
   it("flags synthetic shipped token regressions beyond the threshold", async () => {

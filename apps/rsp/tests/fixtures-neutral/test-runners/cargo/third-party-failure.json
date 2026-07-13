@@ -1,0 +1,42 @@
+{
+  "name": "cargo-third-party-failure",
+  "command": [
+    "cargo",
+    "test"
+  ],
+  "provenance": "Cargo JSON message stream following the published --message-format=json contract; fixture uses third-party crate-style module names.",
+  "recorded": {
+    "stdout": "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":3}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"cli::snapshots::updates_lockfile\"}\n{\"type\":\"test\",\"event\":\"failed\",\"name\":\"cli::snapshots::updates_lockfile\",\"exec_time\":0.12,\"stdout\":\"thread 'cli::snapshots::updates_lockfile' panicked at tests/cli.rs:88: expected lockfile fixture to match\"}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"cli::init::creates_workspace\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"cli::init::creates_workspace\",\"exec_time\":0.04,\"stdout\":\"\"}\n{\"type\":\"test\",\"event\":\"started\",\"name\":\"metadata::parses_workspace_members\"}\n{\"type\":\"test\",\"event\":\"ok\",\"name\":\"metadata::parses_workspace_members\",\"exec_time\":0.03,\"stdout\":\"\"}\n{\"type\":\"suite\",\"event\":\"failed\",\"passed\":2,\"failed\":1,\"ignored\":0,\"measured\":0,\"filtered_out\":0,\"exec_time\":4.2}\n",
+    "stderr": "",
+    "status": 101,
+    "signal": null
+  },
+  "expected": {
+    "exit_code": 101,
+    "summary": "1/3 failed · 1 suites · 4.2s",
+    "failures": [
+      {
+        "suite": "cli::snapshots",
+        "name": "cli::snapshots::updates_lockfile",
+        "excerpt": "thread 'cli::snapshots::updates_lockfile' panicked at tests/cli.rs:88: expected lockfile fixture to match"
+      }
+    ]
+  },
+  "assertions": [
+    {
+      "question": "what was the exit code?",
+      "path": "exit_code",
+      "expected": 101
+    },
+    {
+      "question": "how many tests failed?",
+      "path": "summary",
+      "expected": "1/3 failed · 1 suites · 4.2s"
+    },
+    {
+      "question": "which cargo test failed?",
+      "path": "failures.0.name",
+      "expected": "cli::snapshots::updates_lockfile"
+    }
+  ]
+}
