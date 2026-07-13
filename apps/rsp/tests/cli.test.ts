@@ -800,7 +800,7 @@ describe("rsp cli", () => {
     }
   }, 120_000);
 
-  it("built bundle compresses git log, mints a handle, round-trips it, and reports degraded passthrough", async () => {
+  it("built bundle compresses git log warm and cold, with recovery only for warm handles", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     await commitMany(root, 12);
@@ -830,11 +830,16 @@ describe("rsp cli", () => {
 
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     await rm(join(root, ".red", "tmp", "red-skills.rdb"));
-    const degraded = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const cold = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
-    expect(degraded.status).toBe(raw.status);
-    expect(degraded.stdout).toEqual(raw.stdout);
-    expect(degraded.stderr.toString("utf8")).toBe("rsp: store not provisioned, passing through\n");
+    expect(cold.status).toBe(raw.status);
+    expect(cold.stderr).toEqual(Buffer.alloc(0));
+    expect(cold.stdout.length).toBeLessThan(raw.stdout.length);
+    const coldText = cold.stdout.toString("utf8");
+    expect(coldText).toContain("summary: 12 commits");
+    expect(coldText).toContain("recovery unavailable (cold store) — re-run: git log");
+    expect(coldText).not.toMatch(/rsp show el:[a-f0-9]{12}/);
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"command":"git log"');
   }, 120_000);
 
   it("built bundle records invocation and degradation telemetry through the resident", async () => {
@@ -1184,7 +1189,7 @@ describe("rsp cli", () => {
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("passes through a successful wrapper when the repo store has not been provisioned", async () => {
+  it("passes through a successful wrapper when the repo store is absent and the cold summarizer cannot handle it", async () => {
     const root = await initGitRepo();
     await enableRsp(root);
     await writeFile(join(root, "untracked.txt"), "raw stdout\n", "utf8");
@@ -1194,7 +1199,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -1209,7 +1214,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr.toString("utf8")).toBe(`rsp: store not provisioned, passing through\n${direct.stderr.toString("utf8")}`);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("passes through wrappers when the configured store is unreadable non-RedDB data", async () => {
@@ -1225,7 +1230,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(direct.status);
     expect(res.stdout).toEqual(direct.stdout);
-    expect(res.stderr.toString("utf8")).toBe(`rsp: resident unavailable, passing through\n${direct.stderr.toString("utf8")}`);
+    expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
   });
 
   it("built bundle never writes .red/red.rdb and preserves a RedDB-format file there", async () => {
