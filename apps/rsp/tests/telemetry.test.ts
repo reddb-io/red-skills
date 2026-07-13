@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -300,6 +299,61 @@ describe("rsp telemetry spool", () => {
       command: "git log",
     });
   }, 40_000);
+
+  it("periodically drains telemetry spooled while the built bundle resident is alive and reports stats", async () => {
+    const root = await tempRoot();
+    const bundle = await ensureRspBundle();
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const child = execFile(process.execPath, [
+      bundle,
+      "server",
+      "--socket",
+      paths.socketPath,
+      "--store-uri",
+      storeUri,
+      "--ttl-days",
+      String(DEFAULT_RSP_TTL_DAYS),
+      "--byte-budget",
+      String(DEFAULT_RSP_BYTE_BUDGET),
+      "--idle-ms",
+      "2000",
+      "--telemetry-drain-interval-ms",
+      "50",
+    ], { cwd: root });
+    await waitForResident(paths.socketPath);
+
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "periodic-event",
+      command: "git log --terse",
+      elided: true,
+      raw_bytes: 1000,
+      emitted_bytes: 100,
+      wrapper_ms: 5,
+    });
+
+    await waitForResidentTelemetry(paths.socketPath, "git log --terse");
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      bundle,
+      "stats",
+      "--store-uri",
+      storeUri,
+      "--since",
+      "7d",
+    ], { cwd: root });
+    expect(stdout).toContain("empty: false");
+    expect(stdout).toContain("invocations: 1");
+    expect(stdout).toContain("command: git log --terse invocations: 1");
+
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve, reject) => {
+      child.once("exit", () => resolve());
+      child.once("error", reject);
+    });
+  }, 40_000);
 });
 
 async function readTelemetry(storeUri: string, collection: string, key: string): Promise<unknown> {
@@ -325,12 +379,36 @@ async function waitForResident(socketPath: string): Promise<void> {
   throw new Error("resident did not start");
 }
 
+async function waitForResidentTelemetry(socketPath: string, command: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    const response = await sendResidentRequest({ socketPath, timeoutMs: 200 }, {
+      id: `telemetry-${attempt++}`,
+      op: "telemetry-stats",
+      sinceDays: 7,
+    }).catch(() => null);
+    if (
+      response?.ok &&
+      isRecord(response.value) &&
+      isRecord(response.value.savings) &&
+      Array.isArray(response.value.savings.top_commands) &&
+      response.value.savings.top_commands.some((entry) => isRecord(entry) && entry.command === command)
+    ) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`telemetry ${command} did not drain`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 async function ensureRspBundle(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
   const appRoot = resolve(here, "..");
   const repoRoot = resolve(appRoot, "..", "..");
   const bundle = join(repoRoot, "dist", "rsp.bundle.min.mjs");
-  if (existsSync(bundle)) return bundle;
   await execFileAsync(process.execPath, [
     join(repoRoot, "scripts", "bundle-app.mjs"),
     "--entry",
