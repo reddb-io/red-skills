@@ -24,6 +24,7 @@
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
 import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/ambient-skill.js";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
+import { renderTerseSteeringBlock, type OutputShapingAssignment } from "./output-shaping.js";
 import { isTrustedSource, type SourceTrustLevel } from "./source-trust.js";
 
 /** A comment as projected by the orchestrator from `gh issue view --json comments`. */
@@ -91,6 +92,11 @@ export interface HandoffInput {
    * the first-attempt handoff is byte-for-byte unchanged.
    */
   mergeGateCommands?: readonly string[];
+  /**
+   * Optional measured output-shaping arm (#1638). The section is emitted only for
+   * the steered arm and carries phrasing constraints, never task semantics.
+   */
+  outputShaping?: OutputShapingAssignment;
 }
 
 /** Trimmed-of-all-whitespace emptiness test (bash `[[ -n "$x" ]]` after capture). */
@@ -328,6 +334,14 @@ export function buildHandoff(input: HandoffInput): string {
     lines.push("<merge-gate>");
     lines.push(mergeGate);
     lines.push("</merge-gate>");
+  }
+
+  const outputShaping = input.outputShaping ? renderTerseSteeringBlock(input.outputShaping) : "";
+  if (isPresent(outputShaping)) {
+    lines.push("");
+    lines.push("<output-shaping>");
+    lines.push(outputShaping);
+    lines.push("</output-shaping>");
   }
 
   const attempts = buildPreviousAttempts(input.comments);
