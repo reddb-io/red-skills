@@ -9,3 +9,10 @@ plugins:
       primary-branch: true       # primary-checkout branch-switch guard
   internal:
     enabled: true                # maintainer-only repo operations plugin (ADR 0067)
+
+# rsp token-efficiency surface (per-repo opt-in; hook stays inert without enabled: true)
+rsp:
+  enabled: true
+  ttlDays: 7
+  byteBudget: 67108864
+  heavyGitByteThreshold: 8192
