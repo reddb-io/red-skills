@@ -24,6 +24,14 @@ export interface BaselineAxis {
   source: "recorded" | "measured";
 }
 
+export interface NotCoveredAxis {
+  coverage: "not-covered";
+  label: string;
+  source: "not-covered";
+}
+
+export type ComparatorAxis = BaselineAxis | NotCoveredAxis;
+
 export interface TwoAxisFilterRow {
   filter: string;
   mode: "active" | "passthrough";
@@ -31,7 +39,7 @@ export interface TwoAxisFilterRow {
   raw: BaselineAxis;
   brief: BaselineAxis;
   terse: BaselineAxis;
-  rtk: BaselineAxis;
+  rtk: ComparatorAxis;
   /** Measured delta if this filter were forced active; equals brief/terse for active filters, non-zero for passthrough. */
   hypothetical_active: {
     brief: BaselineAxis;
@@ -102,8 +110,8 @@ interface FixtureMeasurement {
   briefFidelity: boolean;
   terseDelta: number;
   terseFidelity: boolean;
-  rtkDelta: number;
-  rtkFidelity: boolean;
+  rtkDelta?: number;
+  rtkFidelity?: boolean;
 }
 
 const tokenizer = encodingForModel("gpt-4o");
@@ -132,7 +140,6 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
   try {
     for (const fixture of fixtures) {
       const rtkFixture = byName.get(fixture.name);
-      if (!rtkFixture) throw new Error(`missing recorded RTK baseline for ${fixture.name}`);
       const brief = await runFidelityFixture(fixture, { level: "lossless", store });
       const terse = await runFidelityFixture(fixture, { level: "terse", store });
       measurements.push({
@@ -144,8 +151,8 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
         briefFidelity: brief.status === fixture.recorded.status && brief.assertionFailures.length === 0,
         terseDelta: terse.tokenDelta,
         terseFidelity: terse.status === fixture.recorded.status && terse.assertionFailures.length === 0,
-        rtkDelta: tokenDelta(fixture.recorded.stdout, rtkFixture.stdout),
-        rtkFidelity: rtkFixture.fidelity_assertions_passed,
+        rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
+        rtkFidelity: rtkFixture?.fidelity_assertions_passed,
       });
     }
   } finally {
@@ -203,7 +210,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     "| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.filters.map((row) =>
-      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.brief.median_delta_pct)}/${fmt(row.hypothetical_active.brief.p90_delta_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.terse.median_delta_pct)}/${fmt(row.hypothetical_active.terse.p90_delta_pct)}% | ${fmt(row.rtk.median_delta_pct)}/${fmt(row.rtk.p90_delta_pct)}% | ${fmt(row.rtk.fidelity_pass_rate_pct)}% |`
+      `| ${row.filter} | ${row.mode} | ${row.fixture_count} | ${fmt(row.brief.median_delta_pct)}/${fmt(row.brief.p90_delta_pct)}% | ${fmt(row.brief.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.brief.median_delta_pct)}/${fmt(row.hypothetical_active.brief.p90_delta_pct)}% | ${fmt(row.terse.median_delta_pct)}/${fmt(row.terse.p90_delta_pct)}% | ${fmt(row.terse.fidelity_pass_rate_pct)}% | ${fmt(row.hypothetical_active.terse.median_delta_pct)}/${fmt(row.hypothetical_active.terse.p90_delta_pct)}% | ${fmtComparatorDelta(row.rtk)} | ${fmtComparatorFidelity(row.rtk)} |`
     ),
     "",
     `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
@@ -222,7 +229,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
 }
 
 async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityFixture[]> {
-  const roots = [join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
+  const roots = [join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
   const groups = await Promise.all(roots.map((root) => discoverFidelityFixtures(root)));
   return groups.flat().sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -252,15 +259,16 @@ function buildParity(rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow[] {
 function parityRow(domain: TwoAxisParityRow["domain"], filter: string, rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow {
   const row = rows.find((candidate) => candidate.filter === filter);
   if (!row) throw new Error(`missing parity filter ${filter}`);
-  const pass = row.brief.fidelity_pass_rate_pct >= row.rtk.fidelity_pass_rate_pct &&
-    row.brief.median_delta_pct >= row.rtk.median_delta_pct;
+  const rtk = coveredComparatorAxis("rtk", filter, row.rtk);
+  const pass = row.brief.fidelity_pass_rate_pct >= rtk.fidelity_pass_rate_pct &&
+    row.brief.median_delta_pct >= rtk.median_delta_pct;
   return {
     domain,
     filter,
     rsp_median_delta_pct: row.brief.median_delta_pct,
-    rtk_median_delta_pct: row.rtk.median_delta_pct,
+    rtk_median_delta_pct: rtk.median_delta_pct,
     rsp_fidelity_pass_rate_pct: row.brief.fidelity_pass_rate_pct,
-    rtk_fidelity_pass_rate_pct: row.rtk.fidelity_pass_rate_pct,
+    rtk_fidelity_pass_rate_pct: rtk.fidelity_pass_rate_pct,
     parity_gate: pass ? "pass" : "fail",
   };
 }
@@ -277,7 +285,7 @@ function filterRow(filter: string, rows: readonly FixtureMeasurement[], admissio
     raw: axis(rows.map((row) => row.rawDelta), rows.map((row) => row.rawFidelity), "recorded"),
     brief: active ? measuredBrief : passthroughAxis(rows.length),
     terse: active ? measuredTerse : passthroughAxis(rows.length),
-    rtk: axis(rows.map((row) => row.rtkDelta), rows.map((row) => row.rtkFidelity), "recorded"),
+    rtk: comparatorAxis("rtk", rows.map((row) => ({ delta: row.rtkDelta, fidelity: row.rtkFidelity }))),
     hypothetical_active: { brief: measuredBrief, terse: measuredTerse },
   };
 }
@@ -311,6 +319,30 @@ function axis(deltas: readonly number[], fidelity: readonly boolean[], source: B
   };
 }
 
+function comparatorAxis(
+  label: string,
+  rows: readonly { delta?: number; fidelity?: boolean }[],
+): ComparatorAxis {
+  const covered = rows.filter((row): row is { delta: number; fidelity: boolean } =>
+    typeof row.delta === "number" && typeof row.fidelity === "boolean"
+  );
+  if (covered.length === 0) return notCoveredAxis(label);
+  return axis(covered.map((row) => row.delta), covered.map((row) => row.fidelity), "recorded");
+}
+
+function notCoveredAxis(label: string): NotCoveredAxis {
+  return {
+    coverage: "not-covered",
+    label: `${label}: not-covered`,
+    source: "not-covered",
+  };
+}
+
+function coveredComparatorAxis(label: string, filter: string, value: ComparatorAxis): BaselineAxis {
+  if (value.source === "not-covered") throw new Error(`${label} baseline not covered for parity filter ${filter}`);
+  return value;
+}
+
 function filterName(fixture: FidelityFixture): string {
   return fixture.command.slice(0, 2).join(":");
 }
@@ -342,6 +374,16 @@ function round(value: number): number {
 
 function fmt(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function fmtComparatorDelta(value: ComparatorAxis): string {
+  if (value.source === "not-covered") return value.label;
+  return `${fmt(value.median_delta_pct)}/${fmt(value.p90_delta_pct)}%`;
+}
+
+function fmtComparatorFidelity(value: ComparatorAxis): string {
+  if (value.source === "not-covered") return value.label;
+  return `${fmt(value.fidelity_pass_rate_pct)}%`;
 }
 
 function externalClaims(): ExternalClaim[] {

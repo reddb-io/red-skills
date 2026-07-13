@@ -23,12 +23,30 @@ describe("rsp two-axis benchmark report", () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
     expect(report.corpus).toMatchObject({
-      fixture_count: 18,
+      fixture_count: 27,
       large_output_filters: ["git:diff", "git:log", "vitest:run"],
     });
+    expect(report.corpus.filters).toEqual([
+      "cargo:test",
+      "gh:issue",
+      "gh:pr",
+      "gh:run",
+      "git:commit",
+      "git:diff",
+      "git:log",
+      "git:push",
+      "git:status",
+      "vitest:run",
+    ]);
     expect(report.method.tokenizer).toBe("js-tiktoken:gpt-4o");
     expect(report.method.rtk_source).toMatchObject({ kind: "recorded-fixtures", version: expect.stringMatching(/^rtk /) });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
+
+    const ghPr = report.filters.find((row) => row.filter === "gh:pr");
+    expect(ghPr).toMatchObject({
+      fixture_count: 3,
+      rtk: { coverage: "not-covered", label: "rtk: not-covered" },
+    });
 
     const gitCommit = report.filters.find((row) => row.filter === "git:commit");
     expect(gitCommit).toMatchObject({
@@ -75,5 +93,7 @@ describe("rsp two-axis benchmark report", () => {
     await expect(readFile(toonPath, "utf8")).resolves.toBe(report.toon);
     await expect(readFile(summaryPath, "utf8")).resolves.toBe(renderTwoAxisSummary(report));
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Filter | Mode | Fixtures | brief shipped delta | brief fidelity | brief hyp-active delta | terse shipped delta | terse fidelity | terse hyp-active delta | RTK median/p90 token delta | RTK fidelity |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| gh:pr |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
   });
 });
