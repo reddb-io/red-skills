@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RSP_WRAPPER_CAPABILITIES,
+  formatCodexHookDecision,
   formatHookDecision,
   hookDecisionFromClaudePreExecJson,
+  hookDecisionFromCodexPreExecJson,
   rewriteCommand,
   rewriteTableFromCapabilities,
 } from "../src/intercept.js";
@@ -228,5 +230,66 @@ describe("rsp Claude pre-execution hook integration", () => {
     expect(gateCalls).toBe(1);
     expect(rewriteCalls).toBe(0);
     expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+  });
+});
+
+describe("rsp Codex pre-execution hook integration", () => {
+  it("prints a Codex PreToolUse updatedInput response on a certain match when the resident is healthy", async () => {
+    const root = await tempRoot();
+    const result = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "git status" } }),
+      {
+        cwd: root,
+        isEnabled: () => true,
+        isResidentHealthy: async () => true,
+      },
+    );
+
+    expect(formatCodexHookDecision(result)).toEqual({
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status" },
+        },
+      }) + "\n",
+      status: 0,
+    });
+  });
+
+  it("keeps disabled directories inert and exits 0 for Codex fail-open semantics", async () => {
+    const root = await tempRoot();
+    let rewriteCalls = 0;
+    const result = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_input: { command: "git status" } }),
+      {
+        cwd: root,
+        isEnabled: () => false,
+        rewrite: () => {
+          rewriteCalls += 1;
+          return { kind: "rewrite", command: "rsp git status", capabilityId: "unexpected" };
+        },
+      },
+    );
+
+    expect(result).toEqual({ kind: "passthrough", reason: "disabled" });
+    expect(rewriteCalls).toBe(0);
+    expect(formatCodexHookDecision(result)).toEqual({ stdout: "", status: 0 });
+  });
+
+  it("accepts Codex hook JSON on stdin through the CLI", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "git status" } })),
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
