@@ -1,0 +1,9 @@
+# oracle: preserves decision-relevant rows and columns from commit-node-doc; keep as compact TOON, not a scalar verdict.
+command: git commit
+branch: main
+commit: e84b517d
+subject: "doc: document net Socket server property"
+files_changed: 2
+insertions: 18
+deletions: 4
+summary: "commit e84b517d on main: 2 files, +18 -4"
