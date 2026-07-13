@@ -1,0 +1,96 @@
+{
+  "name": "cat-typescript-outline",
+  "large_output": true,
+  "command": [
+    "cat",
+    "src/user.ts"
+  ],
+  "recorded": {
+    "stdout": "export interface User {\n  id: string;\n}\n\nexport async function loadUser(id: string): Promise<User> {\n  return { id };\n}\n\nclass UserCache {\n  get(id: string): User {\n    return { id };\n  }\n}\n\n// benchmark filler 01: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 02: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 03: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 04: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 05: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 06: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 07: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 08: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 09: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 10: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 11: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 12: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 13: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 14: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 15: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 16: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 17: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 18: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 19: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 20: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 21: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 22: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 23: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 24: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 25: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 26: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 27: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 28: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 29: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 30: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 31: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 32: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 33: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 34: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 35: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 36: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 37: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 38: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 39: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 40: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 41: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 42: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 43: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 44: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 45: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 46: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 47: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 48: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 49: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 50: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 51: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 52: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 53: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 54: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 55: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 56: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 57: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 58: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 59: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 60: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 61: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 62: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 63: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 64: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 65: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 66: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 67: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 68: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 69: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 70: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 71: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 72: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 73: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 74: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 75: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 76: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 77: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 78: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 79: deterministic file-read content keeps raw cat output large while preserving outline.\n// benchmark filler 80: deterministic file-read content keeps raw cat output large while preserving outline.\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "cat src/user.ts",
+    "file": "src/user.ts",
+    "kind": "code",
+    "outline_source": "regex",
+    "bytes": 8911,
+    "lines": 94,
+    "symbols": [
+      {
+        "kind": "interface",
+        "name": "User",
+        "line": 1,
+        "signature": "export interface User {"
+      },
+      {
+        "kind": "function",
+        "name": "loadUser",
+        "line": 5,
+        "signature": "export async function loadUser(id: string): Promise<User> {"
+      },
+      {
+        "kind": "class",
+        "name": "UserCache",
+        "line": 9,
+        "signature": "class UserCache {"
+      },
+      {
+        "kind": "method",
+        "name": "get",
+        "line": 10,
+        "signature": "get(id: string): User {"
+      }
+    ],
+    "content": {
+      "head": [
+        "export interface User {",
+        "  id: string;"
+      ],
+      "tail": [
+        "// benchmark filler 79: deterministic file-read content keeps raw cat output large while preserving outline.",
+        "// benchmark filler 80: deterministic file-read content keeps raw cat output large while preserving outline."
+      ],
+      "truncated": true
+    }
+  },
+  "assertions": [
+    {
+      "question": "oracle preserves file",
+      "path": "file",
+      "expected": "src/user.ts"
+    },
+    {
+      "question": "oracle preserves kind",
+      "path": "kind",
+      "expected": "code"
+    },
+    {
+      "question": "oracle preserves symbols.length",
+      "path": "symbols.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves interface name",
+      "path": "symbols.0.name",
+      "expected": "User"
+    },
+    {
+      "question": "oracle preserves function name",
+      "path": "symbols.1.name",
+      "expected": "loadUser"
+    },
+    {
+      "question": "oracle preserves class name",
+      "path": "symbols.2.name",
+      "expected": "UserCache"
+    },
+    {
+      "question": "oracle preserves method name",
+      "path": "symbols.3.name",
+      "expected": "get"
+    }
+  ]
+}
