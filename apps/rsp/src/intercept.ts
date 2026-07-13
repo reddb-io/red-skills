@@ -59,6 +59,9 @@ export function rewriteCommand(command: string): RewriteDecision {
   if (!tokens) return rewriteCompoundCommand(command);
   if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command);
 
+  const fileRead = rewriteFileReadCommand(tokens);
+  if (fileRead) return fileRead;
+
   const rewritten = DEFAULT_REWRITE_TABLE.get(commandKey(tokens));
   if (!rewritten) return rewriteCompoundCommand(command);
   const capability = RSP_WRAPPER_CAPABILITIES.find((entry) => commandKey(entry.command) === commandKey(tokens));
@@ -67,6 +70,30 @@ export function rewriteCommand(command: string): RewriteDecision {
     command: rewritten.join(" "),
     capabilityId: capability?.id ?? commandKey(tokens),
   };
+}
+
+function rewriteFileReadCommand(tokens: readonly string[]): RewriteDecision | null {
+  const command = tokens[0];
+  if (command === "cat" && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
+    return { kind: "rewrite", command: `rsp cat ${tokens[1]}`, capabilityId: "cat:file" };
+  }
+  if ((command === "head" || command === "tail") && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
+    return { kind: "rewrite", command: `rsp cat --${command} 10 ${tokens[1]}`, capabilityId: `cat:${command}` };
+  }
+  if (
+    (command === "head" || command === "tail") &&
+    tokens.length === 4 &&
+    tokens[1] === "-n" &&
+    /^[1-9][0-9]*$/.test(tokens[2]!) &&
+    isPlainFileToken(tokens[3]!)
+  ) {
+    return { kind: "rewrite", command: `rsp cat --${command} ${tokens[2]} ${tokens[3]}`, capabilityId: `cat:${command}` };
+  }
+  return null;
+}
+
+function isPlainFileToken(token: string): boolean {
+  return Boolean(token) && !token.startsWith("-") && !/[ \t]/.test(token);
 }
 
 export async function hookDecisionFromClaudePreExecJson(
