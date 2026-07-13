@@ -33,7 +33,12 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  })));
 });
 
 describe("rsp telemetry spool", () => {
@@ -469,6 +474,50 @@ describe("rsp telemetry spool", () => {
       child.once("error", reject);
     });
   }, 40_000);
+
+  it("nudges the built bundle resident after cold-path-only telemetry gets stale", async () => {
+    const root = await tempRoot();
+    const bundle = await ensureRspBundle();
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const staleCreatedAt = new Date(Date.now() - 60_000).toISOString();
+    await writeFile(telemetrySpoolPath(root), `${JSON.stringify({
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "stale-cold-event",
+      created_at: staleCreatedAt,
+      ts: staleCreatedAt,
+      command: "git log --terse",
+      elided: true,
+      raw_bytes: 1000,
+      emitted_bytes: 100,
+      raw_text: "alpha ".repeat(100),
+      emitted_text: "alpha",
+    })}\n`, "utf8");
+
+    try {
+      const { stdout } = await execFileAsync(process.execPath, [
+        bundle,
+        "cat",
+        ".red/config.yaml",
+      ], {
+        cwd: root,
+        env: {
+          ...process.env,
+          RSP_STORE_URI: storeUri,
+          RSP_TELEMETRY_DRAIN_INTERVAL_MS: "50",
+          RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(await calibratedTelemetryDrainTimeoutMs(root)),
+        },
+      });
+      expect(stdout).toContain("rsp:");
+
+      await waitForResidentTelemetry(paths.socketPath, "git log --terse");
+      await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+      await expect(readFile(paths.summaryPath, "utf8")).resolves.toContain("tokens_saved_today");
+    } finally {
+      await shutdownResident(paths.socketPath);
+    }
+  }, 40_000);
+
   it("aggregates rsp gains percentiles, buckets, rankings, and health", async () => {
     const root = await tempRoot();
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
@@ -675,6 +724,24 @@ async function waitForResidentTelemetry(socketPath: string, command: string): Pr
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`telemetry ${command} did not drain`);
+}
+
+async function shutdownResident(socketPath: string): Promise<void> {
+  await sendResidentRequest({ socketPath, timeoutMs: 500 }, {
+    id: "shutdown",
+    op: "handover",
+    clientVersion: "test-shutdown",
+  }).catch(() => null);
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const alive = await sendResidentRequest({ socketPath, timeoutMs: 100 }, {
+      id: "shutdown-poll",
+      op: "ping",
+    }).then((response) => response.ok, () => false);
+    if (!alive) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("resident did not shut down");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
