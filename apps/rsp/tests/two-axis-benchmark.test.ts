@@ -24,11 +24,12 @@ describe("rsp two-axis benchmark report", () => {
     const report = await buildTwoAxisBenchmarkReport({ fixtureRoot });
 
     expect(report.corpus).toMatchObject({
-      fixture_count: 30,
-      large_output_filters: ["git:diff", "git:log", "vitest:run"],
+      fixture_count: 31,
+      large_output_filters: ["cat:file", "git:diff", "git:log", "vitest:run"],
     });
     expect(report.corpus.filters).toEqual([
       "cargo:test",
+      "cat:file",
       "gh:issue",
       "gh:pr",
       "gh:run",
@@ -81,6 +82,14 @@ describe("rsp two-axis benchmark report", () => {
     expect(typeof gitCommit?.brief.median_delta_pct).toBe("number");
     expect(gitCommit?.oracle_capture.oracle_ceiling.token_count).toBeGreaterThan(1);
     expect(gitCommit?.oracle_capture.rsp.capture_pct).toBeLessThanOrEqual(100);
+
+    const catFile = report.filters.find((row) => row.filter === "cat:file");
+    expect(catFile).toMatchObject({
+      fixture_count: 1,
+      mode: "active",
+      brief: { fidelity_pass_rate_pct: 100 },
+      terse: { fidelity_pass_rate_pct: 100 },
+    });
 
     const vitest = report.filters.find((row) => row.filter === "vitest:run");
     expect(vitest).toMatchObject({
