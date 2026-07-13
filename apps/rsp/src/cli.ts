@@ -54,7 +54,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const wrapperCommand = isWrapperCommand(args.command);
   if (!config.enabled) {
-    if (wrapperCommand) return await degradeToPassthrough(rspDisabledReason(), args.positional);
+    if (wrapperCommand) return await passthroughDisabledDirectory(args.positional);
     process.stdout.write(`${rspDisabledReason()}\n`);
     return 0;
   }
@@ -587,6 +587,13 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
     });
   }
   return status;
+}
+
+async function passthroughDisabledDirectory(argv: readonly string[]): Promise<number> {
+  if (process.env.RSP_DEBUG === "1") {
+    process.stderr.write(`rsp: ${rspDisabledReason()}, passing through\n`);
+  }
+  return await passthrough(argv);
 }
 
 function rspDisabledReason(): string {
