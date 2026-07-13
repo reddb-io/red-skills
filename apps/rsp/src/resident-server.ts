@@ -24,6 +24,7 @@ export interface ResidentServerOptions extends RspResidentConfig {
   socketPath: string;
   rootDir?: string;
   idleMs?: number;
+  residentVersion?: string;
   telemetryDrainIntervalMs?: number;
 }
 
@@ -57,9 +58,10 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     touch();
     handleSocket(socket, async (request) => {
       touch();
-      const value = await handleRequest(store, request);
+      const value = await handleRequest(store, request, opts.residentVersion ?? "0.0.0-dev");
       const response: RspResidentResponse = { id: request.id, ok: true, value, storeOpenCount, storeElapsedMs };
       socket.write(`${JSON.stringify(response)}\n`);
+      if (request.op === "handover") setImmediate(() => server.close());
     });
   });
 
@@ -385,8 +387,9 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
   });
 }
 
-async function handleRequest(store: RspElisionStore, request: RspResidentRequest): Promise<unknown> {
-  if (request.op === "ping") return { pong: true };
+async function handleRequest(store: RspElisionStore, request: RspResidentRequest, residentVersion: string): Promise<unknown> {
+  if (request.op === "ping") return { pong: true, version: residentVersion };
+  if (request.op === "handover") return { handover: true, version: residentVersion, clientVersion: request.clientVersion };
   if (request.op === "stats") return await store.stats();
   if (request.op === "telemetry-stats") {
     const db = store.redDb();
