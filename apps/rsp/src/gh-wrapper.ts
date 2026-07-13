@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
-import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
-import type { RecordedGitContract } from "./git-wrapper.js";
+import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
+import { recoveryInstruction, type RecordedGitContract } from "./git-wrapper.js";
 import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
 export type GhKind = "pr" | "issue" | "run";
@@ -9,7 +9,11 @@ export type GhAction = "list" | "view" | "combined";
 
 export interface GhRenderOptions {
   level: RspLossLevel;
-  store?: Pick<RspElisionStore, "mint">;
+  store?: RspMintStore;
+}
+
+interface RspMintStore {
+  mint(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<string>;
 }
 
 export interface GhRenderResult {
@@ -18,7 +22,7 @@ export interface GhRenderResult {
   status: number | null;
   signal: NodeJS.Signals | null;
   payload?: JsonObject;
-  mintedHandle?: `el:${string}`;
+  mintedHandle?: string;
   bytesElided?: number;
   rowsElided?: number;
   rawOutput?: Buffer;
@@ -134,7 +138,7 @@ export async function renderGhContract(
   });
   if (!handle) throw new Error("terse gh output requires an elision store");
 
-  const marker = `… elided ${terse.rowsElided} rows (+${bytesElided}) — rsp show ${handle}\n`;
+  const marker = `… elided ${terse.rowsElided} rows (+${bytesElided}) — ${recoveryInstruction(handle)}\n`;
   return {
     stdout: Buffer.from(`${encode(terse.payload)}\n${marker}`),
     stderr: Buffer.from(contract.stderr),
@@ -390,7 +394,7 @@ function textField(row: Record<string, unknown>, field: string, limit: number, f
   return out;
 }
 
-function findHandleRequest(payload: JsonObject): { target: { truncated: { handle: `el:${string}` | "" } }; original: string; bytes: number } | null {
+function findHandleRequest(payload: JsonObject): { target: { truncated: { handle: string } }; original: string; bytes: number } | null {
   const stack: unknown[] = [payload];
   while (stack.length > 0) {
     const value = stack.pop();
