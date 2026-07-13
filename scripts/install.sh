@@ -175,14 +175,29 @@ download_release_asset_if_available() {
     return 0
   fi
 
-  [[ "$REFRESH" == "true" || ! -f "$out" ]] || return 0
   mkdir -p "$source/dist"
-  if curl_file "$url" "$out.tmp"; then
-    mv "$out.tmp" "$out"
-    log "downloaded optional release asset $asset"
-  else
-    rm -f "$out.tmp"
-    warn "optional release asset $asset is unavailable for $tag; OpenCode install may build from source"
+  if [[ "$REFRESH" == "true" || ! -f "$out" ]]; then
+    if curl_file "$url" "$out.tmp"; then
+      mv "$out.tmp" "$out"
+      log "downloaded optional release asset $asset"
+    else
+      rm -f "$out.tmp"
+      warn "optional release asset $asset is unavailable for $tag; OpenCode install may build from source"
+    fi
+  fi
+
+  local generated_asset="opencode-host.generated.tgz"
+  local generated_out="$source/dist/$generated_asset"
+  local generated_url="https://github.com/$REPO/releases/download/$tag/$generated_asset"
+  if [[ "$REFRESH" == "true" || ! -f "$source/dist/opencode/.release-generated" ]]; then
+    if curl_file "$generated_url" "$generated_out.tmp"; then
+      mv "$generated_out.tmp" "$generated_out"
+      tar -xzf "$generated_out" -C "$source"
+      log "downloaded optional release asset $generated_asset"
+    else
+      rm -f "$generated_out.tmp"
+      warn "optional release asset $generated_asset is unavailable for $tag; OpenCode install may generate from source"
+    fi
   fi
 }
 
