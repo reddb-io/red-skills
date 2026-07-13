@@ -216,6 +216,30 @@ export function humanizeCount(n: number): string {
   return String(n > 0 ? n : 0);
 }
 
+function threeSigFixed(value: number): string {
+  if (value >= 100) return value.toFixed(0);
+  if (value >= 10) return value.toFixed(1);
+  if (value >= 1) return value.toFixed(2);
+  const decimals = Math.max(2, Math.ceil(-Math.log10(value)) + 2);
+  return value.toFixed(decimals);
+}
+
+function formatThreeSigValue(value: number): string {
+  const n = Number.isFinite(value) && value > 0 ? value : 0;
+  if (n === 0) return "0";
+  if (n >= 1e9) return `${threeSigFixed(n / 1e9)}B`;
+  if (n >= 1e6) return `${threeSigFixed(n / 1e6)}M`;
+  if (n >= 1e3) return `${threeSigFixed(n / 1e3)}k`;
+  return threeSigFixed(n);
+}
+
+export function formatRspTickerValue(tokens: number): string {
+  const n = Math.max(0, Math.floor(tokens));
+  if (n < 1e3) return String(n);
+  if (n < 1e6) return `${(Math.floor(n / 100) / 10).toFixed(1)}k`;
+  return formatThreeSigValue(n);
+}
+
 /**
  * Shortens a model identifier to its friendly family token for the themed
  * per-worker `run=` label (issue #1175): `claude-opus-4-8` → `opus`, `Opus` →
@@ -437,16 +461,14 @@ export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
     const dollars = rsp.dollarsSavedTodayUsd && rsp.dollarsSavedTodayUsd > 0
       ? ` ${formatRspDollars(rsp.dollarsSavedTodayUsd)}`
       : "";
-    return `rsp ↓${humanizeCount(rsp.tokensSavedToday)}${dollars}`;
+    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}${dollars}`;
   }
-  if (rsp.state === "warming") return "rsp …";
-  return "rsp !";
+  if (rsp.state === "warming") return "rsp=…";
+  return "rsp=!";
 }
 
 function formatRspDollars(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.01) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(6)}`;
+  return `$${formatThreeSigValue(value)}`;
 }
 
 /**

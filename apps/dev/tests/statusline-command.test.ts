@@ -706,7 +706,7 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp …");
+    expect(stripAnsi(out.text())).toContain("rsp=…");
   });
 
   it("renders rsp savings when an enabled repo has a fresh resident summary", async () => {
@@ -717,16 +717,16 @@ describe("statusline command — rendered line", () => {
     await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
     await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
       version: 1,
-      tokens_saved_today: 1300000,
+      tokens_saved_today: 1320000,
       dollars_saved_today_usd: 1.625,
       updated_at: new Date().toISOString(),
     }), "utf8");
-    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 1300000, dollarsSavedTodayUsd: 1.625 });
+    expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 1320000, dollarsSavedTodayUsd: 1.625 });
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp ↓1.3M $1.63");
+    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M $1.63");
   });
 
   it("renders rsp savings from an old summary when the resident is idle", async () => {
@@ -746,7 +746,7 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp ↓4.2k");
+    expect(stripAnsi(out.text())).toContain("rsp=↓4.2k");
   });
 
   it("renders rsp savings as zero when the newest summary belongs to yesterday", async () => {
@@ -766,7 +766,7 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp ↓0");
+    expect(stripAnsi(out.text())).toContain("rsp=↓0");
   });
 
   it("renders rsp error when enabled and a stale wake marker produced no summary", async () => {

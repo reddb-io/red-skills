@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatCacheAge,
+  formatRspTickerValue,
   humanizeAlive,
   humanizeCount,
   humanizeTokens,
@@ -132,6 +133,27 @@ describe("statusline — humanizeCount (issue #1175)", () => {
   it("renders the B tier", () => {
     expect(humanizeCount(1000000000)).toBe("1B");
     expect(humanizeCount(2300000000)).toBe("2.3B");
+  });
+});
+
+describe("statusline — formatRspTickerValue", () => {
+  it("keeps raw tokens below one thousand", () => {
+    expect(formatRspTickerValue(847)).toBe("847");
+    expect(formatRspTickerValue(999)).toBe("999");
+  });
+
+  it("renders the k tier with one decimal through the 999.9k edge", () => {
+    expect(formatRspTickerValue(1000)).toBe("1.0k");
+    expect(formatRspTickerValue(12400)).toBe("12.4k");
+    expect(formatRspTickerValue(876300)).toBe("876.3k");
+    expect(formatRspTickerValue(999949)).toBe("999.9k");
+    expect(formatRspTickerValue(999999)).toBe("999.9k");
+  });
+
+  it("renders the M tier with three significant digits", () => {
+    expect(formatRspTickerValue(1320000)).toBe("1.32M");
+    expect(formatRspTickerValue(13200000)).toBe("13.2M");
+    expect(formatRspTickerValue(132000000)).toBe("132M");
   });
 });
 
@@ -495,7 +517,7 @@ describe("statusline — full assembly", () => {
       fleet: { runner: "codex", busy: 1, total: 4, queue: 9 },
       afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
     };
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp ↓1.2k");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · ctx=47k 24% · iss=24 · rsp=↓1.2k");
   });
 
   it("renders rsp healthy savings as one optional token in full and short presets", () => {
@@ -503,35 +525,35 @@ describe("statusline — full assembly", () => {
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "ready", tokensSavedToday: 847 },
     };
-    expect(renderStatusline(input)).toBe("red-skills (main) · rsp ↓847");
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp ↓847");
+    expect(renderStatusline(input)).toBe("red-skills (main) · rsp=↓847");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp=↓847");
     expect(renderStatusline({
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "ready", tokensSavedToday: 2000, dollarsSavedTodayUsd: 0.0025 },
-    })).toBe("red-skills (main) · rsp ↓2k $0.002500");
+    })).toBe("red-skills (main) · rsp=↓2.0k $0.00250");
   });
 
   it("renders rsp warming and error states without ambiguous on/off glyphs", () => {
     expect(renderStatusline({
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "warming" },
-    })).toBe("red-skills (main) · rsp …");
+    })).toBe("red-skills (main) · rsp=…");
     expect(renderStatusline({
       project: { basename: "red-skills", branch: "main" },
       rsp: { state: "error" },
-    })).toBe("red-skills (main) · rsp !");
+    })).toBe("red-skills (main) · rsp=!");
   });
 
   it("formats rsp savings with compact count tiers", () => {
-    const rendered = [0, 847, 1200, 124000, 1300000].map((tokensSavedToday) =>
+    const rendered = [0, 847, 1200, 124000, 1320000].map((tokensSavedToday) =>
       renderStatusline({ project: { basename: "red-skills" }, rsp: { state: "ready", tokensSavedToday } })
     );
     expect(rendered).toEqual([
-      "red-skills · rsp ↓0",
-      "red-skills · rsp ↓847",
-      "red-skills · rsp ↓1.2k",
-      "red-skills · rsp ↓124k",
-      "red-skills · rsp ↓1.3M",
+      "red-skills · rsp=↓0",
+      "red-skills · rsp=↓847",
+      "red-skills · rsp=↓1.2k",
+      "red-skills · rsp=↓124.0k",
+      "red-skills · rsp=↓1.32M",
     ]);
   });
 
