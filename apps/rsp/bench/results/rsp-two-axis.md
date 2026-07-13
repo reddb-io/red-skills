@@ -1,4 +1,8 @@
 rsp two-axis benchmark: 31 fixtures across 14 filters
+Corpus: home
+
+Corpus provenance:
+- Repo-authored rsp benchmark fixtures under apps/rsp/tests/fixtures.
 
 Production mode uses admission threshold 60%; passthrough filters count as 0% token delta because rsp returns the original command output.
 
