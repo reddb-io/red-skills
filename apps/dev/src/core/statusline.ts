@@ -37,6 +37,9 @@ export interface ProjectInput {
    * Rendered as a dim `v<version>` tag on the themed header line so the user can
    * see which RedSkills version is producing the statusline. Themed line only. */
   version?: string;
+  /** Newest locally cached `dev` bundle version. The render path uses this
+   * cache-only fact to mark a stale session without doing network discovery. */
+  latestCachedVersion?: string;
 }
 
 /** The block-2/3 Claude Code payload inputs. */
@@ -286,6 +289,29 @@ export function formatCacheAge(ageS: number): string {
   return rm > 0 ? `${h}h${rm}m` : `${h}h`;
 }
 
+function semverParts(version: string | undefined): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function compareSemver(a: string | undefined, b: string | undefined): number {
+  const pa = semverParts(a);
+  const pb = semverParts(b);
+  if (!pa || !pb) return 0;
+  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+}
+
+function hasCachedUpdate(project: ProjectInput): boolean {
+  return compareSemver(project.latestCachedVersion, project.version) > 0;
+}
+
+export function renderProjectVersionLabel(project: ProjectInput, mode: "always" | "update-only"): string | null {
+  if (!project.version) return null;
+  const update = hasCachedUpdate(project);
+  if (!update && mode === "update-only") return null;
+  return `v${project.version}${update ? "*" : ""}`;
+}
+
 /**
  * Block 1: `basename` plus optional ` (branch)` / ` (detached sha)`. Branches
  * longer than 28 chars are truncated to 27 chars + `…`, matching the bash
@@ -293,13 +319,15 @@ export function formatCacheAge(ageS: number): string {
  */
 export function renderProjectBlock(project: ProjectInput): string {
   const base = project.basename;
+  const version = renderProjectVersionLabel(project, "update-only");
+  const suffix = version ? ` ${version}` : "";
   if (project.branch) {
     let branch = project.branch;
     if (branch.length > BRANCH_MAX) branch = `${branch.slice(0, 27)}…`;
-    return `${base} (${branch})`;
+    return `${base} (${branch})${suffix}`;
   }
-  if (project.detachedSha) return `${base} (detached ${project.detachedSha})`;
-  return base;
+  if (project.detachedSha) return `${base} (detached ${project.detachedSha})${suffix}`;
+  return `${base}${suffix}`;
 }
 
 /** Block 2: `model` or `model·effort`; null when there is no model. */
