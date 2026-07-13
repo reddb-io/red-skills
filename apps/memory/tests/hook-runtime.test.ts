@@ -345,6 +345,15 @@ describe("runner adapters", () => {
     expect(ni.changedFiles.sort()).toEqual(["/repo/src/x.ts", "/repo/src/y.ts"]);
   });
 
+  test("runner adapters accept inline transcript text for OpenCode lifecycle bridges", async () => {
+    const ni = await parseCodexInput("Stop", {
+      cwd: "/repo",
+      session_id: "abc",
+      transcript_text: "We decided to persist OpenCode Stop hooks.",
+    });
+    expect(ni.transcriptText).toBe("We decided to persist OpenCode Stop hooks.");
+  });
+
   test("formatOutput renders each runner's injection shape; no-op is empty", () => {
     expect(formatOutput("claude", "SessionStart", { noop: true })).toBe("{}");
     const claude = JSON.parse(
