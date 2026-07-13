@@ -116,6 +116,7 @@ export class RspElisionStore {
     if (usesEmbeddedRedDb(path)) {
       await ensureReddbBinaryFromWarmCache();
       store.db = await connect(`file://${path}`);
+      await store.ensureRedDbCollections();
       await store.ensureRedDbStore();
     } else {
       store.document = await readStoreDocument(store.path);
@@ -306,6 +307,58 @@ export class RspElisionStore {
   private async ensureRedDbStore(): Promise<void> {
     const index = await this.readRedDbIndex();
     await this.writeRedDbIndex(index);
+  }
+
+  private async ensureRedDbCollections(): Promise<void> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const meta = (await this.db.list()).find((entry) => entry.name === RSP_ELISION_COLLECTION);
+    if (!meta) {
+      await this.db.query(`CREATE KV IF NOT EXISTS ${RSP_ELISION_COLLECTION}`);
+      return;
+    }
+    if (meta.model === "kv") return;
+    if (meta.model !== "table") {
+      throw new Error(`cannot self-heal elision collection ${RSP_ELISION_COLLECTION}: unsupported model ${meta.model}`);
+    }
+
+    const migrated = await this.readLegacyElisionTableRows();
+    await this.db.query(`DROP TABLE ${RSP_ELISION_COLLECTION}`);
+    await this.db.query(`CREATE KV IF NOT EXISTS ${RSP_ELISION_COLLECTION}`);
+    for (const entry of migrated) {
+      await this.kv().put(entry.key, entry.value);
+    }
+    await this.ensureMigratedRedDbIndex(migrated);
+  }
+
+  private async readLegacyElisionTableRows(): Promise<Array<{ key: string; value: unknown }>> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const result = await this.db.query(`SELECT * FROM ${RSP_ELISION_COLLECTION}`);
+    const migrated: Array<{ key: string; value: unknown }> = [];
+    for (const row of result.rows) {
+      const entry = legacyElisionRowToKvEntry(row);
+      if (entry) migrated.push(entry);
+    }
+    return migrated;
+  }
+
+  private async ensureMigratedRedDbIndex(migrated: Array<{ key: string; value: unknown }>): Promise<void> {
+    const hasIndex = migrated.some((entry) => entry.key === indexKey() && isIndexDocument(parseKvValue(entry.value)));
+    if (hasIndex) return;
+    const records = migrated
+      .map((entry): IndexEntry | null => {
+        const record = parseKvValue(entry.value);
+        if (!isStoredRecord(record)) return null;
+        return {
+          handle: record.handle,
+          key: recordKey(record.handle),
+          bytes: record.original_bytes,
+          command: record.command,
+          created_at: record.created_at,
+          expires_at: record.expires_at,
+        };
+      })
+      .filter((entry): entry is IndexEntry => entry != null);
+    await this.writeRedDbIndex({ version: 1, records });
   }
 
   private async mintRedDb(original: Uint8Array | Buffer, meta: RspMintMeta): Promise<`el:${string}`> {
@@ -608,6 +661,30 @@ function parseMemoryIngestPayload(payload: unknown): {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function legacyElisionRowToKvEntry(row: unknown): { key: string; value: unknown } | null {
+  if (!isPlainObject(row)) return null;
+  if (typeof row.key === "string" && row.key.trim() !== "") {
+    return { key: row.key, value: parseKvValue(row.value) };
+  }
+  if (typeof row.record_key === "string" && row.record_key.trim() !== "") {
+    return { key: row.record_key, value: parseKvValue(row.value) };
+  }
+  if (isStoredRecord(row)) return { key: recordKey(row.handle), value: row };
+  if (isExpiredHandle(row) && typeof row.handle === "string" && isHandle(row.handle)) {
+    return { key: tombstoneKey(row.handle), value: row };
+  }
+  return null;
+}
+
+function parseKvValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
 }
 
 interface ResidentRecallHit {
