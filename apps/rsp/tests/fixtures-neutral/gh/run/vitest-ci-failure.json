@@ -1,0 +1,55 @@
+{
+  "name": "run-vitest-ci-failure",
+  "command": [
+    "gh",
+    "run",
+    "view",
+    "29274168273",
+    "--wide"
+  ],
+  "provenance": "Public vitest-dev/vitest Actions run metadata captured on 2026-07-13 for run 29274168273.",
+  "recorded": {
+    "stdout": "{\"databaseId\":29274168273,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"failure\",\"event\":\"pull_request\",\"headBranch\":\"codex/fix-mock-registry-isolation\",\"workflowName\":\"CI\",\"createdAt\":\"2026-07-13T18:22:05Z\",\"jobs\":[{\"name\":\"test / ubuntu-latest / node-22\",\"status\":\"completed\",\"conclusion\":\"failure\",\"log\":\"Run pnpm test\\nFAIL packages/vitest/src/node/registry.test.ts > mock registry isolation\\nAssertionError: expected module cache to be empty after worker teardown\\n  expected: 0\\n  received: 1\\n\"}]}",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "gh run view 29274168273 --wide",
+    "run": {
+      "id": 29274168273,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "failure",
+      "event": "pull_request",
+      "branch": "codex/fix-mock-registry-isolation",
+      "workflow": "CI",
+      "created": "2026-07-13T18:22:05Z",
+      "jobs": [
+        {
+          "name": "test / ubuntu-latest / node-22",
+          "status": "completed",
+          "conclusion": "failure"
+        }
+      ]
+    },
+    "summary": "run 29274168273"
+  },
+  "assertions": [
+    {
+      "question": "which run id was preserved?",
+      "path": "run.id",
+      "expected": 29274168273
+    },
+    {
+      "question": "which conclusion was preserved?",
+      "path": "run.conclusion",
+      "expected": "failure"
+    },
+    {
+      "question": "which job failed?",
+      "path": "run.jobs.0.name",
+      "expected": "test / ubuntu-latest / node-22"
+    }
+  ]
+}
