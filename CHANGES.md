@@ -128,6 +128,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## wayfinder (engineering) - fidelity-max restoration for upstream-faithful testing (issue #1702)
+
+- **status**: modified
+- **upstream**: `66898f6` (upstream `wayfinder`)
+- **why**: /wayfinder needed to match upstream HEAD closely enough to test the flow as designed, with only RedSkills-required renames and tracker mechanics moved out of the skill. The normal `<what-to-do>` / `<supporting-info>` house convention is explicitly waived for this file in favor of upstream fidelity.
+- **what changed**: Rewrote `plugins/dev/skills/engineering/wayfinder/SKILL.md` around the upstream structure and voice, including `disable-model-invocation: true`, Plan-don't-do, Refer-by-name, map-body ordering, question tickets, claim-by-assignment, native blocking, Fog of war, Out of scope semantics, and the two invocation modes. Applied the mandated RedSkills command substitutions while keeping `/research` and `/prototype`. Added the RedSkills-specific map, child, blocking, frontier, claim, and queue mechanics to `plugins/dev/skills/engineering/red-setup/issue-tracker-github.md`.
+
+---
+
 ## afk (engineering) - post-extraction relative-link repair and link guard (issue #1354)
 
 - **status**: modified
