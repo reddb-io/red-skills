@@ -15,6 +15,9 @@ When you would run one of these commands, run it through `rsp` instead:
 
 | Command | rsp wrapper |
 | --- | --- |
+| `cat <file>` | `rsp cat <file>` |
+| `head <file>` / `head -n N <file>` | `rsp cat --head N <file>` |
+| `tail <file>` / `tail -n N <file>` | `rsp cat --tail N <file>` |
 | `git status` | `rsp git status` |
 | `git log` | `rsp git log` |
 | `git diff` | `rsp git diff` |
@@ -35,6 +38,8 @@ When you would run one of these commands, run it through `rsp` instead:
 
 ## When to prefer rsp
 
+- For deterministic file reads, prefer `rsp cat <file>`; code files render an outline plus bounded content, text/config files are threshold-gated, and binary files pass through untouched.
+- For simple file dumps, Claude pre-exec may rewrite bare `cat <file>`, `head <file>`, `head -n N <file>`, `tail <file>`, and `tail -n N <file>` when the path is an unquoted single file token.
 - For `git status`, prefer `rsp git status` when the summarized output is enough.
 - For `git log`, prefer `rsp git log` when the summarized output is enough.
 - For `git diff`, prefer `rsp git diff` when the summarized output is enough.
@@ -69,7 +74,7 @@ normal debugging. Use `--terse` for large or repetitive output; lossy output
 mints an `el:<id>` handle, and `rsp show el:<id>` writes the original bytes
 back to stdout. Use `--full` when exact inline output is required.
 
-Large `rsp git diff` and `rsp git log` output is threshold-gated and may
+`rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may
 truncate by default; pass `--full` when exact inline output is required.
 
 ## Recovering elided output
