@@ -803,6 +803,26 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    const entry = JSON.parse(await readFile(paths.registryPath, "utf8")) as {
+      pid: number;
+      socket_path: string;
+      store_uri: string;
+      resident_version: string;
+      started_at: string;
+    };
+    expect(entry).toMatchObject({
+      socket_path: paths.socketPath,
+      store_uri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
+    });
+    expect(entry.pid).toBeGreaterThan(0);
+    expect(entry.resident_version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(Date.parse(entry.started_at)).toBeGreaterThan(0);
+    const status = runBundleFromCwd(root, ["status"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(status.status, `${status.stdout.toString("utf8")}${status.stderr.toString("utf8")}`).toBe(0);
+    expect(decode(status.stdout.toString("utf8"))).toMatchObject({
+      state: "registered-alive-socket-healthy",
+      entry: { pid: entry.pid, socket_path: paths.socketPath },
+    });
   }, 120_000);
 
   it("built bundle teardown stops every spawned resident process", async () => {
@@ -999,6 +1019,7 @@ describe("rsp cli", () => {
     expect(warm.stderr).toEqual(Buffer.alloc(0));
 
     await waitForGone(paths.socketPath, idleMs + normalizedDurationMs(5_000));
+    await waitForGone(paths.registryPath);
     const expired = runBundleHookFromCwd(root, "git status", env);
     expect(expired.status).toBe(1);
     expect(expired.stdout).toEqual(Buffer.alloc(0));
@@ -1252,6 +1273,11 @@ describe("rsp cli", () => {
     );
     await waitForResidentSocket(root);
     expect(await readResidentVersion(root)).toBe(oldVersion);
+    const oldRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+      pid: number;
+      resident_version: string;
+    };
+    expect(oldRegistry.resident_version).toBe(oldVersion);
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1263,6 +1289,12 @@ describe("rsp cli", () => {
     expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
     expect(await readResidentVersion(root)).not.toBe(oldVersion);
+    const nextRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+      pid: number;
+      resident_version: string;
+    };
+    expect(nextRegistry.pid).not.toBe(oldRegistry.pid);
+    expect(nextRegistry.resident_version).not.toBe(oldVersion);
     expect(await oldResident).toMatchObject({ status: 0 });
   }, 120_000);
 

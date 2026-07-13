@@ -12,9 +12,16 @@ import {
   ensureResidentServer,
   kickResidentServer,
   pingResident,
+  readResidentRegistry,
+  removeResidentRegistry,
+  residentRegistryStatus,
   resolveResidentPaths,
+  sweepResidentRegistry,
   warmResidentServer,
+  writeResidentRegistry,
   type ResidentRequestWithoutId,
+  type RspResidentRegistryEntry,
+  type RspResidentRegistryStatus,
   type RspResidentPaths,
 } from "@reddb-io/shared/resident-client.js";
 
@@ -27,9 +34,16 @@ export {
   ensureResidentServer,
   kickResidentServer,
   pingResident,
+  readResidentRegistry,
+  removeResidentRegistry,
+  residentRegistryStatus,
   resolveResidentPaths,
+  sweepResidentRegistry,
   warmResidentServer,
+  writeResidentRegistry,
   type RspResidentPaths,
+  type RspResidentRegistryEntry,
+  type RspResidentRegistryStatus,
 };
 
 /** rsp-side adapter: the elision-store surface, served by the resident. */
