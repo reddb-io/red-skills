@@ -1,6 +1,9 @@
 {
   "name": "diff-numstat",
-  "command": ["git", "diff"],
+  "command": [
+    "git",
+    "diff"
+  ],
   "recorded": {
     "stdout": "3\t1\tapps/rsp/src/cli.ts\u00000\t12\told.txt\u0000-\t-\tassets/logo.bin\u0000",
     "stderr": "",
@@ -10,13 +13,94 @@
   "expected": {
     "command": "git diff",
     "files": [
-      { "path": "apps/rsp/src/cli.ts", "added": 3, "deleted": 1 },
-      { "path": "old.txt", "added": 0, "deleted": 12 },
-      { "path": "assets/logo.bin", "added": null, "deleted": null }
+      {
+        "path": "apps/rsp/src/cli.ts",
+        "added": 3,
+        "deleted": 1
+      },
+      {
+        "path": "old.txt",
+        "added": 0,
+        "deleted": 12
+      },
+      {
+        "path": "assets/logo.bin",
+        "added": null,
+        "deleted": null
+      }
     ],
     "summary": "3 files, +3 -13"
   },
   "assertions": [
-    { "question": "how many lines were added?", "path": "files.0.added", "expected": 3 }
+    {
+      "question": "oracle preserves files.length",
+      "path": "files.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves files.0.length",
+      "path": "files.0.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves files.0.path",
+      "path": "files.0.path",
+      "expected": "apps/rsp/src/cli.ts"
+    },
+    {
+      "question": "how many lines were added?",
+      "path": "files.0.added",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves files.0.deleted",
+      "path": "files.0.deleted",
+      "expected": 1
+    },
+    {
+      "question": "oracle preserves files.1.length",
+      "path": "files.1.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves files.1.path",
+      "path": "files.1.path",
+      "expected": "old.txt"
+    },
+    {
+      "question": "oracle preserves files.1.added",
+      "path": "files.1.added",
+      "expected": 0
+    },
+    {
+      "question": "oracle preserves files.1.deleted",
+      "path": "files.1.deleted",
+      "expected": 12
+    },
+    {
+      "question": "oracle preserves files.2.length",
+      "path": "files.2.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves files.2.path",
+      "path": "files.2.path",
+      "expected": "assets/logo.bin"
+    },
+    {
+      "question": "oracle preserves files.2.added",
+      "path": "files.2.added",
+      "expected": null
+    },
+    {
+      "question": "oracle preserves files.2.deleted",
+      "path": "files.2.deleted",
+      "expected": null
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "3 files, +3 -13"
+    }
   ]
 }
