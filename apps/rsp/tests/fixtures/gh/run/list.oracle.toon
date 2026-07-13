@@ -1,0 +1,6 @@
+# oracle: preserves decision-relevant rows and columns from run-list-default; keep as compact TOON, not a scalar verdict.
+command: gh run list
+runs[2]{id,name,status,conclusion}:
+  9001,CI,completed,success
+  9002,Release,in_progress,""
+summary: 2 runs
