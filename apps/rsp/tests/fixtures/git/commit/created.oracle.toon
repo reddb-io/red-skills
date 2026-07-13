@@ -1,2 +1,9 @@
 # oracle: preserves decision-relevant rows and columns from commit-created; keep as compact TOON, not a scalar verdict.
-value: "commit 1234567 on feature/rsp: 2 files, +40 -1\n"
+command: git commit
+branch: feature/rsp
+commit: "1234567"
+subject: "Refs #1412 add wrapper"
+files_changed: 2
+insertions: 40
+deletions: 1
+summary: "commit 1234567 on feature/rsp: 2 files, +40 -1"
