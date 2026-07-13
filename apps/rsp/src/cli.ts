@@ -39,6 +39,16 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     await runRspMcpServer();
     return 0;
   }
+  if (args.command === "shell-init") {
+    const shell = args.positional[1];
+    if (shell !== "fish" && shell !== "bash" && shell !== "zsh") {
+      process.stdout.write("error: usage rsp shell-init fish|bash|zsh\n");
+      return 2;
+    }
+    const { renderShellInit } = await import("./shell-init.js");
+    process.stdout.write(renderShellInit(shell));
+    return 0;
+  }
   const { resolveRspConfig } = await import("./config.js");
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
   const wrapperCommand = isWrapperCommand(args.command);
