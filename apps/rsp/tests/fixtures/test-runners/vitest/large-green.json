@@ -17,14 +17,14 @@
   },
   "assertions": [
     {
-      "question": "how many failed?",
-      "path": "summary",
-      "expected": "0/2000 failed · 1 suites · 25s"
-    },
-    {
       "question": "what was the exit code?",
       "path": "exit_code",
       "expected": 0
+    },
+    {
+      "question": "how many failed?",
+      "path": "summary",
+      "expected": "0/2000 failed · 1 suites · 25s"
     }
   ]
 }
