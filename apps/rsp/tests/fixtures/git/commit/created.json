@@ -10,6 +10,41 @@
     "status": 0,
     "signal": null
   },
-  "expected": "commit 1234567 on feature/rsp: 2 files, +40 -1\n",
-  "assertions": []
+  "expected": {
+    "command": "git commit",
+    "branch": "feature/rsp",
+    "commit": "1234567",
+    "subject": "Refs #1412 add wrapper",
+    "files_changed": 2,
+    "insertions": 40,
+    "deletions": 1,
+    "summary": "commit 1234567 on feature/rsp: 2 files, +40 -1"
+  },
+  "assertions": [
+    {
+      "question": "which commit was created?",
+      "path": "commit",
+      "expected": "1234567"
+    },
+    {
+      "question": "what branch received the commit?",
+      "path": "branch",
+      "expected": "feature/rsp"
+    },
+    {
+      "question": "how many files changed?",
+      "path": "files_changed",
+      "expected": 2
+    },
+    {
+      "question": "how many insertions were committed?",
+      "path": "insertions",
+      "expected": 40
+    },
+    {
+      "question": "how many deletions were committed?",
+      "path": "deletions",
+      "expected": 1
+    }
+  ]
 }
