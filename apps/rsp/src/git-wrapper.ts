@@ -6,7 +6,7 @@ import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output
 
 export { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 
-export type GitSubcommand = "status" | "log" | "diff" | "commit" | "push";
+export type GitSubcommand = "status" | "log" | "diff" | "commit" | "push" | "blame" | "branch" | "show";
 
 export const GIT_LOG_MACHINE_FIELDS = ["%h", "%an", "%as", "%s"] as const;
 
@@ -156,13 +156,22 @@ function shouldEmitFull(
 }
 
 function isHeavyGitSubcommand(subcommand: GitSubcommand): boolean {
-  return subcommand === "diff" || subcommand === "log";
+  return subcommand === "diff" || subcommand === "log" || subcommand === "blame" || subcommand === "show";
 }
 
 function parseGitSubcommand(argv: readonly string[]): GitSubcommand {
   if (argv[0] !== "git") throw new Error("expected rsp git <subcommand>");
   const subcommand = argv[1];
-  if (subcommand === "status" || subcommand === "log" || subcommand === "diff" || subcommand === "commit" || subcommand === "push") {
+  if (
+    subcommand === "status" ||
+    subcommand === "log" ||
+    subcommand === "diff" ||
+    subcommand === "commit" ||
+    subcommand === "push" ||
+    subcommand === "blame" ||
+    subcommand === "branch" ||
+    subcommand === "show"
+  ) {
     return subcommand;
   }
   throw new Error(`unsupported git subcommand: ${subcommand ?? ""}`);
@@ -181,6 +190,16 @@ function machineArgs(subcommand: GitSubcommand, rest: readonly string[]): string
       return ["commit", ...passthrough];
     case "push":
       return ["push", "--porcelain", ...passthrough];
+    case "blame":
+      return ["blame", "--line-porcelain", ...passthrough];
+    case "branch":
+      return [
+        "branch",
+        "--format=%(HEAD)%00%(refname:short)%00%(objectname:short)%00%(upstream:short)%00%(worktreepath)%00%(contents:subject)",
+        ...passthrough,
+      ];
+    case "show":
+      return ["show", "--format=%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b%x1e", "--stat", ...passthrough];
   }
 }
 
@@ -215,6 +234,12 @@ function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], 
       return helpIfQueried(parseCommit(command, stdout), query, ["rsp git status --query <path-or-state>"]);
     case "push":
       return helpIfQueried(parsePush(command, stdout), query, ["rsp gh pr list --query <branch>"]);
+    case "blame":
+      return parseBlame(command, stdout, query);
+    case "branch":
+      return parseBranch(command, stdout, query);
+    case "show":
+      return parseShow(command, stdout, query);
   }
 }
 
@@ -332,6 +357,119 @@ function parsePush(command: readonly string[], stdout: string): JsonObject {
   };
 }
 
+function parseBlame(command: readonly string[], stdout: string, query?: string): JsonObject {
+  const lines = stdout.split("\n");
+  const attributions: Array<{ line_start: number; line_end: number; author: string; commit: string; path: string }> = [];
+  let cursor: { commit: string; finalLine: number; author: string; path: string } | null = null;
+  for (const line of lines) {
+    const header = /^([0-9a-f]{8,40}) \d+ (\d+)(?: \d+)?$/.exec(line);
+    if (header) {
+      cursor = { commit: header[1] ?? "", finalLine: Number(header[2] ?? 0), author: "", path: "" };
+      continue;
+    }
+    if (!cursor) continue;
+    if (line.startsWith("author ")) {
+      cursor.author = line.slice("author ".length);
+      continue;
+    }
+    if (line.startsWith("filename ")) {
+      cursor.path = line.slice("filename ".length);
+      continue;
+    }
+    if (!line.startsWith("\t")) continue;
+    const previous = attributions.at(-1);
+    const shortCommit = cursor.commit.slice(0, 12);
+    if (
+      previous &&
+      previous.commit === shortCommit &&
+      previous.author === cursor.author &&
+      previous.path === cursor.path &&
+      previous.line_end + 1 === cursor.finalLine
+    ) {
+      previous.line_end = cursor.finalLine;
+    } else {
+      attributions.push({
+        line_start: cursor.finalLine,
+        line_end: cursor.finalLine,
+        author: cursor.author,
+        commit: shortCommit,
+        path: cursor.path,
+      });
+    }
+    cursor = null;
+  }
+  const filteredAttributions = filterRows(attributions, query);
+  const authorCounts = countBy(filteredAttributions, "author");
+  return helpIfQueried({
+    command: command.join(" "),
+    ranges: filteredAttributions as JsonValue,
+    authors: authorCounts,
+    summary: `${query ? `${filteredAttributions.length}/${attributions.length}` : filteredAttributions.length} ranges, ${Object.keys(authorCounts).length} authors`,
+  }, query, ["rsp git show --query <commit>", "rsp git log --query <author>"]);
+}
+
+function parseBranch(command: readonly string[], stdout: string, query?: string): JsonObject {
+  const branches = stdout.split("\n").filter(Boolean).map((record) => {
+    const [head, name, commit, upstream, worktree, subject] = record.split("\0");
+    return {
+      current: head === "*",
+      name: name ?? "",
+      commit: commit ?? "",
+      upstream: upstream || null,
+      worktree: worktree || null,
+      subject: subject ?? "",
+    };
+  });
+  const filteredBranches = filterRows(branches, query);
+  const current = filteredBranches.find((branch) => branch.current)?.name ?? "";
+  return helpIfQueried({
+    command: command.join(" "),
+    branches: filteredBranches as JsonValue,
+    summary: `${query ? `${filteredBranches.length}/${branches.length}` : filteredBranches.length} branches${current ? `, current ${current}` : ""}`,
+  }, query, ["rsp git log --query <branch>", "rsp gh pr list --query <branch>"]);
+}
+
+function parseShow(command: readonly string[], stdout: string, query?: string): JsonObject {
+  const start = stdout.indexOf("\x1e");
+  const end = start >= 0 ? stdout.indexOf("\x1e", start + 1) : -1;
+  const metaRaw = start >= 0 && end >= 0 ? stdout.slice(start + 1, end) : "";
+  const statRaw = end >= 0 ? stdout.slice(end + 1) : stdout;
+  const [commit, short, author, date, subject, body = ""] = metaRaw.split("\x1f");
+  const files: JsonObject[] = [];
+  for (const line of statRaw.split("\n")) {
+    const match = /^\s*(.+?)\s+\|\s+(\d+)\s+([+\-]+|Bin.*)$/.exec(line);
+    if (!match) continue;
+    const graph = match[3] ?? "";
+    files.push({
+      path: (match[1] ?? "").trim(),
+      changed: Number(match[2] ?? 0),
+      added: [...graph].filter((char) => char === "+").length,
+      deleted: [...graph].filter((char) => char === "-").length,
+      binary: graph.startsWith("Bin"),
+    });
+  }
+  const filteredFiles = filterRows(files, query);
+  let changed = 0;
+  let added = 0;
+  let deleted = 0;
+  for (const file of filteredFiles) {
+    changed += typeof file.changed === "number" ? file.changed : 0;
+    added += typeof file.added === "number" ? file.added : 0;
+    deleted += typeof file.deleted === "number" ? file.deleted : 0;
+  }
+  return helpIfQueried({
+    command: command.join(" "),
+    commit: commit ?? "",
+    short: short ?? "",
+    author: author ?? "",
+    date: date ?? "",
+    subject: subject ?? "",
+    body_lines: body.trim() ? body.trim().split("\n").length : 0,
+    files: filteredFiles as JsonValue,
+    summary: `${query ? `${filteredFiles.length}/${files.length}` : filteredFiles.length} files, ${changed} changed, +${added} -${deleted}`,
+  }, query, ["rsp git blame --query <author-or-path>", "rsp git diff --query <path>"]);
+}
+
 function helpIfQueried(payload: JsonObject, query: string | undefined, help: readonly string[]): JsonObject {
   return query ? withHelp(payload, help) : payload;
 }
@@ -359,7 +497,7 @@ function positiveNumber(value: number | undefined, fallback: number): number {
 }
 
 function tersePayload(payload: JsonObject): { payload: JsonObject; rowsElided: number } | null {
-  for (const key of ["rows", "commits", "files", "refs"] as const) {
+  for (const key of ["rows", "commits", "files", "refs", "ranges", "branches"] as const) {
     const value = payload[key];
     if (Array.isArray(value) && value.length > 1) {
       return {
