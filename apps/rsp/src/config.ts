@@ -10,6 +10,8 @@ export const DEFAULT_RSP_TELEMETRY_TTL_DAYS = 90;
 export const DEFAULT_RSP_TELEMETRY_BYTE_BUDGET = 4 * 1024 * 1024;
 export const DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS = 30_000;
 export const DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
+export const DEFAULT_RSP_IDLE_MS = 5 * 60_000;
+export const MIN_RSP_IDLE_MS = 5_000;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
@@ -20,6 +22,7 @@ export interface RspRuntimeConfig {
   telemetryByteBudget: number;
   telemetryDrainIntervalMs: number;
   telemetryDrainTimeoutMs: number;
+  idleMs: number;
   heavyGitByteThreshold: number;
 }
 
@@ -46,6 +49,11 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_TELEMETRY_DRAIN_TIMEOUT_MS) ?? readNumericYamlPath(yaml, "rsp.telemetryDrainTimeoutMs"),
     DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
   );
+  const idleMs = minNumber(
+    numericEnv(env.RSP_IDLE_MS) ?? readNumericYamlPath(yaml, "rsp.idleMs"),
+    DEFAULT_RSP_IDLE_MS,
+    MIN_RSP_IDLE_MS,
+  );
   const heavyGitByteThreshold = positiveNumber(
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
@@ -61,6 +69,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     telemetryByteBudget,
     telemetryDrainIntervalMs,
     telemetryDrainTimeoutMs,
+    idleMs,
     heavyGitByteThreshold,
   };
 }
@@ -74,6 +83,11 @@ function readNumericYamlPath(yaml: string, dottedPath: string): number | undefin
 
 function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function minNumber(value: number | undefined, fallback: number, min: number): number {
+  const n = positiveNumber(value, fallback);
+  return Math.max(n, min);
 }
 
 function numericEnv(value: string | undefined): number | undefined {
