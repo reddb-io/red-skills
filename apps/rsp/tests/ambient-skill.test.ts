@@ -36,6 +36,8 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("Use `--terse` for large or repetitive output");
     expect(markdown).toContain("Use `--full` when exact inline output is required");
     expect(markdown).toContain("Large `rsp git diff` and `rsp git log` output is threshold-gated");
+    expect(markdown).toContain("call `rsp exec -- \"<command line>\"` directly");
+    expect(markdown).toContain("Bytes inside pipes remain untouched");
     expect(markdown).toContain("If an rsp wrapper is disabled, lacks its store, or fails, it passes through to the raw command");
     expect(markdown).toContain("`rsp show el:<id>` writes the original bytes verbatim to stdout");
   });
