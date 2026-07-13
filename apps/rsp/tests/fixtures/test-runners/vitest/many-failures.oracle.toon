@@ -1,0 +1,9 @@
+# oracle: preserves decision-relevant rows and columns from vitest-many-failures; keep as compact TOON, not a scalar verdict.
+exit_code: 1
+summary: 5/8 failed · 2 suites · 3.2s
+failures[5]{suite,name,excerpt}:
+  apps/rsp/tests/alpha.test.ts,alpha case one,"AssertionError: case one failed\n- Expected: 1\n+ Received: 2\n    at alpha.test.ts:11:5"
+  apps/rsp/tests/alpha.test.ts,alpha case two,"AssertionError: case two failed\n- Expected: 3\n+ Received: 4\n    at alpha.test.ts:19:5"
+  apps/rsp/tests/alpha.test.ts,alpha case three,"AssertionError: case three failed\n- Expected: 5\n+ Received: 6\n    at alpha.test.ts:27:5"
+  apps/rsp/tests/beta.test.ts,beta case four,"AssertionError: case four failed\n- Expected: 7\n+ Received: 8\n    at beta.test.ts:14:5"
+  apps/rsp/tests/beta.test.ts,beta case five,"AssertionError: case five failed\n- Expected: 9\n+ Received: 10\n    at beta.test.ts:22:5"
