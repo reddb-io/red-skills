@@ -50,6 +50,12 @@ import {
   resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
+import {
+  planDocsSweep,
+  renderDocsSweepFileList,
+  type DocsSweepInput,
+  type DocsSweepPlan,
+} from "./docs-sweep.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -218,6 +224,23 @@ export type ReconcileBootOutcome = "landed" | "parked" | "skipped";
  * from closed-over context. When absent, the reconcile sweep is a no-op. */
 export type ReconcileBootRunner = (plan: ReconcileSweepPlan) => Promise<{ outcome: ReconcileBootOutcome }>;
 
+export class BootHaltError extends Error {
+  constructor(
+    readonly phase: "docs-sweep",
+    readonly plan: DocsSweepPlan,
+  ) {
+    super(`Docs Sweep halted (${plan.haltReason ?? "unknown"}): ${renderDocsSweepFileList(plan.files)}`);
+    this.name = "BootHaltError";
+  }
+}
+
+export interface DocsSweepLandResult {
+  ok: boolean;
+  reason?: string;
+}
+
+export type DocsSweepLander = (plan: DocsSweepPlan) => Promise<DocsSweepLandResult>;
+
 /** All injected IO + lookups for the boot run. */
 export interface BootDeps {
   fs: BootFs;
@@ -233,6 +256,8 @@ export interface BootDeps {
   /** When provided, the reconcile sweep (step 7) validates and lands each
    * owned parked-mechanical branch without re-running the agent. */
   reconcileRunner?: ReconcileBootRunner;
+  /** Landing lane for the Docs Sweep. Absent is valid only when the plan is clean. */
+  docsSweepLander?: DocsSweepLander;
 }
 
 // ---------- step inputs ----------
@@ -313,6 +338,8 @@ export interface BootOptions {
    * will heal by shedding the stale `blocked:*` labels. When absent the sweep is a
    * no-op. Optional for back-compat. */
   mixedBlockedCandidates?: readonly MixedBlockedCandidate[];
+  /** Dirty/ahead docs discovered by the runtime for the Docs Sweep. */
+  docsSweep?: DocsSweepInput;
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -377,6 +404,10 @@ export interface ReconcileSweepResult {
   skipped: number[];
 }
 
+export interface DocsSweepResult {
+  plan: DocsSweepPlan;
+}
+
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
  * only `precheck` is populated (the bash `die` aborts before any other step). */
 export interface BootResult {
@@ -385,6 +416,7 @@ export interface BootResult {
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
+  docsSweep?: DocsSweepResult;
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
   staleClaimSweep?: StaleClaimSweepResult;
@@ -407,14 +439,15 @@ export interface BootResult {
  *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
- *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
+ *   6. docs sweep           — planDocsSweep; land stranded .red docs or halt.
+ *   7. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
  *   6a. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
  *                             a cross-host claim that stopped refreshing (#627).
  *                             No-op when `claimedIssues` is absent.
- *   7. reconcile sweep      — planReconcileSweep; validate-and-land each owned
+ *   9. reconcile sweep      — planReconcileSweep; validate-and-land each owned
  *                             parked-mechanical branch without re-running the agent
  *                             (ADR 0055). No-op when reconcileRunner is absent.
- *   8. straggler check      — stragglerCounts + shouldWarnStragglers → warn flag.
+ *   10. straggler check     — stragglerCounts + shouldWarnStragglers → warn flag.
  *
  * Steps 3-8 run only after a passing precheck, mirroring the bash `die`/`set -e`
  * abort. The TTY "proceed anyway?" prompt is the caller's: this returns the
@@ -458,19 +491,22 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 5. snapshot grace + live/local branch cleanup ----
   const branchCleanup = await runBranchCleanup(deps, options.branches);
 
-  // ---- 6. unblock sweep ----
+  // ---- 6. docs sweep ----
+  const docsSweep = await runDocsSweep(deps, options);
+
+  // ---- 7. unblock sweep ----
   const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
 
-  // ---- 6a0. mixed-blocked normalizer (#1481) ----
+  // ---- 7a. mixed-blocked normalizer (#1481) ----
   const mixedBlockedNormalize = await runMixedBlockedNormalize(deps, options);
 
-  // ---- 6a. cross-host stale-claim sweep (#627) ----
+  // ---- 8. cross-host stale-claim sweep (#627) ----
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
-  // ---- 7. reconcile sweep (ADR 0055) ----
+  // ---- 9. reconcile sweep (ADR 0055) ----
   const reconcileSweep = await runReconcileSweep(deps, options, staleClaimSweep.released);
 
-  // ---- 8. straggler check ----
+  // ---- 10. straggler check ----
   const straggler = await runStragglerCheck(deps);
 
   return {
@@ -479,12 +515,32 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     orphanCleanup,
     attemptCap,
     branchCleanup,
+    docsSweep,
     unblockSweep,
     mixedBlockedNormalize,
     staleClaimSweep,
     reconcileSweep,
     straggler,
   };
+}
+
+async function runDocsSweep(deps: BootDeps, options: BootOptions): Promise<DocsSweepResult> {
+  const plan = planDocsSweep(options.docsSweep ?? { base: options.precheck.configuredTrunk ?? "main", files: [] });
+  if (plan.action === "clean") return { plan };
+  if (plan.action === "halt") throw new BootHaltError("docs-sweep", plan);
+  if (!deps.docsSweepLander) {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  let landed: DocsSweepLandResult;
+  try {
+    landed = await deps.docsSweepLander(plan);
+  } catch {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  if (!landed.ok) {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  return { plan };
 }
 
 /** Step 6a: cross-host stale-claim sweep (#627). List the currently-claimed
