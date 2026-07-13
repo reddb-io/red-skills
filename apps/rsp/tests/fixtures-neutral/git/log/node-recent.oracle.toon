@@ -1,0 +1,9 @@
+# oracle: preserves decision-relevant rows and columns from log-node-recent; keep as compact TOON, not a scalar verdict.
+command: git log
+commits[5]{short,author,date,subject}:
+  ace91de6,"Matteo Collina",2026-07-13,"stream: use the ring buffer for WHATWG stream request queues"
+  e84b517d,"Efe Karasakal",2026-07-13,"doc: document net Socket server property"
+  e7864e60,"Samuel Kapust",2026-07-13,"src: zero-initialize cap_data in node_credentials.cc"
+  fc92e911,"Filip Skokan",2026-07-13,"doc: update a Dispatcher undici doc link"
+  8c6cbb8e,"Joyee Cheung",2026-07-13,"inspector: add --cond to node inspect probe mode"
+summary: 5 commits
