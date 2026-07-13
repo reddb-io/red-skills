@@ -11,6 +11,7 @@ import {
   drainTelemetrySpool,
   readTelemetryGainsReport,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+  RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
 } from "../src/telemetry.js";
@@ -350,6 +351,68 @@ describe("rsp telemetry spool", () => {
     });
   }, 40_000);
 
+  it("self-heals old-model telemetry collections in the built bundle resident", async () => {
+    const root = await tempRoot();
+    const bundle = await ensureRspBundle();
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const seeded = await connect(storeUri);
+    try {
+      await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INVOCATIONS_COLLECTION} (id TEXT)`);
+      await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_DEGRADATIONS_COLLECTION} (id TEXT)`);
+      await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INDEX_COLLECTION} (id TEXT)`);
+    } finally {
+      await seeded.close();
+    }
+
+    await writeFile(telemetrySpoolPath(root), `${JSON.stringify({
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "legacy-model-event",
+      command: "git log",
+    })}\n`, "utf8");
+
+    const paths = resolveResidentPaths(root);
+    const child = execFile(process.execPath, [
+      bundle,
+      "server",
+      "--socket",
+      paths.socketPath,
+      "--store-uri",
+      storeUri,
+      "--ttl-days",
+      String(DEFAULT_RSP_TTL_DAYS),
+      "--byte-budget",
+      String(DEFAULT_RSP_BYTE_BUDGET),
+      "--telemetry-drain-timeout-ms",
+      String(await calibratedTelemetryDrainTimeoutMs(root)),
+      "--idle-ms",
+      "100",
+    ], { cwd: root });
+    await waitForResident(paths.socketPath);
+    await new Promise<void>((resolve, reject) => {
+      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`bundle resident exited ${code}`)));
+      child.once("error", reject);
+    });
+
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    await expect(readTelemetry(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION, "legacy-model-event")).resolves.toMatchObject({
+      id: "legacy-model-event",
+      command: "git log",
+    });
+    await expect(readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "telemetry collection model mismatch",
+          source_collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        }),
+      ]),
+    );
+    await expect(readTelemetryCollectionModels(storeUri)).resolves.toMatchObject({
+      [RSP_TELEMETRY_INVOCATIONS_COLLECTION]: "kv",
+      [RSP_TELEMETRY_DEGRADATIONS_COLLECTION]: "kv",
+      [RSP_TELEMETRY_INDEX_COLLECTION]: "kv",
+    });
+  }, 40_000);
+
   it("periodically drains telemetry spooled while the built bundle resident is alive and reports stats", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
@@ -539,6 +602,33 @@ async function readTelemetry(storeUri: string, collection: string, key: string):
   try {
     const raw = await db.kv(collection).get(key);
     return typeof raw === "string" ? JSON.parse(raw) as unknown : raw;
+  } finally {
+    await db.close();
+  }
+}
+
+async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
+  const db = await connect(storeUri);
+  try {
+    const raw = await db.kv(collection).list({ limit: 1000 });
+    return raw.items.map((entry) => typeof entry.value === "string" ? JSON.parse(entry.value) as unknown : entry.value);
+  } finally {
+    await db.close();
+  }
+}
+
+async function readTelemetryCollectionModels(storeUri: string): Promise<Record<string, string>> {
+  const db = await connect(storeUri);
+  try {
+    return Object.fromEntries(
+      (await db.list())
+        .filter((entry) => [
+          RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+          RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+          RSP_TELEMETRY_INDEX_COLLECTION,
+        ].includes(entry.name))
+        .map((entry) => [entry.name, entry.model]),
+    );
   } finally {
     await db.close();
   }

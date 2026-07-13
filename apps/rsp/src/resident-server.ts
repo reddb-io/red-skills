@@ -113,10 +113,20 @@ interface TelemetryIndexDocument {
   records: TelemetryIndexEntry[];
 }
 
+interface TelemetryCollectionHeal {
+  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION | typeof RSP_TELEMETRY_INDEX_COLLECTION;
+  previousModel: string;
+}
+
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
 const TOKENIZATION_TIMEOUT_MS = 500;
 const TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
 const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
+const TELEMETRY_KV_COLLECTIONS = [
+  RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+  RSP_TELEMETRY_INDEX_COLLECTION,
+] as const;
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
@@ -136,8 +146,18 @@ class ResidentTelemetryDrain {
   private async drainAndSweepOnce(): Promise<void> {
     const db = this.store.redDb();
     if (!db) return;
+    const healed = await ensureTelemetryKvCollections(db);
     const index = await this.readIndex(db);
     const nextRecords = [...index.records];
+    for (const entry of healed) {
+      nextRecords.push(await this.writeDrainDegradation(db, {
+        reason: "telemetry collection model mismatch",
+        command: "rsp resident telemetry drain",
+        source_collection: entry.collection,
+        error: `expected kv, got ${entry.previousModel}`,
+        bytes: 0,
+      }));
+    }
     await drainTelemetrySpool(this.opts.rootDir, async (line) => {
       const event = parseTelemetryEvent(line);
       if (!event) {
@@ -273,6 +293,60 @@ async function safeDrainTelemetry(telemetry: ResidentTelemetryDrain, timeoutMs =
   } catch (err) {
     process.stderr.write(`rsp resident: telemetry drain failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
+}
+
+async function ensureTelemetryKvCollections(db: RedDB): Promise<TelemetryCollectionHeal[]> {
+  const healed: TelemetryCollectionHeal[] = [];
+  for (const collection of TELEMETRY_KV_COLLECTIONS) {
+    const probe = await probeTelemetryKvCollection(db, collection);
+    if (probe.ok) continue;
+    if (probe.previousModel) {
+      if (probe.previousModel !== "collection") await dropTelemetryCollection(db, collection, probe.previousModel);
+      healed.push({ collection, previousModel: probe.previousModel });
+    }
+    await db.query(`CREATE KV IF NOT EXISTS ${sqlIdentifier(collection)}`);
+  }
+  return healed;
+}
+
+async function probeTelemetryKvCollection(
+  db: RedDB,
+  collection: typeof TELEMETRY_KV_COLLECTIONS[number],
+): Promise<{ ok: true } | { ok: false; previousModel: string | null }> {
+  try {
+    await db.kv(collection).get("__rsp_telemetry_model_probe__");
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/\bnot found\b/i.test(message)) return { ok: false, previousModel: null };
+    const mismatch = message.match(/model mismatch: expected kv, got ([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (mismatch?.[1]) return { ok: false, previousModel: mismatch[1].toLowerCase() };
+    if (/does not allow 'kv' operations/i.test(message)) return { ok: false, previousModel: "collection" };
+    const meta = (await db.list()).find((entry) => entry.name === collection);
+    if (meta && meta.model !== "kv") return { ok: false, previousModel: meta.model };
+    throw err;
+  }
+}
+
+async function dropTelemetryCollection(db: RedDB, collection: string, model: string): Promise<void> {
+  const kind = ddlKind(model);
+  if (!kind) throw new Error(`cannot self-heal telemetry collection ${collection}: unsupported model ${model}`);
+  await db.query(`DROP ${kind} ${sqlIdentifier(collection)}`);
+}
+
+function ddlKind(model: string): string | null {
+  const normalized = model.toLowerCase();
+  if (normalized === "table") return "TABLE";
+  if (normalized === "kv") return "KV";
+  if (normalized === "graph") return "GRAPH";
+  if (normalized === "queue") return "QUEUE";
+  if (normalized === "document" || normalized === "documents") return "DOCUMENT";
+  return null;
+}
+
+function sqlIdentifier(value: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`invalid telemetry collection name: ${value}`);
+  return value;
 }
 
 async function enrichTelemetryEvent(event: RspTelemetryEvent): Promise<RspTelemetryEvent> {
