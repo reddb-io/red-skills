@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "../src/config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
+import { resolveResidentPaths } from "../src/resident-client.js";
+import { sendResidentRequest } from "../src/resident-protocol.js";
 import { mergeRspBlock, provisionRspRepoStore } from "../src/setup.js";
 
 const roots: string[] = [];
@@ -19,9 +22,75 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  const rootsToRemove = roots.splice(0);
+  await Promise.all(rootsToRemove.map((root) => stopResidentForRoot(root)));
+  await Promise.all(rootsToRemove.map((root) => rm(root, { recursive: true, force: true })));
   delete process.env.REDDB_BIN;
 });
+
+afterAll(async () => {
+  await Promise.all(roots.splice(0).map((root) => stopResidentForRoot(root)));
+});
+
+async function stopResidentForRoot(root: string): Promise<void> {
+  const paths = resolveResidentPaths(root);
+  const pid = await readPid(paths.pidPath);
+  if (await pathExists(paths.socketPath)) {
+    await sendResidentRequest(
+      { socketPath: paths.socketPath, timeoutMs: 500 },
+      { id: randomUUID(), op: "handover", clientVersion: "9999.0.0" },
+    ).catch(() => undefined);
+  }
+  if (pid != null && isPidAlive(pid)) {
+    killResidentPid(pid, "SIGTERM");
+    await waitForPidGone(pid, 1_000).catch(() => killResidentPid(pid, "SIGKILL"));
+  }
+  await rm(paths.socketPath, { force: true });
+  await rm(paths.pidPath, { force: true });
+}
+
+async function readPid(path: string): Promise<number | null> {
+  const text = await readFile(path, "utf8").catch(() => "");
+  const pid = Number(text.trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killResidentPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(process.platform === "win32" ? pid : -pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {}
+  }
+}
+
+async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (isPidAlive(pid)) throw new Error(`process ${pid} still alive after ${timeoutMs}ms`);
+}
 
 describe("mergeRspBlock", () => {
   it("adds an explicit rsp enablement block with retention defaults", () => {
