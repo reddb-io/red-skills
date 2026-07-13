@@ -69,18 +69,6 @@ export async function renderGitContract(
     };
   }
 
-  const scalar = scalarFastPath(subcommand, payload);
-  if (scalar) {
-    return {
-      stdout: Buffer.from(`${scalar}\n`),
-      stderr: Buffer.from(contract.stderr),
-      status: contract.status,
-      signal: contract.signal,
-      payload,
-      oneLine: true,
-    };
-  }
-
   const fullToon = encode(payload);
   if (shouldEmitFull(subcommand, fullToon, parsedCommand.full, options)) {
     return {
@@ -340,23 +328,6 @@ function helpIfQueried(payload: JsonObject, query: string | undefined, help: rea
   return query ? withHelp(payload, help) : payload;
 }
 
-function scalarFastPath(subcommand: GitSubcommand, payload: JsonObject): string | null {
-  if (subcommand === "commit" && typeof payload.commit === "string" && payload.commit.length > 0) {
-    return String(payload.summary ?? "");
-  }
-  if (subcommand === "push") {
-    const refsValue = payload.refs;
-    const refs = Array.isArray(refsValue) ? refsValue : [];
-    const realPushes = refs.filter((ref) => isRecord(ref) && ref.flag !== "=");
-    if (realPushes.length === 1) return String(payload.summary ?? "");
-    return null;
-  }
-  return null;
-}
-
-function isRecord(value: JsonValue | undefined): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function statusState(xy: string): string {
   if (xy.includes("A")) return "added";

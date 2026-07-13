@@ -190,7 +190,7 @@ describe("rsp git fidelity fixtures", () => {
     }
   });
 
-  it("keeps commit-created and push-ref-update fixtures compact without exceeding raw tokens", async () => {
+  it("keeps commit-created and push-ref-update fixtures as compact TOON instead of scalar verdicts", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
@@ -198,13 +198,9 @@ describe("rsp git fidelity fixtures", () => {
       for (const name of ["commit-created", "push-porcelain"]) {
         const fixture = fixtures.find((candidate) => candidate.name === name)!;
         const result = await runFidelityFixture(fixture, { level: "lossless", store });
-        const rawTokens = tokenizer.encode(fixture.recorded.stdout).length;
-        const wrappedTokens = tokenizer.encode(result.stdout.toString("utf8")).length;
 
-        expect(result.oneLine).toBe(true);
-        expect(result.stdout.toString("utf8")).toBe(fixture.expected);
-        expect(wrappedTokens).toBeLessThanOrEqual(rawTokens);
-        expect(result.tokenDelta).toBeGreaterThanOrEqual(0);
+        expect(result.oneLine).toBeUndefined();
+        expect(decode(result.stdout.toString("utf8"))).toEqual(fixture.expected);
         expect(result.assertionFailures).toEqual([]);
       }
     } finally {
@@ -239,7 +235,7 @@ describe("rsp git fidelity fixtures", () => {
         {
           question: "which branch was pushed?",
           expected: "main",
-          actual: "pushed feature/rsp -> github.com:reddb-io/red-skills.git +1 commits",
+          actual: "refs/heads/feature/rsp",
         },
       ]);
     } finally {
@@ -255,11 +251,11 @@ describe("rsp git admission harness", () => {
     const commitRow = report.filters.find((row) => row.filter === "git:commit")!;
     const pushRow = report.filters.find((row) => row.filter === "git:push")!;
 
-    expect(report.summary).toBe("2/5 filters active at threshold 60%");
-    // git:commit's one-line fast-path is a modest positive win that stays below the admission threshold.
+    expect(report.summary).toBe("1/5 filters active at threshold 60%");
+    // git:commit's compact TOON rendering stays below the admission threshold.
     expect(commitRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
-    // git:push clears the threshold now that the fast-path replaces the negative-delta TOON framing.
-    expect(pushRow).toMatchObject({ active: true, mode: "active" });
+    // git:push also stays passthrough when preserving pushed-ref rows would be a token regression.
+    expect(pushRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
 
     const tmp = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(tmp, "red.rdb")}` });

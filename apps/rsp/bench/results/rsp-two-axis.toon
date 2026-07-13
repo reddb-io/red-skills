@@ -258,33 +258,33 @@ filters[10]:
     oracle_capture:
       raw:
         token_count: 33
-        capture_pct: 0
+        capture_pct: 47.8
         source: recorded
       rsp:
         token_count: 33
-        capture_pct: 0
+        capture_pct: 47.8
         source: measured
       terse:
         token_count: 33
-        capture_pct: 0
+        capture_pct: 47.8
         source: measured
       rtk:
         token_count: 59
-        capture_pct: 0
+        capture_pct: 85.5
         source: recorded
       oracle_ceiling:
-        token_count: 23
+        token_count: 69
         capture_pct: 100
         source: fixture-oracle
     hypothetical_active:
       brief:
-        median_delta_pct: 42.4
-        p90_delta_pct: 42.4
+        median_delta_pct: -109.1
+        p90_delta_pct: -109.1
         fidelity_pass_rate_pct: 100
         source: measured
       terse:
-        median_delta_pct: 42.4
-        p90_delta_pct: 42.4
+        median_delta_pct: -109.1
+        p90_delta_pct: -109.1
         fidelity_pass_rate_pct: 100
         source: measured
   - filter: "git:diff"
@@ -398,7 +398,7 @@ filters[10]:
         fidelity_pass_rate_pct: 0
         source: measured
   - filter: "git:push"
-    mode: active
+    mode: passthrough
     fixture_count: 2
     raw:
       median_delta_pct: 0
@@ -406,13 +406,13 @@ filters[10]:
       fidelity_pass_rate_pct: 100
       source: recorded
     brief:
-      median_delta_pct: 31.9
-      p90_delta_pct: 63.8
+      median_delta_pct: 0
+      p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 31.9
-      p90_delta_pct: 63.8
+      median_delta_pct: 0
+      p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
@@ -423,34 +423,34 @@ filters[10]:
     oracle_capture:
       raw:
         token_count: 58
-        capture_pct: 0
+        capture_pct: 56.9
         source: recorded
       rsp:
-        token_count: 21
-        capture_pct: 75
+        token_count: 58
+        capture_pct: 56.9
         source: measured
       terse:
-        token_count: 21
-        capture_pct: 75
+        token_count: 58
+        capture_pct: 56.9
         source: measured
       rtk:
         token_count: 63
-        capture_pct: 0
+        capture_pct: 61.8
         source: recorded
       oracle_ceiling:
-        token_count: 28
+        token_count: 102
         capture_pct: 100
         source: fixture-oracle
     hypothetical_active:
       brief:
-        median_delta_pct: 31.9
-        p90_delta_pct: 63.8
+        median_delta_pct: -37.1
+        p90_delta_pct: 0
         fidelity_pass_rate_pct: 100
         source: measured
       terse:
-        median_delta_pct: 31.9
-        p90_delta_pct: 63.8
-        fidelity_pass_rate_pct: 100
+        median_delta_pct: -32.8
+        p90_delta_pct: 0
+        fidelity_pass_rate_pct: 50
         source: measured
   - filter: "git:status"
     mode: active
@@ -569,22 +569,43 @@ aggregate:
     capture_pct: 0
     source: recorded
   rsp:
-    token_count: 13334
-    capture_pct: 99.9
+    token_count: 13371
+    capture_pct: 99.8
     source: measured
   terse:
-    token_count: 13150
-    capture_pct: 99.1
+    token_count: 13187
+    capture_pct: 98.5
     source: measured
   rtk:
     token_count: 646
     capture_pct: 4.9
     source: recorded
   oracle_ceiling:
-    token_count: 13273
+    token_count: 13393
     capture_pct: 100
     source: fixture-oracle
 parity[2]{domain,filter,rsp_median_delta_pct,rtk_median_delta_pct,rsp_fidelity_pass_rate_pct,rtk_fidelity_pass_rate_pct,parity_gate}:
   cargo-test,"cargo:test",61.9,67.8,100,100,fail
   git-commit,"git:commit",0,-78.8,100,100,pass
+anti_suppression_audit[20]{filter,level,audited,note}:
+  "cargo:test",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
+  "cargo:test",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
+  "gh:issue",brief,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
+  "gh:issue",terse,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
+  "gh:pr",brief,justified,empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON
+  "gh:pr",terse,justified,empty-list sentinel is deliberate; non-empty list and view fixtures keep PR row/body TOON
+  "gh:run",brief,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
+  "gh:run",terse,ok,successful outputs keep decision rows as compact TOON; fault responses are byte-intact passthrough
+  "git:commit",brief,fixed,"success output now renders commit id, branch, subject, and change counts as compact TOON"
+  "git:commit",terse,fixed,"success output now renders commit id, branch, subject, and change counts as compact TOON"
+  "git:diff",brief,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:diff",terse,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:log",brief,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:log",terse,ok,large row sets keep compact TOON plus an elision handle for full detail
+  "git:push",brief,fixed,success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults
+  "git:push",terse,fixed,success output now renders pushed refs and remote as compact TOON; rejected pushes remain byte-intact faults
+  "git:status",brief,justified,clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON
+  "git:status",terse,justified,clean-tree sentinel is a deliberate definitive empty state; changed-tree output keeps row TOON
+  "vitest:run",brief,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
+  "vitest:run",terse,ok,"test outputs keep exit code, summary, and failure rows in compact TOON with handles for elided detail"
 summary: "27 fixtures, 10 filters; shipped modes apply admission threshold 60%"
