@@ -1,6 +1,10 @@
 {
   "name": "pr-list-default",
-  "command": ["gh", "pr", "list"],
+  "command": [
+    "gh",
+    "pr",
+    "list"
+  ],
   "catalog_prior_art": "official catalog GitHub wrapper field choice mined for PR list: number,title,state,isDraft; wider metadata stays opt-in.",
   "recorded": {
     "stdout": "[{\"number\":42,\"title\":\"Add rsp gh wrapper\",\"state\":\"OPEN\",\"isDraft\":false},{\"number\":41,\"title\":\"Draft docs\",\"state\":\"OPEN\",\"isDraft\":true}]",
@@ -11,13 +15,81 @@
   "expected": {
     "command": "gh pr list",
     "prs": [
-      { "number": 42, "title": "Add rsp gh wrapper", "state": "open", "draft": false },
-      { "number": 41, "title": "Draft docs", "state": "open", "draft": true }
+      {
+        "number": 42,
+        "title": "Add rsp gh wrapper",
+        "state": "open",
+        "draft": false
+      },
+      {
+        "number": 41,
+        "title": "Draft docs",
+        "state": "open",
+        "draft": true
+      }
     ],
     "summary": "2 open PRs"
   },
   "assertions": [
-    { "question": "how many fields are in a default PR row?", "path": "prs.0.length", "expected": 4 },
-    { "question": "which PR is first?", "path": "prs.0.number", "expected": 42 }
+    {
+      "question": "oracle preserves prs.length",
+      "path": "prs.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves prs.0.length",
+      "path": "prs.0.length",
+      "expected": 4
+    },
+    {
+      "question": "which PR is first?",
+      "path": "prs.0.number",
+      "expected": 42
+    },
+    {
+      "question": "oracle preserves prs.0.title",
+      "path": "prs.0.title",
+      "expected": "Add rsp gh wrapper"
+    },
+    {
+      "question": "oracle preserves prs.0.state",
+      "path": "prs.0.state",
+      "expected": "open"
+    },
+    {
+      "question": "oracle preserves prs.0.draft",
+      "path": "prs.0.draft",
+      "expected": false
+    },
+    {
+      "question": "oracle preserves prs.1.length",
+      "path": "prs.1.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves prs.1.number",
+      "path": "prs.1.number",
+      "expected": 41
+    },
+    {
+      "question": "oracle preserves prs.1.title",
+      "path": "prs.1.title",
+      "expected": "Draft docs"
+    },
+    {
+      "question": "oracle preserves prs.1.state",
+      "path": "prs.1.state",
+      "expected": "open"
+    },
+    {
+      "question": "oracle preserves prs.1.draft",
+      "path": "prs.1.draft",
+      "expected": true
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "2 open PRs"
+    }
   ]
 }
