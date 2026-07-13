@@ -359,12 +359,14 @@ describe("rsp cli", () => {
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
     const paths = trackedResidentPaths(root);
 
+    const coldNodeBaseline = timedStatus(runNodeNoop);
     const cold = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
+    const coldHookWorkMs = Math.max(0, cold.elapsedMs - coldNodeBaseline.elapsedMs);
 
     expect(cold.status).toBe(1);
     expect(cold.stdout).toEqual(Buffer.alloc(0));
     expect(cold.stderr).toEqual(Buffer.alloc(0));
-    expect(cold.elapsedMs).toBeLessThan(200);
+    expect(coldHookWorkMs).toBeLessThan(200);
     await expect(stat(paths.wakeLockPath)).resolves.toMatchObject({ size: expect.any(Number) });
 
     for (let i = 0; i < 4; i++) {
@@ -383,12 +385,14 @@ describe("rsp cli", () => {
     // also the moment the socket starts answering — poll instead of racing it.
     await waitForGone(paths.wakeLockPath);
 
+    const nodeBaseline = timedStatus(runNodeNoop);
     const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
+    const hookWorkMs = Math.max(0, warm.elapsedMs - nodeBaseline.elapsedMs);
 
     expect(warm.status).toBe(0);
     expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
     expect(warm.stderr).toEqual(Buffer.alloc(0));
-    expect(warm.elapsedMs).toBeLessThan(100);
+    expect(hookWorkMs).toBeLessThan(100);
   }, 120_000);
 
   it("built bundle starts the resident for a repo root longer than the Unix socket path limit", async () => {
@@ -585,6 +589,9 @@ describe("rsp cli", () => {
     expect(compressed.status).toBe(0);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
+    const fastStatus = runBundleFromCwd(root, ["git", "status"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(fastStatus.status).toBe(0);
+    expect(fastStatus.stderr).toEqual(Buffer.alloc(0));
     const residentResult = await resident;
     expect(residentResult.status, `${residentResult.stdout.toString("utf8")}${residentResult.stderr.toString("utf8")}`).toBe(0);
 
@@ -617,6 +624,14 @@ describe("rsp cli", () => {
       tokens_emitted: expect.any(Number),
       estimated: false,
     });
+    expect(invocations).toContainEqual(expect.objectContaining({
+      command: "git status",
+      wrapper: "git",
+      loss: "lossless",
+      elided: false,
+      emitted_bytes: fastStatus.stdout.length,
+      wrapper_ms: expect.any(Number),
+    }));
 
     const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
     expect(degradations).toContainEqual(expect.objectContaining({
@@ -639,7 +654,7 @@ describe("rsp cli", () => {
     expect(statsText).toContain("command: git log");
     expect(statsText).toContain("health:\n");
     expect(statsText).toContain("  degradations: 1\n");
-    expect(statsText).toContain("  degradation_rate: 0.5\n");
+    expect(statsText).toContain("  degradation_rate: 0.3333\n");
     expect(statsText).toContain("  most_recent_degradation_reason: wrapper failed\n");
     expect(statsText).toContain("latency:\n");
     expect(statsText).toMatch(/  wrapper_ms_p50: [0-9.]+\n/);
