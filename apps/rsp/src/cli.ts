@@ -233,6 +233,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
+    if (args.command === "cat") {
+      try {
+        await suppressRspStderr(warmResidentStore);
+      } catch (err) {
+        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
+      }
+      const { runCatWrapper } = await import("./cat-wrapper.js");
+      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      closeStore = () => store.close();
+      const started = process.hrtime.bigint();
+      const result = await suppressRspStderr(() => runCatWrapper(args.positional, {
+        level: args.level,
+        store,
+        heavyByteThreshold: config.heavyGitByteThreshold,
+      }));
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+    }
+
     if (args.command === "exec") {
       try {
         await suppressRspStderr(warmResidentStore);
@@ -473,6 +491,16 @@ async function runColdWrappedCommand(
       return await emitWrappedResult(args, result, started, store, telemetryRoot);
     }
 
+    if (args.command === "cat") {
+      const { runCatWrapper } = await import("./cat-wrapper.js");
+      const result = await runCatWrapper(args.positional, {
+        level: args.level,
+        store,
+        heavyByteThreshold: config.heavyGitByteThreshold,
+      });
+      return await emitWrappedResult(args, result, started, store, telemetryRoot);
+    }
+
     if (args.command === "exec") {
       const { runExecWrapper } = await import("./exec-wrapper.js");
       const result = await runExecWrapper(args.positional, {
@@ -611,7 +639,7 @@ async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function isWrapperCommand(command: string | undefined): boolean {
-  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "exec";
+  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" || command === "exec";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
