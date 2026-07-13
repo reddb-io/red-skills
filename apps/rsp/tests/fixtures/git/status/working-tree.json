@@ -1,6 +1,9 @@
 {
   "name": "status-working-tree",
-  "command": ["git", "status"],
+  "command": [
+    "git",
+    "status"
+  ],
   "recorded": {
     "stdout": "# branch.oid abc123\u0000# branch.head feature/rsp\u00001 .M N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa apps/rsp/src/cli.ts\u00001 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb apps/rsp/src/git-wrapper.ts\u00001 D. N... 100644 000000 000000 cccccccccccccccccccccccccccccccccccccccc 0000000000000000000000000000000000000000 old.txt\u0000",
     "stderr": "",
@@ -11,14 +14,117 @@
     "command": "git status",
     "branch": "feature/rsp",
     "rows": [
-      { "path": "apps/rsp/src/cli.ts", "index": ".", "worktree": "M", "state": "modified" },
-      { "path": "apps/rsp/src/git-wrapper.ts", "index": "A", "worktree": ".", "state": "added" },
-      { "path": "old.txt", "index": "D", "worktree": ".", "state": "deleted" }
+      {
+        "path": "apps/rsp/src/cli.ts",
+        "index": ".",
+        "worktree": "M",
+        "state": "modified"
+      },
+      {
+        "path": "apps/rsp/src/git-wrapper.ts",
+        "index": "A",
+        "worktree": ".",
+        "state": "added"
+      },
+      {
+        "path": "old.txt",
+        "index": "D",
+        "worktree": ".",
+        "state": "deleted"
+      }
     ],
     "summary": "3 changes: 1 added, 1 modified, 1 deleted"
   },
   "assertions": [
-    { "question": "which branch is checked out?", "path": "branch", "expected": "feature/rsp" },
-    { "question": "how many files changed?", "path": "rows.length", "expected": 3 }
+    {
+      "question": "which branch is checked out?",
+      "path": "branch",
+      "expected": "feature/rsp"
+    },
+    {
+      "question": "oracle preserves rows.length",
+      "path": "rows.length",
+      "expected": 3
+    },
+    {
+      "question": "oracle preserves rows.0.length",
+      "path": "rows.0.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves rows.0.path",
+      "path": "rows.0.path",
+      "expected": "apps/rsp/src/cli.ts"
+    },
+    {
+      "question": "oracle preserves rows.0.index",
+      "path": "rows.0.index",
+      "expected": "."
+    },
+    {
+      "question": "oracle preserves rows.0.worktree",
+      "path": "rows.0.worktree",
+      "expected": "M"
+    },
+    {
+      "question": "oracle preserves rows.0.state",
+      "path": "rows.0.state",
+      "expected": "modified"
+    },
+    {
+      "question": "oracle preserves rows.1.length",
+      "path": "rows.1.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves rows.1.path",
+      "path": "rows.1.path",
+      "expected": "apps/rsp/src/git-wrapper.ts"
+    },
+    {
+      "question": "oracle preserves rows.1.index",
+      "path": "rows.1.index",
+      "expected": "A"
+    },
+    {
+      "question": "oracle preserves rows.1.worktree",
+      "path": "rows.1.worktree",
+      "expected": "."
+    },
+    {
+      "question": "oracle preserves rows.1.state",
+      "path": "rows.1.state",
+      "expected": "added"
+    },
+    {
+      "question": "oracle preserves rows.2.length",
+      "path": "rows.2.length",
+      "expected": 4
+    },
+    {
+      "question": "oracle preserves rows.2.path",
+      "path": "rows.2.path",
+      "expected": "old.txt"
+    },
+    {
+      "question": "oracle preserves rows.2.index",
+      "path": "rows.2.index",
+      "expected": "D"
+    },
+    {
+      "question": "oracle preserves rows.2.worktree",
+      "path": "rows.2.worktree",
+      "expected": "."
+    },
+    {
+      "question": "oracle preserves rows.2.state",
+      "path": "rows.2.state",
+      "expected": "deleted"
+    },
+    {
+      "question": "oracle preserves summary",
+      "path": "summary",
+      "expected": "3 changes: 1 added, 1 modified, 1 deleted"
+    }
   ]
 }
