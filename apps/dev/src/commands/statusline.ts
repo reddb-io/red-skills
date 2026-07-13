@@ -16,7 +16,7 @@
 // `.workspace.project_dir` (the fixed session root — survives `cd` into subdirs),
 // else `.workspace.current_dir // .cwd`, else `process.cwd()`.
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { resolveBase } from "../core/base-resolver.js";
@@ -26,7 +26,7 @@ import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import { branchLockPath, readLockedBranch } from "../runtime/lock.js";
 import { resolveRspConfig } from "../../../rsp/src/config.js";
-import { pingResident, resolveResidentPaths } from "../../../rsp/src/resident-client.js";
+import { resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
   collectStatuslineAfk,
   collectStatuslineFleet,
@@ -139,11 +139,54 @@ export function resolveStatuslinePreset(cfg: ReturnType<typeof loadConfig>): Sta
   );
 }
 
+const RSP_WARMUP_GRACE_MS = 15_000;
+const RSP_MIN_SUMMARY_FRESH_MS = 90_000;
+
+interface RspSummaryFile {
+  version: number;
+  tokens_saved_today: number;
+  updated_at: string;
+}
+
+function parseRspSummary(path: string): RspSummaryFile | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { version?: unknown }).version === 1 &&
+      typeof (parsed as { tokens_saved_today?: unknown }).tokens_saved_today === "number" &&
+      typeof (parsed as { updated_at?: unknown }).updated_at === "string"
+    ) {
+      return parsed as RspSummaryFile;
+    }
+  } catch {}
+  return undefined;
+}
+
+function isRecentFile(path: string, nowMs: number, maxAgeMs: number): boolean {
+  try {
+    return nowMs - statSync(path).mtimeMs <= maxAgeMs;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
   const config = resolveRspConfig(root, env);
   if (!config.enabled) return undefined;
   const paths = resolveResidentPaths(root);
-  return await pingResident(paths.socketPath, 50) ? "on" : "warming";
+  const nowMs = Date.now();
+  const summaryFreshMs = Math.max(RSP_MIN_SUMMARY_FRESH_MS, config.telemetryDrainIntervalMs * 3);
+  const summary = parseRspSummary(paths.summaryPath);
+  if (summary) {
+    const updatedAtMs = Date.parse(summary.updated_at);
+    if (Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= summaryFreshMs) {
+      return { state: "ready", tokensSavedToday: Math.max(0, Math.floor(summary.tokens_saved_today)) };
+    }
+  }
+  if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };
+  return { state: "error" };
 }
 
 /** The block-1 project input: basename, the resolved git ref (branch or detached
