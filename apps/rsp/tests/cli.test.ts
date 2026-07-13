@@ -1117,6 +1117,8 @@ describe("rsp cli", () => {
     expect(statsText).toMatch(/  raw_bytes: [1-9]\d*\n/);
     expect(statsText).toMatch(/  emitted_bytes: [1-9]\d*\n/);
     expect(statsText).toMatch(/  tokens_saved: [1-9]\d*\n/);
+    expect(statsText).toContain("  dollars_saved_estimate_usd: $");
+    expect(statsText).toContain("  pricing_model_family: gpt-5\n");
     expect(statsText).toContain("  top_commands:\n");
     expect(statsText).toContain("command: git log");
     expect(statsText).toContain("health:\n");
@@ -1145,6 +1147,7 @@ describe("rsp cli", () => {
         emitted_bytes: 800,
         tokens_raw: 2000,
         tokens_emitted: 200,
+        estimated: true,
         wrapper_ms: 15,
         store_open_count: 1,
       });
@@ -1180,11 +1183,15 @@ describe("rsp cli", () => {
     expect(text).not.toContain("{\n");
     const decoded = decode(text) as {
       window: { requested_days: number; invocations: number; degradations: number };
-      savings: { single_biggest_elision: { command_family: string; tokens_saved: number } };
+      savings: {
+        tokens: { tokens_saved_low: number; tokens_saved_high: number; dollars_saved_estimate_usd: number };
+        single_biggest_elision: { command_family: string; tokens_saved: number };
+      };
     };
     expect(decoded.window.requested_days).toBe(28);
     expect(decoded.window.invocations).toBe(2);
     expect(decoded.window.degradations).toBe(1);
+    expect(decoded.savings.tokens).toMatchObject({ tokens_saved_low: 1350, tokens_saved_high: 2250, dollars_saved_estimate_usd: 0.00225 });
     expect(decoded.savings.single_biggest_elision).toMatchObject({ command_family: "git log", tokens_saved: 1800 });
   }, 120_000);
 
