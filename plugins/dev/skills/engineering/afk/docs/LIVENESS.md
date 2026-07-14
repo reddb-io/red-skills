@@ -35,3 +35,21 @@ A solo `/afk run` worker is protected against a hung inner agent by **two comple
 - **Lane-idle reaper (#363, idle-anchored).** The solo-path port of Fleet Mode's passive stall detector + hard stall reaper, reusing the SAME fleet detector (`computeStalled`) and reaper-signal busy-predicate (`deriveSnapshot` + `decideReaperSignal`) — not a second mechanism. It samples the active attempt's **agent lane** `agent.log.jsonl` mtime (the clean liveness signal — never `afk.log` / the firehose `log.jsonl`, which the per-minute heartbeat keeps fresh and would mask a real stall, the #243 masking) every `RED_AFK_STALL_POLL_S` (default 30s) on a side-channel poll independent of the inner-agent stream, so a fully-hung runner is still observed. A worker alive ≥ `RED_AFK_STALL_THRESHOLD_S` (default 600s) whose agent lane has been idle ≥ the same is a **candidate**; once the lane is idle past `RED_AFK_STALL_KILL_THRESHOLD_S` (default 1800s) the irreversible kill is **gated behind the busy-predicate** — a worker with an active `vitest`/`tsc`/`cargo`/build descendant under its process tree, or non-trivial aggregate cpu, is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is reaped tree-wide (SIGTERM then SIGKILL after the grace). The reap aborts the run → `no-sentinel`, which flows through the existing no-sentinel terminal policy (envelope with the attempt-dir `afk.log` tail, label rotated back to `ready-for-agent`/`ready-for-human`, worktree dropped). This is the **faster idle layer**: it cuts an idle hang at the stall threshold (minutes) rather than only at the progress cap. `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at boot (the same invariant the supervisor enforces) — a `<=` config fails fast before the run claims an issue.
 
 The two layers share the run's `AbortController`: progress watches commits, lane-idle watches the agent lane. The threshold env vars (`RED_AFK_STALL_THRESHOLD_S`, `RED_AFK_STALL_KILL_THRESHOLD_S`, `RED_AFK_STALL_POLL_S`) are consistent with Fleet Mode.
+
+## Host-level OOM signature (#1758)
+
+When the worker log, supervisor tick log, and an unrelated interactive operator
+session all stop in the same short window, treat it as a host-level kill/OOM
+signature, not a worker-code bug. The expected recovery path is:
+
+- relaunch the fleet;
+- let the boot sweep reconcile any dangling `running` claims and stale slots;
+- inspect the preserved pushed `afk/*` branch before deciding whether work was
+  lost.
+
+Heavy validation suites are bounded by `afk.validation.*` config: validation
+subprocesses receive a Node heap cap and Vitest worker cap, and known-heavy
+validation admission serializes when another heavy validation is already active
+or when available memory is below the configured threshold. On small reference
+machines, keep the default `vitest_max_workers: 1` and avoid raising fleet width
+without also raising the per-host memory budget.
