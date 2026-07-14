@@ -2327,6 +2327,42 @@ describe("rsp cli", () => {
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 
+  it("rsp show re-runs re-executable recipes and marks moved state", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+    const storeRoot = await tempRoot();
+    const storeUri = `file://${join(storeRoot, "red.rdb")}`;
+    runGit(["-C", root, "init"]);
+    await writeFile(join(root, ".gitignore"), ".red/\n", "utf8");
+    await writeFile(join(root, "tracked.txt"), "tracked content\n", "utf8");
+    runGit(["-C", root, "add", ".gitignore"]);
+    runGit(["-C", root, "add", "tracked.txt"]);
+
+    const store = await RspElisionStore.open({ uri: storeUri });
+    let handle = "";
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const original = Buffer.from("A  .gitignore\nA  tracked.txt\n");
+      handle = await store.mint(original, {
+        command: "git status --short",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await store.close();
+    }
+    await writeFile(join(root, "moved.txt"), "state moved\n", "utf8");
+
+    const res = runRsp(root, ["show", handle], { RSP_STORE_URI: storeUri });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe(
+      "reconstructed after state moved - current snapshot follows\nA  .gitignore\nA  tracked.txt\n?? moved.txt\n",
+    );
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+  });
+
   it("rsp show prints structured expiry with the original command and exits 1", async () => {
     const root = await tempRoot();
     await enableRsp(root);
