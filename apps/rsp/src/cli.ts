@@ -138,6 +138,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   const residentPaths = resolveResidentPaths(process.cwd());
+  if (args.command === "proxy") {
+    const { runProxy } = await import("./proxy.js");
+    return await runProxy(args.positional, { telemetryRoot: residentPaths.rootDir });
+  }
   if (args.command === "status" || args.command === "sweep") {
     const { residentRegistryStatus, sweepResidentRegistry } = await import("./resident-client.js");
     const status = args.command === "sweep"
@@ -868,11 +872,12 @@ function rspDisabledReason(): string {
 }
 
 function isWrapperCommand(command: string | undefined): boolean {
-  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" || command === "exec";
+  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" ||
+    command === "exec" || command === "proxy";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
-  if (argv[0] === "exec") return await passthroughShell(argv);
+  if (argv[0] === "exec" || argv[0] === "proxy") return await passthroughShell(argv);
   const command = argv[0];
   if (!command) return 2;
   const { spawn } = await import("node:child_process");
@@ -896,8 +901,13 @@ async function passthrough(argv: readonly string[]): Promise<number> {
 async function passthroughShell(argv: readonly string[]): Promise<number> {
   let commandLine: string;
   try {
-    const { parseExecCommandLine } = await import("./exec-wrapper.js");
-    commandLine = parseExecCommandLine(argv);
+    if (argv[0] === "proxy") {
+      const { parseProxyCommandLine } = await import("./proxy.js");
+      commandLine = parseProxyCommandLine(argv);
+    } else {
+      const { parseExecCommandLine } = await import("./exec-wrapper.js");
+      commandLine = parseExecCommandLine(argv);
+    }
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 2;
