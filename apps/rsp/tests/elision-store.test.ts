@@ -232,8 +232,62 @@ describe("RspElisionStore", () => {
         bytes: 3,
         oldest: "2026-07-10T12:00:00.000Z",
         budget: DEFAULT_RSP_BYTE_BUDGET,
+        storage_classes: {
+          derivable: { records: 0, bytes: 0 },
+          "re-executable": { records: 0, bytes: 0 },
+          ephemeral: { records: 1, bytes: 3 },
+        },
       });
       expect(DEFAULT_RSP_TTL_DAYS).toBe(7);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("records exactly one storage class per minted handle and reports the class breakdown", async () => {
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    try {
+      await store.mint(Buffer.from("git history"), {
+        command: "git log --oneline",
+        loss: { level: "terse", bytes_elided: 11 },
+      });
+      await store.mint(Buffer.from("remote pr"), {
+        command: "gh pr view 42",
+        loss: { level: "brief", bytes_elided: 9 },
+      });
+      await store.mint(Buffer.from("test output"), {
+        command: "vitest run",
+        loss: { level: "terse", bytes_elided: 11 },
+      });
+
+      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+        index: { records: Array<{ storage_class?: string }> };
+        records: Record<string, { storage_class?: string }>;
+      };
+      expect(raw.index.records.map((entry) => entry.storage_class).sort()).toEqual([
+        "derivable",
+        "ephemeral",
+        "re-executable",
+      ]);
+      expect(Object.values(raw.records).map((record) => record.storage_class).sort()).toEqual([
+        "derivable",
+        "ephemeral",
+        "re-executable",
+      ]);
+      expect(await store.stats()).toMatchObject({
+        records: 3,
+        bytes: 31,
+        storage_classes: {
+          derivable: { records: 1, bytes: 11 },
+          "re-executable": { records: 1, bytes: 9 },
+          ephemeral: { records: 1, bytes: 11 },
+        },
+      });
     } finally {
       await store.close();
     }
