@@ -11,7 +11,9 @@ export type ProxyLossLevel = "lossless" | "brief" | "terse";
 export interface ProxySegmentMatch {
   command: string;
   commandFamily: string;
-  capabilityId: string;
+  decision: "contributed" | "passed";
+  reason: string;
+  capabilityId?: string;
 }
 
 interface ShellSegmentPart {
@@ -118,8 +120,8 @@ async function appendProxySegmentDecision(rootDir: string, match: ProxySegmentMa
     hook: "proxy",
     command: match.command,
     command_family: match.commandFamily,
-    decision: "contributed",
-    reason: "proxy-segment",
+    decision: match.decision,
+    reason: match.reason,
     capability_id: match.capabilityId,
   });
 }
@@ -152,6 +154,18 @@ function rewriteProxySegment(segment: string, level: ProxyLossLevel): { text: st
   const commandStart = commandWordStart(words);
   if (commandStart >= words.length) return null;
   const commandWords = words.slice(commandStart);
+  const commandValues = commandWords.map((word) => word.value);
+  if (isGhJsonJqSelection(commandValues)) {
+    return {
+      text: segment,
+      match: {
+        command: commandWords.map((word) => word.raw).join(" "),
+        commandFamily: commandFamily(commandValues.join(" ")),
+        decision: "passed",
+        reason: "lossless-gh-json-jq",
+      },
+    };
+  }
   const match = matchProxyCapability(commandWords);
   if (!match) return null;
 
@@ -162,7 +176,9 @@ function rewriteProxySegment(segment: string, level: ProxyLossLevel): { text: st
     text: `${leading}${rewrittenCore}${trailing}`,
     match: {
       command: commandWords.map((word) => word.raw).join(" "),
-      commandFamily: commandFamily(commandWords.map((word) => word.value).join(" ")),
+      commandFamily: commandFamily(commandValues.join(" ")),
+      decision: "contributed",
+      reason: "proxy-segment",
       capabilityId: match.capabilityId,
     },
   };
@@ -328,11 +344,22 @@ function commandFamily(command: string): string {
   const parts = command.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "unknown";
   if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
+  if (isGhJsonJqSelection(parts) && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]} json-jq`;
+  if (isGhJsonJqSelection(parts) && parts[1]) return `gh ${parts[1]} json-jq`;
+  if (isGhJsonJqSelection(parts)) return "gh json-jq";
   if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
   if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
   if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
   if (parts[0] === "vitest") return "vitest";
   return parts[0]!;
+}
+
+function isGhJsonJqSelection(tokens: readonly string[]): boolean {
+  return tokens[0] === "gh" && tokens.some(isJsonJqSelectionFlag);
+}
+
+function isJsonJqSelectionFlag(token: string): boolean {
+  return token === "--json" || token === "--jq" || token.startsWith("--json=") || token.startsWith("--jq=");
 }
 
 function isEnvAssignment(token: string): boolean {
