@@ -71,6 +71,7 @@ export const RSP_WRAPPER_CAPABILITIES: readonly RspWrapperCapability[] = [
 ];
 
 const DEFAULT_REWRITE_TABLE = rewriteTableFromCapabilities(RSP_WRAPPER_CAPABILITIES);
+const LOSSLESS_GH_JSON_JQ_REASON = "lossless-gh-json-jq";
 
 export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCapability[]): Map<string, readonly string[]> {
   const table = new Map<string, readonly string[]>();
@@ -79,6 +80,9 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
 }
 
 export function rewriteCommand(command: string): RewriteDecision {
+  const losslessGh = losslessGhJsonJqPassthrough(command);
+  if (losslessGh) return losslessGh;
+
   const parsed = parseCertainSimpleCommand(command);
   if (!parsed) return rewriteCompoundCommand(command);
   const tokens = parsed.tokens.map((token) => token.text);
@@ -483,6 +487,20 @@ function tokensStartWith(tokens: readonly string[], prefix: readonly string[]): 
   return prefix.every((token, index) => tokens[index] === token);
 }
 
+function losslessGhJsonJqPassthrough(command: string): RewriteDecision | null {
+  const tokens = shellTokens(command.trim()).map((token) => token.text);
+  if (!isGhJsonJqSelection(tokens)) return null;
+  return { kind: "passthrough", reason: LOSSLESS_GH_JSON_JQ_REASON };
+}
+
+function isGhJsonJqSelection(tokens: readonly string[]): boolean {
+  return tokens[0] === "gh" && tokens.some(isJsonJqSelectionFlag);
+}
+
+function isJsonJqSelectionFlag(token: string): boolean {
+  return token === "--json" || token === "--jq" || token.startsWith("--json=") || token.startsWith("--jq=");
+}
+
 function formatRedirectSuffix(tokens: readonly ShellToken[]): string[] {
   return tokens.map((token) => token.text);
 }
@@ -612,6 +630,9 @@ function commandFamily(command: string): string {
   const parts = command.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "unknown";
   if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
+  if (isGhJsonJqSelection(parts) && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]} json-jq`;
+  if (isGhJsonJqSelection(parts) && parts[1]) return `gh ${parts[1]} json-jq`;
+  if (isGhJsonJqSelection(parts)) return "gh json-jq";
   if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
   if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
   if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
