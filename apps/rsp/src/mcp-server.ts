@@ -61,7 +61,7 @@ async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promis
         },
         {
           name: "rsp_stats",
-          description: "Read resident rsp elision store stats.",
+          description: "Read resident rsp accounting stats.",
           inputSchema: { type: "object", properties: {} },
         },
         {
@@ -104,7 +104,7 @@ async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promis
     }
     const store = residentStore(config);
     if (params?.name === "rsp_stats") {
-      return { content: [{ type: "text", text: JSON.stringify(await store.stats()) }] };
+      return { content: [{ type: "text", text: JSON.stringify(await store.accountingStats(config.telemetryByteBudget)) }] };
     }
     if (params?.name === "rsp_show") {
       const handle = String(params.arguments?.handle ?? "");
