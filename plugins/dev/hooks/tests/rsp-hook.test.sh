@@ -96,6 +96,7 @@ expect_eq "stale manifest: fail-open rc" "0" "$?"
 expect_contains "stale manifest: reason surfaces under debug" "stale rsp cache" "$(<"$err")"
 
 printf 'process.exit(42);\n' >"$bundle"
+printf '{"version":"9.9.9"}\n' >"$plugin/.codex-plugin/plugin.json"
 CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" \
   "$plugin/hooks/rsp-hook.sh" prime >"$out" 2>"$err"
 CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" RED_SKILLS_HOOK_DEBUG=1 \
