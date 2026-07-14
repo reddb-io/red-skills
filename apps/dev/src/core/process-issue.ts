@@ -35,6 +35,7 @@ import {
   type AgentEffort,
   type AgentStreamEvent,
   type AttemptProgressInfo,
+  DONE_SIGNAL,
   type RunAgentInput,
   type RunAgentResult,
   type SandboxMode,
@@ -909,6 +910,23 @@ import {
  */
 function blockedLabelsIn(labels: string[]): string[] {
   return labels.filter((l) => l.startsWith("blocked:"));
+}
+
+function stripScoutDoneSignal(text: string): string {
+  const escaped = DONE_SIGNAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`\\s*${escaped}\\s*$`), "").trim();
+}
+
+function scoutReportFrom(chunks: readonly string[], stdout: string | undefined): string {
+  const captured = chunks.join("").trim() || (stdout ?? "").trim();
+  const report = stripScoutDoneSignal(captured);
+  return report || "_Scout completed without output. Check the attempt log for details._";
+}
+
+function scoutCapturedDone(run: RunAgentResult, chunks: readonly string[]): boolean {
+  if (run.completionSignal === DONE_SIGNAL) return true;
+  const captured = chunks.join("").trim() || (run.stdout ?? "").trim();
+  return captured.length > 0 && stripScoutDoneSignal(captured) !== captured;
 }
 
 const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
@@ -1906,6 +1924,13 @@ export async function processIssue(
       effort: initialTier.effort,
     } satisfies StageCommon;
 
+    if (input.runMode === "scout" && run.outcome === "no-sentinel" && scoutCapturedDone(run, scoutTextChunks)) {
+      deps.appendIterLog(
+        "🤖 /scout: AgentOutput was missing, but the captured agent stream ended with DONE — posting the recovered scout report.",
+      );
+      run = { ...run, outcome: "done", completionSignal: run.completionSignal ?? DONE_SIGNAL };
+    }
+
     // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
     // The inner agent (observed: codex) can edit, pass the gates, and emit
     // `<promise>DONE</promise>` without committing every dirty path. This includes
@@ -2176,8 +2201,7 @@ export async function processIssue(
     // output as a report comment and close the disposable issue. No branch is
     // ever pushed to the remote; the worktree was ephemeral.
     if (input.runMode === "scout") {
-      const report = scoutTextChunks.join("").trim() ||
-        "_Scout completed without output. Check the attempt log for details._";
+      const report = scoutReportFrom(scoutTextChunks, run.stdout);
       await deps.gh.comment(issue, `## 🔍 Scout Report\n\n${report}`);
       await deps.gh.close(issue);
       await releaseClaim();
