@@ -67,6 +67,7 @@ interface StoredRecord {
   original?: string;
   original_encoding?: "base64";
   original_bytes: number;
+  content_hash?: string;
   stored_bytes?: number;
   command: string;
   created_at: string;
@@ -74,6 +75,7 @@ interface StoredRecord {
   loss: RspLossMeta;
   storage_class?: RspStorageClass;
   derivation_recipe?: RspDerivationRecipe;
+  reexecution_recipe?: RspReexecutionRecipe;
 }
 
 interface IndexEntry {
@@ -93,6 +95,15 @@ interface RspDerivationRecipe {
   object_ids: string[];
   working_tree_fingerprint: string;
   original_bytes: number;
+}
+
+interface RspReexecutionRecipe {
+  kind: "command";
+  command: string;
+  cwd: string;
+  argv: string[];
+  original_bytes: number;
+  content_hash: string;
 }
 
 interface IndexDocument {
@@ -161,9 +172,11 @@ export class RspElisionStore {
     const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
-    const storageClass = storageClassForCommand(meta.command);
-    const derivationRecipe = storageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
-    const storedBytes = storedBytesFor(bytes, derivationRecipe);
+    const requestedStorageClass = storageClassForCommand(meta.command);
+    const derivationRecipe = requestedStorageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
+    const reexecutionRecipe = requestedStorageClass === "re-executable" ? deriveReexecutionRecipe(bytes, meta.command) : null;
+    const storageClass = requestedStorageClass === "re-executable" && !reexecutionRecipe ? "ephemeral" : requestedStorageClass;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe);
 
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
@@ -175,9 +188,12 @@ export class RspElisionStore {
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
+      content_hash: contentHash(bytes),
       ...(derivationRecipe
         ? { derivation_recipe: derivationRecipe }
-        : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
+        : reexecutionRecipe
+          ? { reexecution_recipe: reexecutionRecipe }
+          : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
     };
 
     delete this.document.tombstones[tombstoneKey(handle)];
@@ -220,7 +236,7 @@ export class RspElisionStore {
     }
 
     const original = this.readOriginal(raw);
-    if (!original && raw.derivation_recipe) {
+    if (!original && (raw.derivation_recipe || raw.reexecution_recipe)) {
       return { status: "expired", expired_at: raw.expires_at, command: raw.command };
     }
     if (!original) return null;
@@ -315,6 +331,7 @@ export class RspElisionStore {
   private readOriginal(record: StoredRecord): Buffer | null {
     if (record.original) return Buffer.from(record.original, "base64");
     if (record.derivation_recipe) return readGitBlobRecipe(record.derivation_recipe);
+    if (record.reexecution_recipe) return readReexecutionRecipe(record.reexecution_recipe);
     return null;
   }
 
@@ -409,9 +426,11 @@ export class RspElisionStore {
     const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
-    const storageClass = storageClassForCommand(meta.command);
-    const derivationRecipe = storageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
-    const storedBytes = storedBytesFor(bytes, derivationRecipe);
+    const requestedStorageClass = storageClassForCommand(meta.command);
+    const derivationRecipe = requestedStorageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
+    const reexecutionRecipe = requestedStorageClass === "re-executable" ? deriveReexecutionRecipe(bytes, meta.command) : null;
+    const storageClass = requestedStorageClass === "re-executable" && !reexecutionRecipe ? "ephemeral" : requestedStorageClass;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe);
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
@@ -422,9 +441,12 @@ export class RspElisionStore {
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
+      content_hash: contentHash(bytes),
       ...(derivationRecipe
         ? { derivation_recipe: derivationRecipe }
-        : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
+        : reexecutionRecipe
+          ? { reexecution_recipe: reexecutionRecipe }
+          : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
     };
     await this.kv().delete(tombstoneKey(handle));
     await this.kv().put(key, record);
@@ -463,7 +485,7 @@ export class RspElisionStore {
       return expired;
     }
     const original = this.readOriginal(raw);
-    if (!original && raw.derivation_recipe) {
+    if (!original && (raw.derivation_recipe || raw.reexecution_recipe)) {
       return { status: "expired", expired_at: raw.expires_at, command: raw.command };
     }
     if (!original) return null;
@@ -684,10 +706,9 @@ export function storageClassForCommand(command: string): RspStorageClass {
     if (subcommand === "log" || subcommand === "diff" || subcommand === "blame" || subcommand === "show") {
       return "derivable";
     }
-    if (subcommand === "status" || subcommand === "branch") return "re-executable";
+    if (isReExecutableArgv(argv)) return "re-executable";
     return "ephemeral";
   }
-  if (executable === "gh") return "re-executable";
   return "ephemeral";
 }
 
@@ -745,13 +766,48 @@ function gitOutput(cwd: string, args: string[]): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-function storedBytesFor(bytes: Buffer, recipe: RspDerivationRecipe | null): number {
-  return recipe ? Buffer.byteLength(JSON.stringify(recipe), "utf8") : bytes.length;
+function deriveReexecutionRecipe(bytes: Buffer, command: string): RspReexecutionRecipe | null {
+  const argv = command.trim().split(/\s+/).filter(Boolean);
+  if (!isReExecutableArgv(argv)) return null;
+  const current = runReexecutionCommand(process.cwd(), argv, bytes.length);
+  if (!current || contentHash(current) !== contentHash(bytes)) return null;
+  return {
+    kind: "command",
+    command,
+    cwd: process.cwd(),
+    argv,
+    original_bytes: bytes.length,
+    content_hash: contentHash(bytes),
+  };
+}
+
+function isReExecutableArgv(argv: readonly string[]): boolean {
+  if (argv[0] === "git") {
+    if (argv[1] === "status") return true;
+    if (argv[1] !== "branch") return false;
+    return argv.length === 2 || argv.slice(2).every((arg) => /^-[avvr]+$/.test(arg));
+  }
+  return false;
+}
+
+function contentHash(bytes: Buffer): string {
+  return createHash("sha256").update("rsp-reexecutable-content-v1\0").update(bytes).digest("hex");
+}
+
+function storedBytesFor(
+  bytes: Buffer,
+  derivationRecipe: RspDerivationRecipe | null,
+  reexecutionRecipe?: RspReexecutionRecipe | null,
+): number {
+  if (derivationRecipe) return Buffer.byteLength(JSON.stringify(derivationRecipe), "utf8");
+  if (reexecutionRecipe) return Buffer.byteLength(JSON.stringify(reexecutionRecipe), "utf8");
+  return bytes.length;
 }
 
 function storedBytesForRecord(record: StoredRecord): number {
   if (typeof record.stored_bytes === "number") return record.stored_bytes;
   if (record.derivation_recipe) return Buffer.byteLength(JSON.stringify(record.derivation_recipe), "utf8");
+  if (record.reexecution_recipe) return Buffer.byteLength(JSON.stringify(record.reexecution_recipe), "utf8");
   return record.original_bytes;
 }
 
@@ -765,6 +821,29 @@ function readGitBlobRecipe(recipe: RspDerivationRecipe): Buffer | null {
   });
   if (result.status !== 0) return null;
   if (result.stdout.length !== recipe.original_bytes) return null;
+  return result.stdout;
+}
+
+function readReexecutionRecipe(recipe: RspReexecutionRecipe): Buffer | null {
+  if (!isReExecutableArgv(recipe.argv)) return null;
+  const current = runReexecutionCommand(recipe.cwd, recipe.argv, recipe.original_bytes);
+  if (!current) return null;
+  if (contentHash(current) === recipe.content_hash) return current;
+  return Buffer.concat([
+    Buffer.from("reconstructed after state moved - current snapshot follows\n", "utf8"),
+    current,
+  ]);
+}
+
+function runReexecutionCommand(cwd: string, argv: readonly string[], originalBytes: number): Buffer | null {
+  const executable = argv[0];
+  if (!executable) return null;
+  const result = spawnSync(executable, argv.slice(1), {
+    cwd,
+    encoding: "buffer",
+    maxBuffer: Math.max(originalBytes + 1024, 1024 * 1024),
+  });
+  if (result.status !== 0 || result.signal) return null;
   return result.stdout;
 }
 
@@ -909,11 +988,13 @@ function isStoredRecord(value: unknown): value is StoredRecord {
   if (!isRecord(value)) return false;
   const hasOriginal = typeof value.original === "string" && value.original_encoding === "base64";
   const hasRecipe = isDerivationRecipe(value.derivation_recipe);
+  const hasReexecutionRecipe = isReexecutionRecipe(value.reexecution_recipe);
   return value.collection === RSP_ELISION_COLLECTION &&
     typeof value.handle === "string" &&
     isHandle(value.handle) &&
-    (hasOriginal || hasRecipe) &&
+    (hasOriginal || hasRecipe || hasReexecutionRecipe) &&
     typeof value.original_bytes === "number" &&
+    (value.content_hash === undefined || isSha256(value.content_hash)) &&
     (value.stored_bytes === undefined || typeof value.stored_bytes === "number") &&
     typeof value.command === "string" &&
     typeof value.created_at === "string" &&
@@ -963,6 +1044,22 @@ function isDerivationRecipe(value: unknown): value is RspDerivationRecipe {
     value.object_ids.every((item) => typeof item === "string" && /^[0-9a-f]{40,64}$/.test(item)) &&
     typeof value.working_tree_fingerprint === "string" &&
     typeof value.original_bytes === "number";
+}
+
+function isReexecutionRecipe(value: unknown): value is RspReexecutionRecipe {
+  return isRecord(value) &&
+    value.kind === "command" &&
+    typeof value.command === "string" &&
+    typeof value.cwd === "string" &&
+    Array.isArray(value.argv) &&
+    value.argv.every((item) => typeof item === "string") &&
+    isReExecutableArgv(value.argv) &&
+    typeof value.original_bytes === "number" &&
+    isSha256(value.content_hash);
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
