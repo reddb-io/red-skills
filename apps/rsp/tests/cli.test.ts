@@ -871,6 +871,82 @@ describe("rsp cli", () => {
     expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(150) + raw.elapsedMs);
   }, 120_000);
 
+  it("built bundle resident listens before opening the RedDB store", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    await waitForResidentSocket(root);
+    const ping = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "ping",
+    });
+    expect(ping).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    const stats = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "stats",
+    });
+    expect(stats).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
+  it("built bundle elision falls back fast when the resident store is not ready", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 24);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForResidentSocket(root);
+
+    const raw = runGit(["-C", root, "log"]);
+    const node = timedStatus(runNodeNoop);
+    const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir }));
+
+    expect(wrapped.status, `${wrapped.stdout.toString("utf8")}${wrapped.stderr.toString("utf8")}`).toBe(0);
+    expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+    expect(wrapped.stdout.length).toBeLessThan(raw.stdout.length);
+    expect(wrapped.stdout.toString("utf8")).toContain("recovery unavailable (resident cold) — re-run: git log");
+    expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(250));
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
   it("built bundle teardown stops every spawned resident process", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
