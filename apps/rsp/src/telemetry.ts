@@ -640,7 +640,9 @@ function accountingStorageClassStats(records: readonly Record<string, unknown>[]
     if (record.elided !== true) continue;
     const storageClass = storageClassField(record.storage_class) ?? storageClassForCommand(stringField(record.command));
     stats[storageClass].records += 1;
-    stats[storageClass].bytes += numeric(record.raw_bytes);
+    const rawBytes = numeric(record.raw_bytes);
+    stats[storageClass].bytes += rawBytes;
+    stats[storageClass].raw_bytes += rawBytes;
   }
   return stats;
 }
@@ -651,9 +653,9 @@ function storageClassField(value: unknown): RspStorageClass | null {
 
 function emptyStorageClassStats(): RspStorageClassStats {
   return {
-    derivable: { records: 0, bytes: 0 },
-    "re-executable": { records: 0, bytes: 0 },
-    ephemeral: { records: 0, bytes: 0 },
+    derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+    "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+    ephemeral: { records: 0, bytes: 0, raw_bytes: 0 },
   };
 }
 
