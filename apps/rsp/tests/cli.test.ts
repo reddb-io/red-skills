@@ -56,7 +56,7 @@ function trackedResidentPaths(root: string) {
 function runRsp(root: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -64,7 +64,7 @@ function runRsp(root: string, args: string[], env: Record<string, string>) {
 function runRspFromCwd(cwd: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
     cwd,
-    env: { ...process.env, ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -88,7 +88,7 @@ function runNodeNoop() {
 function runBundleFromCwd(cwd: string, args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, ...args], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -96,7 +96,7 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
 function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, "hook", "claude-pre-exec"], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     input: Buffer.from(JSON.stringify({ cwd, tool_input: { command } })),
     encoding: "buffer",
   });
@@ -105,7 +105,7 @@ function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, 
 function runBundleCodexHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     input: Buffer.from(JSON.stringify({ cwd, tool_name: "bash", tool_input: { command } })),
     encoding: "buffer",
   });
@@ -115,7 +115,7 @@ function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, 
   return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
       cwd,
-      env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+      env: testChildEnv(env),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -182,6 +182,16 @@ function normalizedDeadlineMs(durationMs = 5_000): number {
 }
 
 const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(TEST_NODE_NOOP_BASELINE_MS, 250, 2_000);
+const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
+
+function testChildEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS),
+    RSP_RESIDENT_READY_TIMEOUT_MS: String(TEST_RESIDENT_READY_TIMEOUT_MS),
+    ...env,
+  };
+}
 
 async function idleBeat(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -935,6 +945,24 @@ describe("rsp cli", () => {
     if (child.exitCode == null) child.kill("SIGTERM");
     const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
     expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
+  it("built bundle warm-resident waits through a slow resident store open", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const warm = runBundleFromCwd(root, ["warm-resident", "--idle-ms", String(normalizedDurationMs(30_000))], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_TEST_DELAY_RESIDENT_STORE_OPEN_MS: "5500",
+    });
+
+    expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.alloc(0));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
+    await waitForResidentReady(root);
   }, 120_000);
 
   it("built bundle elision falls back fast when the resident store is not ready", async () => {
