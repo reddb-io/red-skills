@@ -32,6 +32,16 @@ type HookDecisionResult = {
   event: RspTelemetryEvent;
 };
 
+type ShellToken = {
+  text: string;
+  quoted: boolean;
+};
+
+type ParsedSimpleCommand = {
+  tokens: ShellToken[];
+  redirectSuffix: ShellToken[];
+};
+
 export interface HookDecisionOptions {
   cwd: string;
   isEnabled?: (cwd: string) => boolean | Promise<boolean>;
@@ -69,30 +79,38 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
 }
 
 export function rewriteCommand(command: string): RewriteDecision {
-  const tokens = tokenizeCertainSimpleCommand(command);
-  if (!tokens) return rewriteCompoundCommand(command);
+  const parsed = parseCertainSimpleCommand(command);
+  if (!parsed) return rewriteCompoundCommand(command);
+  const tokens = parsed.tokens.map((token) => token.text);
   if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command);
 
-  const fileRead = rewriteFileReadCommand(tokens);
+  const fileRead = rewriteFileReadCommand(parsed);
   if (fileRead) return fileRead;
 
-  const rewritten = DEFAULT_REWRITE_TABLE.get(commandKey(tokens));
-  if (!rewritten) return rewriteCompoundCommand(command);
-  const capability = RSP_WRAPPER_CAPABILITIES.find((entry) => commandKey(entry.command) === commandKey(tokens));
+  if (parsed.tokens.some((token) => token.quoted)) return rewriteCompoundCommand(command);
+
+  const capability = [...RSP_WRAPPER_CAPABILITIES]
+    .sort((left, right) => right.command.length - left.command.length)
+    .find((entry) => tokensStartWith(tokens, entry.command));
+  if (!capability) return rewriteCompoundCommand(command);
+  const rewritten = ["rsp", ...capability.wrapper, ...tokens.slice(capability.command.length)];
+  const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
   return {
     kind: "rewrite",
-    command: rewritten.join(" "),
-    capabilityId: capability?.id ?? commandKey(tokens),
+    command: [...rewritten.map(shellQuoteIfNeeded), ...redirectSuffix].join(" "),
+    capabilityId: capability.id,
   };
 }
 
-function rewriteFileReadCommand(tokens: readonly string[]): RewriteDecision | null {
+function rewriteFileReadCommand(parsed: ParsedSimpleCommand): RewriteDecision | null {
+  const tokens = parsed.tokens.map((token) => token.text);
   const command = tokens[0];
+  const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
   if (command === "cat" && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: `rsp cat ${tokens[1]}`, capabilityId: "cat:file" };
+    return { kind: "rewrite", command: ["rsp", "cat", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: "cat:file" };
   }
   if ((command === "head" || command === "tail") && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: `rsp cat --${command} 10 ${tokens[1]}`, capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, "10", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   if (
     (command === "head" || command === "tail") &&
@@ -101,13 +119,21 @@ function rewriteFileReadCommand(tokens: readonly string[]): RewriteDecision | nu
     /^[1-9][0-9]*$/.test(tokens[2]!) &&
     isPlainFileToken(tokens[3]!)
   ) {
-    return { kind: "rewrite", command: `rsp cat --${command} ${tokens[2]} ${tokens[3]}`, capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[2]!, shellQuoteIfNeeded(tokens[3]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
+  }
+  if (
+    (command === "head" || command === "tail") &&
+    tokens.length === 3 &&
+    /^-[1-9][0-9]*$/.test(tokens[1]!) &&
+    isPlainFileToken(tokens[2]!)
+  ) {
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[1]!.slice(1), shellQuoteIfNeeded(tokens[2]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   return null;
 }
 
 function isPlainFileToken(token: string): boolean {
-  return Boolean(token) && !token.startsWith("-") && !/[ \t]/.test(token);
+  return Boolean(token) && !token.startsWith("-");
 }
 
 export async function hookDecisionFromClaudePreExecJson(
@@ -379,14 +405,90 @@ function extractHookCommand(payload: Record<string, unknown>): string {
   );
 }
 
-function tokenizeCertainSimpleCommand(command: string): string[] | null {
+function parseCertainSimpleCommand(command: string): ParsedSimpleCommand | null {
   const trimmed = command.trim();
   if (!trimmed) return null;
-  if (/[\n\r|&;()$<>`'"]/.test(trimmed)) return null;
-  const tokens = trimmed.split(/[ \t]+/).filter(Boolean);
+  if (/[\n\r|;()$`]/.test(trimmed)) return null;
+  const tokens = shellTokens(trimmed);
   if (tokens.length === 0) return null;
-  if (tokens.some((token) => token.includes("=") && isEnvAssignment(token))) return null;
+  if (tokens[0]?.quoted) return null;
+  if (tokens.some((token) => /[()$`]/.test(token.text))) return null;
+  if (tokens.some((token) => token.text.includes("=") && isEnvAssignment(token.text))) return null;
+  const commandTokens: ShellToken[] = [];
+  const redirectSuffix: ShellToken[] = [];
+  for (const token of tokens) {
+    if (token.text.includes(">") || token.text.includes("<")) {
+      if (token.quoted || (token.text !== "2>/dev/null" && token.text !== "2>&1")) return null;
+      redirectSuffix.push(token);
+      continue;
+    }
+    commandTokens.push(token);
+  }
+  if (commandTokens.length === 0) return null;
+  return { tokens: commandTokens, redirectSuffix };
+}
+
+function shellTokens(command: string): ShellToken[] {
+  const tokens: ShellToken[] = [];
+  let text = "";
+  let quoted = false;
+  let quote: "'" | "\"" | null = null;
+
+  const push = () => {
+    if (!text && !quoted) return;
+    tokens.push({ text, quoted });
+    text = "";
+    quoted = false;
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const ch = command[index]!;
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      if (quote === "\"" && ch === "\\" && index + 1 < command.length) {
+        index += 1;
+        text += command[index]!;
+        continue;
+      }
+      text += ch;
+      continue;
+    }
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      quoted = true;
+      continue;
+    }
+    if (ch === "\\" && index + 1 < command.length) {
+      index += 1;
+      text += command[index]!;
+      continue;
+    }
+    if (/[ \t]/.test(ch)) {
+      push();
+      continue;
+    }
+    text += ch;
+  }
+
+  if (quote) return [];
+  push();
   return tokens;
+}
+
+function tokensStartWith(tokens: readonly string[], prefix: readonly string[]): boolean {
+  if (tokens.length < prefix.length) return false;
+  return prefix.every((token, index) => tokens[index] === token);
+}
+
+function formatRedirectSuffix(tokens: readonly ShellToken[]): string[] {
+  return tokens.map((token) => token.text);
+}
+
+function shellQuoteIfNeeded(value: string): string {
+  return /[^\w@%+=:,./-]/.test(value) ? shellSingleQuote(value) : value;
 }
 
 function proxyCommand(command: string): RewriteDecision {
