@@ -99,6 +99,59 @@ describe("rsp telemetry spool", () => {
     expect(spool).not.toContain('"id":"ok"');
   });
 
+  it("ingests orphaned .drain files left behind by a crashed drain", async () => {
+    const root = await tempRoot();
+    const spool = telemetrySpoolPath(root);
+    const orphan = `${spool}.999999.1783958744462.drain`;
+    await writeFile(
+      orphan,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "orphaned", command: "git log" })}\n`,
+      "utf8",
+    );
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "live",
+      command: "git status",
+    });
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"orphaned"');
+    expect(drained.join("\n")).toContain('"id":"live"');
+    await expect(readFile(orphan, "utf8")).rejects.toThrow();
+  });
+
+  it("sweeps orphaned .drain files even when the live spool is gone, and leaves live-owner drains alone", async () => {
+    const root = await tempRoot();
+    const spool = telemetrySpoolPath(root);
+    const orphan = `${spool}.999999.1783958744462.drain`;
+    const inFlight = `${spool}.${process.ppid}.1783958744463.drain`;
+    await writeFile(
+      orphan,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "orphaned", command: "git log" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      inFlight,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "not-mine", command: "git log" })}\n`,
+      "utf8",
+    );
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"orphaned"');
+    expect(drained.join("\n")).not.toContain('"id":"not-mine"');
+    await expect(readFile(inFlight, "utf8")).resolves.toContain('"id":"not-mine"');
+  });
+
   it("keeps oversized raw and emitted text out of the spool while preserving byte estimates", async () => {
     const root = await tempRoot();
     const huge = "x".repeat(300 * 1024);

@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
@@ -173,18 +173,56 @@ export async function drainTelemetrySpool(
   drainLine: (line: string) => Promise<boolean>,
 ): Promise<void> {
   const path = telemetrySpoolPath(rootDir);
-  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await rename(path, drainingPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    return;
+  await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
+
+  for (const orphan of await orphanedDrainFiles(path)) {
+    await drainFile(path, orphan, drainLine);
   }
 
+  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
+  try {
+    await rename(path, drainingPath);
+  } catch {
+    return;
+  }
+  await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+  await drainFile(path, drainingPath, drainLine);
+}
+
+/**
+ * A crash between the spool rename and the ingest leaves a `<spool>.<pid>.<ts>.drain` file behind.
+ * Adopt those leftovers, skipping any still owned by a live process other than us.
+ */
+async function orphanedDrainFiles(spoolPath: string): Promise<string[]> {
+  const dir = dirname(spoolPath);
+  const prefix = `${basename(spoolPath)}.`;
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return names
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".drain"))
+    .filter((name) => {
+      const pid = Number(name.slice(prefix.length).split(".")[0]);
+      return !(Number.isInteger(pid) && pid !== process.pid && isProcessAlive(pid));
+    })
+    .sort()
+    .map((name) => join(dir, name));
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function drainFile(
+  spoolPath: string,
+  drainingPath: string,
+  drainLine: (line: string) => Promise<boolean>,
+): Promise<void> {
   const retryLines: string[] = [];
   try {
-    await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
     const text = await readSettledFile(drainingPath);
     const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
     for (const line of lines) {
@@ -195,8 +233,8 @@ export async function drainTelemetrySpool(
     }
   } finally {
     if (retryLines.length > 0) {
-      const current = safeReadFileSync(path);
-      await writeFile(path, `${retryLines.join("\n")}\n${current}`, "utf8");
+      const current = safeReadFileSync(spoolPath);
+      await writeFile(spoolPath, `${retryLines.join("\n")}\n${current}`, "utf8");
     }
     await rm(drainingPath, { force: true });
   }
