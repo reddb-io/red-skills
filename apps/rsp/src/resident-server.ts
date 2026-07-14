@@ -109,6 +109,10 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   void (async () => {
     const openedAt = process.hrtime.bigint();
     if (process.env.RSP_TEST_HANG_RESIDENT_STORE_OPEN === "1") await new Promise(() => undefined);
+    const testDelayMs = Number(process.env.RSP_TEST_DELAY_RESIDENT_STORE_OPEN_MS ?? "0");
+    if (Number.isFinite(testDelayMs) && testDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, testDelayMs));
+    }
     const store = await RspElisionStore.open({
       uri: opts.storeUri,
       ttlDays: opts.ttlDays,
