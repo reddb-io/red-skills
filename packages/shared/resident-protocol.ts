@@ -18,6 +18,7 @@ export type RspResidentRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "handover"; clientVersion: string }
   | { id: string; op: "stats" }
+  | { id: string; op: "accounting-stats"; byteBudget: number }
   | { id: string; op: "telemetry-stats"; sinceDays: number }
   | { id: string; op: "telemetry-gains"; sinceDays: number }
   | { id: string; op: "mint"; original: string; meta: unknown }
