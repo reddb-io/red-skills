@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
+import { storageClassForCommand, type RspStorageClass, type RspStorageClassStats } from "./elision-store.js";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
 export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
@@ -33,6 +34,7 @@ export interface RspAccountingLaneStats {
   bytes: number;
   oldest: string | null;
   budget: number;
+  storage_classes: RspStorageClassStats;
 }
 
 export interface RspTelemetryStats {
@@ -424,6 +426,7 @@ export async function readAccountingLaneStats(
       return ts < oldest ? ts : oldest;
     }, null),
     budget: byteBudget,
+    storage_classes: accountingStorageClassStats(live),
   };
 }
 
@@ -585,6 +588,31 @@ function tokenCountFromCounters(record: Record<string, unknown>, field: "raw" | 
   if (exact != null) return { tokens: exact, estimated: false };
   const bytes = numeric(record[field === "raw" ? "raw_bytes" : "emitted_bytes"]);
   return { tokens: Math.ceil(bytes / 4), estimated: bytes > 0 };
+}
+
+function accountingStorageClassStats(records: readonly Record<string, unknown>[]): RspStorageClassStats {
+  const stats = emptyStorageClassStats();
+  for (const record of records) {
+    if (stringField(record.event_type) === "show") continue;
+    if (stringField(record.degradation_reason) !== "") continue;
+    if (record.elided !== true) continue;
+    const storageClass = storageClassField(record.storage_class) ?? storageClassForCommand(stringField(record.command));
+    stats[storageClass].records += 1;
+    stats[storageClass].bytes += numeric(record.raw_bytes);
+  }
+  return stats;
+}
+
+function storageClassField(value: unknown): RspStorageClass | null {
+  return value === "derivable" || value === "re-executable" || value === "ephemeral" ? value : null;
+}
+
+function emptyStorageClassStats(): RspStorageClassStats {
+  return {
+    derivable: { records: 0, bytes: 0 },
+    "re-executable": { records: 0, bytes: 0 },
+    ephemeral: { records: 0, bytes: 0 },
+  };
 }
 
 async function readCollection(db: RedDB, collection: string): Promise<Array<Record<string, unknown>>> {
