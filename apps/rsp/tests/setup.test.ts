@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "../src/config.js";
+import { DEFAULT_RSP_EPHEMERAL_TTL_HOURS, DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "../src/config.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
@@ -98,6 +98,7 @@ describe("mergeRspBlock", () => {
       enabled: true,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      ephemeralTtlHours: DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     })).toBe([
       "plugins:",
@@ -107,6 +108,7 @@ describe("mergeRspBlock", () => {
       "rsp:",
       "  enabled: true",
       "  ttlDays: 7",
+      "  ephemeralTtlHours: 6",
       "  byteBudget: 67108864",
       "  heavyGitByteThreshold: 8192",
       "",
@@ -125,10 +127,16 @@ describe("mergeRspBlock", () => {
       "",
     ].join("\n");
 
-    const out = mergeRspBlock(existing, { enabled: true, ttlDays: 7, byteBudget: 64, heavyGitByteThreshold: 128 });
+    const out = mergeRspBlock(existing, {
+      enabled: true,
+      ttlDays: 7,
+      ephemeralTtlHours: 6,
+      byteBudget: 64,
+      heavyGitByteThreshold: 128,
+    });
 
     expect(out).toContain("plugins:\n  dev:\n    enabled: true");
-    expect(out).toContain("rsp:\n  enabled: true\n  ttlDays: 7\n  byteBudget: 64\n  heavyGitByteThreshold: 128");
+    expect(out).toContain("rsp:\n  enabled: true\n  ttlDays: 7\n  ephemeralTtlHours: 6\n  byteBudget: 64\n  heavyGitByteThreshold: 128");
     expect(out).toContain("other: kept");
     expect(out).not.toContain("ttlDays: 1");
   });
