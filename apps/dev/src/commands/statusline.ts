@@ -145,6 +145,8 @@ interface RspSummaryFile {
   version: number;
   tokens_saved_today: number;
   dollars_saved_today_usd?: number;
+  show_total_today?: number;
+  show_hit_rate?: number;
   updated_at: string;
 }
 
@@ -209,6 +211,9 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
       state: "ready",
       tokensSavedToday: tokensSavedForCurrentDay(summary, nowMs),
       dollarsSavedTodayUsd: dollarsSavedForCurrentDay(summary, nowMs),
+      showHitRate: summary.show_total_today && summary.show_total_today > 0 && typeof summary.show_hit_rate === "number"
+        ? summary.show_hit_rate
+        : undefined,
     };
   }
   if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };
