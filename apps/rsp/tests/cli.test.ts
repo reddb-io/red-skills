@@ -2192,7 +2192,7 @@ describe("rsp cli", () => {
 
   it("wait ls shows a live registry entry while a command wait is active", async () => {
     const root = await tempRoot();
-    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 700)"`;
+    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 3000)"`;
     const child = spawn(process.execPath, ["--import", tsxLoader, cli, "wait", "cmd", "--reason", "registry probe", "--", command], {
       cwd: root,
       env: { ...process.env },
@@ -2208,7 +2208,7 @@ describe("rsp cli", () => {
     expect(listed.status).toBe("running");
     expect(listed.poll_tier).toBe("local-cmd:2-5s");
 
-    const status = await closeWithTimeout(child, normalizedDurationMs(5_000));
+    const status = await closeWithTimeout(child, normalizedDurationMs(10_000));
     expect(status, Buffer.concat(stderr).toString("utf8")).toBe(0);
     const decoded = decode(Buffer.concat(stdout).toString("utf8")) as { wait: { status: string } };
     expect(decoded.wait.status).toBe("success");
