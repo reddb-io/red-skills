@@ -59,20 +59,16 @@ plugin_manifest_for_hook() {
   plugin_manifest "$root"
 }
 
-file_mtime() {
-  local file="$1" mtime
-  [ -f "$file" ] || return 1
-  mtime="$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || true)"
-  [ -n "$mtime" ] || return 1
-  printf '%s\n' "$mtime"
-}
-
 cache_dir() {
   printf '%s\n' "${RED_SKILLS_RSP_HOOK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/hook-cache}"
 }
 
 cache_file() {
   local root="$1" dir key
+  if [ -z "${RED_SKILLS_RSP_HOOK_CACHE_DIR:-}" ]; then
+    printf '%s/.red-skills-rsp-hook.cache\n' "$root"
+    return 0
+  fi
   dir="$(cache_dir)" || return 1
   key="$(printf '%s' "$root" | cksum | cut -d ' ' -f 1)" || return 1
   [ -n "$key" ] || return 1
@@ -172,7 +168,7 @@ find_red_binary() {
 }
 
 prime_cache() {
-  local root cache bundle red tmp manifest dir claude_manifest codex_manifest claude_mtime codex_mtime
+  local root cache bundle red tmp manifest dir
   root="$(plugin_root || true)"
   if [ -z "$root" ]; then
     debug "prime skipped: plugin root is unset"
@@ -197,10 +193,6 @@ prime_cache() {
 
   red="$(find_red_binary || true)"
   manifest="$(plugin_manifest "$root" || true)"
-  claude_manifest="$root/.claude-plugin/plugin.json"
-  codex_manifest="$root/.codex-plugin/plugin.json"
-  claude_mtime="$(file_mtime "$claude_manifest" || true)"
-  codex_mtime="$(file_mtime "$codex_manifest" || true)"
   dir="${cache%/*}"
   mkdir -p "$dir" 2>/dev/null || {
     debug "prime skipped: cache directory is not writable"
@@ -212,10 +204,6 @@ prime_cache() {
   {
     printf 'PLUGIN_ROOT=%s\n' "$root"
     printf 'PLUGIN_MANIFEST=%s\n' "$manifest"
-    printf 'CLAUDE_PLUGIN_MANIFEST=%s\n' "$claude_manifest"
-    printf 'CLAUDE_PLUGIN_MANIFEST_MTIME=%s\n' "$claude_mtime"
-    printf 'CODEX_PLUGIN_MANIFEST=%s\n' "$codex_manifest"
-    printf 'CODEX_PLUGIN_MANIFEST_MTIME=%s\n' "$codex_mtime"
     printf 'RSP_BUNDLE=%s\n' "$bundle"
     printf 'REDDB_BIN=%s\n' "$red"
   } >"$tmp" 2>/dev/null && mv "$tmp" "$cache" 2>/dev/null || {
@@ -233,8 +221,6 @@ load_cache() {
   local cache="$1" key value
   RSP_HOOK_CACHED_ROOT=""
   RSP_HOOK_CACHED_MANIFEST=""
-  RSP_HOOK_CACHED_CLAUDE_MANIFEST_MTIME=""
-  RSP_HOOK_CACHED_CODEX_MANIFEST_MTIME=""
   RSP_HOOK_CACHED_BUNDLE=""
   RSP_HOOK_CACHED_REDDB_BIN=""
 
@@ -242,8 +228,6 @@ load_cache() {
     case "$key" in
       PLUGIN_ROOT) RSP_HOOK_CACHED_ROOT="$value" ;;
       PLUGIN_MANIFEST) RSP_HOOK_CACHED_MANIFEST="$value" ;;
-      CLAUDE_PLUGIN_MANIFEST_MTIME) RSP_HOOK_CACHED_CLAUDE_MANIFEST_MTIME="$value" ;;
-      CODEX_PLUGIN_MANIFEST_MTIME) RSP_HOOK_CACHED_CODEX_MANIFEST_MTIME="$value" ;;
       RSP_BUNDLE) RSP_HOOK_CACHED_BUNDLE="$value" ;;
       REDDB_BIN) RSP_HOOK_CACHED_REDDB_BIN="$value" ;;
     esac
@@ -251,7 +235,7 @@ load_cache() {
 }
 
 run_hook() {
-  local hook_name="$1" root cache manifest tmp rc current_mtime cached_mtime
+  local hook_name="$1" root cache manifest rc
   root="$(plugin_root || true)"
   if [ -z "$root" ]; then
     debug "$hook_name fail-open: plugin root is unset"
@@ -275,16 +259,9 @@ run_hook() {
   fi
 
   manifest="$(plugin_manifest_for_hook "$root" "$hook_name" || true)"
-  if [ -n "$manifest" ]; then
-    current_mtime="$(file_mtime "$manifest" || true)"
-    case "$hook_name" in
-      codex-*) cached_mtime="$RSP_HOOK_CACHED_CODEX_MANIFEST_MTIME" ;;
-      *) cached_mtime="$RSP_HOOK_CACHED_CLAUDE_MANIFEST_MTIME" ;;
-    esac
-    if [ -n "$current_mtime" ] && [ "$current_mtime" != "$cached_mtime" ]; then
-      debug "$hook_name fail-open: stale rsp cache"
-      return 0
-    fi
+  if [ -n "$manifest" ] && [ "$manifest" -nt "$cache" ]; then
+    debug "$hook_name fail-open: stale rsp cache"
+    return 0
   fi
 
   if [ -z "$RSP_HOOK_CACHED_BUNDLE" ] || [ ! -f "$RSP_HOOK_CACHED_BUNDLE" ]; then
@@ -292,19 +269,11 @@ run_hook() {
     return 0
   fi
 
-  tmp="$(mktemp 2>/dev/null || true)"
-  if [ -z "$tmp" ]; then
-    debug "$hook_name fail-open: could not create stdin temp file"
-    return 0
-  fi
-  trap 'rm -f "$tmp"' EXIT
-  read_stdin_to "$tmp"
-
   if [ -n "$RSP_HOOK_CACHED_REDDB_BIN" ]; then
-    REDDB_BIN="$RSP_HOOK_CACHED_REDDB_BIN" with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name" <"$tmp"
+    REDDB_BIN="$RSP_HOOK_CACHED_REDDB_BIN" with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name"
     rc=$?
   else
-    with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name" <"$tmp"
+    with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name"
     rc=$?
   fi
 
