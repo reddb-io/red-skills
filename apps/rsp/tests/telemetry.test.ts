@@ -673,6 +673,41 @@ describe("rsp telemetry spool", () => {
     expect(summary.decisions).toEqual({ seen: 1, contributed: 1 });
   }, 40_000);
 
+  it("routes a real Codex PreToolUse payload through the built bundle proxy and executes verbatim", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+    const bundle = await ensureRspBundle();
+    const command = "printf 'out\\n'; printf 'err\\n' >&2";
+    const payload = {
+      cwd: root,
+      tool_name: "bash",
+      tool_input: { command },
+    };
+
+    const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify(payload)),
+      encoding: "buffer",
+    });
+    expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
+    const updated = JSON.parse(hook.stdout.toString("utf8")) as {
+      hookSpecificOutput: { updatedInput: { command: string } };
+    };
+    expect(updated.hookSpecificOutput.updatedInput.command).toBe("rsp proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'");
+
+    const raw = spawnSync(command, { cwd: root, shell: true, encoding: "buffer" });
+    const proxied = spawnSync(process.execPath, [bundle, "proxy", "--", command], {
+      cwd: root,
+      encoding: "buffer",
+    });
+
+    expect(proxied.stdout).toEqual(raw.stdout);
+    expect(proxied.stderr).toEqual(raw.stderr);
+    expect(proxied.status).toBe(raw.status);
+    expect(proxied.signal).toBe(raw.signal);
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"reason":"universal-proxy"');
+  }, 40_000);
+
   it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
