@@ -58,7 +58,7 @@ Run the checks against the target repo (cwd by default; `--repo <path|owner/name
 14. **`req:<Spec>` dependency-edge audit** — dependency edges must point at executable slices, never at a Spec (see `triage-labels.md` *Dependency Edges*; #907/#928 incident). List every open issue carrying a `req:N` label whose target #N carries `type:spec`, and emit **one warn line per offending edge** (`⚠️ #<dependent> req:<N> → #<N> is type:spec — re-point at its spec:<N> slices`). Resolve it read-only: for each `req:*` label in use (`gh label list --search req:` or scan `gh issue list --label req:<n>`), check the target's labels with `gh issue view <N> --json labels`; a target with `type:spec` is a finding. Report `✅` when no `req:<Spec>` edge exists, `⚠️` with the count and per-edge lines otherwise. Tag `→ /triage` (re-point each offending edge). During this read-only pass: never edit a label.
 15. **Native blocked-by vs `req:N` divergence audit** — ADR 0094 deliberately keeps two dependency surfaces: native GitHub blocked-by edges for humans and `req:N` labels for the AFK runtime. Compare them across open Tickets (exclude parent Specs carrying `type:spec`) and emit one warn line per divergent edge in either direction: native blocked-by edge without the matching `req:N` label, or `req:N` label without the matching native blocked-by edge.
 
-    Concrete read path (read-only GETs only):
+    Concrete read path (read-only GETs only, matching `/red-setup` issue-tracker-github *Dependency & hierarchy operations*):
 
     ```bash
     gh issue list --state open --json number,labels \
