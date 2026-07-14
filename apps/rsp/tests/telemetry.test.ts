@@ -541,6 +541,14 @@ describe("rsp telemetry spool", () => {
         decision: "passed",
         reason: "unsupported-command",
       });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("passed-lossless-gh-json-jq", {
+        created_at: "2026-07-10T10:01:30.000Z",
+        hook: "codex-pre-exec",
+        command: "gh pr view 1747 --json number,title",
+        command_family: "gh pr view json-jq",
+        decision: "passed",
+        reason: "lossless-gh-json-jq",
+      });
       await db.kv(RSP_DECISIONS_COLLECTION).put("failed-open", {
         created_at: "2026-07-10T10:02:00.000Z",
         hook: "codex-pre-exec",
@@ -553,14 +561,15 @@ describe("rsp telemetry spool", () => {
       const stats = await readTelemetryStats(db, 7, new Date("2026-07-11T00:00:00.000Z"));
 
       expect(stats.decisions).toEqual({
-        seen: 3,
+        seen: 4,
         contributed: 0,
-        passed: 2,
+        passed: 3,
         failed_open: 1,
         contribution_rate: 0,
         top_pass_reasons: [
           { reason: "disabled", count: 1 },
           { reason: "hook-exception", count: 1 },
+          { reason: "lossless-gh-json-jq", count: 1 },
           { reason: "unsupported-command", count: 1 },
         ],
       });
