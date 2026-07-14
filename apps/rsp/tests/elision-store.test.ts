@@ -8,6 +8,7 @@ import {
   DEFAULT_RSP_TTL_DAYS,
   RSP_ELISION_COLLECTION,
   RspElisionStore,
+  storageClassForCommand,
 } from "../src/elision-store.js";
 
 const roots: string[] = [];
@@ -32,7 +33,8 @@ describe("RspElisionStore", () => {
     git(root, ["add", "tracked.txt"]);
     git(root, ["commit", "-m", "seed"]);
 
-    const storePath = join(root, "store.rdb");
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "store.rdb");
     const store = await RspElisionStore.open({
       uri: `file://${storePath}`,
       now: () => new Date("2026-07-10T12:00:00.000Z"),
@@ -72,7 +74,8 @@ describe("RspElisionStore", () => {
     const root = await tempRoot();
     git(root, ["init"]);
 
-    const storePath = join(root, "store.rdb");
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "store.rdb");
     const store = await RspElisionStore.open({
       uri: `file://${storePath}`,
       now: () => new Date("2026-07-10T12:00:00.000Z"),
@@ -101,6 +104,69 @@ describe("RspElisionStore", () => {
       process.chdir(previousCwd);
       await store.close();
     }
+  });
+
+  it("stores re-executable handles as recipe plus hash and marks moved state on show", async () => {
+    const root = await tempRoot();
+    git(root, ["init"]);
+    await writeFile(join(root, "tracked.txt"), "tracked content\n", "utf8");
+    git(root, ["add", "tracked.txt"]);
+
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "store.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const original = Buffer.from("A  tracked.txt\n");
+      const handle = await store.mint(original, {
+        command: "git status --short",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+
+      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+        records: Record<string, {
+          original?: string;
+          content_hash?: string;
+          reexecution_recipe?: { argv?: string[]; content_hash?: string };
+        }>;
+        index: { records: Array<{ bytes: number; storage_class?: string }> };
+      };
+      const [stored] = Object.values(raw.records);
+      expect(stored?.original).toBeUndefined();
+      expect(stored?.content_hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(stored?.reexecution_recipe?.argv).toEqual(["git", "status", "--short"]);
+      expect(stored?.reexecution_recipe?.content_hash).toBe(stored?.content_hash);
+      expect(raw.index.records[0]?.storage_class).toBe("re-executable");
+      expect(raw.index.records[0]?.bytes).toBeLessThan(500);
+
+      const matching = await store.get(handle);
+      if (!matching || "status" in matching) throw new Error("expected live re-executable record");
+      expect(matching.original).toEqual(original);
+
+      await writeFile(join(root, "moved.txt"), "state moved\n", "utf8");
+      const moved = await store.get(handle);
+      if (!moved || "status" in moved) throw new Error("expected reconstructed re-executable record");
+      expect(moved.original.toString("utf8")).toBe(
+        "reconstructed after state moved - current snapshot follows\nA  tracked.txt\n?? moved.txt\n",
+      );
+    } finally {
+      process.chdir(previousCwd);
+      await store.close();
+    }
+  });
+
+  it("classifies only cheap read commands as re-executable", () => {
+    expect(storageClassForCommand("git status --short")).toBe("re-executable");
+    expect(storageClassForCommand("git branch -av")).toBe("re-executable");
+    expect(storageClassForCommand("gh pr view 42")).toBe("ephemeral");
+    expect(storageClassForCommand("gh issue list --label ready-for-agent")).toBe("ephemeral");
+    expect(storageClassForCommand("gh pr checkout 42")).toBe("ephemeral");
+    expect(storageClassForCommand("gh run watch 123")).toBe("ephemeral");
+    expect(storageClassForCommand("git commit -m msg")).toBe("ephemeral");
   });
 
   it("mints elision handles and round-trips original bytes exactly", async () => {
@@ -331,19 +397,26 @@ describe("RspElisionStore", () => {
 
   it("records exactly one storage class per minted handle and reports the class breakdown", async () => {
     const root = await tempRoot();
-    const storePath = join(root, "red.rdb");
+    git(root, ["init"]);
+    await writeFile(join(root, "tracked.txt"), "tracked content\n", "utf8");
+    git(root, ["add", "tracked.txt"]);
+
+    const storeRoot = await tempRoot();
+    const storePath = join(storeRoot, "red.rdb");
     const store = await RspElisionStore.open({
       uri: `file://${storePath}`,
       now: () => new Date("2026-07-10T12:00:00.000Z"),
     });
+    const previousCwd = process.cwd();
+    process.chdir(root);
     try {
       await store.mint(Buffer.from("git history"), {
         command: "git log --oneline",
         loss: { level: "terse", bytes_elided: 11 },
       });
-      await store.mint(Buffer.from("remote pr"), {
-        command: "gh pr view 42",
-        loss: { level: "brief", bytes_elided: 9 },
+      await store.mint(Buffer.from("A  tracked.txt\n"), {
+        command: "git status --short",
+        loss: { level: "brief", bytes_elided: 15 },
       });
       await store.mint(Buffer.from("test output"), {
         command: "vitest run",
@@ -368,7 +441,9 @@ describe("RspElisionStore", () => {
       expect(stats.records).toBe(3);
       expect(stats.storage_classes.derivable.records).toBe(1);
       expect(stats.storage_classes.derivable.bytes).toBeLessThan(500);
-      expect(stats.storage_classes["re-executable"]).toEqual({ records: 1, bytes: 9 });
+      expect(stats.storage_classes["re-executable"].records).toBe(1);
+      expect(stats.storage_classes["re-executable"].bytes).toBeGreaterThan(15);
+      expect(stats.storage_classes["re-executable"].bytes).toBeLessThan(500);
       expect(stats.storage_classes.ephemeral).toEqual({ records: 1, bytes: 11 });
       expect(stats.bytes).toBe(
         stats.storage_classes.derivable.bytes +
@@ -376,6 +451,7 @@ describe("RspElisionStore", () => {
           stats.storage_classes.ephemeral.bytes,
       );
     } finally {
+      process.chdir(previousCwd);
       await store.close();
     }
   });
