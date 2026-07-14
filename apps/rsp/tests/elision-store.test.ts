@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -151,6 +151,65 @@ describe("RspElisionStore", () => {
         command: "first",
       });
       expect((await store.get(second))?.original).toEqual(Buffer.from("abcdef"));
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("performs zero writes to the content store on a no-expiration sweep", async () => {
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      ttlDays: 7,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    try {
+      await store.mint(Buffer.from("sweep test"), {
+        command: "git log",
+        loss: { level: "terse", bytes_elided: 10 },
+      });
+
+      const afterMint = await readFile(storePath, "utf8");
+      const mtimeAfterMint = (await stat(storePath)).mtimeMs;
+
+      await store.stats();
+      await store.stats();
+      await store.stats();
+
+      const afterSweeps = await readFile(storePath, "utf8");
+      const mtimeAfterSweeps = (await stat(storePath)).mtimeMs;
+
+      expect(afterSweeps).toBe(afterMint);
+      expect(mtimeAfterSweeps).toBe(mtimeAfterMint);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("still writes the store when a sweep expires records", async () => {
+    let now = new Date("2026-07-10T12:00:00.000Z");
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      ttlDays: 1,
+      now: () => now,
+    });
+    try {
+      await store.mint(Buffer.from("will expire"), {
+        command: "git diff",
+        loss: { level: "terse", bytes_elided: 11 },
+      });
+
+      const afterMint = await readFile(storePath, "utf8");
+
+      now = new Date("2026-07-12T12:00:00.000Z");
+      await store.stats();
+
+      const afterExpiry = await readFile(storePath, "utf8");
+      expect(afterExpiry).not.toBe(afterMint);
+      expect(await store.stats()).toMatchObject({ records: 0 });
     } finally {
       await store.close();
     }

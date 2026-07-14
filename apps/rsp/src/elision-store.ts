@@ -91,6 +91,7 @@ export class RspElisionStore {
   private document!: StoreDocument;
   private db?: RedDB;
   private readonly path: string;
+  private dirty = false;
 
   private constructor(path: string, private readonly opts: Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget"> & {
     uri: string;
@@ -234,6 +235,7 @@ export class RspElisionStore {
     const withoutExisting = index.records.filter((record) => record.handle !== entry.handle);
     withoutExisting.push(entry);
     this.writeIndex({ version: 1, records: withoutExisting });
+    this.dirty = true;
   }
 
   private prune(): void {
@@ -258,7 +260,9 @@ export class RspElisionStore {
       this.expireEntry(evicted, nowIso);
     }
 
-    this.writeIndex({ version: 1, records: live });
+    if (live.length < index.records.length) {
+      this.writeIndex({ version: 1, records: live });
+    }
   }
 
   private expireEntry(entry: IndexEntry, expiredAt: string): void {
@@ -268,6 +272,7 @@ export class RspElisionStore {
       expired_at: expiredAt,
       command: entry.command,
     };
+    this.dirty = true;
   }
 
   private tombstone(handle: `el:${string}`): RspExpiredHandle | null {
@@ -281,7 +286,9 @@ export class RspElisionStore {
   }
 
   private async flush(): Promise<void> {
+    if (!this.dirty) return;
     await writeStoreDocument(this.path, this.document);
+    this.dirty = false;
   }
 
   private kv() {
@@ -384,7 +391,7 @@ export class RspElisionStore {
     const index = await this.readRedDbIndex();
     const withoutExisting = index.records.filter((entry) => entry.handle !== handle);
     withoutExisting.push({ handle, key, bytes: bytes.length, command: meta.command, created_at: createdAt, expires_at: expiresAt });
-    await this.pruneRedDb({ version: 1, records: withoutExisting });
+    await this.pruneRedDb({ version: 1, records: withoutExisting }, true);
     await this.assertRedDbMintPersisted(handle, bytes.length);
     return handle;
   }
@@ -545,7 +552,7 @@ export class RspElisionStore {
     await this.kv().put(indexKey(), index);
   }
 
-  private async pruneRedDb(index: IndexDocument): Promise<IndexDocument> {
+  private async pruneRedDb(index: IndexDocument, hadAdditions = false): Promise<IndexDocument> {
     const nowMs = this.opts.now().getTime();
     const nowIso = new Date(nowMs).toISOString();
     const live: IndexEntry[] = [];
@@ -564,7 +571,9 @@ export class RspElisionStore {
       await this.expireRedDbEntry(evicted, nowIso);
     }
     const next = { version: 1 as const, records: live };
-    await this.writeRedDbIndex(next);
+    if (hadAdditions || live.length < index.records.length) {
+      await this.writeRedDbIndex(next);
+    }
     return next;
   }
 

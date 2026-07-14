@@ -252,6 +252,7 @@ class ResidentTelemetryDrain {
     healed.unshift(...this.pendingHeals);
     this.pendingHeals = [];
     const index = await this.readIndex(db);
+    const originalCount = index.records.length;
     const nextRecords = [...index.records];
     for (const entry of healed) {
       nextRecords.push(await this.writeDrainDegradation(db, {
@@ -290,7 +291,8 @@ class ResidentTelemetryDrain {
         return true;
       }
     });
-    await this.prune(db, { version: 1, records: nextRecords });
+    const hadAdditions = nextRecords.length > originalCount;
+    await this.prune(db, { version: 1, records: nextRecords }, hadAdditions);
     await writeStatusSummary(db, this.opts.rootDir);
   }
 
@@ -351,7 +353,7 @@ class ResidentTelemetryDrain {
     await db.kv(RSP_TELEMETRY_INDEX_COLLECTION).put("index:v1", index);
   }
 
-  private async prune(db: RedDB, index: TelemetryIndexDocument): Promise<void> {
+  private async prune(db: RedDB, index: TelemetryIndexDocument, hadAdditions = false): Promise<void> {
     const nowMs = Date.now();
     const live: TelemetryIndexEntry[] = [];
     for (const entry of index.records) {
@@ -368,7 +370,9 @@ class ResidentTelemetryDrain {
       bytes -= evicted.bytes;
       await db.kv(evicted.collection).delete(evicted.key);
     }
-    await this.writeIndex(db, { version: 1, records: live });
+    if (hadAdditions || live.length < index.records.length) {
+      await this.writeIndex(db, { version: 1, records: live });
+    }
   }
 }
 
