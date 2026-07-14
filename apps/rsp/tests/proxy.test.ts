@@ -48,6 +48,17 @@ describe("rsp proxy segment recognition", () => {
       commandLine: "printf before; rsp --brief gh pr list --limit 5",
       matches: [expect.objectContaining({ capabilityId: "gh:pr:list", command: "gh pr list --limit 5" })],
     });
+    expect(rewriteProxyCommandLine("printf before; gh pr list --json number,title --jq '.[] | .number'", "brief")).toMatchObject({
+      commandLine: "printf before; gh pr list --json number,title --jq '.[] | .number'",
+      matches: [
+        expect.objectContaining({
+          command: "gh pr list --json number,title --jq '.[] | .number'",
+          commandFamily: "gh pr list json-jq",
+          decision: "passed",
+          reason: "lossless-gh-json-jq",
+        }),
+      ],
+    });
   });
 
   it("summarizes a contributed tail segment with a recoverable elision handle", async () => {
@@ -120,6 +131,34 @@ describe("rsp proxy segment recognition", () => {
       await shutdownResident(paths.socketPath);
       await waitForExit(server);
     }
+  }, 30_000);
+
+  it("executes gh json/jq selector segments byte-identically and records a lossless pass", async () => {
+    const root = await tempRoot();
+    const bundle = await ensureRspBundle();
+    const setup = spawnSync(process.execPath, [bundle, "setup"], { cwd: root, encoding: "utf8" });
+    expect(setup.status, `${setup.stdout}${setup.stderr}`).toBe(0);
+    await mkdir(join(root, "bin"), { recursive: true });
+    await writeFile(join(root, "bin", "gh"), "#!/usr/bin/env sh\nprintf '%s\\n' '[{\"number\":1747,\"title\":\"lossless\"}]'\n", "utf8");
+    await chmod(join(root, "bin", "gh"), 0o755);
+
+    const env = { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}` };
+    const proxied = spawnSync(process.execPath, [
+      bundle,
+      "--brief",
+      "proxy",
+      "--",
+      "gh pr list --json number,title --jq '.[0]'",
+    ], { cwd: root, env, encoding: "utf8" });
+
+    expect(proxied.status, `${proxied.stdout}${proxied.stderr}`).toBe(0);
+    expect(proxied.stdout).toBe("[{\"number\":1747,\"title\":\"lossless\"}]\n");
+    const decisions = await readFile(telemetrySpoolPath(root), "utf8");
+    expect(decisions).toContain('"hook":"proxy"');
+    expect(decisions).toContain('"command":"gh pr list --json number,title --jq \'.[0]\'"');
+    expect(decisions).toContain('"command_family":"gh pr list json-jq"');
+    expect(decisions).toContain('"decision":"passed"');
+    expect(decisions).toContain('"reason":"lossless-gh-json-jq"');
   }, 30_000);
 });
 
