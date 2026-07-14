@@ -13,6 +13,7 @@ import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
 import {
   RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
@@ -597,6 +598,41 @@ async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
 }
 
 describe("rsp cli", () => {
+  it.each([
+    ["compound-stdout-stderr", "printf 'out\\n'; printf 'err\\n' >&2"],
+    ["pipeline", "printf 'one\\ntwo\\n' | sed -n '2p'"],
+    ["redirect", "printf 'saved\\n' > redirected.txt; cat redirected.txt"],
+    ["failing-exit", "printf 'bad\\n' >&2; exit 7"],
+    ["signal", "kill -TERM $$"],
+  ])("proxies %s with byte-identical shell behavior", async (_label, command) => {
+    const rawRoot = await tempRoot();
+    const proxyRoot = await tempRoot();
+    await enableRsp(proxyRoot);
+
+    const raw = runShellFromCwd(rawRoot, command);
+    const proxied = runRsp(proxyRoot, ["proxy", "--", command], {});
+
+    expect(proxied.stdout).toEqual(raw.stdout);
+    expect(proxied.stderr).toEqual(raw.stderr);
+    expect(proxied.status).toBe(raw.status);
+    expect(proxied.signal).toBe(raw.signal);
+  });
+
+  it("fails open to raw execution on proxy-internal error and records the decision", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+
+    const res = runRsp(root, ["proxy", "--", "printf 'ok\\n'"], { RSP_PROXY_FAIL_INTERNAL: "1" });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe("ok\n");
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    const spool = await readFile(telemetrySpoolPath(root), "utf8");
+    expect(spool).toContain(`"collection":"${RSP_DECISIONS_COLLECTION}"`);
+    expect(spool).toContain('"decision":"failed-open"');
+    expect(spool).toContain('"reason":"proxy-internal-error"');
+  });
+
   it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
     expect(localBaselineRatio(100)).toBe(4);
     expect(normalizedDurationMs(1_000, 100)).toBe(4_000);
