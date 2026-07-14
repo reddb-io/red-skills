@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
@@ -146,7 +149,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  const openResidentStore = () => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
+  const openResidentStore = (ensureResident = true) => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
     byteBudget: config.byteBudget,
@@ -156,7 +159,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
     idleMs: config.idleMs,
     clientVersion: buildInfo.version,
-  }));
+  }, { ensureResident }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
@@ -205,17 +208,13 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(suppressRspStderr(warmResidentStore));
       if (isFastGitStatus(args.positional)) {
         const started = process.hrtime.bigint();
         return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
@@ -227,13 +226,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "gh") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(suppressRspStderr(warmResidentStore));
       const { runGhWrapper } = await import("./gh-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
@@ -241,13 +236,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(suppressRspStderr(warmResidentStore));
       const { runTestWrapper } = await import("./test-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
@@ -255,13 +246,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "cat") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(suppressRspStderr(warmResidentStore));
       const { runCatWrapper } = await import("./cat-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runCatWrapper(args.positional, {
@@ -273,13 +260,9 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "exec") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(suppressRspStderr(warmResidentStore));
       const { runExecWrapper } = await import("./exec-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await suppressRspStderr(() => runExecWrapper(args.positional, {
@@ -287,7 +270,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
       }));
-      return await emitWrappedResult(args, result, started, store);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "show" && args.handle) {
@@ -438,10 +421,14 @@ class LazyRspElisionStore implements ElisionStoreLike {
   constructor(private readonly openStore: () => Promise<ElisionStoreLike>) {}
 
   async mint(...args: Parameters<RspElisionStore["mint"]>): Promise<string> {
-    const store = await this.open();
-    const handle = await store.mint(...args);
-    this.metrics = store.lastResponseMetrics?.();
-    return handle;
+    try {
+      const store = await this.open();
+      const handle = await store.mint(...args);
+      this.metrics = store.lastResponseMetrics?.();
+      return handle;
+    } catch {
+      return `recovery unavailable (resident cold) — re-run: ${args[1].command}`;
+    }
   }
 
   async close(): Promise<void> {
@@ -555,8 +542,8 @@ async function emitWrappedResult(
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (store) {
-    await appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics());
-    if (coldNudgeConfig) await nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
+    fireAndForget(appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics()));
+    if (coldNudgeConfig) nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
   } else {
     appendFastInvocationTelemetry(telemetryRoot, args, result, wrapperMs);
   }
@@ -567,24 +554,75 @@ async function emitWrappedResult(
   return result.status ?? 0;
 }
 
-async function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): Promise<void> {
+function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): void {
   try {
     const spoolPath = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
     const stat = statSync(spoolPath);
     const staleMs = config.telemetryDrainIntervalMs * 2;
     if (stat.size < config.telemetryByteBudget && !spoolHasEventOlderThan(spoolPath, Date.now() - staleMs)) return;
-    const { kickResidentServer, resolveResidentPaths } = await import("./resident-client.js");
-    await kickResidentServer(resolveResidentPaths(telemetryRoot), {
-      storeUri: config.storeUri,
-      ttlDays: config.ttlDays,
-      byteBudget: config.byteBudget,
-      telemetryTtlDays: config.telemetryTtlDays,
-      telemetryByteBudget: config.telemetryByteBudget,
-      telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
-      telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
-      idleMs: config.idleMs,
+    const rootDir = fastResidentRoot(telemetryRoot);
+    const socketDir = fastResidentSocketDir(rootDir);
+    const socketPath = join(socketDir, "rsp.sock");
+    const pidPath = join(socketDir, "rsp.pid");
+    const registryPath = join(rootDir, ".red", "tmp", "rsp-resident.pid.json");
+    const wakeLockPath = join(rootDir, ".red", "tmp", "rsp.wake.lock");
+    const child = spawn(process.execPath, [
+      ...process.execArgv,
+      process.argv[1] ?? "",
+      "warm-resident",
+      "--socket",
+      socketPath,
+      "--pid-file",
+      pidPath,
+      "--store-uri",
+      config.storeUri,
+      "--ttl-days",
+      String(config.ttlDays),
+      "--byte-budget",
+      String(config.byteBudget),
+      "--telemetry-ttl-days",
+      String(config.telemetryTtlDays),
+      "--telemetry-byte-budget",
+      String(config.telemetryByteBudget),
+      "--telemetry-drain-interval-ms",
+      String(config.telemetryDrainIntervalMs),
+      "--telemetry-drain-timeout-ms",
+      String(config.telemetryDrainTimeoutMs),
+      "--idle-ms",
+      String(config.idleMs),
+      "--registry",
+      registryPath,
+      "--wake-lock",
+      wakeLockPath,
+    ], {
+      cwd: rootDir,
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, RSP_RESIDENT_WARMER: "1" },
     });
+    child.unref();
   } catch {}
+}
+
+function fastResidentRoot(cwd: string): string {
+  let current = cwd;
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return cwd;
+    current = parent;
+  }
+}
+
+function fastResidentSocketDir(rootDir: string): string {
+  const hash = createHash("sha256").update(rootDir).digest("hex").slice(0, 20);
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  if (xdg) {
+    const candidate = join(xdg, "red-skills", hash);
+    if (join(candidate, "rsp.sock").length < 108) return candidate;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : "nouid";
+  return join(tmpdir(), `red-skills-${uid}`, hash);
 }
 
 function spoolHasEventOlderThan(path: string, cutoffMs: number): boolean {
@@ -671,14 +709,18 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   const status = await passthrough(argv);
   if (telemetryRoot) {
     const { appendTelemetryEvent, RSP_TELEMETRY_DEGRADATIONS_COLLECTION } = await import("./telemetry.js");
-    await appendTelemetryEvent(telemetryRoot, {
+    fireAndForget(appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
       command: passthroughTelemetryCommand(argv),
       reason,
-    });
+    }));
   }
   return status;
+}
+
+function fireAndForget(promise: Promise<unknown>): void {
+  promise.catch(() => undefined);
 }
 
 async function passthroughDisabledDirectory(argv: readonly string[]): Promise<number> {
