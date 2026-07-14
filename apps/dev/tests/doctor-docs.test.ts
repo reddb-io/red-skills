@@ -105,6 +105,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("exclude parent Specs carrying `type:spec`");
     expect(skill).toContain("native blocked-by edge without the matching `req:N` label");
     expect(skill).toContain("`req:N` label without the matching native blocked-by edge");
+    expect(skill).toContain("gh issue list --state open --json number,labels");
+    expect(skill).toContain("repos/{owner}/{repo}/issues/<ticket-number>/dependencies/blocked_by");
+    expect(skill).toContain("nativeBlockedBy: [<blocker-number>, ...]");
+    expect(skill).not.toContain("making this audit execute that read directly is a follow-up Ticket");
     expect(skill).toContain("apps/dev/src/core/dependency-edge-doctor.ts");
     expect(skill).toContain("never add/remove labels and never create/delete native edges");
     expect(skill).toContain("native blocked-by vs `req:N` divergence (check 15)");
