@@ -75,7 +75,23 @@ Run the checks against the target repo (cwd by default; `--repo <path|owner/name
     ```
 
     `labels` comes from the `gh issue list` row. `nativeBlockedBy` comes from the `number` fields returned by the Ticket's `dependencies/blocked_by` endpoint. Do not use `issue_dependencies_summary.blocked_by` for this check; it is only a count and cannot populate the blocker list. Feed the resulting array to `auditDependencyEdges()` and report `✅` when every open Ticket's native blocked-by set equals its `req:N` label set, or `⚠️` with the count and per-Ticket lines otherwise. Tag `→ /triage` (refresh dependency metadata so both surfaces match). The pure classifier is `apps/dev/src/core/dependency-edge-doctor.ts` (`auditDependencyEdges`); every GitHub fact is injected, and the check is read-only. During this read-only pass: never add/remove labels and never create/delete native edges.
-16. **ask-red router coverage sync** — compare the registered dev skill names from the plugin manifest with the slash-command names covered by `plugins/dev/skills/engineering/ask-red/SKILL.md`. Emit one warn line for each registered skill missing from the router and each stale router entry that no longer names a registered skill. Report `✅` when both sets match, `⚠️` with the finding count otherwise. Tag `→ ask-red maintenance rule` (update the router's Coverage Inventory and route text). The pure classifier is `apps/dev/src/core/ask-red-router-doctor.ts` (`auditAskRedRouterCoverage`); every manifest and router fact is injected, and the check is read-only. During this read-only pass: never edit manifests and never rewrite `ask-red`.
+16. **Native sub-issue vs `spec:N` divergence audit** — ADR 0094 also keeps two hierarchy surfaces: native GitHub sub-issue edges for humans and `spec:N` labels for the AFK runtime. Walk open plus recently-closed Specs carrying `type:spec`, compare every label-child carrying `spec:<Spec>` against the Spec's native sub-issues, and emit one warn line per divergent edge in either direction: `spec:N` child without the matching native sub-issue edge, or native sub-issue child without the matching `spec:N` label. Also flag a Spec that still carries `needs-slicing` once it has at least one `spec:N` child. Concrete read path (read-only GETs only):
+
+    ```bash
+    gh issue list --label type:spec --state all --json number,state,closedAt,labels
+    gh issue list --label spec:<spec-number> --state all --json number,labels
+    gh api "repos/{owner}/{repo}/issues/<spec-number>/sub_issues" \
+      --jq '.[] | {number, id, state, title}'
+    ```
+
+    Build the injected audit input as one object per Spec:
+
+    ```ts
+    { number: <spec-number>, labels: ["type:spec", ...], labelChildren: [<ticket-number>, ...], nativeSubIssues: [<ticket-number>, ...] }
+    ```
+
+    Feed the resulting array to `auditSpecSubIssueEdges()` and report `✅` when every Spec's `spec:N` child set equals its native sub-issue set, or `⚠️` with the count and per-Spec lines otherwise. Tag `→ Spec sub-issue reconciler`. The pure classifier and fixer live in `apps/dev/src/core/spec-subissue-reconciler.ts` (`auditSpecSubIssueEdges`, `executeSpecSubIssueReconcile`); every GitHub fact is injected. During this read-only pass: never add/remove labels and never create/delete native edges.
+17. **ask-red router coverage sync** — compare the registered dev skill names from the plugin manifest with the slash-command names covered by `plugins/dev/skills/engineering/ask-red/SKILL.md`. Emit one warn line for each registered skill missing from the router and each stale router entry that no longer names a registered skill. Report `✅` when both sets match, `⚠️` with the finding count otherwise. Tag `→ ask-red maintenance rule` (update the router's Coverage Inventory and route text). The pure classifier is `apps/dev/src/core/ask-red-router-doctor.ts` (`auditAskRedRouterCoverage`); every manifest and router fact is injected, and the check is read-only. During this read-only pass: never edit manifests and never rewrite `ask-red`.
 
 **Scorecard** (always printed): one row per check (✅/⚠️/❌ + one-line evidence) + a readiness score (count of green checks, like `context-status`) + a prioritized recommendation list, **every recommendation carrying a fix-home tag** from the *Fix-home* table. End with the single highest-impact next step.
 
@@ -115,7 +131,8 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 | `→ AFK runtime` | `blocked:*` accumulation (labels must be rotated/cleared on re-queue, plus the re-claim cap) — a bundle change, not a config edit. |
 | `→ launcher fetch` | per-plugin runtime distribution findings (`runtime-missing`, `inert-marker`, `version-drift`, `cache-corrupt`) — the cache is owned by the launcher (`red-fetch`/`afk.mjs`, ADR 0034/0038), never hand-edited. |
 | `→ /triage` | `req:<Spec>` dependency edges (check 14) — re-point each offending edge at the target Spec's executable slices; native blocked-by vs `req:N` divergence (check 15) — refresh dependency metadata so both surfaces match. `/triage` owns the authoring validation. |
-| `→ ask-red maintenance rule` | ask-red router coverage sync (check 16) — update `plugins/dev/skills/engineering/ask-red/SKILL.md` when skills or flows change. |
+| `→ Spec sub-issue reconciler` | native sub-issue vs `spec:N` divergence (check 16) — run the shared reconciler to attach missing native sub-issue edges and remove stale `needs-slicing` from Specs that already have slices. |
+| `→ ask-red maintenance rule` | ask-red router coverage sync (check 17) — update `plugins/dev/skills/engineering/ask-red/SKILL.md` when skills or flows change. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides. |
 | `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |
 

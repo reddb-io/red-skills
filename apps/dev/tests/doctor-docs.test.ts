@@ -119,6 +119,33 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("delegate to `/triage`");
   });
 
+  it("audits native sub-issue vs spec:N divergence and fixes with the shared reconciler", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Native sub-issue vs `spec:N` divergence audit");
+    expect(skill).toContain("open plus recently-closed Specs carrying `type:spec`");
+    expect(skill).toContain("`spec:N` child without the matching native sub-issue edge");
+    expect(skill).toContain("native sub-issue child without the matching `spec:N` label");
+    expect(skill).toContain("still carries `needs-slicing` once it has at least one `spec:N` child");
+    expect(skill).toContain("gh issue list --label type:spec --state all --json number,state,closedAt,labels");
+    expect(skill).toContain("gh issue list --label spec:<spec-number> --state all --json number,labels");
+    expect(skill).toContain("repos/{owner}/{repo}/issues/<spec-number>/sub_issues");
+    expect(skill).toContain("labelChildren: [<ticket-number>, ...]");
+    expect(skill).toContain("nativeSubIssues: [<ticket-number>, ...]");
+    expect(skill).toContain("apps/dev/src/core/spec-subissue-reconciler.ts");
+    expect(skill).toContain("auditSpecSubIssueEdges");
+    expect(skill).toContain("executeSpecSubIssueReconcile");
+    expect(skill).toContain("never add/remove labels and never create/delete native edges");
+    expect(skill).toContain("native sub-issue vs `spec:N` divergence (check 16)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Native sub-issue vs `spec:N` divergence (check 16)");
+    expect(apply).toContain("run the shared Spec sub-issue reconciler");
+    expect(apply).toContain("attach missing native sub-issue edges");
+    expect(apply).toContain("remove stale `needs-slicing`");
+    expect(apply).toContain("Do not remove native-only edges or invent missing labels");
+  });
+
   it("audits ask-red router coverage read-only with the maintenance rule as the fix-home", async () => {
     const skill = await readDoctorSkill();
 
@@ -128,10 +155,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("stale router entry");
     expect(skill).toContain("apps/dev/src/core/ask-red-router-doctor.ts");
     expect(skill).toContain("never edit manifests and never rewrite `ask-red`");
-    expect(skill).toContain("ask-red router coverage sync (check 16)");
+    expect(skill).toContain("ask-red router coverage sync (check 17)");
 
     const apply = await readDoctorApply();
-    expect(apply).toContain("ask-red router coverage sync (check 16)");
+    expect(apply).toContain("ask-red router coverage sync (check 17)");
     expect(apply).toContain("do not patch the router blindly");
     expect(apply).toContain("apply the ask-red maintenance rule");
   });

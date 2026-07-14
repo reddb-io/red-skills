@@ -50,6 +50,10 @@ import {
   resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
+import {
+  executeSpecSubIssueReconcile,
+  type SpecSubIssueCandidate,
+} from "./spec-subissue-reconciler.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -164,6 +168,8 @@ export interface BootGh {
   comment(issue: number, body: string): Promise<void>;
   /** gh issue view --json labels → flat name list. */
   viewLabels(issue: number): Promise<string[]>;
+  /** Create a native GitHub sub-issue edge from parent Spec to child Ticket. */
+  attachSubIssue(parent: number, child: number): Promise<void>;
   /** Optional human-facing metadata lookup for rendered issue refs. */
   issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
 }
@@ -313,6 +319,10 @@ export interface BootOptions {
    * will heal by shedding the stale `blocked:*` labels. When absent the sweep is a
    * no-op. Optional for back-compat. */
   mixedBlockedCandidates?: readonly MixedBlockedCandidate[];
+  /** Open and recently-closed Specs with their `spec:N` label-children and native
+   * sub-issue children. The reconciler attaches missing native edges and strips a
+   * stale `needs-slicing` label once at least one slice exists. */
+  specSubIssueCandidates?: readonly SpecSubIssueCandidate[];
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -357,6 +367,11 @@ export interface MixedBlockedNormalizeResult {
   healed: number[];
 }
 
+export interface SpecSubIssueReconcileBootResult {
+  attached: Array<{ spec: number; child: number }>;
+  needsSlicingRemoved: number[];
+}
+
 export interface StragglerResult {
   counts: StragglerCounts;
   warn: boolean;
@@ -387,6 +402,7 @@ export interface BootResult {
   branchCleanup?: BranchCleanupResult;
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
+  specSubIssueReconcile?: SpecSubIssueReconcileBootResult;
   staleClaimSweep?: StaleClaimSweepResult;
   reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
@@ -408,7 +424,10 @@ export interface BootResult {
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
  *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
- *   6a. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
+ *   6a. mixed-blocked normalizer — shed stale blocked:* from queued/active issues.
+ *   6b. Spec sub-issue reconcile — attach missing native sub-issue edges and
+ *                                  strip stale needs-slicing on sliced Specs.
+ *   6c. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
  *                             a cross-host claim that stopped refreshing (#627).
  *                             No-op when `claimedIssues` is absent.
  *   7. reconcile sweep      — planReconcileSweep; validate-and-land each owned
@@ -464,7 +483,10 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 6a0. mixed-blocked normalizer (#1481) ----
   const mixedBlockedNormalize = await runMixedBlockedNormalize(deps, options);
 
-  // ---- 6a. cross-host stale-claim sweep (#627) ----
+  // ---- 6a1. Spec sub-issue reconciler (#1739) ----
+  const specSubIssueReconcile = await runSpecSubIssueReconcile(deps, options);
+
+  // ---- 6a2. cross-host stale-claim sweep (#627) ----
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
   // ---- 7. reconcile sweep (ADR 0055) ----
@@ -481,6 +503,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     branchCleanup,
     unblockSweep,
     mixedBlockedNormalize,
+    specSubIssueReconcile,
     staleClaimSweep,
     reconcileSweep,
     straggler,
@@ -732,6 +755,19 @@ async function runMixedBlockedNormalize(
   if (candidates.length === 0) return { healed: [] };
   const healed = await executeMixedBlockedNormalize(candidates, deps.gh);
   return { healed };
+}
+
+/** Step 6a1: Spec sub-issue reconciler (#1739). The label edge (`spec:N`) is the
+ * machine truth; native GitHub sub-issue edges are the human surface. This sweep
+ * attaches every missing native edge and removes stale `needs-slicing` once a
+ * Spec has published slices. A no-op when no candidates are provided. */
+async function runSpecSubIssueReconcile(
+  deps: BootDeps,
+  options: BootOptions,
+): Promise<SpecSubIssueReconcileBootResult> {
+  const candidates = options.specSubIssueCandidates ?? [];
+  if (candidates.length === 0) return { attached: [], needsSlicingRemoved: [] };
+  return executeSpecSubIssueReconcile(candidates, deps.gh);
 }
 
 /** Step 7: reconcile sweep (ADR 0055). For each owned parked-mechanical branch,
