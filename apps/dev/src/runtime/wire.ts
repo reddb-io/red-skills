@@ -1523,7 +1523,17 @@ export async function collectBootOptions(
   // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
   // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
   // liveness at discovery so boot's orphan step stays a pure removal, #252.)
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs, reconcileSweepCandidates] =
+  const [
+    snapshotRefs,
+    remoteLiveRefs,
+    localAll,
+    checkedOut,
+    unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
+    reconcileSweepCandidates,
+    specSubIssueCandidates,
+  ] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
       gitx.listRemoteBranches(gitCtx, "afk/"),
@@ -1533,6 +1543,7 @@ export async function collectBootOptions(
       fsx.listStaleClaimDirs(paths.tmpDir),
       fsx.listLegacyWorkDirs(paths.tmpDir),
       ghx.listParkedMechanicalCandidates(ghCtx),
+      ghx.listSpecSubIssueCandidates(ghCtx, nowS),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
 
@@ -1546,6 +1557,7 @@ export async function collectBootOptions(
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,
+    specSubIssueCandidates,
   };
 }
 
@@ -1670,6 +1682,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
+      attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
     },
     git: {
@@ -1778,6 +1791,7 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       editLabels: async () => unreachable(),
       comment: async () => unreachable(),
       viewLabels: async () => unreachable(),
+      attachSubIssue: async () => unreachable(),
     },
     git: {
       deleteRemoteBranch: async () => unreachable(),
