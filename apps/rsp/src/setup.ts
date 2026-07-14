@@ -3,6 +3,7 @@ import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
+  DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
   DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   DEFAULT_RSP_STORE_PATH,
   DEFAULT_RSP_TTL_DAYS,
@@ -13,6 +14,7 @@ const LEGACY_MEMORY_STORE_PATH = ".red/memory/graph.rdb";
 
 export interface RspProvisionOptions {
   ttlDays?: number;
+  ephemeralTtlHours?: number;
   byteBudget?: number;
   heavyGitByteThreshold?: number;
 }
@@ -44,6 +46,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   const next = mergeRspBlock(existing, {
     enabled: true,
     ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
+    ephemeralTtlHours: opts.ephemeralTtlHours ?? DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
     byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
     heavyGitByteThreshold: opts.heavyGitByteThreshold ?? DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   });
@@ -66,6 +69,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
         const store = await RspElisionStore.open({
           uri: `file://${storePath}`,
           ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
+          ephemeralTtlHours: opts.ephemeralTtlHours ?? DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
           byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
           allowResidentOpen: true,
         });
@@ -91,6 +95,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
 export interface RspConfigBlock {
   enabled: boolean;
   ttlDays: number;
+  ephemeralTtlHours: number;
   byteBudget: number;
   heavyGitByteThreshold: number;
 }
@@ -100,6 +105,7 @@ export function mergeRspBlock(existingText: string, block: RspConfigBlock): stri
     "rsp:",
     `  enabled: ${block.enabled ? "true" : "false"}`,
     `  ttlDays: ${positiveNumber(block.ttlDays, DEFAULT_RSP_TTL_DAYS)}`,
+    `  ephemeralTtlHours: ${positiveNumber(block.ephemeralTtlHours, DEFAULT_RSP_EPHEMERAL_TTL_HOURS)}`,
     `  byteBudget: ${positiveNumber(block.byteBudget, DEFAULT_RSP_BYTE_BUDGET)}`,
     `  heavyGitByteThreshold: ${positiveNumber(block.heavyGitByteThreshold, DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD)}`,
   ];
