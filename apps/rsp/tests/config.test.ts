@@ -39,6 +39,7 @@ describe("resolveRspConfig", () => {
 
     expect(resolveRspConfig(join(root, "nested"), {}, undefined)).toEqual({
       enabled: false,
+      proxyEnabled: false,
       storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
       ttlDays: 3,
       ephemeralTtlHours: 4,
@@ -59,6 +60,7 @@ describe("resolveRspConfig", () => {
 
     expect(resolveRspConfig(root, {}, undefined)).toEqual({
       enabled: true,
+      proxyEnabled: false,
       storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       ephemeralTtlHours: DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
@@ -70,6 +72,17 @@ describe("resolveRspConfig", () => {
       idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     });
+  });
+
+  it("exposes the universal proxy flag separately from rsp enablement", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const config = resolveRspConfig(root, {}, undefined);
+
+    expect(config.enabled).toBe(true);
+    expect(config.proxyEnabled).toBe(true);
   });
 
   it("lets env override the heavy git truncation threshold", async () => {
