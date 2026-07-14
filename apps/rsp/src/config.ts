@@ -17,6 +17,7 @@ export const MIN_RSP_IDLE_MS = 5_000;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
+  proxyEnabled: boolean;
   storeUri: string;
   ttlDays: number;
   ephemeralTtlHours: number;
@@ -33,6 +34,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   const configPath = findUp(resolve(cwd), join(".red", "config.yaml"));
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
   const enabled = flatConfigValue(yaml, "rsp.enabled") === "true";
+  const proxyEnabled = flatConfigValue(yaml, "rsp.proxy.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
   const ephemeralTtlHours = positiveNumber(
     numericEnv(env.RSP_EPHEMERAL_TTL_HOURS) ?? readNumericYamlPath(yaml, "rsp.ephemeralTtlHours"),
@@ -69,6 +71,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
 
   return {
     enabled,
+    proxyEnabled,
     storeUri,
     ttlDays,
     ephemeralTtlHours,
