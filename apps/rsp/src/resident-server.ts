@@ -13,8 +13,10 @@ import { createResidentBrainStore } from "./resident-brain.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
+  readAccountingLaneStats,
   readTelemetryGainsReport,
   readTelemetryStats,
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -184,7 +186,10 @@ interface ResidentTelemetryOptions {
 }
 
 interface TelemetryIndexEntry {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   key: string;
   created_at: string;
   expires_at: string;
@@ -197,7 +202,11 @@ interface TelemetryIndexDocument {
 }
 
 interface TelemetryCollectionHeal {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION | typeof RSP_TELEMETRY_INDEX_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_INDEX_COLLECTION;
   previousModel: string;
 }
 
@@ -215,6 +224,7 @@ const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
 );
 const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
 const TELEMETRY_KV_COLLECTIONS = [
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
@@ -281,6 +291,8 @@ class ResidentTelemetryDrain {
       try {
         const entry = await this.writeEvent(db, event);
         nextRecords.push(entry);
+        const mirror = await this.writeAccountingMirror(db, event);
+        if (mirror) nextRecords.push(mirror);
         return true;
       } catch (err) {
         const entry = await this.writeDrainDegradation(db, {
@@ -317,10 +329,53 @@ class ResidentTelemetryDrain {
       key,
       created_at: createdAt,
       expires_at: expiresAt,
-      bytes: typeof event.bytes === "number" && Number.isFinite(event.bytes)
+      bytes: event.collection === RSP_ACCOUNTING_EVENTS_COLLECTION
+        ? 0
+        : typeof event.bytes === "number" && Number.isFinite(event.bytes)
         ? Math.max(0, event.bytes)
         : Buffer.byteLength(JSON.stringify(record), "utf8"),
     };
+  }
+
+  private async writeAccountingMirror(db: RedDB, event: RspTelemetryEvent): Promise<TelemetryIndexEntry | null> {
+    if (event.collection === RSP_ACCOUNTING_EVENTS_COLLECTION) return null;
+    if (event.accounting_recorded === true) return null;
+    if (event.collection === RSP_TELEMETRY_INVOCATIONS_COLLECTION) {
+      return await this.writeEvent(db, {
+        collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+        id: `mirror:${stringField(event.id) || randomUUID()}`,
+        created_at: stringField(event.created_at) || stringField(event.ts) || new Date().toISOString(),
+        event_type: "invocation",
+        command: stringField(event.command) || "unknown",
+        command_class: commandClass(stringField(event.command) || "unknown"),
+        wrapper: event.wrapper,
+        loss: event.loss,
+        elided: event.elided,
+        raw_bytes: event.raw_bytes,
+        emitted_bytes: event.emitted_bytes,
+        tokens_raw: event.tokens_raw,
+        tokens_emitted: event.tokens_emitted,
+        estimated: event.estimated,
+        wrapper_ms: event.wrapper_ms,
+        store_open_count: event.store_open_count,
+        store_elapsed_ms: event.store_elapsed_ms,
+      });
+    }
+    if (event.collection === RSP_TELEMETRY_DEGRADATIONS_COLLECTION) {
+      return await this.writeEvent(db, {
+        collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+        id: `mirror:${stringField(event.id) || randomUUID()}`,
+        created_at: stringField(event.created_at) || stringField(event.ts) || new Date().toISOString(),
+        event_type: "invocation",
+        command: stringField(event.command) || "unknown",
+        command_class: commandClass(stringField(event.command) || "unknown"),
+        loss: "lossless",
+        raw_bytes: 0,
+        emitted_bytes: 0,
+        degradation_reason: stringField(event.reason) || "unknown",
+      });
+    }
+    return null;
   }
 
   private async writeDrainDegradation(
@@ -334,7 +389,7 @@ class ResidentTelemetryDrain {
       error?: string;
     },
   ): Promise<TelemetryIndexEntry> {
-    return await this.writeEvent(db, {
+    const entry = await this.writeEvent(db, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       id: randomUUID(),
       created_at: new Date().toISOString(),
@@ -345,6 +400,22 @@ class ResidentTelemetryDrain {
       source_collection: event.source_collection,
       error: event.error,
     });
+    await this.writeEvent(db, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: `mirror:${randomUUID()}`,
+      created_at: entry.created_at,
+      event_type: "invocation",
+      command: event.command,
+      command_class: commandClass(event.command),
+      loss: "lossless",
+      raw_bytes: 0,
+      emitted_bytes: 0,
+      degradation_reason: event.reason,
+      source_id: event.source_id,
+      source_collection: event.source_collection,
+      error: event.error,
+    });
+    return entry;
   }
 
   private async readIndex(db: RedDB): Promise<TelemetryIndexDocument> {
@@ -394,6 +465,8 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
     version: 1,
     tokens_saved_today: tokensSavedToday,
     dollars_saved_today_usd: Math.round(dollarsSavedToday * 1_000_000) / 1_000_000,
+    show_total_today: stats.health.show_total,
+    show_hit_rate: stats.health.show_total > 0 ? stats.health.show_hit_rate : undefined,
     updated_at: now.toISOString(),
   }), { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
@@ -627,6 +700,10 @@ function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
+function commandClass(command: string): string {
+  return command.trim().split(/\s+/).filter(Boolean)[0] ?? "unknown";
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -657,6 +734,7 @@ function isTelemetryIndex(value: unknown): value is TelemetryIndexDocument {
     value.records.every((entry) =>
       isRecord(entry) &&
       (
+        entry.collection === RSP_ACCOUNTING_EVENTS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_INVOCATIONS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_DEGRADATIONS_COLLECTION
       ) &&
@@ -720,6 +798,11 @@ async function handleRequest(
   const store = state.store;
   if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "stats") return await store.stats();
+  if (request.op === "accounting-stats") {
+    const db = store.redDb();
+    if (!db) throw new Error("rsp accounting stats require the shared RedDB store");
+    return await readAccountingLaneStats(db, request.byteBudget);
+  }
   if (request.op === "telemetry-stats") {
     const db = store.redDb();
     if (!db) throw new Error("rsp telemetry stats require the shared RedDB store");

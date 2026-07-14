@@ -12,6 +12,7 @@ import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
 import {
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
@@ -490,7 +491,7 @@ async function waitForTelemetryInvocations(storeUri: string, command: string, mi
   const deadline = normalizedDeadlineMs();
   let records: unknown[] = [];
   while (Date.now() < deadline) {
-    records = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    records = await readTelemetryRecords(storeUri, RSP_ACCOUNTING_EVENTS_COLLECTION);
     if (records.filter((entry) => isRecord(entry) && entry.command === command).length >= minCount) return records;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -1613,7 +1614,7 @@ describe("rsp cli", () => {
 
     const stats = runBundleFromCwd(root, [], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(stats.status).toBe(0);
-    expect(stats.stdout.toString("utf8")).toContain("records: 1\n");
+    expect(stats.stdout.toString("utf8")).toContain("savings:\n");
 
     const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1800,14 +1801,14 @@ describe("rsp cli", () => {
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], { RED_SKILLS_CACHE_DIR: cacheDir });
     const statsText = stats.stdout.toString("utf8");
     expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
-    expect(statsText).toContain("records: 1\n");
+    expect(statsText).toContain("records: 3\n");
     expect(statsText).toContain("savings:\n");
     expect(statsText).toContain("  window_days: 7\n");
     expect(statsText).toMatch(/  invocations: [1-9]\d*\n/);
     expect(statsText).toContain("  elided: 1\n");
     expect(statsText).toMatch(/  raw_bytes: [1-9]\d*\n/);
     expect(statsText).toMatch(/  emitted_bytes: [1-9]\d*\n/);
-    expect(statsText).toMatch(/  tokens_saved: [1-9]\d*\n/);
+    expect(statsText).toMatch(/  tokens_saved: (?:[1-9]\d*|[1-9]\d*-[1-9]\d* .*)\n/);
     expect(statsText).toContain("  dollars_saved_estimate_usd: $");
     expect(statsText).toContain("  pricing_model_family: gpt-5\n");
     expect(statsText).toContain("  top_commands:\n");

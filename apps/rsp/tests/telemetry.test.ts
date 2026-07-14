@@ -10,6 +10,7 @@ import {
   appendTelemetryEvent,
   drainTelemetrySpool,
   readTelemetryGainsReport,
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -394,6 +395,98 @@ describe("rsp telemetry spool", () => {
     });
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
     await server;
+  }, 60_000);
+
+  it("serves stats from counters-only accounting events and reports show hit-rate", async () => {
+    const root = await tempRoot();
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "accounted-invocation",
+      created_at: new Date().toISOString(),
+      event_type: "invocation",
+      command: "git log",
+      command_class: "git",
+      loss: "terse",
+      elided: true,
+      raw_bytes: 1000,
+      emitted_bytes: 100,
+      bytes: 120,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "show-hit",
+      created_at: new Date().toISOString(),
+      event_type: "show",
+      command: "rsp show",
+      command_class: "show",
+      hit: true,
+      raw_bytes: 900,
+      emitted_bytes: 900,
+      bytes: 80,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "show-miss",
+      created_at: new Date().toISOString(),
+      event_type: "show",
+      command: "rsp show",
+      command_class: "show",
+      hit: false,
+      raw_bytes: 0,
+      emitted_bytes: 40,
+      bytes: 80,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "legacy-ignored",
+      created_at: new Date().toISOString(),
+      command: "git status",
+      raw_bytes: 9999,
+      emitted_bytes: 1,
+      accounting_recorded: true,
+      bytes: 100,
+    });
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
+    const server = runResidentServer({
+      rootDir: root,
+      socketPath: paths.socketPath,
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      telemetryTtlDays: 90,
+      telemetryByteBudget: 1_000,
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
+      idleMs: 100,
+    });
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
+
+    const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
+      id: "stats",
+      op: "telemetry-stats",
+      sinceDays: 7,
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.ok && response.value).toMatchObject({
+      savings: {
+        invocations: 1,
+        elided: 1,
+        raw_bytes: 1000,
+        emitted_bytes: 100,
+        top_commands: [expect.objectContaining({ command: "git log", invocations: 1 })],
+      },
+      health: {
+        show_total: 2,
+        show_hits: 1,
+        show_misses: 1,
+        show_hit_rate: 0.5,
+      },
+    });
+    await server;
+    await expect(readTelemetry(storeUri, RSP_ACCOUNTING_EVENTS_COLLECTION, "accounted-invocation")).resolves.not.toHaveProperty("raw_text");
   }, 60_000);
 
   it("drains a hand-written spool through the built bundle resident", async () => {

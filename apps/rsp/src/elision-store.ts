@@ -838,7 +838,7 @@ function usesEmbeddedRedDb(path: string): boolean {
   return basename(path) === "red-skills.rdb";
 }
 
-async function ensureReddbBinaryFromWarmCache(): Promise<void> {
+export async function ensureReddbBinaryFromWarmCache(): Promise<void> {
   if (process.env.REDDB_BIN) return;
   // Same default cascade as the launcher fetch: an unset RED_SKILLS_CACHE_DIR
   // means the standard cache location, not "no cache".

@@ -5,12 +5,16 @@ import type { RedDB } from "@reddb-io/sdk";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
 export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
+export const RSP_ACCOUNTING_EVENTS_COLLECTION = "rsp_accounting_events_v1";
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
 export const RSP_TELEMETRY_DEGRADATIONS_COLLECTION = "rsp_telemetry_degradations_v1";
 export const RSP_TELEMETRY_INDEX_COLLECTION = "rsp_telemetry_index_v1";
 
 export interface RspTelemetryEvent {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   id?: string;
   created_at?: string;
   bytes?: number;
@@ -22,6 +26,13 @@ export interface RspTelemetryEvent {
   tokens_emitted?: number;
   estimated?: boolean;
   [key: string]: unknown;
+}
+
+export interface RspAccountingLaneStats {
+  records: number;
+  bytes: number;
+  oldest: string | null;
+  budget: number;
 }
 
 export interface RspTelemetryStats {
@@ -50,6 +61,10 @@ export interface RspTelemetryStats {
   health: {
     degradations: number;
     degradation_rate: number;
+    show_total: number;
+    show_hits: number;
+    show_misses: number;
+    show_hit_rate: number;
     by_reason: Array<{ reason: string; count: number }>;
     most_recent: { timestamp: string; reason: string; command: string } | null;
   };
@@ -264,6 +279,7 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
     const parsed = JSON.parse(line) as unknown;
     if (!isRecord(parsed)) return null;
     if (
+      parsed.collection !== RSP_ACCOUNTING_EVENTS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_INVOCATIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_DEGRADATIONS_COLLECTION
     ) return null;
@@ -276,10 +292,12 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
 export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new Date()): Promise<RspTelemetryStats> {
   const windowDays = Number.isFinite(sinceDays) && sinceDays > 0 ? sinceDays : 30;
   const sinceMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
-  const invocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
-  const degradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
+  const accounting = await readAccountingRecords(db, sinceMs);
+  const invocations = accounting.filter((record) =>
+    stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
+  );
+  const showEvents = accounting.filter((record) => stringField(record.event_type) === "show");
+  const degradations = accounting.filter((record) => stringField(record.degradation_reason) !== "");
 
   let elided = 0;
   let rawBytes = 0;
@@ -298,8 +316,10 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
     const raw = numeric(record.raw_bytes);
     const emitted = numeric(record.emitted_bytes);
     const bytesSaved = Math.max(0, raw - emitted);
-    const tokenDelta = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
-    tokensEstimated ||= record.estimated === true && tokenDelta > 0;
+    const rawTokens = tokenCountFromCounters(record, "raw");
+    const emittedTokens = tokenCountFromCounters(record, "emitted");
+    const tokenDelta = Math.max(0, rawTokens.tokens - emittedTokens.tokens);
+    tokensEstimated ||= (record.estimated === true || rawTokens.estimated || emittedTokens.estimated) && tokenDelta > 0;
     rawBytes += raw;
     emittedBytes += emitted;
     tokensSaved += tokenDelta;
@@ -324,7 +344,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   const byReason = new Map<string, number>();
   let mostRecent: RspTelemetryStats["health"]["most_recent"] = null;
   for (const record of degradations) {
-    const reason = stringField(record.reason) || "unknown";
+    const reason = stringField(record.degradation_reason) || stringField(record.reason) || "unknown";
     byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
     const timestamp = timestampString(record);
     if (!mostRecent || timestamp > mostRecent.timestamp) {
@@ -337,10 +357,11 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   }
 
   const totalAttempts = invocations.length + degradations.length;
+  const showHits = showEvents.filter((record) => record.hit === true).length;
   const savingsEstimate = tokenSavingsEstimate(tokensSaved, tokensEstimated);
   return {
     window_days: windowDays,
-    empty: invocations.length === 0 && degradations.length === 0,
+    empty: accounting.length === 0,
     savings: {
       invocations: invocations.length,
       elided,
@@ -367,6 +388,10 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
     health: {
       degradations: degradations.length,
       degradation_rate: totalAttempts === 0 ? 0 : degradations.length / totalAttempts,
+      show_total: showEvents.length,
+      show_hits: showHits,
+      show_misses: Math.max(0, showEvents.length - showHits),
+      show_hit_rate: showEvents.length === 0 ? 0 : round(showHits / showEvents.length),
       by_reason: [...byReason.entries()]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .map(([reason, count]) => ({ reason, count })),
@@ -382,15 +407,36 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   };
 }
 
+export async function readAccountingLaneStats(
+  db: RedDB,
+  byteBudget: number,
+  now = new Date(),
+): Promise<RspAccountingLaneStats> {
+  const records = await readCollection(db, RSP_ACCOUNTING_EVENTS_COLLECTION);
+  const live = records.filter((record) => timestampMs(record) <= now.getTime() || timestampString(record) === "");
+  return {
+    records: live.length,
+    bytes: live.reduce((sum, record) => sum + Buffer.byteLength(JSON.stringify(record), "utf8"), 0),
+    oldest: live.reduce<string | null>((oldest, record) => {
+      const ts = timestampString(record);
+      if (!ts) return oldest;
+      if (oldest == null) return ts;
+      return ts < oldest ? ts : oldest;
+    }, null),
+    budget: byteBudget,
+  };
+}
+
 export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now = new Date()): Promise<RspTelemetryGainsReport> {
   const windowDays = Number.isFinite(sinceDays) && sinceDays > 0 ? sinceDays : 28;
   const until = now.toISOString();
   const since = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const sinceMs = Date.parse(since);
-  const invocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
-  const degradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
+  const accounting = await readAccountingRecords(db, sinceMs);
+  const invocations = accounting.filter((record) =>
+    stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
+  );
+  const degradations = accounting.filter((record) => stringField(record.degradation_reason) !== "");
   const allTimestamps = [...invocations, ...degradations]
     .map(timestampMs)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -416,7 +462,10 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     const date = timestamp.slice(0, 10);
     const minute = timestamp.slice(0, 16);
     const family = commandFamily(stringField(record.command));
-    const tokensSaved = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
+    const tokensSaved = Math.max(
+      0,
+      tokenCountFromCounters(record, "raw").tokens - tokenCountFromCounters(record, "emitted").tokens,
+    );
     totalTokensSaved += tokensSaved;
     tokensEstimated ||= record.estimated === true && tokensSaved > 0;
     const bytesSaved = Math.max(0, numeric(record.raw_bytes) - numeric(record.emitted_bytes));
@@ -452,7 +501,7 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     .map((record) => ({
       timestamp: timestampString(record),
       command_family: commandFamily(stringField(record.command)),
-      reason: stringField(record.reason) || "unknown",
+      reason: stringField(record.degradation_reason) || stringField(record.reason) || "unknown",
     }))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const byReason = new Map<string, number>();
@@ -511,6 +560,31 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
       warm_hits: recordsWithStoreMetric === 0 ? null : Math.max(0, recordsWithStoreMetric - coldBoots),
     },
   };
+}
+
+async function readAccountingRecords(db: RedDB, sinceMs: number): Promise<Array<Record<string, unknown>>> {
+  const accounting = (await readCollection(db, RSP_ACCOUNTING_EVENTS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs);
+  if (accounting.length > 0) return accounting;
+
+  const legacyInvocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs)
+    .map((record) => ({ ...record, event_type: "invocation" }));
+  const legacyDegradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs)
+    .map((record) => ({
+      ...record,
+      event_type: "invocation",
+      degradation_reason: stringField(record.reason) || "unknown",
+    }));
+  return [...legacyInvocations, ...legacyDegradations];
+}
+
+function tokenCountFromCounters(record: Record<string, unknown>, field: "raw" | "emitted"): { tokens: number; estimated: boolean } {
+  const exact = optionalNumeric(record[field === "raw" ? "tokens_raw" : "tokens_emitted"]);
+  if (exact != null) return { tokens: exact, estimated: false };
+  const bytes = numeric(record[field === "raw" ? "raw_bytes" : "emitted_bytes"]);
+  return { tokens: Math.ceil(bytes / 4), estimated: bytes > 0 };
 }
 
 async function readCollection(db: RedDB, collection: string): Promise<Array<Record<string, unknown>>> {
