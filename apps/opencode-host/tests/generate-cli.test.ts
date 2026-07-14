@@ -41,7 +41,7 @@ function writeFixturePlugins(root: string): void {
             hooks: [
               {
                 type: "command",
-                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/../../dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+                command: "sh -c '\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\" claude-pre-exec'",
               },
             ],
           },
