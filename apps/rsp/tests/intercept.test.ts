@@ -107,6 +107,49 @@ describe("rsp interception pure rewrite table", () => {
 });
 
 describe("rsp Claude pre-execution hook integration", () => {
+  it("routes eligible commands through the universal proxy only when the proxy flag is enabled", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const decision = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "printf ok | sed s/ok/OK/" } }),
+      { cwd: root, wakeResident: () => undefined },
+    );
+
+    expect(decision).toEqual({
+      kind: "rewrite",
+      command: "rsp proxy -- 'printf ok | sed s/ok/OK/'",
+      capabilityId: "proxy:universal",
+    });
+    expect(formatCodexHookDecision(decision)).toEqual({
+      stdout: `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp proxy -- 'printf ok | sed s/ok/OK/'" },
+        },
+      })}\n`,
+      status: 0,
+    });
+  });
+
+  it.each([
+    ["interactive", "vim file.txt", "interactive"],
+    ["background", "sleep 1 &", "background"],
+    ["opt-out-env", "RSP_NO_PROXY=1 git status", "opt-out"],
+    ["recursive-rsp", "rsp git status", "opt-out"],
+  ])("leaves %s commands unproxied under the universal proxy flag", async (_label, command, reason) => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    await expect(hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command } }),
+      { cwd: root },
+    )).resolves.toEqual({ kind: "passthrough", reason });
+  });
+
   it("accepts Claude hook JSON on stdin through the CLI and emits updatedInput", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
