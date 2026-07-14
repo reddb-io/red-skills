@@ -166,13 +166,16 @@ async function hookDecisionResultFromPreExecJson(
       event: hookDecisionEvent({ hook, command, decision, reason: "missing-command" }),
     };
   }
-  const decision = (options.rewrite ?? rewriteCommand)(command);
+  const started = process.hrtime.bigint();
+  const config = resolveRspConfig(cwd, process.env);
+  const decision = config.proxyEnabled ? proxyCommand(command) : (options.rewrite ?? rewriteCommand)(command);
+  const decisionMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (decision.kind !== "rewrite") {
     const passed = decision.reason ? decision : { ...decision, reason: "unsupported-command" };
     return {
       decision: passed,
       telemetryRoot: cwd,
-      event: hookDecisionEvent({ hook, command, decision: passed, reason: passed.reason ?? "unsupported-command" }),
+      event: hookDecisionEvent({ hook, command, decision: passed, reason: passed.reason ?? "unsupported-command", decisionMs }),
     };
   }
 
@@ -180,7 +183,13 @@ async function hookDecisionResultFromPreExecJson(
   return {
     decision,
     telemetryRoot: cwd,
-    event: hookDecisionEvent({ hook, command, decision, reason: "matched-capability" }),
+    event: hookDecisionEvent({
+      hook,
+      command,
+      decision,
+      reason: decision.capabilityId === "proxy:universal" ? "universal-proxy" : "matched-capability",
+      decisionMs,
+    }),
   };
 }
 
@@ -252,6 +261,7 @@ function hookDecisionEvent(input: {
   command: string;
   decision: RewriteDecision;
   reason: string;
+  decisionMs?: number;
 }): RspTelemetryEvent {
   const command = input.command.trim();
   const capabilityId = input.decision.kind === "rewrite" ? input.decision.capabilityId : undefined;
@@ -265,6 +275,7 @@ function hookDecisionEvent(input: {
     decision: capabilityId ? "contributed" : "passed",
     reason: input.reason,
     capability_id: capabilityId,
+    decision_ms: input.decisionMs,
   };
 }
 
@@ -378,6 +389,27 @@ function tokenizeCertainSimpleCommand(command: string): string[] | null {
   return tokens;
 }
 
+function proxyCommand(command: string): RewriteDecision {
+  const reason = universalProxyPassthroughReason(command);
+  if (reason) return { kind: "passthrough", reason };
+  return {
+    kind: "rewrite",
+    command: `rsp proxy -- ${shellSingleQuote(command.trim())}`,
+    capabilityId: "proxy:universal",
+  };
+}
+
+function universalProxyPassthroughReason(command: string): string | undefined {
+  const trimmed = command.trim();
+  if (!trimmed) return "missing-command";
+  if (hasSingleAmpersand(trimmed)) return "background";
+  if (/\b(?:RSP_NO_PROXY|RED_SKILLS_RSP_NO_PROXY)=1\b/.test(trimmed)) return "opt-out";
+  const first = shellishWords(commandSegments(trimmed)[0] ?? "")[0];
+  if (first === "rsp") return "opt-out";
+  if (first && INTERACTIVE_COMMANDS.has(first)) return "interactive";
+  return undefined;
+}
+
 function rewriteCompoundCommand(command: string): RewriteDecision {
   const trimmed = command.trim();
   if (!isSafeNoisyCompoundCommand(trimmed)) return { kind: "passthrough" };
@@ -427,6 +459,7 @@ function hasSingleAmpersand(command: string): boolean {
   for (let index = 0; index < command.length; index += 1) {
     if (command[index] !== "&") continue;
     if (command[index - 1] === "&" || command[index + 1] === "&") continue;
+    if (command[index - 1] === ">" || command[index + 1] === ">") continue;
     return true;
   }
   return false;
