@@ -35,6 +35,7 @@ plugins:
 rsp:
   enabled: true
   ttlDays: 7
+  ephemeralTtlHours: 6
   byteBudget: 67108864            # 64 MiB
 
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
