@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -63,14 +64,16 @@ export interface RspElisionStoreOptions {
 interface StoredRecord {
   collection: typeof RSP_ELISION_COLLECTION;
   handle: `el:${string}`;
-  original: string;
-  original_encoding: "base64";
+  original?: string;
+  original_encoding?: "base64";
   original_bytes: number;
+  stored_bytes?: number;
   command: string;
   created_at: string;
   expires_at: string;
   loss: RspLossMeta;
   storage_class?: RspStorageClass;
+  derivation_recipe?: RspDerivationRecipe;
 }
 
 interface IndexEntry {
@@ -81,6 +84,15 @@ interface IndexEntry {
   created_at: string;
   expires_at: string;
   storage_class?: RspStorageClass;
+}
+
+interface RspDerivationRecipe {
+  kind: "git-blob";
+  command: string;
+  cwd: string;
+  object_ids: string[];
+  working_tree_fingerprint: string;
+  original_bytes: number;
 }
 
 interface IndexDocument {
@@ -150,18 +162,22 @@ export class RspElisionStore {
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
     const storageClass = storageClassForCommand(meta.command);
+    const derivationRecipe = storageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe);
 
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
-      original: bytes.toString("base64"),
-      original_encoding: "base64",
       original_bytes: bytes.length,
+      stored_bytes: storedBytes,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
+      ...(derivationRecipe
+        ? { derivation_recipe: derivationRecipe }
+        : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
     };
 
     delete this.document.tombstones[tombstoneKey(handle)];
@@ -169,7 +185,7 @@ export class RspElisionStore {
     this.upsertIndex({
       handle,
       key,
-      bytes: bytes.length,
+      bytes: storedBytes,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
@@ -194,7 +210,7 @@ export class RspElisionStore {
       this.expireEntry({
         handle: raw.handle,
         key: recordKey(raw.handle),
-        bytes: raw.original_bytes,
+        bytes: storedBytesForRecord(raw),
         command: raw.command,
         created_at: raw.created_at,
         expires_at: raw.expires_at,
@@ -204,6 +220,9 @@ export class RspElisionStore {
     }
 
     const original = this.readOriginal(raw);
+    if (!original && raw.derivation_recipe) {
+      return { status: "expired", expired_at: raw.expires_at, command: raw.command };
+    }
     if (!original) return null;
 
     return {
@@ -295,6 +314,7 @@ export class RspElisionStore {
 
   private readOriginal(record: StoredRecord): Buffer | null {
     if (record.original) return Buffer.from(record.original, "base64");
+    if (record.derivation_recipe) return readGitBlobRecipe(record.derivation_recipe);
     return null;
   }
 
@@ -371,7 +391,7 @@ export class RspElisionStore {
         return {
           handle: record.handle,
           key: recordKey(record.handle),
-          bytes: record.original_bytes,
+          bytes: storedBytesForRecord(record),
           command: record.command,
           created_at: record.created_at,
           expires_at: record.expires_at,
@@ -390,17 +410,21 @@ export class RspElisionStore {
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
     const storageClass = storageClassForCommand(meta.command);
+    const derivationRecipe = storageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe);
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
-      original: bytes.toString("base64"),
-      original_encoding: "base64",
       original_bytes: bytes.length,
+      stored_bytes: storedBytes,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
+      ...(derivationRecipe
+        ? { derivation_recipe: derivationRecipe }
+        : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
     };
     await this.kv().delete(tombstoneKey(handle));
     await this.kv().put(key, record);
@@ -409,14 +433,14 @@ export class RspElisionStore {
     withoutExisting.push({
       handle,
       key,
-      bytes: bytes.length,
+      bytes: storedBytes,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
       storage_class: storageClass,
     });
     await this.pruneRedDb({ version: 1, records: withoutExisting }, true);
-    await this.assertRedDbMintPersisted(handle, bytes.length);
+    await this.assertRedDbMintPersisted(handle, storedBytes);
     return handle;
   }
 
@@ -431,7 +455,7 @@ export class RspElisionStore {
       await this.expireRedDbEntry({
         handle: raw.handle,
         key: recordKey(raw.handle),
-        bytes: raw.original_bytes,
+        bytes: storedBytesForRecord(raw),
         command: raw.command,
         created_at: raw.created_at,
         expires_at: raw.expires_at,
@@ -439,6 +463,9 @@ export class RspElisionStore {
       return expired;
     }
     const original = this.readOriginal(raw);
+    if (!original && raw.derivation_recipe) {
+      return { status: "expired", expired_at: raw.expires_at, command: raw.command };
+    }
     if (!original) return null;
     return {
       collection: RSP_ELISION_COLLECTION,
@@ -682,6 +709,65 @@ function storageStatsForIndex(records: readonly IndexEntry[]): RspStorageClassSt
   return stats;
 }
 
+function deriveGitBlobRecipe(bytes: Buffer, command: string): RspDerivationRecipe | null {
+  const cwd = process.cwd();
+  const inside = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd, encoding: "utf8" });
+  if (inside.status !== 0 || inside.stdout.trim() !== "true") return null;
+  const object = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd, input: bytes, encoding: "buffer" });
+  if (object.status !== 0) return null;
+  const objectId = object.stdout.toString("utf8").trim();
+  if (!/^[0-9a-f]{40,64}$/.test(objectId)) return null;
+  return {
+    kind: "git-blob",
+    command,
+    cwd,
+    object_ids: [objectId],
+    working_tree_fingerprint: gitWorkingTreeFingerprint(cwd),
+    original_bytes: bytes.length,
+  };
+}
+
+function gitWorkingTreeFingerprint(cwd: string): string {
+  const head = gitOutput(cwd, ["rev-parse", "HEAD"]) || "unborn";
+  const index = gitOutput(cwd, ["write-tree"]) || "no-index";
+  const status = gitOutput(cwd, ["status", "--porcelain=v1", "-z"]) || "";
+  return createHash("sha256")
+    .update(head)
+    .update("\0")
+    .update(index)
+    .update("\0")
+    .update(status)
+    .digest("hex");
+}
+
+function gitOutput(cwd: string, args: string[]): string | null {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function storedBytesFor(bytes: Buffer, recipe: RspDerivationRecipe | null): number {
+  return recipe ? Buffer.byteLength(JSON.stringify(recipe), "utf8") : bytes.length;
+}
+
+function storedBytesForRecord(record: StoredRecord): number {
+  if (typeof record.stored_bytes === "number") return record.stored_bytes;
+  if (record.derivation_recipe) return Buffer.byteLength(JSON.stringify(record.derivation_recipe), "utf8");
+  return record.original_bytes;
+}
+
+function readGitBlobRecipe(recipe: RspDerivationRecipe): Buffer | null {
+  const objectId = recipe.object_ids[0];
+  if (!objectId) return null;
+  const result = spawnSync("git", ["cat-file", "-p", objectId], {
+    cwd: recipe.cwd,
+    encoding: "buffer",
+    maxBuffer: Math.max(recipe.original_bytes + 1024, 1024 * 1024),
+  });
+  if (result.status !== 0) return null;
+  if (result.stdout.length !== recipe.original_bytes) return null;
+  return result.stdout;
+}
+
 function emptyStorageClassStats(): RspStorageClassStats {
   return {
     derivable: { records: 0, bytes: 0 },
@@ -821,12 +907,14 @@ function positiveNumber(value: number | undefined, fallback: number): number {
 
 function isStoredRecord(value: unknown): value is StoredRecord {
   if (!isRecord(value)) return false;
+  const hasOriginal = typeof value.original === "string" && value.original_encoding === "base64";
+  const hasRecipe = isDerivationRecipe(value.derivation_recipe);
   return value.collection === RSP_ELISION_COLLECTION &&
     typeof value.handle === "string" &&
     isHandle(value.handle) &&
-    typeof value.original === "string" &&
-    value.original_encoding === "base64" &&
+    (hasOriginal || hasRecipe) &&
     typeof value.original_bytes === "number" &&
+    (value.stored_bytes === undefined || typeof value.stored_bytes === "number") &&
     typeof value.command === "string" &&
     typeof value.created_at === "string" &&
     typeof value.expires_at === "string" &&
@@ -864,6 +952,17 @@ function isLossMeta(value: unknown): value is RspLossMeta {
 
 function isStorageClass(value: unknown): value is RspStorageClass {
   return value === "derivable" || value === "re-executable" || value === "ephemeral";
+}
+
+function isDerivationRecipe(value: unknown): value is RspDerivationRecipe {
+  return isRecord(value) &&
+    value.kind === "git-blob" &&
+    typeof value.command === "string" &&
+    typeof value.cwd === "string" &&
+    Array.isArray(value.object_ids) &&
+    value.object_ids.every((item) => typeof item === "string" && /^[0-9a-f]{40,64}$/.test(item)) &&
+    typeof value.working_tree_fingerprint === "string" &&
+    typeof value.original_bytes === "number";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
