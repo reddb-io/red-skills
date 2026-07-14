@@ -4,13 +4,15 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { connect } from "@reddb-io/sdk";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta } from "./elision-store.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
-import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
+import type { RspAccountingLaneStats, RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
 
 interface ParsedArgs {
   command?: string;
@@ -133,8 +135,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
 
-  const { existsSync } = await import("node:fs");
-  const { fileURLToPath } = await import("node:url");
   const residentPaths = resolveResidentPaths(process.cwd());
   if (args.command === "status" || args.command === "sweep") {
     const { residentRegistryStatus, sweepResidentRegistry } = await import("./resident-client.js");
@@ -185,12 +185,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   let closeStore: (() => Promise<void>) | undefined;
   try {
     if (!args.command || args.command === "stats") {
-      const store = await openReadStore();
-      closeStore = () => store.close();
-      const stats = await store.stats();
-      const telemetry = hasTelemetryStats(store)
-        ? await store.telemetryStats(sinceDays(args.positional, 30))
-        : emptyTelemetryStats(sinceDays(args.positional, 30));
+      const { stats, telemetry } = await readStatsSnapshot(config, sinceDays(args.positional, 30));
       process.stdout.write(renderStats(stats, telemetry, statsFull(args.positional)));
       return 0;
     }
@@ -279,13 +274,18 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       const record = await store.get(args.handle);
       if (record && "original" in record && record.original) {
         process.stdout.write(record.original);
+        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, true, record.original.length);
         return 0;
       }
       if (record?.status === "expired") {
-        process.stdout.write(`expired ${record.expired_at} — re-run: ${record.command}\n`);
+        const text = `expired ${record.expired_at} — re-run: ${record.command}\n`;
+        process.stdout.write(text);
+        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
         return 1;
       }
-      process.stdout.write(`expired unknown — re-run: ${args.handle}\n`);
+      const text = `expired unknown — re-run: ${args.handle}\n`;
+      process.stdout.write(text);
+      await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
       return 1;
     }
 
@@ -386,6 +386,10 @@ type TelemetryStatsStore = {
   telemetryStats: (sinceDays: number) => Promise<RspTelemetryStats>;
 };
 
+type AccountingStatsStore = {
+  accountingStats: (byteBudget: number) => Promise<RspAccountingLaneStats>;
+};
+
 type TelemetryGainsStore = {
   telemetryGains: (sinceDays: number) => Promise<RspTelemetryGainsReport>;
 };
@@ -402,6 +406,13 @@ function hasTelemetryGains(store: unknown): store is TelemetryGainsStore {
     store !== null &&
     "telemetryGains" in store &&
     typeof (store as { telemetryGains?: unknown }).telemetryGains === "function";
+}
+
+function hasAccountingStats(store: unknown): store is AccountingStatsStore {
+  return typeof store === "object" &&
+    store !== null &&
+    "accountingStats" in store &&
+    typeof (store as { accountingStats?: unknown }).accountingStats === "function";
 }
 
 interface WrappedCommandResult {
@@ -530,6 +541,48 @@ async function runColdWrappedCommand(
   return await degradeToPassthrough("wrapper failed", args.positional, err, telemetryRoot);
 }
 
+async function readStatsSnapshot(
+  config: RspRuntimeConfig,
+  sinceDaysValue: number,
+): Promise<{ stats: RspAccountingLaneStats; telemetry: RspTelemetryStats }> {
+  const empty = {
+    stats: emptyAccountingStats(config.telemetryByteBudget),
+    telemetry: emptyTelemetryStats(sinceDaysValue),
+  };
+  if (!config.storeUri.startsWith("file://")) return empty;
+  const path = fileURLToPath(config.storeUri);
+  if (!existsSync(path)) return empty;
+  if (!path.endsWith("red-skills.rdb")) {
+    const { RspElisionStore } = await import("./elision-store.js");
+    const store = await RspElisionStore.open({
+      uri: config.storeUri,
+      ttlDays: config.ttlDays,
+      byteBudget: config.byteBudget,
+    });
+    try {
+      return {
+        stats: await store.stats(),
+        telemetry: emptyTelemetryStats(sinceDaysValue),
+      };
+    } finally {
+      await store.close();
+    }
+  }
+
+  const { ensureReddbBinaryFromWarmCache } = await import("./elision-store.js");
+  await ensureReddbBinaryFromWarmCache();
+  const { readAccountingLaneStats, readTelemetryStats } = await import("./telemetry.js");
+  const db = await connect(config.storeUri);
+  try {
+    return {
+      stats: await readAccountingLaneStats(db, config.telemetryByteBudget),
+      telemetry: await readTelemetryStats(db, sinceDaysValue),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
 async function emitWrappedResult(
   args: ParsedArgs,
   result: WrappedCommandResult,
@@ -652,7 +705,26 @@ async function appendInvocationTelemetry(
 ): Promise<void> {
   const emitted = Buffer.concat([result.stdout, result.stderr]);
   const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
-  const { appendTelemetryEvent, RSP_TELEMETRY_INVOCATIONS_COLLECTION } = await import("./telemetry.js");
+  const {
+    appendTelemetryEvent,
+    RSP_ACCOUNTING_EVENTS_COLLECTION,
+    RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  } = await import("./telemetry.js");
+  await appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+    event_type: "invocation",
+    ts: new Date().toISOString(),
+    command: telemetryCommand(args),
+    command_class: args.command ?? "unknown",
+    wrapper: args.command,
+    loss: args.level,
+    elided: Boolean(result.mintedHandle || result.bytesElided),
+    raw_bytes: raw.length,
+    emitted_bytes: emitted.length,
+    wrapper_ms: wrapperMs,
+    store_open_count: metrics?.storeOpenCount,
+    store_elapsed_ms: metrics?.storeElapsedMs,
+  });
   await appendTelemetryEvent(telemetryRoot, {
     collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
     ts: new Date().toISOString(),
@@ -667,6 +739,7 @@ async function appendInvocationTelemetry(
     wrapper_ms: wrapperMs,
     store_open_count: metrics?.storeOpenCount,
     store_elapsed_ms: metrics?.storeElapsedMs,
+    accounting_recorded: true,
   });
 }
 
@@ -680,7 +753,20 @@ function appendFastInvocationTelemetry(
     const emitted = Buffer.concat([result.stdout, result.stderr]);
     const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
     const path = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
-    const line = `${JSON.stringify({
+    const accountingLine = JSON.stringify({
+      collection: "rsp_accounting_events_v1",
+      event_type: "invocation",
+      ts: new Date().toISOString(),
+      command: telemetryCommand(args),
+      command_class: args.command ?? "unknown",
+      wrapper: args.command,
+      loss: args.level,
+      elided: Boolean(result.mintedHandle || result.bytesElided),
+      raw_bytes: raw.length,
+      emitted_bytes: emitted.length,
+      wrapper_ms: wrapperMs,
+    });
+    const legacyLine = JSON.stringify({
       collection: "rsp_telemetry_invocations_v1",
       ts: new Date().toISOString(),
       command: telemetryCommand(args),
@@ -690,7 +776,9 @@ function appendFastInvocationTelemetry(
       raw_bytes: raw.length,
       emitted_bytes: emitted.length,
       wrapper_ms: wrapperMs,
-    })}\n`;
+      accounting_recorded: true,
+    });
+    const line = `${accountingLine}\n${legacyLine}\n`;
     try {
       appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
     } catch (err) {
@@ -708,12 +796,28 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   process.stderr.write(`rsp: ${reason}, passing through\n`);
   const status = await passthrough(argv);
   if (telemetryRoot) {
-    const { appendTelemetryEvent, RSP_TELEMETRY_DEGRADATIONS_COLLECTION } = await import("./telemetry.js");
+    const {
+      appendTelemetryEvent,
+      RSP_ACCOUNTING_EVENTS_COLLECTION,
+      RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+    } = await import("./telemetry.js");
+    fireAndForget(appendTelemetryEvent(telemetryRoot, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      event_type: "invocation",
+      ts: new Date().toISOString(),
+      command: passthroughTelemetryCommand(argv),
+      command_class: argv[0] ?? "unknown",
+      loss: "lossless",
+      raw_bytes: 0,
+      emitted_bytes: 0,
+      degradation_reason: reason,
+    }));
     fireAndForget(appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
       command: passthroughTelemetryCommand(argv),
       reason,
+      accounting_recorded: true,
     }));
   }
   return status;
@@ -721,6 +825,27 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
 
 function fireAndForget(promise: Promise<unknown>): void {
   promise.catch(() => undefined);
+}
+
+async function appendShowAccountingEvent(
+  telemetryRoot: string,
+  handle: string,
+  hit: boolean,
+  emittedBytes: number,
+): Promise<void> {
+  const { appendTelemetryEvent, RSP_ACCOUNTING_EVENTS_COLLECTION } = await import("./telemetry.js");
+  await appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+    event_type: "show",
+    ts: new Date().toISOString(),
+    command: "rsp show",
+    command_class: "show",
+    handle,
+    hit,
+    loss: "lossless",
+    raw_bytes: hit ? emittedBytes : 0,
+    emitted_bytes: emittedBytes,
+  });
 }
 
 async function passthroughDisabledDirectory(argv: readonly string[]): Promise<number> {
@@ -871,6 +996,10 @@ function renderStats(
     "health:",
     `  degradations: ${telemetry.health.degradations}`,
     `  degradation_rate: ${formatRate(telemetry.health.degradation_rate)}`,
+    `  show_total: ${telemetry.health.show_total}`,
+    `  show_hits: ${telemetry.health.show_hits}`,
+    `  show_misses: ${telemetry.health.show_misses}`,
+    `  show_hit_rate: ${formatRate(telemetry.health.show_hit_rate)}`,
     `  most_recent_degradation_at: ${telemetry.health.most_recent?.timestamp ?? "none"}`,
     `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
     "  degradations_by_reason:",
@@ -953,6 +1082,10 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
     health: {
       degradations: 0,
       degradation_rate: 0,
+      show_total: 0,
+      show_hits: 0,
+      show_misses: 0,
+      show_hit_rate: 0,
       by_reason: [],
       most_recent: null,
     },
@@ -963,6 +1096,15 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       store_elapsed_ms_sum: 0,
       store_elapsed_ms_avg: null,
     },
+  };
+}
+
+function emptyAccountingStats(byteBudget: number): RspAccountingLaneStats {
+  return {
+    records: 0,
+    bytes: 0,
+    oldest: null,
+    budget: byteBudget,
   };
 }
 
