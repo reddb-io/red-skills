@@ -667,6 +667,10 @@ describe("rsp telemetry spool", () => {
       reason: "matched-capability",
       capability_id: "git:status",
     }));
+    const summary = JSON.parse(await readFile(paths.summaryPath, "utf8")) as {
+      decisions?: { seen?: number; contributed?: number };
+    };
+    expect(summary.decisions).toEqual({ seen: 1, contributed: 1 });
   }, 40_000);
 
   it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
