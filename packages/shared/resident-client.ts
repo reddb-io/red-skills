@@ -257,17 +257,28 @@ export async function sweepResidentRegistry(paths: RspResidentPaths): Promise<Rs
   return status;
 }
 
-async function waitForServer(socketPath: string, child?: ChildProcess): Promise<void> {
+interface ResidentSpawn {
+  child: ChildProcess;
+  stderrTail(): string;
+  spawnError(): Error | undefined;
+}
+
+async function waitForServer(socketPath: string, spawnHandle?: ResidentSpawn): Promise<void> {
   const deadline = Date.now() + 5_000;
   let last: unknown;
   while (Date.now() < deadline) {
     if (await pingResident(socketPath)) return;
-    if (child && child.exitCode != null) {
-      throw new Error(`resident rsp server exited before ready (${child.exitCode})`);
+    if (spawnHandle) {
+      const spawnError = spawnHandle.spawnError();
+      if (spawnError) throw new Error(formatResidentStartFailure("resident rsp server spawn failed", spawnHandle, spawnError));
+      if (spawnHandle.child.exitCode != null || spawnHandle.child.signalCode != null) {
+        throw new Error(formatResidentStartFailure("resident rsp server exited before ready", spawnHandle));
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw last instanceof Error ? last : new Error("resident rsp server did not start");
+  if (last instanceof Error) throw last;
+  throw new Error(spawnHandle ? formatResidentStartFailure("resident rsp server did not start", spawnHandle) : "resident rsp server did not start");
 }
 
 async function removeUnresponsiveSocket(socketPath: string): Promise<void> {
@@ -284,8 +295,11 @@ async function tryAcquireLock(lockPath: string) {
   }
 }
 
-function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ChildProcess {
+function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ResidentSpawn {
   const [command, prefix] = spawnTarget(config);
+  const captureDiagnostics = process.env.RSP_DEBUG === "1";
+  let spawnError: Error | undefined;
+  let stderrTail = "";
   const child = spawn(command, [
     ...prefix,
     "server",
@@ -316,11 +330,42 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
   ], {
     cwd: paths.rootDir,
     detached: true,
-    stdio: "ignore",
+    stdio: captureDiagnostics ? ["ignore", "ignore", "pipe"] : "ignore",
     env: { ...process.env, RSP_RESIDENT_SERVER: "1" },
   });
+  child.on("error", (err) => {
+    spawnError = err;
+  });
+  if (captureDiagnostics) {
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderrTail = tailString(`${stderrTail}${chunk}`, RESIDENT_START_STDERR_TAIL_BYTES);
+    });
+  }
   child.unref();
-  return child;
+  return {
+    child,
+    stderrTail: () => stderrTail,
+    spawnError: () => spawnError,
+  };
+}
+
+const RESIDENT_START_STDERR_TAIL_BYTES = 8 * 1024;
+
+function formatResidentStartFailure(reason: string, spawnHandle: ResidentSpawn, err?: Error): string {
+  const parts = [reason];
+  if (err) parts.push(`error: ${err.message}`);
+  if (spawnHandle.child.exitCode != null) parts.push(`exit code: ${spawnHandle.child.exitCode}`);
+  if (spawnHandle.child.signalCode != null) parts.push(`signal: ${spawnHandle.child.signalCode}`);
+  const stderrTail = spawnHandle.stderrTail().trimEnd();
+  if (stderrTail) parts.push(`stderr tail:\n${stderrTail}`);
+  return parts.join("\n");
+}
+
+function tailString(value: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (bytes <= maxBytes) return value;
+  return Buffer.from(value, "utf8").subarray(bytes - maxBytes).toString("utf8").replace(/^\uFFFD+/, "");
 }
 
 async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {
