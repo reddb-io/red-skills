@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
+  DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
   DEFAULT_RSP_TTL_DAYS,
   RSP_ELISION_COLLECTION,
   RspElisionStore,
@@ -196,6 +197,59 @@ describe("RspElisionStore", () => {
     }
   });
 
+  it("stores ephemeral originals as compressed content-hash blobs and deduplicates identical content", async () => {
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    try {
+      const original = Buffer.from("repeatable output\n".repeat(500));
+      const first = await store.mint(original, {
+        command: "vitest run --reporter verbose",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+      const second = await store.mint(original, {
+        command: "node noisy-script.mjs",
+        loss: { level: "brief", bytes_elided: original.length },
+      });
+
+      expect(second).not.toBe(first);
+      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+        blobs?: Record<string, { bytes?: string; encoding?: string; stored_bytes?: number; original_bytes?: number }>;
+        records: Record<string, { original?: string; blob_key?: string; content_hash?: string }>;
+        index: { records: Array<{ bytes: number; raw_bytes?: number; blob_key?: string; storage_class?: string }> };
+      };
+      const blobs = Object.values(raw.blobs ?? {});
+      expect(blobs).toHaveLength(1);
+      expect(blobs[0]?.encoding).toBe("gzip+base64");
+      expect(blobs[0]?.original_bytes).toBe(original.length);
+      expect(blobs[0]?.stored_bytes).toBeLessThan(original.length / 4);
+      expect(new Set(Object.values(raw.records).map((record) => record.blob_key)).size).toBe(1);
+      expect(Object.values(raw.records).every((record) => record.original === undefined)).toBe(true);
+      expect(raw.index.records.every((entry) => entry.storage_class === "ephemeral")).toBe(true);
+      expect(raw.index.records.every((entry) => entry.raw_bytes === original.length)).toBe(true);
+
+      const recoveredFirst = await store.get(first);
+      const recoveredSecond = await store.get(second);
+      if (!recoveredFirst || "status" in recoveredFirst || !recoveredSecond || "status" in recoveredSecond) {
+        throw new Error("expected live ephemeral records");
+      }
+      expect(recoveredFirst.original).toEqual(original);
+      expect(recoveredSecond.original).toEqual(original);
+
+      const stats = await store.stats();
+      expect(stats.records).toBe(2);
+      expect(stats.storage_classes.ephemeral.records).toBe(2);
+      expect(stats.storage_classes.ephemeral.raw_bytes).toBe(original.length * 2);
+      expect(stats.storage_classes.ephemeral.bytes).toBe(blobs[0]?.stored_bytes);
+      expect(stats.bytes).toBe(blobs[0]?.stored_bytes);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("round-trips large elisions beyond the database value size", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({
@@ -217,7 +271,7 @@ describe("RspElisionStore", () => {
       expect(stats.records).toBe(1);
       expect(stats.bytes).toBeLessThan(500);
       expect(stats.bytes).toBeLessThan(original.length / 10);
-      expect(stats.storage_classes.derivable).toEqual({ records: 1, bytes: stats.bytes });
+      expect(stats.storage_classes.derivable).toEqual({ records: 1, bytes: stats.bytes, raw_bytes: original.length });
     } finally {
       await store.close();
     }
@@ -248,12 +302,13 @@ describe("RspElisionStore", () => {
     }
   });
 
-  it("expires records by TTL on amortized write and reports the original command", async () => {
+  it("expires ephemeral records by the hours-scale TTL and reports the original command", async () => {
     let now = new Date("2026-07-10T12:00:00.000Z");
     const root = await tempRoot();
     const store = await RspElisionStore.open({
       uri: `file://${join(root, "red.rdb")}`,
       ttlDays: 1,
+      ephemeralTtlHours: 2,
       now: () => now,
     });
     try {
@@ -262,7 +317,7 @@ describe("RspElisionStore", () => {
         loss: { level: "terse", bytes_elided: 10 },
       });
 
-      now = new Date("2026-07-12T12:00:00.000Z");
+      now = new Date("2026-07-10T15:00:00.000Z");
       await store.mint(Buffer.from("new output"), {
         command: "new command",
         loss: { level: "terse", bytes_elided: 10 },
@@ -270,7 +325,7 @@ describe("RspElisionStore", () => {
 
       expect(await store.get(handle)).toEqual({
         status: "expired",
-        expired_at: "2026-07-11T12:00:00.000Z",
+        expired_at: "2026-07-10T14:00:00.000Z",
         command: "old command",
       });
     } finally {
@@ -283,7 +338,7 @@ describe("RspElisionStore", () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({
       uri: `file://${join(root, "red.rdb")}`,
-      byteBudget: 10,
+      byteBudget: 40,
       now: () => new Date(Date.UTC(2026, 6, 10, 12, 0, tick++)),
     });
     try {
@@ -380,16 +435,17 @@ describe("RspElisionStore", () => {
 
       expect(await store.stats()).toEqual({
         records: 1,
-        bytes: 3,
+        bytes: expect.any(Number),
         oldest: "2026-07-10T12:00:00.000Z",
         budget: DEFAULT_RSP_BYTE_BUDGET,
         storage_classes: {
-          derivable: { records: 0, bytes: 0 },
-          "re-executable": { records: 0, bytes: 0 },
-          ephemeral: { records: 1, bytes: 3 },
+          derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+          "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+          ephemeral: { records: 1, bytes: expect.any(Number), raw_bytes: 3 },
         },
       });
       expect(DEFAULT_RSP_TTL_DAYS).toBe(7);
+      expect(DEFAULT_RSP_EPHEMERAL_TTL_HOURS).toBeLessThan(24);
     } finally {
       await store.close();
     }
@@ -444,7 +500,9 @@ describe("RspElisionStore", () => {
       expect(stats.storage_classes["re-executable"].records).toBe(1);
       expect(stats.storage_classes["re-executable"].bytes).toBeGreaterThan(15);
       expect(stats.storage_classes["re-executable"].bytes).toBeLessThan(500);
-      expect(stats.storage_classes.ephemeral).toEqual({ records: 1, bytes: 11 });
+      expect(stats.storage_classes.ephemeral.records).toBe(1);
+      expect(stats.storage_classes.ephemeral.raw_bytes).toBe(11);
+      expect(stats.storage_classes.ephemeral.bytes).toBeLessThan(100);
       expect(stats.bytes).toBe(
         stats.storage_classes.derivable.bytes +
           stats.storage_classes["re-executable"].bytes +
