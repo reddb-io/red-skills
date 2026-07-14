@@ -21,6 +21,7 @@ export interface RspResidentPaths {
 
 const UNIX_SOCKET_PATH_LIMIT = 108;
 const RESIDENT_REGISTRY_VERSION = 1;
+const DEFAULT_RESIDENT_READY_TIMEOUT_MS = 5_000;
 
 export interface RspResidentRegistryEntry {
   version: typeof RESIDENT_REGISTRY_VERSION;
@@ -264,7 +265,7 @@ interface ResidentSpawn {
 }
 
 async function waitForServer(socketPath: string, spawnHandle?: ResidentSpawn): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + residentReadyTimeoutMs();
   let last: unknown;
   while (Date.now() < deadline) {
     if (await pingResident(socketPath)) return;
@@ -279,6 +280,11 @@ async function waitForServer(socketPath: string, spawnHandle?: ResidentSpawn): P
   }
   if (last instanceof Error) throw last;
   throw new Error(spawnHandle ? formatResidentStartFailure("resident rsp server did not start", spawnHandle) : "resident rsp server did not start");
+}
+
+function residentReadyTimeoutMs(): number {
+  const value = Number(process.env.RSP_RESIDENT_READY_TIMEOUT_MS ?? "");
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_RESIDENT_READY_TIMEOUT_MS;
 }
 
 async function removeUnresponsiveSocket(socketPath: string): Promise<void> {
