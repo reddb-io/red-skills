@@ -27,6 +27,8 @@ scan_text_file() {
     line_no=$((line_no + 1))
     trimmed="${line#"${line%%[![:space:]]*}"}"
     [[ "$trimmed" == \#* ]] && continue
+    [[ "$trimmed" == '//'* ]] && continue
+    [[ "$trimmed" == '*'* ]] && continue
 
     if grep -Eq '(^|[[:space:];|&({])exit[[:space:]]+[1-9][0-9]*($|[[:space:];|&)])' <<<"$line"; then
       report "$rel" "$line_no" "nonzero-exit" "$trimmed"
@@ -63,12 +65,18 @@ scan_manifest() {
     if [[ "$command" == *'cat >"$tmp"'* && "$command" != *'timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat >"$tmp"'* ]]; then
       report "$rel" "?" "manifest-unbounded-stdin" "$command"
     fi
-    if [[ "$command" == *" node "* && "$command" != *'timeout "${RED_SKILLS_HOOK_TIMEOUT_S:-30s}" node '* ]]; then
+    if [[ "$command" == *" node "* && "$command" != *'timeout "${RED_SKILLS_HOOK_TIMEOUT_S:-3s}" node '* ]]; then
       report "$rel" "?" "manifest-unbounded-node" "$command"
+    fi
+    if [[ "$command" == *'RED_SKILLS_HOOK_TIMEOUT_S:-30s'* ]]; then
+      report "$rel" "?" "manifest-slow-hook-timeout" "$command"
     fi
     if [[ "$command" == *'branch-lock'* || "$command" == *'command-guard.sh'* ]]; then
       if [[ "$command" == *'<"$tmp"'* && "$command" != *'|| printf "{}"'* ]]; then
         report "$rel" "?" "manifest-hook-crash-not-open" "$command"
+      fi
+      if [[ "$command" == *'<"$tmp"'* && "$command" != *'timeout "${RED_SKILLS_HOOK_TIMEOUT_S:-3s}"'* ]]; then
+        report "$rel" "?" "manifest-hook-unbounded-runtime" "$command"
       fi
     fi
   done <<<"$commands"
