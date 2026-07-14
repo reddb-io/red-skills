@@ -185,6 +185,10 @@ interface HarnessOptions {
    * to one commit on a real outcome / none on exhaustion. Set `[]` to model the
    * codex DONE-without-commit case the salvage port rescues. */
   commits?: { sha: string }[];
+  /** Text chunks emitted through the agent stream callback before runAgent returns. */
+  agentTextEvents?: string[];
+  /** Override the fake runAgent completion signal. */
+  completionSignal?: string;
   /** When set, register the commit-leftovers `salvageUncommitted` port and have
    * it return this count (files committed). undefined omits the port (legacy
    * caller — no salvage). */
@@ -511,6 +515,9 @@ function harness(opts: HarnessOptions = {}): {
       trace.runAgentCalls.push(input);
       await opts.onRunAgent?.();
       const thisOutcome = opts.outcomes ? (opts.outcomes[callIdx] ?? outcome) : outcome;
+      for (const message of opts.agentTextEvents ?? []) {
+        input.onAgentEvent?.({ type: "text", message, iteration: 1, timestamp: new Date(0) });
+      }
       return {
         outcome: thisOutcome,
         branch: input.branch,
@@ -518,11 +525,12 @@ function harness(opts: HarnessOptions = {}): {
           opts.commits ??
           (thisOutcome === "exhausted" || thisOutcome === "runner-transient" ? [] : [{ sha: "deadbee" }]),
         completionSignal:
-          thisOutcome === "done"
+          opts.completionSignal ??
+          (thisOutcome === "done"
             ? "<promise>DONE</promise>"
             : thisOutcome === "blocked"
               ? "<promise>BLOCKED</promise>"
-              : undefined,
+              : undefined),
         timeoutReason: thisOutcome === "timeout" ? opts.timeoutReason : undefined,
         stdout: thisOutcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
       };
@@ -3613,6 +3621,26 @@ describe("processIssue — scout mode (runMode: 'scout')", () => {
     const humanLabel = trace.labelEdits.find((e) => e.add.includes("ready-for-human"));
     expect(humanLabel).toBeDefined();
     expect(trace.closed).not.toContain(9);
+  });
+
+  it("recovers a scout report when AgentOutput enforcement downgraded a captured DONE stream", async () => {
+    const { deps, input, trace } = harness({
+      runMode: "scout",
+      outcome: "no-sentinel",
+      commits: [],
+      completionSignal: "<promise>DONE</promise>",
+      agentTextEvents: ["# Findings\n\nReport body.\n", "<promise>DONE</promise>"],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    const report = trace.comments.find((c) => c.issue === 9 && c.body.includes("Scout Report"));
+    expect(report?.body).toContain("# Findings");
+    expect(report?.body).toContain("Report body.");
+    expect(report?.body).not.toContain("<promise>DONE</promise>");
+    expect(trace.closed).toContain(9);
+    expect(trace.pushedAttempt).toHaveLength(0);
   });
 });
 
