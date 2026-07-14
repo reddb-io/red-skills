@@ -39,24 +39,10 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   const redRpcGuard = startRedRpcParentDeathGuard();
   installRedRpcExitCleanup();
 
-  const openedAt = process.hrtime.bigint();
-  const store = await RspElisionStore.open({
-    uri: opts.storeUri,
-    ttlDays: opts.ttlDays,
-    byteBudget: opts.byteBudget,
-    allowResidentOpen: true,
-  });
-  const storeElapsedMs = Number(process.hrtime.bigint() - openedAt) / 1_000_000;
-  let storeOpenCount = 1;
-  const bootTelemetryHeals = store.redDb() ? await ensureTelemetryKvCollections(store.redDb()!) : [];
-  const telemetry = new ResidentTelemetryDrain(store, {
-    rootDir: opts.rootDir ?? process.cwd(),
-    ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
-    byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
-    bootHeals: bootTelemetryHeals,
-  });
   const telemetryDrainTimeoutMs = opts.telemetryDrainTimeoutMs ?? TELEMETRY_DRAIN_TIMEOUT_MS;
-  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
+  let storeState: ResidentStoreState = { kind: "opening", startedAt: process.hrtime.bigint() };
+  let telemetryTimer: NodeJS.Timeout | undefined;
+  let shuttingDown = false;
 
   const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
@@ -64,24 +50,27 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   let idleShutdownStarted = false;
   const activeSockets = new Set<Socket>();
   const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
-  const telemetryTimer = setInterval(() => {
-    void safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
-  }, telemetryDrainIntervalMs);
-  telemetryTimer.unref();
   const server = createServer((socket) => {
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
     touch();
     handleSocket(socket, async (request) => {
       touch();
-      const value = await handleRequest(store, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
-      const response: RspResidentResponse = { id: request.id, ok: true, value, storeOpenCount, storeElapsedMs };
-      socket.write(`${JSON.stringify(response)}\n`);
+      const value = await handleRequest(storeState, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
+      const response: RspResidentResponse = {
+        id: request.id,
+        ok: true,
+        value,
+        storeOpenCount: storeState.kind === "ready" ? storeState.storeOpenCount : undefined,
+        storeElapsedMs: storeState.kind === "ready" ? storeState.storeElapsedMs : undefined,
+      };
+      safeSocketWrite(socket, response);
       if (request.op === "handover") setImmediate(() => beginShutdown());
     });
   });
 
   function beginShutdown(): void {
+    shuttingDown = true;
     idleShutdownStarted = true;
     idleShutdownWatchdog = armIdleShutdownWatchdog(idleShutdownWatchdog);
     server.close();
@@ -89,6 +78,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   }
 
   function touch(): void {
+    if (storeState.kind === "opening") return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       beginShutdown();
@@ -115,6 +105,43 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
       resolve();
     });
   });
+
+  void (async () => {
+    const openedAt = process.hrtime.bigint();
+    if (process.env.RSP_TEST_HANG_RESIDENT_STORE_OPEN === "1") await new Promise(() => undefined);
+    const store = await RspElisionStore.open({
+      uri: opts.storeUri,
+      ttlDays: opts.ttlDays,
+      byteBudget: opts.byteBudget,
+      allowResidentOpen: true,
+    });
+    const storeElapsedMs = Number(process.hrtime.bigint() - openedAt) / 1_000_000;
+    const telemetry = new ResidentTelemetryDrain(store, {
+      rootDir: opts.rootDir ?? process.cwd(),
+      ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
+      byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
+    });
+    if (shuttingDown) {
+      await store.close();
+      return;
+    }
+    await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
+    if (shuttingDown) {
+      await store.close();
+      return;
+    }
+    storeState = { kind: "ready", store, telemetry, storeOpenCount: 1, storeElapsedMs };
+    telemetryTimer = setInterval(() => {
+      const ready = storeState.kind === "ready" ? storeState : undefined;
+      if (ready) void safeDrainTelemetry(ready.telemetry, telemetryDrainTimeoutMs);
+    }, telemetryDrainIntervalMs);
+    telemetryTimer.unref();
+    touch();
+  })().catch((err) => {
+    storeState = { kind: "failed", error: err instanceof Error ? err : new Error(String(err)) };
+    touch();
+  });
+
   if (opts.pidPath) {
     await writeFile(opts.pidPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
   }
@@ -127,15 +154,16 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
       resident_version: residentVersion,
     });
   } catch {}
-  touch();
 
   await new Promise<void>((resolve) => server.once("close", resolve));
-  storeOpenCount = 0;
   if (idleTimer) clearTimeout(idleTimer);
-  clearInterval(telemetryTimer);
+  if (telemetryTimer) clearInterval(telemetryTimer);
   await rm(opts.socketPath, { force: true });
-  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs, idleShutdownStarted);
-  await store.close();
+  const finalStoreState = storeState as ResidentStoreState;
+  if (finalStoreState.kind === "ready") {
+    await safeDrainTelemetry(finalStoreState.telemetry, telemetryDrainTimeoutMs, idleShutdownStarted);
+    await finalStoreState.store.close();
+  }
   if (idleShutdownWatchdog) clearTimeout(idleShutdownWatchdog);
   for (const { signal, handler } of signalHandlers) process.off(signal, handler);
   redRpcGuard?.kill("SIGTERM");
@@ -169,6 +197,11 @@ interface TelemetryCollectionHeal {
   previousModel: string;
 }
 
+type ResidentStoreState =
+  | { kind: "opening"; startedAt: bigint }
+  | { kind: "ready"; store: RspElisionStore; telemetry: ResidentTelemetryDrain; storeOpenCount: number; storeElapsedMs: number }
+  | { kind: "failed"; error: Error };
+
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
 const TOKENIZATION_TIMEOUT_MS = 500;
 const TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
@@ -185,6 +218,7 @@ const TELEMETRY_KV_COLLECTIONS = [
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
+  private pending = false;
   private pendingHeals: TelemetryCollectionHeal[];
 
   constructor(
@@ -195,7 +229,17 @@ class ResidentTelemetryDrain {
   }
 
   async drainAndSweep(): Promise<void> {
-    this.running ??= this.drainAndSweepOnce().finally(() => {
+    if (this.running) {
+      this.pending = true;
+      await this.running;
+      return;
+    }
+    this.running = (async () => {
+      do {
+        this.pending = false;
+        await this.drainAndSweepOnce();
+      } while (this.pending);
+    })().finally(() => {
       this.running = undefined;
     });
     await this.running;
@@ -622,6 +666,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => Promise<void>): void {
   let buffer = "";
   socket.setEncoding("utf8");
+  socket.on("error", () => undefined);
   socket.on("data", (chunk) => {
     buffer += chunk;
     const newline = buffer.indexOf("\n");
@@ -640,7 +685,7 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
-        socket.write(`${JSON.stringify(response)}\n`);
+        safeSocketWrite(socket, response);
       } finally {
         socket.end();
       }
@@ -648,14 +693,24 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
   });
 }
 
+function safeSocketWrite(socket: Socket, response: RspResidentResponse): void {
+  if (socket.destroyed || !socket.writable) return;
+  try {
+    socket.write(`${JSON.stringify(response)}\n`);
+  } catch {}
+}
+
 async function handleRequest(
-  store: RspElisionStore,
+  state: ResidentStoreState,
   request: RspResidentRequest,
   storeUri: string,
   residentVersion: string,
 ): Promise<unknown> {
-  if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "handover") return { handover: true, version: residentVersion, clientVersion: request.clientVersion };
+  if (state.kind === "opening") throw new Error("rsp resident store is not ready");
+  if (state.kind === "failed") throw new Error(`rsp resident store failed to open: ${state.error.message}`);
+  const store = state.store;
+  if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "stats") return await store.stats();
   if (request.op === "telemetry-stats") {
     const db = store.redDb();

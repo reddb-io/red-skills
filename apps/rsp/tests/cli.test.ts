@@ -369,6 +369,33 @@ async function waitForResidentSocket(root: string): Promise<void> {
   await stat(paths.socketPath);
 }
 
+async function waitForResidentReady(root: string): Promise<void> {
+  const socketPath = trackedResidentPaths(root).socketPath;
+  const deadline = normalizedDeadlineMs();
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const response = await sendResidentRequest(
+        { socketPath, timeoutMs: 500 },
+        { id: randomUUID(), op: "ping" },
+      );
+      if (response.ok) return;
+      last = new Error(response.error);
+    } catch (err) {
+      last = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw last instanceof Error ? last : new Error("resident ready probe failed");
+}
+
+function expectWarmResident(root: string, env: Record<string, string> = {}): void {
+  const warm = runBundleFromCwd(root, ["warm-resident"], env);
+  expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+  expect(warm.stdout).toEqual(Buffer.alloc(0));
+  expect(warm.stderr).toEqual(Buffer.alloc(0));
+}
+
 async function waitForSummaryTokens(root: string, minTokens: number): Promise<number> {
   const summaryPath = resolveResidentPaths(root).summaryPath;
   const deadline = normalizedDeadlineMs();
@@ -396,11 +423,12 @@ async function readResidentVersion(root: string): Promise<string | undefined> {
         { id: "version", op: "ping" },
       );
       const value = response.ok && isRecord(response.value) ? response.value : {};
-      return typeof value.version === "string" ? value.version : undefined;
+      const version = typeof value.version === "string" ? value.version : undefined;
+      if (version) return version;
     } catch (err) {
       last = err;
-      await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw last instanceof Error ? last : new Error("resident version probe failed");
 }
@@ -871,6 +899,82 @@ describe("rsp cli", () => {
     expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(150) + raw.elapsedMs);
   }, 120_000);
 
+  it("built bundle resident listens before opening the RedDB store", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    await waitForResidentSocket(root);
+    const ping = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "ping",
+    });
+    expect(ping).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    const stats = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "stats",
+    });
+    expect(stats).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
+  it("built bundle elision falls back fast when the resident store is not ready", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 24);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForResidentSocket(root);
+
+    const raw = runGit(["-C", root, "log"]);
+    const node = timedStatus(runNodeNoop);
+    const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir }));
+
+    expect(wrapped.status, `${wrapped.stdout.toString("utf8")}${wrapped.stderr.toString("utf8")}`).toBe(0);
+    expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+    expect(wrapped.stdout.length).toBeLessThan(raw.stdout.length);
+    expect(wrapped.stdout.toString("utf8")).toContain("recovery unavailable (resident cold) — re-run: git log");
+    expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(250));
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
   it("built bundle teardown stops every spawned resident process", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
@@ -1080,6 +1184,7 @@ describe("rsp cli", () => {
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], env);
     await waitForResidentSocket(root);
+    await waitForResidentReady(root);
 
     const hook = runBundleCodexHookFromCwd(root, "git status", env);
     expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
@@ -1169,6 +1274,7 @@ describe("rsp cli", () => {
     };
     const setup = runBundleFromCwd(root, ["setup"], env);
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    expectWarmResident(root, env);
 
     const worktreeA = join(root, ".red", "tmp", "linked-a");
     const worktreeB = join(root, ".red", "tmp", "linked-b");
@@ -1319,6 +1425,7 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
     await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expectWarmResident(root, env);
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], env);
     expect(compressed.status).toBe(0);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
@@ -1336,6 +1443,10 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
     await mkdir(dirname(paths.socketPath), { recursive: true });
     await writeFile(paths.socketPath, "orphaned resident socket\n", "utf8");
+    expectWarmResident(root, {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+    });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], {
       RED_SKILLS_CACHE_DIR: cacheDir,
@@ -1369,6 +1480,7 @@ describe("rsp cli", () => {
       resident_version: string;
     };
     expect(oldRegistry.resident_version).toBe(oldVersion);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1401,6 +1513,7 @@ describe("rsp cli", () => {
     const hung = await startHungOldResident(paths.socketPath, oldVersion);
     try {
       expect(await readResidentVersion(root)).toBe(oldVersion);
+      expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
       const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1422,6 +1535,7 @@ describe("rsp cli", () => {
     const raw = runGit(["-C", root, "log"]);
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1463,6 +1577,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
     const command = "git log | head -c 400000";
     const direct = runShellFromCwd(root, command);
 
@@ -1490,6 +1605,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
     const source = [
       "export function greet(name: string): string {",
       "  return `hello ${name}`;",
@@ -1528,6 +1644,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const redirected = runBundleFromCwd(root, ["exec", "--", "printf 'redirected\\n' > out.txt"], {
       RED_SKILLS_CACHE_DIR: cacheDir,
@@ -1557,6 +1674,7 @@ describe("rsp cli", () => {
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
     await waitForResidentSocket(root);
+    await waitForResidentReady(root);
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(compressed.status).toBe(0);
@@ -1570,11 +1688,13 @@ describe("rsp cli", () => {
 
     const degradedResident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
     await waitForResidentSocket(root);
-    const degraded = runBundleFromCwd(root, ["git", "--version"], { RED_SKILLS_CACHE_DIR: cacheDir });
-    const direct = runGit(["--version"]);
+    await waitForResidentReady(root);
+    const degradedArgs: string[] = [];
+    const degraded = runBundleFromCwd(root, ["git", ...degradedArgs], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const direct = runGit(degradedArgs);
     expect(degraded.status).toBe(direct.status);
     expect(degraded.stdout).toEqual(direct.stdout);
-    expect(degraded.stderr.toString("utf8")).toBe("rsp: wrapper failed, passing through\n");
+    expect(degraded.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
     const degradedResidentResult = await degradedResident;
     expect(
       degradedResidentResult.status,
@@ -1608,7 +1728,7 @@ describe("rsp cli", () => {
 
     const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
     expect(degradations).toContainEqual(expect.objectContaining({
-      command: "git --version",
+      command: "git",
       reason: "wrapper failed",
     }));
 
@@ -1823,6 +1943,7 @@ describe("rsp cli", () => {
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+    expectWarmResident(root, env);
 
     expect(runBundleFromCwd(root, ["git", "log", "--terse"], env).status).toBe(0);
     expect(runGit(["-C", root, "log"]).status).toBe(0);
@@ -1954,6 +2075,7 @@ describe("rsp cli", () => {
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const redBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from([0, 1, 2, 3])]);
     await writeFile(join(root, ".red", "red.rdb"), redBytes);
+    expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1972,6 +2094,10 @@ describe("rsp cli", () => {
     const legacyPath = join(root, ".red", "red.rdb");
     const legacyBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from("legacy graph bytes")]);
     await writeFile(legacyPath, legacyBytes);
+    const warm = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "warm-resident"]);
+    expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.alloc(0));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
 
     const compressed = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "git", "log", "--terse"]);
 
