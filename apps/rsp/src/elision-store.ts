@@ -23,6 +23,10 @@ export interface RspMintMeta {
   loss: RspLossMeta;
 }
 
+export type RspStorageClass = "derivable" | "re-executable" | "ephemeral";
+
+export type RspStorageClassStats = Record<RspStorageClass, { records: number; bytes: number }>;
+
 export interface RspElisionRecord {
   collection: typeof RSP_ELISION_COLLECTION;
   handle: `el:${string}`;
@@ -30,6 +34,7 @@ export interface RspElisionRecord {
   command: string;
   created_at: string;
   loss: RspLossMeta;
+  storage_class: RspStorageClass;
 }
 
 export interface RspExpiredHandle {
@@ -44,6 +49,7 @@ export interface RspStoreStats {
   bytes: number;
   oldest: string | null;
   budget: number;
+  storage_classes: RspStorageClassStats;
 }
 
 export interface RspElisionStoreOptions {
@@ -64,6 +70,7 @@ interface StoredRecord {
   created_at: string;
   expires_at: string;
   loss: RspLossMeta;
+  storage_class?: RspStorageClass;
 }
 
 interface IndexEntry {
@@ -73,6 +80,7 @@ interface IndexEntry {
   command: string;
   created_at: string;
   expires_at: string;
+  storage_class?: RspStorageClass;
 }
 
 interface IndexDocument {
@@ -141,6 +149,7 @@ export class RspElisionStore {
     const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
+    const storageClass = storageClassForCommand(meta.command);
 
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
@@ -152,6 +161,7 @@ export class RspElisionStore {
       created_at: createdAt,
       expires_at: expiresAt,
       loss: meta.loss,
+      storage_class: storageClass,
     };
 
     delete this.document.tombstones[tombstoneKey(handle)];
@@ -163,6 +173,7 @@ export class RspElisionStore {
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
+      storage_class: storageClass,
     });
     this.prune();
     await this.flush();
@@ -202,6 +213,7 @@ export class RspElisionStore {
       command: raw.command,
       created_at: raw.created_at,
       loss: raw.loss,
+      storage_class: storageClassForRecord(raw),
     };
   }
 
@@ -219,6 +231,7 @@ export class RspElisionStore {
         return entry.created_at < oldest ? entry.created_at : oldest;
       }, null),
       budget: this.opts.byteBudget,
+      storage_classes: storageStatsForIndex(records),
     };
   }
 
@@ -362,6 +375,7 @@ export class RspElisionStore {
           command: record.command,
           created_at: record.created_at,
           expires_at: record.expires_at,
+          storage_class: storageClassForRecord(record),
         };
       })
       .filter((entry): entry is IndexEntry => entry != null);
@@ -375,6 +389,7 @@ export class RspElisionStore {
     const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
+    const storageClass = storageClassForCommand(meta.command);
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
@@ -385,12 +400,21 @@ export class RspElisionStore {
       created_at: createdAt,
       expires_at: expiresAt,
       loss: meta.loss,
+      storage_class: storageClass,
     };
     await this.kv().delete(tombstoneKey(handle));
     await this.kv().put(key, record);
     const index = await this.readRedDbIndex();
     const withoutExisting = index.records.filter((entry) => entry.handle !== handle);
-    withoutExisting.push({ handle, key, bytes: bytes.length, command: meta.command, created_at: createdAt, expires_at: expiresAt });
+    withoutExisting.push({
+      handle,
+      key,
+      bytes: bytes.length,
+      command: meta.command,
+      created_at: createdAt,
+      expires_at: expiresAt,
+      storage_class: storageClass,
+    });
     await this.pruneRedDb({ version: 1, records: withoutExisting }, true);
     await this.assertRedDbMintPersisted(handle, bytes.length);
     return handle;
@@ -423,6 +447,7 @@ export class RspElisionStore {
       command: raw.command,
       created_at: raw.created_at,
       loss: raw.loss,
+      storage_class: storageClassForRecord(raw),
     };
   }
 
@@ -436,6 +461,7 @@ export class RspElisionStore {
         return entry.created_at < oldest ? entry.created_at : oldest;
       }, null),
       budget: this.opts.byteBudget,
+      storage_classes: storageStatsForIndex(index.records),
     };
   }
 
@@ -622,6 +648,48 @@ function indexKey(): string {
   return "index:v1";
 }
 
+export function storageClassForCommand(command: string): RspStorageClass {
+  const argv = command.trim().split(/\s+/).filter(Boolean);
+  const executable = argv[0] ?? "";
+  if (executable === "cat") return "derivable";
+  if (executable === "git") {
+    const subcommand = argv[1] ?? "";
+    if (subcommand === "log" || subcommand === "diff" || subcommand === "blame" || subcommand === "show") {
+      return "derivable";
+    }
+    if (subcommand === "status" || subcommand === "branch") return "re-executable";
+    return "ephemeral";
+  }
+  if (executable === "gh") return "re-executable";
+  return "ephemeral";
+}
+
+function storageClassForRecord(record: Pick<StoredRecord, "command" | "storage_class">): RspStorageClass {
+  return isStorageClass(record.storage_class) ? record.storage_class : storageClassForCommand(record.command);
+}
+
+function storageClassForIndexEntry(entry: Pick<IndexEntry, "command" | "storage_class">): RspStorageClass {
+  return isStorageClass(entry.storage_class) ? entry.storage_class : storageClassForCommand(entry.command);
+}
+
+function storageStatsForIndex(records: readonly IndexEntry[]): RspStorageClassStats {
+  const stats = emptyStorageClassStats();
+  for (const entry of records) {
+    const storageClass = storageClassForIndexEntry(entry);
+    stats[storageClass].records += 1;
+    stats[storageClass].bytes += entry.bytes;
+  }
+  return stats;
+}
+
+function emptyStorageClassStats(): RspStorageClassStats {
+  return {
+    derivable: { records: 0, bytes: 0 },
+    "re-executable": { records: 0, bytes: 0 },
+    ephemeral: { records: 0, bytes: 0 },
+  };
+}
+
 function isHandle(value: string): value is `el:${string}` {
   return /^el:[a-f0-9]{12}$/.test(value);
 }
@@ -762,7 +830,8 @@ function isStoredRecord(value: unknown): value is StoredRecord {
     typeof value.command === "string" &&
     typeof value.created_at === "string" &&
     typeof value.expires_at === "string" &&
-    isLossMeta(value.loss);
+    isLossMeta(value.loss) &&
+    (value.storage_class === undefined || isStorageClass(value.storage_class));
 }
 
 function isIndexDocument(value: unknown): value is IndexDocument {
@@ -775,7 +844,8 @@ function isIndexDocument(value: unknown): value is IndexDocument {
     typeof entry.bytes === "number" &&
     typeof entry.command === "string" &&
     typeof entry.created_at === "string" &&
-    typeof entry.expires_at === "string"
+    typeof entry.expires_at === "string" &&
+    (entry.storage_class === undefined || isStorageClass(entry.storage_class))
   );
 }
 
@@ -790,6 +860,10 @@ function isLossMeta(value: unknown): value is RspLossMeta {
   return isRecord(value) &&
     typeof value.level === "string" &&
     typeof value.bytes_elided === "number";
+}
+
+function isStorageClass(value: unknown): value is RspStorageClass {
+  return value === "derivable" || value === "re-executable" || value === "ephemeral";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
