@@ -69,11 +69,18 @@ describe("rsp interception pure rewrite table", () => {
   it.each([
     ["git-log-format-flags", "git log --oneline --decorate=short", "rsp git log --oneline --decorate=short", "git:log"],
     ["git-diff-stat-range", "git diff --stat origin/main..HEAD", "rsp git diff --stat origin/main..HEAD", "git:diff"],
-    ["gh-pr-view-selector", "gh pr view 1746 --json number,title", "rsp gh pr view 1746 --json number,title", "gh:pr:view"],
     ["git-status-stderr-null", "git status --short 2>/dev/null", "rsp git status --short 2>/dev/null", "git:status"],
     ["git-log-stderr-merge", "git log --oneline 2>&1", "rsp git log --oneline 2>&1", "git:log"],
   ])("rewrites flagged or stderr-only family shape %s", (_name, command, rewritten, capabilityId) => {
     expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it.each([
+    ["json-fields", "gh pr view 1747 --json number,title"],
+    ["jq-expression", "gh run view 9001 --json databaseId --jq '.databaseId'"],
+    ["api-jq", "gh api repos/reddb-io/red-skills --jq .name"],
+  ])("passes through lossless gh json/jq selector family %s", (_name, command) => {
+    expect(rewriteCommand(command)).toEqual({ kind: "passthrough", reason: "lossless-gh-json-jq" });
   });
 
   it.each([
@@ -441,6 +448,30 @@ describe("rsp Codex pre-execution hook integration", () => {
       decision: "contributed",
       reason: "matched-capability",
       capability_id: "git:status",
+    });
+  });
+
+  it("records gh json/jq selectors as lossless passthrough decisions", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "gh pr view 1747 --json number,title --jq .number" } })),
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    const lines = (await readFile(telemetrySpoolPath(root), "utf8")).trim().split(/\r?\n/);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      collection: RSP_DECISIONS_COLLECTION,
+      hook: "codex-pre-exec",
+      command: "gh pr view 1747 --json number,title --jq .number",
+      command_family: "gh pr view json-jq",
+      decision: "passed",
+      reason: "lossless-gh-json-jq",
     });
   });
 
