@@ -6,6 +6,7 @@ import { resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
 export const DEFAULT_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
 export const DEFAULT_RSP_TTL_DAYS = 7;
+export const DEFAULT_RSP_EPHEMERAL_TTL_HOURS = 6;
 export const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 export const DEFAULT_RSP_TELEMETRY_TTL_DAYS = 90;
 export const DEFAULT_RSP_TELEMETRY_BYTE_BUDGET = 4 * 1024 * 1024;
@@ -18,6 +19,7 @@ export interface RspRuntimeConfig {
   enabled: boolean;
   storeUri: string;
   ttlDays: number;
+  ephemeralTtlHours: number;
   byteBudget: number;
   telemetryTtlDays: number;
   telemetryByteBudget: number;
@@ -32,6 +34,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
   const enabled = flatConfigValue(yaml, "rsp.enabled") === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
+  const ephemeralTtlHours = positiveNumber(
+    numericEnv(env.RSP_EPHEMERAL_TTL_HOURS) ?? readNumericYamlPath(yaml, "rsp.ephemeralTtlHours"),
+    DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
+  );
   const byteBudget = positiveNumber(readNumericYamlPath(yaml, "rsp.byteBudget"), DEFAULT_RSP_BYTE_BUDGET);
   const telemetryTtlDays = positiveNumber(
     readNumericYamlPath(yaml, "rsp.telemetryTtlDays"),
@@ -65,6 +71,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     enabled,
     storeUri,
     ttlDays,
+    ephemeralTtlHours,
     byteBudget,
     telemetryTtlDays,
     telemetryByteBudget,
