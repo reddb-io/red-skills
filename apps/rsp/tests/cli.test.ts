@@ -1065,7 +1065,7 @@ describe("rsp cli", () => {
     expect(await countTrackedResidentProcesses()).toBe(0);
   }, 120_000);
 
-  it("built bundle pre-exec hook passes through while cold, warms once, then rewrites when healthy", async () => {
+  it("built bundle Claude pre-exec hook rewrites while cold and warms once", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
@@ -1078,8 +1078,14 @@ describe("rsp cli", () => {
     const cold = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
     const coldHookWorkMs = Math.max(0, cold.elapsedMs - coldNodeBaseline.elapsedMs);
 
-    expect(cold.status).toBe(1);
-    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.status).toBe(0);
+    expect(JSON.parse(cold.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
     await expectLatencyBudget(
       "cold pre-exec hook work",
@@ -1099,8 +1105,14 @@ describe("rsp cli", () => {
         const retryCold = timedStatus(() => runBundleHookFromCwd(retryRoot, "git status", retryEnv));
         const retryColdHookWorkMs = Math.max(0, retryCold.elapsedMs - retryNodeBaseline.elapsedMs);
 
-        expect(retryCold.status).toBe(1);
-        expect(retryCold.stdout).toEqual(Buffer.alloc(0));
+        expect(retryCold.status).toBe(0);
+        expect(JSON.parse(retryCold.stdout.toString("utf8"))).toMatchObject({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: { command: "rsp git status" },
+          },
+        });
         expect(retryCold.stderr).toEqual(Buffer.alloc(0));
         return budgetSample(
           retryColdHookWorkMs,
@@ -1109,23 +1121,23 @@ describe("rsp cli", () => {
         );
       },
     );
-    await expect(stat(paths.wakeLockPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await waitForResidentSocket(root);
+    // The wake lock is transient; the observable contract is that the hook's
+    // kick brings the resident online.
+    await waitForGone(paths.wakeLockPath);
 
     for (let i = 0; i < 4; i++) {
       const repeat = runBundleHookFromCwd(root, "git status", env);
-      expect([0, 1]).toContain(repeat.status);
-      if (repeat.status === 0) {
-        expect(repeat.stdout).toEqual(Buffer.from("rsp git status\n"));
-      } else {
-        expect(repeat.stdout).toEqual(Buffer.alloc(0));
-      }
+      expect(repeat.status).toBe(0);
+      expect(JSON.parse(repeat.stdout.toString("utf8"))).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status" },
+        },
+      });
       expect(repeat.stderr).toEqual(Buffer.alloc(0));
     }
-
-    await waitForResidentSocket(root);
-    // The warmer removes the wake lock only after ensure returns, which is
-    // also the moment the socket starts answering — poll instead of racing it.
-    await waitForGone(paths.wakeLockPath);
 
     const measureWarmHookWork = () => {
       const nodeSamples: number[] = [];
@@ -1135,7 +1147,13 @@ describe("rsp cli", () => {
         const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
 
         expect(warm.status).toBe(0);
-        expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+        expect(JSON.parse(warm.stdout.toString("utf8"))).toMatchObject({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: { command: "rsp git status" },
+          },
+        });
         expect(warm.stderr).toEqual(Buffer.alloc(0));
         nodeSamples.push(node.elapsedMs);
         warmSamples.push(warm.elapsedMs);
@@ -1183,8 +1201,14 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
 
     const cold = runBundleHookFromCwd(root, "git status", env);
-    expect(cold.status).toBe(1);
-    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.status).toBe(0);
+    expect(JSON.parse(cold.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
     await waitForResidentSocket(root);
     await waitForGone(paths.wakeLockPath);
@@ -1192,14 +1216,26 @@ describe("rsp cli", () => {
     await new Promise((resolve) => setTimeout(resolve, normalizedDurationMs(2_000)));
     const warm = runBundleHookFromCwd(root, "git status", env);
     expect(warm.status).toBe(0);
-    expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+    expect(JSON.parse(warm.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(warm.stderr).toEqual(Buffer.alloc(0));
 
     await waitForGone(paths.socketPath, idleMs + normalizedDurationMs(5_000));
     await waitForGone(paths.registryPath);
     const expired = runBundleHookFromCwd(root, "git status", env);
-    expect(expired.status).toBe(1);
-    expect(expired.stdout).toEqual(Buffer.alloc(0));
+    expect(expired.status).toBe(0);
+    expect(JSON.parse(expired.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(expired.stderr).toEqual(Buffer.alloc(0));
   }, 120_000);
 

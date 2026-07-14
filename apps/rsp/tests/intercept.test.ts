@@ -103,7 +103,7 @@ describe("rsp interception pure rewrite table", () => {
 });
 
 describe("rsp Claude pre-execution hook integration", () => {
-  it("accepts Claude hook JSON on stdin through the CLI and returns the stdout/exit contract", async () => {
+  it("accepts Claude hook JSON on stdin through the CLI and emits updatedInput", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
@@ -113,13 +113,44 @@ describe("rsp Claude pre-execution hook integration", () => {
       input: Buffer.from(JSON.stringify({ cwd: root, tool_input: { command: "git status" } })),
     });
 
-    expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("prints only the rewritten command and exits 0 on a certain match when the resident is healthy", async () => {
+  it("reports rewrite and parse decisions under RSP_DEBUG", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const rewrite = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "claude-pre-exec"], {
+      cwd: root,
+      env: { ...process.env, RSP_DEBUG: "1" },
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_input: { command: "git status" } })),
+    });
+
+    expect(rewrite.status).toBe(0);
+    expect(rewrite.stderr.toString("utf8")).toContain("rsp hook claude-pre-exec: rewrite git:status\n");
+
+    const parseFailure = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "claude-pre-exec"], {
+      cwd: root,
+      env: { ...process.env, RSP_DEBUG: "1" },
+      input: Buffer.from("{"),
+    });
+
+    expect(parseFailure.status).toBe(0);
+    expect(parseFailure.stdout).toEqual(Buffer.alloc(0));
+    expect(parseFailure.stderr.toString("utf8")).toContain("rsp hook claude-pre-exec: passthrough payload-parse-error\n");
+  });
+
+  it("prints Claude updatedInput JSON and exits 0 on a certain match", async () => {
     const root = await tempRoot();
     let healthCalls = 0;
     let wakeCalls = 0;
@@ -138,12 +169,21 @@ describe("rsp Claude pre-execution hook integration", () => {
       },
     );
 
-    expect(formatHookDecision(result)).toEqual({ stdout: "rsp git status\n", status: 0 });
-    expect(healthCalls).toBe(1);
-    expect(wakeCalls).toBe(0);
+    expect(formatHookDecision(result)).toEqual({
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status" },
+        },
+      }) + "\n",
+      status: 0,
+    });
+    expect(healthCalls).toBe(0);
+    expect(wakeCalls).toBe(1);
   });
 
-  it("prints a shell-safe rsp exec rewrite for compound noisy commands when the resident is healthy", async () => {
+  it("prints a shell-safe rsp exec updatedInput for compound noisy commands", async () => {
     const root = await tempRoot();
     const result = await hookDecisionFromClaudePreExecJson(
       JSON.stringify({ cwd: root, tool_input: { command: "cd apps && git log --oneline" } }),
@@ -155,7 +195,13 @@ describe("rsp Claude pre-execution hook integration", () => {
     );
 
     expect(formatHookDecision(result)).toEqual({
-      stdout: "rsp exec -- 'cd apps && git log --oneline'\n",
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp exec -- 'cd apps && git log --oneline'" },
+        },
+      }) + "\n",
       status: 0,
     });
   });
@@ -179,13 +225,14 @@ describe("rsp Claude pre-execution hook integration", () => {
       },
     );
 
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 0 });
     expect(healthCalls).toBe(0);
     expect(wakeCalls).toBe(0);
   });
 
-  it("passes through and wakes the resident when the resident is not healthy", async () => {
+  it("rewrites and wakes the resident without health-gating the decision", async () => {
     const root = await tempRoot();
+    let healthCalls = 0;
     let wakeCalls = 0;
     const started = performance.now();
     const result = await hookDecisionFromClaudePreExecJson(
@@ -193,7 +240,10 @@ describe("rsp Claude pre-execution hook integration", () => {
       {
         cwd: root,
         isEnabled: () => true,
-        isResidentHealthy: async () => false,
+        isResidentHealthy: async () => {
+          healthCalls += 1;
+          return false;
+        },
         wakeResident: () => {
           wakeCalls += 1;
         },
@@ -201,8 +251,9 @@ describe("rsp Claude pre-execution hook integration", () => {
     );
     const elapsedMs = performance.now() - started;
 
-    expect(result).toEqual({ kind: "passthrough", reason: "resident-unhealthy" });
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(result).toEqual({ kind: "rewrite", command: "rsp git status", capabilityId: "git:status" });
+    expect(formatHookDecision(result).status).toBe(0);
+    expect(healthCalls).toBe(0);
     expect(wakeCalls).toBe(1);
     expect(elapsedMs).toBeLessThan(50);
   });
@@ -229,7 +280,7 @@ describe("rsp Claude pre-execution hook integration", () => {
     expect(result).toEqual({ kind: "passthrough", reason: "disabled" });
     expect(gateCalls).toBe(1);
     expect(rewriteCalls).toBe(0);
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 0 });
   });
 });
 
@@ -288,7 +339,13 @@ describe("rsp Codex pre-execution hook integration", () => {
     });
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });

@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import {
   kickResidentServer,
-  pingResident,
   resolveResidentPaths,
 } from "./resident-client.js";
 
@@ -17,6 +16,10 @@ export interface RspWrapperCapability {
 export type RewriteDecision =
   | { kind: "rewrite"; command: string; capabilityId: string }
   | { kind: "passthrough"; reason?: string };
+
+type HookPayloadParse =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; reason: string };
 
 export interface HookDecisionOptions {
   cwd: string;
@@ -114,7 +117,9 @@ async function hookDecisionFromPreExecJson(
   raw: string,
   options: HookDecisionOptions,
 ): Promise<RewriteDecision> {
-  const payload = parseJsonRecord(raw);
+  const parsed = parseJsonRecord(raw);
+  if (!parsed.ok) return { kind: "passthrough", reason: parsed.reason };
+  const payload = parsed.payload;
   const cwd = stringAt(payload, ["cwd"]) || stringAt(payload, ["tool_input", "cwd"]) || options.cwd;
   const enabled = await (options.isEnabled ?? isRspHookEnabled)(cwd);
   if (!enabled) return { kind: "passthrough", reason: "disabled" };
@@ -122,28 +127,29 @@ async function hookDecisionFromPreExecJson(
   const command = extractHookCommand(payload);
   if (!command) return { kind: "passthrough", reason: "missing-command" };
   const decision = (options.rewrite ?? rewriteCommand)(command);
-  if (decision.kind !== "rewrite") return decision;
+  if (decision.kind !== "rewrite") return decision.reason ? decision : { ...decision, reason: "unsupported-command" };
 
-  const healthy = await (options.isResidentHealthy ?? isRspResidentHealthy)(cwd);
-  if (healthy) return decision;
-
-  await (options.wakeResident ?? wakeRspResident)(cwd);
-  return { kind: "passthrough", reason: "resident-unhealthy" };
+  await wakeResidentForRewrite(cwd, options.wakeResident ?? wakeRspResident);
+  return decision;
 }
 
 export function formatHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
-  if (decision.kind === "rewrite") return { stdout: `${decision.command}\n`, status: 0 };
-  return { stdout: "", status: 1 };
+  if (decision.kind === "rewrite") return formatUpdatedInputDecision(decision.command);
+  return { stdout: "", status: 0 };
 }
 
 export function formatCodexHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
-  if (decision.kind !== "rewrite") return { stdout: "", status: 0 };
+  if (decision.kind === "rewrite") return formatUpdatedInputDecision(decision.command);
+  return { stdout: "", status: 0 };
+}
+
+function formatUpdatedInputDecision(command: string): { stdout: string; status: number } {
   return {
     stdout: `${JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: decision.command },
+        updatedInput: { command },
       },
     })}\n`,
     status: 0,
@@ -151,28 +157,35 @@ export function formatCodexHookDecision(decision: RewriteDecision): { stdout: st
 }
 
 export async function runClaudePreExecHook(stdinPath?: string): Promise<number> {
-  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
-  const decision = await hookDecisionFromClaudePreExecJson(raw, { cwd: process.cwd() });
-  const formatted = formatHookDecision(decision);
-  if (formatted.stdout) process.stdout.write(formatted.stdout);
-  return formatted.status;
+  try {
+    const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+    const decision = await hookDecisionFromClaudePreExecJson(raw, { cwd: process.cwd() });
+    debugHookDecision("claude-pre-exec", decision);
+    const formatted = formatHookDecision(decision);
+    if (formatted.stdout) process.stdout.write(formatted.stdout);
+    return formatted.status;
+  } catch (err) {
+    debugHookException("claude-pre-exec", err);
+    return 0;
+  }
 }
 
 export async function runCodexPreExecHook(stdinPath?: string): Promise<number> {
-  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
-  const decision = await hookDecisionFromCodexPreExecJson(raw, { cwd: process.cwd() });
-  const formatted = formatCodexHookDecision(decision);
-  if (formatted.stdout) process.stdout.write(formatted.stdout);
-  return formatted.status;
+  try {
+    const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+    const decision = await hookDecisionFromCodexPreExecJson(raw, { cwd: process.cwd() });
+    debugHookDecision("codex-pre-exec", decision);
+    const formatted = formatCodexHookDecision(decision);
+    if (formatted.stdout) process.stdout.write(formatted.stdout);
+    return formatted.status;
+  } catch (err) {
+    debugHookException("codex-pre-exec", err);
+    return 0;
+  }
 }
 
 function isRspHookEnabled(cwd: string): boolean {
   return resolveRspConfig(cwd, process.env).enabled;
-}
-
-async function isRspResidentHealthy(cwd: string): Promise<boolean> {
-  const paths = resolveResidentPaths(cwd);
-  return await pingResident(paths.socketPath, 50);
 }
 
 async function wakeRspResident(cwd: string): Promise<void> {
@@ -181,6 +194,41 @@ async function wakeRspResident(cwd: string): Promise<void> {
   if (!storeIsProvisioned(config)) return;
   const paths = resolveResidentPaths(cwd);
   await kickResidentServer(paths, toResidentConfig(config));
+}
+
+async function wakeResidentForRewrite(
+  cwd: string,
+  wakeResident: (cwd: string) => void | Promise<void>,
+): Promise<void> {
+  try {
+    await Promise.resolve(wakeResident(cwd));
+  } catch (err) {
+    debugHookWakeFailure(err);
+  }
+}
+
+function debugHookDecision(hook: string, decision: RewriteDecision): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  if (decision.kind === "rewrite") {
+    process.stderr.write(`rsp hook ${hook}: rewrite ${decision.capabilityId}\n`);
+    return;
+  }
+  process.stderr.write(`rsp hook ${hook}: passthrough ${decision.reason ?? "unsupported-command"}\n`);
+}
+
+function debugHookException(hook: string, err: unknown): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  process.stderr.write(`rsp hook ${hook}: exception ${errorLabel(err)}\n`);
+}
+
+function debugHookWakeFailure(err: unknown): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  process.stderr.write(`rsp hook pre-exec: resident-wake-failed ${errorLabel(err)}\n`);
+}
+
+function errorLabel(err: unknown): string {
+  if (err instanceof Error) return err.name || "Error";
+  return typeof err;
 }
 
 function toResidentConfig(config: RspRuntimeConfig) {
@@ -332,12 +380,12 @@ function commandKey(tokens: readonly string[]): string {
   return tokens.join("\0");
 }
 
-function parseJsonRecord(raw: string): Record<string, unknown> {
+function parseJsonRecord(raw: string): HookPayloadParse {
   try {
     const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
+    return isRecord(parsed) ? { ok: true, payload: parsed } : { ok: false, reason: "payload-not-object" };
   } catch {
-    return {};
+    return { ok: false, reason: "payload-parse-error" };
   }
 }
 
