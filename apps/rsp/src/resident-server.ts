@@ -17,6 +17,7 @@ import {
   readTelemetryGainsReport,
   readTelemetryStats,
   RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -188,6 +189,7 @@ interface ResidentTelemetryOptions {
 interface TelemetryIndexEntry {
   collection:
     | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
     | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
     | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   key: string;
@@ -204,6 +206,7 @@ interface TelemetryIndexDocument {
 interface TelemetryCollectionHeal {
   collection:
     | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
     | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
     | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION
     | typeof RSP_TELEMETRY_INDEX_COLLECTION;
@@ -225,6 +228,7 @@ const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
 const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
 const TELEMETRY_KV_COLLECTIONS = [
   RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
@@ -735,6 +739,7 @@ function isTelemetryIndex(value: unknown): value is TelemetryIndexDocument {
       isRecord(entry) &&
       (
         entry.collection === RSP_ACCOUNTING_EVENTS_COLLECTION ||
+        entry.collection === RSP_DECISIONS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_INVOCATIONS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_DEGRADATIONS_COLLECTION
       ) &&
