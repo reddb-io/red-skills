@@ -7,6 +7,7 @@ import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
 export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
 export const RSP_ACCOUNTING_EVENTS_COLLECTION = "rsp_accounting_events_v1";
+export const RSP_DECISIONS_COLLECTION = "rsp_decisions_v1";
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
 export const RSP_TELEMETRY_DEGRADATIONS_COLLECTION = "rsp_telemetry_degradations_v1";
 export const RSP_TELEMETRY_INDEX_COLLECTION = "rsp_telemetry_index_v1";
@@ -14,6 +15,7 @@ export const RSP_TELEMETRY_INDEX_COLLECTION = "rsp_telemetry_index_v1";
 export interface RspTelemetryEvent {
   collection:
     | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
     | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
     | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   id?: string;
@@ -76,6 +78,14 @@ export interface RspTelemetryStats {
     store_open_count_sum: number;
     store_elapsed_ms_sum: number;
     store_elapsed_ms_avg: number | null;
+  };
+  decisions: {
+    seen: number;
+    contributed: number;
+    passed: number;
+    failed_open: number;
+    contribution_rate: number;
+    top_pass_reasons: Array<{ reason: string; count: number }>;
   };
 }
 
@@ -282,6 +292,7 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
     if (!isRecord(parsed)) return null;
     if (
       parsed.collection !== RSP_ACCOUNTING_EVENTS_COLLECTION &&
+      parsed.collection !== RSP_DECISIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_INVOCATIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_DEGRADATIONS_COLLECTION
     ) return null;
@@ -295,6 +306,8 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   const windowDays = Number.isFinite(sinceDays) && sinceDays > 0 ? sinceDays : 30;
   const sinceMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
   const accounting = await readAccountingRecords(db, sinceMs);
+  const decisions = (await readCollection(db, RSP_DECISIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs);
   const invocations = accounting.filter((record) =>
     stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
   );
@@ -361,6 +374,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   const totalAttempts = invocations.length + degradations.length;
   const showHits = showEvents.filter((record) => record.hit === true).length;
   const savingsEstimate = tokenSavingsEstimate(tokensSaved, tokensEstimated);
+  const decisionCounts = countDecisions(decisions);
   return {
     window_days: windowDays,
     empty: accounting.length === 0,
@@ -406,6 +420,34 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
       store_elapsed_ms_sum: round(storeElapsedMsSum),
       store_elapsed_ms_avg: storeElapsedMsCount === 0 ? null : round(storeElapsedMsSum / storeElapsedMsCount),
     },
+    decisions: decisionCounts,
+  };
+}
+
+function countDecisions(records: Array<Record<string, unknown>>): RspTelemetryStats["decisions"] {
+  let contributed = 0;
+  let passed = 0;
+  let failedOpen = 0;
+  const passReasons = new Map<string, number>();
+  for (const record of records) {
+    const decision = stringField(record.decision);
+    if (decision === "contributed") contributed++;
+    else if (decision === "failed-open") failedOpen++;
+    else passed++;
+    if (decision !== "contributed") {
+      const reason = stringField(record.reason) || "unknown";
+      passReasons.set(reason, (passReasons.get(reason) ?? 0) + 1);
+    }
+  }
+  return {
+    seen: records.length,
+    contributed,
+    passed,
+    failed_open: failedOpen,
+    contribution_rate: records.length === 0 ? 0 : round(contributed / records.length),
+    top_pass_reasons: [...passReasons.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, count]) => ({ reason, count })),
   };
 }
 
