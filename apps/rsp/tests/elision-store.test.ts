@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,6 +23,86 @@ afterEach(async () => {
 });
 
 describe("RspElisionStore", () => {
+  it("stores derivable handles as git object recipes and re-derives byte-identical output", async () => {
+    const root = await tempRoot();
+    git(root, ["init"]);
+    git(root, ["config", "user.email", "agent@example.invalid"]);
+    git(root, ["config", "user.name", "Agent"]);
+    await writeFile(join(root, "tracked.txt"), "tracked content\n", "utf8");
+    git(root, ["add", "tracked.txt"]);
+    git(root, ["commit", "-m", "seed"]);
+
+    const storePath = join(root, "store.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const original = Buffer.from(Array.from({ length: 12_000 }, (_, index) => `line ${index}\n`).join(""));
+      const handle = await store.mint(original, {
+        command: "git log --oneline",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+
+      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+        records: Record<string, { original?: string; derivation_recipe?: { object_ids?: string[] } }>;
+        index: { records: Array<{ bytes: number }> };
+      };
+      const [record] = Object.values(raw.records);
+      expect(record?.original).toBeUndefined();
+      expect(record?.derivation_recipe?.object_ids).toHaveLength(1);
+      expect(raw.index.records[0]?.bytes).toBeLessThan(500);
+      expect(raw.index.records[0]?.bytes).toBeLessThan(original.length / 10);
+
+      const recovered = await store.get(handle);
+      if (!recovered || "status" in recovered) throw new Error("expected live derivable record");
+      expect(recovered.original).toEqual(original);
+      await expect(store.stats()).resolves.toMatchObject({
+        storage_classes: { derivable: { records: 1, bytes: raw.index.records[0]?.bytes } },
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await store.close();
+    }
+  });
+
+  it("reports the unchanged expired contract when a derivable recipe object is unreachable", async () => {
+    const root = await tempRoot();
+    git(root, ["init"]);
+
+    const storePath = join(root, "store.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const original = Buffer.from("temporary derivable output\n");
+      const handle = await store.mint(original, {
+        command: "git diff",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+        records: Record<string, { derivation_recipe?: { object_ids?: string[] } }>;
+      };
+      const oid = Object.values(raw.records)[0]?.derivation_recipe?.object_ids?.[0];
+      if (!oid) throw new Error("missing derivation object id");
+      await rm(join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2)), { force: true });
+
+      await expect(store.get(handle)).resolves.toEqual({
+        status: "expired",
+        expired_at: "2026-07-17T12:00:00.000Z",
+        command: "git diff",
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await store.close();
+    }
+  });
+
   it("mints elision handles and round-trips original bytes exactly", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({
@@ -66,7 +147,11 @@ describe("RspElisionStore", () => {
 
       if (!record || "status" in record) throw new Error("expected live elision record");
       expect(record.original).toEqual(original);
-      await expect(store.stats()).resolves.toMatchObject({ records: 1, bytes: original.length });
+      const stats = await store.stats();
+      expect(stats.records).toBe(1);
+      expect(stats.bytes).toBeLessThan(500);
+      expect(stats.bytes).toBeLessThan(original.length / 10);
+      expect(stats.storage_classes.derivable).toEqual({ records: 1, bytes: stats.bytes });
     } finally {
       await store.close();
     }
@@ -279,17 +364,26 @@ describe("RspElisionStore", () => {
         "ephemeral",
         "re-executable",
       ]);
-      expect(await store.stats()).toMatchObject({
-        records: 3,
-        bytes: 31,
-        storage_classes: {
-          derivable: { records: 1, bytes: 11 },
-          "re-executable": { records: 1, bytes: 9 },
-          ephemeral: { records: 1, bytes: 11 },
-        },
-      });
+      const stats = await store.stats();
+      expect(stats.records).toBe(3);
+      expect(stats.storage_classes.derivable.records).toBe(1);
+      expect(stats.storage_classes.derivable.bytes).toBeLessThan(500);
+      expect(stats.storage_classes["re-executable"]).toEqual({ records: 1, bytes: 9 });
+      expect(stats.storage_classes.ephemeral).toEqual({ records: 1, bytes: 11 });
+      expect(stats.bytes).toBe(
+        stats.storage_classes.derivable.bytes +
+          stats.storage_classes["re-executable"].bytes +
+          stats.storage_classes.ephemeral.bytes,
+      );
     } finally {
       await store.close();
     }
   });
 });
+
+function git(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+}
