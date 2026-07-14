@@ -208,68 +208,68 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      fireAndForget(suppressRspStderr(warmResidentStore));
+      fireAndForget(warmResidentStore());
       if (isFastGitStatus(args.positional)) {
         const started = process.hrtime.bigint();
         return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
+      const result = await runGitWrapper(args.positional, {
         level: args.level,
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
-      }));
+      });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "gh") {
-      fireAndForget(suppressRspStderr(warmResidentStore));
+      fireAndForget(warmResidentStore());
       const { runGhWrapper } = await import("./gh-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
+      const result = await runGhWrapper(args.positional, { level: args.level, store });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
-      fireAndForget(suppressRspStderr(warmResidentStore));
+      fireAndForget(warmResidentStore());
       const { runTestWrapper } = await import("./test-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
+      const result = await runTestWrapper(args.positional, { level: args.level, store });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "cat") {
-      fireAndForget(suppressRspStderr(warmResidentStore));
+      fireAndForget(warmResidentStore());
       const { runCatWrapper } = await import("./cat-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runCatWrapper(args.positional, {
+      const result = await runCatWrapper(args.positional, {
         level: args.level,
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
-      }));
+      });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "exec") {
-      fireAndForget(suppressRspStderr(warmResidentStore));
+      fireAndForget(warmResidentStore());
       const { runExecWrapper } = await import("./exec-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(() => openResidentStore(false)));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runExecWrapper(args.positional, {
+      const result = await runExecWrapper(args.positional, {
         level: args.level,
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
-      }));
+      });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
@@ -732,16 +732,6 @@ async function passthroughDisabledDirectory(argv: readonly string[]): Promise<nu
 
 function rspDisabledReason(): string {
   return "rsp is not enabled in this directory; run /red-setup";
-}
-
-async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
-  const write = process.stderr.write;
-  process.stderr.write = (() => true) as typeof process.stderr.write;
-  try {
-    return await fn();
-  } finally {
-    process.stderr.write = write;
-  }
 }
 
 function isWrapperCommand(command: string | undefined): boolean {
