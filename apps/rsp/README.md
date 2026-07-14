@@ -30,8 +30,54 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
 - `rsp show el:<id>` writes the original bytes for an elided handle.
 - `rsp`, `rsp stats`, and `rsp gains` report elision-store and telemetry gains.
 - `rsp mcp` exposes the resident-backed compression surface for MCP clients.
-- `rsp hook claude-pre-exec` and `rsp hook claude-post-exec` are the hook interception
-  surfaces used by supported agent hosts.
+- `rsp hook claude-pre-exec`, `rsp hook claude-post-exec`, and
+  `rsp hook codex-pre-exec` are the hook interception surfaces used by
+  supported agent hosts.
+
+## Permanent Proxy Model
+
+The pre-exec hook has two modes after `rsp.enabled: true` is set. Without the
+proxy flag it rewrites only the explicit wrapper families listed in the
+generated ambient skill. With `rsp.proxy.enabled: true`, the hook rewrites the
+whole eligible shell command to:
+
+```sh
+rsp proxy -- "<original command>"
+```
+
+The universal hook route has deliberate exclusions. It passes through empty or
+missing commands, background jobs using a single `&`, recursive `rsp` calls,
+known interactive commands such as shells, editors, pagers, `ssh`, and process
+monitors, and commands opted out with `RSP_NO_PROXY=1` or
+`RED_SKILLS_RSP_NO_PROXY=1`.
+
+`rsp proxy` then makes a contribute-or-pass decision per recognized shell
+segment. It contributes only for stdout-tail segments it can wrap without
+changing upstream bytes:
+
+- git `status`, `log`, `diff`, `show`, and `blame`
+- GitHub `pr|issue|run list|view`
+- `vitest`, `vitest run`, and `cargo test`
+- simple `cat`, `head`, and `tail` file reads
+
+Pipeline producers are not rewritten, so bytes inside pipes remain untouched.
+GitHub commands using `--json` or `--jq` are a special lossless family: they are
+recorded as `lossless-gh-json-jq` passes and execute byte-identically rather
+than being summarized.
+
+## Contribution Metrics
+
+`rsp stats` reports decision telemetry from the dedicated decision lane:
+`seen`, `contributed`, `passed`, `failed_open`, `contribution_rate`, and the top
+pass reasons. A contributed decision means rsp inserted a wrapper. A passed
+decision means the hook or proxy intentionally left the command or segment raw.
+A failed-open decision means rsp hit an internal failure and ran the original
+command instead.
+
+Treat these metrics as the contract for what rsp actually changed. They can
+substantiate proxy coverage, opt-outs, lossless GitHub JSON/JQ passes, and
+fail-open behavior; they do not claim compression for unrecognized command
+families.
 
 The generated ambient instruction that agents read is
 [generated/AMBIENT-SKILL.md](generated/AMBIENT-SKILL.md). Regenerate it after
@@ -82,6 +128,8 @@ store, wait registry, and the fail-open invariant.
 ```yaml
 rsp:
   enabled: true
+  proxy:
+    enabled: true
 ```
 
 Useful optional keys:

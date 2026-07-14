@@ -28,6 +28,51 @@ Each wrapper returns stdout, stderr, status, signal, and optional raw output
 metadata. `emitWrappedResult()` writes the wrapper output first, then appends
 telemetry best-effort.
 
+## Permanent Proxy Routing
+
+Pre-exec interception starts with the repository gate. If `.red/config.yaml`
+does not set `rsp.enabled: true`, the hook records a `passed` decision with the
+`disabled` reason and emits no updated command. When rsp is enabled but
+`rsp.proxy.enabled` is absent or false, the hook uses the explicit capability
+table plus conservative `cat`/`head`/`tail` and safe noisy compound matching.
+
+When both `rsp.enabled: true` and `rsp.proxy.enabled: true` are set, the hook
+uses the universal proxy route. Eligible commands are rewritten to
+`rsp proxy -- '<original command>'` with capability `proxy:universal`, and the
+hook decision event records reason `universal-proxy`. The hook still passes
+through commands that would make routing unsafe or recursive:
+
+- empty or missing commands: `missing-command`
+- background jobs with a single `&`: `background`
+- `RSP_NO_PROXY=1` or `RED_SKILLS_RSP_NO_PROXY=1`: `opt-out`
+- commands whose first word is already `rsp`: `opt-out`
+- known interactive commands such as shells, editors, pagers, `ssh`, `top`, and
+  `htop`: `interactive`
+
+`rsp proxy` executes the routed shell command verbatim after segment rewriting.
+It splits shell segments on `&&`, `||`, `;`, and `|`, but it never rewrites a
+segment whose next operator is a pipe. That keeps pipeline producer bytes raw.
+For non-pipeline-tail segments, the proxy recognizes only families backed by
+shipped wrappers:
+
+- git `status`, `log`, `diff`, `show`, and `blame`
+- GitHub `pr|issue|run list|view`
+- `vitest` and `vitest run`
+- `cargo test`
+- simple `cat`, `head`, and `tail` file reads
+
+Recognized segments emit decision telemetry with hook `proxy`, decision
+`contributed`, reason `proxy-segment`, and a concrete capability id such as
+`git:log` or `gh:pr:list`. GitHub commands containing `--json`, `--jq`,
+`--json=...`, or `--jq=...` are the lossless selector family. The proxy records
+them with decision `passed`, reason `lossless-gh-json-jq`, and leaves the exact
+segment text unchanged.
+
+If proxy routing fails after parsing the original command, `rsp proxy` appends a
+`failed-open` decision with reason `proxy-internal-error` and runs the original
+command line. If parsing fails before an original command is known, it surfaces
+the usage error instead of inventing a command to run.
+
 ## Resident Lifecycle
 
 The resident is started through `rsp server` or warmed by client calls through
@@ -137,8 +182,10 @@ are also recorded as degradation events.
 `rsp` and `rsp stats` read elision-store stats plus a telemetry window. The
 telemetry stats include invocation count, elision count, raw/emitted bytes,
 estimated tokens saved, estimated dollar savings, top commands, degradation
-rate, most recent degradation, latency percentiles, and resident cold/warm
-metrics.
+rate, most recent degradation, latency percentiles, resident cold/warm metrics,
+and decision-lane counts: `seen`, `contributed`, `passed`, `failed_open`,
+`contribution_rate`, and top pass reasons. Those decision fields are the
+evidence for hook and proxy contribution claims.
 
 `rsp gains` reads a wider telemetry report designed for operational review. It
 groups latency by command family, builds request throughput rows, reports a
@@ -183,6 +230,11 @@ wrapper capabilities plus plain `cat`, `head`, and `tail` file reads. Compound
 commands, environment assignment prefixes, unsupported commands, disabled
 repositories, missing commands, or unhealthy residents pass through.
 
+`rsp hook codex-pre-exec` uses the same decision engine and emits Codex
+`updatedInput` when a rewrite is selected. Codex does not use post-exec output
+replacement; accounting for Codex hook contribution comes from the decision
+event and, for proxy-routed commands, the proxy segment decisions.
+
 When the resident is unhealthy, the hook wakes it and returns passthrough for
 that command. The next command can use the wrapper after the resident is ready.
 `rsp hook claude-post-exec` is the normalization hook for host-provided command
@@ -196,10 +248,16 @@ lose the command result.
 Important fail-open paths:
 
 - Disabled repositories do not force wrapper behavior.
+- Proxy-disabled repositories use the explicit wrapper route instead of the
+  universal proxy route.
+- Universal proxy exclusions pass through before command execution.
 - Missing store provisioning lets wrapper commands run cold where possible.
 - Wrapper exceptions call the raw command path through passthrough degradation.
+- Proxy internal errors run the original command and record `failed-open`.
 - `gh` auth/rate-limit and other fault outputs preserve the byte-level fault
   output.
+- `gh --json`/`--jq` selector commands are recorded as `lossless-gh-json-jq`
+  passes and execute byte-identically.
 - Binary file reads pass through unchanged.
 - Telemetry append, telemetry drain, status summary, and cold drain nudges are
   best-effort.
