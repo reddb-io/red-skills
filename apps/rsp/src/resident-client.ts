@@ -53,6 +53,7 @@ export class ResidentRspElisionStore {
   constructor(
     private readonly paths: RspResidentPaths,
     private readonly config: RspResidentConfig,
+    private readonly opts: { ensureResident?: boolean } = {},
   ) {}
 
   lastResponseMetrics(): ResidentResponseMetrics | undefined {
@@ -100,7 +101,7 @@ export class ResidentRspElisionStore {
   async close(): Promise<void> {}
 
   private async request(request: ResidentRequestWithoutId): Promise<unknown> {
-    await ensureResidentServer(this.paths, this.config);
+    if (this.opts.ensureResident !== false) await ensureResidentServer(this.paths, this.config);
     const response = await sendResidentRequest(this.paths, { ...request, id: randomUUID() } as RspResidentRequest);
     if (!response.ok) throw new Error(response.error);
     this.metrics = {
