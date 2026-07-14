@@ -140,7 +140,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const residentPaths = resolveResidentPaths(process.cwd());
   if (args.command === "proxy") {
     const { runProxy } = await import("./proxy.js");
-    return await runProxy(args.positional, { telemetryRoot: residentPaths.rootDir });
+    return await runProxy(args.positional, { telemetryRoot: residentPaths.rootDir, level: args.level });
   }
   if (args.command === "status" || args.command === "sweep") {
     const { residentRegistryStatus, sweepResidentRegistry } = await import("./resident-client.js");
