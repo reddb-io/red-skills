@@ -335,6 +335,7 @@ function toResidentConfig(config: RspRuntimeConfig) {
   return {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,

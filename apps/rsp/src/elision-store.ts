@@ -5,12 +5,13 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { connect, type RedDB } from "@reddb-io/sdk";
-import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "./config.js";
+import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_EPHEMERAL_TTL_HOURS, DEFAULT_RSP_TTL_DAYS } from "./config.js";
 
 export const RSP_ELISION_COLLECTION = "rsp_elisions_v1";
 
-export { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS };
+export { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_EPHEMERAL_TTL_HOURS, DEFAULT_RSP_TTL_DAYS };
 
 export type RspLossLevel = "lossless" | "brief" | "terse" | (string & {});
 
@@ -26,7 +27,7 @@ export interface RspMintMeta {
 
 export type RspStorageClass = "derivable" | "re-executable" | "ephemeral";
 
-export type RspStorageClassStats = Record<RspStorageClass, { records: number; bytes: number }>;
+export type RspStorageClassStats = Record<RspStorageClass, { records: number; bytes: number; raw_bytes: number }>;
 
 export interface RspElisionRecord {
   collection: typeof RSP_ELISION_COLLECTION;
@@ -56,6 +57,7 @@ export interface RspStoreStats {
 export interface RspElisionStoreOptions {
   uri: string;
   ttlDays?: number;
+  ephemeralTtlHours?: number;
   byteBudget?: number;
   now?: () => Date;
   allowResidentOpen?: boolean;
@@ -69,6 +71,7 @@ interface StoredRecord {
   original_bytes: number;
   content_hash?: string;
   stored_bytes?: number;
+  blob_key?: string;
   command: string;
   created_at: string;
   expires_at: string;
@@ -82,10 +85,22 @@ interface IndexEntry {
   handle: `el:${string}`;
   key: string;
   bytes: number;
+  raw_bytes?: number;
   command: string;
   created_at: string;
   expires_at: string;
   storage_class?: RspStorageClass;
+  blob_key?: string;
+}
+
+interface StoredBlob {
+  key: string;
+  content_hash: string;
+  encoding: "gzip+base64";
+  bytes: string;
+  original_bytes: number;
+  stored_bytes: number;
+  created_at: string;
 }
 
 interface RspDerivationRecipe {
@@ -114,6 +129,7 @@ interface IndexDocument {
 interface StoreDocument {
   version: 1;
   records: Record<string, StoredRecord>;
+  blobs: Record<string, StoredBlob>;
   tombstones: Record<string, RspExpiredHandle>;
   index: IndexDocument;
 }
@@ -124,10 +140,11 @@ export class RspElisionStore {
   private readonly path: string;
   private dirty = false;
 
-  private constructor(path: string, private readonly opts: Omit<RspElisionStoreOptions, "ttlDays" | "byteBudget"> & {
+  private constructor(path: string, private readonly opts: Omit<RspElisionStoreOptions, "ttlDays" | "ephemeralTtlHours" | "byteBudget"> & {
     uri: string;
     now: () => Date;
     ttlDays: number;
+    ephemeralTtlHours: number;
     byteBudget: number;
   }) {
     this.path = path;
@@ -142,6 +159,7 @@ export class RspElisionStore {
     const store = new RspElisionStore(path, {
       uri: opts.uri,
       ttlDays: positiveNumber(opts.ttlDays, DEFAULT_RSP_TTL_DAYS),
+      ephemeralTtlHours: positiveNumber(opts.ephemeralTtlHours, DEFAULT_RSP_EPHEMERAL_TTL_HOURS),
       byteBudget: positiveNumber(opts.byteBudget, DEFAULT_RSP_BYTE_BUDGET),
       now: opts.now ?? (() => new Date()),
     });
@@ -169,14 +187,24 @@ export class RspElisionStore {
     const bytes = Buffer.from(original);
     const now = this.opts.now();
     const createdAt = now.toISOString();
-    const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
     const requestedStorageClass = storageClassForCommand(meta.command);
     const derivationRecipe = requestedStorageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
     const reexecutionRecipe = requestedStorageClass === "re-executable" ? deriveReexecutionRecipe(bytes, meta.command) : null;
-    const storageClass = requestedStorageClass === "re-executable" && !reexecutionRecipe ? "ephemeral" : requestedStorageClass;
-    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe);
+    const storageClass = requestedStorageClass === "derivable" && !derivationRecipe
+      ? "ephemeral"
+      : requestedStorageClass === "re-executable" && !reexecutionRecipe
+        ? "ephemeral"
+        : requestedStorageClass;
+    const expiresAt = expiresAtFor(now, storageClass, this.opts.ttlDays, this.opts.ephemeralTtlHours);
+    const hash = contentHash(bytes);
+    const blob = storageClass === "ephemeral" ? compressedBlob(bytes, hash, createdAt) : null;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe, blob);
+    if (blob && !this.document.blobs[blob.key]) {
+      this.document.blobs[blob.key] = blob;
+      this.dirty = true;
+    }
 
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
@@ -188,12 +216,12 @@ export class RspElisionStore {
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
-      content_hash: contentHash(bytes),
+      content_hash: hash,
       ...(derivationRecipe
         ? { derivation_recipe: derivationRecipe }
         : reexecutionRecipe
           ? { reexecution_recipe: reexecutionRecipe }
-          : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
+          : { blob_key: blob?.key }),
     };
 
     delete this.document.tombstones[tombstoneKey(handle)];
@@ -202,10 +230,12 @@ export class RspElisionStore {
       handle,
       key,
       bytes: storedBytes,
+      raw_bytes: bytes.length,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
       storage_class: storageClass,
+      blob_key: blob?.key,
     });
     this.prune();
     await this.flush();
@@ -227,15 +257,18 @@ export class RspElisionStore {
         handle: raw.handle,
         key: recordKey(raw.handle),
         bytes: storedBytesForRecord(raw),
+        raw_bytes: raw.original_bytes,
         command: raw.command,
         created_at: raw.created_at,
         expires_at: raw.expires_at,
+        storage_class: storageClassForRecord(raw),
+        blob_key: raw.blob_key,
       }, raw.expires_at);
       await this.flush();
       return expired;
     }
 
-    const original = this.readOriginal(raw);
+    const original = await this.readOriginal(raw);
     if (!original && (raw.derivation_recipe || raw.reexecution_recipe)) {
       return { status: "expired", expired_at: raw.expires_at, command: raw.command };
     }
@@ -260,7 +293,7 @@ export class RspElisionStore {
     const records = index.records;
     return {
       records: records.length,
-      bytes: records.reduce((sum, entry) => sum + entry.bytes, 0),
+      bytes: storedBytesForIndex(records),
       oldest: records.reduce<string | null>((oldest, entry) => {
         if (oldest == null) return entry.created_at;
         return entry.created_at < oldest ? entry.created_at : oldest;
@@ -300,17 +333,18 @@ export class RspElisionStore {
       }
     }
 
-    let bytes = live.reduce((sum, entry) => sum + entry.bytes, 0);
+    let bytes = storedBytesForIndex(live);
     live.sort((a, b) => a.created_at.localeCompare(b.created_at));
     while (bytes > this.opts.byteBudget && live.length > 0) {
       const evicted = live.shift()!;
-      bytes -= evicted.bytes;
       this.expireEntry(evicted, nowIso);
+      bytes = storedBytesForIndex(live);
     }
 
     if (live.length < index.records.length) {
       this.writeIndex({ version: 1, records: live });
     }
+    this.deleteUnreferencedLocalBlobs(live);
   }
 
   private expireEntry(entry: IndexEntry, expiredAt: string): void {
@@ -328,11 +362,26 @@ export class RspElisionStore {
     return isExpiredHandle(raw) ? raw : null;
   }
 
-  private readOriginal(record: StoredRecord): Buffer | null {
+  private async readOriginal(record: StoredRecord): Promise<Buffer | null> {
     if (record.original) return Buffer.from(record.original, "base64");
     if (record.derivation_recipe) return readGitBlobRecipe(record.derivation_recipe);
     if (record.reexecution_recipe) return readReexecutionRecipe(record.reexecution_recipe);
+    if (record.blob_key) {
+      const blob = this.db ? await this.kvGet(record.blob_key) : this.document.blobs[record.blob_key];
+      if (!isStoredBlob(blob)) return null;
+      return readCompressedBlob(blob);
+    }
     return null;
+  }
+
+  private deleteUnreferencedLocalBlobs(live: readonly IndexEntry[]): void {
+    const referenced = new Set(live.map((entry) => entry.blob_key).filter((key): key is string => typeof key === "string"));
+    for (const key of Object.keys(this.document.blobs)) {
+      if (!referenced.has(key)) {
+        delete this.document.blobs[key];
+        this.dirty = true;
+      }
+    }
   }
 
   private async flush(): Promise<void> {
@@ -409,10 +458,12 @@ export class RspElisionStore {
           handle: record.handle,
           key: recordKey(record.handle),
           bytes: storedBytesForRecord(record),
+          raw_bytes: record.original_bytes,
           command: record.command,
           created_at: record.created_at,
           expires_at: record.expires_at,
           storage_class: storageClassForRecord(record),
+          blob_key: record.blob_key,
         };
       })
       .filter((entry): entry is IndexEntry => entry != null);
@@ -423,14 +474,23 @@ export class RspElisionStore {
     const bytes = Buffer.from(original);
     const now = this.opts.now();
     const createdAt = now.toISOString();
-    const expiresAt = new Date(now.getTime() + this.opts.ttlDays * 24 * 60 * 60 * 1000).toISOString();
     const handle = contentHandle(bytes, meta);
     const key = recordKey(handle);
     const requestedStorageClass = storageClassForCommand(meta.command);
     const derivationRecipe = requestedStorageClass === "derivable" ? deriveGitBlobRecipe(bytes, meta.command) : null;
     const reexecutionRecipe = requestedStorageClass === "re-executable" ? deriveReexecutionRecipe(bytes, meta.command) : null;
-    const storageClass = requestedStorageClass === "re-executable" && !reexecutionRecipe ? "ephemeral" : requestedStorageClass;
-    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe);
+    const storageClass = requestedStorageClass === "derivable" && !derivationRecipe
+      ? "ephemeral"
+      : requestedStorageClass === "re-executable" && !reexecutionRecipe
+        ? "ephemeral"
+        : requestedStorageClass;
+    const expiresAt = expiresAtFor(now, storageClass, this.opts.ttlDays, this.opts.ephemeralTtlHours);
+    const hash = contentHash(bytes);
+    const blob = storageClass === "ephemeral" ? compressedBlob(bytes, hash, createdAt) : null;
+    const storedBytes = storedBytesFor(bytes, derivationRecipe, reexecutionRecipe, blob);
+    if (blob && !isStoredBlob(await this.kvGet(blob.key))) {
+      await this.kv().put(blob.key, blob);
+    }
     const record: StoredRecord = {
       collection: RSP_ELISION_COLLECTION,
       handle,
@@ -441,12 +501,12 @@ export class RspElisionStore {
       expires_at: expiresAt,
       loss: meta.loss,
       storage_class: storageClass,
-      content_hash: contentHash(bytes),
+      content_hash: hash,
       ...(derivationRecipe
         ? { derivation_recipe: derivationRecipe }
         : reexecutionRecipe
           ? { reexecution_recipe: reexecutionRecipe }
-          : { original: bytes.toString("base64"), original_encoding: "base64" as const }),
+          : { blob_key: blob?.key }),
     };
     await this.kv().delete(tombstoneKey(handle));
     await this.kv().put(key, record);
@@ -456,10 +516,12 @@ export class RspElisionStore {
       handle,
       key,
       bytes: storedBytes,
+      raw_bytes: bytes.length,
       command: meta.command,
       created_at: createdAt,
       expires_at: expiresAt,
       storage_class: storageClass,
+      blob_key: blob?.key,
     });
     await this.pruneRedDb({ version: 1, records: withoutExisting }, true);
     await this.assertRedDbMintPersisted(handle, storedBytes);
@@ -478,13 +540,16 @@ export class RspElisionStore {
         handle: raw.handle,
         key: recordKey(raw.handle),
         bytes: storedBytesForRecord(raw),
+        raw_bytes: raw.original_bytes,
         command: raw.command,
         created_at: raw.created_at,
         expires_at: raw.expires_at,
+        storage_class: storageClassForRecord(raw),
+        blob_key: raw.blob_key,
       }, raw.expires_at);
       return expired;
     }
-    const original = this.readOriginal(raw);
+    const original = await this.readOriginal(raw);
     if (!original && (raw.derivation_recipe || raw.reexecution_recipe)) {
       return { status: "expired", expired_at: raw.expires_at, command: raw.command };
     }
@@ -504,7 +569,7 @@ export class RspElisionStore {
     const index = await this.pruneRedDb(await this.readRedDbIndex());
     return {
       records: index.records.length,
-      bytes: index.records.reduce((sum, entry) => sum + entry.bytes, 0),
+      bytes: storedBytesForIndex(index.records),
       oldest: index.records.reduce<string | null>((oldest, entry) => {
         if (oldest == null) return entry.created_at;
         return entry.created_at < oldest ? entry.created_at : oldest;
@@ -638,17 +703,18 @@ export class RspElisionStore {
         live.push(entry);
       }
     }
-    let bytes = live.reduce((sum, entry) => sum + entry.bytes, 0);
+    let bytes = storedBytesForIndex(live);
     live.sort((a, b) => a.created_at.localeCompare(b.created_at));
     while (bytes > this.opts.byteBudget && live.length > 0) {
       const evicted = live.shift()!;
-      bytes -= evicted.bytes;
       await this.expireRedDbEntry(evicted, nowIso);
+      bytes = storedBytesForIndex(live);
     }
     const next = { version: 1 as const, records: live };
     if (hadAdditions || live.length < index.records.length) {
       await this.writeRedDbIndex(next);
     }
+    await this.deleteUnreferencedRedDbBlobs(live);
     return next;
   }
 
@@ -659,6 +725,16 @@ export class RspElisionStore {
       expired_at: expiredAt,
       command: entry.command,
     });
+  }
+
+  private async deleteUnreferencedRedDbBlobs(live: readonly IndexEntry[]): Promise<void> {
+    const referenced = new Set(live.map((entry) => entry.blob_key).filter((key): key is string => typeof key === "string"));
+    const listed = await this.kv().list({ limit: 10_000 }).catch(() => ({ items: [] as Array<{ key: string }> }));
+    for (const entry of listed.items) {
+      if (entry.key.startsWith("blob:") && !referenced.has(entry.key)) {
+        await this.kv().delete(entry.key);
+      }
+    }
   }
 
   private async assertRedDbMintPersisted(handle: `el:${string}`, bytes: number): Promise<void> {
@@ -697,6 +773,10 @@ function indexKey(): string {
   return "index:v1";
 }
 
+function blobKey(hash: string): string {
+  return `blob:${hash}`;
+}
+
 export function storageClassForCommand(command: string): RspStorageClass {
   const argv = command.trim().split(/\s+/).filter(Boolean);
   const executable = argv[0] ?? "";
@@ -722,12 +802,42 @@ function storageClassForIndexEntry(entry: Pick<IndexEntry, "command" | "storage_
 
 function storageStatsForIndex(records: readonly IndexEntry[]): RspStorageClassStats {
   const stats = emptyStorageClassStats();
+  const seenBlobsByClass: Record<RspStorageClass, Set<string>> = {
+    derivable: new Set(),
+    "re-executable": new Set(),
+    ephemeral: new Set(),
+  };
   for (const entry of records) {
     const storageClass = storageClassForIndexEntry(entry);
     stats[storageClass].records += 1;
+    stats[storageClass].raw_bytes += entry.raw_bytes ?? entry.bytes;
+    if (entry.blob_key) {
+      if (seenBlobsByClass[storageClass].has(entry.blob_key)) continue;
+      seenBlobsByClass[storageClass].add(entry.blob_key);
+    }
     stats[storageClass].bytes += entry.bytes;
   }
   return stats;
+}
+
+function expiresAtFor(now: Date, storageClass: RspStorageClass, ttlDays: number, ephemeralTtlHours: number): string {
+  const ttlMs = storageClass === "ephemeral"
+    ? ephemeralTtlHours * 60 * 60 * 1000
+    : ttlDays * 24 * 60 * 60 * 1000;
+  return new Date(now.getTime() + ttlMs).toISOString();
+}
+
+function storedBytesForIndex(records: readonly IndexEntry[]): number {
+  let bytes = 0;
+  const seenBlobs = new Set<string>();
+  for (const entry of records) {
+    if (entry.blob_key) {
+      if (seenBlobs.has(entry.blob_key)) continue;
+      seenBlobs.add(entry.blob_key);
+    }
+    bytes += entry.bytes;
+  }
+  return bytes;
 }
 
 function deriveGitBlobRecipe(bytes: Buffer, command: string): RspDerivationRecipe | null {
@@ -798,9 +908,11 @@ function storedBytesFor(
   bytes: Buffer,
   derivationRecipe: RspDerivationRecipe | null,
   reexecutionRecipe?: RspReexecutionRecipe | null,
+  blob?: StoredBlob | null,
 ): number {
   if (derivationRecipe) return Buffer.byteLength(JSON.stringify(derivationRecipe), "utf8");
   if (reexecutionRecipe) return Buffer.byteLength(JSON.stringify(reexecutionRecipe), "utf8");
+  if (blob) return blob.stored_bytes;
   return bytes.length;
 }
 
@@ -808,7 +920,30 @@ function storedBytesForRecord(record: StoredRecord): number {
   if (typeof record.stored_bytes === "number") return record.stored_bytes;
   if (record.derivation_recipe) return Buffer.byteLength(JSON.stringify(record.derivation_recipe), "utf8");
   if (record.reexecution_recipe) return Buffer.byteLength(JSON.stringify(record.reexecution_recipe), "utf8");
+  if (record.blob_key) return typeof record.stored_bytes === "number" ? record.stored_bytes : 0;
   return record.original_bytes;
+}
+
+function compressedBlob(bytes: Buffer, hash: string, createdAt: string): StoredBlob {
+  const compressed = gzipSync(bytes);
+  return {
+    key: blobKey(hash),
+    content_hash: hash,
+    encoding: "gzip+base64",
+    bytes: compressed.toString("base64"),
+    original_bytes: bytes.length,
+    stored_bytes: compressed.length,
+    created_at: createdAt,
+  };
+}
+
+function readCompressedBlob(blob: StoredBlob): Buffer | null {
+  try {
+    const original = gunzipSync(Buffer.from(blob.bytes, "base64"));
+    return original.length === blob.original_bytes ? original : null;
+  } catch {
+    return null;
+  }
 }
 
 function readGitBlobRecipe(recipe: RspDerivationRecipe): Buffer | null {
@@ -849,14 +984,18 @@ function runReexecutionCommand(cwd: string, argv: readonly string[], originalByt
 
 function emptyStorageClassStats(): RspStorageClassStats {
   return {
-    derivable: { records: 0, bytes: 0 },
-    "re-executable": { records: 0, bytes: 0 },
-    ephemeral: { records: 0, bytes: 0 },
+    derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+    "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+    ephemeral: { records: 0, bytes: 0, raw_bytes: 0 },
   };
 }
 
 function isHandle(value: string): value is `el:${string}` {
   return /^el:[a-f0-9]{12}$/.test(value);
+}
+
+function isBlobKey(value: string): boolean {
+  return /^blob:[a-f0-9]{64}$/.test(value);
 }
 
 function parseMemoryRecallPayload(payload: unknown): {
@@ -989,13 +1128,16 @@ function isStoredRecord(value: unknown): value is StoredRecord {
   const hasOriginal = typeof value.original === "string" && value.original_encoding === "base64";
   const hasRecipe = isDerivationRecipe(value.derivation_recipe);
   const hasReexecutionRecipe = isReexecutionRecipe(value.reexecution_recipe);
+  const blobKeyValue = value.blob_key;
+  const hasBlob = typeof blobKeyValue === "string" && isBlobKey(blobKeyValue);
   return value.collection === RSP_ELISION_COLLECTION &&
     typeof value.handle === "string" &&
     isHandle(value.handle) &&
-    (hasOriginal || hasRecipe || hasReexecutionRecipe) &&
+    (hasOriginal || hasRecipe || hasReexecutionRecipe || hasBlob) &&
     typeof value.original_bytes === "number" &&
     (value.content_hash === undefined || isSha256(value.content_hash)) &&
     (value.stored_bytes === undefined || typeof value.stored_bytes === "number") &&
+    (blobKeyValue === undefined || (typeof blobKeyValue === "string" && isBlobKey(blobKeyValue))) &&
     typeof value.command === "string" &&
     typeof value.created_at === "string" &&
     typeof value.expires_at === "string" &&
@@ -1005,17 +1147,34 @@ function isStoredRecord(value: unknown): value is StoredRecord {
 
 function isIndexDocument(value: unknown): value is IndexDocument {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.records)) return false;
-  return value.records.every((entry) =>
-    isRecord(entry) &&
+  return value.records.every((entry) => {
+    if (!isRecord(entry)) return false;
+    const blobKeyValue = entry.blob_key;
+    return (
     typeof entry.handle === "string" &&
     isHandle(entry.handle) &&
     typeof entry.key === "string" &&
     typeof entry.bytes === "number" &&
+    (entry.raw_bytes === undefined || typeof entry.raw_bytes === "number") &&
     typeof entry.command === "string" &&
     typeof entry.created_at === "string" &&
     typeof entry.expires_at === "string" &&
-    (entry.storage_class === undefined || isStorageClass(entry.storage_class))
-  );
+    (entry.storage_class === undefined || isStorageClass(entry.storage_class)) &&
+    (blobKeyValue === undefined || (typeof blobKeyValue === "string" && isBlobKey(blobKeyValue)))
+    );
+  });
+}
+
+function isStoredBlob(value: unknown): value is StoredBlob {
+  return isRecord(value) &&
+    typeof value.key === "string" &&
+    isBlobKey(value.key) &&
+    isSha256(value.content_hash) &&
+    value.encoding === "gzip+base64" &&
+    typeof value.bytes === "string" &&
+    typeof value.original_bytes === "number" &&
+    typeof value.stored_bytes === "number" &&
+    typeof value.created_at === "string";
 }
 
 function isExpiredHandle(value: unknown): value is RspExpiredHandle {
@@ -1071,7 +1230,7 @@ async function readStoreDocument(path: string): Promise<StoreDocument> {
     const text = await readFile(path, "utf8");
     if (text.trim() === "") return emptyStoreDocument();
     const parsed = JSON.parse(text) as unknown;
-    if (isStoreDocument(parsed)) return parsed;
+    if (isStoreDocument(parsed)) return { ...parsed, blobs: parsed.blobs ?? {} };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       const document = emptyStoreDocument();
@@ -1142,7 +1301,7 @@ async function writeStoreDocument(path: string, document: StoreDocument): Promis
 }
 
 function emptyStoreDocument(): StoreDocument {
-  return { version: 1, records: {}, tombstones: {}, index: { version: 1, records: [] } };
+  return { version: 1, records: {}, blobs: {}, tombstones: {}, index: { version: 1, records: [] } };
 }
 
 function isStoreDocument(value: unknown): value is StoreDocument {
@@ -1150,6 +1309,7 @@ function isStoreDocument(value: unknown): value is StoreDocument {
     value.version === 1 &&
     isRecord(value.records) &&
     Object.values(value.records).every(isStoredRecord) &&
+    (value.blobs === undefined || (isRecord(value.blobs) && Object.values(value.blobs).every(isStoredBlob))) &&
     isRecord(value.tombstones) &&
     Object.values(value.tombstones).every(isExpiredHandle) &&
     isIndexDocument(value.index);

@@ -98,6 +98,8 @@ truncate by default; pass `--full` when exact inline output is required.
 `rsp show el:<id>` writes the original bytes verbatim to stdout. Expired or
 evicted handles print `expired <ISO date> — re-run: <original command>` and
 exit 1, so the exact command to reproduce the output is always in reach.
+Ephemeral byte payloads are stored as short-TTL compressed content blobs;
+identical outputs share one stored blob without changing handle recovery.
 
 ## Failure behavior
 

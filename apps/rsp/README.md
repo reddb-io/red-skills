@@ -45,8 +45,11 @@ pnpm --filter @reddb-io/rsp gen:ambient-skill
 
 When `rsp` omits bytes, it prints an `el:<id>` handle. Handles are short,
 content-addressed identifiers minted by `RspElisionStore.mint(original, meta)`.
-The resident writes the original bytes into the rsp-owned RedDB KV collection
+The resident writes recoverable storage into the rsp-owned RedDB KV collection
 and records the command, loss level, creation time, expiry time, and byte count.
+Ephemeral outputs keep bytes as compressed content-hash blobs, so identical
+outputs share one stored blob while `rsp show` still returns the exact original
+bytes.
 
 Recover a handle with:
 
@@ -55,8 +58,9 @@ rsp show el:<id>
 ```
 
 Expired or evicted handles print an expiry line with the original command to
-rerun. Defaults are seven days of elision retention and a 64 MiB byte budget;
-`.red/config.yaml` can override `rsp.ttlDays` and `rsp.byteBudget`.
+rerun. Defaults are seven days of derivable/re-executable elision retention,
+six hours of ephemeral retention, and a 64 MiB byte budget; `.red/config.yaml`
+can override `rsp.ttlDays`, `rsp.ephemeralTtlHours`, and `rsp.byteBudget`.
 
 ## Resident and Telemetry
 
@@ -83,6 +87,7 @@ rsp:
 Useful optional keys:
 
 - `rsp.ttlDays`: elision handle retention days.
+- `rsp.ephemeralTtlHours`: ephemeral byte-blob retention hours.
 - `rsp.byteBudget`: elision byte budget.
 - `rsp.telemetryTtlDays`: telemetry retention days.
 - `rsp.telemetryByteBudget`: telemetry byte budget.

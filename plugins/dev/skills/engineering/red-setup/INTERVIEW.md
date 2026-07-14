@@ -105,7 +105,7 @@ The loss levels are:
 Three things to verify after setup:
 
 1. **Repo store is provisioned.** `rsp` with no arguments should print store stats. If it says the repo store is not provisioned, finish `/red-setup` so `.red/red.rdb` exists.
-2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
+2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, `rsp.ephemeralTtlHours: 6`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
 3. **Hook behavior is scoped.** In opted-in repos, the pre-exec hook may rewrite simple supported commands such as `git status`, `gh pr list`, `vitest`, and `cargo test` to their `rsp` forms. In non-opted-in repos, the hook is inert and agents should call `rsp` explicitly only when available.
 
 The per-host ambient instruction surface that replaces legacy host-local terminal guidance is tracked in #1415 and generated from `apps/rsp/generated/AMBIENT-SKILL.md`; do not block setup on it.

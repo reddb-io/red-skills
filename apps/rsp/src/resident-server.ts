@@ -119,6 +119,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     const store = await RspElisionStore.open({
       uri: opts.storeUri,
       ttlDays: opts.ttlDays,
+      ephemeralTtlHours: opts.ephemeralTtlHours,
       byteBudget: opts.byteBudget,
       allowResidentOpen: true,
     });

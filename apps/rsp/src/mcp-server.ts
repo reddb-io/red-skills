@@ -195,6 +195,7 @@ function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
   return new ResidentRspElisionStore(resolveResidentPaths(process.cwd()), {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,

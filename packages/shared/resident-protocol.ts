@@ -3,6 +3,7 @@ import { createConnection } from "node:net";
 export interface RspResidentConfig {
   storeUri: string;
   ttlDays: number;
+  ephemeralTtlHours?: number;
   byteBudget: number;
   clientVersion?: string;
   telemetryTtlDays?: number;

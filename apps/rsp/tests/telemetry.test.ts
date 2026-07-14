@@ -511,9 +511,9 @@ describe("rsp telemetry spool", () => {
     expect(accountingResponse.ok).toBe(true);
     expect(accountingResponse.ok && accountingResponse.value).toMatchObject({
       storage_classes: {
-        derivable: { records: 1, bytes: 1000 },
-        "re-executable": { records: 0, bytes: 0 },
-        ephemeral: { records: 1, bytes: 400 },
+        derivable: { records: 1, bytes: 1000, raw_bytes: 1000 },
+        "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+        ephemeral: { records: 1, bytes: 400, raw_bytes: 400 },
       },
     });
     await server;
