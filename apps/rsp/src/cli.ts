@@ -95,6 +95,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       rootDir: serverPaths.rootDir,
       storeUri: serverConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
+      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? serverConfig.ephemeralTtlHours,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? serverConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
@@ -122,6 +123,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }, {
       storeUri: warmConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
+      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? warmConfig.ephemeralTtlHours,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? warmConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
@@ -152,6 +154,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const openResidentStore = (ensureResident = true) => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
@@ -163,6 +166,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
@@ -176,6 +180,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return await RspElisionStore.open({
       uri: config.storeUri,
       ttlDays: config.ttlDays,
+      ephemeralTtlHours: config.ephemeralTtlHours,
       byteBudget: config.byteBudget,
     });
   };
@@ -557,6 +562,7 @@ async function readStatsSnapshot(
     const store = await RspElisionStore.open({
       uri: config.storeUri,
       ttlDays: config.ttlDays,
+      ephemeralTtlHours: config.ephemeralTtlHours,
       byteBudget: config.byteBudget,
     });
     try {
@@ -631,6 +637,8 @@ function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig
       config.storeUri,
       "--ttl-days",
       String(config.ttlDays),
+      "--ephemeral-ttl-hours",
+      String(config.ephemeralTtlHours),
       "--byte-budget",
       String(config.byteBudget),
       "--telemetry-ttl-days",
@@ -1060,7 +1068,7 @@ function renderReasons(reasons: Array<{ reason: string; count: number }>): strin
 
 function renderStorageClasses(stats: RspStorageClassStats): string[] {
   return (["derivable", "re-executable", "ephemeral"] as const).map((storageClass) =>
-    `  ${storageClass}: records: ${stats[storageClass].records} bytes: ${stats[storageClass].bytes}`
+    `  ${storageClass}: records: ${stats[storageClass].records} bytes: ${stats[storageClass].bytes} raw_bytes: ${stats[storageClass].raw_bytes}`
   );
 }
 
@@ -1136,9 +1144,9 @@ function emptyAccountingStats(byteBudget: number): RspAccountingLaneStats {
 
 function emptyStorageClassStats(): RspStorageClassStats {
   return {
-    derivable: { records: 0, bytes: 0 },
-    "re-executable": { records: 0, bytes: 0 },
-    ephemeral: { records: 0, bytes: 0 },
+    derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+    "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+    ephemeral: { records: 0, bytes: 0, raw_bytes: 0 },
   };
 }
 
