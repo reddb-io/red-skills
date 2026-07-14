@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,10 @@ import {
   rewriteCommand,
   rewriteTableFromCapabilities,
 } from "../src/intercept.js";
+import {
+  RSP_DECISIONS_COLLECTION,
+  telemetrySpoolPath,
+} from "../src/telemetry.js";
 
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
@@ -348,5 +352,29 @@ describe("rsp Codex pre-execution hook integration", () => {
     });
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("records exactly one decision event for a Codex hook invocation", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "git status" } })),
+    });
+
+    expect(res.status).toBe(0);
+    const lines = (await readFile(telemetrySpoolPath(root), "utf8")).trim().split(/\r?\n/);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      collection: RSP_DECISIONS_COLLECTION,
+      hook: "codex-pre-exec",
+      command: "git status",
+      command_family: "git status",
+      decision: "contributed",
+      reason: "matched-capability",
+      capability_id: "git:status",
+    });
   });
 });
