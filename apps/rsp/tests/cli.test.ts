@@ -2276,6 +2276,7 @@ describe("rsp cli", () => {
     expect(res.status).toBe(0);
     const text = res.stdout.toString("utf8");
     expect(text).toContain("records: 1\nbytes: 3\noldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n");
+    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0\n  re-executable: records: 0 bytes: 0\n  ephemeral: records: 1 bytes: 3\n");
     expect(text).toContain("savings:\n  window_days: 30\n  empty: true\n  invocations: 0\n");
     expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
     expect(text).toContain("latency:\n  wrapper_ms_p50: none\n");
@@ -2294,6 +2295,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(0);
     expect(text).toContain("records: 0\nbytes: 0\noldest: none\n");
+    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0\n  re-executable: records: 0 bytes: 0\n  ephemeral: records: 0 bytes: 0\n");
     expect(text).toContain("savings:\n  window_days: 7\n  empty: true\n  invocations: 0\n");
     expect(text).toContain("  top_commands:\n    empty: true\n");
     expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");

@@ -414,6 +414,19 @@ describe("rsp telemetry spool", () => {
     });
     await appendTelemetryEvent(root, {
       collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "accounted-ephemeral",
+      created_at: new Date().toISOString(),
+      event_type: "invocation",
+      command: "vitest run",
+      command_class: "vitest",
+      loss: "terse",
+      elided: true,
+      raw_bytes: 400,
+      emitted_bytes: 40,
+      bytes: 90,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
       id: "show-hit",
       created_at: new Date().toISOString(),
       event_type: "show",
@@ -472,17 +485,33 @@ describe("rsp telemetry spool", () => {
     expect(response.ok).toBe(true);
     expect(response.ok && response.value).toMatchObject({
       savings: {
-        invocations: 1,
-        elided: 1,
-        raw_bytes: 1000,
-        emitted_bytes: 100,
-        top_commands: [expect.objectContaining({ command: "git log", invocations: 1 })],
+        invocations: 2,
+        elided: 2,
+        raw_bytes: 1400,
+        emitted_bytes: 140,
+        top_commands: [
+          expect.objectContaining({ command: "git log", invocations: 1 }),
+          expect.objectContaining({ command: "vitest run", invocations: 1 }),
+        ],
       },
       health: {
         show_total: 2,
         show_hits: 1,
         show_misses: 1,
         show_hit_rate: 0.5,
+      },
+    });
+    const accountingResponse = await sendResidentRequest({ socketPath: paths.socketPath }, {
+      id: "accounting-stats",
+      op: "accounting-stats",
+      byteBudget: 1_000,
+    });
+    expect(accountingResponse.ok).toBe(true);
+    expect(accountingResponse.ok && accountingResponse.value).toMatchObject({
+      storage_classes: {
+        derivable: { records: 1, bytes: 1000 },
+        "re-executable": { records: 0, bytes: 0 },
+        ephemeral: { records: 1, bytes: 400 },
       },
     });
     await server;

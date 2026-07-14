@@ -9,7 +9,7 @@ import { connect } from "@reddb-io/sdk";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
-import type { RspElisionStore, RspMintMeta } from "./elision-store.js";
+import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
 import type { RspAccountingLaneStats, RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
@@ -962,17 +962,20 @@ function statsFull(args: readonly string[]): boolean {
 }
 
 function renderStats(
-  stats: { records: number; bytes: number; oldest: string | null; budget: number },
+  stats: { records: number; bytes: number; oldest: string | null; budget: number; storage_classes?: RspStorageClassStats },
   telemetry = emptyTelemetryStats(30),
   full = false,
 ): string {
   const topCommands = telemetry.savings.top_commands.slice(0, full ? 10 : 3);
   const daily = full ? telemetry.savings.daily_tokens_saved : telemetry.savings.daily_tokens_saved.slice(-7);
+  const storageClasses = stats.storage_classes ?? emptyStorageClassStats();
   return [
     `records: ${stats.records}`,
     `bytes: ${stats.bytes}`,
     `oldest: ${stats.oldest ?? "none"}`,
     `budget: ${stats.budget}`,
+    "storage_classes:",
+    ...renderStorageClasses(storageClasses),
     "savings:",
     `  window_days: ${telemetry.window_days}`,
     `  empty: ${telemetry.empty}`,
@@ -1047,6 +1050,12 @@ function renderReasons(reasons: Array<{ reason: string; count: number }>): strin
   return reasons.map((entry) => `    ${entry.reason}: ${entry.count}`);
 }
 
+function renderStorageClasses(stats: RspStorageClassStats): string[] {
+  return (["derivable", "re-executable", "ephemeral"] as const).map((storageClass) =>
+    `  ${storageClass}: records: ${stats[storageClass].records} bytes: ${stats[storageClass].bytes}`
+  );
+}
+
 function formatNullable(value: number | null): string {
   return value == null ? "none" : String(value);
 }
@@ -1105,6 +1114,15 @@ function emptyAccountingStats(byteBudget: number): RspAccountingLaneStats {
     bytes: 0,
     oldest: null,
     budget: byteBudget,
+    storage_classes: emptyStorageClassStats(),
+  };
+}
+
+function emptyStorageClassStats(): RspStorageClassStats {
+  return {
+    derivable: { records: 0, bytes: 0 },
+    "re-executable": { records: 0, bytes: 0 },
+    ephemeral: { records: 0, bytes: 0 },
   };
 }
 
