@@ -730,6 +730,30 @@ describe("statusline command — rendered line", () => {
     expect(stripAnsi(out.text())).not.toContain("$1.63");
   });
 
+  it("renders cached rsp decisions contribution from the resident summary when present", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
+      version: 1,
+      tokens_saved_today: 1320000,
+      decisions: { contributed: 0, seen: 12 },
+      updated_at: new Date().toISOString(),
+    }), "utf8");
+    expect(await resolveStatuslineRsp(root, {})).toEqual({
+      state: "ready",
+      tokensSavedToday: 1320000,
+      decisions: { contributed: 0, seen: 12 },
+    });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M int=0/12");
+  });
+
   it("renders rsp savings from an old summary when the resident is idle", async () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");

@@ -147,6 +147,10 @@ interface RspSummaryFile {
   dollars_saved_today_usd?: number;
   show_total_today?: number;
   show_hit_rate?: number;
+  decisions?: {
+    seen?: number;
+    contributed?: number;
+  };
   updated_at: string;
 }
 
@@ -200,6 +204,17 @@ function dollarsSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): numb
   return Math.max(0, summary.dollars_saved_today_usd);
 }
 
+function decisionsFromSummary(summary: RspSummaryFile): Extract<RspStatusInput, { state: "ready" }>["decisions"] {
+  const seen = summary.decisions?.seen;
+  const contributed = summary.decisions?.contributed;
+  if (typeof seen !== "number" || !Number.isFinite(seen) || seen <= 0) return undefined;
+  if (typeof contributed !== "number" || !Number.isFinite(contributed)) return undefined;
+  return {
+    seen: Math.floor(seen),
+    contributed: Math.max(0, Math.floor(contributed)),
+  };
+}
+
 export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
   const config = resolveRspConfig(root, env);
   if (!config.enabled) return undefined;
@@ -214,6 +229,7 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
       showHitRate: summary.show_total_today && summary.show_total_today > 0 && typeof summary.show_hit_rate === "number"
         ? summary.show_hit_rate
         : undefined,
+      decisions: decisionsFromSummary(summary),
     };
   }
   if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };

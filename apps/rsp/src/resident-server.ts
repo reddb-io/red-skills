@@ -471,6 +471,12 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
     dollars_saved_today_usd: Math.round(dollarsSavedToday * 1_000_000) / 1_000_000,
     show_total_today: stats.health.show_total,
     show_hit_rate: stats.health.show_total > 0 ? stats.health.show_hit_rate : undefined,
+    decisions: stats.decisions.seen > 0
+      ? {
+          seen: stats.decisions.seen,
+          contributed: stats.decisions.contributed,
+        }
+      : undefined,
     updated_at: now.toISOString(),
   }), { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
