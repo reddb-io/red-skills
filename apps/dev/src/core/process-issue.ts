@@ -393,6 +393,8 @@ export interface ProcessIssueDeps {
   remoteGit: GitExec;
   /** pnpm executor for feedback.ts. */
   pnpm: PnpmExec;
+  /** Resource budget applied to feedback validation subprocesses (#1758). */
+  validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
   /**
@@ -2313,6 +2315,7 @@ export async function processIssue(
       now: deps.nowEpoch,
       baselineWorktree: base,
       validationScope,
+      resourceBudget: deps.validationResourceBudget,
     });
     markProcessSafetyStep("post-barrier:feedback-done");
     // on_baseline_probe (#832): the "already failing on main?" probe (ADR 0071)

@@ -51,7 +51,7 @@ import type { GhContext } from "../runtime/gh.js";
 import { buildReviewGh } from "../runtime/review-gh.js";
 import type { GitContext } from "../runtime/git.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../core/output-shaping.js";
@@ -589,8 +589,10 @@ async function runReconcileWorker(
   };
 
   const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
     rebaseOnto: reconcileSettings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
   try {
     const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
@@ -1000,6 +1002,7 @@ export function buildProcessDeps(
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
+    validationResourceBudget: readValidationResourceBudget(config),
     layout: feedback.layout,
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.
@@ -1928,8 +1931,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
   // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
   // (default behaviour unchanged).
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
     rebaseOnto: settings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
 
   // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A

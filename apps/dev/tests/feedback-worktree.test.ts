@@ -505,7 +505,11 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
         seen.push({ script, env: opts.env });
         return { code: 0, stdout: "", stderr: "" };
       },
-      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async (cmd, args, opts) => {
+        const script = cmd === "sh" ? `sh:${args.join(" ")}` : cmd;
+        seen.push({ script, env: opts.env });
+        return { code: 0, stdout: "", stderr: "" };
+      },
       worktreeRemove: async () => {},
       branchHead: async () => null,
       worktreeHead: async () => null,
@@ -548,6 +552,24 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
       else process.env.RED_AFK_WORKER_ID = prevWorkerId;
       if (prevIterDir === undefined) delete process.env.RED_AFK_ITER_DIR;
       else process.env.RED_AFK_ITER_DIR = prevIterDir;
+    }
+  });
+
+  it("applies validation resource budget to pnpm and backpressure subprocesses", async () => {
+    const { io, envsFor } = captureEnvIO();
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      resourceBudget: { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2 },
+    });
+
+    await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+    await fb.backpressure({ command: "pnpm --dir apps/rsp test", cwd: "afk/w1/42-fix", timeoutMs: 1000 });
+
+    const envs = [...envsFor("test"), ...envsFor("sh:-c pnpm --dir apps/rsp test")];
+    expect(envs).toHaveLength(2);
+    for (const env of envs) {
+      expect(env.NODE_OPTIONS).toContain("--max-old-space-size=1536");
+      expect(env.VITEST_MAX_WORKERS).toBe("2");
     }
   });
 });

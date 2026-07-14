@@ -122,6 +122,7 @@ function envNameMatches(name: string, exact: readonly string[], prefixes: readon
 
 export function buildFeedbackSubprocessEnv(
   source: NodeJS.ProcessEnv = process.env,
+  budget: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number } = {},
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(source)) {
@@ -136,6 +137,15 @@ export function buildFeedbackSubprocessEnv(
     ) {
       env[name] = value;
     }
+  }
+  if (budget.nodeMaxOldSpaceMb && budget.nodeMaxOldSpaceMb > 0) {
+    const heapOpt = `--max-old-space-size=${Math.trunc(budget.nodeMaxOldSpaceMb)}`;
+    env.NODE_OPTIONS = env.NODE_OPTIONS && env.NODE_OPTIONS.trim() !== ""
+      ? `${env.NODE_OPTIONS} ${heapOpt}`
+      : heapOpt;
+  }
+  if (budget.vitestMaxWorkers && budget.vitestMaxWorkers > 0) {
+    env.VITEST_MAX_WORKERS = String(Math.trunc(budget.vitestMaxWorkers));
   }
   return env;
 }
@@ -432,6 +442,11 @@ export interface RunFeedbackInput {
    * before (no scope is recorded in the result).
    */
   validationScope?: ValidationScope;
+  /**
+   * Validation subprocess resource budget (#1758). Applied to every feedback
+   * command and baseline probe through the sanitized env.
+   */
+  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
 }
 
 export interface RunFeedbackResult {
@@ -546,7 +561,7 @@ async function runChecksForBaseline(
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
   const { worktree, scopes, layout, now, baselineWorktree, validationScope } = input;
-  const subprocessEnv = buildFeedbackSubprocessEnv();
+  const subprocessEnv = buildFeedbackSubprocessEnv(process.env, input.resourceBudget);
   const quarantine = input.quarantine ?? [];
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];

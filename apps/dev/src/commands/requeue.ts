@@ -38,7 +38,7 @@ import { pathExists, removeDir } from "../runtime/fs.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
-import { getConfig, loadConfig } from "../core/config.js";
+import { getConfig, loadConfig, readValidationResourceBudget } from "../core/config.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -326,7 +326,10 @@ async function runAdoptLanding(
   const gitCtx: GitContext = { cwd };
   const lockPath = branchLockPath(cwd);
   const feedbackDir = join(paths.tmpDir, "adopt-landing", String(issue));
-  const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {});
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {
+    resourceBudget: readValidationResourceBudget(config),
+  });
 
   // Bound to the live worker-presence row's stage inside withAdoptPresence
   // below; reconcile's `markStage` calls through it (#1306).
@@ -338,9 +341,7 @@ async function runAdoptLanding(
       {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: undefined,
-        configTrunk:
-          getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") ||
-          undefined,
+        configTrunk: getConfig(config, "dev.trunk") || undefined,
         fetchIssueBody: async () => undefined,
       },
     );
@@ -433,7 +434,7 @@ async function runAdoptLanding(
       base,
       // ADR 0083 landing precondition (#1018): the configured Trunk the primary
       // checkout tracks, for doLanding's local-trunk-divergence guard.
-      trunk: getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") || "main",
+      trunk: getConfig(config, "dev.trunk") || "main",
       repo,
       repoDir: cwd,
       remote: "origin",
