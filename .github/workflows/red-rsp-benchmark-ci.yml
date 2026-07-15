@@ -5,6 +5,11 @@ on:
     paths:
       - apps/rsp/**
       - .github/workflows/red-rsp-benchmark-ci.yml
+  push:
+    # The red-toon-watch rolling PR (GITHUB_TOKEN-authored, never triggers
+    # pull_request workflows) bumps TQ_VERSION here — run on its branch push
+    # so the benchmark check lands on the head SHA.
+    branches: [automation/toon-bump]
 
 permissions:
   contents: read
