@@ -178,7 +178,7 @@ describe("afkPaths", () => {
     expect(p.tmpDir).toBe("/repo/.red/tmp");
     expect(p.stateDir).toBe("/repo/.red/state");
     expect(p.workersRoot).toBe("/repo/.red/tmp/workers");
-    expect(p.historyPath).toBe("/repo/.red/state/afk-history.jsonl");
+    expect(p.historyPath).toBe("/repo/.red/state/afk-history.toonl");
     expect(p.fleetStatePath).toBe("/repo/.red/tmp/afk-supervisor.state.json");
     expect(p.fleetFirehosePath).toBe("/repo/.red/tmp/afk-supervisor.log.jsonl");
     expect(p.configPath).toBe("/repo/.red/config.yaml");

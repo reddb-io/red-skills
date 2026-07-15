@@ -85,7 +85,7 @@ export function afkPaths(root: string): AfkPaths {
     tmpDir,
     stateDir,
     workersRoot: join(tmpDir, "workers"),
-    historyPath: join(stateDir, "afk-history.jsonl"),
+    historyPath: join(stateDir, "afk-history.toonl"),
     fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
     fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
     monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
@@ -469,7 +469,7 @@ import {
 } from "../core/worker-state-reader.js";
 import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
-import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
+import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
   workers: CompactWorker[];
@@ -754,8 +754,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     });
   }
 
-  const histText = await fsx.readText(paths.historyPath);
-  const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
+  const events = (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
   const fleet = await readFleetState(paths.fleetStatePath);
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor

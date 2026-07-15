@@ -9,14 +9,14 @@
  * observed over a long enough window, with a low enough failure ratio — before
  * operators move the opt-in dist-tag pointer.
  *
- * The metrics come straight from the `afk-history.jsonl` ledger
+ * The metrics come straight from the AFK history ledger
  * ({@link HistoryRecord} in `history.ts`): `done` events carrying a `merge_sha`
  * are landed work (the drain), while `blocked`/`exhausted` are the failure lane.
  * Thresholds here are the *initial* bar from ADR 0058; tuning them is
  * operational and out of scope for this slice (PRD #614).
  */
 
-import { type HistoryRecord, parseHistoryLines } from "./history.js";
+import { type HistoryRecord, readHistoryRecords } from "./history.js";
 
 /** The initial promotion bar from ADR 0058. Tuning is operational (out of scope). */
 export interface PromotionBar {
@@ -137,7 +137,5 @@ export async function readDrainMetrics(
   io: DrainReadIO,
   sinceEpoch = 0,
 ): Promise<DrainMetrics> {
-  const text = await io.read(path);
-  if (!text) return computeDrainMetrics([], sinceEpoch);
-  return computeDrainMetrics(parseHistoryLines(text), sinceEpoch);
+  return computeDrainMetrics(await readHistoryRecords(path, io), sinceEpoch);
 }

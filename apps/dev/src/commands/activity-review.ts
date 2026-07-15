@@ -14,7 +14,7 @@ import {
   type ActivityReviewPullRequest,
   type ActivityReviewTokenSummary,
 } from "../core/activity-review.js";
-import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
+import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 
@@ -367,7 +367,7 @@ export async function activityReviewCommand(
   const repoArgs = ctx.repo ? ["--repo", ctx.repo] : [];
   const paths = afkPaths(cwd);
 
-  const [issueRows, prRows, gitStats, monitor, historyText, tokenSummary] = await Promise.all([
+  const [issueRows, prRows, gitStats, monitor, history, tokenSummary] = await Promise.all([
     ghJsonArray<unknown>(exec, cwd, [
       "issue",
       "list",
@@ -392,7 +392,7 @@ export async function activityReviewCommand(
     ]),
     collectGitStats(exec, cwd, interval.start, interval.end),
     collectMonitorInputs(cwd),
-    readFile(paths.historyPath, "utf8").catch(() => ""),
+    readHistoryRecords(paths.historyPath, { read: async (path) => readFile(path, "utf8").catch(() => null) }),
     collectTokenSummary(paths.workersRoot, interval.start, interval.end),
   ]);
 
@@ -404,7 +404,6 @@ export async function activityReviewCommand(
     interval.start,
     interval.end,
   );
-  const history = historyText ? parseHistoryLines(historyText) : [] as HistoryRecord[];
   const report = buildActivityReviewReport({
     kind,
     now,
