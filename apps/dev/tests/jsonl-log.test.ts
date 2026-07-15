@@ -17,15 +17,15 @@ import {
 const TS = "2026-05-30T12:00:00+00:00";
 
 describe("jsonl-log record shape", () => {
-  it("builds one well-formed envelope with every standard field and an extra", () => {
+  it("builds one well-formed envelope with non-default standard fields and an extra", () => {
     const record = buildRecord("stage", "writing test for X", TS, {
-      lvl: "info",
+      lvl: "warn",
       worker: "wA1B9",
       issue: 246,
       attempt: 1,
       extra: { stage_n: "3" },
     });
-    expect(record.lvl).toBe("info");
+    expect(record.lvl).toBe("warn");
     expect(record.worker).toBe("wA1B9");
     expect(record.type).toBe("stage");
     expect(record.msg).toBe("writing test for X");
@@ -38,16 +38,16 @@ describe("jsonl-log record shape", () => {
   });
 
   it("emits the canonical field order: ts lvl worker issue attempt type msg …extra", () => {
-    const record = buildRecord("stage", "m", TS, { worker: "wA1B9", issue: 246, attempt: 1, extra: { stage_n: "3" } });
+    const record = buildRecord("stage", "m", TS, { lvl: "warn", worker: "wA1B9", issue: 246, attempt: 1, extra: { stage_n: "3" } });
     expect(Object.keys(record)).toEqual([...ENVELOPE_FIELD_ORDER, "stage_n"]);
   });
 
   it("applies bash defaults when optional fields are omitted", () => {
     const record = buildRecord("note", "bare", TS);
-    expect(record.lvl).toBe("info");
-    expect(record.worker).toBe("");
-    expect(record.issue).toBe(0);
-    expect(record.attempt).toBe(0);
+    expect(record).not.toHaveProperty("lvl");
+    expect(record).not.toHaveProperty("worker");
+    expect(record).not.toHaveProperty("issue");
+    expect(record).not.toHaveProperty("attempt");
   });
 
   it("accepts numeric-string issue/attempt and coerces to JSON numbers", () => {
@@ -61,6 +61,15 @@ describe("jsonl-log record shape", () => {
     const line = JSON.stringify(buildRecord("agent", evil, TS));
     expect(line.includes("\n")).toBe(false);
     expect((JSON.parse(line) as { msg: string }).msg).toBe(evil);
+  });
+
+  it("keeps raw firehose payloads structured and omits dead default fields", () => {
+    const record = buildRecord("raw", { iteration: 2, line: "{\"type\":\"usage\",\"inputTokens\":3}" }, TS);
+    expect(record).toEqual({
+      ts: TS,
+      type: "raw",
+      msg: { iteration: 2, line: "{\"type\":\"usage\",\"inputTokens\":3}" },
+    });
   });
 });
 
