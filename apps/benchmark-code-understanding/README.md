@@ -11,7 +11,7 @@ because they clone external repositories and invoke a headless agent.
 pnpm --filter @reddb-io/benchmark-code-understanding dev doctor
 pnpm --filter @reddb-io/benchmark-code-understanding dev run --dry-run
 pnpm --filter @reddb-io/benchmark-code-understanding dev run --runs 1
-pnpm --filter @reddb-io/benchmark-code-understanding dev report --input .red/tmp/bench/code-understanding/runs.jsonl --human
+pnpm --filter @reddb-io/benchmark-code-understanding dev report --input .red/tmp/bench/code-understanding/runs.toonl --human
 ```
 
 By default, generated benchmark data lives under `.red/tmp/bench/` so it stays
