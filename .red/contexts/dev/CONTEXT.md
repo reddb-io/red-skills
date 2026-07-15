@@ -75,7 +75,7 @@ A read-only reflection of AFK worker state onto a runner-native background-task 
 _Avoid_: native agent, subagent
 
 **Branch lock**:
-A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > **Trunk**) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
+A local opt-in pin (`.red/state/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > **Trunk**) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031). Legacy readers may still recognize the old tmp location during migration, but the canonical home is the state tier.
 _Avoid_: pinned branch
 
 **Pinned branch**:
@@ -137,6 +137,26 @@ _Avoid_: recovery routing, park logic (these are the per-site applications of on
 **Worktree**:
 An isolated `git worktree` created by AFK per **Attempt** under `.red/tmp/workers/{wid}/{issue}-a{n}/worktree/`.
 _Avoid_: afk clone, sandbox checkout
+
+**Red lifecycle tier**:
+One of the canonical `.red/` lifecycles from ADR 0098: tracked knowledge/config, plugin stores, durable machine state under `.red/state/`, or disposable scratch under `.red/tmp/`. The lifecycle decides whether a path is versioned, plugin-owned, durable-local, or safely deletable.
+_Avoid_: tmp as a catch-all, state mixed with scratch
+
+**State tier**:
+The gitignored durable machine-state tier at `.red/state/`. Named lanes include `afk/`, `rsp/`, `statusline/`, `branch-lock.yaml`, and `red-skills.rdb`. It is never mass-deletable and must survive `rm -rf .red/tmp`.
+_Avoid_: cache, tmp state
+
+**Tmp tier**:
+The gitignored disposable scratch tier at `.red/tmp/`. It is safe to remove by contract; no durable state may live there, and every writer must use a named lane.
+_Avoid_: durable tmp, loose tmp-root files
+
+**Lane registry**:
+The ADR 0098 registry of named writer-owned paths under `.red/state/`, `.red/tmp/`, and `.red/researches/`. A new writer must use a registered lane or extend the registry before writing.
+_Avoid_: ad-hoc path convention, loose file namespace
+
+**Researches home**:
+The gitignored durable generated-knowledge home at `.red/researches/`, used for date-disambiguated `/research` reports until they are curated into tracked docs or the wiki.
+_Avoid_: tmp research reports
 
 **Fleet supervisor**:
 The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers.
@@ -209,7 +229,7 @@ A question the elided output must still answer, recorded in a filter's fixture b
 _Avoid_: accuracy check, snapshot test, golden file
 
 **Repo store**:
-The single local RedDB file the repo's plugins share, provisioned by `/red-setup`. Plugins separate logically inside it by collection — the governed memory graph and the **Elision** records never mix — not by opening separate files.
+The single local RedDB file the repo's plugins share, provisioned by `/red-setup` at `.red/state/red-skills.rdb` (ADR 0098 amends ADR 0095's original root location). Plugins separate logically inside it by collection — the governed memory graph and the **Elision** records never mix — not by opening separate files.
 _Avoid_: graph.rdb, the memory database, elision cache
 
 **rsp**:
@@ -250,6 +270,8 @@ _Avoid_: compact mode (names the flag, not the contract), lossy output
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
 - **Ship (interactive landing)** is retired (ADR 0081); hand-done work reaches the shared validation gate via requeue, and dispatch happens through `/go` or `/afk`.
+- A **Red lifecycle tier** defines whether `.red/` content is tracked, plugin-owned, durable-local, or disposable; the **Lane registry** assigns each non-tracked writer a named path inside the right tier.
+- The **State tier** survives tmp cleanup; the **Tmp tier** is safe to delete by contract.
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
 - The **Release watcher** observes toon releases, updates the catalog, and lets the consuming workspace lockfile choose the exact red-castle-resolved toon version.
