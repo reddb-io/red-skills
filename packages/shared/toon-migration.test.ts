@@ -75,6 +75,14 @@ describe("shared TOON migration registry", () => {
           kind: "toonl",
         }),
         expect.objectContaining({
+          id: "dev.supervisor-firehose",
+          plugin: "dev",
+          legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
+          toonPath: ".red/tmp/afk-supervisor.log.jsonl",
+          kind: "toonl",
+          migration: "sniff-read",
+        }),
+        expect.objectContaining({
           id: "dev.code-understanding-bench-runs",
           plugin: "dev",
           legacyPath: ".red/tmp/bench/code-understanding/runs.jsonl",
@@ -127,6 +135,7 @@ describe("shared TOON migration registry", () => {
     );
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.agent-log");
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.supervisor-firehose");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.code-understanding-bench-runs");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.attempt-state");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.rsp-wait-registry");
@@ -246,6 +255,34 @@ describe("shared TOON migration registry", () => {
       value: [
         expect.objectContaining({ ts: "t1", worker: "wA", type: "agent", msg: "line A" }),
         expect.objectContaining({ ts: "t2", issue: 2, attempt: 1, type: "agent", msg: "line B" }),
+      ],
+    });
+  });
+
+  test("registers the supervisor firehose as sniff-read without rewriting legacy history", async () => {
+    const root = await scratch();
+    await write(
+      root,
+      ".red/tmp/afk-supervisor.log.jsonl",
+      [
+        JSON.stringify({ ts: "t1", worker: "fleet", type: "heartbeat", msg: "legacy" }),
+        encode([{ ts: "t2", worker: "fleet", type: "heartbeat", msg: "toon" }]),
+        "",
+      ].join("\n"),
+    );
+
+    const before = await readFile(join(root, ".red/tmp/afk-supervisor.log.jsonl"), "utf8");
+    const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    const after = await readFile(join(root, ".red/tmp/afk-supervisor.log.jsonl"), "utf8");
+
+    expect(report.converted).not.toContain("dev.supervisor-firehose");
+    expect(report.skipped).toContain("dev.supervisor-firehose");
+    expect(after).toBe(before);
+    await expect(readRegisteredToonSurface(root, "dev.supervisor-firehose")).resolves.toMatchObject({
+      format: "toonl",
+      value: [
+        expect.objectContaining({ ts: "t1", type: "heartbeat", msg: "legacy" }),
+        expect.objectContaining({ ts: "t2", type: "heartbeat", msg: "toon" }),
       ],
     });
   });
