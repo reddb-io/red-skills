@@ -38,6 +38,14 @@ rsp:
   ephemeralTtlHours: 6
   byteBudget: 67108864            # 64 MiB
 
+# Required host binaries (ADR 0097). /red-setup installs these through their
+# checksum-verified upstream installers and records the exact pin here so
+# /red-doctor can red-flag absence or version drift. tq is required for
+# TOON/TOONL inspection; there is no jq fallback lane.
+host_binaries:
+  tq:
+    version: 0.1.0
+
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
 # worktrees must live under .red/tmp/, and branch-changing commands in the
 # primary checkout are blocked. Create task branches with:

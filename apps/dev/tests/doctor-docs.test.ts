@@ -79,6 +79,21 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
   });
 
+  it("audits required host binaries read-only with red-setup as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Required host binaries");
+    expect(skill).toContain("TQ_VERSION");
+    expect(skill).toContain("Absence or version drift is a red finding");
+    expect(skill).toContain("apps/dev/src/core/host-binary-doctor.ts");
+    expect(skill).toContain("never run installer scripts during Pass 1");
+    expect(skill).toContain("Required host binaries");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Required host binaries `❌` (check 18)");
+    expect(apply).toContain("delegate to `/red-setup`");
+  });
+
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
     const skill = await readDoctorSkill();
 

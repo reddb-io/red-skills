@@ -209,6 +209,20 @@ describe("red-setup docs", () => {
     expect(script).toContain(".cache/red-skills/bundles");
   });
 
+  it("documents tq as a pinned required host binary installed by setup", async () => {
+    const skill = await readSetupRedSkillsDocs();
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
+
+    expect(skill).toContain("**Section E2 — Required host binaries");
+    expect(skill).toContain("TQ_VERSION=v0.1.0");
+    expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh");
+    expect(skill).toContain("no jq fallback");
+    expect(skill).toContain("host_binaries:");
+    expect(template).toContain("host_binaries:");
+    expect(template).toContain("tq:");
+    expect(template).toContain("version: 0.1.0");
+  });
+
   it("installs a runtime shim that prefers active env roots, then the highest host cache", () => {
     const tmp = mkdtempSync(join(tmpdir(), "red-runtime-shim-"));
     const bin = join(tmp, "bin");

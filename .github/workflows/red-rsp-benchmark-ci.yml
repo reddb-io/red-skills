@@ -22,6 +22,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install pinned tq
+        env:
+          TQ_VERSION: v0.1.0
+        run: curl -fsSL "https://raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh" | sh
+
       - name: Install workspace dependencies
         env:
           REDDB_SKIP_POSTINSTALL: "1"
