@@ -53,6 +53,13 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     toonPath: ".red/state/afk-history.toonl",
     kind: "toonl",
   },
+  {
+    id: "dev.agent-log",
+    plugin: "dev",
+    legacyPath: ".red/tmp/agent.log.jsonl",
+    toonPath: ".red/tmp/agent.log.toonl",
+    kind: "toonl",
+  },
 ];
 
 export const REGISTERED_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
@@ -167,10 +174,18 @@ async function quiescenceReasons(rootDir: string): Promise<string[]> {
 async function readLegacyFile(path: string, kind: RegisteredToonSurfaceKind): Promise<unknown> {
   const body = await readFile(path, "utf8");
   if (kind === "toonl") {
-    return body
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line));
+    const rows: unknown[] = [];
+    for (const raw of body.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      try {
+        rows.push(JSON.parse(line));
+      } catch {
+        // Append-only lanes may end with a torn crash-tail row; convert the
+        // parseable prefix and let the next segment start clean.
+      }
+    }
+    return rows;
   }
   return JSON.parse(body);
 }
@@ -189,6 +204,22 @@ function renderSurface(value: unknown, surface: RegisteredToonSurface): string {
 }
 
 function normalizeToonlRows(surface: RegisteredToonSurface, rows: unknown[]): unknown[] {
+  if (surface.id === "dev.agent-log") {
+    return rows.map((row) => {
+      const rec = row && typeof row === "object" ? row as Record<string, unknown> : {};
+      return {
+        ts: typeof rec.ts === "string" ? rec.ts : "",
+        lvl: typeof rec.lvl === "string" && rec.lvl.length > 0 ? rec.lvl : null,
+        worker: typeof rec.worker === "string" && rec.worker.length > 0 ? rec.worker : null,
+        issue: Number.isFinite(Number(rec.issue)) ? Number(rec.issue) : null,
+        attempt: Number.isFinite(Number(rec.attempt)) ? Number(rec.attempt) : null,
+        type: typeof rec.type === "string" ? rec.type : "",
+        msg: rec.msg === undefined ? "" : rec.msg,
+        iteration: rec.iteration === undefined ? null : rec.iteration,
+        kind: rec.kind === undefined ? null : rec.kind,
+      };
+    });
+  }
   if (surface.id !== "dev.afk-history") return rows;
   return rows.map((row) => {
     const rec = row && typeof row === "object" ? row as Record<string, unknown> : {};
