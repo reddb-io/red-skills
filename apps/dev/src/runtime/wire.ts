@@ -18,7 +18,7 @@ import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
-import { classifyDocsPath, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
+import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
@@ -852,7 +852,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
 
 // ---------- statusline inputs ----------
 
-import type { AfkInput, FleetInput, RepoInput } from "../core/statusline.js";
+import type { AfkInput, DocsInput, FleetInput, RepoInput } from "../core/statusline.js";
 
 /** The DEFAULT TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
  * GitHub-derived queue/human and open-PR/open-issue counts AND the repo-global
@@ -1503,6 +1503,45 @@ export async function collectStatuslineRepo(
   return { openPrs, todayPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };
 }
 
+type GitExec = typeof execTool;
+
+export async function collectStatuslineDocs(
+  ctx: RepoContext,
+  base = "main",
+  exec: GitExec = execTool,
+): Promise<DocsInput | undefined> {
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const baseRef = `${ctx.remote}/${base}`;
+  const precedent = new Map<DocsSweepFileState["group"], boolean>([
+    ["glossary", await docsTrackedPrecedentWithExec(gitCtx, baseRef, "glossary", exec)],
+    ["adr", await docsTrackedPrecedentWithExec(gitCtx, baseRef, "adr", exec)],
+  ]);
+
+  const status = await exec("git", ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  const files = status.code === 0 ? parseDocsPorcelain(status.stdout, precedent) : [];
+  const byPath = new Map(files.map((f) => [f.path, f]));
+
+  const ahead = await exec("git", ["diff", "--name-only", `${baseRef}...HEAD`, "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  if (ahead.code === 0) {
+    for (const raw of ahead.stdout.split("\n")) {
+      const path = raw.trim();
+      if (!path || byPath.has(path)) continue;
+      const group = classifyDocsPath(path);
+      if (group !== "glossary" && group !== "adr") continue;
+      byPath.set(path, {
+        path,
+        state: "ahead",
+        group,
+        ignored: false,
+        trackedPrecedent: precedent.get(group) ?? false,
+      });
+    }
+  }
+
+  const plan = planDocsSweep({ base, files: [...byPath.values()] });
+  return plan.files.length > 0 ? { count: plan.files.length } : undefined;
+}
+
 // ---------- reap inputs ----------
 
 import { issueMeta, listIssueStates, type GhContext } from "./gh.js";
@@ -1736,6 +1775,17 @@ function parseDocsPorcelain(stdout: string, precedent: Map<DocsSweepFileState["g
 async function docsTrackedPrecedent(ctx: gitx.GitContext, baseRef: string, group: DocsSweepFileState["group"]): Promise<boolean> {
   if (group !== "glossary" && group !== "adr") return false;
   const r = await execTool("git", ["ls-tree", "-r", "--name-only", baseRef, "--", docsSweepGroupPath(group)], { cwd: ctx.cwd });
+  return r.code === 0 && r.stdout.trim() !== "";
+}
+
+async function docsTrackedPrecedentWithExec(
+  ctx: gitx.GitContext,
+  baseRef: string,
+  group: DocsSweepFileState["group"],
+  exec: typeof execTool,
+): Promise<boolean> {
+  if (group !== "glossary" && group !== "adr") return false;
+  const r = await exec("git", ["ls-tree", "-r", "--name-only", baseRef, "--", docsSweepGroupPath(group)], { cwd: ctx.cwd });
   return r.code === 0 && r.stdout.trim() !== "";
 }
 

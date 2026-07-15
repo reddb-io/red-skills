@@ -71,11 +71,12 @@ const input: StatuslineInput = {
   project: { basename: "red-skills", branch: "main", version: "1.2.3" },
   claude,
   repo,
+  docs: { count: 2 },
 };
 
 describe("statusline style — header line", () => {
   it("powerlines » project, model·effort, ctx, 5h/7d usage, prs/iss, +local/-local — reset-terminated", () => {
-    const h = renderHeaderLine(input.project, claude, repo);
+    const h = renderHeaderLine(input.project, claude, repo, undefined, "full", undefined, input.docs);
     expect(h).not.toContain("\n");
     expect(h.endsWith(RESET)).toBe(true);
     expect(h).toContain(WINE2); // project block bg
@@ -91,6 +92,7 @@ describe("statusline style — header line", () => {
     expect(t).toContain("prs=3");
     expect(t).toContain("iss=24");
     expect(t).toContain("loc=+142 -36");
+    expect(t).toContain("doc=2");
   });
 
   it("renders only the usage window that is present (graceful absence)", () => {
@@ -155,6 +157,7 @@ describe("statusline style — header line", () => {
     expect(t).not.toContain("7d=");
     expect(t).not.toContain("prs=");
     expect(t).not.toContain("loc=+142 -36");
+    expect(t).not.toContain("doc=");
   });
 
   it("styles rsp states from the shared render model", () => {
@@ -486,7 +489,7 @@ describe("statusline style — full themed assembly", () => {
       expect(starts[1]).toBe(starts[0]);
     }
     expect(rows[1].indexOf("impl")).toBe(rows[0].indexOf("validation"));
-    expect(header).toBe(renderHeaderLine(input.project, claude, repo));
+    expect(header).toBe(renderHeaderLine(input.project, claude, repo, undefined, "full", undefined, input.docs));
     expect(firstRaw).toContain(KEY);
     expect(secondRaw).toContain(KEY);
     expect(firstRaw).toContain(BOLD);
