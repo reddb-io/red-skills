@@ -17,7 +17,8 @@ default lane, one exception lane, and several on-ramps that feed those lanes.
 
 **Tracked work defaults to `/afk`.** If the work is already a Ticket, should be a
 Ticket, or belongs to a Spec, route it through `/afk`. This is the modus
-operandi.
+operandi. `/afk` boot owns the Docs Sweep, so stranded `.red/` glossary/ADR docs
+auto-land or halt before worker dispatch rather than becoming a separate route.
 
 **Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
 does not already belong on the tracker. If the work is already tracked, keep it

@@ -136,7 +136,7 @@ Run before the first iteration:
 
 ## Boot-time sweeps
 
-At boot the bundle reclaims stale state — orphan attempt dirs (issue-state TTL), the per-issue attempt cap (#257), the `afk-attempts/*` snapshot-branch grace cleanup (#258), and the on-demand `/afk reap` branch reaper (#275). Mechanics: [`docs/BOOT-SWEEPS.md`](./BOOT-SWEEPS.md).
+At boot the bundle reclaims stale state — orphan attempt dirs (issue-state TTL), the per-issue attempt cap (#257), the `afk-attempts/*` snapshot-branch grace cleanup (#258), the **Docs Sweep** (origin-visible `.red/` docs before dispatch), and the on-demand `/afk reap` branch reaper (#275). Mechanics: [`docs/BOOT-SWEEPS.md`](./BOOT-SWEEPS.md).
 
 ## Dependency Unblock — `req:N` edges, close cascade + boot sweep
 
@@ -150,7 +150,7 @@ Dependencies are first-class **`req:N` edge labels** (one per blocker), and a de
 
 Best-effort: a `gh` failure here logs a `warn:` and never fails the close — the boot sweep below catches anything the cascade missed.
 
-**2. Unblock Sweep (boot-time, the safety net).** After [orphan cleanup](./BOOT-SWEEPS.md) and before *Straggler Check*, `/afk` re-scans dependency-blocked issues by label and promotes any whose deps all closed:
+**2. Unblock Sweep (boot-time, the safety net).** After [orphan cleanup and the Docs Sweep](./BOOT-SWEEPS.md) and before *Straggler Check*, `/afk` re-scans dependency-blocked issues by label and promotes any whose deps all closed:
 
 1. `gh issue list` for open `blocked:dependency` issues with `number,labels,body`.
 2. Deps come from the `req:*` labels (the source of truth); for pre-`req:N` issues with no such label, fall back to extracting `#N` refs under the literal `## Blocked by` body heading (`- [ ] #N`) only when the issue is still labelled `blocked:dependency`.

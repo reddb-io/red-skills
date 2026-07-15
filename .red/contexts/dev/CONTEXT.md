@@ -90,6 +90,10 @@ _Avoid_: main (as a hardcoded assumption), default branch, primary branch
 How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
+**Docs Sweep**:
+The `/afk` boot phase that enforces origin-visible `.red/` documentation before any worker dispatch. It detects stranded glossary docs (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`) and ADRs (`.red/adr/**`) from dirty, untracked, ignored, and ahead-of-origin state; auto-lands one `docs:` PR through the ADR 0092 isolated lane when publishable; and halts boot with the explicit relative file list when origin reachability or landing fails.
+_Avoid_: handoff doc injection, best-effort docs warning
+
 **Ship (interactive landing) — RETIRED (ADR 0081)**:
 The historical `/ship` finalizer for already-committed work in an exempt `.red/tmp/work-ship-*/` worktree. Retired by ADR 0081: its roles are subsumed by the dispatch tiers — hand-done work routes through **requeue** (the no-agent landing lane, ADR 0055), and the review→test→lint→PR→CI line is the shared internal validation gate reached automatically by `/go` and `/afk`. The term survives only for reading historical envelopes and ADRs; never suggest `/ship` as a live command.
 _Avoid_: suggesting `/ship` for new work (use `/go`, `/afk`, or requeue)

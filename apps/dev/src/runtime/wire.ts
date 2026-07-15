@@ -11,13 +11,14 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { copyFileSync, readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
+import { classifyDocsPath, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
@@ -43,6 +44,7 @@ import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
 import { collectLogLineCounts } from "./log-cursor.js";
 import { isLivePid } from "./kill-tree.js";
+import { execTool } from "./exec.js";
 
 // ---------- repo resolution ----------
 
@@ -1651,6 +1653,7 @@ export async function collectBootOptions(
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,
+    docsSweep: await collectDocsSweepInput(ctx, facts.configuredTrunk ?? "main"),
     specSubIssueCandidates,
   };
 }
@@ -1699,6 +1702,123 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     allowHttpsRemote:
       process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
   };
+}
+
+const DOC_SWEEP_PATHS = [".red/CONTEXT.md", ".red/CONTEXT-MAP.md", ".red/contexts", ".red/adr"] as const;
+
+function docsSweepGroupPath(group: DocsSweepFileState["group"]): string {
+  return group === "adr" ? ".red/adr" : ".red";
+}
+
+function parseDocsPorcelain(stdout: string, precedent: Map<DocsSweepFileState["group"], boolean>): DocsSweepFileState[] {
+  const files = new Map<string, DocsSweepFileState>();
+  for (const raw of stdout.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line) continue;
+    const status = line.slice(0, 2);
+    let path = line.slice(3);
+    const arrow = path.indexOf(" -> ");
+    if (arrow !== -1) path = path.slice(arrow + 4);
+    path = gitx.unquotePorcelainPath(path);
+    const group = classifyDocsPath(path);
+    if (group !== "glossary" && group !== "adr") continue;
+    files.set(path, {
+      path,
+      state: status === "??" || status === "!!" ? "untracked" : "modified",
+      group,
+      ignored: status === "!!",
+      trackedPrecedent: precedent.get(group) ?? false,
+    });
+  }
+  return [...files.values()];
+}
+
+async function docsTrackedPrecedent(ctx: gitx.GitContext, baseRef: string, group: DocsSweepFileState["group"]): Promise<boolean> {
+  if (group !== "glossary" && group !== "adr") return false;
+  const r = await execTool("git", ["ls-tree", "-r", "--name-only", baseRef, "--", docsSweepGroupPath(group)], { cwd: ctx.cwd });
+  return r.code === 0 && r.stdout.trim() !== "";
+}
+
+export async function collectDocsSweepInput(ctx: RepoContext, base: string) {
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const fetch = await execTool("git", ["fetch", ctx.remote, base], { cwd: ctx.root });
+  const originReachable = fetch.code === 0;
+  const baseRef = `${ctx.remote}/${base}`;
+  const precedent = new Map<DocsSweepFileState["group"], boolean>([
+    ["glossary", await docsTrackedPrecedent(gitCtx, baseRef, "glossary")],
+    ["adr", await docsTrackedPrecedent(gitCtx, baseRef, "adr")],
+  ]);
+
+  const status = await execTool("git", ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  const files = status.code === 0 ? parseDocsPorcelain(status.stdout, precedent) : [];
+  const byPath = new Map(files.map((f) => [f.path, f]));
+
+  if (originReachable) {
+    const ahead = await execTool("git", ["diff", "--name-only", `${baseRef}...HEAD`, "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+    if (ahead.code === 0) {
+      for (const raw of ahead.stdout.split("\n")) {
+        const path = raw.trim();
+        if (!path || byPath.has(path)) continue;
+        const group = classifyDocsPath(path);
+        if (group !== "glossary" && group !== "adr") continue;
+        byPath.set(path, {
+          path,
+          state: "ahead",
+          group,
+          ignored: false,
+          trackedPrecedent: precedent.get(group) ?? false,
+        });
+      }
+    }
+  }
+
+  return { base, files: [...byPath.values()], originReachable };
+}
+
+export async function landDocsSweep(ctx: RepoContext, plan: DocsSweepPlan) {
+  const paths = afkPaths(ctx.root);
+  const stamp = `${Date.now().toString(36)}-${process.pid}`;
+  const worktree = join(paths.tmpDir, "docs-sweep", stamp);
+  const branch = `docs/afk-docs-sweep-${stamp}`;
+  const title = "docs: land AFK boot docs sweep";
+  const body = "Automated Docs Sweep landing for stranded .red documentation.";
+
+  await fsx.ensureDir(dirname(worktree));
+  const add = await execTool("git", ["worktree", "add", "-b", branch, worktree, `${ctx.remote}/${plan.base}`], { cwd: ctx.root });
+  if (add.code !== 0) return { ok: false, reason: "worktree-add-failed" };
+
+  try {
+    for (const f of plan.files) {
+      const src = join(ctx.root, f.path);
+      const dst = join(worktree, f.path);
+      if (existsSync(src)) {
+        mkdirSync(dirname(dst), { recursive: true });
+        copyFileSync(src, dst);
+      } else {
+        rmSync(dst, { force: true });
+      }
+    }
+    const addDocs = await execTool("git", ["add", "--force", "--", ...plan.files.map((f) => f.path)], { cwd: worktree });
+    if (addDocs.code !== 0) return { ok: false, reason: "add-failed" };
+    const commit = await execTool("git", ["commit", "-m", title], { cwd: worktree });
+    if (commit.code !== 0) return { ok: false, reason: "commit-failed" };
+    const push = await execTool("git", ["push", ctx.remote, `HEAD:refs/heads/${branch}`], { cwd: worktree });
+    if (push.code !== 0) return { ok: false, reason: "push-failed" };
+    const create = await execTool("gh", ["-R", ctx.repo, "pr", "create", "--base", plan.base, "--head", branch, "--title", title, "--body", body], { cwd: ctx.root });
+    if (create.code !== 0) return { ok: false, reason: "pr-create-failed" };
+    const prNumber = /\/pull\/([0-9]+)/.exec(create.stdout)?.[1] ?? create.stdout.trim().match(/^[0-9]+$/)?.[0];
+    const resolvedPr = prNumber
+      ? { code: 0, stdout: prNumber, stderr: "" }
+      : await execTool("gh", ["-R", ctx.repo, "pr", "view", branch, "--json", "number", "-q", ".number"], { cwd: ctx.root });
+    const number = resolvedPr.stdout.trim();
+    if (resolvedPr.code !== 0 || !number) return { ok: false, reason: "pr-resolve-failed" };
+    const merge = await execTool("gh", ["-R", ctx.repo, "pr", "merge", number, "--merge", "--delete-branch"], { cwd: ctx.root });
+    if (merge.code !== 0) return { ok: false, reason: "merge-failed" };
+    await execTool("git", ["fetch", ctx.remote, plan.base], { cwd: ctx.root });
+    return { ok: true };
+  } finally {
+    await execTool("git", ["worktree", "remove", "--force", worktree], { cwd: ctx.root });
+  }
 }
 
 // ---------- boot deps ----------
@@ -1856,6 +1976,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
     },
     nowS,
     config: cfg,
+    docsSweepLander: (plan) => landDocsSweep(ctx, plan),
   };
 }
 
@@ -1902,5 +2023,6 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       },
     },
     nowS,
+    docsSweepLander: async () => unreachable(),
   };
 }
