@@ -102,6 +102,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   token savings, command-family winners, and degradation health from telemetry.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes.
+- TOON/TOONL operational reader changes are documentation-maintenance work:
+  `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
+  `/afk` plus `/daily-review` own the lane-reading examples.
 - `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,
   uncommitted work, blocker — then acts on it: requeue into `ready-for-agent`,
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.

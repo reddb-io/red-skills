@@ -2,11 +2,18 @@
 
 > Extracted from `afk/SKILL.md` for progressive disclosure. Consulted on demand — not the agent's step-by-step loop.
 >
-> How the bundle reclaims stale state at boot. The agent never runs these by hand — they are the bundle's startup hygiene. Referenced from *Bootstrap* and the *Per-Issue Loop* close step.
+> How the bundle reclaims stale tmp-lane state at boot. Durable AFK process state
+> lives in the state tier under `.red/state/afk/`; the agent never runs these by
+> hand because they are the bundle's startup hygiene. Referenced from *Bootstrap*
+> and the *Per-Issue Loop* close step.
+
+The lane janitor only acts on registered disposable lanes under `.red/tmp/`.
+Tmp lane cleanup never deletes `.red/state/`, plugin stores, tracked config, or
+`.red/researches/`.
 
 ## Orphan Cleanup (boot-time)
 
-Right after bootstrap and before *Straggler Check*, `/afk` runs two passes. First it **drain-wipes** any leftover **legacy flat** `.red/tmp/work-*/` dirs — these are never created under the nested scheme (the drain-first cutover, issue #252), so any survivor is a pre-cutover relic and is removed unconditionally. Then it sweeps the nested attempt dirs in every worker namespace (`.red/tmp/workers/*/*/`, `.red/tmp/go-workers/*/*/`, and `.red/tmp/scout-workers/*/*/`) whose parent worker's `worker.pid` is dead, and afterwards removes dead empty worker shells across those namespaces: dead/corrupt/missing `worker.pid` files plus the worker dir when it contains no attempt dirs or only empty attempt dirs. Live `worker.pid` dirs and non-empty preserved attempt dirs are left untouched. For each orphaned attempt dir:
+Right after bootstrap and before *Straggler Check*, `/afk` runs two passes. First it reconciles leftover **legacy flat** `.red/tmp/work-*` dirs from the pre-nested scheme (the drain-first cutover, issue #252). This sweep is pid-guarded and slug-sparing: slug-named manual worktrees are left alone, and numeric legacy work dirs are removed only when their recorded or inferable process is no longer live. Then it sweeps the nested attempt dirs in every worker namespace (`.red/tmp/workers/*/*/`, `.red/tmp/go-workers/*/*/`, and `.red/tmp/scout-workers/*/*/`) whose parent worker's `worker.pid` is dead, and afterwards removes dead empty worker shells across those namespaces: dead/corrupt/missing `worker.pid` files plus the worker dir when it contains no attempt dirs or only empty attempt dirs. Live `worker.pid` dirs and non-empty preserved attempt dirs are left untouched. For each orphaned attempt dir:
 
 1. **(Slice D — heartbeat sub-shell retired.)** No zombie reap step is needed; older state files may still carry a `heartbeat_pid` but it's vestigial and ignored.
 2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
@@ -79,6 +86,6 @@ maintainer can land or remove the stranded docs deliberately.
 
 The sweeps above (*Orphan Cleanup*, *Attempt Cap*, *Snapshot Branch Grace Cleanup*, *Docs Sweep*, the *Unblock Sweep*, and the *Straggler Check*) all read and mutate **shared** `.red/tmp` / branch / `gh` state. When several workers boot at once they would race over that state — the observed failure mode was a fleet collapsing to a single live worker because peers fast-died in their boot sweeps.
 
-So in **fleet mode** the **supervisor** runs the full sweep suite **exactly once, before it spawns any worker**, and logs the result to `.red/tmp/afk-supervisor.log` (`boot sweeps complete: orphans … | attempt-cap … | branches … | docs-sweep … | unblocked … | stragglers …`). Every worker the supervisor spawns carries a `RED_AFK_SWEEPS_DONE=1` marker; a marked worker's boot is **bootstrap + claim only** — it ensures its dirs/gitignore/`worker.pid` and goes straight to claiming an issue, skipping every shared sweep. This makes respawns cheap and keeps workers from racing each other over boot state. The supervisor runs the sweeps a single time per lifetime: a worker that exits and is respawned does **not** re-trigger them.
+So in **fleet mode** the **supervisor** runs the full sweep suite **exactly once, before it spawns any worker**, and logs the result to `.red/state/afk/afk-supervisor.log` (`boot sweeps complete: orphans … | attempt-cap … | branches … | docs-sweep … | unblocked … | stragglers …`). Every worker the supervisor spawns carries a `RED_AFK_SWEEPS_DONE=1` marker; a marked worker's boot is **bootstrap + claim only** — it ensures its dirs/gitignore/`worker.pid` and goes straight to claiming an issue, skipping every shared sweep. This makes respawns cheap and keeps workers from racing each other over boot state. The supervisor runs the sweeps a single time per lifetime: a worker that exits and is respawned does **not** re-trigger them.
 
 A **solo** `/afk run` (no supervisor, no marker) is unchanged — it runs the full sweep suite itself, exactly as described above. `/afk run --boot-only` reports which path it took: `sweeps ran` for a solo boot, `sweeps skipped (supervisor-owned)` for a marked worker.

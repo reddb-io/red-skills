@@ -87,6 +87,23 @@ describe("rsp cat wrapper", () => {
     expect(result.bytesElided).toBeUndefined();
   });
 
+  it("accepts --full and emits text files inline byte-for-byte", async () => {
+    const root = await tempRoot();
+    const path = join(root, "notes.md");
+    const text = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+    await writeFile(path, text, "utf8");
+
+    const result = await runCatWrapper(["cat", "--full", path], {
+      level: "terse",
+      heavyByteThreshold: 1,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.toString("utf8")).toBe(text);
+    expect(result.mintedHandle).toBeUndefined();
+    expect(result.bytesElided).toBeUndefined();
+  });
+
   it("renders text head/tail slices with original-byte recovery", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "store.rdb")}` });

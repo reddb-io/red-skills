@@ -1,10 +1,12 @@
 # AXI + TOON is the doctrine for every agent-facing CLI
 
 > **⚠️ Partially amended by [Amendment 1 (2026-07-09)](#amendment-1-2026-07-09--rtk-retired-toon-scope-widened-to-all-structured-data).** Two points below no longer hold: the "RTK stays the safety net" consequence (RTK is retired by ADR 0095) and Decision 2's tabular-only TOON boundary (TOON now covers all structured data at every depth). The rest of the doctrine stands unchanged.
+>
+> **⚠️ Partially amended by [Amendment 2 (2026-07-14)](#amendment-2-2026-07-14--encoder-authority-moves-to-the-published-reddb-iotoon-two-regime-output-contract).** The encoder authority is no longer `@toon-format/toon`/spec v3.2 — it is the published `@reddb-io/toon` (spec v3.3 + TOONL, `github:reddb-io/toon`), and every producer is bound to the two-regime contract: lossless by default, optimization only when explicitly requested and declared in-band.
 
 ## Status
 
-Accepted, with Amendment 1 (2026-07-09). Codifies the AXI ("Agent eXperience Interface") design-time principles and the TOON output format as the RedSkills standard for every CLI whose primary reader is an agent. Implements Track 1C/F of PRD #907; the first application slice is #918.
+Accepted, with Amendment 1 (2026-07-09) and Amendment 2 (2026-07-14). Codifies the AXI ("Agent eXperience Interface") design-time principles and the TOON output format as the RedSkills standard for every CLI whose primary reader is an agent. Implements Track 1C/F of PRD #907; the first application slice is #918.
 
 ## Context
 
@@ -133,3 +135,26 @@ Decision 2 bounded TOON to uniform arrays ("do not force TOON onto a single scal
 **Decision:** the boundary becomes binary — **all structured data is TOON, at every depth (tabular, nested, scalar); free-form prose is never serialized** (prose has no structure to encode). This removes the per-surface judgment call of "is this tabular enough?". The house dialect's extra-spec syntax (bare summary lines, bracketed status tokens as syntax) is folded into spec-legal form: the summary becomes a trailing TOON field, status tokens become plain field values. The `--json` and `--full` escape hatches are unchanged.
 
 **Adoption scope extends to the memory plugin:** the memory CLI converts TOON-first per surface (`recall` first — the highest-frequency agent read — then `context-pack`, `timeline`/`dashboard`, the rest opportunistically), with `--json` continuing to answer byte-identically for existing consumers; the `red-memory` MCP tool responses follow the same doctrine through the same shared serializers, since their reader is the same model. Every converted slice still reports its measured token delta (Decision 4 is unchanged).
+
+## Amendment 2 (2026-07-14) — encoder authority moves to the published @reddb-io/toon; two-regime output contract
+
+Decided in the wayfinder charting + grilling sessions of 2026-07-14 (map #1765, tickets #1767 and #1768). Everything above stands except the two points below.
+
+### 1. The encoder authority is the published `@reddb-io/toon` (spec v3.3 + TOONL)
+
+Amendment 1 bound RedSkills to the public TOON spec **v3.2** via the external `@toon-format/toon` encoder, wrapped by the private workspace package `packages/toon`. That binding is replaced:
+
+- The canonical implementation is the **published `@reddb-io/toon`** from `github:reddb-io/toon` — TOON **v3.3** (100% of the official spec corpus) plus **TOONL v0.1**, dependency-free, with the toon repo as the **sole publisher**. RedSkills stops maintaining any format package.
+- `packages/toon` is deleted; the pnpm catalog repoints the unchanged import name to npm; the house helpers `appendSummaryField`/`projectFields` move upstream into the published package's public API; `@toon-format/toon` leaves the catalog.
+- The swap is gated by the existing rsp fidelity/round-trip suites — the reversibility contract (ADR 0095) is the acceptance test for the new encoder.
+
+This also extends the doctrine's reach from stdout to disk: ADR 0097 makes TOON/TOONL the on-disk format doctrine on top of this encoder authority.
+
+### 2. The two-regime output contract
+
+Every TOON/TOONL producer obeys:
+
+1. **Default = lossless.** `decode(encode(x)) === x` always; cell safety is the encoder's quoting, never pre-encode mutation of the data.
+2. **Explicit opt-in = declared optimization.** Reduction (field projection, row capping, truncation) happens only behind an explicit flag (`--compact` or equivalent) and is declared in-band — the document marks that it was optimized and what was reduced, with recovery in reach (an Elision handle where bytes are stored; re-run without the flag where the output is re-derivable).
+
+Silent lossy normalization on the default path is the forbidden pattern. The escape hatches of the original decision (`--json`, `--full`) are unchanged.

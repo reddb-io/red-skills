@@ -4,9 +4,13 @@ import { fileURLToPath } from "node:url";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import {
   kickResidentServer,
-  pingResident,
   resolveResidentPaths,
 } from "./resident-client.js";
+import {
+  appendTelemetryEvent,
+  RSP_DECISIONS_COLLECTION,
+  type RspTelemetryEvent,
+} from "./telemetry.js";
 
 export interface RspWrapperCapability {
   id: string;
@@ -17,6 +21,26 @@ export interface RspWrapperCapability {
 export type RewriteDecision =
   | { kind: "rewrite"; command: string; capabilityId: string }
   | { kind: "passthrough"; reason?: string };
+
+type HookPayloadParse =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+type HookDecisionResult = {
+  decision: RewriteDecision;
+  telemetryRoot: string;
+  event: RspTelemetryEvent;
+};
+
+type ShellToken = {
+  text: string;
+  quoted: boolean;
+};
+
+type ParsedSimpleCommand = {
+  tokens: ShellToken[];
+  redirectSuffix: ShellToken[];
+};
 
 export interface HookDecisionOptions {
   cwd: string;
@@ -47,6 +71,7 @@ export const RSP_WRAPPER_CAPABILITIES: readonly RspWrapperCapability[] = [
 ];
 
 const DEFAULT_REWRITE_TABLE = rewriteTableFromCapabilities(RSP_WRAPPER_CAPABILITIES);
+const LOSSLESS_GH_JSON_JQ_REASON = "lossless-gh-json-jq";
 
 export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCapability[]): Map<string, readonly string[]> {
   const table = new Map<string, readonly string[]>();
@@ -55,30 +80,41 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
 }
 
 export function rewriteCommand(command: string): RewriteDecision {
-  const tokens = tokenizeCertainSimpleCommand(command);
-  if (!tokens) return rewriteCompoundCommand(command);
+  const losslessGh = losslessGhJsonJqPassthrough(command);
+  if (losslessGh) return losslessGh;
+
+  const parsed = parseCertainSimpleCommand(command);
+  if (!parsed) return rewriteCompoundCommand(command);
+  const tokens = parsed.tokens.map((token) => token.text);
   if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command);
 
-  const fileRead = rewriteFileReadCommand(tokens);
+  const fileRead = rewriteFileReadCommand(parsed);
   if (fileRead) return fileRead;
 
-  const rewritten = DEFAULT_REWRITE_TABLE.get(commandKey(tokens));
-  if (!rewritten) return rewriteCompoundCommand(command);
-  const capability = RSP_WRAPPER_CAPABILITIES.find((entry) => commandKey(entry.command) === commandKey(tokens));
+  if (parsed.tokens.some((token) => token.quoted)) return rewriteCompoundCommand(command);
+
+  const capability = [...RSP_WRAPPER_CAPABILITIES]
+    .sort((left, right) => right.command.length - left.command.length)
+    .find((entry) => tokensStartWith(tokens, entry.command));
+  if (!capability) return rewriteCompoundCommand(command);
+  const rewritten = ["rsp", ...capability.wrapper, ...tokens.slice(capability.command.length)];
+  const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
   return {
     kind: "rewrite",
-    command: rewritten.join(" "),
-    capabilityId: capability?.id ?? commandKey(tokens),
+    command: [...rewritten.map(shellQuoteIfNeeded), ...redirectSuffix].join(" "),
+    capabilityId: capability.id,
   };
 }
 
-function rewriteFileReadCommand(tokens: readonly string[]): RewriteDecision | null {
+function rewriteFileReadCommand(parsed: ParsedSimpleCommand): RewriteDecision | null {
+  const tokens = parsed.tokens.map((token) => token.text);
   const command = tokens[0];
+  const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
   if (command === "cat" && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: `rsp cat ${tokens[1]}`, capabilityId: "cat:file" };
+    return { kind: "rewrite", command: ["rsp", "cat", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: "cat:file" };
   }
   if ((command === "head" || command === "tail") && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: `rsp cat --${command} 10 ${tokens[1]}`, capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, "10", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   if (
     (command === "head" || command === "tail") &&
@@ -87,13 +123,21 @@ function rewriteFileReadCommand(tokens: readonly string[]): RewriteDecision | nu
     /^[1-9][0-9]*$/.test(tokens[2]!) &&
     isPlainFileToken(tokens[3]!)
   ) {
-    return { kind: "rewrite", command: `rsp cat --${command} ${tokens[2]} ${tokens[3]}`, capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[2]!, shellQuoteIfNeeded(tokens[3]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
+  }
+  if (
+    (command === "head" || command === "tail") &&
+    tokens.length === 3 &&
+    /^-[1-9][0-9]*$/.test(tokens[1]!) &&
+    isPlainFileToken(tokens[2]!)
+  ) {
+    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[1]!.slice(1), shellQuoteIfNeeded(tokens[2]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   return null;
 }
 
 function isPlainFileToken(token: string): boolean {
-  return Boolean(token) && !token.startsWith("-") && !/[ \t]/.test(token);
+  return Boolean(token) && !token.startsWith("-");
 }
 
 export async function hookDecisionFromClaudePreExecJson(
@@ -114,36 +158,88 @@ async function hookDecisionFromPreExecJson(
   raw: string,
   options: HookDecisionOptions,
 ): Promise<RewriteDecision> {
-  const payload = parseJsonRecord(raw);
+  return (await hookDecisionResultFromPreExecJson(raw, options, "pre-exec")).decision;
+}
+
+async function hookDecisionResultFromPreExecJson(
+  raw: string,
+  options: HookDecisionOptions,
+  hook: string,
+): Promise<HookDecisionResult> {
+  const parsed = parseJsonRecord(raw);
+  if (!parsed.ok) {
+    const decision: RewriteDecision = { kind: "passthrough", reason: parsed.reason };
+    return {
+      decision,
+      telemetryRoot: options.cwd,
+      event: hookDecisionEvent({ hook, command: "", decision, reason: parsed.reason }),
+    };
+  }
+  const payload = parsed.payload;
   const cwd = stringAt(payload, ["cwd"]) || stringAt(payload, ["tool_input", "cwd"]) || options.cwd;
   const enabled = await (options.isEnabled ?? isRspHookEnabled)(cwd);
-  if (!enabled) return { kind: "passthrough", reason: "disabled" };
+  if (!enabled) {
+    const decision: RewriteDecision = { kind: "passthrough", reason: "disabled" };
+    return {
+      decision,
+      telemetryRoot: cwd,
+      event: hookDecisionEvent({ hook, command: extractHookCommand(payload), decision, reason: "disabled" }),
+    };
+  }
 
   const command = extractHookCommand(payload);
-  if (!command) return { kind: "passthrough", reason: "missing-command" };
-  const decision = (options.rewrite ?? rewriteCommand)(command);
-  if (decision.kind !== "rewrite") return decision;
+  if (!command) {
+    const decision: RewriteDecision = { kind: "passthrough", reason: "missing-command" };
+    return {
+      decision,
+      telemetryRoot: cwd,
+      event: hookDecisionEvent({ hook, command, decision, reason: "missing-command" }),
+    };
+  }
+  const started = process.hrtime.bigint();
+  const config = resolveRspConfig(cwd, process.env);
+  const decision = config.proxyEnabled ? proxyCommand(command) : (options.rewrite ?? rewriteCommand)(command);
+  const decisionMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  if (decision.kind !== "rewrite") {
+    const passed = decision.reason ? decision : { ...decision, reason: "unsupported-command" };
+    return {
+      decision: passed,
+      telemetryRoot: cwd,
+      event: hookDecisionEvent({ hook, command, decision: passed, reason: passed.reason ?? "unsupported-command", decisionMs }),
+    };
+  }
 
-  const healthy = await (options.isResidentHealthy ?? isRspResidentHealthy)(cwd);
-  if (healthy) return decision;
-
-  await (options.wakeResident ?? wakeRspResident)(cwd);
-  return { kind: "passthrough", reason: "resident-unhealthy" };
+  await wakeResidentForRewrite(cwd, options.wakeResident ?? wakeRspResident);
+  return {
+    decision,
+    telemetryRoot: cwd,
+    event: hookDecisionEvent({
+      hook,
+      command,
+      decision,
+      reason: decision.capabilityId === "proxy:universal" ? "universal-proxy" : "matched-capability",
+      decisionMs,
+    }),
+  };
 }
 
 export function formatHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
-  if (decision.kind === "rewrite") return { stdout: `${decision.command}\n`, status: 0 };
-  return { stdout: "", status: 1 };
+  if (decision.kind === "rewrite") return formatUpdatedInputDecision(decision.command);
+  return { stdout: "", status: 0 };
 }
 
 export function formatCodexHookDecision(decision: RewriteDecision): { stdout: string; status: number } {
-  if (decision.kind !== "rewrite") return { stdout: "", status: 0 };
+  if (decision.kind === "rewrite") return formatUpdatedInputDecision(decision.command);
+  return { stdout: "", status: 0 };
+}
+
+function formatUpdatedInputDecision(command: string): { stdout: string; status: number } {
   return {
     stdout: `${JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: decision.command },
+        updatedInput: { command },
       },
     })}\n`,
     status: 0,
@@ -151,28 +247,86 @@ export function formatCodexHookDecision(decision: RewriteDecision): { stdout: st
 }
 
 export async function runClaudePreExecHook(stdinPath?: string): Promise<number> {
-  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
-  const decision = await hookDecisionFromClaudePreExecJson(raw, { cwd: process.cwd() });
-  const formatted = formatHookDecision(decision);
-  if (formatted.stdout) process.stdout.write(formatted.stdout);
-  return formatted.status;
+  let raw = "";
+  try {
+    raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+    const result = await hookDecisionResultFromPreExecJson(raw, { cwd: process.cwd() }, "claude-pre-exec");
+    recordHookDecision(result.telemetryRoot, result.event);
+    const decision = result.decision;
+    debugHookDecision("claude-pre-exec", decision);
+    const formatted = formatHookDecision(decision);
+    if (formatted.stdout) process.stdout.write(formatted.stdout);
+    return formatted.status;
+  } catch (err) {
+    recordHookDecision(process.cwd(), failedOpenHookEvent("claude-pre-exec", raw, err));
+    debugHookException("claude-pre-exec", err);
+    return 0;
+  }
 }
 
 export async function runCodexPreExecHook(stdinPath?: string): Promise<number> {
-  const raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
-  const decision = await hookDecisionFromCodexPreExecJson(raw, { cwd: process.cwd() });
-  const formatted = formatCodexHookDecision(decision);
-  if (formatted.stdout) process.stdout.write(formatted.stdout);
-  return formatted.status;
+  let raw = "";
+  try {
+    raw = stdinPath ? readFileSync(stdinPath, "utf8") : readFileSync(0, "utf8");
+    const result = await hookDecisionResultFromPreExecJson(raw, { cwd: process.cwd() }, "codex-pre-exec");
+    recordHookDecision(result.telemetryRoot, result.event);
+    const decision = result.decision;
+    debugHookDecision("codex-pre-exec", decision);
+    const formatted = formatCodexHookDecision(decision);
+    if (formatted.stdout) process.stdout.write(formatted.stdout);
+    return formatted.status;
+  } catch (err) {
+    recordHookDecision(process.cwd(), failedOpenHookEvent("codex-pre-exec", raw, err));
+    debugHookException("codex-pre-exec", err);
+    return 0;
+  }
+}
+
+function recordHookDecision(rootDir: string, event: RspTelemetryEvent): void {
+  appendTelemetryEvent(rootDir, event).catch(() => undefined);
+}
+
+function hookDecisionEvent(input: {
+  hook: string;
+  command: string;
+  decision: RewriteDecision;
+  reason: string;
+  decisionMs?: number;
+}): RspTelemetryEvent {
+  const command = input.command.trim();
+  const capabilityId = input.decision.kind === "rewrite" ? input.decision.capabilityId : undefined;
+  return {
+    collection: RSP_DECISIONS_COLLECTION,
+    event_type: "decision",
+    ts: new Date().toISOString(),
+    hook: input.hook,
+    command: command || "unknown",
+    command_family: commandFamily(command),
+    decision: capabilityId ? "contributed" : "passed",
+    reason: input.reason,
+    capability_id: capabilityId,
+    decision_ms: input.decisionMs,
+  };
+}
+
+function failedOpenHookEvent(hook: string, raw: string, err: unknown): RspTelemetryEvent {
+  const parsed = parseJsonRecord(raw);
+  const command = parsed.ok ? extractHookCommand(parsed.payload) : "";
+  return {
+    collection: RSP_DECISIONS_COLLECTION,
+    event_type: "decision",
+    ts: new Date().toISOString(),
+    hook,
+    command: command || "unknown",
+    command_family: commandFamily(command),
+    decision: "failed-open",
+    reason: "hook-exception",
+    error: errorLabel(err),
+  };
 }
 
 function isRspHookEnabled(cwd: string): boolean {
   return resolveRspConfig(cwd, process.env).enabled;
-}
-
-async function isRspResidentHealthy(cwd: string): Promise<boolean> {
-  const paths = resolveResidentPaths(cwd);
-  return await pingResident(paths.socketPath, 50);
 }
 
 async function wakeRspResident(cwd: string): Promise<void> {
@@ -183,10 +337,46 @@ async function wakeRspResident(cwd: string): Promise<void> {
   await kickResidentServer(paths, toResidentConfig(config));
 }
 
+async function wakeResidentForRewrite(
+  cwd: string,
+  wakeResident: (cwd: string) => void | Promise<void>,
+): Promise<void> {
+  try {
+    await Promise.resolve(wakeResident(cwd));
+  } catch (err) {
+    debugHookWakeFailure(err);
+  }
+}
+
+function debugHookDecision(hook: string, decision: RewriteDecision): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  if (decision.kind === "rewrite") {
+    process.stderr.write(`rsp hook ${hook}: rewrite ${decision.capabilityId}\n`);
+    return;
+  }
+  process.stderr.write(`rsp hook ${hook}: passthrough ${decision.reason ?? "unsupported-command"}\n`);
+}
+
+function debugHookException(hook: string, err: unknown): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  process.stderr.write(`rsp hook ${hook}: exception ${errorLabel(err)}\n`);
+}
+
+function debugHookWakeFailure(err: unknown): void {
+  if (process.env.RSP_DEBUG !== "1") return;
+  process.stderr.write(`rsp hook pre-exec: resident-wake-failed ${errorLabel(err)}\n`);
+}
+
+function errorLabel(err: unknown): string {
+  if (err instanceof Error) return err.name || "Error";
+  return typeof err;
+}
+
 function toResidentConfig(config: RspRuntimeConfig) {
   return {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
@@ -219,14 +409,125 @@ function extractHookCommand(payload: Record<string, unknown>): string {
   );
 }
 
-function tokenizeCertainSimpleCommand(command: string): string[] | null {
+function parseCertainSimpleCommand(command: string): ParsedSimpleCommand | null {
   const trimmed = command.trim();
   if (!trimmed) return null;
-  if (/[\n\r|&;()$<>`'"]/.test(trimmed)) return null;
-  const tokens = trimmed.split(/[ \t]+/).filter(Boolean);
+  if (/[\n\r|;()$`]/.test(trimmed)) return null;
+  const tokens = shellTokens(trimmed);
   if (tokens.length === 0) return null;
-  if (tokens.some((token) => token.includes("=") && isEnvAssignment(token))) return null;
+  if (tokens[0]?.quoted) return null;
+  if (tokens.some((token) => /[()$`]/.test(token.text))) return null;
+  if (tokens.some((token) => token.text.includes("=") && isEnvAssignment(token.text))) return null;
+  const commandTokens: ShellToken[] = [];
+  const redirectSuffix: ShellToken[] = [];
+  for (const token of tokens) {
+    if (token.text.includes(">") || token.text.includes("<")) {
+      if (token.quoted || (token.text !== "2>/dev/null" && token.text !== "2>&1")) return null;
+      redirectSuffix.push(token);
+      continue;
+    }
+    commandTokens.push(token);
+  }
+  if (commandTokens.length === 0) return null;
+  return { tokens: commandTokens, redirectSuffix };
+}
+
+function shellTokens(command: string): ShellToken[] {
+  const tokens: ShellToken[] = [];
+  let text = "";
+  let quoted = false;
+  let quote: "'" | "\"" | null = null;
+
+  const push = () => {
+    if (!text && !quoted) return;
+    tokens.push({ text, quoted });
+    text = "";
+    quoted = false;
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const ch = command[index]!;
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      if (quote === "\"" && ch === "\\" && index + 1 < command.length) {
+        index += 1;
+        text += command[index]!;
+        continue;
+      }
+      text += ch;
+      continue;
+    }
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      quoted = true;
+      continue;
+    }
+    if (ch === "\\" && index + 1 < command.length) {
+      index += 1;
+      text += command[index]!;
+      continue;
+    }
+    if (/[ \t]/.test(ch)) {
+      push();
+      continue;
+    }
+    text += ch;
+  }
+
+  if (quote) return [];
+  push();
   return tokens;
+}
+
+function tokensStartWith(tokens: readonly string[], prefix: readonly string[]): boolean {
+  if (tokens.length < prefix.length) return false;
+  return prefix.every((token, index) => tokens[index] === token);
+}
+
+function losslessGhJsonJqPassthrough(command: string): RewriteDecision | null {
+  const tokens = shellTokens(command.trim()).map((token) => token.text);
+  if (!isGhJsonJqSelection(tokens)) return null;
+  return { kind: "passthrough", reason: LOSSLESS_GH_JSON_JQ_REASON };
+}
+
+function isGhJsonJqSelection(tokens: readonly string[]): boolean {
+  return tokens[0] === "gh" && tokens.some(isJsonJqSelectionFlag);
+}
+
+function isJsonJqSelectionFlag(token: string): boolean {
+  return token === "--json" || token === "--jq" || token.startsWith("--json=") || token.startsWith("--jq=");
+}
+
+function formatRedirectSuffix(tokens: readonly ShellToken[]): string[] {
+  return tokens.map((token) => token.text);
+}
+
+function shellQuoteIfNeeded(value: string): string {
+  return /[^\w@%+=:,./-]/.test(value) ? shellSingleQuote(value) : value;
+}
+
+function proxyCommand(command: string): RewriteDecision {
+  const reason = universalProxyPassthroughReason(command);
+  if (reason) return { kind: "passthrough", reason };
+  return {
+    kind: "rewrite",
+    command: `rsp proxy -- ${shellSingleQuote(command.trim())}`,
+    capabilityId: "proxy:universal",
+  };
+}
+
+function universalProxyPassthroughReason(command: string): string | undefined {
+  const trimmed = command.trim();
+  if (!trimmed) return "missing-command";
+  if (hasSingleAmpersand(trimmed)) return "background";
+  if (/\b(?:RSP_NO_PROXY|RED_SKILLS_RSP_NO_PROXY)=1\b/.test(trimmed)) return "opt-out";
+  const first = shellishWords(commandSegments(trimmed)[0] ?? "")[0];
+  if (first === "rsp") return "opt-out";
+  if (first && INTERACTIVE_COMMANDS.has(first)) return "interactive";
+  return undefined;
 }
 
 function rewriteCompoundCommand(command: string): RewriteDecision {
@@ -278,6 +579,7 @@ function hasSingleAmpersand(command: string): boolean {
   for (let index = 0; index < command.length; index += 1) {
     if (command[index] !== "&") continue;
     if (command[index - 1] === "&" || command[index + 1] === "&") continue;
+    if (command[index - 1] === ">" || command[index + 1] === ">") continue;
     return true;
   }
   return false;
@@ -324,6 +626,20 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function commandFamily(command: string): string {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "unknown";
+  if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
+  if (isGhJsonJqSelection(parts) && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]} json-jq`;
+  if (isGhJsonJqSelection(parts) && parts[1]) return `gh ${parts[1]} json-jq`;
+  if (isGhJsonJqSelection(parts)) return "gh json-jq";
+  if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
+  if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
+  if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
+  if (parts[0] === "vitest") return "vitest";
+  return parts[0]!;
+}
+
 function isEnvAssignment(token: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
 }
@@ -332,12 +648,12 @@ function commandKey(tokens: readonly string[]): string {
   return tokens.join("\0");
 }
 
-function parseJsonRecord(raw: string): Record<string, unknown> {
+function parseJsonRecord(raw: string): HookPayloadParse {
   try {
     const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
+    return isRecord(parsed) ? { ok: true, payload: parsed } : { ok: false, reason: "payload-not-object" };
   } catch {
-    return {};
+    return { ok: false, reason: "payload-parse-error" };
   }
 }
 

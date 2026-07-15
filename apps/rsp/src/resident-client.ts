@@ -5,6 +5,7 @@ import type {
   RspMintMeta,
   RspStoreStats,
 } from "./elision-store.js";
+import type { RspAccountingLaneStats } from "./telemetry.js";
 import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
@@ -53,6 +54,7 @@ export class ResidentRspElisionStore {
   constructor(
     private readonly paths: RspResidentPaths,
     private readonly config: RspResidentConfig,
+    private readonly opts: { ensureResident?: boolean } = {},
   ) {}
 
   lastResponseMetrics(): ResidentResponseMetrics | undefined {
@@ -85,6 +87,10 @@ export class ResidentRspElisionStore {
     return await this.request({ op: "stats" }) as RspStoreStats;
   }
 
+  async accountingStats(byteBudget: number): Promise<RspAccountingLaneStats> {
+    return await this.request({ op: "accounting-stats", byteBudget }) as RspAccountingLaneStats;
+  }
+
   async telemetryStats(sinceDays: number): Promise<RspTelemetryStats> {
     return await this.request({ op: "telemetry-stats", sinceDays }) as RspTelemetryStats;
   }
@@ -100,7 +106,7 @@ export class ResidentRspElisionStore {
   async close(): Promise<void> {}
 
   private async request(request: ResidentRequestWithoutId): Promise<unknown> {
-    await ensureResidentServer(this.paths, this.config);
+    if (this.opts.ensureResident !== false) await ensureResidentServer(this.paths, this.config);
     const response = await sendResidentRequest(this.paths, { ...request, id: randomUUID() } as RspResidentRequest);
     if (!response.ok) throw new Error(response.error);
     this.metrics = {

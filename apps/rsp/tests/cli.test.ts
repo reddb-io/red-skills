@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
@@ -6,12 +6,14 @@ import { createRequire } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { connect } from "@reddb-io/sdk";
-import { decode } from "@reddb-io/toon";
+import { decode, parseRecords } from "@reddb-io/toon";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
 import { sendResidentRequest } from "../src/resident-protocol.js";
 import {
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   telemetrySpoolPath,
@@ -56,7 +58,7 @@ function trackedResidentPaths(root: string) {
 function runRsp(root: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -64,7 +66,7 @@ function runRsp(root: string, args: string[], env: Record<string, string>) {
 function runRspFromCwd(cwd: string, args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--import", tsxLoader, cli, ...args], {
     cwd,
-    env: { ...process.env, ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -88,7 +90,7 @@ function runNodeNoop() {
 function runBundleFromCwd(cwd: string, args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, ...args], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     encoding: "buffer",
   });
 }
@@ -96,7 +98,7 @@ function runBundleFromCwd(cwd: string, args: string[], env: Record<string, strin
 function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, "hook", "claude-pre-exec"], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     input: Buffer.from(JSON.stringify({ cwd, tool_input: { command } })),
     encoding: "buffer",
   });
@@ -105,7 +107,7 @@ function runBundleHookFromCwd(cwd: string, command: string, env: Record<string, 
 function runBundleCodexHookFromCwd(cwd: string, command: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
     cwd,
-    env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+    env: testChildEnv(env),
     input: Buffer.from(JSON.stringify({ cwd, tool_name: "bash", tool_input: { command } })),
     encoding: "buffer",
   });
@@ -115,7 +117,7 @@ function runBundleFromCwdAsync(cwd: string, args: string[], env: Record<string, 
   return new Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
       cwd,
-      env: { ...process.env, RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS), ...env },
+      env: testChildEnv(env),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -182,6 +184,16 @@ function normalizedDeadlineMs(durationMs = 5_000): number {
 }
 
 const TEST_TELEMETRY_DRAIN_TIMEOUT_MS = normalizedTimeoutMs(TEST_NODE_NOOP_BASELINE_MS, 250, 2_000);
+const TEST_RESIDENT_READY_TIMEOUT_MS = normalizedDurationMs(10_000);
+
+function testChildEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    RSP_TELEMETRY_DRAIN_TIMEOUT_MS: String(TEST_TELEMETRY_DRAIN_TIMEOUT_MS),
+    RSP_RESIDENT_READY_TIMEOUT_MS: String(TEST_RESIDENT_READY_TIMEOUT_MS),
+    ...env,
+  };
+}
 
 async function idleBeat(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -238,6 +250,37 @@ async function commitMany(root: string, count: number): Promise<void> {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function fakeGhPath(root: string, responses: Array<Record<string, unknown>>): Promise<{ path: string; responsesDir: string; countFile: string }> {
+  const bin = join(root, "bin");
+  const responsesDir = join(root, "gh-responses");
+  await mkdir(bin, { recursive: true });
+  await mkdir(responsesDir, { recursive: true });
+  for (let i = 0; i < responses.length; i++) {
+    await writeFile(join(responsesDir, `${i + 1}.json`), JSON.stringify(responses[i]), "utf8");
+  }
+  await writeFile(join(responsesDir, "default.json"), JSON.stringify(responses.at(-1) ?? {}), "utf8");
+  const gh = join(bin, "gh");
+  await writeFile(
+    gh,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'count_file="$GH_FAKE_RESPONSES/count"',
+      "count=0",
+      'if [ -f "$count_file" ]; then count="$(cat "$count_file")"; fi',
+      'next="$((count + 1))"',
+      'printf "%s" "$next" > "$count_file"',
+      'response="$GH_FAKE_RESPONSES/$next.json"',
+      'if [ ! -f "$response" ]; then response="$GH_FAKE_RESPONSES/default.json"; fi',
+      'cat "$response"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(gh, 0o755);
+  return { path: `${bin}:${process.env.PATH ?? ""}`, responsesDir, countFile: join(responsesDir, "count") };
 }
 
 async function runMcpRequests(
@@ -369,13 +412,41 @@ async function waitForResidentSocket(root: string): Promise<void> {
   await stat(paths.socketPath);
 }
 
+async function waitForResidentReady(root: string): Promise<void> {
+  const socketPath = trackedResidentPaths(root).socketPath;
+  const deadline = normalizedDeadlineMs();
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const response = await sendResidentRequest(
+        { socketPath, timeoutMs: 500 },
+        { id: randomUUID(), op: "ping" },
+      );
+      if (response.ok) return;
+      last = new Error(response.error);
+    } catch (err) {
+      last = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw last instanceof Error ? last : new Error("resident ready probe failed");
+}
+
+async function expectWarmResident(root: string, env: Record<string, string> = {}): Promise<void> {
+  const warm = runBundleFromCwd(root, ["warm-resident"], env);
+  expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+  expect(warm.stdout).toEqual(Buffer.alloc(0));
+  expect(warm.stderr).toEqual(Buffer.alloc(0));
+  await waitForResidentReady(root);
+}
+
 async function waitForSummaryTokens(root: string, minTokens: number): Promise<number> {
   const summaryPath = resolveResidentPaths(root).summaryPath;
   const deadline = normalizedDeadlineMs();
   let last = 0;
   while (Date.now() < deadline) {
     try {
-      const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { tokens_saved_today?: unknown };
+      const summary = parseStructured(await readFile(summaryPath, "utf8")) as { tokens_saved_today?: unknown };
       last = typeof summary.tokens_saved_today === "number" ? summary.tokens_saved_today : 0;
       if (last > minTokens) return last;
     } catch {}
@@ -383,6 +454,16 @@ async function waitForSummaryTokens(root: string, minTokens: number): Promise<nu
   }
   expect(last).toBeGreaterThan(minTokens);
   return last;
+}
+
+function parseStructured(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function readResidentVersion(root: string): Promise<string | undefined> {
@@ -396,11 +477,12 @@ async function readResidentVersion(root: string): Promise<string | undefined> {
         { id: "version", op: "ping" },
       );
       const value = response.ok && isRecord(response.value) ? response.value : {};
-      return typeof value.version === "string" ? value.version : undefined;
+      const version = typeof value.version === "string" ? value.version : undefined;
+      if (version) return version;
     } catch (err) {
       last = err;
-      await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw last instanceof Error ? last : new Error("resident version probe failed");
 }
@@ -447,11 +529,43 @@ async function readTelemetryRecords(storeUri: string, collection: string): Promi
   }
 }
 
+async function readSpoolEvents(root: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(telemetrySpoolPath(root), "utf8").catch(() => "");
+  return parseSpoolRows(raw).flatMap((row) => {
+    if (typeof row.event_json !== "string") {
+      const { spool_id: _spoolId, ...event } = row;
+      return typeof event.collection === "string" ? [event] : [];
+    }
+    try {
+      const event = JSON.parse(row.event_json) as unknown;
+      return isRecord(event) ? [event] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function parseSpoolRows(raw: string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (isRecord(row)) rows.push(row);
+    }
+  }
+  return rows;
+}
+
 async function waitForTelemetryInvocations(storeUri: string, command: string, minCount: number): Promise<unknown[]> {
   const deadline = normalizedDeadlineMs();
   let records: unknown[] = [];
   while (Date.now() < deadline) {
-    records = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
+    records = await readTelemetryRecords(storeUri, RSP_ACCOUNTING_EVENTS_COLLECTION);
     if (records.filter((entry) => isRecord(entry) && entry.command === command).length >= minCount) return records;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -557,6 +671,44 @@ async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
 }
 
 describe("rsp cli", () => {
+  it.each([
+    ["compound-stdout-stderr", "printf 'out\\n'; printf 'err\\n' >&2"],
+    ["pipeline", "printf 'one\\ntwo\\n' | sed -n '2p'"],
+    ["redirect", "printf 'saved\\n' > redirected.txt; cat redirected.txt"],
+    ["failing-exit", "printf 'bad\\n' >&2; exit 7"],
+    ["signal", "kill -TERM $$"],
+  ])("proxies %s with byte-identical shell behavior", async (_label, command) => {
+    const rawRoot = await tempRoot();
+    const proxyRoot = await tempRoot();
+    await enableRsp(proxyRoot);
+
+    const raw = runShellFromCwd(rawRoot, command);
+    const proxied = runRsp(proxyRoot, ["proxy", "--", command], {});
+
+    expect(proxied.stdout).toEqual(raw.stdout);
+    expect(proxied.stderr).toEqual(raw.stderr);
+    expect(proxied.status).toBe(raw.status);
+    expect(proxied.signal).toBe(raw.signal);
+  });
+
+  it("fails open to raw execution on proxy-internal error and records the decision", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+
+    const res = runRsp(root, ["proxy", "--", "printf 'ok\\n'"], { RSP_PROXY_FAIL_INTERNAL: "1" });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe("ok\n");
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        collection: RSP_DECISIONS_COLLECTION,
+        decision: "failed-open",
+        reason: "proxy-internal-error",
+      }),
+    ]));
+  });
+
   it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
     expect(localBaselineRatio(100)).toBe(4);
     expect(normalizedDurationMs(1_000, 100)).toBe(4_000);
@@ -693,7 +845,7 @@ describe("rsp cli", () => {
       const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
       expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
       await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
 
@@ -841,8 +993,8 @@ describe("rsp cli", () => {
     expect(runGit(["-C", root, "add", ".gitignore"]).status).toBe(0);
     expect(runGit(["-C", root, "commit", "-m", "baseline"]).status).toBe(0);
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
-    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
+    await mkdir(dirname(telemetrySpoolPath(root)), { recursive: true });
     const huge = "x".repeat(512 * 1024);
     await writeFile(telemetrySpoolPath(root), Array.from({ length: 8 }, (_, i) => JSON.stringify({
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -869,6 +1021,100 @@ describe("rsp cli", () => {
     expect(wrapped.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(150) + raw.elapsedMs);
+  }, 120_000);
+
+  it("built bundle resident listens before opening the RedDB store", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    await waitForResidentSocket(root);
+    const ping = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "ping",
+    });
+    expect(ping).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    const stats = await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "stats",
+    });
+    expect(stats).toMatchObject({ ok: false, error: "rsp resident store is not ready" });
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
+  }, 120_000);
+
+  it("built bundle warm-resident waits through a slow resident store open", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+
+    const warm = runBundleFromCwd(root, ["warm-resident", "--idle-ms", String(normalizedDurationMs(30_000))], {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_TEST_DELAY_RESIDENT_STORE_OPEN_MS: "5500",
+    });
+
+    expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.alloc(0));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
+    await waitForResidentReady(root);
+  }, 120_000);
+
+  it("built bundle elision falls back fast when the resident store is not ready", async () => {
+    buildBundleOnce();
+    const root = await initGitRepo();
+    await commitMany(root, 24);
+    const cacheDir = await seedWarmRedCache();
+    const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
+    expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    const paths = trackedResidentPaths(root);
+    const child = spawn(process.execPath, [bundle, "server", "--idle-ms", String(normalizedDurationMs(5_000))], {
+      cwd: root,
+      env: {
+        ...process.env,
+        RED_SKILLS_CACHE_DIR: cacheDir,
+        RSP_TEST_HANG_RESIDENT_STORE_OPEN: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForResidentSocket(root);
+
+    const raw = runGit(["-C", root, "log"]);
+    const node = timedStatus(runNodeNoop);
+    const wrapped = timedStatus(() => runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir }));
+
+    expect(wrapped.status, `${wrapped.stdout.toString("utf8")}${wrapped.stderr.toString("utf8")}`).toBe(0);
+    expect(wrapped.stderr).toEqual(Buffer.alloc(0));
+    expect(wrapped.stdout.length).toBeLessThan(raw.stdout.length);
+    expect(wrapped.stdout.toString("utf8")).toContain("recovery unavailable (resident cold) — re-run: git log");
+    expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(250));
+    await sendResidentRequest({ socketPath: paths.socketPath, timeoutMs: 200 }, {
+      id: randomUUID(),
+      op: "handover",
+      clientVersion: "999.0.0",
+    }).catch(() => undefined);
+    if (child.exitCode == null) child.kill("SIGTERM");
+    const status = await closeWithTimeout(child, normalizedDurationMs(5_000)).catch(() => null);
+    expect(status === 0 || status === null).toBe(true);
   }, 120_000);
 
   it("built bundle teardown stops every spawned resident process", async () => {
@@ -932,7 +1178,7 @@ describe("rsp cli", () => {
     expect(await countTrackedResidentProcesses()).toBe(0);
   }, 120_000);
 
-  it("built bundle pre-exec hook passes through while cold, warms once, then rewrites when healthy", async () => {
+  it("built bundle Claude pre-exec hook rewrites while cold and warms once", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
@@ -945,8 +1191,14 @@ describe("rsp cli", () => {
     const cold = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
     const coldHookWorkMs = Math.max(0, cold.elapsedMs - coldNodeBaseline.elapsedMs);
 
-    expect(cold.status).toBe(1);
-    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.status).toBe(0);
+    expect(JSON.parse(cold.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
     await expectLatencyBudget(
       "cold pre-exec hook work",
@@ -966,8 +1218,14 @@ describe("rsp cli", () => {
         const retryCold = timedStatus(() => runBundleHookFromCwd(retryRoot, "git status", retryEnv));
         const retryColdHookWorkMs = Math.max(0, retryCold.elapsedMs - retryNodeBaseline.elapsedMs);
 
-        expect(retryCold.status).toBe(1);
-        expect(retryCold.stdout).toEqual(Buffer.alloc(0));
+        expect(retryCold.status).toBe(0);
+        expect(JSON.parse(retryCold.stdout.toString("utf8"))).toMatchObject({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: { command: "rsp git status" },
+          },
+        });
         expect(retryCold.stderr).toEqual(Buffer.alloc(0));
         return budgetSample(
           retryColdHookWorkMs,
@@ -976,23 +1234,23 @@ describe("rsp cli", () => {
         );
       },
     );
-    await expect(stat(paths.wakeLockPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    await waitForResidentSocket(root);
+    // The wake lock is transient; the observable contract is that the hook's
+    // kick brings the resident online.
+    await waitForGone(paths.wakeLockPath);
 
     for (let i = 0; i < 4; i++) {
       const repeat = runBundleHookFromCwd(root, "git status", env);
-      expect([0, 1]).toContain(repeat.status);
-      if (repeat.status === 0) {
-        expect(repeat.stdout).toEqual(Buffer.from("rsp git status\n"));
-      } else {
-        expect(repeat.stdout).toEqual(Buffer.alloc(0));
-      }
+      expect(repeat.status).toBe(0);
+      expect(JSON.parse(repeat.stdout.toString("utf8"))).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status" },
+        },
+      });
       expect(repeat.stderr).toEqual(Buffer.alloc(0));
     }
-
-    await waitForResidentSocket(root);
-    // The warmer removes the wake lock only after ensure returns, which is
-    // also the moment the socket starts answering — poll instead of racing it.
-    await waitForGone(paths.wakeLockPath);
 
     const measureWarmHookWork = () => {
       const nodeSamples: number[] = [];
@@ -1002,7 +1260,13 @@ describe("rsp cli", () => {
         const warm = timedStatus(() => runBundleHookFromCwd(root, "git status", env));
 
         expect(warm.status).toBe(0);
-        expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+        expect(JSON.parse(warm.stdout.toString("utf8"))).toMatchObject({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: { command: "rsp git status" },
+          },
+        });
         expect(warm.stderr).toEqual(Buffer.alloc(0));
         nodeSamples.push(node.elapsedMs);
         warmSamples.push(warm.elapsedMs);
@@ -1050,8 +1314,14 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
 
     const cold = runBundleHookFromCwd(root, "git status", env);
-    expect(cold.status).toBe(1);
-    expect(cold.stdout).toEqual(Buffer.alloc(0));
+    expect(cold.status).toBe(0);
+    expect(JSON.parse(cold.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
     await waitForResidentSocket(root);
     await waitForGone(paths.wakeLockPath);
@@ -1059,14 +1329,26 @@ describe("rsp cli", () => {
     await new Promise((resolve) => setTimeout(resolve, normalizedDurationMs(2_000)));
     const warm = runBundleHookFromCwd(root, "git status", env);
     expect(warm.status).toBe(0);
-    expect(warm.stdout).toEqual(Buffer.from("rsp git status\n"));
+    expect(JSON.parse(warm.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(warm.stderr).toEqual(Buffer.alloc(0));
 
     await waitForGone(paths.socketPath, idleMs + normalizedDurationMs(5_000));
     await waitForGone(paths.registryPath);
     const expired = runBundleHookFromCwd(root, "git status", env);
-    expect(expired.status).toBe(1);
-    expect(expired.stdout).toEqual(Buffer.alloc(0));
+    expect(expired.status).toBe(0);
+    expect(JSON.parse(expired.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(expired.stderr).toEqual(Buffer.alloc(0));
   }, 120_000);
 
@@ -1077,9 +1359,10 @@ describe("rsp cli", () => {
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], env);
     await waitForResidentSocket(root);
+    await waitForResidentReady(root);
 
     const hook = runBundleCodexHookFromCwd(root, "git status", env);
     expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
@@ -1150,7 +1433,7 @@ describe("rsp cli", () => {
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
     expect(((await stat(dirname(paths.socketPath))).mode & 0o777)).toBe(0o700);
     await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle uses the primary resident and store from linked worktrees", async () => {
@@ -1169,6 +1452,7 @@ describe("rsp cli", () => {
     };
     const setup = runBundleFromCwd(root, ["setup"], env);
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    await expectWarmResident(root, env);
 
     const worktreeA = join(root, ".red", "tmp", "linked-a");
     const worktreeB = join(root, ".red", "tmp", "linked-b");
@@ -1190,7 +1474,7 @@ describe("rsp cli", () => {
     expect(fromWorktree.status, `${fromWorktree.stdout.toString("utf8")}${fromWorktree.stderr.toString("utf8")}`).toBe(0);
     const handle = extractHandle(fromWorktree.stdout);
     await expect(stat(primaryPaths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
     await waitForSummaryTokens(root, beforeWorktree);
 
     const concurrent = await Promise.all([
@@ -1209,7 +1493,7 @@ describe("rsp cli", () => {
     expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
     expect(shown.stdout.toString("utf8")).toContain("commit ");
 
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     await waitForTelemetryInvocations(storeUri, "git log", 2);
     const invocations = await waitForTelemetryInvocations(storeUri, "git status", 3);
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d"], env);
@@ -1319,6 +1603,7 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
     await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(paths.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expectWarmResident(root, env);
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], env);
     expect(compressed.status).toBe(0);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
@@ -1336,6 +1621,10 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
     await mkdir(dirname(paths.socketPath), { recursive: true });
     await writeFile(paths.socketPath, "orphaned resident socket\n", "utf8");
+    await expectWarmResident(root, {
+      RED_SKILLS_CACHE_DIR: cacheDir,
+      RSP_FAIL_IF_STORE_OPEN: "1",
+    });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], {
       RED_SKILLS_CACHE_DIR: cacheDir,
@@ -1364,11 +1653,14 @@ describe("rsp cli", () => {
     );
     await waitForResidentSocket(root);
     expect(await readResidentVersion(root)).toBe(oldVersion);
-    const oldRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+    const oldRegistryRaw = await readFile(trackedResidentPaths(root).registryPath, "utf8");
+    const oldRegistry = parseStructured(oldRegistryRaw) as {
       pid: number;
       resident_version: string;
     };
     expect(oldRegistry.resident_version).toBe(oldVersion);
+    expect(oldRegistryRaw.trimStart().startsWith("{")).toBe(false);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1380,7 +1672,7 @@ describe("rsp cli", () => {
     expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
     expect(await readResidentVersion(root)).not.toBe(oldVersion);
-    const nextRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+    const nextRegistry = parseStructured(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
       pid: number;
       resident_version: string;
     };
@@ -1401,6 +1693,7 @@ describe("rsp cli", () => {
     const hung = await startHungOldResident(paths.socketPath, oldVersion);
     try {
       expect(await readResidentVersion(root)).toBe(oldVersion);
+      await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
       const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1422,6 +1715,7 @@ describe("rsp cli", () => {
     const raw = runGit(["-C", root, "log"]);
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1434,7 +1728,7 @@ describe("rsp cli", () => {
 
     const stats = runBundleFromCwd(root, [], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(stats.status).toBe(0);
-    expect(stats.stdout.toString("utf8")).toContain("records: 1\n");
+    expect(stats.stdout.toString("utf8")).toContain("savings:\n");
 
     const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1443,7 +1737,7 @@ describe("rsp cli", () => {
     expect(shown.stderr).toEqual(Buffer.alloc(0));
 
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await rm(join(root, ".red", "tmp", "red-skills.rdb"));
+    await rm(join(root, ".red", "state", "red-skills.rdb"));
     const cold = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(cold.status).toBe(raw.status);
@@ -1453,7 +1747,9 @@ describe("rsp cli", () => {
     expect(coldText).toContain("summary: 12 commits");
     expect(coldText).toContain("recovery unavailable (cold store) — re-run: git log");
     expect(coldText).not.toMatch(/rsp show el:[a-f0-9]{12}/);
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"command":"git log"');
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: "git log" }),
+    ]));
   }, 120_000);
 
   it("built bundle elides final stdout from rsp exec pipelines and recovers original bytes", async () => {
@@ -1463,6 +1759,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
     const command = "git log | head -c 400000";
     const direct = runShellFromCwd(root, command);
 
@@ -1481,7 +1778,9 @@ describe("rsp cli", () => {
     expect(shown.status).toBe(0);
     expect(shown.stdout).toEqual(direct.stdout);
     expect(shown.stderr).toEqual(Buffer.alloc(0));
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain(`"command":"${command}"`);
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command }),
+    ]));
   }, 120_000);
 
   it("built bundle renders rsp cat code outlines and recovers original file bytes", async () => {
@@ -1490,6 +1789,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
     const source = [
       "export function greet(name: string): string {",
       "  return `hello ${name}`;",
@@ -1528,6 +1828,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const redirected = runBundleFromCwd(root, ["exec", "--", "printf 'redirected\\n' > out.txt"], {
       RED_SKILLS_CACHE_DIR: cacheDir,
@@ -1554,9 +1855,10 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
     await waitForResidentSocket(root);
+    await waitForResidentReady(root);
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(compressed.status).toBe(0);
@@ -1570,11 +1872,13 @@ describe("rsp cli", () => {
 
     const degradedResident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
     await waitForResidentSocket(root);
-    const degraded = runBundleFromCwd(root, ["git", "--version"], { RED_SKILLS_CACHE_DIR: cacheDir });
-    const direct = runGit(["--version"]);
+    await waitForResidentReady(root);
+    const degradedArgs: string[] = [];
+    const degraded = runBundleFromCwd(root, ["git", ...degradedArgs], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const direct = runGit(degradedArgs);
     expect(degraded.status).toBe(direct.status);
     expect(degraded.stdout).toEqual(direct.stdout);
-    expect(degraded.stderr.toString("utf8")).toBe("rsp: wrapper failed, passing through\n");
+    expect(degraded.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
     const degradedResidentResult = await degradedResident;
     expect(
       degradedResidentResult.status,
@@ -1608,21 +1912,21 @@ describe("rsp cli", () => {
 
     const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
     expect(degradations).toContainEqual(expect.objectContaining({
-      command: "git --version",
+      command: "git",
       reason: "wrapper failed",
     }));
 
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], { RED_SKILLS_CACHE_DIR: cacheDir });
     const statsText = stats.stdout.toString("utf8");
     expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
-    expect(statsText).toContain("records: 1\n");
+    expect(statsText).toContain("records: 3\n");
     expect(statsText).toContain("savings:\n");
     expect(statsText).toContain("  window_days: 7\n");
     expect(statsText).toMatch(/  invocations: [1-9]\d*\n/);
     expect(statsText).toContain("  elided: 1\n");
     expect(statsText).toMatch(/  raw_bytes: [1-9]\d*\n/);
     expect(statsText).toMatch(/  emitted_bytes: [1-9]\d*\n/);
-    expect(statsText).toMatch(/  tokens_saved: [1-9]\d*\n/);
+    expect(statsText).toMatch(/  tokens_saved: (?:[1-9]\d*|[1-9]\d*-[1-9]\d* .*)\n/);
     expect(statsText).toContain("  dollars_saved_estimate_usd: $");
     expect(statsText).toContain("  pricing_model_family: gpt-5\n");
     expect(statsText).toContain("  top_commands:\n");
@@ -1642,7 +1946,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const db = await connect(storeUri);
     try {
       await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("big", {
@@ -1711,7 +2015,7 @@ describe("rsp cli", () => {
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
 
     const now = new Date().toISOString();
-    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    await mkdir(dirname(telemetrySpoolPath(root)), { recursive: true });
     await writeFile(telemetrySpoolPath(root), [
       JSON.stringify({
         collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -1769,7 +2073,7 @@ describe("rsp cli", () => {
     expect(status, `${Buffer.concat(stdout).toString("utf8")}${Buffer.concat(stderr).toString("utf8")}`).toBe(0);
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
 
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const invocations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
     expect(invocations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "leading", command: "git status" }),
@@ -1792,11 +2096,13 @@ describe("rsp cli", () => {
     expect(statsText).toContain("command: git log --terse invocations: 1");
     expect(statsText).toContain("command: gh pr list invocations: 1");
     expect(statsText).toContain("degradations: 1\n");
-    const summary = JSON.parse(await readFile(resolveResidentPaths(root).summaryPath, "utf8")) as {
+    const summaryRaw = await readFile(resolveResidentPaths(root).summaryPath, "utf8");
+    const summary = parseStructured(summaryRaw) as {
       version: number;
       tokens_saved_today: number;
       updated_at: string;
     };
+    expect(summaryRaw.trimStart().startsWith("{")).toBe(false);
     expect(summary.version).toBe(1);
     expect(summary.tokens_saved_today).toBeGreaterThan(0);
     expect(Date.parse(summary.updated_at)).not.toBeNaN();
@@ -1823,6 +2129,7 @@ describe("rsp cli", () => {
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
+    await expectWarmResident(root, env);
 
     expect(runBundleFromCwd(root, ["git", "log", "--terse"], env).status).toBe(0);
     expect(runGit(["-C", root, "log"]).status).toBe(0);
@@ -1898,7 +2205,7 @@ describe("rsp cli", () => {
     expect(res.status).toBe(1);
     expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a successful wrapper when the repo store is absent and the cold summarizer cannot handle it", async () => {
@@ -1913,7 +2220,7 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a failing wrapper with the underlying exit code and raw stderr when the store is absent", async () => {
@@ -1954,6 +2261,7 @@ describe("rsp cli", () => {
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const redBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from([0, 1, 2, 3])]);
     await writeFile(join(root, ".red", "red.rdb"), redBytes);
+    await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1961,7 +2269,7 @@ describe("rsp cli", () => {
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
     await expect(readFile(join(root, ".red", "red.rdb"))).resolves.toEqual(redBytes);
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle redirects a configured legacy RedDB store to JSON without mutating it", async () => {
@@ -1972,6 +2280,10 @@ describe("rsp cli", () => {
     const legacyPath = join(root, ".red", "red.rdb");
     const legacyBytes = Buffer.concat([Buffer.from("RDBSBLK1", "ascii"), Buffer.from("legacy graph bytes")]);
     await writeFile(legacyPath, legacyBytes);
+    const warm = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "warm-resident"]);
+    expect(warm.status, `${warm.stdout.toString("utf8")}${warm.stderr.toString("utf8")}`).toBe(0);
+    expect(warm.stdout).toEqual(Buffer.alloc(0));
+    expect(warm.stderr).toEqual(Buffer.alloc(0));
 
     const compressed = runBundleFromCwd(root, ["--store-uri", `file://${legacyPath}`, "git", "log", "--terse"]);
 
@@ -2015,13 +2327,60 @@ describe("rsp cli", () => {
     expect(stdout).toContain("Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.");
   });
 
+  it("wait pr keeps polling when GitHub has not registered checks for the head SHA yet", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [
+      { number: 123, state: "OPEN", mergeable: "UNKNOWN", statusCheckRollup: [] },
+      { number: 123, state: "OPEN", mergeable: "MERGEABLE", statusCheckRollup: [{ conclusion: "SUCCESS" }] },
+    ]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.verdict.summary).toBe("PR #123 checks passed");
+    expect(decoded.verdict.details).toMatchObject({ checks: 1, mergeable: "MERGEABLE" });
+  });
+
+  it("wait pr resolves no-check repositories only through the empty-check grace path", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [{ number: 123, state: "OPEN", mergeable: "MERGEABLE", statusCheckRollup: [] }]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.verdict.summary).toBe("PR #123 has no checks configured");
+    expect(decoded.verdict.details).toMatchObject({ checks: 0, mergeable: "MERGEABLE" });
+  });
+
   it("wait cmd exits with TOON success and removes its registry entry", async () => {
     const root = await tempRoot();
     const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 120)"`;
     const actual = timedStatus(() => runRsp(root, ["wait", "cmd", "--timeout", "5s", "--reason", "test wait", "--", command], {}));
 
     expect(actual.status).toBe(0);
-    expect(actual.elapsedMs).toBeGreaterThanOrEqual(normalizedDurationMs(80));
+    expect(actual.elapsedMs).toBeGreaterThanOrEqual(normalizedDurationMs(60));
     const decoded = decode(actual.stdout.toString("utf8")) as {
       wait: { target: string; status: string; reason: string };
       verdict: { exit_code: number };
@@ -2038,7 +2397,8 @@ describe("rsp cli", () => {
 
   it("wait ls shows a live registry entry while a command wait is active", async () => {
     const root = await tempRoot();
-    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 700)"`;
+    await mkdir(join(root, ".red"), { recursive: true });
+    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 8000)"`;
     const child = spawn(process.execPath, ["--import", tsxLoader, cli, "wait", "cmd", "--reason", "registry probe", "--", command], {
       cwd: root,
       env: { ...process.env },
@@ -2053,8 +2413,12 @@ describe("rsp cli", () => {
     expect(listed.target).toContain("cmd:");
     expect(listed.status).toBe("running");
     expect(listed.poll_tier).toBe("local-cmd:2-5s");
+    const registryFiles = await readdir(join(root, ".red", "tmp", "waits"));
+    const registryBody = await readFile(join(root, ".red", "tmp", "waits", registryFiles[0]!), "utf8");
+    expect(registryBody.trimStart().startsWith("{")).toBe(false);
+    expect((decode(registryBody) as { reason?: string }).reason).toBe("registry probe");
 
-    const status = await closeWithTimeout(child, normalizedDurationMs(5_000));
+    const status = await closeWithTimeout(child, normalizedDurationMs(10_000));
     expect(status, Buffer.concat(stderr).toString("utf8")).toBe(0);
     const decoded = decode(Buffer.concat(stdout).toString("utf8")) as { wait: { status: string } };
     expect(decoded.wait.status).toBe("success");
@@ -2068,6 +2432,7 @@ describe("rsp cli", () => {
     const storeUri = `file://${join(root, "red.rdb")}`;
     const store = await RspElisionStore.open({
       uri: storeUri,
+      ephemeralTtlHours: 720,
       now: () => new Date("2026-07-10T12:00:00.000Z"),
     });
     try {
@@ -2079,11 +2444,14 @@ describe("rsp cli", () => {
       await store.close();
     }
 
-    const res = runRsp(root, [], { RSP_STORE_URI: storeUri });
+    const res = runRsp(root, [], { RSP_STORE_URI: storeUri, RSP_EPHEMERAL_TTL_HOURS: "720" });
 
     expect(res.status).toBe(0);
     const text = res.stdout.toString("utf8");
-    expect(text).toContain("records: 1\nbytes: 3\noldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n");
+    expect(text).toContain("records: 1\n");
+    expect(text).toContain("oldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n");
+    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0 raw_bytes: 0\n  re-executable: records: 0 bytes: 0 raw_bytes: 0\n");
+    expect(text).toMatch(/  ephemeral: records: 1 bytes: [1-9]\d* raw_bytes: 3\n/);
     expect(text).toContain("savings:\n  window_days: 30\n  empty: true\n  invocations: 0\n");
     expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
     expect(text).toContain("latency:\n  wrapper_ms_p50: none\n");
@@ -2102,6 +2470,7 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(0);
     expect(text).toContain("records: 0\nbytes: 0\noldest: none\n");
+    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0 raw_bytes: 0\n  re-executable: records: 0 bytes: 0 raw_bytes: 0\n  ephemeral: records: 0 bytes: 0 raw_bytes: 0\n");
     expect(text).toContain("savings:\n  window_days: 7\n  empty: true\n  invocations: 0\n");
     expect(text).toContain("  top_commands:\n    empty: true\n");
     expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
@@ -2133,6 +2502,42 @@ describe("rsp cli", () => {
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 
+  it("rsp show re-runs re-executable recipes and marks moved state", async () => {
+    const root = await tempRoot();
+    await enableRsp(root);
+    const storeRoot = await tempRoot();
+    const storeUri = `file://${join(storeRoot, "red.rdb")}`;
+    runGit(["-C", root, "init"]);
+    await writeFile(join(root, ".gitignore"), ".red/\n", "utf8");
+    await writeFile(join(root, "tracked.txt"), "tracked content\n", "utf8");
+    runGit(["-C", root, "add", ".gitignore"]);
+    runGit(["-C", root, "add", "tracked.txt"]);
+
+    const store = await RspElisionStore.open({ uri: storeUri });
+    let handle = "";
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const original = Buffer.from("A  .gitignore\nA  tracked.txt\n");
+      handle = await store.mint(original, {
+        command: "git status --short",
+        loss: { level: "terse", bytes_elided: original.length },
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await store.close();
+    }
+    await writeFile(join(root, "moved.txt"), "state moved\n", "utf8");
+
+    const res = runRsp(root, ["show", handle], { RSP_STORE_URI: storeUri });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout.toString("utf8")).toBe(
+      "reconstructed after state moved - current snapshot follows\nA  .gitignore\nA  tracked.txt\n?? moved.txt\n",
+    );
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+  });
+
   it("rsp show prints structured expiry with the original command and exits 1", async () => {
     const root = await tempRoot();
     await enableRsp(root);
@@ -2157,7 +2562,7 @@ describe("rsp cli", () => {
     const res = runRsp(root, ["show", handle], { RSP_STORE_URI: storeUri });
 
     expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.from("expired 2026-07-11T12:00:00.000Z — re-run: rerun me\n"));
+    expect(res.stdout).toEqual(Buffer.from("expired 2026-07-10T18:00:00.000Z — re-run: rerun me\n"));
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 });

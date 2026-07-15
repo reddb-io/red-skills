@@ -8,7 +8,7 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 
 | Filter | Mode | Fixtures | raw tokens | rsp tokens | RTK tokens | Headroom tokens | oracle tokens | rsp capture | RTK capture | Headroom capture | brief shipped delta | brief fidelity-first score | terse shipped delta | terse fidelity-first score | RTK fidelity-first score | Headroom fidelity-first score |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| cargo:test | active | 3 | 478 | 202 | 132 | 468 | 203 | 99.5% | 65% | 3.6% | 61.9/84.2% | 100% | 57.7/84.2% | 100% | 100% | 100% |
+| cargo:test | active | 3 | 478 | 203 | 132 | 468 | 203 | 100% | 65% | 3.6% | 61.9/83.6% | 100% | 57.7/83.6% | 100% | 100% | 100% |
 | cat:file | active | 1 | 1489 | 332 | rtk: not-covered | headroom: not-covered | 166 | 87.5% | rtk: not-covered | headroom: not-covered | 77.7/77.7% | 100% | 87.1/87.1% | 100% | rtk: not-covered | headroom: not-covered |
 | gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 123 | 80 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 108 | 64 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
@@ -21,9 +21,9 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | git:push | passthrough | 2 | 58 | 58 | 63 | 58 | 102 | 56.9% | 61.8% | 56.9% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
 | git:show | passthrough | 1 | 98 | 98 | rtk: not-covered | 98 | 132 | 74.2% | rtk: not-covered | 74.2% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | git:status | active | 2 | 153 | 79 | 54 | 153 | 83 | 95.2% | 65.1% | 0% | 60.5/75% | 100% | 60.5/75% | 50% | 100% | 100% |
-| vitest:run | active | 6 | 51368 | 654 | 208 | 51060 | 442 | 99.6% | 47.1% | 0.6% | 58.8/100% | 100% | 70/100% | 100% | 100% | 83.3% |
+| vitest:run | active | 6 | 51368 | 656 | 208 | 51060 | 442 | 99.6% | 47.1% | 0.6% | 58.8/100% | 100% | 69.9/100% | 100% | 100% | 83.3% |
 
-Aggregate oracle ceiling: raw 66174 tokens (0% capture), rsp 13953 tokens (99.8% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 13874 tokens.
+Aggregate oracle ceiling: raw 66174 tokens (0% capture), rsp 13956 tokens (99.8% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 13874 tokens.
 
 Large-output filters: cat:file, git:diff, git:log, vitest:run.
 

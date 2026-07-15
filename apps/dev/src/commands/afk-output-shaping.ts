@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { tmpDir } from "@reddb-io/shared/red-paths.js";
 import {
   buildOutputShapingReport,
   collectOutputShapingSamples,
@@ -39,7 +39,7 @@ export async function afkOutputShapingCommand(args: readonly string[]): Promise<
     throw new Error(`unknown afk-output-shaping argument: ${arg}`);
   }
 
-  const report = buildOutputShapingReport(collectOutputShapingSamples(join(root, ".red", "tmp")));
+  const report = buildOutputShapingReport(collectOutputShapingSamples(tmpDir(root)));
   const output =
     format === "json"
       ? `${JSON.stringify(report, null, 2)}\n`

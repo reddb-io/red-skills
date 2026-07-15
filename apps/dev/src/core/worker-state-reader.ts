@@ -14,7 +14,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import type { AfkState } from "../types/state.js";
-import { parseState, isStateLive, parseIdentity, readIdentitySync, type PidStartTimeProbe } from "./state.js";
+import { parseStateDocument, isStateLive, parseIdentity, readIdentitySync, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
 import { allWorkersRoots } from "./worker-paths.js";
 import {
@@ -271,7 +271,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   }
   let state: AfkState;
   try {
-    state = parseState(JSON.parse(text));
+    state = parseStateDocument(text);
   } catch {
     return null;
   }

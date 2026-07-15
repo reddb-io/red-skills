@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/benchmark-code-understanding",
-  "version": "2.54.0",
+  "version": "2.60.2",
   "private": true,
   "description": "Internal A/B benchmark for RedSkills code understanding against CodeGraph and native agent search.",
   "license": "Apache-2.0",
@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/shared": "workspace:*"
+    "@reddb-io/shared": "workspace:*",
+    "@reddb-io/toon": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

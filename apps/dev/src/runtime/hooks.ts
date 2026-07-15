@@ -10,6 +10,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { hooksDir } from "@reddb-io/shared/red-paths.js";
 import { execTool } from "./exec.js";
 import type { HookExec } from "../core/hook-dispatcher.js";
 import { scriptDefaultResolver, type ResolveHooksOptions } from "../core/hook-config.js";
@@ -63,8 +64,8 @@ export function makeHookResolveOptions(root: string): ResolveHooksOptions {
 
   const libHooksDir = skillDir
     ? join(skillDir, "hooks")
-    : join(root, ".red", "hooks", "lib");
-  const projectHooksDir = join(root, ".red", "hooks");
+    : join(hooksDir(root), "lib");
+  const projectHooksDir = hooksDir(root);
 
   return {
     defaultCommand: scriptDefaultResolver(libHooksDir, projectHooksDir, existsSync),

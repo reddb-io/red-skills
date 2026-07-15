@@ -204,6 +204,8 @@ export interface FeedbackWorktreeOptions {
    * re-rebasing would invalidate the cache for no benefit).
    */
   rebaseOnto?: string;
+  /** Resource budget applied to validation subprocesses (#1758). */
+  resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
 }
 
 /**
@@ -221,6 +223,7 @@ export function makeFeedbackWorktree(
 ): FeedbackWorktree {
   const cacheEnabled = options.cacheEnabled !== false; // default: ON
   const rebaseOnto = options.rebaseOnto; // default: undefined (OFF)
+  const resourceBudget = options.resourceBudget ?? {};
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
@@ -351,7 +354,7 @@ export function makeFeedbackWorktree(
   // `<branch>/<scope>`. Peel the scope off the end (via the package layout),
   // materialise the branch, and rewrite the dir onto the real checkout path.
   const pnpm: PnpmExec = async (args, opts) => {
-    const env = opts?.env ?? buildFeedbackSubprocessEnv();
+    const env = opts?.env ?? buildFeedbackSubprocessEnv(process.env, resourceBudget);
     // args === ["pnpm", "-C", dir, script]
     const cIdx = args.indexOf("-C");
     if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
@@ -383,7 +386,8 @@ export function makeFeedbackWorktree(
     if (dir === null) {
       return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; validation blocked` };
     }
-    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
+    const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
+    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 

@@ -315,8 +315,11 @@ export function parkedSlotWorkFor(
   tmpDir: string,
   slot: number,
   lastPid: number | null = null,
+  // The main supervisor launch log now lives in the state tier (issue #1685);
+  // per-slot logs stay disposable in tmp. Defaults to the legacy tmp location so
+  // existing callers/tests keep working.
+  supervisorLogPath: string = join(tmpDir, "afk-supervisor.log"),
 ): SweepWork {
-  const supervisorLogPath = join(tmpDir, "afk-supervisor.log");
 
   // Path 1: slot log boot-stamp parse.
   const wids = parseWorkerIdsFromLog(slotLogPath(tmpDir, slot));

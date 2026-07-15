@@ -4,6 +4,7 @@ export interface EnvelopeSection {
   name: string;
   body: string;
   fenced?: boolean;
+  fenceLang?: string;
 }
 
 export interface EnvelopeInput {
@@ -25,7 +26,8 @@ export function buildEnvelope(input: EnvelopeInput): string {
   const summary = `worker \`${input.worker}\` · status: ${input.status} · duration: ${input.duration} · diff: ${input.diff} · attempt: ${input.attempt}${merge}`;
   const body = (input.sections ?? [])
     .map((section) => {
-      const content = section.fenced ? `\n\`\`\`\n${section.body}\n\`\`\`\n` : `\n${section.body}\n`;
+      const fence = section.fenced ? `\`\`\`${section.fenceLang ?? ""}` : "";
+      const content = section.fenced ? `\n${fence}\n${section.body}\n\`\`\`\n` : `\n${section.body}\n`;
       return `<details data-section="${escapeHtml(section.name)}"><summary>${escapeHtml(section.name)}</summary>\n${content}\n</details>`;
     })
     .join("\n\n");

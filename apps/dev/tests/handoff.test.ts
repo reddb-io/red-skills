@@ -76,6 +76,22 @@ describe("buildPreviousAttempts", () => {
     expect(out).toContain("<log>\nline A\nline B\nline C\n</log>");
   });
 
+  it("strips ```toon fences from a log section during rollout", () => {
+    const env = buildEnvelope({
+      status: "no-sentinel",
+      worker: "wTEST",
+      duration: "3m0s",
+      diff: "+5 -2",
+      attempt: 2,
+      sections: [
+        { name: "notes", body: "no notes" },
+        { name: "log", body: "tail: line C", fenced: true, fenceLang: "toon" },
+      ],
+    });
+    const out = buildPreviousAttempts([{ body: env }]);
+    expect(out).toContain("<log>\ntail: line C\n</log>");
+  });
+
   it("numbers attempts in order across multiple envelopes", () => {
     const e1 = makeEnvelope("blocked", "w1", "1m0s", 1, "first");
     const e2 = makeEnvelope("done", "w2", "2m0s", 2, "second");

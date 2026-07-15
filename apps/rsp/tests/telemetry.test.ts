@@ -1,18 +1,24 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { connect } from "@reddb-io/sdk";
+import { decode, parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTelemetryEvent,
   drainTelemetrySpool,
   readTelemetryGainsReport,
+  readTelemetryStats,
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  telemetryLegacySpoolPath,
+  telemetrySpoolCorrectionsPath,
   telemetrySpoolPath,
 } from "../src/telemetry.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS, RSP_ELISION_COLLECTION } from "../src/elision-store.js";
@@ -28,6 +34,8 @@ async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-telemetry-"));
   roots.push(root);
   await mkdir(join(root, ".red", "tmp"), { recursive: true });
+  // Durable telemetry spools live in the rsp state lane (ADR 0098).
+  await mkdir(join(root, ".red", "state", "rsp"), { recursive: true });
   await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
   return root;
 }
@@ -63,14 +71,18 @@ describe("rsp telemetry spool", () => {
     });
   });
 
-  it("appends JSONL without throwing when the target is unavailable", async () => {
+  it("appends TOONL rows without throwing when the target is unavailable", async () => {
     const root = await tempRoot();
     await appendTelemetryEvent(root, {
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
       id: "ok",
       command: "git status",
     });
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"id":"ok"');
+    await expect(readSpoolRows(root)).resolves.toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({ id: "ok", command: "git status" }),
+      }),
+    ]);
 
     await writeFile(join(root, ".red", "tmp", "not-a-dir"), "x", "utf8");
     await expect(appendTelemetryEvent(join(root, "not-there"), {
@@ -94,9 +106,95 @@ describe("rsp telemetry spool", () => {
 
     await drainTelemetrySpool(root, async (line) => !line.includes("retry-me"));
 
-    const spool = await readFile(telemetrySpoolPath(root), "utf8");
-    expect(spool).toContain('"id":"retry-me"');
-    expect(spool).not.toContain('"id":"ok"');
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    const corrections = await readCorrectionRows(root);
+    expect(corrections).toEqual([
+      expect.objectContaining({
+        action: "retry",
+        event: expect.objectContaining({ id: "retry-me" }),
+      }),
+    ]);
+
+    const retried: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      retried.push(line);
+      return true;
+    });
+    expect(retried.join("\n")).toContain('"id":"retry-me"');
+    const afterRetry = await readCorrectionRows(root);
+    expect(afterRetry.at(-1)).toEqual(expect.objectContaining({ action: "resolved" }));
+  });
+
+  it("drains legacy JSONL spools by sniffing format without rewriting them", async () => {
+    const root = await tempRoot();
+    await writeFile(telemetryLegacySpoolPath(root), `${JSON.stringify({
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "legacy-jsonl",
+      command: "git status",
+    })}\n`, "utf8");
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"legacy-jsonl"');
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).resolves.toBe("");
+  });
+
+  it("ingests orphaned .drain files left behind by a crashed drain", async () => {
+    const root = await tempRoot();
+    const spool = telemetrySpoolPath(root);
+    const orphan = `${spool}.999999.1783958744462.drain`;
+    await writeFile(
+      orphan,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "orphaned", command: "git log" })}\n`,
+      "utf8",
+    );
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "live",
+      command: "git status",
+    });
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"orphaned"');
+    expect(drained.join("\n")).toContain('"id":"live"');
+    await expect(readFile(orphan, "utf8")).rejects.toThrow();
+  });
+
+  it("sweeps orphaned .drain files even when the live spool is gone, and leaves live-owner drains alone", async () => {
+    const root = await tempRoot();
+    const spool = telemetrySpoolPath(root);
+    const orphan = `${spool}.999999.1783958744462.drain`;
+    const inFlight = `${spool}.${process.ppid}.1783958744463.drain`;
+    await writeFile(
+      orphan,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "orphaned", command: "git log" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      inFlight,
+      `${JSON.stringify({ collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION, id: "not-mine", command: "git log" })}\n`,
+      "utf8",
+    );
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"orphaned"');
+    expect(drained.join("\n")).not.toContain('"id":"not-mine"');
+    await expect(readFile(inFlight, "utf8")).resolves.toContain('"id":"not-mine"');
   });
 
   it("keeps oversized raw and emitted text out of the spool while preserving byte estimates", async () => {
@@ -113,12 +211,14 @@ describe("rsp telemetry spool", () => {
 
     const spool = await readFile(telemetrySpoolPath(root), "utf8");
     expect(spool).not.toContain(huge);
-    expect(JSON.parse(spool)).toMatchObject({
-      id: "oversized",
-      command: "git log",
-      raw_bytes: Buffer.byteLength(huge, "utf8"),
-      emitted_bytes: Buffer.byteLength(huge, "utf8"),
-      estimated: true,
+    expect((await readSpoolRows(root))[0]).toMatchObject({
+      event: {
+        id: "oversized",
+        command: "git log",
+        raw_bytes: Buffer.byteLength(huge, "utf8"),
+        emitted_bytes: Buffer.byteLength(huge, "utf8"),
+        estimated: true,
+      },
     });
   });
 
@@ -343,6 +443,185 @@ describe("rsp telemetry spool", () => {
     await server;
   }, 60_000);
 
+  it("serves stats from counters-only accounting events and reports show hit-rate", async () => {
+    const root = await tempRoot();
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "accounted-invocation",
+      created_at: new Date().toISOString(),
+      event_type: "invocation",
+      command: "git log",
+      command_class: "git",
+      loss: "terse",
+      elided: true,
+      raw_bytes: 1000,
+      emitted_bytes: 100,
+      bytes: 120,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "accounted-ephemeral",
+      created_at: new Date().toISOString(),
+      event_type: "invocation",
+      command: "vitest run",
+      command_class: "vitest",
+      loss: "terse",
+      elided: true,
+      raw_bytes: 400,
+      emitted_bytes: 40,
+      bytes: 90,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "show-hit",
+      created_at: new Date().toISOString(),
+      event_type: "show",
+      command: "rsp show",
+      command_class: "show",
+      hit: true,
+      raw_bytes: 900,
+      emitted_bytes: 900,
+      bytes: 80,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: "show-miss",
+      created_at: new Date().toISOString(),
+      event_type: "show",
+      command: "rsp show",
+      command_class: "show",
+      hit: false,
+      raw_bytes: 0,
+      emitted_bytes: 40,
+      bytes: 80,
+    });
+    await appendTelemetryEvent(root, {
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "legacy-ignored",
+      created_at: new Date().toISOString(),
+      command: "git status",
+      raw_bytes: 9999,
+      emitted_bytes: 1,
+      accounting_recorded: true,
+      bytes: 100,
+    });
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
+    const server = runResidentServer({
+      rootDir: root,
+      socketPath: paths.socketPath,
+      storeUri,
+      ttlDays: DEFAULT_RSP_TTL_DAYS,
+      byteBudget: DEFAULT_RSP_BYTE_BUDGET,
+      telemetryTtlDays: 90,
+      telemetryByteBudget: 1_000,
+      telemetryDrainTimeoutMs: timing.drainTimeoutMs,
+      idleMs: 100,
+    });
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
+
+    const response = await sendResidentRequest({ socketPath: paths.socketPath }, {
+      id: "stats",
+      op: "telemetry-stats",
+      sinceDays: 7,
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.ok && response.value).toMatchObject({
+      savings: {
+        invocations: 2,
+        elided: 2,
+        raw_bytes: 1400,
+        emitted_bytes: 140,
+        top_commands: [
+          expect.objectContaining({ command: "git log", invocations: 1 }),
+          expect.objectContaining({ command: "vitest run", invocations: 1 }),
+        ],
+      },
+      health: {
+        show_total: 2,
+        show_hits: 1,
+        show_misses: 1,
+        show_hit_rate: 0.5,
+      },
+    });
+    const accountingResponse = await sendResidentRequest({ socketPath: paths.socketPath }, {
+      id: "accounting-stats",
+      op: "accounting-stats",
+      byteBudget: 1_000,
+    });
+    expect(accountingResponse.ok).toBe(true);
+    expect(accountingResponse.ok && accountingResponse.value).toMatchObject({
+      storage_classes: {
+        derivable: { records: 1, bytes: 1000, raw_bytes: 1000 },
+        "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+        ephemeral: { records: 1, bytes: 400, raw_bytes: 400 },
+      },
+    });
+    await server;
+    await expect(readTelemetry(storeUri, RSP_ACCOUNTING_EVENTS_COLLECTION, "accounted-invocation")).resolves.not.toHaveProperty("raw_text");
+  }, 60_000);
+
+  it("computes contribution-rate stats from the dedicated decision lane", async () => {
+    const root = await tempRoot();
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const db = await connect(storeUri);
+    try {
+      await db.kv(RSP_DECISIONS_COLLECTION).put("passed-disabled", {
+        created_at: "2026-07-10T10:00:00.000Z",
+        hook: "codex-pre-exec",
+        command: "git status",
+        command_family: "git status",
+        decision: "passed",
+        reason: "disabled",
+      });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("passed-unsupported", {
+        created_at: "2026-07-10T10:01:00.000Z",
+        hook: "codex-pre-exec",
+        command: "git status --short",
+        command_family: "git status",
+        decision: "passed",
+        reason: "unsupported-command",
+      });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("passed-lossless-gh-json-jq", {
+        created_at: "2026-07-10T10:01:30.000Z",
+        hook: "codex-pre-exec",
+        command: "gh pr view 1747 --json number,title",
+        command_family: "gh pr view json-jq",
+        decision: "passed",
+        reason: "lossless-gh-json-jq",
+      });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("failed-open", {
+        created_at: "2026-07-10T10:02:00.000Z",
+        hook: "codex-pre-exec",
+        command: "unknown",
+        command_family: "unknown",
+        decision: "failed-open",
+        reason: "hook-exception",
+      });
+
+      const stats = await readTelemetryStats(db, 7, new Date("2026-07-11T00:00:00.000Z"));
+
+      expect(stats.decisions).toEqual({
+        seen: 4,
+        contributed: 0,
+        passed: 3,
+        failed_open: 1,
+        contribution_rate: 0,
+        top_pass_reasons: [
+          { reason: "disabled", count: 1 },
+          { reason: "hook-exception", count: 1 },
+          { reason: "lossless-gh-json-jq", count: 1 },
+          { reason: "unsupported-command", count: 1 },
+        ],
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
   it("drains a hand-written spool through the built bundle resident", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
@@ -384,6 +663,110 @@ describe("rsp telemetry spool", () => {
     });
   }, 40_000);
 
+  it("pipes a real Codex PreToolUse payload through the built bundle and drains a decision event", async () => {
+    const root = await tempRoot();
+    const bundle = await ensureRspBundle();
+    const payload = {
+      cwd: root,
+      tool_name: "bash",
+      tool_input: { command: "git status" },
+    };
+
+    const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify(payload)),
+      encoding: "buffer",
+    });
+    expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
+    expect(JSON.parse(hook.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
+
+    const paths = resolveResidentPaths(root);
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const timing = await calibratedTelemetryTiming(root);
+    const child = execFile(process.execPath, [
+      bundle,
+      "server",
+      "--socket",
+      paths.socketPath,
+      "--store-uri",
+      storeUri,
+      "--ttl-days",
+      String(DEFAULT_RSP_TTL_DAYS),
+      "--byte-budget",
+      String(DEFAULT_RSP_BYTE_BUDGET),
+      "--telemetry-drain-timeout-ms",
+      String(timing.drainTimeoutMs),
+      "--idle-ms",
+      "100",
+    ], { cwd: root });
+    await waitForResident(paths.socketPath, timing.waitTimeoutMs);
+    await new Promise<void>((resolve, reject) => {
+      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`bundle resident exited ${code}`)));
+      child.once("error", reject);
+    });
+
+    const decisions = await readTelemetryRecords(storeUri, RSP_DECISIONS_COLLECTION);
+    expect(decisions).toContainEqual(expect.objectContaining({
+      hook: "codex-pre-exec",
+      command: "git status",
+      command_family: "git status",
+      decision: "contributed",
+      reason: "matched-capability",
+      capability_id: "git:status",
+    }));
+    const summary = parseStructured(await readFile(paths.summaryPath, "utf8")) as {
+      decisions?: { seen?: number; contributed?: number };
+    };
+    expect(summary.decisions).toEqual({ seen: 1, contributed: 1 });
+  }, 40_000);
+
+  it("routes a real Codex PreToolUse payload through the built bundle proxy and executes verbatim", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+    const bundle = await ensureRspBundle();
+    const command = "printf 'out\\n'; printf 'err\\n' >&2";
+    const payload = {
+      cwd: root,
+      tool_name: "bash",
+      tool_input: { command },
+    };
+
+    const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify(payload)),
+      encoding: "buffer",
+    });
+    expect(hook.status, `${hook.stdout.toString("utf8")}${hook.stderr.toString("utf8")}`).toBe(0);
+    const updated = JSON.parse(hook.stdout.toString("utf8")) as {
+      hookSpecificOutput: { updatedInput: { command: string } };
+    };
+    expect(updated.hookSpecificOutput.updatedInput.command).toBe("rsp proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'");
+
+    const raw = spawnSync(command, { cwd: root, shell: true, encoding: "buffer" });
+    const proxied = spawnSync(process.execPath, [bundle, "proxy", "--", command], {
+      cwd: root,
+      encoding: "buffer",
+    });
+
+    expect(proxied.stdout).toEqual(raw.stdout);
+    expect(proxied.stderr).toEqual(raw.stderr);
+    expect(proxied.status).toBe(raw.status);
+    expect(proxied.signal).toBe(raw.signal);
+    await expect(readSpoolRows(root)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ reason: "universal-proxy" }),
+        }),
+      ]),
+    );
+  }, 40_000);
+
   it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
@@ -408,6 +791,7 @@ describe("rsp telemetry spool", () => {
         "record:123456789abc",
         legacyRecord,
       );
+      await seeded.query(`CREATE TABLE ${RSP_DECISIONS_COLLECTION} (id TEXT)`);
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INVOCATIONS_COLLECTION} (id TEXT)`);
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_DEGRADATIONS_COLLECTION} (id TEXT)`);
       await seeded.query(`CREATE TABLE ${RSP_TELEMETRY_INDEX_COLLECTION} (id TEXT)`);
@@ -415,11 +799,21 @@ describe("rsp telemetry spool", () => {
       await seeded.close();
     }
 
-    await writeFile(telemetrySpoolPath(root), `${JSON.stringify({
-      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
-      id: "legacy-model-event",
-      command: "git log",
-    })}\n`, "utf8");
+    await writeFile(telemetrySpoolPath(root), [
+      JSON.stringify({
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: "legacy-model-event",
+        command: "git log",
+      }),
+      JSON.stringify({
+        collection: RSP_DECISIONS_COLLECTION,
+        id: "legacy-decision-event",
+        command: "git status",
+        decision: "contributed",
+        reason: "matched-capability",
+      }),
+      "",
+    ].join("\n"), "utf8");
 
     const paths = resolveResidentPaths(root);
     const timing = await calibratedTelemetryTiming(root);
@@ -461,6 +855,11 @@ describe("rsp telemetry spool", () => {
       id: "legacy-model-event",
       command: "git log",
     });
+    await expect(readTelemetry(storeUri, RSP_DECISIONS_COLLECTION, "legacy-decision-event")).resolves.toMatchObject({
+      id: "legacy-decision-event",
+      command: "git status",
+      decision: "contributed",
+    });
     await expect(readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -471,6 +870,7 @@ describe("rsp telemetry spool", () => {
     );
     await expect(readTelemetryCollectionModels(storeUri)).resolves.toMatchObject({
       [RSP_ELISION_COLLECTION]: "kv",
+      [RSP_DECISIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_INVOCATIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_DEGRADATIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_INDEX_COLLECTION]: "kv",
@@ -718,6 +1118,47 @@ async function readTelemetry(storeUri: string, collection: string, key: string):
   }
 }
 
+async function readSpoolRows(root: string): Promise<Array<Record<string, unknown>>> {
+  return (await readToonlRows(telemetrySpoolPath(root))).map((row) => {
+    if ("event" in row) return row;
+    const { spool_id: _spoolId, ...event } = row;
+    return { ...row, event };
+  });
+}
+
+async function readCorrectionRows(root: string): Promise<Array<Record<string, unknown>>> {
+  return readToonlRows(telemetrySpoolCorrectionsPath(root));
+}
+
+async function readToonlRows(path: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(path, "utf8").catch(() => "");
+  if (!raw.trim()) return [];
+  return parseSniffedToonlRows(raw).map((row) => {
+    if (typeof row.event_json !== "string") return row;
+    try {
+      return { ...row, event: JSON.parse(row.event_json) as unknown };
+    } catch {
+      return row;
+    }
+  });
+}
+
+function parseSniffedToonlRows(raw: string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (isRecord(row)) rows.push(row);
+    }
+  }
+  return rows;
+}
+
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
   const db = await connect(storeUri);
   try {
@@ -735,6 +1176,7 @@ async function readTelemetryCollectionModels(storeUri: string): Promise<Record<s
       (await db.list())
         .filter((entry) => [
           RSP_ELISION_COLLECTION,
+          RSP_DECISIONS_COLLECTION,
           RSP_TELEMETRY_INVOCATIONS_COLLECTION,
           RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
           RSP_TELEMETRY_INDEX_COLLECTION,
@@ -807,10 +1249,20 @@ async function waitForStatusSummary(summaryPath: string, minMtimeMs = 0, timeout
       readFile(summaryPath, "utf8").catch(() => ""),
       fileMtimeMs(summaryPath),
     ]);
-    if (summary.includes("tokens_saved_today") && mtimeMs > minMtimeMs) return;
+    if (parseStructured(summary) && mtimeMs > minMtimeMs) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("rsp status summary did not refresh");
+}
+
+function parseStructured(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function fileMtimeMs(path: string): Promise<number> {

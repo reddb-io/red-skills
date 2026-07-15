@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { decode } from "@reddb-io/toon";
 import type { RecalledNode } from "../src/engine.js";
 import type { StoredNode } from "../src/graph-store.js";
 import {
@@ -229,6 +230,17 @@ describe("recall ranking pipeline", () => {
       { source: "keyword:cache pipeline", rank: 2, contribution: 1 / 62 },
     ]);
     expect(recall.context_md).toContain("signal_provenance[4]{source,rank,contribution}:");
-    expect(recall.context_md).toContain("keyword:cache,1,0.016393");
+    expect(recall.context_md).toContain("\"keyword:cache\",1,0.016393");
+    const lines = recall.context_md.split("\n");
+    const signalStart = lines.findIndex((line) => line.startsWith("signal_provenance["));
+    const signalBlock = lines.slice(signalStart, signalStart + 5);
+    expect(decode(signalBlock.join("\n"))).toEqual({
+      signal_provenance: [
+        { source: "keyword:cache", rank: 1, contribution: 0.016393 },
+        { source: "keyword:pipeline", rank: 1, contribution: 0.016393 },
+        { source: "graph", rank: 1, contribution: 0.016393 },
+        { source: "keyword:cache pipeline", rank: 2, contribution: 0.016129 },
+      ],
+    });
   });
 });

@@ -320,7 +320,7 @@ describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
     "HEAD aaaaaaa",
     "branch refs/heads/main",
     "",
-    "worktree /repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+    "worktree /repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
     "HEAD bbbbbbb",
     "branch refs/heads/afk/wQDOR/894-x",
     "",
@@ -330,7 +330,7 @@ describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
     const { exec, calls } = recordingExec(() => ok(porcelain));
     const ctx: GitContext = { cwd: "/repo", exec };
     expect(await worktreePathUnder(ctx, "/repo/.red/tmp/workers/wQDOR/894-a1")).toBe(
-      "/repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+      "/repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
     );
     expect(calls[0]).toEqual(["git", "worktree", "list", "--porcelain"]);
   });
@@ -338,7 +338,7 @@ describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
   it("tolerates a trailing slash on the prefix", async () => {
     const { exec } = recordingExec(() => ok(porcelain));
     expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a1/")).toBe(
-      "/repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+      "/repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
     );
   });
 

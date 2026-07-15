@@ -30,22 +30,32 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
-# rsp hook activation and retention (ADR 0095). /red-setup provisions
-# `.red/red.rdb`; the hook remains inert unless this explicit flag is true.
+# rsp hook activation and retention (ADR 0095 amended by ADR 0098). /red-setup
+# provisions `.red/state/red-skills.rdb`; the hook remains inert unless this
+# explicit flag is true.
 rsp:
   enabled: true
   ttlDays: 7
+  ephemeralTtlHours: 6
   byteBudget: 67108864            # 64 MiB
 
+# Required host binaries (ADR 0097). /red-setup installs these through their
+# checksum-verified upstream installers and records the exact pin here so
+# /red-doctor can red-flag absence or version drift. tq is required for
+# TOON/TOONL inspection; there is no jq fallback lane.
+host_binaries:
+  tq:
+    version: 0.3.0
+
 # Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
-# worktrees must live under .red/tmp/, and branch-changing commands in the
-# primary checkout are blocked. Create task branches with:
-#   git worktree add .red/tmp/work-<slug> -b <branch> origin/main
+# worktrees must live under a registered .red/tmp/ lane, and branch-changing
+# commands in the primary checkout are blocked. Create task branches with:
+#   git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main
 #
 # Command guard policy. The installed Claude Code, Codex, and opencode hooks are
 # thin proxies: they read this repo-owned policy at runtime and stay inert unless
 # plugins.dev.enabled is true. These rules are additional to the built-in
-# .red/tmp worktree boundary above. Uncomment only rules this repo actually wants.
+# registered .red/tmp worktree boundary above. Uncomment only rules this repo actually wants.
 # command_guard:
 #   global:                       # applies in main sessions and runtime worktrees
 #     - "rm -Rf /*"

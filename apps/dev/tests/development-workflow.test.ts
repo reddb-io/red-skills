@@ -43,13 +43,13 @@ describe("development workflow rules block", () => {
 
   it("documents the loop and enforced .red/tmp worktree boundary", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("worktree");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/work-*/`");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("git worktree add .red/tmp/work-<slug>");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/worktrees/manual/<slug>`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("git worktree add .red/tmp/worktrees/manual/<slug>");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("not with `git checkout -b` or `git switch -c`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("push the branch early");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("merge it or park the issue/PR for `/hitl`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("The agent never switches the primary checkout's branch; only the user does.");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("the dev command proxy blocks agent-created worktrees outside `.red/tmp/`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("the dev command proxy blocks agent-created worktrees outside registered `.red/tmp/` lanes");
   });
 
   it("routes one-off work through /go and never suggests the retired /ship (ADR 0081)", () => {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { decode, encode } from "@reddb-io/toon";
 import {
   afkPaths,
   resolveRunSettings,
@@ -15,6 +16,7 @@ import {
   withTimeout,
   collectStatuslineAfk,
   collectStatuslineRepo,
+  statuslineCountCachePath,
   STATUSLINE_CACHE_TTL_S,
   applyStatuslineCountCacheLabelDelta,
   editLabelsWithStatuslineCache,
@@ -107,7 +109,7 @@ describe("resolveAttemptHead (#1390)", () => {
             "HEAD base",
             "branch refs/heads/main",
             "",
-            "worktree /repo/.red/tmp/workers/w1/1390-a1/.sandcastle/worktrees/afk-w1-1390",
+            "worktree /repo/.red/tmp/workers/w1/1390-a1/.red-castle/worktrees/afk-w1-1390",
             "HEAD moved-head",
             "branch refs/heads/afk/w1/1390-loc",
             "",
@@ -178,9 +180,17 @@ describe("afkPaths", () => {
     expect(p.tmpDir).toBe("/repo/.red/tmp");
     expect(p.stateDir).toBe("/repo/.red/state");
     expect(p.workersRoot).toBe("/repo/.red/tmp/workers");
-    expect(p.historyPath).toBe("/repo/.red/state/afk-history.jsonl");
-    expect(p.fleetStatePath).toBe("/repo/.red/tmp/afk-supervisor.state.json");
-    expect(p.fleetFirehosePath).toBe("/repo/.red/tmp/afk-supervisor.log.jsonl");
+    expect(p.historyPath).toBe("/repo/.red/state/afk-history.toonl");
+    // Durable supervisor artifacts relocated to the state tier (issue #1685).
+    expect(p.fleetStatePath).toBe("/repo/.red/state/afk/afk-supervisor.state.json");
+    expect(p.fleetFirehosePath).toBe("/repo/.red/state/afk/afk-supervisor.log.jsonl");
+    expect(p.monitorLogCursorPath).toBe("/repo/.red/state/afk/monitor-log-cursors.json");
+    expect(p.supervisorPidPath).toBe("/repo/.red/state/afk/afk-supervisor.pid");
+    expect(p.runnerCircuitDir).toBe("/repo/.red/state/afk/runner-circuit");
+    expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.json");
+    // Scratch worktrees under the tmp worktrees lane.
+    expect(p.landingWorktreesDir).toBe("/repo/.red/tmp/worktrees/landing");
+    expect(p.reconcileWorktreesDir).toBe("/repo/.red/tmp/worktrees/reconcile");
     expect(p.configPath).toBe("/repo/.red/config.yaml");
   });
 });
@@ -466,7 +476,7 @@ describe("collectMonitorInputs", () => {
     const root = scratch();
     try {
       const path = afkPaths(root).fleetStatePath;
-      mkdirSync(join(root, ".red", "tmp"), { recursive: true });
+      mkdirSync(dirname(path), { recursive: true });
       writeFileSync(
         path,
         JSON.stringify({
@@ -620,6 +630,10 @@ function detachedSpawnRecorder() {
   return { calls, spawn };
 }
 
+function readToonCache<T>(path: string): T {
+  return decode(readFileSync(path, "utf8")) as T;
+}
+
 // ---------------------------------------------------------------------------
 // collectStatuslineAfk — cache discipline (#818)
 // ---------------------------------------------------------------------------
@@ -630,12 +644,15 @@ describe("collectStatuslineAfk — cache discipline", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      // Cache now lives in the statusline state lane (issue #1685).
+      const cachePath = statuslineCountCachePath(root);
 
       const before = nowS();
       await withFakeGh(() => collectStatuslineAfk({ root, repo: "", remote: "origin" }));
 
-      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { queue: number; human: number; ts: number };
+      const raw = readFileSync(cachePath, "utf8");
+      expect(raw.trimStart().startsWith("{")).toBe(false);
+      const cache = decode(raw) as { queue: number; human: number; ts: number };
       expect(cache.ts).toBeGreaterThanOrEqual(before);
       expect(cache.queue).toBe(0); // fake gh returns []
       expect(cache.human).toBe(0);
@@ -731,6 +748,26 @@ describe("collectStatuslineAfk — cache discipline", () => {
       const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { queue: number; human: number; ts: number };
       expect(cache.ts).toBe(freshTs); // ts unchanged → no write
       expect(cache.queue).toBe(7); // cached value preserved
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fresh TOON cache: reads queue/human without a gh refresh", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = join(tmpDir, "statusline-cache.json");
+      const freshTs = nowS();
+      writeFileSync(cachePath, encode({ queue: 11, human: 4, ts: freshTs }), "utf8");
+      writeRenderableAttempt(root, "w1", 55, new Date().toISOString());
+
+      const result = await collectStatuslineAfk({ root, repo: "", remote: "origin" });
+
+      expect(result?.queue).toBe(11);
+      expect(result?.human).toBe(4);
+      expect(readToonCache<{ ts: number }>(cachePath).ts).toBe(freshTs);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -860,16 +897,16 @@ describe("statusline count cache write-through", () => {
       writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: 100 }), "utf8");
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-agent"], ["running"], 200)).toBe(true);
-      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 3, human: 2, ts: 200 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 2, ts: 200 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["running"], ["ready-for-human", "blocked:validation"], 300)).toBe(true);
-      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 3, human: 3, ts: 300 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 3, ts: 300 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human", "blocked:validation"], ["ready-for-agent"], 400)).toBe(true);
-      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 4, human: 2, ts: 400 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 2, ts: 400 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human"], [], 500)).toBe(true);
-      expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ queue: 4, human: 1, ts: 500 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 1, ts: 500 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -893,7 +930,7 @@ describe("statusline count cache write-through", () => {
         ["running"],
       );
 
-      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { queue: number; human: number; ts: number };
+      const cache = readToonCache<{ queue: number; human: number; ts: number }>(cachePath);
       expect(ok).toBe(true);
       expect(edits).toBe(1);
       expect(cache.queue).toBe(0);
@@ -938,14 +975,17 @@ describe("collectStatuslineRepo — cache discipline", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ openPrs: 3, openIssues: 5, ts: staleTs }), "utf8");
 
       await withFakeGh(() => collectStatuslineRepo({ root, repo: "", remote: "origin" }));
 
-      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { openPrs: number; openIssues: number; ts: number };
+      const raw = readFileSync(cachePath, "utf8");
+      expect(raw.trimStart().startsWith("{")).toBe(false);
+      const cache = decode(raw) as { openPrs: number; openIssues: number; ts: number };
       expect(cache.ts).toBeGreaterThan(staleTs); // ts advanced beyond the stale value
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1000,12 +1040,39 @@ describe("collectStatuslineRepo — cache discipline", () => {
     }
   });
 
-  it("stale cache: folds the local diffstat into the same refresh (#1178)", async () => {
+  it("fresh TOON repo cache: serves the local diffstat without a refresh", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
       const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const freshTs = nowS();
+      writeFileSync(
+        cachePath,
+        encode({ baseRef: "origin/main", openPrs: 6, todayPrs: 2, openIssues: 14, localAdded: 20, localRemoved: 3, ts: freshTs }),
+        "utf8",
+      );
+
+      const result = await collectStatuslineRepo({ root, repo: "", remote: "origin" });
+
+      expect(result.openPrs).toBe(6);
+      expect(result.todayPrs).toBe(2);
+      expect(result.openIssues).toBe(14);
+      expect(result.localAdded).toBe(20);
+      expect(result.localRemoved).toBe(3);
+      expect(readToonCache<{ ts: number }>(cachePath).ts).toBe(freshTs);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stale cache: folds the local diffstat into the same refresh (#1178)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(
@@ -1016,11 +1083,11 @@ describe("collectStatuslineRepo — cache discipline", () => {
 
       await withFakeGh(() => collectStatuslineRepo({ root, repo: "", remote: "origin" }));
 
-      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as {
+      const cache = readToonCache<{
         localAdded: number;
         localRemoved: number;
         ts: number;
-      };
+      }>(cachePath);
       expect(cache.ts).toBeGreaterThan(staleTs); // refreshed
       // The diff fields are rewritten by the same refresh (root is not a git
       // repo → freshly-measured 0/0, overwriting the stale 99/11).

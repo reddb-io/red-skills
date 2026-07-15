@@ -1,0 +1,185 @@
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { parseCli } from "../src/cli.js";
+import { toonBumpCommand } from "../src/commands/toon-bump.js";
+import { collectToonPinDrift, TOON_PIN_SITES, type CatalogToonVersion } from "../src/core/toon-version.js";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function scratch(): Promise<string> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "dev-toon-bump-"));
+  roots.push(root);
+  return root;
+}
+
+async function write(root: string, rel: string, body: string): Promise<void> {
+  const path = join(root, rel);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, body, "utf8");
+}
+
+async function read(root: string, rel: string): Promise<string> {
+  return readFile(join(root, rel), "utf8");
+}
+
+async function writeFixture(root: string, version = "0.2.6"): Promise<void> {
+  await write(
+    root,
+    "pnpm-workspace.yaml",
+    `packages:
+  - "apps/*"
+
+catalog:
+  "@reddb-io/toon": ${version}
+
+minimumReleaseAgeExclude:
+  - "@reddb-io/sdk"
+  - '@reddb-io/toon@${version}'
+`,
+  );
+  await write(
+    root,
+    "pnpm-lock.yaml",
+    `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    '@reddb-io/toon':
+      specifier: ${version}
+      version: ${version}
+
+importers:
+  apps/dev:
+    dependencies:
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: ${version}
+
+packages:
+  '@reddb-io/toon@${version}':
+    resolution: {integrity: sha512-fixture}
+    engines: {node: '>=18'}
+
+snapshots:
+  '@reddb-io/toon@${version}': {}
+`,
+  );
+  await writeRegisteredSites(root, version);
+}
+
+async function writeRegisteredSites(root: string, version: string): Promise<void> {
+  await write(root, ".github/workflows/red-workspace-ci.yml", `env:\n  TQ_VERSION: v${version}\n`);
+  await write(root, ".github/workflows/red-rsp-benchmark-ci.yml", `env:\n  TQ_VERSION: v${version}\n`);
+  await write(
+    root,
+    "plugins/dev/skills/engineering/red-setup/INTERVIEW.md",
+    `TQ_VERSION=v${version}
+curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
+The installed version must be \`${version}\`.
+`,
+  );
+  await write(
+    root,
+    "plugins/dev/skills/engineering/red-setup/REFERENCE.md",
+    `TQ_VERSION=v${version}
+host binary is pinned to \`${version}\`.
+`,
+  );
+  await write(
+    root,
+    "plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md",
+    `host_binaries.tq.version: ${version}
+TQ_VERSION=v${version}
+curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
+\`tq --version\` reports \`${version}\`
+host_binaries:
+  tq:
+    version: ${version}
+`,
+  );
+  await write(
+    root,
+    "plugins/dev/skills/engineering/red-setup/config-template.yaml",
+    `host_binaries:
+  tq:
+    version: ${version}
+`,
+  );
+  await write(
+    root,
+    "plugins/dev/skills/engineering/red-doctor/SKILL.md",
+    `host_binaries.tq.version\` (pin \`${version}\`)
+TQ_VERSION=v${version}
+curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
+`,
+  );
+}
+
+function target(version: string): CatalogToonVersion {
+  return { packageName: "@reddb-io/toon", version, tag: `v${version}` };
+}
+
+describe("toon-bump dev command", () => {
+  test("routes as a dedicated dev CLI verb", () => {
+    expect(parseCli(["toon-bump", "0.3.0", "--root", "/repo", "--dry-run"])).toEqual({
+      command: "toon-bump",
+      args: ["0.3.0", "--root", "/repo", "--dry-run"],
+    });
+  });
+
+  test("bumps every S1 registered site and replaces stale lockfile entries", async () => {
+    const root = await scratch();
+    await writeFixture(root);
+    let stdout = "";
+
+    const code = await toonBumpCommand(["0.3.0", "--root", root], {
+      stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+      stderr: { write: () => true },
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("schema_version: red.dev.toon_bump.v1");
+    await expect(collectToonPinDrift(root, target("0.3.0"))).resolves.toEqual([]);
+    await expect(read(root, "pnpm-workspace.yaml")).resolves.toContain("'@reddb-io/toon@0.3.0'");
+    const lockfile = await read(root, "pnpm-lock.yaml");
+    expect(lockfile).toContain("'@reddb-io/toon@0.3.0'");
+    expect(lockfile).not.toContain("@reddb-io/toon@0.2.6");
+    expect(lockfile).not.toMatch(/version: 0\.2\.6/);
+  });
+
+  test("dry-run prints the would-be plan without writing", async () => {
+    const root = await scratch();
+    await writeFixture(root);
+    let stdout = "";
+
+    const code = await toonBumpCommand(["0.3.0", "--root", root, "--dry-run"], {
+      stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+      stderr: { write: () => true },
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("mode: dry-run");
+    expect(stdout).toContain(TOON_PIN_SITES[0]!.path);
+    await expect(collectToonPinDrift(root, target("0.3.0"))).resolves.toHaveLength(TOON_PIN_SITES.length);
+    await expect(read(root, "pnpm-lock.yaml")).resolves.toContain("@reddb-io/toon@0.2.6");
+  });
+
+  test("returns a distinct no-op code when already clean", async () => {
+    const root = await scratch();
+    await writeFixture(root, "0.3.0");
+
+    const code = await toonBumpCommand(["0.3.0", "--root", root], {
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+    });
+
+    expect(code).toBe(10);
+  });
+});

@@ -19,8 +19,8 @@
 #      idempotently — both deny, neither conflicts.
 #
 # The lock layer stays silent (no block) when there is no lock file, and is
-# scope-exempt inside /afk worktrees under .red/tmp/work-*/, mirroring the
-# branch-lock hook so the autonomous loop is never strangled.
+# scope-exempt inside registered worktree lanes under .red/tmp/worktrees/,
+# mirroring the branch-lock hook so the autonomous loop is never strangled.
 #
 #   3. Primary branch guard — when `.red/config.yaml` sets
 #      `dev.lock.primary-branch: true`, the hook blocks branch-switching in the
@@ -60,8 +60,10 @@ if [ -z "$ROOT" ]; then
 fi
 [ -z "$ROOT" ] && exit 0
 
-# Scope: /afk worktrees under .red/tmp/work-*/ are exempt even when locked.
+# Scope: registered worktree lanes under .red/tmp/worktrees/ are exempt even when locked.
 case "$ROOT" in
+  */.red/tmp/worktrees/*/*) exit 0 ;;
+  */.red/tmp/worktrees/*/*/*) exit 0 ;;
   */.red/tmp/work-*) exit 0 ;;
   */.red/tmp/work-*/*) exit 0 ;;
 esac
@@ -166,7 +168,7 @@ The command '$COMMAND' would switch the agent's primary checkout branch.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,
 and non-branch-changing commands. To work on another branch, create/use a
-worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
+worktree under .red/tmp/worktrees/manual/<slug> or ask the user to change the primary branch.
 EOF
   exit 2
 fi

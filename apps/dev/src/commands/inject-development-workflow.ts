@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { configFile, redDir } from "@reddb-io/shared/red-paths.js";
 import { planDevelopmentWorkflowInjection } from "../core/development-workflow.js";
 
 export interface DevelopmentWorkflowInjectionResult {
@@ -38,14 +39,14 @@ function writeIfChanged(path: string, next: string): boolean {
 export function injectDevelopmentWorkflowRules(root: string): DevelopmentWorkflowInjectionResult {
   const agentsPath = join(root, "AGENTS.md");
   const claudePath = join(root, "CLAUDE.md");
-  const configPath = join(root, ".red", "config.yaml");
+  const configPath = configFile(root);
   const plan = planDevelopmentWorkflowInjection({
     agentsMarkdown: readIfExists(agentsPath),
     claudeMarkdown: readIfExists(claudePath),
     configYaml: readIfExists(configPath),
   });
 
-  mkdirSync(join(root, ".red"), { recursive: true });
+  mkdirSync(redDir(root), { recursive: true });
 
   return {
     agentsPath,

@@ -54,10 +54,10 @@ export function buildWatchdogIO(
   stdout: NodeJS.WritableStream = process.stdout,
 ): WatchdogIO {
   const paths = afkPaths(root);
-  const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
-  const stopFile = join(paths.tmpDir, "afk-supervisor.stop");
-  const logFile = join(paths.tmpDir, "afk-supervisor.log");
-  const restartLedgerFile = join(paths.tmpDir, "afk-supervisor.restarts.json");
+  const pidFile = paths.supervisorPidPath;
+  const stopFile = paths.supervisorStopPath;
+  const logFile = paths.supervisorLogPath;
+  const restartLedgerFile = paths.supervisorRestartsPath;
 
   // Carried from liveness() → relaunch() so a recovered fleet keeps its target
   // and runner. Falls back to a 2-slot, freshly-detected-runner fleet when the

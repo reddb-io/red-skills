@@ -5,6 +5,11 @@ on:
     paths:
       - apps/rsp/**
       - .github/workflows/red-rsp-benchmark-ci.yml
+  push:
+    # The red-toon-watch rolling PR (GITHUB_TOKEN-authored, never triggers
+    # pull_request workflows) bumps TQ_VERSION here — run on its branch push
+    # so the benchmark check lands on the head SHA.
+    branches: [automation/toon-bump]
 
 permissions:
   contents: read
@@ -21,6 +26,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
+
+      - name: Install pinned tq
+        env:
+          TQ_VERSION: v0.3.0
+        run: curl -fsSL "https://raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh" | sh
 
       - name: Install workspace dependencies
         env:

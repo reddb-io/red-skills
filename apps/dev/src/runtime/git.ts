@@ -486,7 +486,7 @@ export async function worktreePathForBranch(ctx: GitContext, branch: string): Pr
 /**
  * Resolve the worktree path registered under `dirPrefix` (the attempt dir),
  * parsed from `git worktree list --porcelain`. sandcastle creates the agent's
- * worktree at `{attemptDir}/.sandcastle/worktrees/{slug}`, but the state file's
+ * worktree at `{attemptDir}/.red-castle/worktrees/{slug}`, but the state file's
  * `current.worktree` is seeded to the legacy `{attemptDir}/worktree` path that
  * never exists — so a `git diff` there fails and the heartbeat / monitor read a
  * permanent `+0 -0` even with a dirty worktree (the sandcastle-blind hazard). An

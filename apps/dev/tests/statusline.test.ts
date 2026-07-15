@@ -533,6 +533,45 @@ describe("statusline — full assembly", () => {
     })).toBe("red-skills (main) · rsp=↓2.0k");
   });
 
+  it("renders rsp decisions contribution as contributed/seen when cached lane data exists", () => {
+    const input: StatuslineInput = {
+      project: { basename: "red-skills", branch: "main" },
+      rsp: {
+        state: "ready",
+        tokensSavedToday: 1200,
+        decisions: { contributed: 8, seen: 10 },
+      },
+    };
+    expect(renderStatusline(input)).toBe("red-skills (main) · rsp=↓1.2k int=8/10");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp=↓1.2k int=8/10");
+  });
+
+  it("renders zero rsp decisions contribution as a visible zero-over-seen signal", () => {
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: {
+        state: "ready",
+        tokensSavedToday: 1200,
+        decisions: { contributed: 0, seen: 12 },
+      },
+    })).toBe("red-skills (main) · rsp=↓1.2k int=0/12");
+  });
+
+  it("omits rsp decisions contribution when the cached decisions lane is missing", () => {
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: { state: "ready", tokensSavedToday: 1200 },
+    })).toBe("red-skills (main) · rsp=↓1.2k");
+    expect(renderStatusline({
+      project: { basename: "red-skills", branch: "main" },
+      rsp: {
+        state: "ready",
+        tokensSavedToday: 1200,
+        decisions: { contributed: 0, seen: 0 },
+      },
+    })).toBe("red-skills (main) · rsp=↓1.2k");
+  });
+
   it("renders rsp warming and error states without ambiguous on/off glyphs", () => {
     expect(renderStatusline({
       project: { basename: "red-skills", branch: "main" },

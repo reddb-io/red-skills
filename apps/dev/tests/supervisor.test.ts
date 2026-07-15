@@ -24,6 +24,7 @@ import {
   validateSupervisorProgressThreshold,
   classifySupervisor,
   evaluateDrainBudget,
+  evaluateValidationAdmission,
   guardedTick,
   type IterDirInfo,
   type ReconcileCandidate,
@@ -510,6 +511,38 @@ describe("evaluateDrainBudget", () => {
     expect(evaluateDrainBudget(9.99, 10)?.tier).toBe("CRITICAL");
     expect(evaluateDrainBudget(10, 10)?.tier).toBe("HARD_STOP");
     expect(evaluateDrainBudget(12, 10)?.tier).toBe("HARD_STOP");
+  });
+});
+
+describe("evaluateValidationAdmission (#1758)", () => {
+  it("serializes known-heavy validation and checks available memory before admission", () => {
+    expect(evaluateValidationAdmission({
+      knownHeavy: false,
+      activeHeavyValidations: 5,
+      availableMemoryMb: 0,
+      minAvailableMemoryMb: 4096,
+    })).toEqual({ admit: true, reason: "not-heavy" });
+
+    expect(evaluateValidationAdmission({
+      knownHeavy: true,
+      activeHeavyValidations: 1,
+      availableMemoryMb: 8192,
+      minAvailableMemoryMb: 4096,
+    })).toEqual({ admit: false, reason: "serialize-heavy-validation" });
+
+    expect(evaluateValidationAdmission({
+      knownHeavy: true,
+      activeHeavyValidations: 0,
+      availableMemoryMb: 2048,
+      minAvailableMemoryMb: 4096,
+    })).toEqual({ admit: false, reason: "insufficient-memory" });
+
+    expect(evaluateValidationAdmission({
+      knownHeavy: true,
+      activeHeavyValidations: 0,
+      availableMemoryMb: 8192,
+      minAvailableMemoryMb: 4096,
+    })).toEqual({ admit: true, reason: "admit" });
   });
 });
 
@@ -1556,6 +1589,7 @@ describe("envelope builders", () => {
     expect(body).toContain("worker `wTEST`");
     expect(body).toContain('data-section="notes"');
     expect(body).toContain('data-section="log"');
+    expect(body).toContain("```toon");
     expect(body).toContain("stalled tool call");
   });
 });
