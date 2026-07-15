@@ -845,7 +845,7 @@ describe("rsp cli", () => {
       const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
       expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
       await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
 
@@ -993,8 +993,8 @@ describe("rsp cli", () => {
     expect(runGit(["-C", root, "add", ".gitignore"]).status).toBe(0);
     expect(runGit(["-C", root, "commit", "-m", "baseline"]).status).toBe(0);
     const cacheDir = await seedWarmRedCache();
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
-    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
+    await mkdir(dirname(telemetrySpoolPath(root)), { recursive: true });
     const huge = "x".repeat(512 * 1024);
     await writeFile(telemetrySpoolPath(root), Array.from({ length: 8 }, (_, i) => JSON.stringify({
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -1359,7 +1359,7 @@ describe("rsp cli", () => {
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
     const env = { RED_SKILLS_CACHE_DIR: cacheDir };
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], env);
     await waitForResidentSocket(root);
     await waitForResidentReady(root);
@@ -1433,7 +1433,7 @@ describe("rsp cli", () => {
     await expect(stat(paths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
     expect(((await stat(dirname(paths.socketPath))).mode & 0o777)).toBe(0o700);
     await expect(stat(join(root, ".red", "tmp", "rsp.sock"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle uses the primary resident and store from linked worktrees", async () => {
@@ -1474,7 +1474,7 @@ describe("rsp cli", () => {
     expect(fromWorktree.status, `${fromWorktree.stdout.toString("utf8")}${fromWorktree.stderr.toString("utf8")}`).toBe(0);
     const handle = extractHandle(fromWorktree.stdout);
     await expect(stat(primaryPaths.socketPath)).resolves.toMatchObject({ size: expect.any(Number) });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
     await waitForSummaryTokens(root, beforeWorktree);
 
     const concurrent = await Promise.all([
@@ -1493,7 +1493,7 @@ describe("rsp cli", () => {
     expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
     expect(shown.stdout.toString("utf8")).toContain("commit ");
 
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     await waitForTelemetryInvocations(storeUri, "git log", 2);
     const invocations = await waitForTelemetryInvocations(storeUri, "git status", 3);
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d"], env);
@@ -1737,7 +1737,7 @@ describe("rsp cli", () => {
     expect(shown.stderr).toEqual(Buffer.alloc(0));
 
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await rm(join(root, ".red", "tmp", "red-skills.rdb"));
+    await rm(join(root, ".red", "state", "red-skills.rdb"));
     const cold = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
 
     expect(cold.status).toBe(raw.status);
@@ -1855,7 +1855,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const resident = runBundleFromCwdAsync(root, ["server", "--idle-ms", "1000"], { RED_SKILLS_CACHE_DIR: cacheDir });
     await waitForResidentSocket(root);
     await waitForResidentReady(root);
@@ -1946,7 +1946,7 @@ describe("rsp cli", () => {
     const cacheDir = await seedWarmRedCache();
     const setup = runBundleFromCwd(root, ["setup"], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const db = await connect(storeUri);
     try {
       await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("big", {
@@ -2015,7 +2015,7 @@ describe("rsp cli", () => {
     expect(setup.status, `${setup.stdout.toString("utf8")}${setup.stderr.toString("utf8")}`).toBe(0);
 
     const now = new Date().toISOString();
-    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    await mkdir(dirname(telemetrySpoolPath(root)), { recursive: true });
     await writeFile(telemetrySpoolPath(root), [
       JSON.stringify({
         collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -2073,7 +2073,7 @@ describe("rsp cli", () => {
     expect(status, `${Buffer.concat(stdout).toString("utf8")}${Buffer.concat(stderr).toString("utf8")}`).toBe(0);
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
 
-    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
     const invocations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_INVOCATIONS_COLLECTION);
     expect(invocations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "leading", command: "git status" }),
@@ -2205,7 +2205,7 @@ describe("rsp cli", () => {
     expect(res.status).toBe(1);
     expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a successful wrapper when the repo store is absent and the cold summarizer cannot handle it", async () => {
@@ -2220,7 +2220,7 @@ describe("rsp cli", () => {
     expect(res.stdout).toEqual(direct.stdout);
     expect(res.stderr.toString("utf8")).toBe(`rsp: wrapper failed, passing through\n${direct.stderr.toString("utf8")}`);
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("passes through a failing wrapper with the underlying exit code and raw stderr when the store is absent", async () => {
@@ -2269,7 +2269,7 @@ describe("rsp cli", () => {
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
     await expect(readFile(join(root, ".red", "red.rdb"))).resolves.toEqual(redBytes);
-    await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
   it("built bundle redirects a configured legacy RedDB store to JSON without mutating it", async () => {
