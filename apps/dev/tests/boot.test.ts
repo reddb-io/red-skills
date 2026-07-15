@@ -342,7 +342,7 @@ describe("runBoot Docs Sweep", () => {
             base: "main",
             files: [
               {
-                path: ".red/adr/0097-docs-sweep.md",
+                path: ".red/adr/0099-docs-sweep.md",
                 state: "untracked",
                 group: "adr",
                 ignored: true,

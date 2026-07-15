@@ -36,7 +36,7 @@ describe("Docs Sweep planner", () => {
   });
 
   it("plans land for untracked ADR docs", () => {
-    const f = file({ path: ".red/adr/0097-docs-sweep.md", state: "untracked" });
+    const f = file({ path: ".red/adr/0099-docs-sweep.md", state: "untracked" });
     expect(planDocsSweep({ base: "main", files: [f] }).action).toBe("land");
   });
 
@@ -67,7 +67,7 @@ describe("Docs Sweep planner", () => {
 
   it("halts ignored docs in zero-precedent path classes", () => {
     const stranded = file({
-      path: ".red/adr/0097-docs-sweep.md",
+      path: ".red/adr/0099-docs-sweep.md",
       state: "untracked",
       ignored: true,
       trackedPrecedent: false,
