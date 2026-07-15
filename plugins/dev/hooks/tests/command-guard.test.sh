@@ -304,6 +304,54 @@ YAML
 result="$(run_hook "$repo" "$(payload "$repo" "git clean -fd .")")"
 expect_eq "legacy dev fallback scalar: block" "0" "$(sed -n '1p' <<<"$result")"
 
+cat >"$repo/.red/config.yaml" <<'YAML'
+plugins:
+  dev:
+    enabled: true
+YAML
+
+result="$(run_hook "$repo" "$(payload "$repo" "echo foo > .red/tmp/out.log")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "tmp-root guard: blocks redirection to tmp root" "0" "$rc"
+expect_contains "tmp-root guard: names logs lane" ".red/tmp/logs/" "$stderr"
+expect_contains "tmp-root guard: names scratch lane" ".red/tmp/scratch/" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "echo foo >> .red/tmp/out.log")")"
+expect_eq "tmp-root guard: blocks append redirection to tmp root" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "touch .red/tmp/marker")")"
+expect_eq "tmp-root guard: blocks touch at tmp root" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "tee .red/tmp/output.txt")")"
+expect_eq "tmp-root guard: blocks tee to tmp root" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "cp foo.txt .red/tmp/foo.txt")")"
+expect_eq "tmp-root guard: blocks cp to tmp root" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "mv foo.txt .red/tmp/foo.txt")")"
+expect_eq "tmp-root guard: blocks mv to tmp root" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "echo foo > .red/tmp/logs/2026-07-15/out.log")")"
+expect_eq "tmp-root guard: allows write inside logs lane" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "touch .red/tmp/scratch/marker")")"
+expect_eq "tmp-root guard: allows touch inside scratch lane" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "echo foo > .red/tmp/workers/wABC/42-a1/out.log")")"
+expect_eq "tmp-root guard: allows write inside workers lane" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "tee -a .red/tmp/scratch/trace.log")")"
+expect_eq "tmp-root guard: allows tee inside scratch lane" "0" "$(sed -n '1p' <<<"$result")"
+
+cat >"$repo/.red/config.yaml" <<'YAML'
+plugins:
+  dev:
+    enabled: false
+YAML
+result="$(run_hook "$repo" "$(payload "$repo" "echo foo > .red/tmp/out.log")")"
+expect_eq "tmp-root guard: pass-through when plugin disabled" "0" "$(sed -n '1p' <<<"$result")"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
