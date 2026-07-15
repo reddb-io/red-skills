@@ -114,15 +114,15 @@ describe("shared TOON migration registry", () => {
         expect.objectContaining({
           id: "dev.rsp-resident-registry",
           plugin: "dev",
-          legacyPath: ".red/tmp/rsp-resident.pid.json",
-          toonPath: ".red/tmp/rsp-resident.pid.json",
+          legacyPath: ".red/state/rsp/rsp-resident.pid.json",
+          toonPath: ".red/state/rsp/rsp-resident.pid.json",
           kind: "toon",
         }),
         expect.objectContaining({
           id: "dev.rsp-status-summary",
           plugin: "dev",
-          legacyPath: ".red/tmp/rsp-status-summary.json",
-          toonPath: ".red/tmp/rsp-status-summary.json",
+          legacyPath: ".red/state/rsp/rsp-status-summary.json",
+          toonPath: ".red/state/rsp/rsp-status-summary.json",
           kind: "toon",
         }),
         expect.objectContaining({
@@ -146,7 +146,7 @@ describe("shared TOON migration registry", () => {
     const root = await scratch();
     await write(root, ".red/memory/config.json", JSON.stringify({ mode: "graph" }));
     await write(root, ".red/tmp/afk-supervisor.pid", `${process.pid}\n`);
-    await write(root, ".red/tmp/rsp-resident.pid.json", JSON.stringify({ pid: process.pid }));
+    await write(root, ".red/state/rsp/rsp-resident.pid.json", JSON.stringify({ pid: process.pid }));
 
     const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "memory" });
 
@@ -359,10 +359,10 @@ describe("shared TOON migration registry", () => {
     );
     await write(
       root,
-      ".red/tmp/rsp-resident.pid.json",
+      ".red/state/rsp/rsp-resident.pid.json",
       JSON.stringify({ version: 1, pid: 0, socket_path: "sock", store_uri: "file://store", resident_version: "old", started_at: "t" }),
     );
-    await write(root, ".red/tmp/rsp-status-summary.json", JSON.stringify({ version: 1, tokens_saved_today: 12, updated_at: "t" }));
+    await write(root, ".red/state/rsp/rsp-status-summary.json", JSON.stringify({ version: 1, tokens_saved_today: 12, updated_at: "t" }));
     await write(
       root,
       ".red/tmp/waits/wait-a.json",
@@ -385,8 +385,8 @@ describe("shared TOON migration registry", () => {
     const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.json"), "utf8");
     const countRaw = await readFile(join(root, ".red/tmp/statusline-cache.json"), "utf8");
     const repoRaw = await readFile(join(root, ".red/tmp/statusline-repo-cache.json"), "utf8");
-    const residentRaw = await readFile(join(root, ".red/tmp/rsp-resident.pid.json"), "utf8");
-    const summaryRaw = await readFile(join(root, ".red/tmp/rsp-status-summary.json"), "utf8");
+    const residentRaw = await readFile(join(root, ".red/state/rsp/rsp-resident.pid.json"), "utf8");
+    const summaryRaw = await readFile(join(root, ".red/state/rsp/rsp-status-summary.json"), "utf8");
     const waitRaw = await readFile(join(root, ".red/tmp/waits/wait-a.json"), "utf8");
     expect(stateRaw.trimStart().startsWith("{")).toBe(false);
     expect(countRaw.trimStart().startsWith("{")).toBe(false);
@@ -464,12 +464,12 @@ describe("encodeSnapshotToon keyed-map collapse", () => {
     const root = await scratch();
     // A status-summary-shaped snapshot that carries a uniform object map field.
     const payload = { version: 1, updated_at: "t", ...uniformMap };
-    await write(root, ".red/tmp/rsp-status-summary.json", JSON.stringify(payload));
+    await write(root, ".red/state/rsp/rsp-status-summary.json", JSON.stringify(payload));
 
     const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
     expect(report.converted).toContain("dev.rsp-status-summary");
 
-    const written = await readFile(join(root, ".red/tmp/rsp-status-summary.json"), "utf8");
+    const written = await readFile(join(root, ".red/state/rsp/rsp-status-summary.json"), "utf8");
     expect(written).toContain("storage_classes{records,bytes,raw_bytes}:");
 
     const read = await readRegisteredToonSurface(root, "dev.rsp-status-summary");
