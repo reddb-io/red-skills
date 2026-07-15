@@ -45,8 +45,19 @@ export const MEMORY_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = 
   },
 ];
 
+export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
+  {
+    id: "dev.afk-history",
+    plugin: "dev",
+    legacyPath: ".red/state/afk-history.jsonl",
+    toonPath: ".red/state/afk-history.toonl",
+    kind: "toonl",
+  },
+];
+
 export const REGISTERED_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
   ...MEMORY_TOON_MIGRATION_SURFACES,
+  ...DEV_TOON_MIGRATION_SURFACES,
 ];
 
 export function registeredToonSurfacesForPlugin(
@@ -97,7 +108,7 @@ export async function convertRegisteredToonSurfaces(
 
     const value = await readLegacyFile(legacy, surface.kind);
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, renderSurface(value, surface.kind), "utf8");
+    await writeFile(target, renderSurface(value, surface), "utf8");
     converted.push(surface.id);
   }
 
@@ -166,21 +177,33 @@ async function readLegacyFile(path: string, kind: RegisteredToonSurfaceKind): Pr
 
 async function readConvertedFile(path: string, kind: RegisteredToonSurfaceKind): Promise<unknown> {
   const body = await readFile(path, "utf8");
-  if (kind === "toonl") {
-    return body
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => decode(line));
-  }
   return decode(body);
 }
 
-function renderSurface(value: unknown, kind: RegisteredToonSurfaceKind): string {
-  if (kind === "toonl") {
-    const rows = Array.isArray(value) ? value : [value];
-    return `${rows.map((row) => encode(row as JsonValue)).join("\n")}\n`;
+function renderSurface(value: unknown, surface: RegisteredToonSurface): string {
+  if (surface.kind === "toonl") {
+    const rows = normalizeToonlRows(surface, Array.isArray(value) ? value : [value]);
+    return encode(rows as JsonValue);
   }
   return encode(value as JsonValue);
+}
+
+function normalizeToonlRows(surface: RegisteredToonSurface, rows: unknown[]): unknown[] {
+  if (surface.id !== "dev.afk-history") return rows;
+  return rows.map((row) => {
+    const rec = row && typeof row === "object" ? row as Record<string, unknown> : {};
+    return {
+      ts: typeof rec.ts === "string" ? rec.ts : "",
+      epoch: Number.isFinite(Number(rec.epoch)) ? Number(rec.epoch) : 0,
+      worker: typeof rec.worker === "string" ? rec.worker : "",
+      issue: Number.isFinite(Number(rec.issue)) ? Number(rec.issue) : 0,
+      event: typeof rec.event === "string" ? rec.event : "",
+      duration_s: Number.isFinite(Number(rec.duration_s)) ? Number(rec.duration_s) : 0,
+      runner: typeof rec.runner === "string" ? rec.runner : "",
+      merge_sha: typeof rec.merge_sha === "string" && rec.merge_sha.length > 0 ? rec.merge_sha : null,
+      reason: typeof rec.reason === "string" && rec.reason.length > 0 ? rec.reason : null,
+    };
+  });
 }
 
 async function readPidFile(path: string): Promise<number | null> {
