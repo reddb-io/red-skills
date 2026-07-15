@@ -7,7 +7,7 @@ import {
   renderActivityReviewReportToon,
   type ActivityReviewIssue,
 } from "../src/core/activity-review.js";
-import { parseGitLogStats } from "../src/commands/activity-review.js";
+import { collectTokensFromObject, parseGitLogStats } from "../src/commands/activity-review.js";
 import type { HistoryRecord } from "../src/core/history.js";
 
 const issue = (over: Partial<ActivityReviewIssue>): ActivityReviewIssue => ({
@@ -185,5 +185,21 @@ describe("activity review", () => {
       "commit:bbb",
       " 1 file changed, 3 deletions(-)",
     ].join("\n"))).toEqual({ commits: 2, added: 10, removed: 4 });
+  });
+
+  it("collects tokens from old raw JSON strings and new structured raw payloads", () => {
+    const oldRaw = {
+      ts: "2026-06-06T12:00:00.000Z",
+      type: "raw",
+      msg: "{\"type\":\"usage\",\"inputTokens\":3,\"outputTokens\":5}",
+    };
+    const newRaw = {
+      ts: "2026-06-06T12:00:01.000Z",
+      type: "raw",
+      msg: { iteration: 1, line: "{\"type\":\"usage\",\"inputTokens\":7,\"outputTokens\":11}" },
+    };
+
+    expect(collectTokensFromObject(oldRaw)).toEqual({ input: 3, output: 5, total: 0, hits: 2 });
+    expect(collectTokensFromObject(newRaw)).toEqual({ input: 7, output: 11, total: 0, hits: 2 });
   });
 });
