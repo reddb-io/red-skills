@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { decode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 
 type WaitKind = "cmd" | "pr" | "run" | "release";
 type WaitStatus = "running" | "success" | "failure" | "timeout" | "indeterminate";
@@ -64,7 +65,7 @@ export async function runWait(argv: readonly string[], cwd = process.cwd()): Pro
     return 0;
   }
   if (parsed.kind === "ls") {
-    process.stdout.write(`${encode({ waits: await listWaits(cwd) })}\n`);
+    process.stdout.write(`${encodeSnapshotToon({ waits: await listWaits(cwd) })}\n`);
     return 0;
   }
   if (!isWaitKind(parsed.kind)) {
@@ -89,7 +90,7 @@ export async function runWait(argv: readonly string[], cwd = process.cwd()): Pro
     await mkdir(await waitRegistryDir(cwd), { recursive: true });
     await writeRegistryEntry(registryPath, entry);
     verdict = await dispatchWait({ ...parsed, kind: waitKind }, cwd, registryPath, entry);
-    process.stdout.write(`${encode(renderVerdict(waitKind, entry, verdict))}\n`);
+    process.stdout.write(`${encodeSnapshotToon(renderVerdict(waitKind, entry, verdict))}\n`);
     await signalCompletion(parsed.options);
     return verdict.exitCode;
   } finally {
@@ -382,7 +383,7 @@ async function writeStatus(path: string, entry: WaitRegistryEntry, status: WaitS
 }
 
 async function writeRegistryEntry(path: string, entry: WaitRegistryEntry): Promise<void> {
-  await writeFile(path, `${encode(entry as unknown as JsonObject)}\n`, "utf8");
+  await writeFile(path, `${encodeSnapshotToon(entry as unknown as JsonObject)}\n`, "utf8");
 }
 
 async function signalCompletion(options: WaitOptions): Promise<void> {

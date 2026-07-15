@@ -3,6 +3,20 @@ import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
+/**
+ * Encodes an rsp snapshot surface as TOON with keyed-map collapse enabled
+ * (toon 0.3 line — the lossless tabular form for uniform object maps). Collapse
+ * is opportunistic: the encoder only rewrites a keyed map whose values are two
+ * or more uniform objects, so flat objects and array-wrapped surfaces come out
+ * byte-identical to `encode(value)`. Every reader is `decode`, which parses the
+ * collapsed and non-collapsed forms transparently, so enabling the flag never
+ * breaks a consumer. Use this at every rsp snapshot TOON emit point so a
+ * qualifying shape wins the extra tokens the moment it appears (Spec #1801).
+ */
+export function encodeSnapshotToon(value: JsonValue): string {
+  return encode(value, { keyedMapCollapse: true });
+}
+
 export type RegisteredToonSurfaceKind = "toon" | "toonl";
 export type RegisteredToonSurfacePlugin = "memory" | "brain" | "dev";
 
@@ -389,7 +403,7 @@ function renderSurface(value: unknown, surface: RegisteredToonSurface): string {
     const rows = normalizeToonlRows(surface, Array.isArray(value) ? value : [value]);
     return encode(rows as JsonValue);
   }
-  return encode(value as JsonValue);
+  return encodeSnapshotToon(value as JsonValue);
 }
 
 function normalizeToonlRows(surface: RegisteredToonSurface, rows: unknown[]): unknown[] {

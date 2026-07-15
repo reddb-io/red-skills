@@ -2,11 +2,12 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { decode, encode } from "@reddb-io/toon";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import {
   DEV_TOON_MIGRATION_SURFACES,
   MEMORY_TOON_MIGRATION_SURFACES,
   convertRegisteredToonSurfaces,
+  encodeSnapshotToon,
   readRegisteredToonSurface,
   registeredToonSurfacesForPlugin,
 } from "./toon-migration.js";
@@ -410,5 +411,68 @@ describe("shared TOON migration registry", () => {
         "dev.rsp-wait-registry",
       ]),
     );
+  });
+});
+
+describe("encodeSnapshotToon keyed-map collapse", () => {
+  // A uniform object map: two-plus keys, every value the same primitive shape.
+  const uniformMap = {
+    storage_classes: {
+      derivable: { records: 3, bytes: 40, raw_bytes: 120 },
+      "re-executable": { records: 1, bytes: 10, raw_bytes: 55 },
+      ephemeral: { records: 2, bytes: 22, raw_bytes: 88 },
+    },
+  };
+
+  test("collapses a uniform object map and round-trips losslessly", () => {
+    const collapsed = encodeSnapshotToon(uniformMap);
+    const expanded = encode(uniformMap as JsonValue);
+    // The collapse rewrites the map into a brace-header tabular block, so the
+    // encoded text differs from default encoding and carries the header.
+    expect(collapsed).not.toBe(expanded);
+    expect(collapsed).toContain("storage_classes{records,bytes,raw_bytes}:");
+    expect(decode(collapsed)).toEqual(uniformMap);
+  });
+
+  test("readers decode both the collapsed and the non-collapsed form (fixtures cover both)", () => {
+    const collapsed = encodeSnapshotToon(uniformMap);
+    const nonCollapsed = encode(uniformMap as JsonValue);
+    // Same logical value, two on-disk encodings; the reader is format-blind.
+    expect(decode(collapsed)).toEqual(uniformMap);
+    expect(decode(nonCollapsed)).toEqual(uniformMap);
+    expect(decode(collapsed)).toEqual(decode(nonCollapsed));
+  });
+
+  test("leaves non-qualifying surfaces byte-identical to default encoding", () => {
+    // Flat object: no nested map to collapse.
+    const flat = { version: 1, tokens_saved_today: 12, updated_at: "t" };
+    // Array-wrapped surface: already tabular via §9.3, not a keyed map.
+    const arrayWrapped = {
+      waits: [
+        { id: "a", target: "cmd:test", status: "running" },
+        { id: "b", target: "pr:1", status: "running" },
+      ],
+    };
+    // Single-entry map: below the two-key collapse floor.
+    const singleEntry = { by_class: { derivable: { records: 1, bytes: 2 } } };
+    for (const surface of [flat, arrayWrapped, singleEntry]) {
+      expect(encodeSnapshotToon(surface as JsonValue)).toBe(encode(surface as JsonValue));
+    }
+  });
+
+  test("converts a registered rsp snapshot with a uniform map collapsed and re-readable", async () => {
+    const root = await scratch();
+    // A status-summary-shaped snapshot that carries a uniform object map field.
+    const payload = { version: 1, updated_at: "t", ...uniformMap };
+    await write(root, ".red/tmp/rsp-status-summary.json", JSON.stringify(payload));
+
+    const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    expect(report.converted).toContain("dev.rsp-status-summary");
+
+    const written = await readFile(join(root, ".red/tmp/rsp-status-summary.json"), "utf8");
+    expect(written).toContain("storage_classes{records,bytes,raw_bytes}:");
+
+    const read = await readRegisteredToonSurface(root, "dev.rsp-status-summary");
+    expect(read.value).toEqual(payload);
   });
 });

@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "@reddb-io/sdk";
-import { encode, type JsonObject } from "@reddb-io/toon";
+import { type JsonObject } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
@@ -153,7 +154,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     const status = args.command === "sweep"
       ? await sweepResidentRegistry(residentPaths)
       : await residentRegistryStatus(residentPaths);
-    process.stdout.write(`${encode(status as unknown as JsonObject)}\n`);
+    process.stdout.write(`${encodeSnapshotToon(status as unknown as JsonObject)}\n`);
     return 0;
   }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
@@ -1041,7 +1042,7 @@ function renderStats(
 }
 
 function renderGainsReportToon(report: RspTelemetryGainsReport): string {
-  return `${encode(report as unknown as JsonObject)}\n`;
+  return `${encodeSnapshotToon(report as unknown as JsonObject)}\n`;
 }
 
 function formatTokensSaved(savings: RspTelemetryStats["savings"]): string {
