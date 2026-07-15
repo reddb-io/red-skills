@@ -180,4 +180,23 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("do not patch the router blindly");
     expect(apply).toContain("apply the ask-red maintenance rule");
   });
+
+  it("audits .red lifecycle taxonomy violations read-only with ADR 0098 as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain(".red lifecycle taxonomy");
+    expect(skill).toContain("loose file directly under `.red/tmp/`");
+    expect(skill).toContain("directory directly under `.red/tmp/` that is not in the lane registry");
+    expect(skill).toContain("known durable-state filename still living under `.red/tmp/`");
+    expect(skill).toContain("top-level `.red/` directory not documented by ADR 0098");
+    expect(skill).toContain("apps/dev/src/core/red-taxonomy-doctor.ts");
+    expect(skill).toContain("auditRedTaxonomy");
+    expect(skill).toContain("never move, delete, or create files");
+    expect(skill).toContain("`.red` lifecycle taxonomy (check 19)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("`.red` lifecycle taxonomy (check 19)");
+    expect(apply).toContain("do not auto-move content");
+    expect(apply).toContain("Delegate to the owning writer");
+  });
 });
