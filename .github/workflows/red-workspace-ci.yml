@@ -15,7 +15,11 @@ name: red-workspace-ci
 on:
   pull_request:
   push:
-    branches: [main]
+    # automation/toon-bump: the red-toon-watch rolling PR is opened with
+    # GITHUB_TOKEN, whose events never trigger pull_request workflows — the
+    # push trigger attaches these check runs to the head SHA so the rolling
+    # PR still gets real CI adjudication.
+    branches: [main, automation/toon-bump]
 
 permissions:
   contents: read
