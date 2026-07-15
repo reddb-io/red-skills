@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { afkPaths, preferExistingPath } from "../runtime/wire.js";
+import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
 import { classifySupervisor, resolveSupervisorConfig } from "../core/supervisor.js";
@@ -94,12 +96,17 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; target: numbe
 }
 
 export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStopResult> {
-  const tmp = join(root, ".red", "tmp");
-  const pidFile = join(tmp, "afk-supervisor.pid");
-  const stopFile = join(tmp, "afk-supervisor.stop");
-  const supervisor = await reapStaleSupervisorState(tmp, isLivePid);
+  const paths = afkPaths(root);
+  const tmp = paths.tmpDir;
+  const stateAfk = dirname(paths.supervisorPidPath);
+  // Speak to the supervisor at whichever layout it wrote its pid — a legacy (tmp)
+  // supervisor watches the tmp stop file, a migrated one watches state/afk. Write
+  // the stop sentinel adjacent to the live pid so either generation sees it.
+  const pidFile = preferExistingPath(paths.supervisorPidPath, join(tmp, "afk-supervisor.pid"));
+  const stopFile = join(dirname(pidFile), "afk-supervisor.stop");
+  const supervisor = await reapStaleSupervisorState([stateAfk, tmp], isLivePid);
   if (supervisor.status === "stale") {
-    stdout.write(`no fleet running (stale supervisor files under .red/tmp — cleaned).\n`);
+    stdout.write(`no fleet running (stale supervisor files — cleaned).\n`);
     return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
   }
   const pid = supervisor.pid;
@@ -133,7 +140,7 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     return { status: "stopped", pid };
   }
   stdout.write(
-    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/tmp/afk-supervisor.log.\n`,
+    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/state/afk/afk-supervisor.log.\n`,
   );
   return { status: "timeout", pid };
 }
@@ -141,13 +148,19 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
 export async function launchFleet(args: readonly string[], root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetLaunchResult> {
   const parsed = parseFleetArgs(args);
   if (!Number.isInteger(parsed.target) || parsed.target < 0) throw new Error("fleet target must be a non-negative integer");
-  const tmp = join(root, ".red", "tmp");
+  const paths = afkPaths(root);
+  const tmp = paths.tmpDir;
+  const stateAfk = dirname(paths.supervisorPidPath);
   await mkdir(tmp, { recursive: true });
-  const pidFile = join(tmp, "afk-supervisor.pid");
-  const logFile = join(tmp, "afk-supervisor.log");
-  const supervisor = await reapStaleSupervisorState(tmp, isLivePid);
+  await mkdir(stateAfk, { recursive: true });
+  // One-time boot migration: relocate legacy `.red/tmp` durable artifacts to the
+  // state tier before any supervisor path is read/written (issue #1685).
+  await migrateLegacyDevPaths(root).catch(() => undefined);
+  const pidFile = paths.supervisorPidPath;
+  const logFile = paths.supervisorLogPath;
+  const supervisor = await reapStaleSupervisorState([stateAfk, tmp], isLivePid);
   if (supervisor.status === "stale") {
-    stdout.write(`cleaned stale supervisor files under .red/tmp before fleet launch.\n`);
+    stdout.write(`cleaned stale supervisor files before fleet launch.\n`);
   }
   const existing = supervisor.status === "live" ? supervisor.pid : null;
   if (existing) {

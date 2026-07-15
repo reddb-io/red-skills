@@ -8,7 +8,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type FleetHeartbeat,
   initSupervisorState,
@@ -289,7 +289,7 @@ export function buildSupervisorBootSweeps(
       stateDir: paths.stateDir,
       gitignorePath: paths.gitignorePath,
       workerDir: paths.tmpDir,
-      workerPidFile: join(paths.tmpDir, "afk-supervisor-boot.pid"),
+      workerPidFile: join(dirname(paths.supervisorPidPath), "afk-supervisor-boot.pid"),
       workerPid: process.pid,
     };
     const options = await collectBootOptions(ctx, facts, bootstrap, nowS);
@@ -420,7 +420,8 @@ function buildSupervisorDeps(
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
       },
-      parkedSlotWork: (slot, lastPid) => parkedSlotWorkFor(tmpDir, slot, lastPid),
+      parkedSlotWork: (slot, lastPid) =>
+        parkedSlotWorkFor(tmpDir, slot, lastPid, afkPaths(root).supervisorLogPath),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
@@ -587,17 +588,23 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const root = cwd;
   const paths = afkPaths(root);
   const tmp = paths.tmpDir;
-  const pidFile = join(tmp, "afk-supervisor.pid");
-  const stopFile = join(tmp, "afk-supervisor.stop");
-  const logFile = join(tmp, "afk-supervisor.log");
+  const stateAfk = dirname(paths.supervisorPidPath);
+  const pidFile = paths.supervisorPidPath;
+  const stopFile = paths.supervisorStopPath;
+  const logFile = paths.supervisorLogPath;
   const firehoseFile = paths.fleetFirehosePath;
   const stateFile = paths.fleetStatePath;
 
+  // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
+  // the state tier before the supervisor reads/writes them (issue #1685).
+  await import("../runtime/red-path-migration.js").then((m) => m.migrateLegacyDevPaths(root)).catch(() => undefined);
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
+  await import("../runtime/fs.js").then((m) => m.ensureDir(stateAfk));
   // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
   // attach from boot rather than waiting for the first worker to create it.
   await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
-  await reapStaleSupervisorState(tmp, isAlive);
+  // Reap dead supervisor artifacts across the state home and the legacy tmp home.
+  await reapStaleSupervisorState([stateAfk, tmp], isAlive);
   // single-supervisor lock
   if (existsSync(pidFile)) {
     try {

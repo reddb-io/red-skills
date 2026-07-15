@@ -5,9 +5,10 @@
 // here — callers resolve target/runner/passthrough and inject them.
 
 import { spawn } from "node:child_process";
-import { openSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { afkStateDir } from "@reddb-io/shared/red-paths.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,9 +61,10 @@ export interface SpawnSupervisorOptions {
  * inline spawn so launch + watchdog-relaunch stay byte-identical.
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
-  const tmp = join(opts.root, ".red", "tmp");
-  const pidFile = join(tmp, "afk-supervisor.pid");
-  const logFile = join(tmp, "afk-supervisor.log");
+  const stateAfk = afkStateDir(opts.root);
+  mkdirSync(stateAfk, { recursive: true });
+  const pidFile = join(stateAfk, "afk-supervisor.pid");
+  const logFile = join(stateAfk, "afk-supervisor.log");
 
   const childArgs = [...(opts.passthrough ?? [])];
   if (opts.request) childArgs.unshift("--request", opts.request);

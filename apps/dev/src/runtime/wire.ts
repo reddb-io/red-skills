@@ -14,6 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
+import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
@@ -73,27 +74,100 @@ export interface AfkPaths {
   stateDir: string;
   workersRoot: string;
   historyPath: string;
+  /** Supervisor heartbeat snapshot (state tier, ADR 0098). */
   fleetStatePath: string;
+  /** Supervisor firehose log (state tier). */
   fleetFirehosePath: string;
+  /** Monitor log-cursor cache (state tier). */
   monitorLogCursorPath: string;
+  /** Supervisor pid file (state tier). */
+  supervisorPidPath: string;
+  /** Supervisor stop sentinel (state tier). */
+  supervisorStopPath: string;
+  /** Supervisor launch log (state tier). */
+  supervisorLogPath: string;
+  /** Watchdog restart ledger (state tier). */
+  supervisorRestartsPath: string;
+  /** Runner circuit-breaker directory (state tier). */
+  runnerCircuitDir: string;
+  /** GitHub queue/human count cache (statusline state lane). */
+  statuslineCachePath: string;
+  /** Repo-global diffstat cache (statusline state lane). */
+  statuslineRepoCachePath: string;
+  /** Branch lock (state tier root). */
+  branchLockPath: string;
+  /** Global land lock (tmp tier — disposable coordination). */
+  landLockPath: string;
+  /** Claim-lock registry (tmp tier). */
+  claimsDir: string;
+  /** Failure-diagnostics lane (tmp tier). */
+  diagnosticsDir: string;
+  /** Merge-resolve scratch file (tmp scratch lane). */
+  mergeResolveScratchPath: string;
+  /** Disposable scratch worktree lanes (tmp/worktrees, ADR 0098). */
+  landingWorktreesDir: string;
+  rebaseWorktreesDir: string;
+  cascadeWorktreesDir: string;
+  feedbackWorktreesDir: string;
+  adoptWorktreesDir: string;
+  reconcileWorktreesDir: string;
   gitignorePath: string;
   configPath: string;
 }
 
 export function afkPaths(root: string): AfkPaths {
-  const tmpDir = join(root, ".red", "tmp");
-  const stateDir = join(root, ".red", "state");
+  const tmp = rp.tmpDir(root);
+  const state = rp.stateDir(root);
+  const afkState = rp.afkStateDir(root);
+  const statusline = rp.statuslineStateDir(root);
   return {
-    tmpDir,
-    stateDir,
-    workersRoot: join(tmpDir, "workers"),
-    historyPath: join(stateDir, "afk-history.toonl"),
-    fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
-    fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
-    monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
+    tmpDir: tmp,
+    stateDir: state,
+    workersRoot: rp.workersDir(root),
+    historyPath: join(state, "afk-history.toonl"),
+    fleetStatePath: join(afkState, "afk-supervisor.state.json"),
+    fleetFirehosePath: join(afkState, "afk-supervisor.log.jsonl"),
+    monitorLogCursorPath: join(afkState, "monitor-log-cursors.json"),
+    supervisorPidPath: join(afkState, "afk-supervisor.pid"),
+    supervisorStopPath: join(afkState, "afk-supervisor.stop"),
+    supervisorLogPath: join(afkState, "afk-supervisor.log"),
+    supervisorRestartsPath: join(afkState, "afk-supervisor.restarts.json"),
+    runnerCircuitDir: join(afkState, "runner-circuit"),
+    statuslineCachePath: join(statusline, "statusline-cache.json"),
+    statuslineRepoCachePath: join(statusline, "statusline-repo-cache.json"),
+    branchLockPath: rp.branchLockFile(root),
+    landLockPath: join(tmp, "afk-land.lock"),
+    claimsDir: rp.claimsDir(root),
+    diagnosticsDir: rp.diagnosticsDir(root),
+    mergeResolveScratchPath: join(rp.scratchDir(root), "merge-resolve.last"),
+    landingWorktreesDir: rp.landingWorktreesDir(root),
+    rebaseWorktreesDir: rp.rebaseWorktreesDir(root),
+    cascadeWorktreesDir: rp.cascadeWorktreesDir(root),
+    feedbackWorktreesDir: rp.feedbackWorktreesDir(root),
+    adoptWorktreesDir: rp.adoptWorktreesDir(root),
+    reconcileWorktreesDir: rp.reconcileWorktreesDir(root),
     gitignorePath: join(root, ".gitignore"),
-    configPath: join(root, ".red", "config.yaml"),
+    configPath: join(rp.redDir(root), "config.yaml"),
   };
+}
+
+/**
+ * Prefer the canonical (state-tier) path; fall back to the legacy `.red/tmp`
+ * location when only the legacy copy is present. This keeps a durable artifact
+ * READABLE across the one-release window before the boot migration
+ * (runtime/red-path-migration.ts) relocates it — the back-compat read the
+ * migration's "nothing deleted on ambiguity" rule pairs with (issue #1685).
+ */
+export function preferExistingPath(current: string, legacy: string): string {
+  if (existsSync(current)) return current;
+  if (existsSync(legacy)) return legacy;
+  return current;
+}
+
+/** Legacy `.red/tmp` companion of a relocated supervisor/statusline artifact,
+ * for {@link preferExistingPath} fallback reads. */
+function legacyTmpPath(root: string, name: string): string {
+  return join(rp.tmpDir(root), name);
 }
 
 // ---------- config-derived run settings ----------
@@ -757,12 +831,14 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   }
 
   const events = (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
-  const fleet = await readFleetState(paths.fleetStatePath);
+  const fleet = await readFleetState(
+    preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
+  );
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
   // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
   // and the cache age so the render can show a stale marker when the data is old.
-  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const cachePath = preferExistingPath(paths.statuslineCachePath, legacyTmpPath(root, "statusline-cache.json"));
   const cached = readStatuslineCache(cachePath);
   const nowS = Math.floor(Date.now() / 1000);
   const remoteExtra = cached !== null
@@ -849,7 +925,7 @@ export interface StatuslineRefreshSpawnOptions {
 }
 
 export function statuslineCountCachePath(root: string): string {
-  return join(afkPaths(root).tmpDir, "statusline-cache.json");
+  return afkPaths(root).statuslineCachePath;
 }
 
 function decodeCacheDocument(text: string): unknown {
@@ -1142,7 +1218,9 @@ export async function collectStatuslineAfk(
   // fleet is idle (workers == 0).
   const cachePath = statuslineCountCachePath(ctx.root);
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readStatuslineCache(cachePath);
+  const cached = readStatuslineCache(
+    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-cache.json")),
+  );
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
 
@@ -1218,10 +1296,14 @@ export async function collectStatuslineFleet(
   nowS: number = Math.floor(Date.now() / 1000),
 ): Promise<FleetInput | undefined> {
   const paths = afkPaths(ctx.root);
-  const pid = readSupervisorPid(join(paths.tmpDir, "afk-supervisor.pid"));
+  const pid = readSupervisorPid(
+    preferExistingPath(paths.supervisorPidPath, legacyTmpPath(ctx.root, "afk-supervisor.pid")),
+  );
   if (pid === null || !isLivePid(pid)) return undefined;
 
-  const state = await readFleetState(paths.fleetStatePath);
+  const state = await readFleetState(
+    preferExistingPath(paths.fleetStatePath, legacyTmpPath(ctx.root, "afk-supervisor.state.json")),
+  );
   if (!state) return undefined;
   if (nowS - state.epoch > maxAgeS) return undefined;
 
@@ -1362,9 +1444,11 @@ export async function collectStatuslineRepo(
   baseRef = "origin/main",
 ): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
-  const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
+  const cachePath = paths.statuslineRepoCachePath;
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readRepoStatsCache(cachePath);
+  const cached = readRepoStatsCache(
+    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-repo-cache.json")),
+  );
   const cacheMatchesBase = cached?.baseRef === baseRef;
   let openPrs = cached?.openPrs ?? 0;
   let todayPrs = cached?.todayPrs ?? 0;
@@ -1704,7 +1788,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
       // debris, not a mid-issue crash — the sweep removes it without touching
       // the winner's `running` label.
-      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).tmpDir, "claims", String(issue))),
+      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).claimsDir, String(issue))),
       // Orphan state pairs gh issue state/label with the attempt dir's
       // envelope.posted flag (read from the state file, not gh). Derived from
       // the batched map, preserving ghx.orphanState's exact label/state →

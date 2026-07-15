@@ -15,6 +15,7 @@
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import { loadConfig } from "../core/config.js";
 import {
   routeModelTier,
@@ -76,13 +77,13 @@ function payloadCwd(payload: PreToolUseInput): string | undefined {
 export function resolveConfigPath(start: string): string {
   let dir = start;
   for (let i = 0; i < 64; i++) {
-    const candidate = join(dir, ".red", "config.yaml");
+    const candidate = configFile(dir);
     if (existsSync(candidate)) return candidate;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return join(start, ".red", "config.yaml");
+  return configFile(start);
 }
 
 /**

@@ -17,6 +17,8 @@ import {
   cascadeWorktreesDir,
   claimsDir,
   classifyLegacyWorktreeName,
+  configFile,
+  hooksDir,
   diagnosticsDir,
   docsWorktreesDir,
   feedbackWorktreesDir,
@@ -26,6 +28,7 @@ import {
   manualWorktreesDir,
   memoryDir,
   rebaseWorktreesDir,
+  reconcileWorktreesDir,
   redDir,
   researchesDir,
   resolveRedRoot,
@@ -51,6 +54,8 @@ describe("tier directories", () => {
     expect(stateDir(ROOT)).toBe("/repo/.red/state");
     expect(tmpDir(ROOT)).toBe("/repo/.red/tmp");
     expect(researchesDir(ROOT)).toBe("/repo/.red/researches");
+    expect(configFile(ROOT)).toBe("/repo/.red/config.yaml");
+    expect(hooksDir(ROOT)).toBe("/repo/.red/hooks");
   });
 
   it("normalizes a trailing slash on the root", () => {
@@ -132,6 +137,7 @@ describe("tmp tier lanes", () => {
     expect(rebaseWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/rebase");
     expect(cascadeWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/cascade");
     expect(adoptWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/adopt");
+    expect(reconcileWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/reconcile");
     expect(docsWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/docs");
   });
 

@@ -27,7 +27,7 @@ describe("TOONL operational docs", () => {
 
     expect(joined).toContain("tq -p toonl -o json -r .msg");
     expect(joined).toContain(".red/state/afk-history.toonl");
-    expect(joined).toContain(".red/tmp/afk-supervisor.log.jsonl");
+    expect(joined).toContain(".red/state/afk/afk-supervisor.log.jsonl");
     expect(joined).toContain("there is no jq fallback");
     expect(joined).not.toMatch(/afk-history\.jsonl/);
     const laneReaderLines = joined

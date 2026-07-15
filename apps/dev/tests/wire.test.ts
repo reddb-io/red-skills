@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import { decode, encode } from "@reddb-io/toon";
 import {
@@ -16,6 +16,7 @@ import {
   withTimeout,
   collectStatuslineAfk,
   collectStatuslineRepo,
+  statuslineCountCachePath,
   STATUSLINE_CACHE_TTL_S,
   applyStatuslineCountCacheLabelDelta,
   editLabelsWithStatuslineCache,
@@ -180,8 +181,16 @@ describe("afkPaths", () => {
     expect(p.stateDir).toBe("/repo/.red/state");
     expect(p.workersRoot).toBe("/repo/.red/tmp/workers");
     expect(p.historyPath).toBe("/repo/.red/state/afk-history.toonl");
-    expect(p.fleetStatePath).toBe("/repo/.red/tmp/afk-supervisor.state.json");
-    expect(p.fleetFirehosePath).toBe("/repo/.red/tmp/afk-supervisor.log.jsonl");
+    // Durable supervisor artifacts relocated to the state tier (issue #1685).
+    expect(p.fleetStatePath).toBe("/repo/.red/state/afk/afk-supervisor.state.json");
+    expect(p.fleetFirehosePath).toBe("/repo/.red/state/afk/afk-supervisor.log.jsonl");
+    expect(p.monitorLogCursorPath).toBe("/repo/.red/state/afk/monitor-log-cursors.json");
+    expect(p.supervisorPidPath).toBe("/repo/.red/state/afk/afk-supervisor.pid");
+    expect(p.runnerCircuitDir).toBe("/repo/.red/state/afk/runner-circuit");
+    expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.json");
+    // Scratch worktrees under the tmp worktrees lane.
+    expect(p.landingWorktreesDir).toBe("/repo/.red/tmp/worktrees/landing");
+    expect(p.reconcileWorktreesDir).toBe("/repo/.red/tmp/worktrees/reconcile");
     expect(p.configPath).toBe("/repo/.red/config.yaml");
   });
 });
@@ -467,7 +476,7 @@ describe("collectMonitorInputs", () => {
     const root = scratch();
     try {
       const path = afkPaths(root).fleetStatePath;
-      mkdirSync(join(root, ".red", "tmp"), { recursive: true });
+      mkdirSync(dirname(path), { recursive: true });
       writeFileSync(
         path,
         JSON.stringify({
@@ -635,7 +644,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      // Cache now lives in the statusline state lane (issue #1685).
+      const cachePath = statuslineCountCachePath(root);
 
       const before = nowS();
       await withFakeGh(() => collectStatuslineAfk({ root, repo: "", remote: "origin" }));
@@ -965,7 +975,8 @@ describe("collectStatuslineRepo — cache discipline", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ openPrs: 3, openIssues: 5, ts: staleTs }), "utf8");
@@ -1060,7 +1071,8 @@ describe("collectStatuslineRepo — cache discipline", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(
