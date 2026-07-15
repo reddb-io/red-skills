@@ -249,6 +249,7 @@ export function formatBootSweepResult(result: BootResult): string {
   const oc = result.orphanCleanup;
   const ac = result.attemptCap;
   const bc = result.branchCleanup;
+  const ds = result.docsSweep?.plan;
   const us = result.unblockSweep;
   const st = result.straggler;
   return (
@@ -256,6 +257,7 @@ export function formatBootSweepResult(result: BootResult): string {
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
     ` | branches snapshot=${bc?.snapshotReaped.length ?? 0} remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
+    ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +
     ` | stragglers unlabeled=${st?.counts.unlabeled ?? 0} triage=${st?.counts.needsTriage ?? 0} info=${st?.counts.needsInfo ?? 0}`
   );

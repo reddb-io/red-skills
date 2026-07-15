@@ -31,6 +31,7 @@ import { resolveRspConfig } from "../../../rsp/src/config.js";
 import { resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
   collectStatuslineAfk,
+  collectStatuslineDocs,
   collectStatuslineFleet,
   collectStatuslineRepo,
   collectStatuslineWorkers,
@@ -333,8 +334,9 @@ export async function statuslineCommand(
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
-  const [repo, afk, fleet, workers, rsp] = await Promise.all([
+  const [repo, docs, afk, fleet, workers, rsp] = await Promise.all([
     collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
+    collectStatuslineDocs(repoCtx, base),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
     collectStatuslineFleet(repoCtx),
     collectStatuslineWorkers(repoCtx),
@@ -348,7 +350,7 @@ export async function statuslineCommand(
   const color = !process.env.NO_COLOR;
   const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
   const nowS = Math.floor(Date.now() / 1000);
-  const line = renderStatuslineThemed({ project, claude, repo, fleet, afk, rsp }, color, {
+  const line = renderStatuslineThemed({ project, claude, repo, docs, fleet, afk, rsp }, color, {
     columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
     workers,
     now: nowS,

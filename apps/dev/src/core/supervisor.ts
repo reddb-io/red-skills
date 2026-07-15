@@ -27,6 +27,7 @@ import { buildEnvelope } from "./envelope.js";
 import { renderLogTailToon } from "./envelope-emit.js";
 import { dispose } from "./disposition.js";
 import { type RecoveryEnv } from "./recovery.js";
+import { BootHaltError } from "./boot.js";
 import {
   LABEL_READY,
   LABEL_RUNNING,
@@ -2111,12 +2112,16 @@ export async function runSupervisor(
   // so every worker the fleet spawns boots bootstrap+claim only and never races
   // peers over `.red/tmp` state. This is the ONLY call site — a respawn after a
   // worker exit happens inside the tick loop below and never re-enters here, so
-  // the sweeps run exactly once per supervisor lifetime. Best-effort: a boot
-  // failure is logged, not fatal (each worker still runs its own precheck).
+  // the sweeps run exactly once per supervisor lifetime. Best-effort boot
+  // failures are logged, but a typed halt intentionally stops before spawn.
   if (deps.bootSweeps) {
     try {
       await deps.bootSweeps();
     } catch (err) {
+      if (err instanceof BootHaltError) {
+        deps.log?.(`boot sweeps halted: ${err.message}`);
+        return;
+      }
       deps.log?.(
         `boot sweeps failed: ${err instanceof Error ? err.message : String(err)} — spawning workers anyway`,
       );

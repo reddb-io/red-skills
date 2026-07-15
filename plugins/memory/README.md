@@ -479,7 +479,7 @@ and exits silently — a dormant hook never touches the engine or the turn.
 | **SessionStart** | session start / resume / `/clear` | recalls memory relevant to the focus (goal/branch/cwd) and injects it as context |
 | **PostToolUse** | a file edit (`Edit`/`Write`, or Codex `apply_patch`) | incrementally re-indexes the changed file into the graph |
 | **Stop** | end of an assistant turn | extracts structured Problem/Fix/Validation/Decision facts, or decision / why-note fallback memories, and stores them |
-| **PreCompact** | before a context compaction / `/clear` | flushes ephemeral session knowledge to memory before compaction |
+| **PreCompact** | before a context compaction / `/clear` where the host exposes that event | flushes ephemeral session knowledge to memory before compaction; unavailable on Codex |
 
 Extraction (Stop / PreCompact) runs through a **bounded-LLM extractor** in
 production; with no LLM key configured it falls back to a deterministic
@@ -607,9 +607,21 @@ CLI entrypoint dispatches both runners, mapping each one's payload and output
 shape internally.
 
 **Known difference: Codex has no `PreCompact` equivalent** — no compaction /
-context-trim event exists, so the anti-goldfish flush-before-context-death
-safety net is absent there. On Codex the flush leans on `Stop` (extract every
-substantive turn) plus `SessionStart`-on-`/clear` recall instead.
+context-trim event exists in the Codex hook vocabulary, so
+`hooks/codex.hooks.json` intentionally does not contain `PreCompact`. No
+Memory config flag can make Codex fire that hook today.
+
+What is lost on Codex: Memory cannot run a last-chance extraction immediately
+before `/clear` or host-driven context trimming. Facts that exist only in the
+soon-to-be-discarded context, and have not already been captured by a prior
+`Stop` hook or explicit `memory store` / `memory extract`, can be lost.
+
+What compensates: Codex still wires `Stop`, so every substantive completed turn
+can extract memories before the next turn starts, and it wires `SessionStart`,
+so a new session or `/clear` can recall stored context after the reset. Hook
+coverage reports this as an effective fallback only when both `Stop` and
+`SessionStart` are enabled; otherwise it reports an actionable Codex
+`PreCompact` fallback gap.
 
 ### Session lifecycle — `.red/memory/sessions/current`
 

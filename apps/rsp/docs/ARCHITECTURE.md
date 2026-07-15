@@ -126,23 +126,42 @@ Supported resident operations include:
 
 The default store URI points at the repo-local shared RedDB file. The elision
 collection is `rsp_elisions_v1`, stored as a RedDB KV collection. The resident
-keeps an `index:v1` document beside the records so pruning can enforce both
-time-to-live and byte-budget limits.
+keeps an `index:v1` accounting lane beside the records so pruning can enforce
+both time-to-live and the physical cap.
 
 Minting an elision:
 
 1. Hashes the original bytes and metadata into a stable `el:<id>` handle.
-2. Stores the original bytes as base64 with command metadata, loss level,
-   creation time, expiry time, and byte count.
-3. Deletes any old tombstone for the same handle.
-4. Updates the index.
-5. Prunes expired records and oldest records over the byte budget.
-6. Verifies that the RedDB record and index entry were persisted.
+2. Classifies the handle into one of three storage classes:
+   - `derivable` for output that can be reconstructed from stored git blob
+     object ids, such as file reads and git diff/log/show/blame output.
+   - `re-executable` for deterministic repository commands, currently `git
+     status` and supported `git branch` forms, where the command recipe and
+     content hash are enough to replay or detect moved state.
+   - `ephemeral` for output that must retain bytes directly.
+3. Stores recipe metadata for derivable and re-executable handles, or stores
+   ephemeral bytes as gzip-compressed content-hash blobs. Identical ephemeral
+   outputs share one physical blob.
+4. Records command metadata, loss level, creation time, expiry time, raw byte
+   count, stored byte cost, and storage class.
+5. Deletes any old tombstone for the same handle.
+6. Updates the index.
+7. Prunes expired records and oldest records over the physical cap.
+8. Verifies that the RedDB record and index entry were persisted.
+
+The accounting lane is the `index:v1` document. Each live handle contributes
+its storage class, raw bytes, and stored bytes; shared blobs are counted once.
+`rsp stats` exposes this as a per-class breakdown plus the total stored bytes
+and configured budget. The default cap is 64 MiB of physical recipe/blob storage,
+not 64 MiB of original command-output bytes.
 
 Reading an elision returns the original bytes when live. If a record has
 expired or has been evicted, `rsp` returns an expired tombstone with the expiry
 time and original command. `rsp show el:<id>` writes live original bytes
-verbatim and prints the expired tombstone message otherwise.
+verbatim and prints the expired tombstone message otherwise. If a derivable or
+re-executable recipe can no longer reconstruct the original bytes, the handle
+degrades to the same expired-handle contract instead of pretending recovery is
+lossless.
 
 The store also retains a JSON-document fallback for non-RedDB URIs and legacy
 migration code for older table-shaped elision collections, but the normal

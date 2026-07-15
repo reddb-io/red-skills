@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -416,6 +417,135 @@ describe("RspElisionStore", () => {
       const afterExpiry = await readFile(storePath, "utf8");
       expect(afterExpiry).not.toBe(afterMint);
       expect(await store.stats()).toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("compacts the on-disk store after repeated mint-expire-sweep cycles", async () => {
+    let now = new Date("2026-07-10T12:00:00.000Z");
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      byteBudget: 2_000,
+      ephemeralTtlHours: 1,
+      now: () => now,
+    });
+    try {
+      for (let cycle = 0; cycle < 24; cycle += 1) {
+        await store.mint(Buffer.from(`cycle ${cycle} ${"x".repeat(256)}`), {
+          command: `node noisy-${cycle}.mjs`,
+          loss: { level: "terse", bytes_elided: 256 },
+        });
+        now = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        await store.stats();
+      }
+
+      expect((await stat(storePath)).size).toBeLessThanOrEqual(2_000);
+      await expect(store.stats()).resolves.toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("bounds the embedded RedDB file after repeated mint-expire-sweep cycles", async () => {
+    let now = new Date("2026-07-10T12:00:00.000Z");
+    const root = await tempRoot();
+    const storePath = join(root, "red-skills.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      byteBudget: 512 * 1024,
+      ephemeralTtlHours: 1,
+      now: () => now,
+    });
+    try {
+      for (let cycle = 0; cycle < 20; cycle += 1) {
+        await store.mint(randomBytes(64 * 1024), {
+          command: `node noisy-${cycle}.mjs`,
+          loss: { level: "terse", bytes_elided: 64 * 1024 },
+        });
+        now = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        await store.stats();
+      }
+
+      expect((await stat(storePath)).size).toBeLessThanOrEqual(512 * 1024);
+      await expect(store.stats()).resolves.toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("rotates to a compact generation while preserving live records and degraded old-handle semantics", async () => {
+    let now = new Date("2026-07-10T12:00:00.000Z");
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      byteBudget: 2_400,
+      ephemeralTtlHours: 1,
+      now: () => now,
+    });
+    try {
+      const expired: `el:${string}`[] = [];
+      for (let cycle = 0; cycle < 16; cycle += 1) {
+        expired.push(await store.mint(Buffer.from(`expired ${cycle} ${"x".repeat(128)}`), {
+          command: `node expired-${cycle}.mjs`,
+          loss: { level: "terse", bytes_elided: 128 },
+        }));
+        now = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        await store.stats();
+      }
+
+      const live = await store.mint(Buffer.from("live record"), {
+        command: "node live.mjs",
+        loss: { level: "terse", bytes_elided: 11 },
+      });
+      await store.stats();
+
+      const recovered = await store.get(live);
+      if (!recovered || "status" in recovered) throw new Error("expected live record after rotation");
+      expect(recovered.original).toEqual(Buffer.from("live record"));
+      expect((await stat(storePath)).size).toBeLessThanOrEqual(2_400);
+      expect(await store.get(expired[0]!)).toBeNull();
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("cuts over an old-format json store by discarding it instead of migrating records", async () => {
+    const root = await tempRoot();
+    const storePath = join(root, "red.rdb");
+    await writeFile(storePath, JSON.stringify({
+      version: 0,
+      records: {
+        "record:123456789abc": {
+          collection: RSP_ELISION_COLLECTION,
+          handle: "el:123456789abc",
+          original: Buffer.from("legacy payload").toString("base64"),
+          original_encoding: "base64",
+          original_bytes: 14,
+          command: "git diff",
+          created_at: "2026-07-10T12:00:00.000Z",
+          expires_at: "2026-07-17T12:00:00.000Z",
+          loss: { level: "terse", bytes_elided: 14 },
+        },
+      },
+      tombstones: {},
+      index: { version: 1, records: [] },
+    }), "utf8");
+
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+    try {
+      await expect(store.get("el:123456789abc")).resolves.toBeNull();
+      const handle = await store.mint(Buffer.from("fresh"), {
+        command: "node fresh.mjs",
+        loss: { level: "terse", bytes_elided: 5 },
+      });
+      await expect(store.get(handle)).resolves.toMatchObject({ handle });
     } finally {
       await store.close();
     }

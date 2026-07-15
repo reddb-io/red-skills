@@ -767,7 +767,7 @@ describe("rsp telemetry spool", () => {
     );
   }, 40_000);
 
-  it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
+  it("self-heals old-model rsp collections in the built bundle resident with clean elision cutover", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
     const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
@@ -839,11 +839,7 @@ describe("rsp telemetry spool", () => {
       { id: "recover-legacy-elision", op: "get", handle: legacyHandle },
     )).resolves.toMatchObject({
       ok: true,
-      value: expect.objectContaining({
-        handle: legacyHandle,
-        original: Buffer.from("legacy recoverable elision").toString("base64"),
-        original_encoding: "base64",
-      }),
+      value: null,
     });
     await new Promise<void>((resolve, reject) => {
       child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`bundle resident exited ${code}`)));
@@ -875,6 +871,13 @@ describe("rsp telemetry spool", () => {
       [RSP_TELEMETRY_DEGRADATIONS_COLLECTION]: "kv",
       [RSP_TELEMETRY_INDEX_COLLECTION]: "kv",
     });
+
+    const degraded = spawnSync(process.execPath, [bundle, "--store-uri", storeUri, "show", legacyHandle], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(degraded.status).toBe(1);
+    expect(degraded.stdout).toBe(`expired unknown — re-run: ${legacyHandle}\n`);
   }, 40_000);
 
   it("periodically drains telemetry spooled while the built bundle resident is alive and reports stats", async () => {

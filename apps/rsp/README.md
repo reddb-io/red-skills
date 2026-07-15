@@ -4,7 +4,7 @@
 high-noise commands, emits compact decision-preserving output, and keeps the
 original bytes recoverable through `el:<id>` handles.
 
-Benchmark headline: `rsp` reaches **99.4% decision-oracle capture** versus
+Benchmark headline: `rsp` reaches **99.8% decision-oracle capture** versus
 **RTK 4.9%** and **Headroom 0.6%** on the two-axis benchmark. The checked-in
 summary is at [bench/results/rsp-two-axis.md](bench/results/rsp-two-axis.md),
 and the benchmark guide is at [bench/README.md](bench/README.md).
@@ -91,11 +91,23 @@ pnpm --filter @reddb-io/rsp gen:ambient-skill
 
 When `rsp` omits bytes, it prints an `el:<id>` handle. Handles are short,
 content-addressed identifiers minted by `RspElisionStore.mint(original, meta)`.
-The resident writes recoverable storage into the rsp-owned RedDB KV collection
-and records the command, loss level, creation time, expiry time, and byte count.
-Ephemeral outputs keep bytes as compressed content-hash blobs, so identical
-outputs share one stored blob while `rsp show` still returns the exact original
-bytes.
+The resident writes handle records into the rsp-owned RedDB KV collection and
+chooses one of three storage classes:
+
+- **derivable**: git blob-backed output such as `git diff`, `git log`, `git show`,
+  `git blame`, and file reads that can be reconstructed from stored object ids.
+- **re-executable**: deterministic repository commands such as `git status` and
+  `git branch -av` whose command recipe and content hash are enough to replay or
+  detect moved state.
+- **ephemeral**: outputs that must keep bytes, stored as gzip-compressed
+  content-hash blobs so identical outputs share one physical blob.
+
+Each handle records the command, loss level, creation time, expiry time, raw byte
+count, storage class, and stored byte cost. The accounting lane is the handle
+index: it totals stored bytes, raw bytes, and per-class records so `rsp stats`
+can report both recoverability and physical pressure. The default 64 MiB
+physical cap applies to stored recipe/blob bytes, not raw command-output bytes.
+Expired or evicted handles retain a tombstone with the original command to rerun.
 
 Recover a handle with:
 
@@ -103,10 +115,9 @@ Recover a handle with:
 rsp show el:<id>
 ```
 
-Expired or evicted handles print an expiry line with the original command to
-rerun. Defaults are seven days of derivable/re-executable elision retention,
-six hours of ephemeral retention, and a 64 MiB byte budget; `.red/config.yaml`
-can override `rsp.ttlDays`, `rsp.ephemeralTtlHours`, and `rsp.byteBudget`.
+Defaults are seven days of derivable/re-executable elision retention, six hours
+of ephemeral retention, and a 64 MiB physical cap; `.red/config.yaml` can
+override `rsp.ttlDays`, `rsp.ephemeralTtlHours`, and `rsp.byteBudget`.
 
 ## Resident and Telemetry
 

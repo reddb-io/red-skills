@@ -2272,7 +2272,7 @@ describe("rsp cli", () => {
     await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).resolves.toMatchObject({ size: expect.any(Number) });
   }, 120_000);
 
-  it("built bundle redirects a configured legacy RedDB store to JSON without mutating it", async () => {
+  it("built bundle cuts over a configured legacy RedDB store without a sidecar migration", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     await commitMany(root, 12);
@@ -2290,8 +2290,9 @@ describe("rsp cli", () => {
     expect(compressed.status).toBe(0);
     expect(compressed.stderr).toEqual(Buffer.alloc(0));
     expect(compressed.stdout.toString("utf8")).toMatch(/rsp show el:[a-f0-9]{12}/);
-    await expect(readFile(legacyPath)).resolves.toEqual(legacyBytes);
-    await expect(stat(join(root, ".red", "tmp", "rsp-elisions.json"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(readFile(legacyPath)).resolves.not.toEqual(legacyBytes);
+    await expect(readFile(legacyPath, "utf8")).resolves.toContain("\"version\":1");
+    await expect(stat(join(root, ".red", "tmp", "rsp-elisions.json"))).rejects.toMatchObject({ code: "ENOENT" });
   }, 120_000);
 
   it("passes through wrappers when rsp hits an internal wrapper error after opening the store", async () => {

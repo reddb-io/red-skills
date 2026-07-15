@@ -149,6 +149,12 @@ export interface RepoInput {
   cacheAgeS?: number;
 }
 
+/** Cached/local unlanded `.red/` docs count. */
+export interface DocsInput {
+  /** `doc` — unlanded glossary/ADR docs detected from local git state. */
+  count: number;
+}
+
 /** Repo-global fleet-supervisor segment, independent of live worker rows. */
 export interface FleetInput {
   /** Supervisor runner (`codex`, `claude`, `opencode`, ...). */
@@ -179,6 +185,7 @@ export interface StatuslineInput {
   project: ProjectInput;
   claude?: ClaudeInput;
   repo?: RepoInput;
+  docs?: DocsInput;
   fleet?: FleetInput;
   afk?: AfkInput;
   rsp?: RspStatusInput;
@@ -461,6 +468,11 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   return parts.join(" · ");
 }
 
+export function renderUnlandedDocsBlock(docs: DocsInput | undefined): string | null {
+  if (!docs || docs.count <= 0) return null;
+  return `doc=${Math.floor(docs.count)}`;
+}
+
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
   if (rsp.state === "ready") {
@@ -537,6 +549,8 @@ export function renderStatuslineWithPreset(input: StatuslineInput, preset: Statu
   if (usage !== null) sections.push(usage);
   const repo = renderRepoBlock(input.repo);
   if (repo !== null) sections.push(repo);
+  const docs = renderUnlandedDocsBlock(input.docs);
+  if (docs !== null) sections.push(docs);
   const fleet = renderFleetBlock(input.fleet);
   if (fleet !== null) sections.push(fleet);
   const rsp = renderRspBlock(input.rsp);

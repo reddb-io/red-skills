@@ -16,6 +16,7 @@ import {
   withTimeout,
   collectStatuslineAfk,
   collectStatuslineRepo,
+  collectStatuslineDocs,
   statuslineCountCachePath,
   STATUSLINE_CACHE_TTL_S,
   applyStatuslineCountCacheLabelDelta,
@@ -1093,6 +1094,35 @@ describe("collectStatuslineRepo — cache discipline", () => {
       // repo → freshly-measured 0/0, overwriting the stale 99/11).
       expect(cache.localAdded).toBe(0);
       expect(cache.localRemoved).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("collectStatuslineDocs — cached local git state only", () => {
+  it("counts unlanded docs without fetching", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-docs-"));
+    try {
+      mkdirSync(join(root, ".red", "contexts", "dev"), { recursive: true });
+      const exec = async (cmd: string, args: readonly string[]): Promise<ExecOutput> => {
+        if (cmd !== "git") return { code: 127, stdout: "", stderr: "unexpected command" };
+        if (args[0] === "fetch") throw new Error("statusline docs collector must not fetch");
+        if (args[0] === "ls-tree") return { code: 0, stdout: ".red/CONTEXT-MAP.md\n", stderr: "" };
+        if (args[0] === "status") {
+          return {
+            code: 0,
+            stdout: " M .red/CONTEXT-MAP.md\n?? .red/contexts/dev/NEW.md\n?? README.md\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "diff") return { code: 0, stdout: ".red/adr/0100-local.md\nREADME.md\n", stderr: "" };
+        return { code: 1, stdout: "", stderr: "unexpected git command" };
+      };
+
+      await expect(collectStatuslineDocs({ root, repo: "", remote: "origin" }, "main", exec)).resolves.toEqual({
+        count: 3,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

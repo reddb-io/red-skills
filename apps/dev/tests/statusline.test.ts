@@ -9,6 +9,7 @@ import {
   renderAfkBlock,
   renderContextBlock,
   renderFleetBlock,
+  renderUnlandedDocsBlock,
   renderModelBlock,
   renderProjectBlock,
   renderRepoBlock,
@@ -329,6 +330,14 @@ describe("statusline — fleet block", () => {
   });
 });
 
+describe("statusline — unlanded docs block", () => {
+  it("renders only when the count is non-zero", () => {
+    expect(renderUnlandedDocsBlock({ count: 3 })).toBe("doc=3");
+    expect(renderUnlandedDocsBlock({ count: 0 })).toBeNull();
+    expect(renderUnlandedDocsBlock(undefined)).toBeNull();
+  });
+});
+
 describe("statusline — AFK block", () => {
   it("renders the full token run in the fixed order", () => {
     // case 3: one live worker on #17 with ad12 rm3, blocked 2, cached rq11 rh3.
@@ -500,10 +509,11 @@ describe("statusline — full assembly", () => {
       project: { basename: "red-skills", branch: "main" },
       claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24, usage5h: 23, usage7d: 41 },
       repo: { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 },
+      docs: { count: 2 },
       afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
     };
     expect(renderStatusline(input)).toBe(
-      "red-skills (main) · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
+      "red-skills (main) · Opus·high · 47k 24% · 5h=23% 7d=41% · prs=3 iss=24 loc=+142 -36 · doc=2 · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17",
     );
     expect(renderStatuslineWithPreset(input, "full")).toBe(renderStatusline(input));
   });
