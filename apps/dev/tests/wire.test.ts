@@ -108,7 +108,7 @@ describe("resolveAttemptHead (#1390)", () => {
             "HEAD base",
             "branch refs/heads/main",
             "",
-            "worktree /repo/.red/tmp/workers/w1/1390-a1/.sandcastle/worktrees/afk-w1-1390",
+            "worktree /repo/.red/tmp/workers/w1/1390-a1/.red-castle/worktrees/afk-w1-1390",
             "HEAD moved-head",
             "branch refs/heads/afk/w1/1390-loc",
             "",

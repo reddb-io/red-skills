@@ -823,7 +823,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls[0]?.runner).toBe("claude");
     expect(trace.runAgentCalls[0]?.model).toBe("claude-opus-4-8");
     expect(trace.runAgentCalls[0]?.effort).toBe("high");
-    // cwd is anchored at the attempt dir so sandcastle's `.sandcastle/` lands
+    // cwd is anchored at the attempt dir so sandcastle's `.red-castle/` lands
     // under .red/ (the attempt dir), never at the repo root.
     expect(trace.runAgentCalls[0]?.cwd).toBe("/tmp/afk/workers/wAAAA/9-a1");
 

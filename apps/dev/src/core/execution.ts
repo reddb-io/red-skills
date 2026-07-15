@@ -256,7 +256,7 @@ export interface RunAgentInput {
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
   sandboxMode?: SandboxMode;
   /**
-   * Absolute host anchor for sandcastle's `.sandcastle/` dir + git operations.
+   * Absolute host anchor for sandcastle's `.red-castle/` dir + git operations.
    * AFK sets this to the attempt dir so nothing lands at the repo root
    * (everything under .red/). Defaults to process.cwd() in sandcastle when
    * omitted. NOTE: sandcastle resolves `promptFile` against process.cwd(), NOT
@@ -892,7 +892,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     // under it are host-visible mid-run — the precondition for arming the guard +
     // heartbeat under docker/podman. `none` ignores `mountPath` (no container).
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none", input.cwd ? { mountPath: input.cwd } : undefined),
-    // Re-anchor sandcastle's `.sandcastle/` dir + git ops at the caller's cwd
+    // Re-anchor sandcastle's `.red-castle/` dir + git ops at the caller's cwd
     // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
     // root. Omitted → sandcastle defaults to process.cwd().
     ...(input.cwd ? { cwd: input.cwd } : {}),

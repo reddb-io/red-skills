@@ -1323,7 +1323,7 @@ export function buildProcessDeps(
       const head = info.head ?? "";
       void (async () => {
         // sandcastle creates the agent's worktree at
-        // `{attemptDir}/.sandcastle/worktrees/{slug}`, NOT the legacy
+        // `{attemptDir}/.red-castle/worktrees/{slug}`, NOT the legacy
         // `{attemptDir}/worktree` the state seeds — diffing the latter fails
         // (it never exists) and every tick read a permanent `+0 -0` even with a
         // dirty worktree, which also starved the attempt-progress guard's

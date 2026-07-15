@@ -1654,7 +1654,7 @@ export async function processIssue(
   // provider) coerces to claude so the spawn always has a real agent.
   let activeRunner: Runner = toAgentRunner(input.runner);
   let attemptN = input.attempt;
-  // Anchor sandcastle at the per-attempt dir so its `.sandcastle/` (worktrees,
+  // Anchor sandcastle at the per-attempt dir so its `.red-castle/` (worktrees,
   // logs, .env, patches) + git ops land under .red/, never at the repo root.
   // attemptDir is always absolute (built from `${root}/.red/tmp/...`), which is
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
