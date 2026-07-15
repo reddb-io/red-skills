@@ -2,7 +2,7 @@
   "name": "@reddb-io/rsp",
   "version": "2.23.1",
   "private": true,
-  "description": "RedSkills neutral rsp binary: reversible elision store and retrieval over an rsp-owned JSON store.",
+  "description": "RedSkills neutral rsp binary: reversible elision retrieval over the repo-local RedDB store.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -17,13 +17,14 @@
     "build": "tsc -p tsconfig.build.json && pnpm bundle",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/rsp.bundle.min.mjs --asset rsp.bundle.min.mjs --minify --reddb-from-package",
     "bench:two-axis": "node --import tsx src/two-axis-benchmark-cli.ts",
+    "bench:two-axis:neutral": "node --import tsx src/two-axis-benchmark-cli.ts --fixture-root tests/fixtures-neutral --corpus-label neutral-third-party --corpus-provenance \"Public run metadata from vitest-dev/vitest Actions run 29274168273 and rust-lang/cargo Actions run 29195830177.\" --corpus-provenance \"Git machine output from public nodejs/node and rust-lang/rust repository history captured on 2026-07-13.\" --corpus-provenance \"Cargo JSON message output follows the published --message-format=json contract with third-party crate-style test names.\" --out bench/results/rsp-two-axis-neutral.toon --summary bench/results/rsp-two-axis-neutral.md --no-require-large-output-fixtures",
     "bench:two-axis:check": "node --import tsx src/two-axis-benchmark-cli.ts --check --out bench/results/rsp-two-axis.toon --summary bench/results/rsp-two-axis.md",
     "gen:ambient-skill": "node --import tsx scripts/gen-ambient-skill.mjs",
     "test": "vitest run",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
-    "@reddb-io/toon": "workspace:*",
+    "@reddb-io/toon": "catalog:",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/sdk": "1.23.1",

@@ -1,0 +1,151 @@
+name: red-toon-watch
+
+on:
+  schedule:
+    - cron: '25 13 * * *'
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Optional stable toon release tag to process instead of releases/latest"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: red-toon-watch
+  cancel-in-progress: false
+
+env:
+  TOON_BUMP_BRANCH: automation/toon-bump
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Resolve stable toon release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG_INPUT: ${{ inputs.target_tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$TARGET_TAG_INPUT" ]; then
+            tag="$TARGET_TAG_INPUT"
+            gh api "repos/reddb-io/toon/releases/tags/$tag" > release.json
+          else
+            gh api "repos/reddb-io/toon/releases/latest" > release.json
+            tag="$(jq -r '.tag_name' release.json)"
+          fi
+
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::toon release tag must be stable vX.Y.Z, got '$tag'"
+            exit 1
+          fi
+
+          if [ "$(jq -r '.draft or .prerelease' release.json)" != "false" ]; then
+            echo "::error::toon release '$tag' is not a stable published release"
+            exit 1
+          fi
+
+          target_version="${tag#v}"
+          current_version="$(
+            node <<'NODE'
+          const fs = require("fs");
+          const match = fs
+            .readFileSync("pnpm-workspace.yaml", "utf8")
+            .match(/["@']?@reddb-io\/toon["@']?:\s*([0-9]+\.[0-9]+\.[0-9]+)/);
+          if (!match) process.exit(1);
+          console.log(match[1]);
+          NODE
+          )"
+          newest="$(printf '%s\n%s\n' "$current_version" "$target_version" | sort -V | tail -n 1)"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "target_version=$target_version" >> "$GITHUB_OUTPUT"
+          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
+
+          if [ "$newest" != "$target_version" ] || [ "$current_version" = "$target_version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Catalog already pins $current_version; no newer stable toon release to process."
+            exit 0
+          fi
+
+          jq -r '.body // "_No release notes published._"' release.json > toon-release-notes.md
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install workspace dependencies
+        if: steps.release.outputs.changed == 'true'
+        env:
+          REDDB_SKIP_POSTINSTALL: "1"
+        run: pnpm install --frozen-lockfile
+
+      - name: Run toon bump
+        if: steps.release.outputs.changed == 'true'
+        env:
+          TARGET_VERSION: ${{ steps.release.outputs.target_version }}
+        run: |
+          set -euo pipefail
+          pnpm -C apps/dev dev toon-bump "$TARGET_VERSION"
+          pnpm install --lockfile-only
+          if git diff --quiet; then
+            echo "::notice::toon-bump reported newer $TARGET_VERSION but left no diff; stopping without PR."
+            exit 0
+          fi
+
+      - name: Open or update rolling PR
+        if: steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_TAG: ${{ steps.release.outputs.tag }}
+          TARGET_VERSION: ${{ steps.release.outputs.target_version }}
+          CURRENT_VERSION: ${{ steps.release.outputs.current_version }}
+        run: |
+          set -euo pipefail
+
+          perl -0pe 's#claude\.ai/code/session_[A-Za-z0-9_-]+#[REDACTED_CLAUDE_SESSION]#g; s#/(Users|home)/[A-Za-z0-9._-]+#[REDACTED_HOME]#g; s#https?://([^/\s)]+)#https://[REDACTED_HOST]#g' \
+            toon-release-notes.md > sanitized-toon-release-notes.md
+          SANITIZED_NOTES="$(cat sanitized-toon-release-notes.md)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TOON_BUMP_BRANCH"
+          git add -- pnpm-workspace.yaml pnpm-lock.yaml .github/workflows/red-workspace-ci.yml .github/workflows/red-rsp-benchmark-ci.yml plugins/dev/skills/engineering/red-setup/INTERVIEW.md plugins/dev/skills/engineering/red-setup/REFERENCE.md plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md plugins/dev/skills/engineering/red-setup/config-template.yaml plugins/dev/skills/engineering/red-doctor/SKILL.md
+          git commit -m "chore: bump toon to $TRIGGER_TAG"
+          git push --force-with-lease origin "$TOON_BUMP_BRANCH"
+
+          body_file="$(mktemp)"
+          trap 'rm -f "$body_file"' EXIT
+          {
+            printf 'Automated rolling toon bump.\n\n'
+            printf -- '- trigger tag: `%s`\n' "$TRIGGER_TAG"
+            printf -- '- catalog pin: `%s` -> `%s`\n' "$CURRENT_VERSION" "$TARGET_VERSION"
+            printf -- '- source release: `reddb-io/toon@%s`\n\n' "$TRIGGER_TAG"
+            printf '## Toon release notes\n\n'
+            printf '%s\n' "$SANITIZED_NOTES"
+            printf '\n---\n'
+            printf 'This rolling PR is force-updated by `red-toon-watch`; CI adjudicates readiness and merge remains manual.\n'
+          } > "$body_file"
+
+          title="chore: bump toon to $TRIGGER_TAG"
+          existing="$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$TOON_BUMP_BRANCH" --state open --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body-file "$body_file" --base main
+          else
+            gh pr create --title "$title" --body-file "$body_file" --base main --head "$TOON_BUMP_BRANCH"
+          fi

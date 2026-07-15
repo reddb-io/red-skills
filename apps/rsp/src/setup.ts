@@ -1,18 +1,22 @@
 import { constants } from "node:fs";
-import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { LEGACY_SHARED_STORE_REL } from "@reddb-io/shared/red-paths.js";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
+  DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
   DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   DEFAULT_RSP_STORE_PATH,
   DEFAULT_RSP_TTL_DAYS,
 } from "./config.js";
 
 export const REPO_STORE_PATH = DEFAULT_RSP_STORE_PATH;
+const LEGACY_STORE_PATH = LEGACY_SHARED_STORE_REL;
 const LEGACY_MEMORY_STORE_PATH = ".red/memory/graph.rdb";
 
 export interface RspProvisionOptions {
   ttlDays?: number;
+  ephemeralTtlHours?: number;
   byteBudget?: number;
   heavyGitByteThreshold?: number;
 }
@@ -23,6 +27,7 @@ export interface RspProvisionResult {
   configChanged: boolean;
   storeCreated: boolean;
   memoryStoreMigrated: boolean;
+  legacyStoreMigrated: boolean;
 }
 
 export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionOptions = {}): Promise<RspProvisionResult> {
@@ -31,7 +36,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   const configPath = join(redDir, "config.yaml");
   const storePath = join(root, REPO_STORE_PATH);
   await mkdir(redDir, { recursive: true });
-  // The store lives under .red/tmp/, which need not exist yet.
+  // The store lives under .red/state/, which need not exist yet.
   await mkdir(dirname(storePath), { recursive: true });
 
   let existing = "";
@@ -44,6 +49,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
   const next = mergeRspBlock(existing, {
     enabled: true,
     ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
+    ephemeralTtlHours: opts.ephemeralTtlHours ?? DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
     byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
     heavyGitByteThreshold: opts.heavyGitByteThreshold ?? DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   });
@@ -52,9 +58,16 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
 
   const storeCreated = !(await exists(storePath));
   let memoryStoreMigrated = false;
+  let legacyStoreMigrated = false;
   if (storeCreated) {
+    const legacyStore = join(root, LEGACY_STORE_PATH);
     const legacyMemoryStore = join(root, LEGACY_MEMORY_STORE_PATH);
-    if (await exists(legacyMemoryStore)) {
+    if (await exists(legacyStore)) {
+      // One-time move of the pre-ADR-0098 tmp-tier store into the state tier.
+      // After the move the state store exists, so a rerun is a no-op.
+      await rename(legacyStore, storePath);
+      legacyStoreMigrated = true;
+    } else if (await exists(legacyMemoryStore)) {
       await copyFile(legacyMemoryStore, storePath);
       memoryStoreMigrated = true;
     } else {
@@ -66,6 +79,7 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
         const store = await RspElisionStore.open({
           uri: `file://${storePath}`,
           ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
+          ephemeralTtlHours: opts.ephemeralTtlHours ?? DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
           byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
           allowResidentOpen: true,
         });
@@ -85,12 +99,14 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
     configChanged: configChanged || memoryConfig !== next,
     storeCreated,
     memoryStoreMigrated,
+    legacyStoreMigrated,
   };
 }
 
 export interface RspConfigBlock {
   enabled: boolean;
   ttlDays: number;
+  ephemeralTtlHours: number;
   byteBudget: number;
   heavyGitByteThreshold: number;
 }
@@ -100,6 +116,7 @@ export function mergeRspBlock(existingText: string, block: RspConfigBlock): stri
     "rsp:",
     `  enabled: ${block.enabled ? "true" : "false"}`,
     `  ttlDays: ${positiveNumber(block.ttlDays, DEFAULT_RSP_TTL_DAYS)}`,
+    `  ephemeralTtlHours: ${positiveNumber(block.ephemeralTtlHours, DEFAULT_RSP_EPHEMERAL_TTL_HOURS)}`,
     `  byteBudget: ${positiveNumber(block.byteBudget, DEFAULT_RSP_BYTE_BUDGET)}`,
     `  heavyGitByteThreshold: ${positiveNumber(block.heavyGitByteThreshold, DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD)}`,
   ];

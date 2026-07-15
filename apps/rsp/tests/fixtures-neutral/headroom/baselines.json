@@ -1,0 +1,52 @@
+{
+  "version": "headroom-ai 0.31.0",
+  "captured_at": "2026-07-13T00:00:00.000Z",
+  "capture_script": "apps/rsp/scripts/capture-headroom-baselines.py",
+  "fixtures": [
+    {
+      "name": "cargo-third-party-failure",
+      "coverage": "covered",
+      "stdout": "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":3}\n{\"type\":\"test\",\"event\":\"failed\",\"name\":\"cli::snapshots::updates_lockfile\",\"exec_time\":0.12,\"stdout\":\"thread 'cli::snapshots::updates_lockfile' panicked at tests/cli.rs:88: expected lockfile fixture to match\"}\n{\"type\":\"suite\",\"event\":\"failed\",\"passed\":2,\"failed\":1,\"exec_time\":4.2}\n",
+      "fidelity_assertions_passed": true,
+      "transforms_applied": [
+        "router:noop"
+      ]
+    },
+    {
+      "name": "commit-node-doc",
+      "coverage": "covered",
+      "stdout": "[main e84b517d] doc: document net Socket server property\n 2 files changed, 18 insertions(+), 4 deletions(-)\n",
+      "fidelity_assertions_passed": true,
+      "transforms_applied": [
+        "router:noop"
+      ]
+    },
+    {
+      "name": "diff-rust-large-numstat",
+      "coverage": "covered",
+      "stdout": "38\t32\tcompiler/rustc_borrowck/src/diagnostics/conflict_errors.rs\u000010\t17\tcompiler/rustc_borrowck/src/diagnostics/explain_borrow.rs\u000010\t11\tcompiler/rustc_borrowck/src/diagnostics/region_errors.rs\u000033\t30\tcompiler/rustc_borrowck/src/region_infer/mod.rs\u000012\t4\tcompiler/rustc_hir_typeck/src/method/probe.rs\u00003\t3\tcompiler/rustc_middle/src/ty/generic_args.rs\u000023\t0\tcompiler/rustc_middle/src/ty/print/pretty.rs\u00006\t18\tcompiler/rustc_middle/src/ty/typeck_results.rs\u000024\t2\tcompiler/rustc_mir_dataflow/src/impls/storage_liveness.rs\u000046\t1\tcompiler/rustc_mir_transform/src/coroutine/mod.rs\u00001\t1\tcompiler/rustc_parse/src/parser/diagnostics.rs\u000090\t22\tcompiler/rustc_resolve/src/diagnostics/impls.rs\u00001\t1\tcompiler/rustc_target/src/target_features.rs\u00002\t2\tlibrary/core/src/num/nonzero.rs\u00006\t1\tlibrary/core/src/ptr/non_null.rs\u00001\t2\tsrc/bootstrap/src/core/build_steps/clean.rs\u00003\t8\tsrc/bootstrap/src/core/build_steps/compile.rs\u000018\t10\tsrc/bootstrap/src/core/builder/mod.rs\u00003\t1\tsrc/bootstrap/src/lib.rs\u00005\t7\tsrc/tools/rust-analyzer/Cargo.lock\u0000",
+      "fidelity_assertions_passed": true,
+      "transforms_applied": [
+        "router:noop"
+      ]
+    },
+    {
+      "name": "log-node-recent",
+      "coverage": "covered",
+      "stdout": "\u001eace91de6\u001fMatteo Collina\u001f2026-07-13\u001fstream: use the ring buffer for WHATWG stream request queues\u0000\u001ee84b517d\u001fEfe Karasakal\u001f2026-07-13\u001fdoc: document net Socket server property\u0000\u001ee7864e60\u001fSamuel Kapust\u001f2026-07-13\u001fsrc: zero-initialize cap_data in node_credentials.cc\u0000\u001efc92e911\u001fFilip Skokan\u001f2026-07-13\u001fdoc: update a Dispatcher undici doc link\u0000\u001e8c6cbb8e\u001fJoyee Cheung\u001f2026-07-13\u001finspector: add --cond to node inspect probe mode\u0000",
+      "fidelity_assertions_passed": true,
+      "transforms_applied": [
+        "router:noop"
+      ]
+    },
+    {
+      "name": "run-vitest-ci-failure",
+      "coverage": "covered",
+      "stdout": "{\"databaseId\":29274168273,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"failure\",\"event\":\"pull_request\",\"headBranch\":\"codex/fix-mock-registry-isolation\",\"workflowName\":\"CI\",\"createdAt\":\"2026-07-13T18:22:05Z\",\"jobs\":[{\"name\":\"test / ubuntu-latest / node-22\",\"status\":\"completed\",\"conclusion\":\"failure\",\"log\":\"Run pnpm test\\nFAIL packages/vitest/src/node/registry.test.ts > mock registry isolation\\nAssertionError: expected module cache to be empty after worker teardown\\n  expected: 0\\n  received: 1\\n\"}]}",
+      "fidelity_assertions_passed": true,
+      "transforms_applied": [
+        "router:noop"
+      ]
+    }
+  ]
+}

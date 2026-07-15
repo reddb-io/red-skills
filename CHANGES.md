@@ -2,7 +2,39 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.1.0 tag commit; see `.upstream`).
+Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (reviewed 33 commits after v1.1.0; see `.upstream`).
+
+---
+
+## wayfinder (engineering) — research children stay in the AFK fleet (issue #1699)
+
+- **status**: not-adopted
+- **upstream**: `66898f6` (upstream `wayfinder`; 33-commit delta from `d574778f`)
+- **why**: Upstream now starts in-session `/research` subagents in parallel while charting a wayfinder map. RedSkills deliberately routes research children through the AFK fleet instead: isolated worktrees, shared validation gate, and PR-backed results are the stronger contract for repo-affecting autonomous work.
+- **what changed**: Reviewed upstream commit `2602257` and recorded the divergence. No upstream skill content was imported in this slice; future syncs must not replace the AFK fleet route with in-session research subagents.
+
+## skill metadata — per-skill `agents/openai.yaml` files not adopted (issue #1699)
+
+- **status**: not-adopted
+- **upstream**: `66898f6` (upstream `agents/openai.yaml` metadata; 33-commit delta from `d574778f`)
+- **why**: Upstream added hand-authored Codex metadata beside every skill. RedSkills derives Codex plugin manifests from the canonical plugin manifests with `scripts/generate-codex-manifests.mjs`, keeping host metadata generated and checked instead of duplicating per-skill files.
+- **what changed**: Reviewed upstream commit `697d4ce` and recorded the divergence. No `agents/openai.yaml` files were added; future syncs should preserve the generated-manifest path unless that generator contract changes.
+
+## to-tickets (engineering) — upstream local-file mode remains irrelevant (issue #1699)
+
+- **status**: not-adopted
+- **upstream**: `66898f6` (upstream `to-tickets` local tracker; 33-commit delta from `d574778f`)
+- **why**: Upstream changed its local-file tracker to write one markdown file per ticket. RedSkills publishes tracked work to GitHub Issues, adds native sub-issue and dependency edges, and uses `ready-for-agent`, `blocked:dependency`, and `req:N` labels for AFK queue semantics, so upstream's local markdown storage shape is not part of our runtime contract.
+- **what changed**: Reviewed upstream commit `44eed54` and recorded the divergence. No local-file ticket mode was imported in this slice; GitHub Issues remains the supported publication surface for RedSkills backlog slices.
+
+---
+
+## wayfinder (engineering) — AFK task dispatch to autonomous lane (issue #1830)
+
+- **status**: modified
+- **upstream**: `66898f6` (upstream `wayfinder`)
+- **why**: Wayfinder was describing AFK-typed Task tickets as driven inline by the session, contradicting the RedSkills autonomous-lane contract where repo-mutating work runs in isolated worktrees through the shared gate.
+- **what changed**: In `plugins/dev/skills/engineering/wayfinder/SKILL.md`, changed the Task type dispatch sentence to state that the session never executes repo-mutating task work inline — when AFK-safe it routes the ticket into the autonomous queue per the tracker doc, and the AFK engine runs it (isolated worktree, shared validation gate, PR); HITL branch unchanged. In `plugins/dev/skills/engineering/red-setup/issue-tracker-github.md` Wayfinding operations, added a bullet naming `/afk --issues <n>` as the immediate dispatch command and stating the wayfinder session must not resolve AFK-safe tasks inline.
 
 ---
 

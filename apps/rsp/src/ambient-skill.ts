@@ -5,7 +5,7 @@ import { RSP_WRAPPER_CAPABILITIES, type RspWrapperCapability } from "./intercept
 // so the source of truth for the file location lives in one place.
 export const AMBIENT_SKILL_RELATIVE_PATH = "generated/AMBIENT-SKILL.md";
 
-export type RspInstructionRunner = "claude" | "codex";
+export type RspInstructionRunner = "claude" | "codex" | "opencode";
 
 export interface AmbientSkillRenderOptions {
   runner?: RspInstructionRunner;
@@ -48,6 +48,29 @@ export function renderAmbientSkill(
     "",
     ...runnerLines,
     ...(runnerLines.length > 0 ? [""] : []),
+    "## Permanent Proxy Model",
+    "",
+    "When `.red/config.yaml` sets `rsp.enabled: true` and `rsp.proxy.enabled: true`,",
+    "the pre-exec hook routes eligible shell commands through `rsp proxy -- <command>`",
+    "instead of matching only a top-level allowlist. The hook still passes through",
+    "missing commands, background jobs, recursive `rsp` calls, known interactive",
+    "commands, and commands opted out with `RSP_NO_PROXY=1` or",
+    "`RED_SKILLS_RSP_NO_PROXY=1`.",
+    "",
+    "`rsp proxy` executes the shell command and only contributes where it recognizes",
+    "a stdout-tail segment it can wrap. Recognized segment families are git",
+    "`status|log|diff|show|blame`, GitHub `pr|issue|run list|view`, `vitest`,",
+    "`vitest run`, `cargo test`, and simple `cat`/`head`/`tail` file reads.",
+    "Pipeline producers are left raw, so bytes inside pipes remain untouched.",
+    "`gh ... --json` and `gh ... --jq` selections are recorded as",
+    "`lossless-gh-json-jq` passes and execute byte-identically.",
+    "",
+    "Decision telemetry is the truth source for proxy coverage. A `contributed`",
+    "decision means rsp inserted a wrapper; `passed` means it deliberately left the",
+    "command or segment raw; `failed-open` means rsp ran the original command after",
+    "an internal proxy failure. Read `rsp stats` contribution metrics as measured",
+    "routing evidence, not a promise that every command family was compressed.",
+    "",
     "## Wrapped commands",
     "",
     "When you would run one of these commands, run it through `rsp` instead:",
@@ -105,6 +128,8 @@ export function renderAmbientSkill(
     "`rsp show el:<id>` writes the original bytes verbatim to stdout. Expired or",
     "evicted handles print `expired <ISO date> — re-run: <original command>` and",
     "exit 1, so the exact command to reproduce the output is always in reach.",
+    "Ephemeral byte payloads are stored as short-TTL compressed content blobs;",
+    "identical outputs share one stored blob without changing handle recovery.",
     "",
     "## Failure behavior",
     "",
@@ -119,9 +144,10 @@ function renderRunnerLines(runner: RspInstructionRunner | undefined): string[] {
     return [
       "## Codex lane",
       "",
-      "Codex pre-execution rewrite hook is available for simple wrapped",
-      "commands when the repo opts into `rsp.enabled`; direct `rsp` calls still",
-      "help when composing commands deliberately. Codex PostToolUse cannot",
+      "Codex pre-execution rewrite hook is available when the repo opts into",
+      "`rsp.enabled`; with `rsp.proxy.enabled` it uses the permanent proxy route,",
+      "otherwise it rewrites only recognized wrapper families. Direct `rsp` calls",
+      "still help when composing commands deliberately. Codex PostToolUse cannot",
       "replace completed Bash output, so post-exec output normalization remains",
       "a Claude-only hook gap; invocation accounting comes from the rewritten",
       "`rsp` command's telemetry event.",
@@ -133,6 +159,15 @@ function renderRunnerLines(runner: RspInstructionRunner | undefined): string[] {
       "",
       "Claude Code pre-execution interception is available for simple wrapped",
       "commands, and direct calls still help when composing commands deliberately.",
+    ];
+  }
+  if (runner === "opencode") {
+    return [
+      "## OpenCode lane",
+      "",
+      "OpenCode receives this guidance through the generated opencode plugin surface.",
+      "The plugin can rewrite simple shell-tool commands before execution, and direct",
+      "`rsp` calls still help when composing commands deliberately.",
     ];
   }
   return [];

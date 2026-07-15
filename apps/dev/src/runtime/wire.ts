@@ -11,11 +11,15 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { copyFileSync, readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
+import * as rp from "@reddb-io/shared/red-paths.js";
+import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
+import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
+import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
@@ -40,6 +44,7 @@ import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
 import { collectLogLineCounts } from "./log-cursor.js";
 import { isLivePid } from "./kill-tree.js";
+import { execTool } from "./exec.js";
 
 // ---------- repo resolution ----------
 
@@ -71,27 +76,100 @@ export interface AfkPaths {
   stateDir: string;
   workersRoot: string;
   historyPath: string;
+  /** Supervisor heartbeat snapshot (state tier, ADR 0098). */
   fleetStatePath: string;
+  /** Supervisor firehose log (state tier). */
   fleetFirehosePath: string;
+  /** Monitor log-cursor cache (state tier). */
   monitorLogCursorPath: string;
+  /** Supervisor pid file (state tier). */
+  supervisorPidPath: string;
+  /** Supervisor stop sentinel (state tier). */
+  supervisorStopPath: string;
+  /** Supervisor launch log (state tier). */
+  supervisorLogPath: string;
+  /** Watchdog restart ledger (state tier). */
+  supervisorRestartsPath: string;
+  /** Runner circuit-breaker directory (state tier). */
+  runnerCircuitDir: string;
+  /** GitHub queue/human count cache (statusline state lane). */
+  statuslineCachePath: string;
+  /** Repo-global diffstat cache (statusline state lane). */
+  statuslineRepoCachePath: string;
+  /** Branch lock (state tier root). */
+  branchLockPath: string;
+  /** Global land lock (tmp tier — disposable coordination). */
+  landLockPath: string;
+  /** Claim-lock registry (tmp tier). */
+  claimsDir: string;
+  /** Failure-diagnostics lane (tmp tier). */
+  diagnosticsDir: string;
+  /** Merge-resolve scratch file (tmp scratch lane). */
+  mergeResolveScratchPath: string;
+  /** Disposable scratch worktree lanes (tmp/worktrees, ADR 0098). */
+  landingWorktreesDir: string;
+  rebaseWorktreesDir: string;
+  cascadeWorktreesDir: string;
+  feedbackWorktreesDir: string;
+  adoptWorktreesDir: string;
+  reconcileWorktreesDir: string;
   gitignorePath: string;
   configPath: string;
 }
 
 export function afkPaths(root: string): AfkPaths {
-  const tmpDir = join(root, ".red", "tmp");
-  const stateDir = join(root, ".red", "state");
+  const tmp = rp.tmpDir(root);
+  const state = rp.stateDir(root);
+  const afkState = rp.afkStateDir(root);
+  const statusline = rp.statuslineStateDir(root);
   return {
-    tmpDir,
-    stateDir,
-    workersRoot: join(tmpDir, "workers"),
-    historyPath: join(stateDir, "afk-history.jsonl"),
-    fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
-    fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
-    monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
+    tmpDir: tmp,
+    stateDir: state,
+    workersRoot: rp.workersDir(root),
+    historyPath: join(state, "afk-history.toonl"),
+    fleetStatePath: join(afkState, "afk-supervisor.state.json"),
+    fleetFirehosePath: join(afkState, "afk-supervisor.log.jsonl"),
+    monitorLogCursorPath: join(afkState, "monitor-log-cursors.json"),
+    supervisorPidPath: join(afkState, "afk-supervisor.pid"),
+    supervisorStopPath: join(afkState, "afk-supervisor.stop"),
+    supervisorLogPath: join(afkState, "afk-supervisor.log"),
+    supervisorRestartsPath: join(afkState, "afk-supervisor.restarts.json"),
+    runnerCircuitDir: join(afkState, "runner-circuit"),
+    statuslineCachePath: join(statusline, "statusline-cache.json"),
+    statuslineRepoCachePath: join(statusline, "statusline-repo-cache.json"),
+    branchLockPath: rp.branchLockFile(root),
+    landLockPath: join(tmp, "afk-land.lock"),
+    claimsDir: rp.claimsDir(root),
+    diagnosticsDir: rp.diagnosticsDir(root),
+    mergeResolveScratchPath: join(rp.scratchDir(root), "merge-resolve.last"),
+    landingWorktreesDir: rp.landingWorktreesDir(root),
+    rebaseWorktreesDir: rp.rebaseWorktreesDir(root),
+    cascadeWorktreesDir: rp.cascadeWorktreesDir(root),
+    feedbackWorktreesDir: rp.feedbackWorktreesDir(root),
+    adoptWorktreesDir: rp.adoptWorktreesDir(root),
+    reconcileWorktreesDir: rp.reconcileWorktreesDir(root),
     gitignorePath: join(root, ".gitignore"),
-    configPath: join(root, ".red", "config.yaml"),
+    configPath: join(rp.redDir(root), "config.yaml"),
   };
+}
+
+/**
+ * Prefer the canonical (state-tier) path; fall back to the legacy `.red/tmp`
+ * location when only the legacy copy is present. This keeps a durable artifact
+ * READABLE across the one-release window before the boot migration
+ * (runtime/red-path-migration.ts) relocates it — the back-compat read the
+ * migration's "nothing deleted on ambiguity" rule pairs with (issue #1685).
+ */
+export function preferExistingPath(current: string, legacy: string): string {
+  if (existsSync(current)) return current;
+  if (existsSync(legacy)) return legacy;
+  return current;
+}
+
+/** Legacy `.red/tmp` companion of a relocated supervisor/statusline artifact,
+ * for {@link preferExistingPath} fallback reads. */
+function legacyTmpPath(root: string, name: string): string {
+  return join(rp.tmpDir(root), name);
 }
 
 // ---------- config-derived run settings ----------
@@ -469,7 +547,7 @@ import {
 } from "../core/worker-state-reader.js";
 import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
-import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
+import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
   workers: CompactWorker[];
@@ -754,14 +832,15 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     });
   }
 
-  const histText = await fsx.readText(paths.historyPath);
-  const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
-  const fleet = await readFleetState(paths.fleetStatePath);
+  const events = (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
+  const fleet = await readFleetState(
+    preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
+  );
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
   // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
   // and the cache age so the render can show a stale marker when the data is old.
-  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const cachePath = preferExistingPath(paths.statuslineCachePath, legacyTmpPath(root, "statusline-cache.json"));
   const cached = readStatuslineCache(cachePath);
   const nowS = Math.floor(Date.now() / 1000);
   const remoteExtra = cached !== null
@@ -773,7 +852,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
 
 // ---------- statusline inputs ----------
 
-import type { AfkInput, FleetInput, RepoInput } from "../core/statusline.js";
+import type { AfkInput, DocsInput, FleetInput, RepoInput } from "../core/statusline.js";
 
 /** The DEFAULT TTL (seconds) of every EXPENSIVE FETCHED statusline number — the
  * GitHub-derived queue/human and open-PR/open-issue counts AND the repo-global
@@ -848,12 +927,20 @@ export interface StatuslineRefreshSpawnOptions {
 }
 
 export function statuslineCountCachePath(root: string): string {
-  return join(afkPaths(root).tmpDir, "statusline-cache.json");
+  return afkPaths(root).statuslineCachePath;
+}
+
+function decodeCacheDocument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return decodeToon(text);
+  }
 }
 
 function readStatuslineCache(path: string): StatuslineCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
     return {
       queue: Number(parsed.queue ?? 0),
       human: Number(parsed.human ?? 0),
@@ -868,7 +955,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
   try {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeDevSnapshotToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1133,7 +1220,9 @@ export async function collectStatuslineAfk(
   // fleet is idle (workers == 0).
   const cachePath = statuslineCountCachePath(ctx.root);
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readStatuslineCache(cachePath);
+  const cached = readStatuslineCache(
+    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-cache.json")),
+  );
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
 
@@ -1209,10 +1298,14 @@ export async function collectStatuslineFleet(
   nowS: number = Math.floor(Date.now() / 1000),
 ): Promise<FleetInput | undefined> {
   const paths = afkPaths(ctx.root);
-  const pid = readSupervisorPid(join(paths.tmpDir, "afk-supervisor.pid"));
+  const pid = readSupervisorPid(
+    preferExistingPath(paths.supervisorPidPath, legacyTmpPath(ctx.root, "afk-supervisor.pid")),
+  );
   if (pid === null || !isLivePid(pid)) return undefined;
 
-  const state = await readFleetState(paths.fleetStatePath);
+  const state = await readFleetState(
+    preferExistingPath(paths.fleetStatePath, legacyTmpPath(ctx.root, "afk-supervisor.state.json")),
+  );
   if (!state) return undefined;
   if (nowS - state.epoch > maxAgeS) return undefined;
 
@@ -1309,7 +1402,7 @@ interface RepoStatsCache {
 
 function readRepoStatsCache(path: string): RepoStatsCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
     return {
       baseRef: typeof parsed.baseRef === "string" && parsed.baseRef.trim() ? parsed.baseRef.trim() : "origin/main",
       openPrs: Number(parsed.openPrs ?? 0),
@@ -1326,8 +1419,9 @@ function readRepoStatsCache(path: string): RepoStatsCache | null {
 
 function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
   try {
+    mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeDevSnapshotToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1352,9 +1446,11 @@ export async function collectStatuslineRepo(
   baseRef = "origin/main",
 ): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
-  const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
+  const cachePath = paths.statuslineRepoCachePath;
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readRepoStatsCache(cachePath);
+  const cached = readRepoStatsCache(
+    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-repo-cache.json")),
+  );
   const cacheMatchesBase = cached?.baseRef === baseRef;
   let openPrs = cached?.openPrs ?? 0;
   let todayPrs = cached?.todayPrs ?? 0;
@@ -1405,6 +1501,45 @@ export async function collectStatuslineRepo(
   }
 
   return { openPrs, todayPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };
+}
+
+type GitExec = typeof execTool;
+
+export async function collectStatuslineDocs(
+  ctx: RepoContext,
+  base = "main",
+  exec: GitExec = execTool,
+): Promise<DocsInput | undefined> {
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const baseRef = `${ctx.remote}/${base}`;
+  const precedent = new Map<DocsSweepFileState["group"], boolean>([
+    ["glossary", await docsTrackedPrecedentWithExec(gitCtx, baseRef, "glossary", exec)],
+    ["adr", await docsTrackedPrecedentWithExec(gitCtx, baseRef, "adr", exec)],
+  ]);
+
+  const status = await exec("git", ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  const files = status.code === 0 ? parseDocsPorcelain(status.stdout, precedent) : [];
+  const byPath = new Map(files.map((f) => [f.path, f]));
+
+  const ahead = await exec("git", ["diff", "--name-only", `${baseRef}...HEAD`, "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  if (ahead.code === 0) {
+    for (const raw of ahead.stdout.split("\n")) {
+      const path = raw.trim();
+      if (!path || byPath.has(path)) continue;
+      const group = classifyDocsPath(path);
+      if (group !== "glossary" && group !== "adr") continue;
+      byPath.set(path, {
+        path,
+        state: "ahead",
+        group,
+        ignored: false,
+        trackedPrecedent: precedent.get(group) ?? false,
+      });
+    }
+  }
+
+  const plan = planDocsSweep({ base, files: [...byPath.values()] });
+  return plan.files.length > 0 ? { count: plan.files.length } : undefined;
 }
 
 // ---------- reap inputs ----------
@@ -1523,7 +1658,17 @@ export async function collectBootOptions(
   // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
   // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
   // liveness at discovery so boot's orphan step stays a pure removal, #252.)
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs, reconcileSweepCandidates] =
+  const [
+    snapshotRefs,
+    remoteLiveRefs,
+    localAll,
+    checkedOut,
+    unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
+    reconcileSweepCandidates,
+    specSubIssueCandidates,
+  ] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
       gitx.listRemoteBranches(gitCtx, "afk/"),
@@ -1533,6 +1678,7 @@ export async function collectBootOptions(
       fsx.listStaleClaimDirs(paths.tmpDir),
       fsx.listLegacyWorkDirs(paths.tmpDir),
       ghx.listParkedMechanicalCandidates(ghCtx),
+      ghx.listSpecSubIssueCandidates(ghCtx, nowS),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
 
@@ -1546,6 +1692,8 @@ export async function collectBootOptions(
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,
+    docsSweep: await collectDocsSweepInput(ctx, facts.configuredTrunk ?? "main"),
+    specSubIssueCandidates,
   };
 }
 
@@ -1593,6 +1741,134 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     allowHttpsRemote:
       process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
   };
+}
+
+const DOC_SWEEP_PATHS = [".red/CONTEXT.md", ".red/CONTEXT-MAP.md", ".red/contexts", ".red/adr"] as const;
+
+function docsSweepGroupPath(group: DocsSweepFileState["group"]): string {
+  return group === "adr" ? ".red/adr" : ".red";
+}
+
+function parseDocsPorcelain(stdout: string, precedent: Map<DocsSweepFileState["group"], boolean>): DocsSweepFileState[] {
+  const files = new Map<string, DocsSweepFileState>();
+  for (const raw of stdout.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line) continue;
+    const status = line.slice(0, 2);
+    let path = line.slice(3);
+    const arrow = path.indexOf(" -> ");
+    if (arrow !== -1) path = path.slice(arrow + 4);
+    path = gitx.unquotePorcelainPath(path);
+    const group = classifyDocsPath(path);
+    if (group !== "glossary" && group !== "adr") continue;
+    files.set(path, {
+      path,
+      state: status === "??" || status === "!!" ? "untracked" : "modified",
+      group,
+      ignored: status === "!!",
+      trackedPrecedent: precedent.get(group) ?? false,
+    });
+  }
+  return [...files.values()];
+}
+
+async function docsTrackedPrecedent(ctx: gitx.GitContext, baseRef: string, group: DocsSweepFileState["group"]): Promise<boolean> {
+  if (group !== "glossary" && group !== "adr") return false;
+  const r = await execTool("git", ["ls-tree", "-r", "--name-only", baseRef, "--", docsSweepGroupPath(group)], { cwd: ctx.cwd });
+  return r.code === 0 && r.stdout.trim() !== "";
+}
+
+async function docsTrackedPrecedentWithExec(
+  ctx: gitx.GitContext,
+  baseRef: string,
+  group: DocsSweepFileState["group"],
+  exec: typeof execTool,
+): Promise<boolean> {
+  if (group !== "glossary" && group !== "adr") return false;
+  const r = await exec("git", ["ls-tree", "-r", "--name-only", baseRef, "--", docsSweepGroupPath(group)], { cwd: ctx.cwd });
+  return r.code === 0 && r.stdout.trim() !== "";
+}
+
+export async function collectDocsSweepInput(ctx: RepoContext, base: string) {
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const fetch = await execTool("git", ["fetch", ctx.remote, base], { cwd: ctx.root });
+  const originReachable = fetch.code === 0;
+  const baseRef = `${ctx.remote}/${base}`;
+  const precedent = new Map<DocsSweepFileState["group"], boolean>([
+    ["glossary", await docsTrackedPrecedent(gitCtx, baseRef, "glossary")],
+    ["adr", await docsTrackedPrecedent(gitCtx, baseRef, "adr")],
+  ]);
+
+  const status = await execTool("git", ["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+  const files = status.code === 0 ? parseDocsPorcelain(status.stdout, precedent) : [];
+  const byPath = new Map(files.map((f) => [f.path, f]));
+
+  if (originReachable) {
+    const ahead = await execTool("git", ["diff", "--name-only", `${baseRef}...HEAD`, "--", ...DOC_SWEEP_PATHS], { cwd: ctx.root });
+    if (ahead.code === 0) {
+      for (const raw of ahead.stdout.split("\n")) {
+        const path = raw.trim();
+        if (!path || byPath.has(path)) continue;
+        const group = classifyDocsPath(path);
+        if (group !== "glossary" && group !== "adr") continue;
+        byPath.set(path, {
+          path,
+          state: "ahead",
+          group,
+          ignored: false,
+          trackedPrecedent: precedent.get(group) ?? false,
+        });
+      }
+    }
+  }
+
+  return { base, files: [...byPath.values()], originReachable };
+}
+
+export async function landDocsSweep(ctx: RepoContext, plan: DocsSweepPlan) {
+  const paths = afkPaths(ctx.root);
+  const stamp = `${Date.now().toString(36)}-${process.pid}`;
+  const worktree = join(paths.tmpDir, "docs-sweep", stamp);
+  const branch = `docs/afk-docs-sweep-${stamp}`;
+  const title = "docs: land AFK boot docs sweep";
+  const body = "Automated Docs Sweep landing for stranded .red documentation.";
+
+  await fsx.ensureDir(dirname(worktree));
+  const add = await execTool("git", ["worktree", "add", "-b", branch, worktree, `${ctx.remote}/${plan.base}`], { cwd: ctx.root });
+  if (add.code !== 0) return { ok: false, reason: "worktree-add-failed" };
+
+  try {
+    for (const f of plan.files) {
+      const src = join(ctx.root, f.path);
+      const dst = join(worktree, f.path);
+      if (existsSync(src)) {
+        mkdirSync(dirname(dst), { recursive: true });
+        copyFileSync(src, dst);
+      } else {
+        rmSync(dst, { force: true });
+      }
+    }
+    const addDocs = await execTool("git", ["add", "--force", "--", ...plan.files.map((f) => f.path)], { cwd: worktree });
+    if (addDocs.code !== 0) return { ok: false, reason: "add-failed" };
+    const commit = await execTool("git", ["commit", "-m", title], { cwd: worktree });
+    if (commit.code !== 0) return { ok: false, reason: "commit-failed" };
+    const push = await execTool("git", ["push", ctx.remote, `HEAD:refs/heads/${branch}`], { cwd: worktree });
+    if (push.code !== 0) return { ok: false, reason: "push-failed" };
+    const create = await execTool("gh", ["-R", ctx.repo, "pr", "create", "--base", plan.base, "--head", branch, "--title", title, "--body", body], { cwd: ctx.root });
+    if (create.code !== 0) return { ok: false, reason: "pr-create-failed" };
+    const prNumber = /\/pull\/([0-9]+)/.exec(create.stdout)?.[1] ?? create.stdout.trim().match(/^[0-9]+$/)?.[0];
+    const resolvedPr = prNumber
+      ? { code: 0, stdout: prNumber, stderr: "" }
+      : await execTool("gh", ["-R", ctx.repo, "pr", "view", branch, "--json", "number", "-q", ".number"], { cwd: ctx.root });
+    const number = resolvedPr.stdout.trim();
+    if (resolvedPr.code !== 0 || !number) return { ok: false, reason: "pr-resolve-failed" };
+    const merge = await execTool("gh", ["-R", ctx.repo, "pr", "merge", number, "--merge", "--delete-branch"], { cwd: ctx.root });
+    if (merge.code !== 0) return { ok: false, reason: "merge-failed" };
+    await execTool("git", ["fetch", ctx.remote, plan.base], { cwd: ctx.root });
+    return { ok: true };
+  } finally {
+    await execTool("git", ["worktree", "remove", "--force", worktree], { cwd: ctx.root });
+  }
 }
 
 // ---------- boot deps ----------
@@ -1670,6 +1946,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
+      attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
     },
     git: {
@@ -1681,7 +1958,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
       // debris, not a mid-issue crash — the sweep removes it without touching
       // the winner's `running` label.
-      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).tmpDir, "claims", String(issue))),
+      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).claimsDir, String(issue))),
       // Orphan state pairs gh issue state/label with the attempt dir's
       // envelope.posted flag (read from the state file, not gh). Derived from
       // the batched map, preserving ghx.orphanState's exact label/state →
@@ -1749,6 +2026,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
     },
     nowS,
     config: cfg,
+    docsSweepLander: (plan) => landDocsSweep(ctx, plan),
   };
 }
 
@@ -1778,6 +2056,7 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       editLabels: async () => unreachable(),
       comment: async () => unreachable(),
       viewLabels: async () => unreachable(),
+      attachSubIssue: async () => unreachable(),
     },
     git: {
       deleteRemoteBranch: async () => unreachable(),
@@ -1794,5 +2073,6 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       },
     },
     nowS,
+    docsSweepLander: async () => unreachable(),
   };
 }

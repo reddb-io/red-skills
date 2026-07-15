@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
 import {
@@ -7,7 +10,8 @@ import {
   renderActivityReviewReportToon,
   type ActivityReviewIssue,
 } from "../src/core/activity-review.js";
-import { parseGitLogStats } from "../src/commands/activity-review.js";
+import { collectTokenSummary, collectTokensFromObject, parseGitLogStats } from "../src/commands/activity-review.js";
+import { appendRecordToonlTaggedRow, buildRecord } from "../src/core/jsonl-log.js";
 import type { HistoryRecord } from "../src/core/history.js";
 
 const issue = (over: Partial<ActivityReviewIssue>): ActivityReviewIssue => ({
@@ -185,5 +189,77 @@ describe("activity review", () => {
       "commit:bbb",
       " 1 file changed, 3 deletions(-)",
     ].join("\n"))).toEqual({ commits: 2, added: 10, removed: 4 });
+  });
+
+  it("collects tokens from old raw JSON strings and new structured raw payloads", () => {
+    const oldRaw = {
+      ts: "2026-06-06T12:00:00.000Z",
+      type: "raw",
+      msg: "{\"type\":\"usage\",\"inputTokens\":3,\"outputTokens\":5}",
+    };
+    const newRaw = {
+      ts: "2026-06-06T12:00:01.000Z",
+      type: "raw",
+      msg: { iteration: 1, line: "{\"type\":\"usage\",\"inputTokens\":7,\"outputTokens\":11}" },
+    };
+
+    expect(collectTokensFromObject(oldRaw)).toEqual({ input: 3, output: 5, total: 0, hits: 2 });
+    expect(collectTokensFromObject(newRaw)).toEqual({ input: 7, output: 11, total: 0, hits: 2 });
+  });
+
+  it("activity-review token scan reads legacy JSONL and tagged-row TOONL attempt lanes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "activity-review-firehose-"));
+    const attemptDir = join(root, "wAAAA", "1824-a1");
+    await mkdir(attemptDir, { recursive: true });
+    const log = join(attemptDir, "log.jsonl");
+    const tagged: string[] = [];
+    const sink = async (_p: string, line: string) => void tagged.push(line);
+    await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
+      ts: "2026-07-15T12:00:00.000Z",
+      fields: { extra: { iteration: "1" } },
+      sink,
+    });
+    await writeFile(
+      log,
+      [
+        JSON.stringify(buildRecord("raw", { iteration: 0, line: "{\"inputTokens\":3,\"outputTokens\":5}" }, "2026-07-15T11:00:00.000Z")),
+        ...tagged,
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const summary = await collectTokenSummary(
+      root,
+      new Date("2026-07-15T00:00:00.000Z"),
+      new Date("2026-07-16T00:00:00.000Z"),
+    );
+    expect(summary).toEqual({ available: true, input: 10, output: 16, total: null, sourceRecords: 2 });
+  });
+
+  it("activity-review token scan resumes from disposable cursor state without changing results", async () => {
+    const root = await mkdtemp(join(tmpdir(), "activity-review-cursor-"));
+    const attemptDir = join(root, "wAAAA", "1825-a1");
+    await mkdir(attemptDir, { recursive: true });
+    const log = join(attemptDir, "log.jsonl");
+    await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
+      ts: "2026-07-15T12:00:00.000Z",
+      fields: { extra: { iteration: "1" } },
+    });
+    const start = new Date("2026-07-15T00:00:00.000Z");
+    const end = new Date("2026-07-16T00:00:00.000Z");
+
+    const first = await collectTokenSummary(root, start, end);
+    expect(first).toEqual({ available: true, input: 7, output: 11, total: null, sourceRecords: 1 });
+
+    await appendRecordToonlTaggedRow(log, "raw", { iteration: 2, line: "{\"inputTokens\":13,\"outputTokens\":17}" }, {
+      ts: "2026-07-15T12:05:00.000Z",
+      fields: { extra: { iteration: "2" } },
+    });
+    const resumed = await collectTokenSummary(root, start, end);
+    expect(resumed).toEqual({ available: true, input: 20, output: 28, total: null, sourceRecords: 2 });
+
+    await writeFile(join(root, ".activity-review-token-cursors.json"), "", "utf8");
+    const cold = await collectTokenSummary(root, start, end);
+    expect(cold).toEqual(resumed);
   });
 });

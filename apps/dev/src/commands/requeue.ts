@@ -38,7 +38,7 @@ import { pathExists, removeDir } from "../runtime/fs.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
-import { getConfig, loadConfig } from "../core/config.js";
+import { getConfig, loadConfig, readValidationResourceBudget } from "../core/config.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -325,8 +325,11 @@ async function runAdoptLanding(
   const ghCtx: GhContext = { cwd, repo };
   const gitCtx: GitContext = { cwd };
   const lockPath = branchLockPath(cwd);
-  const feedbackDir = join(paths.tmpDir, "adopt-landing", String(issue));
-  const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {});
+  const feedbackDir = join(paths.adoptWorktreesDir, String(issue));
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {
+    resourceBudget: readValidationResourceBudget(config),
+  });
 
   // Bound to the live worker-presence row's stage inside withAdoptPresence
   // below; reconcile's `markStage` calls through it (#1306).
@@ -338,9 +341,7 @@ async function runAdoptLanding(
       {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: undefined,
-        configTrunk:
-          getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") ||
-          undefined,
+        configTrunk: getConfig(config, "dev.trunk") || undefined,
         fetchIssueBody: async () => undefined,
       },
     );
@@ -393,7 +394,7 @@ async function runAdoptLanding(
       // Landing worktree for the locked (DIRECT) land path (#572).
       makeLandingWorktree: async (bas: string) => {
         const slug = bas.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
-        const dest = join(paths.tmpDir, "landing", `${slug}-adopt-${issue}`);
+        const dest = join(paths.landingWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, bas);
         return ok ? dest : null;
@@ -402,7 +403,7 @@ async function runAdoptLanding(
       // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006).
       makeRebaseWorktree: async (branch: string) => {
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
-        const dest = join(paths.tmpDir, "rebase", `${slug}-adopt-${issue}`);
+        const dest = join(paths.rebaseWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
         return ok ? dest : null;
@@ -433,14 +434,14 @@ async function runAdoptLanding(
       base,
       // ADR 0083 landing precondition (#1018): the configured Trunk the primary
       // checkout tracks, for doLanding's local-trunk-divergence guard.
-      trunk: getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") || "main",
+      trunk: getConfig(config, "dev.trunk") || "main",
       repo,
       repoDir: cwd,
       remote: "origin",
       // Synthetic worker identity for logging/envelope — no real AFK worker ran.
       workerId: "requeue-adopt",
       attempt: 0,
-      attemptDir: join(paths.tmpDir, "adopt-landing", String(issue)),
+      attemptDir: join(paths.adoptWorktreesDir, String(issue)),
       runner: "claude" as Runner,
       // #1171: bypass doLanding's sensitive-path guard ONLY for a maintainer-
       // reviewed adopt of a `blocked:sensitive-path` park. Defaults false — a

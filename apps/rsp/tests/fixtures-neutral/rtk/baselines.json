@@ -1,0 +1,26 @@
+{
+  "version": "rtk 0.14.0",
+  "captured_at": "2026-07-13T00:00:00.000Z",
+  "fixtures": [
+    {
+      "name": "cargo-third-party-failure",
+      "stdout": "rtk cargo test\n1/3 failed: cli::snapshots::updates_lockfile\nthread panicked at tests/cli.rs:88: expected lockfile fixture to match\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "commit-node-doc",
+      "stdout": "rtk git commit\nmain e84b517d doc: document net Socket server property\n2 files changed, +18 -4\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "diff-rust-large-numstat",
+      "stdout": "rtk git diff --numstat\n20 files changed, +333 -173\nfirst compiler/rustc_borrowck/src/diagnostics/conflict_errors.rs\n",
+      "fidelity_assertions_passed": true
+    },
+    {
+      "name": "log-node-recent",
+      "stdout": "rtk git log\n5 commits\nace91de6 Matteo Collina stream: use the ring buffer for WHATWG stream request queues\n",
+      "fidelity_assertions_passed": true
+    }
+  ]
+}

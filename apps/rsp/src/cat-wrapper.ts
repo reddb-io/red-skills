@@ -19,6 +19,7 @@ interface ParsedCatCommand {
   file: string;
   mode: "full" | "head" | "tail";
   limit?: number;
+  inlineFull?: boolean;
 }
 
 type FileSymbol = JsonObject & {
@@ -96,9 +97,14 @@ export function parseCatCommand(argv: readonly string[]): ParsedCatCommand {
   const args = argv.slice(1);
   let mode: ParsedCatCommand["mode"] = "full";
   let limit: number | undefined;
+  let inlineFull = false;
   const files: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
+    if (arg === "--full") {
+      inlineFull = true;
+      continue;
+    }
     if (arg === "--head" || arg === "--tail") {
       mode = arg.slice(2) as "head" | "tail";
       limit = positiveInteger(args[++index], DEFAULT_SLICE_LINES);
@@ -112,8 +118,8 @@ export function parseCatCommand(argv: readonly string[]): ParsedCatCommand {
     }
     files.push(arg);
   }
-  if (files.length !== 1) throw new Error("usage: rsp cat [--head N|--tail N] <file>");
-  return { file: files[0]!, mode, ...(limit ? { limit } : {}) };
+  if (files.length !== 1) throw new Error("usage: rsp cat [--full] [--head N|--tail N] <file>");
+  return { file: files[0]!, mode, ...(limit ? { limit } : {}), ...(inlineFull ? { inlineFull } : {}) };
 }
 
 async function renderCatBytes(
@@ -124,6 +130,15 @@ async function renderCatBytes(
 ): Promise<GitRenderResult> {
   const text = bytes.toString("utf8");
   const sliced = applySlice(text, parsed);
+  if (parsed.inlineFull) {
+    return {
+      stdout: Buffer.from(sliced.text),
+      stderr: Buffer.alloc(0),
+      status: 0,
+      signal: null,
+      rawOutput: bytes,
+    };
+  }
   const shouldElide = options.level !== "lossless" ||
     bytes.length > positiveNumber(options.heavyByteThreshold, DEFAULT_CAT_HEAVY_BYTE_THRESHOLD) ||
     sliced.truncated;

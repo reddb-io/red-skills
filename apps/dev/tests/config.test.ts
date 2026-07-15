@@ -9,6 +9,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  readValidationResourceBudget,
   downgradeAfkModelTier,
   resolveTier,
   resolveCiTimeoutSeconds,
@@ -257,6 +258,25 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
         "plugins:\n  dev:\n    afk:\n      output_shaping:\n        terse_steering: true\n",
     });
     expect(getConfig(values, "afk.output_shaping.terse_steering")).toBe("true");
+  });
+
+  it("defaults and reads AFK validation resource budgets (#1758)", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(readValidationResourceBudget(defaults)).toEqual({
+      nodeMaxOldSpaceMb: 2048,
+      vitestMaxWorkers: 1,
+      heavyAvailableMemoryMb: 4096,
+    });
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    afk:\n      validation:\n        node_max_old_space_mb: 1536\n        vitest_max_workers: 2\n        heavy_available_memory_mb: 3072\n",
+    });
+    expect(readValidationResourceBudget(values)).toEqual({
+      nodeMaxOldSpaceMb: 1536,
+      vitestMaxWorkers: 2,
+      heavyAvailableMemoryMb: 3072,
+    });
   });
 });
 

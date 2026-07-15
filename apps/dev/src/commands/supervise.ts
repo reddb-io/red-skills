@@ -8,7 +8,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type FleetHeartbeat,
   initSupervisorState,
@@ -17,7 +17,7 @@ import {
   type SpawnPolicy,
   type SupervisorDeps,
 } from "../core/supervisor.js";
-import { appendRecord } from "../core/jsonl-log.js";
+import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
   afkPaths,
   resolveRepoSlug,
@@ -249,6 +249,7 @@ export function formatBootSweepResult(result: BootResult): string {
   const oc = result.orphanCleanup;
   const ac = result.attemptCap;
   const bc = result.branchCleanup;
+  const ds = result.docsSweep?.plan;
   const us = result.unblockSweep;
   const st = result.straggler;
   return (
@@ -256,6 +257,7 @@ export function formatBootSweepResult(result: BootResult): string {
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
     ` | branches snapshot=${bc?.snapshotReaped.length ?? 0} remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
+    ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +
     ` | stragglers unlabeled=${st?.counts.unlabeled ?? 0} triage=${st?.counts.needsTriage ?? 0} info=${st?.counts.needsInfo ?? 0}`
   );
@@ -289,7 +291,7 @@ export function buildSupervisorBootSweeps(
       stateDir: paths.stateDir,
       gitignorePath: paths.gitignorePath,
       workerDir: paths.tmpDir,
-      workerPidFile: join(paths.tmpDir, "afk-supervisor-boot.pid"),
+      workerPidFile: join(dirname(paths.supervisorPidPath), "afk-supervisor-boot.pid"),
       workerPid: process.pid,
     };
     const options = await collectBootOptions(ctx, facts, bootstrap, nowS);
@@ -420,7 +422,8 @@ function buildSupervisorDeps(
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
       },
-      parkedSlotWork: (slot, lastPid) => parkedSlotWorkFor(tmpDir, slot, lastPid),
+      parkedSlotWork: (slot, lastPid) =>
+        parkedSlotWorkFor(tmpDir, slot, lastPid, afkPaths(root).supervisorLogPath),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
@@ -552,7 +555,7 @@ function buildSupervisorDeps(
         // best-effort: state-file failure must not affect the supervisor.
       }
       try {
-        await appendRecord(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
+        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
           ts: hb.ts,
           fields: {
             worker: "fleet",
@@ -565,14 +568,10 @@ function buildSupervisorDeps(
               slots_total: String(hb.slotsTotal),
               slots_parked: String(hb.slotsParked),
               spawns_this_tick: String(hb.spawnsThisTick),
-              ...(hb.drainBudget
-                ? {
-                    drain_budget_tier: hb.drainBudget.tier,
-                    drain_budget_spent_usd: hb.drainBudget.spentUsd.toFixed(4),
-                    drain_budget_limit_usd: hb.drainBudget.limitUsd.toFixed(4),
-                    drain_budget_percent: (hb.drainBudget.percent * 100).toFixed(2),
-                  }
-                : {}),
+              drain_budget_tier: hb.drainBudget?.tier ?? null,
+              drain_budget_spent_usd: hb.drainBudget?.spentUsd.toFixed(4) ?? null,
+              drain_budget_limit_usd: hb.drainBudget?.limitUsd.toFixed(4) ?? null,
+              drain_budget_percent: hb.drainBudget ? (hb.drainBudget.percent * 100).toFixed(2) : null,
             },
           },
         });
@@ -591,17 +590,23 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const root = cwd;
   const paths = afkPaths(root);
   const tmp = paths.tmpDir;
-  const pidFile = join(tmp, "afk-supervisor.pid");
-  const stopFile = join(tmp, "afk-supervisor.stop");
-  const logFile = join(tmp, "afk-supervisor.log");
+  const stateAfk = dirname(paths.supervisorPidPath);
+  const pidFile = paths.supervisorPidPath;
+  const stopFile = paths.supervisorStopPath;
+  const logFile = paths.supervisorLogPath;
   const firehoseFile = paths.fleetFirehosePath;
   const stateFile = paths.fleetStatePath;
 
+  // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
+  // the state tier before the supervisor reads/writes them (issue #1685).
+  await import("../runtime/red-path-migration.js").then((m) => m.migrateLegacyDevPaths(root)).catch(() => undefined);
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
+  await import("../runtime/fs.js").then((m) => m.ensureDir(stateAfk));
   // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
   // attach from boot rather than waiting for the first worker to create it.
   await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
-  await reapStaleSupervisorState(tmp, isAlive);
+  // Reap dead supervisor artifacts across the state home and the legacy tmp home.
+  await reapStaleSupervisorState([stateAfk, tmp], isAlive);
   // single-supervisor lock
   if (existsSync(pidFile)) {
     try {

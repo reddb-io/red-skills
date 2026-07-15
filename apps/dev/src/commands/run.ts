@@ -28,6 +28,7 @@ import {
 import { isRunner, type Runner } from "../types/runner.js";
 import {
   afkPaths,
+  preferExistingPath,
   collectPrecheckFacts,
   collectBootOptions,
   collectMonitorInputs,
@@ -47,11 +48,13 @@ import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
+import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import type { GhContext } from "../runtime/gh.js";
 import { buildReviewGh } from "../runtime/review-gh.js";
 import type { GitContext } from "../runtime/git.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../core/output-shaping.js";
@@ -83,7 +86,7 @@ import {
 } from "../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../core/host-identity.js";
-import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
+import { appendAgentRecord, appendRecordToonlTaggedRow } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
@@ -458,7 +461,7 @@ function makeBootReconcileRunner(
       makeLandingWorktree: async (base: string) => {
         const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
         const slug = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
-        const dest = join(paths.tmpDir, "landing", `${slug}-boot-${slot}`);
+        const dest = join(paths.landingWorktreesDir, `${slug}-boot-${slot}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, base);
         return ok ? dest : null;
@@ -469,7 +472,7 @@ function makeBootReconcileRunner(
       makeRebaseWorktree: async (branch: string) => {
         const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
-        const dest = join(paths.tmpDir, "rebase", `${slug}-boot-${slot}`);
+        const dest = join(paths.rebaseWorktreesDir, `${slug}-boot-${slot}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
         return ok ? dest : null;
@@ -530,7 +533,7 @@ function makeBootReconcileRunner(
         remote: ctx.remote,
         workerId,
         attempt: 0,
-        attemptDir: join(paths.tmpDir, "boot-reconcile", String(plan.number)),
+        attemptDir: join(paths.reconcileWorktreesDir, String(plan.number)),
         runner,
         // #1095: a `blocked:merge-conflict` park carries a branch that already
         // validated green before a land-time trunk conflict. Trust that prior
@@ -589,8 +592,10 @@ async function runReconcileWorker(
   };
 
   const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
-  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
     rebaseOnto: reconcileSettings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
   try {
     const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
@@ -1000,6 +1005,7 @@ export function buildProcessDeps(
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
+    validationResourceBudget: readValidationResourceBudget(config),
     layout: feedback.layout,
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.
@@ -1059,7 +1065,7 @@ export function buildProcessDeps(
           ? codexSpawnArgs({
               prompt,
               worktree: cwd,
-              lastMessagePath: join(paths.tmpDir, "merge-resolve.last"),
+              lastMessagePath: paths.mergeResolveScratchPath,
               model: conflictTier.model,
               effort: conflictTier.effort,
             })
@@ -1075,7 +1081,7 @@ export function buildProcessDeps(
     makeLandingWorktree: async (base: string) => {
       const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
       const slug = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
-      const dest = join(paths.tmpDir, "landing", `${slug}-${slot}`);
+      const dest = join(paths.landingWorktreesDir, `${slug}-${slot}`);
       await gitx.worktreeRemove(gitCtx, dest);
       const ok = await gitx.worktreeAdd(gitCtx, dest, base);
       return ok ? dest : null;
@@ -1086,7 +1092,7 @@ export function buildProcessDeps(
     makeRebaseWorktree: async (branch: string) => {
       const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
       const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
-      const dest = join(paths.tmpDir, "rebase", `${slug}-${slot}`);
+      const dest = join(paths.rebaseWorktreesDir, `${slug}-${slot}`);
       await gitx.worktreeRemove(gitCtx, dest);
       const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
       return ok ? dest : null;
@@ -1174,14 +1180,16 @@ export function buildProcessDeps(
       // the meter + iteration markers. Returning here also narrows `event` to the
       // non-raw variants for the rest of the handler.
       if (event.type === "raw") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", event.line, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "raw", {
+          iteration: event.iteration,
+          line: event.line,
+        }, {
           ts,
-          fields: { extra: { kind: "raw", iteration: String(event.iteration) } },
         }).catch(() => {});
         return;
       }
       if (event.type === "sessionId") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
           ts,
           fields: {
             extra: {
@@ -1224,7 +1232,7 @@ export function buildProcessDeps(
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
-          void appendRecord(join(dir0, "log.jsonl"), "iteration", line, {
+          void appendRecordToonlTaggedRow(join(dir0, "log.jsonl"), "iteration", line, {
             ts,
             fields: { extra: { iteration: String(n), phase } },
           }).catch(() => {});
@@ -1255,7 +1263,7 @@ export function buildProcessDeps(
       // Firehose lane (issue #250): every record in the uniform envelope. The
       // native port left this unopened; restore it so the post-mortem firehose
       // carries the agent turns alongside the (future) heartbeat/hook records.
-      void appendRecord(join(current.attemptDir, "log.jsonl"), "agent", msg, {
+      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "agent", msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
@@ -1318,7 +1326,7 @@ export function buildProcessDeps(
       const head = info.head ?? "";
       void (async () => {
         // sandcastle creates the agent's worktree at
-        // `{attemptDir}/.sandcastle/worktrees/{slug}`, NOT the legacy
+        // `{attemptDir}/.red-castle/worktrees/{slug}`, NOT the legacy
         // `{attemptDir}/worktree` the state seeds — diffing the latter fails
         // (it never exists) and every tick read a permanent `+0 -0` even with a
         // dirty worktree, which also starved the attempt-progress guard's
@@ -1386,7 +1394,7 @@ export function buildProcessDeps(
           removed,
           activity,
         });
-        await appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
+        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
           ts,
           fields: { extra: hb.extra },
         }).catch(() => {});
@@ -1480,7 +1488,7 @@ export function buildProcessDeps(
       async rebaseAndPush(repoDir: string, branch: string, newBase: string) {
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
         const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
-        const dest = join(paths.tmpDir, "cascade-rebase", `${slug}-${slot}`);
+        const dest = join(paths.cascadeWorktreesDir, `${slug}-${slot}`);
         try {
           await gitx.worktreeRemove(gitCtx, dest);
           const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
@@ -1637,7 +1645,7 @@ function makeRecordOutcomeEvent(
 ): (event: OutcomeEvent) => Promise<void> {
   return async (event: OutcomeEvent): Promise<void> => {
     try {
-      const configPath = join(gitRoot, ".red", "config.yaml");
+      const configPath = configFile(gitRoot);
       const configText = readFileSync(configPath, "utf8");
       if (!pluginEnabledInConfig(configText, "brain")) return;
       const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
@@ -1706,12 +1714,8 @@ async function recordBootError(workerDir: string, type: "boot-error" | "session-
   process.stderr.write(`[afk] ${type}: ${message}\n`);
 }
 
-function runnerCircuitDir(tmpDir: string): string {
-  return join(tmpDir, "runner-circuit");
-}
-
-function runnerCircuitPath(tmpDir: string, runner: Runner): string {
-  return join(runnerCircuitDir(tmpDir), `${runner}.json`);
+function runnerCircuitPath(circuitDir: string, runner: Runner): string {
+  return join(circuitDir, `${runner}.json`);
 }
 
 function runnerTransientCooldownS(env: Record<string, string | undefined>): number {
@@ -1724,15 +1728,15 @@ function runnerTransientCooldownS(env: Record<string, string | undefined>): numb
 }
 
 async function openRunnerCircuit(
-  tmpDir: string,
+  circuitDir: string,
   runner: Runner,
   nowS: number,
   env: Record<string, string | undefined>,
 ): Promise<void> {
   const cooldownS = runnerTransientCooldownS(env);
-  await fsx.ensureDir(runnerCircuitDir(tmpDir));
+  await fsx.ensureDir(circuitDir);
   await writeFile(
-    runnerCircuitPath(tmpDir, runner),
+    runnerCircuitPath(circuitDir, runner),
     `${JSON.stringify({
       runner,
       opened_at: nowS,
@@ -1744,12 +1748,12 @@ async function openRunnerCircuit(
 }
 
 async function runnerCircuitOpen(
-  tmpDir: string,
+  circuitDir: string,
   runner: Runner,
   nowS: number,
 ): Promise<boolean> {
   try {
-    const raw = await readFile(runnerCircuitPath(tmpDir, runner), "utf8");
+    const raw = await readFile(runnerCircuitPath(circuitDir, runner), "utf8");
     const parsed = JSON.parse(raw) as { expires_at?: unknown };
     return typeof parsed.expires_at === "number" && parsed.expires_at > nowS;
   } catch {
@@ -1807,6 +1811,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
 
+  // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
+  // the state tier before this worker reads/writes supervisor/circuit state
+  // (issue #1685). Idempotent + best-effort — a second boot is a no-op.
+  await migrateLegacyDevPaths(cwd).catch(() => undefined);
+
   // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
   // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
   // spawned by the running supervisor; RED_AFK_SWEEPS_DONE=1 workers are
@@ -1814,7 +1823,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // dispatch (#1087) is exempt too: its isolated namespace/lane/origin can
   // never collide with the fleet, so it must boot whether or not a fleet is up.
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
-    const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
+    const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
     const exempt = isNamespacedDispatch({ origin: flags.origin, lane: flags.lane });
     const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
@@ -1928,8 +1937,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
   // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
   // (default behaviour unchanged).
-  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
     rebaseOnto: settings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
 
   // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A
@@ -1961,7 +1972,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     processIssue: async (pd, pi) => {
       const result = await processIssue(pd, pi);
       if (result.outcome === "runner-transient") {
-        await openRunnerCircuit(paths.tmpDir, pi.runner, Math.floor(Date.now() / 1000), process.env).catch(() => {});
+        await openRunnerCircuit(paths.runnerCircuitDir, pi.runner, Math.floor(Date.now() / 1000), process.env).catch(() => {});
       }
       // Abandon means DELETE (#644): buildProcessInput pre-creates the attempt
       // dir + state (current.number, live pid) BEFORE the claim, so a lost race
@@ -2002,7 +2013,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
     },
     runnerCircuit: {
-      isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1000)),
+      isOpen: (r) => runnerCircuitOpen(paths.runnerCircuitDir, r, Math.floor(Date.now() / 1000)),
     },
     buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
       const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);

@@ -77,10 +77,12 @@ lock; it never writes the lock itself.
 
 ## Why the lock exists
 
-The lock is a local fact — `./.red/tmp/branch-lock.yaml` whose content is the
-branch name — under the gitignored `.red/tmp/`, so every checkout and machine
-locks independently and nothing is committed. Absence of the file means unlocked:
-the branch-lock layer is strictly opt-in.
+The lock is a local fact — `.red/state/branch-lock.yaml` whose content is the
+branch name — under the gitignored state tier, so every checkout and machine
+locks independently and nothing is committed. Legacy readers may still recognize
+the old `.red/tmp/branch-lock.yaml` path during migration, but the canonical home
+is the durable state tier. Absence of the file means unlocked: the branch-lock
+layer is strictly opt-in.
 
 Layered under it, the dev plugin ships an **unconditional** primary-checkout
 branch guard (ADR 0083 §2, untouchable primary). Once the dev plugin is enabled
@@ -100,10 +102,11 @@ The same unconditional guard also blocks the work-destroying commands the
 standing maintainer rules forbid in the primary checkout, because parallel human
 WIP lives there and these have destroyed in-progress work before (issue #1024).
 The refusal points to the sanctioned alternative — do branch work in an isolated
-worktree under `.red/tmp/work-*/`, and if the local trunk diverged from origin,
-leave it alone and base on the fresh remote ref (ADR 0083). Inside isolated
-worktrees these commands remain allowed — the guard is about the primary checkout
-only, and `/afk` and `/go` worktrees under `.red/tmp/` are always exempt.
+worktree under `.red/tmp/worktrees/manual/<slug>`, and if the local trunk
+diverged from origin, leave it alone and base on the fresh remote ref (ADR 0083).
+Inside isolated worktrees these commands remain allowed — the guard is about the
+primary checkout only, and `/afk` and `/go` worktrees under their registered
+`.red/tmp/` lanes are always exempt.
 
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
@@ -128,7 +131,7 @@ branch-lock/
     ├── lib/
     │   ├── dev-config.sh          ← read dev.lock.primary-branch from .red/config.yaml
     │   ├── lock-store.sh          ← read/write/clear branch-lock.yaml
-    │   ├── scope-resolver.sh      ← primary enforces, .red/tmp/work-*/ exempt
+    │   ├── scope-resolver.sh      ← primary enforces, registered .red/tmp worktrees exempt
     │   └── git-command-classifier.sh ← branch-switch + work-loss family = block
     └── tests/
         ├── lock-store.test.sh
@@ -162,14 +165,14 @@ It allows (exit 0, silent):
 - `git stash list` / `git stash show` — read-only stash
 - `git clean -n` / `--dry-run` — non-destructive clean
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
-- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/go` work
+- `git worktree add .red/tmp/worktrees/manual/<slug>` — manual worktrees stay in the registered lane
 - `git commit`, `git status` / read-only git, and any other command
 
 The dev command proxy has a stricter host-wide invariant when
 `plugins.dev.enabled: true`: any agent-created `git worktree add` destination
-must resolve under the repo's `.red/tmp/`. Branch-lock allows the command class;
-the dev proxy decides whether the destination path is inside the repo-owned
-runtime area.
+must resolve under a registered lane in the repo's `.red/tmp/`. Branch-lock
+allows the command class; the dev proxy decides whether the destination path is
+inside the repo-owned runtime area.
 
 ## Tests
 

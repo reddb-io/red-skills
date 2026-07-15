@@ -1,0 +1,24 @@
+# oracle: preserves decision-relevant rows and columns from diff-rust-large-numstat; keep as compact TOON, not a scalar verdict.
+command: git diff
+files[20]{path,added,deleted}:
+  compiler/rustc_borrowck/src/diagnostics/conflict_errors.rs,38,32
+  compiler/rustc_borrowck/src/diagnostics/explain_borrow.rs,10,17
+  compiler/rustc_borrowck/src/diagnostics/region_errors.rs,10,11
+  compiler/rustc_borrowck/src/region_infer/mod.rs,33,30
+  compiler/rustc_hir_typeck/src/method/probe.rs,12,4
+  compiler/rustc_middle/src/ty/generic_args.rs,3,3
+  compiler/rustc_middle/src/ty/print/pretty.rs,23,0
+  compiler/rustc_middle/src/ty/typeck_results.rs,6,18
+  compiler/rustc_mir_dataflow/src/impls/storage_liveness.rs,24,2
+  compiler/rustc_mir_transform/src/coroutine/mod.rs,46,1
+  compiler/rustc_parse/src/parser/diagnostics.rs,1,1
+  compiler/rustc_resolve/src/diagnostics/impls.rs,90,22
+  compiler/rustc_target/src/target_features.rs,1,1
+  library/core/src/num/nonzero.rs,2,2
+  library/core/src/ptr/non_null.rs,6,1
+  src/bootstrap/src/core/build_steps/clean.rs,1,2
+  src/bootstrap/src/core/build_steps/compile.rs,3,8
+  src/bootstrap/src/core/builder/mod.rs,18,10
+  src/bootstrap/src/lib.rs,3,1
+  src/tools/rust-analyzer/Cargo.lock,5,7
+summary: 20 files, +335 -173

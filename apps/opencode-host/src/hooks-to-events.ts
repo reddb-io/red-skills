@@ -83,7 +83,8 @@ export function rewritePluginRoot(command: string, plugin: string): string {
   // JS template that uses the surrounding function's `directory` arg.
   return command
     .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, `\${__pluginRoot}`)
-    .replace(/\$\{CODEX_PLUGIN_ROOT\}/g, `\${__pluginRoot}`);
+    .replace(/\$\{CODEX_PLUGIN_ROOT\}/g, `\${__pluginRoot}`)
+    .replace(/\brsp-instructions --runner (claude|codex) --hook\b/g, "rsp-instructions --runner opencode --hook");
 }
 
 /** The TypeScript template for a single `tool.execute.before` module. */
@@ -146,7 +147,7 @@ function toolExecuteBeforeTemplate(input: {
   const rspRewriteHelper = hasRspHook
     ? [
         "      const __runRspRewrite = async (inner: string): Promise<string | null> => {",
-        "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
+        "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot, OPENCODE_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
         "        const writer = proc.stdin.getWriter();",
         "        await writer.write(__encoder.encode(__payload));",
         "        await writer.close();",
@@ -182,7 +183,7 @@ function toolExecuteBeforeTemplate(input: {
     "      const __shellQuote = (value: string): string => `'${value.replaceAll(\"'\", \"'\\\\''\")}'`;",
     "      const __denyCommand = (reason: string, code: number): string => `printf '%s\\\\n' ${__shellQuote(reason)} >&2; exit ${code}`;",
     "      const __runHook = async (inner: string): Promise<boolean> => {",
-    "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
+    "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot, OPENCODE_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
     "        const writer = proc.stdin.getWriter();",
     "        await writer.write(__encoder.encode(__payload));",
     "        await writer.close();",
@@ -528,11 +529,11 @@ function userPromptSubmitTemplate(input: {
  *  (exit 0 + non-empty stdout = rewrite; exit 1 = passthrough) rather
  *  than the block-deny JSON protocol the other hooks use.
  *
- *  The detection is intentionally conservative: only the well-known
- *  `hook claude-pre-exec` invocation qualifies; other rsp subcommands
- *  are pass-through-safe for the block-deny path. */
+ *  The detection is intentionally conservative: only the well-known Claude rsp
+ *  pre-exec invocation qualifies; other rsp subcommands are pass-through-safe
+ *  for the block-deny path. */
 export function isRspRewriteHook(inner: string): boolean {
-  return inner.includes("hook claude-pre-exec");
+  return inner.includes("hook claude-pre-exec") || (inner.includes("rsp-hook.sh") && inner.includes("claude-pre-exec"));
 }
 
 /** Translate a Claude/Codex matcher glob into a JS regex literal. The

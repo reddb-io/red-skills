@@ -103,6 +103,10 @@ Before moving into implementation, summarize:
 
 Keep this summary concise. The goal is to prove the agent is grounded, not to dump every artifact.
 
+### 9. End-of-session doc-landing finalizer
+
+When the context session ends, run the shared end-of-session doc-landing finalizer in [`/start`'s DOC-LANDING-FINALIZER.md](../start/DOC-LANDING-FINALIZER.md) before exiting.
+
 ## Hard rules
 
 - Do not let graph or memory output outrank the current worktree.

@@ -82,8 +82,8 @@ primary checkout to another branch or destroy work in it (branch switch,
 human WIP lives in this primary checkout, and these commands have destroyed
 in-progress work before.
 
-Do branch work in an isolated worktree under .red/tmp/work-*/ instead
-('git worktree add .red/tmp/work-<slug> -b <branch> origin/main'). If the local
+Do branch work in an isolated worktree under .red/tmp/worktrees/manual/<slug> instead
+('git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main'). If the local
 trunk diverged from origin, leave it alone and base on the fresh remote ref
 (ADR 0083) — never reset or stash the primary to reconcile it.
 

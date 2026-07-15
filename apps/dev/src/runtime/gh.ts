@@ -15,6 +15,7 @@ import {
   LABEL_STALLED,
   LABEL_CRASHED,
   LABEL_MERGE_CONFLICT,
+  LABEL_TYPE_SPEC,
 } from "../core/triage-labels.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
@@ -24,6 +25,7 @@ import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from
 import type { ActorTrustVerdict, RepoVisibility } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
+import type { SpecSubIssueCandidate } from "../core/spec-subissue-reconciler.js";
 import {
   MAIN_RED_REPAIR_TITLE,
   type MainRedRepairIssue,
@@ -381,6 +383,149 @@ export async function createIssue(
     throw new Error(`gh: failed to create issue (code ${r.code}): ${(r.stdout || r.stderr || "").trim()}`);
   }
   return num;
+}
+
+/** Resolve a GitHub issue's REST database id. The sub-issues and dependency
+ * endpoints require this numeric id, not the issue number. */
+async function issueDatabaseId(ctx: GhContext, issue: number): Promise<number> {
+  const r = await runGh(ctx, ["api", apiPath(ctx, `issues/${issue}`), "--jq", ".id"]);
+  const id = Number((r.stdout ?? "").trim());
+  if (r.code !== 0 || !Number.isInteger(id) || id <= 0) {
+    throw new Error(`gh: failed to resolve issue database id for #${issue} (code ${r.code})`);
+  }
+  return id;
+}
+
+/** Create a native GitHub sub-issue relationship from parent Spec to child
+ * Ticket. Idempotence is provided by callers/sweeps comparing existing edges;
+ * a failed POST throws so the caller can leave the pair for the next sweep. */
+export async function attachSubIssue(ctx: GhContext, parent: number, child: number): Promise<void> {
+  const childId = await issueDatabaseId(ctx, child);
+  const r = await runGh(ctx, [
+    "api",
+    "-X",
+    "POST",
+    apiPath(ctx, `issues/${parent}/sub_issues`),
+    "-f",
+    `sub_issue_id=${childId}`,
+  ]);
+  if (r.code !== 0) {
+    throw new Error(`gh: failed to attach #${child} as a sub-issue of #${parent} (code ${r.code})`);
+  }
+}
+
+function parseIssueRows(stdout: string): Array<{
+  number?: number;
+  state?: string;
+  closedAt?: string | null;
+  labels?: Array<{ name?: string }>;
+}> {
+  try {
+    const rows = JSON.parse(stdout || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseNumberJsonLines(stdout: string): number[] {
+  const out: number[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as { number?: unknown };
+      const n = Number(parsed.number ?? 0);
+      if (Number.isInteger(n) && n > 0) out.push(n);
+    } catch {
+      // Ignore malformed jq lines; the sweep will retry on a later boot.
+    }
+  }
+  return out;
+}
+
+function isRecentSpecRow(row: { state?: string; closedAt?: string | null }, nowS: number, recentDays: number): boolean {
+  if (String(row.state ?? "").toUpperCase() !== "CLOSED") return true;
+  if (!row.closedAt) return false;
+  const closedS = Math.floor(Date.parse(row.closedAt) / 1000);
+  if (!Number.isFinite(closedS)) return false;
+  return nowS - closedS <= recentDays * 86400;
+}
+
+async function listSpecLabelChildren(ctx: GhContext, spec: number): Promise<number[]> {
+  const r = await runGh(ctx, [
+    "issue",
+    "list",
+    ...repoArgs(ctx),
+    "--label",
+    `spec:${spec}`,
+    "--state",
+    "all",
+    "--limit",
+    "500",
+    "--json",
+    "number,labels",
+  ]);
+  if (r.code !== 0) return [];
+  return parseIssueRows(r.stdout).map((row) => Number(row.number ?? 0)).filter((n) => Number.isInteger(n) && n > 0);
+}
+
+async function listNativeSubIssues(ctx: GhContext, spec: number): Promise<number[]> {
+  const r = await runGh(ctx, [
+    "api",
+    "--paginate",
+    apiPath(ctx, `issues/${spec}/sub_issues`),
+    "--jq",
+    ".[] | {number}",
+  ]);
+  if (r.code !== 0) return [];
+  return parseNumberJsonLines(r.stdout);
+}
+
+/** List Specs for the sub-issue reconciler: open Specs plus recently closed
+ * Specs, with both surfaces injected into the pure reconciler. */
+export async function listSpecSubIssueCandidates(
+  ctx: GhContext,
+  nowS = Math.floor(Date.now() / 1000),
+  recentDays = 30,
+): Promise<SpecSubIssueCandidate[]> {
+  const r = await runGh(ctx, [
+    "issue",
+    "list",
+    ...repoArgs(ctx),
+    "--label",
+    LABEL_TYPE_SPEC,
+    "--state",
+    "all",
+    "--limit",
+    "500",
+    "--json",
+    "number,state,closedAt,labels",
+  ]);
+  if (r.code !== 0) return [];
+
+  const specs = parseIssueRows(r.stdout)
+    .filter((row) => isRecentSpecRow(row, nowS, recentDays))
+    .map((row) => ({
+      number: Number(row.number ?? 0),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }))
+    .filter((row) => Number.isInteger(row.number) && row.number > 0);
+
+  const candidates: SpecSubIssueCandidate[] = [];
+  for (const spec of specs) {
+    const [labelChildren, nativeSubIssues] = await Promise.all([
+      listSpecLabelChildren(ctx, spec.number),
+      listNativeSubIssues(ctx, spec.number),
+    ]);
+    candidates.push({
+      number: spec.number,
+      labels: spec.labels,
+      labelChildren,
+      nativeSubIssues,
+    });
+  }
+  return candidates;
 }
 
 /** Find the single open auto-filed main-red repair issue by its stable title. */

@@ -1,16 +1,29 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
+import { rspStateDir } from "@reddb-io/shared/red-paths.js";
+import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
+import { storageClassForCommand, type RspStorageClass, type RspStorageClassStats } from "./elision-store.js";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
-export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
+/** Durable telemetry spool filenames; they live in the rsp state lane (ADR 0098). */
+export const RSP_TELEMETRY_SPOOL_FILE = "rsp-telemetry.spool.toonl";
+export const RSP_TELEMETRY_LEGACY_SPOOL_FILE = "rsp-telemetry.spool.jsonl";
+export const RSP_TELEMETRY_SPOOL_CORRECTIONS_FILE = "rsp-telemetry.spool.corrections.toonl";
+export const RSP_ACCOUNTING_EVENTS_COLLECTION = "rsp_accounting_events_v1";
+export const RSP_DECISIONS_COLLECTION = "rsp_decisions_v1";
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
 export const RSP_TELEMETRY_DEGRADATIONS_COLLECTION = "rsp_telemetry_degradations_v1";
 export const RSP_TELEMETRY_INDEX_COLLECTION = "rsp_telemetry_index_v1";
 
 export interface RspTelemetryEvent {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   id?: string;
   created_at?: string;
   bytes?: number;
@@ -22,6 +35,14 @@ export interface RspTelemetryEvent {
   tokens_emitted?: number;
   estimated?: boolean;
   [key: string]: unknown;
+}
+
+export interface RspAccountingLaneStats {
+  records: number;
+  bytes: number;
+  oldest: string | null;
+  budget: number;
+  storage_classes: RspStorageClassStats;
 }
 
 export interface RspTelemetryStats {
@@ -50,6 +71,10 @@ export interface RspTelemetryStats {
   health: {
     degradations: number;
     degradation_rate: number;
+    show_total: number;
+    show_hits: number;
+    show_misses: number;
+    show_hit_rate: number;
     by_reason: Array<{ reason: string; count: number }>;
     most_recent: { timestamp: string; reason: string; command: string } | null;
   };
@@ -60,9 +85,32 @@ export interface RspTelemetryStats {
     store_elapsed_ms_sum: number;
     store_elapsed_ms_avg: number | null;
   };
+  decisions: {
+    seen: number;
+    contributed: number;
+    passed: number;
+    failed_open: number;
+    contribution_rate: number;
+    top_pass_reasons: Array<{ reason: string; count: number }>;
+  };
 }
 
 const SPOOL_TEXT_INLINE_CAP_BYTES = 64 * 1024;
+interface RspTelemetryCorrectionRow {
+  correction_id: string;
+  target_spool_id: string;
+  action: "retry" | "resolved";
+  created_at: string;
+  event_json?: string;
+}
+
+interface RspTelemetrySpoolEntry {
+  spool_id: string;
+  event?: RspTelemetryEvent;
+  raw_line?: string;
+}
+
+type FlatToonlRecord = Record<string, string | number | boolean | null>;
 
 export interface RspTelemetryGainsReport {
   schema_version: "red.rsp.gains.v1";
@@ -114,15 +162,54 @@ export interface LatencyPercentiles {
   wrapper_ms_p99: number | null;
 }
 
+/**
+ * Walk up from startDir to find the first directory that already contains a
+ * `.red` child. Returns the repo root if found, null otherwise.
+ *
+ * Never creates or modifies the filesystem — only existsSync probes. Safe for
+ * deleted paths because path.resolve() is string-only and existsSync returns
+ * false (never throws) for absent entries. This upholds ADR 0067: rsp never
+ * mints a `.red/` directory; if none is found in the hierarchy, the caller
+ * must drop the telemetry event.
+ */
+function resolveRootForTelemetryWrite(startDir: string): string | null {
+  if (!startDir) return null;
+  let current = resolve(startDir);
+  while (true) {
+    if (existsSync(join(current, ".red"))) return current;
+    const parent = resolve(join(current, ".."));
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
 export function telemetrySpoolPath(rootDir: string): string {
-  return join(rootDir, RSP_TELEMETRY_SPOOL);
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_FILE);
+}
+
+export function telemetryLegacySpoolPath(rootDir: string): string {
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_LEGACY_SPOOL_FILE);
+}
+
+export function telemetrySpoolCorrectionsPath(rootDir: string): string {
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_CORRECTIONS_FILE);
 }
 
 export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryEvent): Promise<void> {
+  appendTelemetryEventSync(rootDir, event);
+}
+
+export function appendTelemetryEventSync(rootDir: string, event: RspTelemetryEvent): void {
   try {
-    const path = telemetrySpoolPath(rootDir);
+    const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+    if (!resolvedRoot) return;
+    const path = telemetrySpoolPath(resolvedRoot);
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(compactTelemetryEventForSpool(event))}\n`, { encoding: "utf8", mode: 0o600 });
+    appendFileSync(path, formatSpoolRow({
+      spool_id: randomUUID(),
+      event: compactTelemetryEventForSpool(event),
+    }), { encoding: "utf8", mode: 0o600 });
   } catch {}
 }
 
@@ -147,67 +234,115 @@ function compactTextField(
 }
 
 export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
-  const path = telemetrySpoolPath(rootDir);
-  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await rename(path, drainingPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    return [];
-  }
-
-  try {
-    await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
-    const text = await readSettledFile(drainingPath);
-    return text.split(/\r?\n/).filter((line) => line.trim() !== "");
-  } finally {
-    await rm(drainingPath, { force: true });
-  }
+  const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+  if (!resolvedRoot) return [];
+  const path = telemetrySpoolPath(resolvedRoot);
+  await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
+  const files = await renameActiveSpools(resolvedRoot);
+  const entries = [
+    ...await readPendingCorrectionEntries(resolvedRoot),
+    ...await readDrainEntries(files),
+  ];
+  await Promise.all(files.map((file) => rm(file, { force: true })));
+  return entries.map((entry) => JSON.stringify(entry.event));
 }
 
 export async function drainTelemetrySpool(
   rootDir: string,
   drainLine: (line: string) => Promise<boolean>,
 ): Promise<void> {
-  const path = telemetrySpoolPath(rootDir);
-  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await rename(path, drainingPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    return;
+  const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+  if (!resolvedRoot) return;
+  const path = telemetrySpoolPath(resolvedRoot);
+  await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
+  await ensureActiveSpoolFiles(resolvedRoot);
+
+  for (const orphan of await orphanedDrainFiles(resolvedRoot)) {
+    await drainFile(resolvedRoot, orphan, drainLine);
   }
 
-  const retryLines: string[] = [];
+  for (const entry of await readPendingCorrectionEntries(resolvedRoot)) {
+    await drainEntry(resolvedRoot, entry, drainLine, true);
+  }
+
+  for (const drainingPath of await renameActiveSpools(resolvedRoot)) {
+    await drainFile(resolvedRoot, drainingPath, drainLine);
+  }
+}
+
+/**
+ * A crash between the spool rename and the ingest leaves a `<spool>.<pid>.<ts>.drain` file behind.
+ * Adopt those leftovers, skipping any still owned by a live process other than us.
+ */
+async function orphanedDrainFiles(rootDir: string): Promise<string[]> {
+  const spoolPaths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const dir = dirname(spoolPaths[0]!);
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return names.filter((name) =>
+    spoolPaths.some((spoolPath) => name.startsWith(`${basename(spoolPath)}.`) && name.endsWith(".drain"))
+  )
+    .filter((name) => {
+      const base = spoolPaths.find((spoolPath) => name.startsWith(`${basename(spoolPath)}.`));
+      if (!base) return false;
+      const prefix = `${basename(base)}.`;
+      const pid = Number(name.slice(prefix.length).split(".")[0]);
+      return !(Number.isInteger(pid) && pid !== process.pid && isProcessAlive(pid));
+    })
+    .sort()
+    .map((name) => join(dir, name));
+}
+
+function isProcessAlive(pid: number): boolean {
   try {
-    await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function drainFile(
+  rootDir: string,
+  drainingPath: string,
+  drainLine: (line: string) => Promise<boolean>,
+): Promise<void> {
+  try {
     const text = await readSettledFile(drainingPath);
-    const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
-    for (const line of lines) {
-      try {
-        if (await drainLine(line)) continue;
-      } catch {}
-      retryLines.push(line);
+    for (const entry of parseSpoolEntries(text)) {
+      await drainEntry(rootDir, entry, drainLine, false);
     }
   } finally {
-    if (retryLines.length > 0) {
-      const current = safeReadFileSync(path);
-      await writeFile(path, `${retryLines.join("\n")}\n${current}`, "utf8");
-    }
     await rm(drainingPath, { force: true });
   }
 }
 
-function safeReadFileSync(path: string): string {
+async function drainEntry(
+  rootDir: string,
+  entry: RspTelemetrySpoolEntry,
+  drainLine: (line: string) => Promise<boolean>,
+  fromCorrection: boolean,
+): Promise<void> {
+  const line = entry.event ? JSON.stringify(entry.event) : entry.raw_line ?? "";
   try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
+    if (await drainLine(line)) {
+      if (fromCorrection) {
+        appendCorrection(rootDir, {
+          correction_id: randomUUID(),
+          target_spool_id: entry.spool_id,
+          action: "resolved",
+          created_at: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+  } catch {}
+  appendCorrection(rootDir, {
+    correction_id: randomUUID(),
+    target_spool_id: entry.spool_id,
+    action: "retry",
+    created_at: new Date().toISOString(),
+    event_json: entry.event ? JSON.stringify(entry.event) : undefined,
+  });
 }
 
 async function readSettledFile(path: string): Promise<string> {
@@ -226,6 +361,8 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
     const parsed = JSON.parse(line) as unknown;
     if (!isRecord(parsed)) return null;
     if (
+      parsed.collection !== RSP_ACCOUNTING_EVENTS_COLLECTION &&
+      parsed.collection !== RSP_DECISIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_INVOCATIONS_COLLECTION &&
       parsed.collection !== RSP_TELEMETRY_DEGRADATIONS_COLLECTION
     ) return null;
@@ -235,13 +372,209 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
   }
 }
 
+function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
+  const spoolEmitter: ToonlLineEmitter = encodeLines();
+  return spoolEmitter.push(spoolEntryToToonlRow(row));
+}
+
+function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow): void {
+  try {
+    const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+    if (!resolvedRoot) return;
+    const path = telemetrySpoolCorrectionsPath(resolvedRoot);
+    mkdirSync(dirname(path), { recursive: true });
+    const correctionEmitter: ToonlLineEmitter = encodeLines();
+    appendFileSync(path, correctionEmitter.push({
+      correction_id: correction.correction_id,
+      target_spool_id: correction.target_spool_id,
+      action: correction.action,
+      created_at: correction.created_at,
+      event_json: correction.event_json ?? null,
+    }), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+  } catch {}
+}
+
+async function renameActiveSpools(rootDir: string): Promise<string[]> {
+  const paths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const renamed: string[] = [];
+  for (const path of paths) {
+    const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
+    try {
+      await rename(path, drainingPath);
+      await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      renamed.push(drainingPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
+    }
+  }
+  return renamed;
+}
+
+async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
+  await Promise.all([
+    writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }),
+    writeFile(telemetryLegacySpoolPath(rootDir), "", { flag: "a" }),
+  ]).catch(() => undefined);
+}
+
+async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {
+  const entries: RspTelemetrySpoolEntry[] = [];
+  for (const path of paths) {
+    entries.push(...parseSpoolEntries(await readSettledFile(path)));
+  }
+  return entries;
+}
+
+async function readPendingCorrectionEntries(rootDir: string): Promise<RspTelemetrySpoolEntry[]> {
+  const text = await readFile(telemetrySpoolCorrectionsPath(rootDir), "utf8").catch(() => "");
+  const latest = new Map<string, RspTelemetryCorrectionRow>();
+  for (const row of parseCorrectionRows(text)) latest.set(row.target_spool_id, row);
+  return [...latest.values()]
+    .filter((row) => row.action === "retry" && row.event_json)
+    .map((row) => ({ spool_id: row.target_spool_id, event: parseTelemetryEvent(row.event_json!) ?? undefined }))
+    .filter((entry) => entry.event !== undefined);
+}
+
+function parseSpoolEntries(text: string): RspTelemetrySpoolEntry[] {
+  const entries: RspTelemetrySpoolEntry[] = [];
+  let header = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isRecord(parsed)) {
+        const event = parseTelemetryEvent(JSON.stringify(parsed));
+        entries.push(event
+          ? { spool_id: legacySpoolId(JSON.stringify(parsed)), event }
+          : { spool_id: legacySpoolId(line), raw_line: line });
+      }
+      continue;
+    } catch {}
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) {
+      entries.push({ spool_id: legacySpoolId(line), raw_line: line });
+      continue;
+    }
+    try {
+      for (const row of parseRecords(`${header}\n${line}\n`)) {
+        if (isFlatToonlRecord(row) && isSpoolRow(row)) {
+          entries.push({ spool_id: row.spool_id, event: eventFromSpoolRow(row)! });
+        }
+      }
+    } catch {
+      if (line.startsWith("{")) entries.push({ spool_id: legacySpoolId(line), raw_line: line });
+    }
+  }
+  return entries;
+}
+
+function parseCorrectionRows(text: string): RspTelemetryCorrectionRow[] {
+  return parseSniffedRecords(text).map(toCorrectionRow).filter((row): row is RspTelemetryCorrectionRow => row !== null);
+}
+
+function parseSniffedRecords(text: string): FlatToonlRecord[] {
+  const records: FlatToonlRecord[] = [];
+  let header = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isFlatToonlRecord(parsed)) records.push(parsed);
+    } catch {
+      if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+        header = line;
+        continue;
+      }
+      if (!header) continue;
+      try {
+        for (const rec of parseRecords(`${header}\n${line}\n`)) {
+          if (isFlatToonlRecord(rec)) records.push(rec);
+        }
+      } catch {}
+    }
+  }
+  return records;
+}
+
+function legacySpoolId(line: string): string {
+  return `legacy:${createHash("sha256").update(line).digest("hex").slice(0, 24)}`;
+}
+
+function spoolEntryToToonlRow(entry: RspTelemetrySpoolEntry): FlatToonlRecord {
+  const row: FlatToonlRecord = { spool_id: entry.spool_id };
+  for (const [key, value] of Object.entries(entry.event ?? {})) {
+    if (key === "spool_id") continue;
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      value === null
+    ) {
+      row[key] = value;
+    } else if (value !== undefined) {
+      row[key] = JSON.stringify(value);
+    }
+  }
+  return row;
+}
+
+function eventFromSpoolRow(row: FlatToonlRecord): RspTelemetryEvent | null {
+  const { spool_id: _spoolId, ...event } = row;
+  return parseTelemetryEvent(JSON.stringify(event));
+}
+
+function isSpoolRow(value: FlatToonlRecord): value is FlatToonlRecord & { spool_id: string } {
+  return typeof value.spool_id === "string" && eventFromSpoolRow(value) !== null;
+}
+
+function toCorrectionRow(value: FlatToonlRecord): RspTelemetryCorrectionRow | null {
+  if (
+    typeof value.correction_id === "string" &&
+    typeof value.target_spool_id === "string" &&
+    (value.action === "retry" || value.action === "resolved") &&
+    typeof value.created_at === "string" &&
+    (value.event_json === null || typeof value.event_json === "string")
+  ) {
+    return {
+      correction_id: value.correction_id,
+      target_spool_id: value.target_spool_id,
+      action: value.action,
+      created_at: value.created_at,
+      event_json: value.event_json ?? undefined,
+    };
+  }
+  return null;
+}
+
+function isFlatToonlRecord(value: unknown): value is FlatToonlRecord {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((entry) =>
+    typeof entry === "string" ||
+    typeof entry === "number" ||
+    typeof entry === "boolean" ||
+    entry === null
+  );
+}
+
 export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new Date()): Promise<RspTelemetryStats> {
   const windowDays = Number.isFinite(sinceDays) && sinceDays > 0 ? sinceDays : 30;
   const sinceMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
-  const invocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
+  const accounting = await readAccountingRecords(db, sinceMs);
+  const decisions = (await readCollection(db, RSP_DECISIONS_COLLECTION))
     .filter((record) => timestampMs(record) >= sinceMs);
-  const degradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
+  const invocations = accounting.filter((record) =>
+    stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
+  );
+  const showEvents = accounting.filter((record) => stringField(record.event_type) === "show");
+  const degradations = accounting.filter((record) => stringField(record.degradation_reason) !== "");
 
   let elided = 0;
   let rawBytes = 0;
@@ -260,8 +593,10 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
     const raw = numeric(record.raw_bytes);
     const emitted = numeric(record.emitted_bytes);
     const bytesSaved = Math.max(0, raw - emitted);
-    const tokenDelta = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
-    tokensEstimated ||= record.estimated === true && tokenDelta > 0;
+    const rawTokens = tokenCountFromCounters(record, "raw");
+    const emittedTokens = tokenCountFromCounters(record, "emitted");
+    const tokenDelta = Math.max(0, rawTokens.tokens - emittedTokens.tokens);
+    tokensEstimated ||= (record.estimated === true || rawTokens.estimated || emittedTokens.estimated) && tokenDelta > 0;
     rawBytes += raw;
     emittedBytes += emitted;
     tokensSaved += tokenDelta;
@@ -286,7 +621,7 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   const byReason = new Map<string, number>();
   let mostRecent: RspTelemetryStats["health"]["most_recent"] = null;
   for (const record of degradations) {
-    const reason = stringField(record.reason) || "unknown";
+    const reason = stringField(record.degradation_reason) || stringField(record.reason) || "unknown";
     byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
     const timestamp = timestampString(record);
     if (!mostRecent || timestamp > mostRecent.timestamp) {
@@ -299,10 +634,12 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   }
 
   const totalAttempts = invocations.length + degradations.length;
+  const showHits = showEvents.filter((record) => record.hit === true).length;
   const savingsEstimate = tokenSavingsEstimate(tokensSaved, tokensEstimated);
+  const decisionCounts = countDecisions(decisions);
   return {
     window_days: windowDays,
-    empty: invocations.length === 0 && degradations.length === 0,
+    empty: accounting.length === 0,
     savings: {
       invocations: invocations.length,
       elided,
@@ -329,6 +666,10 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
     health: {
       degradations: degradations.length,
       degradation_rate: totalAttempts === 0 ? 0 : degradations.length / totalAttempts,
+      show_total: showEvents.length,
+      show_hits: showHits,
+      show_misses: Math.max(0, showEvents.length - showHits),
+      show_hit_rate: showEvents.length === 0 ? 0 : round(showHits / showEvents.length),
       by_reason: [...byReason.entries()]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .map(([reason, count]) => ({ reason, count })),
@@ -341,6 +682,55 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
       store_elapsed_ms_sum: round(storeElapsedMsSum),
       store_elapsed_ms_avg: storeElapsedMsCount === 0 ? null : round(storeElapsedMsSum / storeElapsedMsCount),
     },
+    decisions: decisionCounts,
+  };
+}
+
+function countDecisions(records: Array<Record<string, unknown>>): RspTelemetryStats["decisions"] {
+  let contributed = 0;
+  let passed = 0;
+  let failedOpen = 0;
+  const passReasons = new Map<string, number>();
+  for (const record of records) {
+    const decision = stringField(record.decision);
+    if (decision === "contributed") contributed++;
+    else if (decision === "failed-open") failedOpen++;
+    else passed++;
+    if (decision !== "contributed") {
+      const reason = stringField(record.reason) || "unknown";
+      passReasons.set(reason, (passReasons.get(reason) ?? 0) + 1);
+    }
+  }
+  return {
+    seen: records.length,
+    contributed,
+    passed,
+    failed_open: failedOpen,
+    contribution_rate: records.length === 0 ? 0 : round(contributed / records.length),
+    top_pass_reasons: [...passReasons.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, count]) => ({ reason, count })),
+  };
+}
+
+export async function readAccountingLaneStats(
+  db: RedDB,
+  byteBudget: number,
+  now = new Date(),
+): Promise<RspAccountingLaneStats> {
+  const records = await readCollection(db, RSP_ACCOUNTING_EVENTS_COLLECTION);
+  const live = records.filter((record) => timestampMs(record) <= now.getTime() || timestampString(record) === "");
+  return {
+    records: live.length,
+    bytes: live.reduce((sum, record) => sum + Buffer.byteLength(JSON.stringify(record), "utf8"), 0),
+    oldest: live.reduce<string | null>((oldest, record) => {
+      const ts = timestampString(record);
+      if (!ts) return oldest;
+      if (oldest == null) return ts;
+      return ts < oldest ? ts : oldest;
+    }, null),
+    budget: byteBudget,
+    storage_classes: accountingStorageClassStats(live),
   };
 }
 
@@ -349,10 +739,11 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
   const until = now.toISOString();
   const since = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const sinceMs = Date.parse(since);
-  const invocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
-  const degradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
-    .filter((record) => timestampMs(record) >= sinceMs);
+  const accounting = await readAccountingRecords(db, sinceMs);
+  const invocations = accounting.filter((record) =>
+    stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
+  );
+  const degradations = accounting.filter((record) => stringField(record.degradation_reason) !== "");
   const allTimestamps = [...invocations, ...degradations]
     .map(timestampMs)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -378,7 +769,10 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     const date = timestamp.slice(0, 10);
     const minute = timestamp.slice(0, 16);
     const family = commandFamily(stringField(record.command));
-    const tokensSaved = Math.max(0, numeric(record.tokens_raw) - numeric(record.tokens_emitted));
+    const tokensSaved = Math.max(
+      0,
+      tokenCountFromCounters(record, "raw").tokens - tokenCountFromCounters(record, "emitted").tokens,
+    );
     totalTokensSaved += tokensSaved;
     tokensEstimated ||= record.estimated === true && tokensSaved > 0;
     const bytesSaved = Math.max(0, numeric(record.raw_bytes) - numeric(record.emitted_bytes));
@@ -414,7 +808,7 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     .map((record) => ({
       timestamp: timestampString(record),
       command_family: commandFamily(stringField(record.command)),
-      reason: stringField(record.reason) || "unknown",
+      reason: stringField(record.degradation_reason) || stringField(record.reason) || "unknown",
     }))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const byReason = new Map<string, number>();
@@ -472,6 +866,58 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
       cold_boots: recordsWithStoreMetric === 0 ? null : coldBoots,
       warm_hits: recordsWithStoreMetric === 0 ? null : Math.max(0, recordsWithStoreMetric - coldBoots),
     },
+  };
+}
+
+async function readAccountingRecords(db: RedDB, sinceMs: number): Promise<Array<Record<string, unknown>>> {
+  const accounting = (await readCollection(db, RSP_ACCOUNTING_EVENTS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs);
+  if (accounting.length > 0) return accounting;
+
+  const legacyInvocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs)
+    .map((record) => ({ ...record, event_type: "invocation" }));
+  const legacyDegradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
+    .filter((record) => timestampMs(record) >= sinceMs)
+    .map((record) => ({
+      ...record,
+      event_type: "invocation",
+      degradation_reason: stringField(record.reason) || "unknown",
+    }));
+  return [...legacyInvocations, ...legacyDegradations];
+}
+
+function tokenCountFromCounters(record: Record<string, unknown>, field: "raw" | "emitted"): { tokens: number; estimated: boolean } {
+  const exact = optionalNumeric(record[field === "raw" ? "tokens_raw" : "tokens_emitted"]);
+  if (exact != null) return { tokens: exact, estimated: false };
+  const bytes = numeric(record[field === "raw" ? "raw_bytes" : "emitted_bytes"]);
+  return { tokens: Math.ceil(bytes / 4), estimated: bytes > 0 };
+}
+
+function accountingStorageClassStats(records: readonly Record<string, unknown>[]): RspStorageClassStats {
+  const stats = emptyStorageClassStats();
+  for (const record of records) {
+    if (stringField(record.event_type) === "show") continue;
+    if (stringField(record.degradation_reason) !== "") continue;
+    if (record.elided !== true) continue;
+    const storageClass = storageClassField(record.storage_class) ?? storageClassForCommand(stringField(record.command));
+    stats[storageClass].records += 1;
+    const rawBytes = numeric(record.raw_bytes);
+    stats[storageClass].bytes += rawBytes;
+    stats[storageClass].raw_bytes += rawBytes;
+  }
+  return stats;
+}
+
+function storageClassField(value: unknown): RspStorageClass | null {
+  return value === "derivable" || value === "re-executable" || value === "ephemeral" ? value : null;
+}
+
+function emptyStorageClassStats(): RspStorageClassStats {
+  return {
+    derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+    "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+    ephemeral: { records: 0, bytes: 0, raw_bytes: 0 },
   };
 }
 

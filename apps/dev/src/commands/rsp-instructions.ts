@@ -3,12 +3,13 @@ import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/
 function runnerFromArgs(args: readonly string[]): RspInstructionRunner {
   const index = args.indexOf("--runner");
   const runner = index >= 0 ? args[index + 1] : undefined;
+  if (runner === "opencode") return "opencode";
   return runner === "claude" ? "claude" : "codex";
 }
 
 export function renderRspInstructionsHookOutput(runner: RspInstructionRunner): string {
   const instructions = renderAmbientSkill(undefined, { runner });
-  if (runner === "codex") return JSON.stringify({ systemMessage: instructions });
+  if (runner === "codex" || runner === "opencode") return JSON.stringify({ systemMessage: instructions });
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "SessionStart",

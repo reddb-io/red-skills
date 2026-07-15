@@ -1,0 +1,41 @@
+{
+  "name": "commit-node-doc",
+  "command": [
+    "git",
+    "commit"
+  ],
+  "provenance": "Commit subject sampled from public nodejs/node history captured on 2026-07-13.",
+  "recorded": {
+    "stdout": "[main e84b517d] doc: document net Socket server property\n 2 files changed, 18 insertions(+), 4 deletions(-)\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {
+    "command": "git commit",
+    "branch": "main",
+    "commit": "e84b517d",
+    "subject": "doc: document net Socket server property",
+    "files_changed": 2,
+    "insertions": 18,
+    "deletions": 4,
+    "summary": "commit e84b517d on main: 2 files, +18 -4"
+  },
+  "assertions": [
+    {
+      "question": "which commit was created?",
+      "path": "commit",
+      "expected": "e84b517d"
+    },
+    {
+      "question": "what branch received the commit?",
+      "path": "branch",
+      "expected": "main"
+    },
+    {
+      "question": "how many insertions were committed?",
+      "path": "insertions",
+      "expected": 18
+    }
+  ]
+}

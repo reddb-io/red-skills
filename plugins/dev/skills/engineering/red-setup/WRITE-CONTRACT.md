@@ -7,13 +7,14 @@ Show the user a draft of:
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
 - The Section H development-workflow changes: `plugins.dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
+- The Section E2 required-host-binary record: `host_binaries.tq.version: 0.3.0`
 - The Section G1 command-guard changes if the user accepted them: the exact `command_guard` block or scoped entries that will be written to `.red/config.yaml`
 
 Let them edit before writing.
 
 ## Write
 
-**No-clobber rule (governs every write below).** Never overwrite, rewrite, or reorder content in a file this skill did not just create: if a target already exists, skip it, log a one-line notice, and move on — no second ask, and never `git add` on the user's behalf. Two surgical merges are the *only* exceptions, flagged at the steps that own them: updating `plugins.<name>.enabled` flags in an existing `.red/config.yaml`, and appending a missing `tmp/`/`state/` line to an existing `.red/.gitignore`. (Copied workflow YAML is the one "ask, don't silently skip" case — diff and ask first.)
+**No-clobber rule (governs every write below).** Never overwrite, rewrite, or reorder content in a file this skill did not just create: if a target already exists, skip it, log a one-line notice, and move on — no second ask, and never `git add` on the user's behalf. Two surgical merges are the *only* exceptions, flagged at the steps that own them: updating `plugins.<name>.enabled` flags in an existing `.red/config.yaml`, and appending a missing `tmp/`, `state/`, or `researches/` line to an existing `.red/.gitignore`. (Copied workflow YAML is the one "ask, don't silently skip" case — diff and ask first.)
 
 **Pick the file to edit:**
 
@@ -63,21 +64,41 @@ If the user accepted Section D, copy each standalone `red-*.yml` template the us
 Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags
 and the `rsp` opt-in block:
 
-1. If `.red/config.yaml` already exists at the repo root, apply the **plugin-flags exception** to the no-clobber rule: surgically add/update the `plugins.<name>.enabled` flags to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off), and surgically add/update the top-level `rsp:` block to `enabled: true`, `ttlDays: 7`, and `byteBudget: 67108864`; touch nothing else, and log `.red/config.yaml present - merged plugin activation flags and rsp defaults, left the rest as-is`.
+1. If `.red/config.yaml` already exists at the repo root, apply the **plugin-flags exception** to the no-clobber rule: surgically add/update the `plugins.<name>.enabled` flags to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off), and surgically add/update the top-level `rsp:` block to `enabled: true`, `ttlDays: 7`, `ephemeralTtlHours: 6`, and `byteBudget: 67108864`; touch nothing else, and log `.red/config.yaml present - merged plugin activation flags and rsp defaults, left the rest as-is`.
 2. Otherwise, ensure `.red/` exists (this section is the authorized creator) and copy [config-template.yaml](./config-template.yaml) to `.red/config.yaml`, then set the top `plugins:` block's `enabled` flags to match Section A0 (the template ships with `plugins.dev.enabled: true` as the baseline and `memory`/`brain` commented — uncomment/flip per the choice). The `rsp` block ships enabled with default retention because the hook remains strictly per-repo opt-in: absent block or any value other than `enabled: true` is inert. The rest of the template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads, so it stays a no-op until the user uncomments a line — including the commented `command_guard` and `afk.backpressure` blocks.
-3. **Provision the rsp elision store.** Run `rsp setup` from the repo root. This is the supported provisioning command: it writes the `rsp:` config block, creates the rsp-owned JSON store at `.red/tmp/rsp-elisions.json` (ephemeral and already gitignored; the shared RedDB store reserved for memory + rsp is `.red/tmp/red-skills.rdb`, see #1539), and leaves an existing file untouched on re-run. `rsp setup` performs no memory-graph migration and does not create, move, or repoint `.red/memory/graph.rdb` or `plugins.memory.storePath`; memory and brain keep using RedDB through their own provisioning path.
-4. **Self-ignore `.red/`'s ephemeral state.** Whenever `.red/` exists (fresh scaffold or pre-existing), make the directory protect itself so `.red/tmp` and `.red/state` never get committed regardless of the repo-root `.gitignore`. Write `.red/.gitignore` if it is **missing** with exactly:
+3. **Provision the rsp elision store.** Run `rsp setup` from the repo root. This is the supported provisioning command: it writes the `rsp:` config block and points rsp at the shared repo-local RedDB store `.red/state/red-skills.rdb` (per ADR 0098). Elision records use the `rsp_elisions_v1` KV collection with storage-class accounting and a physical byte cap; legacy JSON files are only a fallback/migration path, not the normal setup target. `rsp setup` performs no memory-graph migration and does not create, move, or repoint `.red/memory/graph.rdb` or `plugins.memory.storePath`; memory and brain keep using RedDB through their own provisioning path.
+4. **Self-ignore `.red/`'s local state.** Whenever `.red/` exists (fresh scaffold or pre-existing), make the directory protect itself so `.red/tmp`, `.red/state`, and `.red/researches` never get committed regardless of the repo-root `.gitignore`. Write `.red/.gitignore` if it is **missing** with exactly:
 
    ```gitignore
    # Generated by /red-setup — local AFK/runtime state, never committed.
    tmp/
    state/
+   researches/
    ```
 
-   If `.red/.gitignore` already **exists**, apply the **gitignore-append exception**: append whichever of the two patterns (`tmp/`, `state/`) is missing, and never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`) committable — only `tmp/` and `state/` are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
+   If `.red/.gitignore` already **exists**, apply the **gitignore-append exception**: append whichever of the three patterns (`tmp/`, `state/`, `researches/`) is missing, and never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`, `contracts/`, `hooks/`) committable — only local state and generated research reports are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
 5. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 6. **Command guard write (only when Section G1 was explicitly accepted).** Update `.red/config.yaml` with the confirmed `command_guard` policy. If the file is fresh, replace the commented placeholder with the confirmed block. If the file already existed, merge only the accepted `command_guard.global`, `command_guard.main`, and/or `command_guard.worktree` entries, appending without duplicates and preserving unrelated content. If a legacy `command_guard.deny` block exists, leave it intact unless the user explicitly approved migrating it to `global`.
 7. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
+
+Install and record required host binaries (Section E2):
+
+1. Run the pinned toon installer exactly as documented:
+
+   ```bash
+   TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh
+   ```
+
+2. Verify `tq --version` reports `0.3.0`. If it does not, stop and report the mismatch; do not offer a jq fallback.
+3. Ensure `.red/config.yaml` records the pin:
+
+   ```yaml
+   host_binaries:
+     tq:
+       version: 0.3.0
+   ```
+
+   If `.red/config.yaml` already exists, merge only that `host_binaries.tq.version` entry and preserve unrelated content.
 
 If the user accepted Section H, activate the development workflow:
 

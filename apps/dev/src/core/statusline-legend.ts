@@ -12,6 +12,7 @@ export const STATUSLINE_LEGEND_ROWS: readonly TokenLegendRow[] = [
   { token: "cpr", name: "created_pull_requests_today", gloss: "Pull requests created on the local calendar day." },
   { token: "iss", name: "issue_number_or_count", gloss: "Header issue count; worker current issue number." },
   { token: "loc", name: "lines_changed", gloss: "Added and removed line delta as +A -R." },
+  { token: "doc", name: "unlanded_docs", gloss: "Unlanded .red glossary/ADR docs from cached local git state." },
   { token: "#", name: "issue", gloss: "Plain monitor current issue marker." },
   { token: "wrk", name: "workers", gloss: "Live AFK worker count in the aggregate statusline block." },
   { token: "rdy", name: "ready_for_agent", gloss: "Cached ready-for-agent queue count." },

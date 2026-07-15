@@ -7,9 +7,11 @@ import {
   historyAppend,
   historyTrim,
   parseHistoryLines,
+  readHistoryRecords,
   readDoneBuckets,
   renderSparkline,
   type HistoryRecord,
+  type HistoryTrimTool,
 } from "../src/core/history.js";
 
 // Mirrors plugins/dev/skills/engineering/afk/scripts/tests/fixtures/history/buckets.jsonl:
@@ -83,9 +85,9 @@ describe("history sparkline rendering", () => {
 });
 
 describe("history append", () => {
-  it("appends one JSONL record per call with defaults and numeric fields", async () => {
+  it("appends one TOONL row per call with defaults, numeric fields, and explicit nulls", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
-    const path = join(dir, "nested", "afk-history.jsonl");
+    const path = join(dir, "nested", "afk-history.toonl");
 
     const r1 = await historyAppend(
       path,
@@ -99,7 +101,10 @@ describe("history append", () => {
     expect(typeof r1.issue).toBe("number");
     expect(typeof r1.duration_s).toBe("number");
 
-    const records = parseHistoryLines(await readFile(path, "utf8"));
+    const body = await readFile(path, "utf8");
+    expect(body.split("\n")[0]).toBe("[1]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    expect(body).toContain(",abcdef1,null");
+    const records = parseHistoryLines(body);
     expect(records.length).toBe(1);
     expect(records[0]?.worker).toBe("wTEST");
     expect(records[0]?.issue).toBe(42);
@@ -127,7 +132,7 @@ describe("history append", () => {
 
   it("round-trips a done event into bucket 0 via the reader", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
-    const path = join(dir, "afk-history.jsonl");
+    const path = join(dir, "afk-history.toonl");
     const nowEpoch = 1700000000;
     await historyAppend(path, { ts: "t", epoch: nowEpoch }, "done", { worker: "wRT", issue: 1 });
     const records = parseHistoryLines(await readFile(path, "utf8"));
@@ -135,7 +140,7 @@ describe("history append", () => {
     expect(total).toBe(1);
   });
 
-  it("skips malformed JSONL lines while keeping valid monitor history", () => {
+  it("skips malformed legacy JSONL lines while keeping valid monitor history", () => {
     const records = parseHistoryLines(
       [
         JSON.stringify({ ts: "t1", epoch: 1, worker: "wA", issue: 1, event: "done", duration_s: 0, runner: "codex" }),
@@ -148,6 +153,22 @@ describe("history append", () => {
     expect(records.map((record) => record.issue)).toEqual([1, 2]);
   });
 
+  it("skips a crash-truncated TOONL tail while keeping complete rows", () => {
+    const records = parseHistoryLines(
+      [
+        "[3]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:",
+        "  t1,1,wA,1,done,0,codex,null,null",
+        "  t2,2,wB,2,blocked,3,claude,null,no-sentinel",
+        "  t3,",
+        "",
+      ].join("\n"),
+    );
+
+    expect(records.map((record) => record.issue)).toEqual([1, 2]);
+    expect(records[0]).not.toHaveProperty("merge_sha");
+    expect(records[0]).not.toHaveProperty("reason");
+  });
+
   it("rejects an empty event", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
     const path = join(dir, "afk-history.jsonl");
@@ -156,18 +177,86 @@ describe("history append", () => {
 });
 
 describe("history trim", () => {
-  it("caps to the bound, keeps newest, and returns the cap", async () => {
+  it("delegates over-bound TOONL caps to the tq trim runner", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
-    const path = join(dir, "afk-history.jsonl");
+    const path = join(dir, "afk-history.toonl");
+    for (let i = 1; i <= 6; i += 1) {
+      await historyAppend(path, { ts: `t${i}`, epoch: i }, "done", {});
+    }
+    const calls: Array<{ path: string; keepLast: number }> = [];
+    const tool: HistoryTrimTool = {
+      async trimKeepLast(calledPath, keepLast) {
+        calls.push({ path: calledPath, keepLast });
+        await writeFile(
+          calledPath,
+          [
+            "[2]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:",
+            "  t5,5,,0,done,0,,null,null",
+            "  t6,6,,0,done,0,,null,null",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        return true;
+      },
+    };
+
+    expect(await historyTrim(path, 2, undefined, tool)).toBe(2);
+    expect(calls).toEqual([{ path, keepLast: 2 }]);
+    expect(parseHistoryLines(await readFile(path, "utf8")).map((record) => record.epoch)).toEqual([5, 6]);
+  });
+
+  it("falls back in-process when the tq trim runner is unavailable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.toonl");
+    for (let i = 1; i <= 6; i += 1) {
+      await historyAppend(path, { ts: `t${i}`, epoch: i }, "done", {});
+    }
+    const tool: HistoryTrimTool = {
+      async trimKeepLast() {
+        return false;
+      },
+    };
+
+    expect(await historyTrim(path, 3, undefined, tool)).toBe(3);
+    const body = await readFile(path, "utf8");
+    expect(body.split("\n")[0]).toBe("[3]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    expect(parseHistoryLines(body).map((record) => record.epoch)).toEqual([4, 5, 6]);
+  });
+
+  it("caps to the bound, keeps newest, preserves the TOONL header, and returns the cap", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.toonl");
     const clock = (epoch: number) => ({ ts: "t", epoch });
     for (let i = 1; i <= 20; i += 1) {
       await historyAppend(path, clock(i), "done", {});
     }
     const echoed = await historyTrim(path, 5);
     expect(echoed).toBe(5);
-    const records = parseHistoryLines(await readFile(path, "utf8"));
+    const body = await readFile(path, "utf8");
+    expect(body.split("\n")[0]).toBe("[5]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    const records = parseHistoryLines(body);
     expect(records.length).toBe(5);
     expect(records[0]?.epoch).toBe(16); // newest 5 survive (16..20)
+  });
+
+  it("preserves TOONL header validity around every trim boundary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.toonl");
+    for (let i = 1; i <= 12; i += 1) {
+      await historyAppend(path, { ts: "t", epoch: i }, "done", {});
+    }
+
+    for (let cap = 1; cap <= 12; cap += 1) {
+      const copy = join(dir, `copy-${cap}.toonl`);
+      await writeFile(copy, await readFile(path, "utf8"), "utf8");
+      await historyTrim(copy, cap);
+      const body = await readFile(copy, "utf8");
+      expect(body.split("\n")[0]).toBe(`[${cap}]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:`);
+      expect(parseHistoryLines(body).map((record) => record.epoch)).toEqual(
+        Array.from({ length: cap }, (_, index) => 13 - cap + index),
+      );
+    }
   });
 
   it("stays silent and untouched when under bound", async () => {
@@ -196,5 +285,24 @@ describe("history trim", () => {
 
     await expect(historyTrim(path, 2)).rejects.toThrow();
     expect(await readFile(path, "utf8")).toBe(original);
+  });
+});
+
+describe("history format sniffing", () => {
+  it("reads converted TOONL before legacy JSONL and falls back to legacy during migration", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const legacy = join(dir, ".red", "state", "afk-history.jsonl");
+    const converted = join(dir, ".red", "state", "afk-history.toonl");
+    await mkdir(join(dir, ".red", "state"), { recursive: true });
+    await writeFile(
+      legacy,
+      `${JSON.stringify({ ts: "legacy", epoch: 1, worker: "wA", issue: 1, event: "done", duration_s: 0, runner: "codex" })}\n`,
+      "utf8",
+    );
+
+    expect((await readHistoryRecords(converted)).map((record) => record.ts)).toEqual(["legacy"]);
+
+    await historyAppend(converted, { ts: "converted", epoch: 2 }, "blocked", { worker: "wB", issue: 2 });
+    expect((await readHistoryRecords(converted)).map((record) => record.ts)).toEqual(["converted"]);
   });
 });

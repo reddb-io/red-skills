@@ -29,32 +29,42 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function supervisorArtifactPaths(tmpDir: string): Promise<string[]> {
+async function supervisorArtifactPaths(dir: string): Promise<string[]> {
   const out = [
-    join(tmpDir, "afk-supervisor.pid"),
-    join(tmpDir, "afk-supervisor.state.json"),
-    join(tmpDir, "afk-supervisor.state.json.tmp"),
-    join(tmpDir, "afk-supervisor.stop"),
+    join(dir, "afk-supervisor.pid"),
+    join(dir, "afk-supervisor.state.json"),
+    join(dir, "afk-supervisor.state.json.tmp"),
+    join(dir, "afk-supervisor.stop"),
   ];
   try {
-    for (const entry of await readdir(tmpDir)) {
-      if (entry.startsWith("afk-supervisor.log")) out.push(join(tmpDir, entry));
+    for (const entry of await readdir(dir)) {
+      if (entry.startsWith("afk-supervisor.log")) out.push(join(dir, entry));
     }
   } catch {
-    // Missing/unreadable tmp dir means there are no removable artifacts we can see.
+    // Missing/unreadable dir means there are no removable artifacts we can see.
   }
   return [...new Set(out)];
 }
 
+/**
+ * Reap stale supervisor artifacts across the canonical state-tier home and any
+ * legacy `.red/tmp` home (issue #1685). Pass the state dir first; a legacy dir is
+ * scanned for the one-release migration window so a supervisor whose pid still
+ * lives under the old layout is honoured and its dead artifacts are cleaned up.
+ */
 export async function reapStaleSupervisorState(
-  tmpDir: string,
+  dirs: string | readonly string[],
   isLivePid: (pid: number) => boolean = defaultIsLivePid,
 ): Promise<SupervisorStateReapResult> {
-  const pidFile = join(tmpDir, "afk-supervisor.pid");
-  const pid = await readSupervisorPid(pidFile);
+  const dirList = typeof dirs === "string" ? [dirs] : [...dirs];
+  let pid: number | null = null;
+  for (const dir of dirList) {
+    pid = await readSupervisorPid(join(dir, "afk-supervisor.pid"));
+    if (pid !== null) break;
+  }
   if (pid !== null && isLivePid(pid)) return { status: "live", pid, removed: [] };
 
-  const artifacts = await supervisorArtifactPaths(tmpDir);
+  const artifacts = (await Promise.all(dirList.map((d) => supervisorArtifactPaths(d)))).flat();
   const present: string[] = [];
   for (const path of artifacts) {
     if (await exists(path)) present.push(path);

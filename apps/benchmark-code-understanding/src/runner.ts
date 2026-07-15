@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { encode, type JsonValue } from "@reddb-io/toon";
 import type { CorpusCase, CorpusId } from "./corpus.js";
 import { loadCorpus } from "./corpus.js";
 import { emptyTokenUsage, emptyToolCounts, parseAgentJsonl } from "./report.js";
@@ -44,7 +45,7 @@ export async function runBenchmark(options: RunBenchmarkOptions): Promise<RunRec
       for (let runIndex = 1; runIndex <= options.runs; runIndex += 1) {
         const record = await runOne({ ...options, arm, testCase, repoPath, runIndex });
         records.push(record);
-        await appendJsonl(options.out, record);
+        await appendToonl(options.out, record);
       }
     }
   }
@@ -335,9 +336,8 @@ async function binaryCheck(command: string, label: string, missingStatus: "warn"
   };
 }
 
-async function appendJsonl(path: string, record: RunRecord): Promise<void> {
-  const current = existsSync(path) ? await readFile(path, "utf8") : "";
-  await writeFile(path, `${current}${JSON.stringify(record)}\n`, "utf8");
+async function appendToonl(path: string, record: RunRecord): Promise<void> {
+  await appendFile(path, `${encode([record] as unknown as JsonValue).trimEnd()}\n`, "utf8");
 }
 
 function shellQuote(value: string): string {

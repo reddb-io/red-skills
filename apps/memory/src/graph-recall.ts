@@ -5,6 +5,7 @@ import {
   type RecallScope,
   type RecallStore,
 } from "./engine.js";
+import { encode } from "@reddb-io/toon";
 import {
   loadEngineeringCodeCuration,
   resolveEngineeringCodeAlias,
@@ -301,7 +302,7 @@ function renderGraphRecallContext(
     lines.push(`- **${hit.label}** _(${hit.node_type})_`);
     if (hit.excerpt) lines.push(`  ${hit.excerpt.slice(0, 200)}`);
     const signalLines = renderSignalProvenance(hit.signal_provenance);
-    if (signalLines.length > 0) lines.push(...signalLines.map((line) => `  ${line}`));
+    if (signalLines.length > 0) lines.push(...signalLines);
     if (hit.hooks && hit.hooks.length > 0) {
       const parts = hit.hooks.map((hook) => `${hook.lifecycle}=${hook.exit_code}`);
       lines.push(`  _hooks: ${parts.join(", ")}_`);
@@ -320,13 +321,15 @@ export function renderSignalProvenance(
   signals: readonly RecallSignalProvenance[] | undefined,
 ): string[] {
   if (!signals || signals.length === 0) return [];
-  return [
-    `signal_provenance[${signals.length}]{source,rank,contribution}:`,
-    ...signals.map(
-      (signal) =>
-        `  ${signal.source},${signal.rank},${formatSignalContribution(signal.contribution)}`,
-    ),
-  ];
+  return encode({
+    signal_provenance: signals.map((signal) => ({
+      source: signal.source,
+      rank: signal.rank,
+      contribution: Number(formatSignalContribution(signal.contribution)),
+    })),
+  })
+    .trimEnd()
+    .split("\n");
 }
 
 function formatSignalContribution(value: number): string {

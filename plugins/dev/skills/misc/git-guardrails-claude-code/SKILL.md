@@ -83,7 +83,7 @@ Once the dev plugin is enabled (`plugins.dev.enabled: true`), this hook blocks t
 agent from switching the primary checkout's branch (`git switch <branch>`,
 `git checkout <branch>`, `git switch -b <new>`) **unconditionally** — with no
 branch-lock file and no config toggle (ADR 0083 §2, untouchable primary). `git
-commit`, `git worktree add`, read-only git, and `.red/tmp/work-*/` worktrees stay
+commit`, `git worktree add`, read-only git, and registered `.red/tmp/worktrees/<lane>/<slug>` worktrees stay
 allowed; the human terminal is not intercepted. The historical
 `dev.lock.primary-branch` key is retained as read-only legacy history only — it no
 longer enables or disables the guard.

@@ -201,6 +201,14 @@ export const CONFIG_DEFAULTS = {
   // worker state beside the existing heartbeat output-token counters so the
   // report can compare steered vs unsteered output without changing semantics.
   "afk.output_shaping.terse_steering": "false",
+  // Validation resource budget (#1758). Feedback/backpressure validation runs
+  // after the inner agent has finished, often spawning vitest/tsc/build workers
+  // outside the attempt guard. Keep Node heaps and Vitest worker fan-out bounded
+  // by default so two AFK slots cannot OOM the host by validating heavy suites
+  // at full parallelism. Repos may tune these under plugins.dev.afk.validation.
+  "afk.validation.node_max_old_space_mb": "2048",
+  "afk.validation.vitest_max_workers": "1",
+  "afk.validation.heavy_available_memory_mb": "4096",
   // Spec cascade rebase (issue #1007). After a successful DONE landing, rebase
   // every open sibling branch (same spec:N, not held by a live worker) onto the
   // new base HEAD so the next worker to pick up a sibling starts from a
@@ -612,6 +620,27 @@ export function readPostAttemptFormat(values: ConfigValues): string[] {
   if (indexed.length > 0) return indexed;
   const scalar = values["afk.post_attempt_format"];
   return scalar && scalar.trim() !== "" ? [scalar] : [];
+}
+
+export interface ValidationResourceBudget {
+  nodeMaxOldSpaceMb?: number;
+  vitestMaxWorkers?: number;
+  heavyAvailableMemoryMb?: number;
+}
+
+function readPositiveInt(values: ConfigValues, key: string): number | undefined {
+  const raw = getConfig(values, key).trim();
+  if (raw === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+export function readValidationResourceBudget(values: ConfigValues): ValidationResourceBudget {
+  return {
+    nodeMaxOldSpaceMb: readPositiveInt(values, "afk.validation.node_max_old_space_mb"),
+    vitestMaxWorkers: readPositiveInt(values, "afk.validation.vitest_max_workers"),
+    heavyAvailableMemoryMb: readPositiveInt(values, "afk.validation.heavy_available_memory_mb"),
+  };
 }
 
 /** Default CI-aware merge wait, in seconds (#812) — 30 minutes, generous enough

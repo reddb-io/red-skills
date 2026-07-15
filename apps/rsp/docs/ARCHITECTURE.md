@@ -28,6 +28,51 @@ Each wrapper returns stdout, stderr, status, signal, and optional raw output
 metadata. `emitWrappedResult()` writes the wrapper output first, then appends
 telemetry best-effort.
 
+## Permanent Proxy Routing
+
+Pre-exec interception starts with the repository gate. If `.red/config.yaml`
+does not set `rsp.enabled: true`, the hook records a `passed` decision with the
+`disabled` reason and emits no updated command. When rsp is enabled but
+`rsp.proxy.enabled` is absent or false, the hook uses the explicit capability
+table plus conservative `cat`/`head`/`tail` and safe noisy compound matching.
+
+When both `rsp.enabled: true` and `rsp.proxy.enabled: true` are set, the hook
+uses the universal proxy route. Eligible commands are rewritten to
+`rsp proxy -- '<original command>'` with capability `proxy:universal`, and the
+hook decision event records reason `universal-proxy`. The hook still passes
+through commands that would make routing unsafe or recursive:
+
+- empty or missing commands: `missing-command`
+- background jobs with a single `&`: `background`
+- `RSP_NO_PROXY=1` or `RED_SKILLS_RSP_NO_PROXY=1`: `opt-out`
+- commands whose first word is already `rsp`: `opt-out`
+- known interactive commands such as shells, editors, pagers, `ssh`, `top`, and
+  `htop`: `interactive`
+
+`rsp proxy` executes the routed shell command verbatim after segment rewriting.
+It splits shell segments on `&&`, `||`, `;`, and `|`, but it never rewrites a
+segment whose next operator is a pipe. That keeps pipeline producer bytes raw.
+For non-pipeline-tail segments, the proxy recognizes only families backed by
+shipped wrappers:
+
+- git `status`, `log`, `diff`, `show`, and `blame`
+- GitHub `pr|issue|run list|view`
+- `vitest` and `vitest run`
+- `cargo test`
+- simple `cat`, `head`, and `tail` file reads
+
+Recognized segments emit decision telemetry with hook `proxy`, decision
+`contributed`, reason `proxy-segment`, and a concrete capability id such as
+`git:log` or `gh:pr:list`. GitHub commands containing `--json`, `--jq`,
+`--json=...`, or `--jq=...` are the lossless selector family. The proxy records
+them with decision `passed`, reason `lossless-gh-json-jq`, and leaves the exact
+segment text unchanged.
+
+If proxy routing fails after parsing the original command, `rsp proxy` appends a
+`failed-open` decision with reason `proxy-internal-error` and runs the original
+command line. If parsing fails before an original command is known, it surfaces
+the usage error instead of inventing a command to run.
+
 ## Resident Lifecycle
 
 The resident is started through `rsp server` or warmed by client calls through
@@ -81,23 +126,42 @@ Supported resident operations include:
 
 The default store URI points at the repo-local shared RedDB file. The elision
 collection is `rsp_elisions_v1`, stored as a RedDB KV collection. The resident
-keeps an `index:v1` document beside the records so pruning can enforce both
-time-to-live and byte-budget limits.
+keeps an `index:v1` accounting lane beside the records so pruning can enforce
+both time-to-live and the physical cap.
 
 Minting an elision:
 
 1. Hashes the original bytes and metadata into a stable `el:<id>` handle.
-2. Stores the original bytes as base64 with command metadata, loss level,
-   creation time, expiry time, and byte count.
-3. Deletes any old tombstone for the same handle.
-4. Updates the index.
-5. Prunes expired records and oldest records over the byte budget.
-6. Verifies that the RedDB record and index entry were persisted.
+2. Classifies the handle into one of three storage classes:
+   - `derivable` for output that can be reconstructed from stored git blob
+     object ids, such as file reads and git diff/log/show/blame output.
+   - `re-executable` for deterministic repository commands, currently `git
+     status` and supported `git branch` forms, where the command recipe and
+     content hash are enough to replay or detect moved state.
+   - `ephemeral` for output that must retain bytes directly.
+3. Stores recipe metadata for derivable and re-executable handles, or stores
+   ephemeral bytes as gzip-compressed content-hash blobs. Identical ephemeral
+   outputs share one physical blob.
+4. Records command metadata, loss level, creation time, expiry time, raw byte
+   count, stored byte cost, and storage class.
+5. Deletes any old tombstone for the same handle.
+6. Updates the index.
+7. Prunes expired records and oldest records over the physical cap.
+8. Verifies that the RedDB record and index entry were persisted.
+
+The accounting lane is the `index:v1` document. Each live handle contributes
+its storage class, raw bytes, and stored bytes; shared blobs are counted once.
+`rsp stats` exposes this as a per-class breakdown plus the total stored bytes
+and configured budget. The default cap is 64 MiB of physical recipe/blob storage,
+not 64 MiB of original command-output bytes.
 
 Reading an elision returns the original bytes when live. If a record has
 expired or has been evicted, `rsp` returns an expired tombstone with the expiry
 time and original command. `rsp show el:<id>` writes live original bytes
-verbatim and prints the expired tombstone message otherwise.
+verbatim and prints the expired tombstone message otherwise. If a derivable or
+re-executable recipe can no longer reconstruct the original bytes, the handle
+degrades to the same expired-handle contract instead of pretending recovery is
+lossless.
 
 The store also retains a JSON-document fallback for non-RedDB URIs and legacy
 migration code for older table-shaped elision collections, but the normal
@@ -137,8 +201,10 @@ are also recorded as degradation events.
 `rsp` and `rsp stats` read elision-store stats plus a telemetry window. The
 telemetry stats include invocation count, elision count, raw/emitted bytes,
 estimated tokens saved, estimated dollar savings, top commands, degradation
-rate, most recent degradation, latency percentiles, and resident cold/warm
-metrics.
+rate, most recent degradation, latency percentiles, resident cold/warm metrics,
+and decision-lane counts: `seen`, `contributed`, `passed`, `failed_open`,
+`contribution_rate`, and top pass reasons. Those decision fields are the
+evidence for hook and proxy contribution claims.
 
 `rsp gains` reads a wider telemetry report designed for operational review. It
 groups latency by command family, builds request throughput rows, reports a
@@ -183,6 +249,11 @@ wrapper capabilities plus plain `cat`, `head`, and `tail` file reads. Compound
 commands, environment assignment prefixes, unsupported commands, disabled
 repositories, missing commands, or unhealthy residents pass through.
 
+`rsp hook codex-pre-exec` uses the same decision engine and emits Codex
+`updatedInput` when a rewrite is selected. Codex does not use post-exec output
+replacement; accounting for Codex hook contribution comes from the decision
+event and, for proxy-routed commands, the proxy segment decisions.
+
 When the resident is unhealthy, the hook wakes it and returns passthrough for
 that command. The next command can use the wrapper after the resident is ready.
 `rsp hook claude-post-exec` is the normalization hook for host-provided command
@@ -196,10 +267,16 @@ lose the command result.
 Important fail-open paths:
 
 - Disabled repositories do not force wrapper behavior.
+- Proxy-disabled repositories use the explicit wrapper route instead of the
+  universal proxy route.
+- Universal proxy exclusions pass through before command execution.
 - Missing store provisioning lets wrapper commands run cold where possible.
 - Wrapper exceptions call the raw command path through passthrough degradation.
+- Proxy internal errors run the original command and record `failed-open`.
 - `gh` auth/rate-limit and other fault outputs preserve the byte-level fault
   output.
+- `gh --json`/`--jq` selector commands are recorded as `lossless-gh-json-jq`
+  passes and execute byte-identically.
 - Binary file reads pass through unchanged.
 - Telemetry append, telemetry drain, status summary, and cold drain nudges are
   best-effort.

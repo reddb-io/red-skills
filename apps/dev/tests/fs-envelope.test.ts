@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import { readEnvelopePosted, writeEnvelopePosted } from "../src/runtime/fs.js";
 
 describe("envelope posted state persistence", () => {
@@ -27,7 +28,12 @@ describe("envelope posted state persistence", () => {
 
     await writeEnvelopePosted(attemptDir, true);
 
-    const after = JSON.parse(await readFile(statePath, "utf8"));
+    const after = decode(await readFile(statePath, "utf8")) as {
+      worker_id?: string;
+      pid?: number;
+      runner?: string;
+      current?: Record<string, unknown>;
+    };
     expect(after.worker_id).toBe("wENV");
     expect(after.pid).toBe(123);
     expect(after.runner).toBe("codex");

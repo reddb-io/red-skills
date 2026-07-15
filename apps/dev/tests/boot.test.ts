@@ -4,6 +4,7 @@ import {
   runBoot,
   type BootDeps,
   type BootOptions,
+  BootHaltError,
   type OrphanDir,
   type PrecheckFacts,
   type ReconcileBootRunner,
@@ -169,6 +170,7 @@ function makeDeps(over: Partial<{
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
+  docsSweepLander: BootDeps["docsSweepLander"];
 }> = {}) {
   const calls: string[] = [];
   const fsCalls = {
@@ -181,6 +183,7 @@ function makeDeps(over: Partial<{
     editLabels: [] as Array<{ issue: number; remove: string[]; add: string[] }>,
     comment: [] as Array<{ issue: number; body: string }>,
     viewLabels: [] as Array<{ issue: number }>,
+    attachSubIssue: [] as Array<{ parent: number; child: number }>,
   };
   const gitCalls = {
     deleteRemote: [] as string[],
@@ -220,6 +223,10 @@ function makeDeps(over: Partial<{
         ghCalls.viewLabels.push({ issue });
         return over.viewLabels ? over.viewLabels(issue) : ["running"];
       },
+      async attachSubIssue(parent, child) {
+        calls.push(`gh.attachSubIssue:${parent}:${child}`);
+        ghCalls.attachSubIssue.push({ parent, child });
+      },
     },
     git: {
       async deleteRemoteBranch(branch) {
@@ -250,6 +257,7 @@ function makeDeps(over: Partial<{
     env: over.env ?? {},
     config: over.config ?? {},
     ...(over.reconcileRunner ? { reconcileRunner: over.reconcileRunner } : {}),
+    ...(over.docsSweepLander ? { docsSweepLander: over.docsSweepLander } : {}),
   };
 
   return { deps, calls, fsCalls, ghCalls, gitCalls };
@@ -286,6 +294,69 @@ describe("runBoot precheck short-circuit", () => {
     expect(result.bootstrap).toBeUndefined();
     expect(result.orphanCleanup).toBeUndefined();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("runBoot Docs Sweep", () => {
+  it("lands stranded docs before the unblock sweep", async () => {
+    const blockerState: BootDeps["lookups"]["blockerState"] = async () => "CLOSED";
+    const { deps, calls } = makeDeps({
+      blockerState,
+      docsSweepLander: async (plan) => {
+        calls.push(`docs.land:${plan.files.map((f) => f.path).join(",")}`);
+        return { ok: true };
+      },
+    });
+
+    await runBoot(
+      deps,
+      options({
+        docsSweep: {
+          base: "main",
+          files: [
+            {
+              path: ".red/CONTEXT-MAP.md",
+              state: "modified",
+              group: "glossary",
+              ignored: false,
+              trackedPrecedent: true,
+            },
+          ],
+        },
+        unblockCandidates: [
+          { number: 100, labels: ["blocked:dependency"], body: "## Blocked by\n\n- [ ] #10\n" },
+        ],
+      }),
+    );
+
+    expect(calls.indexOf("docs.land:.red/CONTEXT-MAP.md")).toBeLessThan(calls.indexOf("gh.editLabels:100"));
+  });
+
+  it("halts before worker-consumable sweeps when stranded docs cannot land", async () => {
+    const { deps, calls } = makeDeps();
+    await expect(
+      runBoot(
+        deps,
+        options({
+          docsSweep: {
+            base: "main",
+            files: [
+              {
+                path: ".red/adr/0099-docs-sweep.md",
+                state: "untracked",
+                group: "adr",
+                ignored: true,
+                trackedPrecedent: false,
+              },
+            ],
+          },
+          unblockCandidates: [
+            { number: 100, labels: ["blocked:dependency"], body: "## Blocked by\n\n- [ ] #10\n" },
+          ],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(BootHaltError);
+    expect(calls).not.toContain("gh.editLabels:100");
   });
 });
 
@@ -679,6 +750,39 @@ describe("runBoot mixed-blocked normalizer (#1481)", () => {
     const r = await runBoot(deps, options());
     expect(ghCalls.editLabels).toEqual([]);
     expect(r.mixedBlockedNormalize).toEqual({ healed: [] });
+  });
+});
+
+describe("runBoot Spec sub-issue reconciler (#1739)", () => {
+  it("attaches label-only children and strips stale needs-slicing", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({
+        specSubIssueCandidates: [
+          {
+            number: 42,
+            labels: ["type:spec", "needs-slicing"],
+            labelChildren: [7, 8],
+            nativeSubIssues: [7],
+          },
+        ],
+      }),
+    );
+
+    expect(ghCalls.attachSubIssue).toEqual([{ parent: 42, child: 8 }]);
+    expect(ghCalls.editLabels).toEqual([{ issue: 42, remove: ["needs-slicing"], add: [] }]);
+    expect(r.specSubIssueReconcile).toEqual({
+      attached: [{ spec: 42, child: 8 }],
+      needsSlicingRemoved: [42],
+    });
+  });
+
+  it("is a no-op when no Spec candidates are provided", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(ghCalls.attachSubIssue).toEqual([]);
+    expect(r.specSubIssueReconcile).toEqual({ attached: [], needsSlicingRemoved: [] });
   });
 });
 

@@ -48,12 +48,15 @@ describe("rsp ambient skill generator", () => {
   it("renders runner-specific guidance for Claude and Codex interception", () => {
     const codex = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "codex" });
     const claude = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "claude" });
+    const opencode = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "opencode" });
 
     expect(codex).toContain("Codex lane");
     expect(codex).toContain("pre-execution rewrite hook is available");
     expect(codex).toContain("Codex PostToolUse cannot");
     expect(claude).toContain("Claude lane");
     expect(claude).toContain("pre-execution interception is available");
+    expect(opencode).toContain("OpenCode lane");
+    expect(opencode).toContain("opencode plugin surface");
   });
 
   it("committed artifact matches the generator output (drift check)", () => {

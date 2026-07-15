@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildValidationRecord,
+  buildFeedbackSubprocessEnv,
   decideBaselineDiffGate,
   isInfraFeedbackFailure,
   nearestPackageScope,
@@ -17,6 +18,24 @@ import {
   type RunFeedbackResult,
   type ValidationRecord,
 } from "../src/core/feedback.js";
+
+describe("buildFeedbackSubprocessEnv resource budget (#1758)", () => {
+  it("adds bounded Node heap and Vitest worker env without leaking AFK routing vars", () => {
+    const env = buildFeedbackSubprocessEnv(
+      {
+        PATH: "/bin",
+        NODE_OPTIONS: "--trace-warnings",
+        RED_AFK_WORKERS_NAMESPACE: "go-workers",
+      },
+      { nodeMaxOldSpaceMb: 1536, vitestMaxWorkers: 2 },
+    );
+
+    expect(env.PATH).toBe("/bin");
+    expect(env.NODE_OPTIONS).toContain("--max-old-space-size=1536");
+    expect(env.VITEST_MAX_WORKERS).toBe("2");
+    expect("RED_AFK_WORKERS_NAMESPACE" in env).toBe(false);
+  });
+});
 
 /**
  * Fake package layout: `packages` is the set of dirs that carry a package.json

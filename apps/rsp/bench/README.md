@@ -9,10 +9,16 @@ The rsp benchmark measures two separate questions:
    command facts an agent needs, such as exit status, failure rows, commit ids,
    PR rows, and recovery handles.
 
-The headline used by the rsp docs is **99.4% decision-oracle capture** for rsp
+The headline used by the rsp docs is **99.8% decision-oracle capture** for rsp
 versus **RTK 4.9%** and **Headroom 0.6%**. The generated result artifacts live
 in [bench/results/rsp-two-axis.md](results/rsp-two-axis.md) and
 [bench/results/rsp-two-axis.toon](results/rsp-two-axis.toon).
+
+The additive neutral third-party corpus lives in
+[bench/results/rsp-two-axis-neutral.md](results/rsp-two-axis-neutral.md) and
+[bench/results/rsp-two-axis-neutral.toon](results/rsp-two-axis-neutral.toon).
+The side-by-side home/neutral table is
+[bench/results/rsp-two-axis-corpus-comparison.md](results/rsp-two-axis-corpus-comparison.md).
 
 ## Run It
 
@@ -26,6 +32,17 @@ This regenerates the default artifacts:
 
 - `apps/rsp/bench/results/rsp-two-axis.toon`
 - `apps/rsp/bench/results/rsp-two-axis.md`
+
+To regenerate the neutral third-party artifacts:
+
+```sh
+pnpm --filter @reddb-io/rsp bench:two-axis:neutral
+```
+
+This writes:
+
+- `apps/rsp/bench/results/rsp-two-axis-neutral.toon`
+- `apps/rsp/bench/results/rsp-two-axis-neutral.md`
 
 To write to explicit paths:
 
@@ -65,6 +82,13 @@ The RTK and Headroom comparators are recorded baselines:
 
 - `apps/rsp/tests/fixtures/rtk/baselines.json`
 - `apps/rsp/tests/fixtures/headroom/baselines.json`
+
+The neutral corpus is discovered under `apps/rsp/tests/fixtures-neutral`.
+It is additive and smaller than the home corpus: public run metadata from
+vitest-dev/vitest and rust-lang/cargo, public git machine output from
+nodejs/node and rust-lang/rust, and Cargo JSON message output following the
+published `--message-format=json` contract. Its comparator baselines live next
+to it under `fixtures-neutral/rtk` and `fixtures-neutral/headroom`.
 
 The benchmark does not execute RTK or Headroom during normal runs. Headroom
 capture is isolated in `apps/rsp/scripts/capture-headroom-baselines.py`.

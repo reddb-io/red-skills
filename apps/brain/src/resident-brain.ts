@@ -1,4 +1,11 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  SHARED_STORE_REL,
+  legacySharedStorePath,
+  resolveSharedStorePath,
+  sharedStorePath as sharedStorePathForRoot,
+} from "@reddb-io/shared/red-paths.js";
 import {
   ResidentRspClient,
   resolveResidentPaths,
@@ -18,13 +25,17 @@ import type {
 import type { StoredBrainArtifact, StoredBrainConnection } from "./schema.js";
 import type { ResolvedBrainConfig } from "./config.js";
 
-export const SHARED_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
+/** Canonical shared RedDB store location (state tier); see {@link SHARED_STORE_REL}. */
+export const SHARED_RSP_STORE_PATH = SHARED_STORE_REL;
 const DEFAULT_RSP_TTL_DAYS = 7;
 const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 
 export function shouldUseResidentBrain(config: ResolvedBrainConfig): boolean {
   if (!config.connectionString.startsWith("file://")) return false;
-  return config.connectionString.slice("file://".length) === sharedStorePath(config.rootDir);
+  const path = config.connectionString.slice("file://".length);
+  // Accept both the canonical state-tier path and the legacy tmp-tier path so a
+  // connection string pointed at either shares the resident during the transition.
+  return path === sharedStorePathForRoot(config.rootDir) || path === legacySharedStorePath(config.rootDir);
 }
 
 export async function openResidentBrainStore(config: ResolvedBrainConfig): Promise<BrainStoreLike> {
@@ -35,11 +46,9 @@ export async function openResidentBrainStore(config: ResolvedBrainConfig): Promi
 }
 
 export function sharedStoreUri(rootDir: string): string {
-  return `file://${sharedStorePath(rootDir)}`;
-}
-
-function sharedStorePath(rootDir: string): string {
-  return resolve(rootDir, SHARED_RSP_STORE_PATH);
+  // Honor the transition window: open the legacy tmp-tier store if it still
+  // exists and setup has not yet migrated it to the state tier.
+  return `file://${resolveSharedStorePath(resolve(rootDir), existsSync)}`;
 }
 
 function residentConfig(rootDir: string): RspResidentConfig {

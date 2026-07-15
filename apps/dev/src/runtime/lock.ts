@@ -8,12 +8,26 @@
 // `readLockedBranch` (lock > pin > main) and process-issue's `isLocked` (which
 // toggles landMerge vs landPr).
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { branchLockFile, tmpDir } from "@reddb-io/shared/red-paths.js";
 import { readText } from "./fs.js";
 
-/** Standard lock-file path for a primary checkout (.red/tmp/branch-lock.yaml). */
+/**
+ * The branch-lock file path for a primary checkout, funnelled through the shared
+ * path authority (issue #1685). The canonical home is the state tier
+ * (`.red/state/branch-lock.yaml`), but the branch-lock skill's SHELL writer still
+ * owns the legacy `.red/tmp/branch-lock.yaml` during the migration window — so
+ * this reader prefers whichever exists (canonical first) to always track the live
+ * writer. The dev runtime only READS the lock; the writer migrates separately, so
+ * the lock is deliberately NOT relocated by the boot migration.
+ */
 export function branchLockPath(root: string): string {
-  return join(root, ".red", "tmp", "branch-lock.yaml");
+  const canonical = branchLockFile(root);
+  if (existsSync(canonical)) return canonical;
+  const legacy = join(tmpDir(root), "branch-lock.yaml");
+  if (existsSync(legacy)) return legacy;
+  return canonical;
 }
 
 /**

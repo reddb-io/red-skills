@@ -50,6 +50,16 @@ import {
   resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
+import {
+  planDocsSweep,
+  renderDocsSweepFileList,
+  type DocsSweepInput,
+  type DocsSweepPlan,
+} from "./docs-sweep.js";
+import {
+  executeSpecSubIssueReconcile,
+  type SpecSubIssueCandidate,
+} from "./spec-subissue-reconciler.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -164,6 +174,8 @@ export interface BootGh {
   comment(issue: number, body: string): Promise<void>;
   /** gh issue view --json labels → flat name list. */
   viewLabels(issue: number): Promise<string[]>;
+  /** Create a native GitHub sub-issue edge from parent Spec to child Ticket. */
+  attachSubIssue(parent: number, child: number): Promise<void>;
   /** Optional human-facing metadata lookup for rendered issue refs. */
   issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
 }
@@ -218,6 +230,23 @@ export type ReconcileBootOutcome = "landed" | "parked" | "skipped";
  * from closed-over context. When absent, the reconcile sweep is a no-op. */
 export type ReconcileBootRunner = (plan: ReconcileSweepPlan) => Promise<{ outcome: ReconcileBootOutcome }>;
 
+export class BootHaltError extends Error {
+  constructor(
+    readonly phase: "docs-sweep",
+    readonly plan: DocsSweepPlan,
+  ) {
+    super(`Docs Sweep halted (${plan.haltReason ?? "unknown"}): ${renderDocsSweepFileList(plan.files)}`);
+    this.name = "BootHaltError";
+  }
+}
+
+export interface DocsSweepLandResult {
+  ok: boolean;
+  reason?: string;
+}
+
+export type DocsSweepLander = (plan: DocsSweepPlan) => Promise<DocsSweepLandResult>;
+
 /** All injected IO + lookups for the boot run. */
 export interface BootDeps {
   fs: BootFs;
@@ -233,6 +262,8 @@ export interface BootDeps {
   /** When provided, the reconcile sweep (step 7) validates and lands each
    * owned parked-mechanical branch without re-running the agent. */
   reconcileRunner?: ReconcileBootRunner;
+  /** Landing lane for the Docs Sweep. Absent is valid only when the plan is clean. */
+  docsSweepLander?: DocsSweepLander;
 }
 
 // ---------- step inputs ----------
@@ -313,6 +344,12 @@ export interface BootOptions {
    * will heal by shedding the stale `blocked:*` labels. When absent the sweep is a
    * no-op. Optional for back-compat. */
   mixedBlockedCandidates?: readonly MixedBlockedCandidate[];
+  /** Dirty/ahead docs discovered by the runtime for the Docs Sweep. */
+  docsSweep?: DocsSweepInput;
+  /** Open and recently-closed Specs with their `spec:N` label-children and native
+   * sub-issue children. The reconciler attaches missing native edges and strips a
+   * stale `needs-slicing` label once at least one slice exists. */
+  specSubIssueCandidates?: readonly SpecSubIssueCandidate[];
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -357,6 +394,11 @@ export interface MixedBlockedNormalizeResult {
   healed: number[];
 }
 
+export interface SpecSubIssueReconcileBootResult {
+  attached: Array<{ spec: number; child: number }>;
+  needsSlicingRemoved: number[];
+}
+
 export interface StragglerResult {
   counts: StragglerCounts;
   warn: boolean;
@@ -377,6 +419,10 @@ export interface ReconcileSweepResult {
   skipped: number[];
 }
 
+export interface DocsSweepResult {
+  plan: DocsSweepPlan;
+}
+
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
  * only `precheck` is populated (the bash `die` aborts before any other step). */
 export interface BootResult {
@@ -385,8 +431,10 @@ export interface BootResult {
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
+  docsSweep?: DocsSweepResult;
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
+  specSubIssueReconcile?: SpecSubIssueReconcileBootResult;
   staleClaimSweep?: StaleClaimSweepResult;
   reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
@@ -407,14 +455,18 @@ export interface BootResult {
  *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
- *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
- *   6a. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
+ *   6. docs sweep           — planDocsSweep; land stranded .red docs or halt.
+ *   7. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
+ *   7a. mixed-blocked normalizer — shed stale blocked:* from queued/active issues.
+ *   7b. Spec sub-issue reconcile — attach missing native sub-issue edges and
+ *                                  strip stale needs-slicing on sliced Specs.
+ *   7c. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
  *                             a cross-host claim that stopped refreshing (#627).
  *                             No-op when `claimedIssues` is absent.
- *   7. reconcile sweep      — planReconcileSweep; validate-and-land each owned
+ *   9. reconcile sweep      — planReconcileSweep; validate-and-land each owned
  *                             parked-mechanical branch without re-running the agent
  *                             (ADR 0055). No-op when reconcileRunner is absent.
- *   8. straggler check      — stragglerCounts + shouldWarnStragglers → warn flag.
+ *   10. straggler check     — stragglerCounts + shouldWarnStragglers → warn flag.
  *
  * Steps 3-8 run only after a passing precheck, mirroring the bash `die`/`set -e`
  * abort. The TTY "proceed anyway?" prompt is the caller's: this returns the
@@ -458,19 +510,25 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 5. snapshot grace + live/local branch cleanup ----
   const branchCleanup = await runBranchCleanup(deps, options.branches);
 
-  // ---- 6. unblock sweep ----
+  // ---- 6. docs sweep ----
+  const docsSweep = await runDocsSweep(deps, options);
+
+  // ---- 7. unblock sweep ----
   const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
 
-  // ---- 6a0. mixed-blocked normalizer (#1481) ----
+  // ---- 7a. mixed-blocked normalizer (#1481) ----
   const mixedBlockedNormalize = await runMixedBlockedNormalize(deps, options);
 
-  // ---- 6a. cross-host stale-claim sweep (#627) ----
+  // ---- 7b. Spec sub-issue reconciler (#1739) ----
+  const specSubIssueReconcile = await runSpecSubIssueReconcile(deps, options);
+
+  // ---- 7c. cross-host stale-claim sweep (#627) ----
   const staleClaimSweep = await runStaleClaimSweep(deps);
 
-  // ---- 7. reconcile sweep (ADR 0055) ----
+  // ---- 9. reconcile sweep (ADR 0055) ----
   const reconcileSweep = await runReconcileSweep(deps, options, staleClaimSweep.released);
 
-  // ---- 8. straggler check ----
+  // ---- 10. straggler check ----
   const straggler = await runStragglerCheck(deps);
 
   return {
@@ -479,12 +537,33 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     orphanCleanup,
     attemptCap,
     branchCleanup,
+    docsSweep,
     unblockSweep,
     mixedBlockedNormalize,
+    specSubIssueReconcile,
     staleClaimSweep,
     reconcileSweep,
     straggler,
   };
+}
+
+async function runDocsSweep(deps: BootDeps, options: BootOptions): Promise<DocsSweepResult> {
+  const plan = planDocsSweep(options.docsSweep ?? { base: options.precheck.configuredTrunk ?? "main", files: [] });
+  if (plan.action === "clean") return { plan };
+  if (plan.action === "halt") throw new BootHaltError("docs-sweep", plan);
+  if (!deps.docsSweepLander) {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  let landed: DocsSweepLandResult;
+  try {
+    landed = await deps.docsSweepLander(plan);
+  } catch {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  if (!landed.ok) {
+    throw new BootHaltError("docs-sweep", { ...plan, action: "halt", haltReason: "landing-failed" });
+  }
+  return { plan };
 }
 
 /** Step 6a: cross-host stale-claim sweep (#627). List the currently-claimed
@@ -732,6 +811,19 @@ async function runMixedBlockedNormalize(
   if (candidates.length === 0) return { healed: [] };
   const healed = await executeMixedBlockedNormalize(candidates, deps.gh);
   return { healed };
+}
+
+/** Step 6a1: Spec sub-issue reconciler (#1739). The label edge (`spec:N`) is the
+ * machine truth; native GitHub sub-issue edges are the human surface. This sweep
+ * attaches every missing native edge and removes stale `needs-slicing` once a
+ * Spec has published slices. A no-op when no candidates are provided. */
+async function runSpecSubIssueReconcile(
+  deps: BootDeps,
+  options: BootOptions,
+): Promise<SpecSubIssueReconcileBootResult> {
+  const candidates = options.specSubIssueCandidates ?? [];
+  if (candidates.length === 0) return { attached: [], needsSlicingRemoved: [] };
+  return executeSpecSubIssueReconcile(candidates, deps.gh);
 }
 
 /** Step 7: reconcile sweep (ADR 0055). For each owned parked-mechanical branch,

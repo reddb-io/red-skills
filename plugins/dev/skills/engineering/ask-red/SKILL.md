@@ -17,7 +17,8 @@ default lane, one exception lane, and several on-ramps that feed those lanes.
 
 **Tracked work defaults to `/afk`.** If the work is already a Ticket, should be a
 Ticket, or belongs to a Spec, route it through `/afk`. This is the modus
-operandi.
+operandi. `/afk` boot owns the Docs Sweep, so stranded `.red/` glossary/ADR docs
+auto-land or halt before worker dispatch rather than becoming a separate route.
 
 **Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
 does not already belong on the tracker. If the work is already tracked, keep it
@@ -101,6 +102,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   token savings, command-family winners, and degradation health from telemetry.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes.
+- TOON/TOONL operational reader changes are documentation-maintenance work:
+  `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
+  `/afk` plus `/daily-review` own the lane-reading examples.
 - `/retake` reconstructs one Ticket's real state — PRs, branches, worktrees,
   uncommitted work, blocker — then acts on it: requeue into `ready-for-agent`,
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.

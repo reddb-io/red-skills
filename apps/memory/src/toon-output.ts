@@ -9,25 +9,33 @@ import {
 
 type JsonRecord = Record<string, JsonValue>;
 
-function toJsonValue(value: unknown, strictStrings = false, key = ""): JsonValue {
+export interface RenderToonDocumentOptions {
+  compact?: boolean;
+}
+
+function compactString(value: string, key: string): string {
+  const normalized = value.replace(/\\[nrt]/g, " ").replace(/\s+/g, " ").trim();
+  return key === "markdown"
+    ? normalized.replace(/[\[\]{}]/g, " ").replace(/\s+/g, " ").trim()
+    : normalized;
+}
+
+function toJsonValue(value: unknown, opts: RenderToonDocumentOptions = {}, key = ""): JsonValue {
   if (value == null) return null;
   if (typeof value === "string") {
-    const normalized = value.replace(/\\[nrt]/g, " ").replace(/\s+/g, " ").trim();
-    return strictStrings || key === "markdown"
-      ? normalized.replace(/[\[\]{}]/g, " ")
-      : normalized;
+    return opts.compact ? compactString(value, key) : value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return Number.isNaN(value) ? null : value;
   }
   if (Array.isArray(value)) {
-    return value.map((child) => toJsonValue(child, strictStrings, key));
+    return value.map((child) => toJsonValue(child, opts, key));
   }
   if (typeof value === "object") {
     const out: JsonRecord = {};
     for (const [key, child] of Object.entries(value)) {
       if (child !== undefined && typeof child !== "function" && typeof child !== "symbol") {
-        out[key] = toJsonValue(child, strictStrings, key);
+        out[key] = toJsonValue(child, opts, key);
       }
     }
     return out;
@@ -63,12 +71,17 @@ export function renderToonOutput<Row extends JsonRecord>({
   return appendSummaryField(value, summary);
 }
 
-export function renderToonDocument(value: unknown): string {
-  const output = encode(toJsonValue(value));
-  try {
-    decode(output);
-    return output;
-  } catch {
-    return encode(toJsonValue(value, true));
-  }
+export function renderToonDocument(value: unknown, opts: RenderToonDocumentOptions = {}): string {
+  const output = opts.compact
+    ? encode({
+        _reduction: {
+          mode: "compact",
+          reduced: "string whitespace collapsed; markdown bracket characters removed",
+          recover: "rerun without --compact",
+        },
+        value: toJsonValue(value, opts),
+      })
+    : encode(toJsonValue(value, opts));
+  decode(output);
+  return output;
 }
