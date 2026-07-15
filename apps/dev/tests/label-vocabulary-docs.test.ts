@@ -175,20 +175,20 @@ describe("red-setup docs", () => {
     expect(skill).toContain("**Section G1 — Command guards");
     expect(skill).toContain("hooks are **proxy guarantees**, not the policy source");
     expect(skill).toContain("Built-in invariant: when `plugins.dev.enabled: true`");
-    expect(skill).toContain("Agent-created `git worktree add` destinations must resolve under the repo's `.red/tmp/`");
+    expect(skill).toContain("Agent-created `git worktree add` destinations must resolve under a registered lane in the repo's `.red/tmp/`");
     expect(skill).toContain("Examples are examples only");
     expect(skill).toContain("command_guard.global");
     expect(skill).toContain("command_guard.main");
     expect(skill).toContain("command_guard.worktree");
     expect(template).toContain("Built-in dev shell guard");
     expect(template).toContain("agent-created");
-    expect(template).toContain("git worktree add .red/tmp/work-<slug>");
+    expect(template).toContain("git worktree add .red/tmp/worktrees/manual/<slug>");
     expect(template).toContain("# command_guard:");
     expect(template).toContain("#   global:");
     expect(template).toContain("#   main:");
     expect(template).toContain("#   worktree:");
     expect(readme).toContain("Example policy, not a default:");
-    expect(readme).toContain("git worktree add .red/tmp/work-<slug>");
+    expect(readme).toContain("git worktree add .red/tmp/worktrees/manual/<slug>");
   });
 
   it("documents the cross-cli runtime shim instead of global plugin-root env vars", async () => {
