@@ -6,6 +6,7 @@ import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
+import { encode, type JsonObject } from "@reddb-io/toon";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
@@ -465,21 +466,22 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
     : 0;
   const path = join(rootDir, RSP_STATUS_SUMMARY);
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmp, JSON.stringify({
+  const payload: JsonObject = {
     version: 1,
     tokens_saved_today: tokensSavedToday,
     dollars_saved_today_usd: Math.round(dollarsSavedToday * 1_000_000) / 1_000_000,
     show_total_today: stats.health.show_total,
-    show_hit_rate: stats.health.show_total > 0 ? stats.health.show_hit_rate : undefined,
-    decisions: stats.decisions.seen > 0
-      ? {
-          seen: stats.decisions.seen,
-          contributed: stats.decisions.contributed,
-        }
-      : undefined,
     updated_at: now.toISOString(),
-  }), { encoding: "utf8", mode: 0o600 });
+  };
+  if (stats.health.show_total > 0) payload.show_hit_rate = stats.health.show_hit_rate;
+  if (stats.decisions.seen > 0) {
+    payload.decisions = {
+      seen: stats.decisions.seen,
+      contributed: stats.decisions.contributed,
+    };
+  }
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(tmp, `${encode(payload)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
