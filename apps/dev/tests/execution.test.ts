@@ -377,7 +377,7 @@ describe("buildRunOptions", () => {
       makeDeps(async () => fakeResult()),
       { ...baseInput, cwd: "/abs/attempt/dir" },
     );
-    // cwd is forwarded verbatim so sandcastle puts `.sandcastle/` under the
+    // cwd is forwarded verbatim so sandcastle puts `.red-castle/` under the
     // attempt dir (.red/tmp/...), never at the repo root.
     expect(opts.cwd).toBe("/abs/attempt/dir");
   });
