@@ -1177,9 +1177,11 @@ export function buildProcessDeps(
       // the meter + iteration markers. Returning here also narrows `event` to the
       // non-raw variants for the rest of the handler.
       if (event.type === "raw") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", event.line, {
+        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", {
+          iteration: event.iteration,
+          line: event.line,
+        }, {
           ts,
-          fields: { extra: { kind: "raw", iteration: String(event.iteration) } },
         }).catch(() => {});
         return;
       }
