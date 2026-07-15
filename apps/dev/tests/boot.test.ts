@@ -181,6 +181,7 @@ function makeDeps(over: Partial<{
     editLabels: [] as Array<{ issue: number; remove: string[]; add: string[] }>,
     comment: [] as Array<{ issue: number; body: string }>,
     viewLabels: [] as Array<{ issue: number }>,
+    attachSubIssue: [] as Array<{ parent: number; child: number }>,
   };
   const gitCalls = {
     deleteRemote: [] as string[],
@@ -219,6 +220,10 @@ function makeDeps(over: Partial<{
         calls.push(`gh.viewLabels:${issue}`);
         ghCalls.viewLabels.push({ issue });
         return over.viewLabels ? over.viewLabels(issue) : ["running"];
+      },
+      async attachSubIssue(parent, child) {
+        calls.push(`gh.attachSubIssue:${parent}:${child}`);
+        ghCalls.attachSubIssue.push({ parent, child });
       },
     },
     git: {
@@ -679,6 +684,39 @@ describe("runBoot mixed-blocked normalizer (#1481)", () => {
     const r = await runBoot(deps, options());
     expect(ghCalls.editLabels).toEqual([]);
     expect(r.mixedBlockedNormalize).toEqual({ healed: [] });
+  });
+});
+
+describe("runBoot Spec sub-issue reconciler (#1739)", () => {
+  it("attaches label-only children and strips stale needs-slicing", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({
+        specSubIssueCandidates: [
+          {
+            number: 42,
+            labels: ["type:spec", "needs-slicing"],
+            labelChildren: [7, 8],
+            nativeSubIssues: [7],
+          },
+        ],
+      }),
+    );
+
+    expect(ghCalls.attachSubIssue).toEqual([{ parent: 42, child: 8 }]);
+    expect(ghCalls.editLabels).toEqual([{ issue: 42, remove: ["needs-slicing"], add: [] }]);
+    expect(r.specSubIssueReconcile).toEqual({
+      attached: [{ spec: 42, child: 8 }],
+      needsSlicingRemoved: [42],
+    });
+  });
+
+  it("is a no-op when no Spec candidates are provided", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(ghCalls.attachSubIssue).toEqual([]);
+    expect(r.specSubIssueReconcile).toEqual({ attached: [], needsSlicingRemoved: [] });
   });
 });
 

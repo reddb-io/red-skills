@@ -480,7 +480,7 @@ describe("doLanding — conventional landing titles (#1267)", () => {
     expect(r).toEqual({ ok: true, locked: false });
     const j = joined(h.mergeCalls);
     expect(j).toContain(
-      "gh -R o/r pr create --base main --head afk/wAAAA/9-fix-the-thing --title feat: #9 Fix the thing --body Automated AFK landing for #9. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the `afk-attempts/*` snapshot branches.\n\nCloses #9",
+      "gh -R o/r pr create --base main --head afk/wAAAA/9-fix-the-thing --title feat: #9 Fix the thing --body Automated AFK landing for #9. Per-attempt history lives in the issue Envelopes, the local ledgers, and the `afk-attempts/*` snapshot branches.\n\nCloses #9",
     );
     expect(j).toContain("gh -R o/r pr merge 42 --merge --subject feat: #9 Fix the thing");
   });

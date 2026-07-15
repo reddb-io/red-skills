@@ -6,6 +6,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 
@@ -21,6 +22,7 @@ export interface RspResidentPaths {
 
 const UNIX_SOCKET_PATH_LIMIT = 108;
 const RESIDENT_REGISTRY_VERSION = 1;
+const DEFAULT_RESIDENT_READY_TIMEOUT_MS = 5_000;
 
 export interface RspResidentRegistryEntry {
   version: typeof RESIDENT_REGISTRY_VERSION;
@@ -143,6 +145,8 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
     config.storeUri,
     "--ttl-days",
     String(config.ttlDays),
+    "--ephemeral-ttl-hours",
+    String(config.ephemeralTtlHours ?? 6),
     "--byte-budget",
     String(config.byteBudget),
     "--telemetry-ttl-days",
@@ -181,7 +185,7 @@ export async function warmResidentServer(paths: RspResidentPaths, config: RspRes
 
 export async function readResidentRegistry(path: string): Promise<RspResidentRegistryEntry | null> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const parsed = parseStructuredDocument(await readFile(path, "utf8"));
     return isResidentRegistryEntry(parsed) ? parsed : null;
   } catch {
     return null;
@@ -205,7 +209,7 @@ export async function writeResidentRegistry(
   };
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(tmp, `${encode(payload as unknown as JsonObject)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
@@ -257,17 +261,33 @@ export async function sweepResidentRegistry(paths: RspResidentPaths): Promise<Rs
   return status;
 }
 
-async function waitForServer(socketPath: string, child?: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 5_000;
+interface ResidentSpawn {
+  child: ChildProcess;
+  stderrTail(): string;
+  spawnError(): Error | undefined;
+}
+
+async function waitForServer(socketPath: string, spawnHandle?: ResidentSpawn): Promise<void> {
+  const deadline = Date.now() + residentReadyTimeoutMs();
   let last: unknown;
   while (Date.now() < deadline) {
     if (await pingResident(socketPath)) return;
-    if (child && child.exitCode != null) {
-      throw new Error(`resident rsp server exited before ready (${child.exitCode})`);
+    if (spawnHandle) {
+      const spawnError = spawnHandle.spawnError();
+      if (spawnError) throw new Error(formatResidentStartFailure("resident rsp server spawn failed", spawnHandle, spawnError));
+      if (spawnHandle.child.exitCode != null || spawnHandle.child.signalCode != null) {
+        throw new Error(formatResidentStartFailure("resident rsp server exited before ready", spawnHandle));
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw last instanceof Error ? last : new Error("resident rsp server did not start");
+  if (last instanceof Error) throw last;
+  throw new Error(spawnHandle ? formatResidentStartFailure("resident rsp server did not start", spawnHandle) : "resident rsp server did not start");
+}
+
+function residentReadyTimeoutMs(): number {
+  const value = Number(process.env.RSP_RESIDENT_READY_TIMEOUT_MS ?? "");
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_RESIDENT_READY_TIMEOUT_MS;
 }
 
 async function removeUnresponsiveSocket(socketPath: string): Promise<void> {
@@ -284,8 +304,11 @@ async function tryAcquireLock(lockPath: string) {
   }
 }
 
-function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ChildProcess {
+function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ResidentSpawn {
   const [command, prefix] = spawnTarget(config);
+  const captureDiagnostics = process.env.RSP_DEBUG === "1";
+  let spawnError: Error | undefined;
+  let stderrTail = "";
   const child = spawn(command, [
     ...prefix,
     "server",
@@ -297,6 +320,8 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
     config.storeUri,
     "--ttl-days",
     String(config.ttlDays),
+    "--ephemeral-ttl-hours",
+    String(config.ephemeralTtlHours ?? 6),
     "--byte-budget",
     String(config.byteBudget),
     "--telemetry-ttl-days",
@@ -316,11 +341,52 @@ function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): Chil
   ], {
     cwd: paths.rootDir,
     detached: true,
-    stdio: "ignore",
+    stdio: captureDiagnostics ? ["ignore", "ignore", "pipe"] : "ignore",
     env: { ...process.env, RSP_RESIDENT_SERVER: "1" },
   });
+  child.on("error", (err) => {
+    spawnError = err;
+  });
+  if (captureDiagnostics) {
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderrTail = tailString(`${stderrTail}${chunk}`, RESIDENT_START_STDERR_TAIL_BYTES);
+    });
+  }
   child.unref();
-  return child;
+  return {
+    child,
+    stderrTail: () => stderrTail,
+    spawnError: () => spawnError,
+  };
+}
+
+const RESIDENT_START_STDERR_TAIL_BYTES = 8 * 1024;
+
+function formatResidentStartFailure(reason: string, spawnHandle: ResidentSpawn, err?: Error): string {
+  const parts = [reason];
+  if (err) parts.push(`error: ${err.message}`);
+  if (spawnHandle.child.exitCode != null) parts.push(`exit code: ${spawnHandle.child.exitCode}`);
+  if (spawnHandle.child.signalCode != null) parts.push(`signal: ${spawnHandle.child.signalCode}`);
+  const stderrTail = spawnHandle.stderrTail().trimEnd();
+  if (stderrTail) parts.push(`stderr tail:\n${stderrTail}`);
+  return parts.join("\n");
+}
+
+function tailString(value: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (bytes <= maxBytes) return value;
+  return Buffer.from(value, "utf8").subarray(bytes - maxBytes).toString("utf8").replace(/^\uFFFD+/, "");
+}
+
+function parseStructuredDocument(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {

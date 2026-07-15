@@ -14,6 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
+import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -85,7 +86,7 @@ export function afkPaths(root: string): AfkPaths {
     tmpDir,
     stateDir,
     workersRoot: join(tmpDir, "workers"),
-    historyPath: join(stateDir, "afk-history.jsonl"),
+    historyPath: join(stateDir, "afk-history.toonl"),
     fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
     fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
     monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
@@ -469,7 +470,7 @@ import {
 } from "../core/worker-state-reader.js";
 import { planLivenessReclaim, type LivenessReclaimInput } from "../core/reclaim.js";
 import type { WorkerVitals } from "../types/state.js";
-import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
+import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
   workers: CompactWorker[];
@@ -754,8 +755,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     });
   }
 
-  const histText = await fsx.readText(paths.historyPath);
-  const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
+  const events = (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
   const fleet = await readFleetState(paths.fleetStatePath);
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
@@ -851,9 +851,17 @@ export function statuslineCountCachePath(root: string): string {
   return join(afkPaths(root).tmpDir, "statusline-cache.json");
 }
 
+function decodeCacheDocument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return decodeToon(text);
+  }
+}
+
 function readStatuslineCache(path: string): StatuslineCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
     return {
       queue: Number(parsed.queue ?? 0),
       human: Number(parsed.human ?? 0),
@@ -868,7 +876,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
   try {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1309,7 +1317,7 @@ interface RepoStatsCache {
 
 function readRepoStatsCache(path: string): RepoStatsCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
     return {
       baseRef: typeof parsed.baseRef === "string" && parsed.baseRef.trim() ? parsed.baseRef.trim() : "origin/main",
       openPrs: Number(parsed.openPrs ?? 0),
@@ -1326,8 +1334,9 @@ function readRepoStatsCache(path: string): RepoStatsCache | null {
 
 function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
   try {
+    mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1523,7 +1532,17 @@ export async function collectBootOptions(
   // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
   // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
   // liveness at discovery so boot's orphan step stays a pure removal, #252.)
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs, reconcileSweepCandidates] =
+  const [
+    snapshotRefs,
+    remoteLiveRefs,
+    localAll,
+    checkedOut,
+    unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
+    reconcileSweepCandidates,
+    specSubIssueCandidates,
+  ] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
       gitx.listRemoteBranches(gitCtx, "afk/"),
@@ -1533,6 +1552,7 @@ export async function collectBootOptions(
       fsx.listStaleClaimDirs(paths.tmpDir),
       fsx.listLegacyWorkDirs(paths.tmpDir),
       ghx.listParkedMechanicalCandidates(ghCtx),
+      ghx.listSpecSubIssueCandidates(ghCtx, nowS),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
 
@@ -1546,6 +1566,7 @@ export async function collectBootOptions(
     staleClaimDirs,
     legacyWorkDirs,
     reconcileSweepCandidates,
+    specSubIssueCandidates,
   };
 }
 
@@ -1670,6 +1691,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
+      attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
     },
     git: {
@@ -1778,6 +1800,7 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       editLabels: async () => unreachable(),
       comment: async () => unreachable(),
       viewLabels: async () => unreachable(),
+      attachSubIssue: async () => unreachable(),
     },
     git: {
       deleteRemoteBranch: async () => unreachable(),

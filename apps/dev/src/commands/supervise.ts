@@ -17,7 +17,7 @@ import {
   type SpawnPolicy,
   type SupervisorDeps,
 } from "../core/supervisor.js";
-import { appendRecord } from "../core/jsonl-log.js";
+import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
   afkPaths,
   resolveRepoSlug,
@@ -552,7 +552,7 @@ function buildSupervisorDeps(
         // best-effort: state-file failure must not affect the supervisor.
       }
       try {
-        await appendRecord(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
+        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
           ts: hb.ts,
           fields: {
             worker: "fleet",
@@ -565,14 +565,10 @@ function buildSupervisorDeps(
               slots_total: String(hb.slotsTotal),
               slots_parked: String(hb.slotsParked),
               spawns_this_tick: String(hb.spawnsThisTick),
-              ...(hb.drainBudget
-                ? {
-                    drain_budget_tier: hb.drainBudget.tier,
-                    drain_budget_spent_usd: hb.drainBudget.spentUsd.toFixed(4),
-                    drain_budget_limit_usd: hb.drainBudget.limitUsd.toFixed(4),
-                    drain_budget_percent: (hb.drainBudget.percent * 100).toFixed(2),
-                  }
-                : {}),
+              drain_budget_tier: hb.drainBudget?.tier ?? null,
+              drain_budget_spent_usd: hb.drainBudget?.spentUsd.toFixed(4) ?? null,
+              drain_budget_limit_usd: hb.drainBudget?.limitUsd.toFixed(4) ?? null,
+              drain_budget_percent: hb.drainBudget ? (hb.drainBudget.percent * 100).toFixed(2) : null,
             },
           },
         });

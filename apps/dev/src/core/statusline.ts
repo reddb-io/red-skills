@@ -164,7 +164,13 @@ export interface FleetInput {
 }
 
 export type RspStatusInput =
-  | { state: "ready"; tokensSavedToday: number; dollarsSavedTodayUsd?: number }
+  | {
+      state: "ready";
+      tokensSavedToday: number;
+      dollarsSavedTodayUsd?: number;
+      showHitRate?: number;
+      decisions?: { contributed: number; seen: number };
+    }
   | { state: "warming" }
   | { state: "error" };
 
@@ -458,7 +464,12 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
   if (rsp.state === "ready") {
-    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}`;
+    const decisions =
+      rsp.decisions && Number.isFinite(rsp.decisions.seen) && rsp.decisions.seen > 0
+        ? ` int=${Math.max(0, Math.floor(rsp.decisions.contributed))}/${Math.floor(rsp.decisions.seen)}`
+        : "";
+    const hitRate = typeof rsp.showHitRate === "number" ? ` hit=${Math.round(rsp.showHitRate * 100)}%` : "";
+    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}${decisions}${hitRate}`;
   }
   if (rsp.state === "warming") return "rsp=…";
   return "rsp=!";

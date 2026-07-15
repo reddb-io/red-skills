@@ -16,15 +16,13 @@
     "@reddb-io/dev#bundle": {
       "dependsOn": [
         "@reddb-io/build-info#build",
-        "@reddb-io/shared#build",
-        "@reddb-io/toon#build"
+        "@reddb-io/shared#build"
       ],
       "cache": false
     },
     "@reddb-io/rsp#bundle": {
       "dependsOn": [
-        "@reddb-io/build-info#build",
-        "@reddb-io/toon#build"
+        "@reddb-io/build-info#build"
       ],
       "cache": false
     },

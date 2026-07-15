@@ -51,7 +51,9 @@ empty tables use the definitive `key[0]:` empty state.
   added/removed, local workers, local attempts, local worker time, token spend
   when retained runner logs expose usage fields.
 - Local workers: worker id, attempts, issues, runner, duration, and terminal
-  events from `.red/state/afk-history.jsonl` plus live local worker state.
+  events from the `.red/state/afk-history.toonl` TOONL lane plus live local
+  worker state. `tq` is pinned by `/red-setup` and is the only documented
+  reader for RedSkills-owned TOONL lanes; there is no jq fallback.
 - Challenges: HITL/blocker/no-sentinel/merge-conflict evidence from issue
   labels, issue bodies/comments, and local AFK history reasons.
 - Issue and PR cycle times: closed-in-interval rows include items opened before

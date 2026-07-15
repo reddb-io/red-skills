@@ -7,7 +7,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   type ProtocolConnection,
-} from "vscode-languageserver-protocol/node.js";
+} from "vscode-languageserver-protocol/node";
 import {
   InitializeRequest,
   InitializedNotification,

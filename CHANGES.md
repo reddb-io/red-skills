@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@d574778f94cf620fcc8ce741584093bc650a61d3` (v1.
 
 ---
 
+## wayfinder (engineering) — AFK task dispatch to autonomous lane (issue #1830)
+
+- **status**: modified
+- **upstream**: `66898f6` (upstream `wayfinder`)
+- **why**: Wayfinder was describing AFK-typed Task tickets as driven inline by the session, contradicting the RedSkills autonomous-lane contract where repo-mutating work runs in isolated worktrees through the shared gate.
+- **what changed**: In `plugins/dev/skills/engineering/wayfinder/SKILL.md`, changed the Task type dispatch sentence to state that the session never executes repo-mutating task work inline — when AFK-safe it routes the ticket into the autonomous queue per the tracker doc, and the AFK engine runs it (isolated worktree, shared validation gate, PR); HITL branch unchanged. In `plugins/dev/skills/engineering/red-setup/issue-tracker-github.md` Wayfinding operations, added a bullet naming `/afk --issues <n>` as the immediate dispatch command and stating the wayfinder session must not resolve AFK-safe tasks inline.
+
+---
+
 ## red-gains (engineering) — added (issue #1583)
 
 - **status**: added

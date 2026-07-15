@@ -10,7 +10,7 @@ async function doc(relativePath: string): Promise<string> {
 }
 
 describe("rsp docs surface", () => {
-  it("describes the shipped rsp surface without stale future-tense claims", async () => {
+  it("describes the shipped rsp surface with stable contract headings", async () => {
     const readme = await doc("README.md");
 
     expect(readme).toContain("99.4% decision-oracle capture");
@@ -23,12 +23,36 @@ describe("rsp docs surface", () => {
     expect(readme).toContain("resident");
     expect(readme).toContain("telemetry");
     expect(readme).toContain("rsp wait");
+    for (const heading of [
+      "## What rsp Does",
+      "## Permanent Proxy Model",
+      "## Contribution Metrics",
+      "## Recovery Model",
+      "## Resident and Telemetry",
+      "## Configuration",
+    ]) {
+      expect(readme).toContain(heading);
+    }
     expect(readme).not.toMatch(/land in later slices|currently carries only|will ship/i);
   });
 
-  it("documents resident lifecycle, telemetry, elisions, wait, and fail-open behavior", async () => {
+  it("documents resident lifecycle, telemetry, elisions, wait, proxy, and fail-open behavior", async () => {
     const architecture = await doc("docs/ARCHITECTURE.md");
 
+    for (const heading of [
+      "## CLI and Wrappers",
+      "## Permanent Proxy Routing",
+      "## Resident Lifecycle",
+      "## Socket Protocol",
+      "## Elision Store and Handles",
+      "## Telemetry Chain",
+      "## Stats, Gains, and Statusline Summary",
+      "## Wait Registry",
+      "## Hook Interception",
+      "## Fail-Open Invariant",
+    ]) {
+      expect(architecture).toContain(heading);
+    }
     for (const required of [
       "socket",
       "single embedded writer",
@@ -44,6 +68,11 @@ describe("rsp docs surface", () => {
       "el:",
       "wait registry",
       "fail-open",
+      "rsp.proxy.enabled",
+      "proxy:universal",
+      "lossless-gh-json-jq",
+      "contribution_rate",
+      "failed-open",
     ]) {
       expect(architecture).toContain(required);
     }

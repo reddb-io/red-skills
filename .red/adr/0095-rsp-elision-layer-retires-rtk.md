@@ -36,7 +36,7 @@ Each filter's fixture carries **Fidelity assertions**: questions the elided outp
 
 ### 5. The Repo store: one RedDB file, logical separation by collection
 
-`/setup-red-skills` — the sole authorized creator of `.red/` — provisions a single local RedDB file shared by the repo's plugins. ADR 0097 amends the file's home to the durable state tier: `.red/state/red-skills.rdb`. The memory plugin's governed graph and `rsp`'s elision records live in **separate collections of the same file** (RedDB supports named graph and KV collections): one engine, one file, one connection — and the governed recall surface is never polluted by transient stdout. The memory plugin's existing `graph.rdb` migrates by a one-time mechanical repoint of `storePath`.
+`/setup-red-skills` — the sole authorized creator of `.red/` — provisions a single local RedDB file shared by the repo's plugins. ADR 0098 amends the file's home to the durable state tier: `.red/state/red-skills.rdb`. The memory plugin's governed graph and `rsp`'s elision records live in **separate collections of the same file** (RedDB supports named graph and KV collections): one engine, one file, one connection — and the governed recall surface is never polluted by transient stdout. The memory plugin's existing `graph.rdb` migrates by a one-time mechanical repoint of `storePath`.
 
 ### 6. Retrieval and retention
 
@@ -66,6 +66,6 @@ Immediately: RTK's `[hooks] exclude_commands` is extended to disarm the zero-gai
 ## Consequences
 
 - A fourth versioned artifact exists (`rsp`'s neutral package) with its own admission-gated filter set; `dev` and `memory` both consume it.
-- `/setup-red-skills` gains Repo-store provisioning; memory's `storePath` repoints to the shared file under `.red/state/red-skills.rdb` (one-time migration, per ADR 0097).
+- `/setup-red-skills` gains Repo-store provisioning; memory's `storePath` repoints to the shared file under `.red/state/red-skills.rdb` (one-time migration, per ADR 0098).
 - The global `RTK.md` instruction file is eventually replaced by `rsp` ambient instructions generated per host (Claude/Codex/OpenCode) through the existing hook/manifest generation surface.
 - Benchmarks against RTK and the external context-optimization layer are first-class deliverables, run with a real tokenizer and fidelity assertions — the numbers we publish mean what they say.

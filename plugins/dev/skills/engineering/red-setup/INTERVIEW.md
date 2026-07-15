@@ -105,7 +105,7 @@ The loss levels are:
 Three things to verify after setup:
 
 1. **Repo store is provisioned.** `rsp` with no arguments should print store stats. If it says the repo store is not provisioned, finish `/red-setup` so `.red/red.rdb` exists.
-2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
+2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, `rsp.ephemeralTtlHours: 6`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
 3. **Hook behavior is scoped.** In opted-in repos, the pre-exec hook may rewrite simple supported commands such as `git status`, `gh pr list`, `vitest`, and `cargo test` to their `rsp` forms. In non-opted-in repos, the hook is inert and agents should call `rsp` explicitly only when available.
 
 The per-host ambient instruction surface that replaces legacy host-local terminal guidance is tracked in #1415 and generated from `apps/rsp/generated/AMBIENT-SKILL.md`; do not block setup on it.
@@ -140,6 +140,24 @@ rsp git status
 ```
 
 If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the shell `PATH`. Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally as a substitute.
+
+**Section E2 — Required host binaries (mandatory).**
+
+> Explainer: TOON/TOONL files are first-class RedSkills state. `tq` is the jq-for-TOON CLI from `github:reddb-io/toon`; after ADR 0097 there is no jq fallback for RedSkills-owned TOON/TOONL logs. A host without the pinned `tq` cannot inspect its own TOONL state, so setup installs the binary and records the expected version for `/red-doctor`.
+
+Install the pinned `tq` through the toon repo's checksum-verified installer:
+
+```bash
+TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh
+```
+
+Then verify:
+
+```bash
+tq --version
+```
+
+The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
 
 **Section F — RedSkills statusline (optional).**
 

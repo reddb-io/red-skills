@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { decode } from "@reddb-io/toon";
 import { resolveBase } from "../core/base-resolver.js";
 import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
@@ -145,12 +146,19 @@ interface RspSummaryFile {
   version: number;
   tokens_saved_today: number;
   dollars_saved_today_usd?: number;
+  show_total_today?: number;
+  show_hit_rate?: number;
+  decisions?: {
+    seen?: number;
+    contributed?: number;
+  };
   updated_at: string;
 }
 
 function parseRspSummary(path: string): RspSummaryFile | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const raw = readFileSync(path, "utf8").trim();
+    const parsed = raw.startsWith("{") ? JSON.parse(raw) as unknown : decode(raw);
     if (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -198,6 +206,17 @@ function dollarsSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): numb
   return Math.max(0, summary.dollars_saved_today_usd);
 }
 
+function decisionsFromSummary(summary: RspSummaryFile): Extract<RspStatusInput, { state: "ready" }>["decisions"] {
+  const seen = summary.decisions?.seen;
+  const contributed = summary.decisions?.contributed;
+  if (typeof seen !== "number" || !Number.isFinite(seen) || seen <= 0) return undefined;
+  if (typeof contributed !== "number" || !Number.isFinite(contributed)) return undefined;
+  return {
+    seen: Math.floor(seen),
+    contributed: Math.max(0, Math.floor(contributed)),
+  };
+}
+
 export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv = process.env): Promise<RspStatusInput | undefined> {
   const config = resolveRspConfig(root, env);
   if (!config.enabled) return undefined;
@@ -209,6 +228,10 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
       state: "ready",
       tokensSavedToday: tokensSavedForCurrentDay(summary, nowMs),
       dollarsSavedTodayUsd: dollarsSavedForCurrentDay(summary, nowMs),
+      showHitRate: summary.show_total_today && summary.show_total_today > 0 && typeof summary.show_hit_rate === "number"
+        ? summary.show_hit_rate
+        : undefined,
+      decisions: decisionsFromSummary(summary),
     };
   }
   if (isRecentFile(paths.wakeLockPath, nowMs, RSP_WARMUP_GRACE_MS)) return { state: "warming" };

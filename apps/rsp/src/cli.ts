@@ -1,13 +1,25 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { encode, type JsonObject } from "@reddb-io/toon";
+import { fileURLToPath } from "node:url";
+import { connect } from "@reddb-io/sdk";
+import { type JsonObject } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
-import type { RspElisionStore, RspMintMeta } from "./elision-store.js";
+import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
-import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
+import {
+  appendTelemetryEventSync,
+  telemetrySpoolPath,
+  type RspAccountingLaneStats,
+  type RspTelemetryGainsReport,
+  type RspTelemetryStats,
+} from "./telemetry.js";
 
 interface ParsedArgs {
   command?: string;
@@ -90,6 +102,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       rootDir: serverPaths.rootDir,
       storeUri: serverConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
+      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? serverConfig.ephemeralTtlHours,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? serverConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
@@ -117,6 +130,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }, {
       storeUri: warmConfig.storeUri,
       ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
+      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? warmConfig.ephemeralTtlHours,
       byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
       telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? warmConfig.telemetryTtlDays,
       telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
@@ -130,15 +144,17 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
 
-  const { existsSync } = await import("node:fs");
-  const { fileURLToPath } = await import("node:url");
   const residentPaths = resolveResidentPaths(process.cwd());
+  if (args.command === "proxy") {
+    const { runProxy } = await import("./proxy.js");
+    return await runProxy(args.positional, { telemetryRoot: residentPaths.rootDir, level: args.level });
+  }
   if (args.command === "status" || args.command === "sweep") {
     const { residentRegistryStatus, sweepResidentRegistry } = await import("./resident-client.js");
     const status = args.command === "sweep"
       ? await sweepResidentRegistry(residentPaths)
       : await residentRegistryStatus(residentPaths);
-    process.stdout.write(`${encode(status as unknown as JsonObject)}\n`);
+    process.stdout.write(`${encodeSnapshotToon(status as unknown as JsonObject)}\n`);
     return 0;
   }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
@@ -146,9 +162,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
     return 1;
   }
-  const openResidentStore = () => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
+  const openResidentStore = (ensureResident = true) => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
@@ -156,10 +173,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
     idleMs: config.idleMs,
     clientVersion: buildInfo.version,
-  }));
+  }, { ensureResident }));
   const warmResidentStore = () => ensureResidentServer(residentPaths, {
     storeUri: config.storeUri,
     ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
     byteBudget: config.byteBudget,
     telemetryTtlDays: config.telemetryTtlDays,
     telemetryByteBudget: config.telemetryByteBudget,
@@ -173,6 +191,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return await RspElisionStore.open({
       uri: config.storeUri,
       ttlDays: config.ttlDays,
+      ephemeralTtlHours: config.ephemeralTtlHours,
       byteBudget: config.byteBudget,
     });
   };
@@ -182,12 +201,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   let closeStore: (() => Promise<void>) | undefined;
   try {
     if (!args.command || args.command === "stats") {
-      const store = await openReadStore();
-      closeStore = () => store.close();
-      const stats = await store.stats();
-      const telemetry = hasTelemetryStats(store)
-        ? await store.telemetryStats(sinceDays(args.positional, 30))
-        : emptyTelemetryStats(sinceDays(args.positional, 30));
+      const { stats, telemetry } = await readStatsSnapshot(config, sinceDays(args.positional, 30));
       process.stdout.write(renderStats(stats, telemetry, statsFull(args.positional)));
       return 0;
     }
@@ -205,89 +219,69 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     if (args.command === "git") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(warmResidentStore());
       if (isFastGitStatus(args.positional)) {
         const started = process.hrtime.bigint();
         return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir);
       }
       const { runGitWrapper } = await import("./git-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runGitWrapper(args.positional, {
+      const result = await runGitWrapper(args.positional, {
         level: args.level,
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
-      }));
+      });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "gh") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(warmResidentStore());
       const { runGhWrapper } = await import("./gh-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runGhWrapper(args.positional, { level: args.level, store }));
+      const result = await runGhWrapper(args.positional, { level: args.level, store });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(warmResidentStore());
       const { runTestWrapper } = await import("./test-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runTestWrapper(args.positional, { level: args.level, store }));
+      const result = await runTestWrapper(args.positional, { level: args.level, store });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "cat") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(warmResidentStore());
       const { runCatWrapper } = await import("./cat-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runCatWrapper(args.positional, {
+      const result = await runCatWrapper(args.positional, {
         level: args.level,
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
-      }));
+      });
       return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "exec") {
-      try {
-        await suppressRspStderr(warmResidentStore);
-      } catch (err) {
-        return await runColdWrappedCommand(args, config, residentPaths.rootDir, err);
-      }
+      fireAndForget(warmResidentStore());
       const { runExecWrapper } = await import("./exec-wrapper.js");
-      const store = new LazyRspElisionStore(() => suppressRspStderr(openResidentStore));
+      const store = new LazyRspElisionStore(() => openResidentStore(false));
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
-      const result = await suppressRspStderr(() => runExecWrapper(args.positional, {
+      const result = await runExecWrapper(args.positional, {
         level: args.level,
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
-      }));
-      return await emitWrappedResult(args, result, started, store);
+      });
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
     }
 
     if (args.command === "show" && args.handle) {
@@ -296,13 +290,18 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       const record = await store.get(args.handle);
       if (record && "original" in record && record.original) {
         process.stdout.write(record.original);
+        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, true, record.original.length);
         return 0;
       }
       if (record?.status === "expired") {
-        process.stdout.write(`expired ${record.expired_at} — re-run: ${record.command}\n`);
+        const text = `expired ${record.expired_at} — re-run: ${record.command}\n`;
+        process.stdout.write(text);
+        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
         return 1;
       }
-      process.stdout.write(`expired unknown — re-run: ${args.handle}\n`);
+      const text = `expired unknown — re-run: ${args.handle}\n`;
+      process.stdout.write(text);
+      await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
       return 1;
     }
 
@@ -403,6 +402,10 @@ type TelemetryStatsStore = {
   telemetryStats: (sinceDays: number) => Promise<RspTelemetryStats>;
 };
 
+type AccountingStatsStore = {
+  accountingStats: (byteBudget: number) => Promise<RspAccountingLaneStats>;
+};
+
 type TelemetryGainsStore = {
   telemetryGains: (sinceDays: number) => Promise<RspTelemetryGainsReport>;
 };
@@ -419,6 +422,13 @@ function hasTelemetryGains(store: unknown): store is TelemetryGainsStore {
     store !== null &&
     "telemetryGains" in store &&
     typeof (store as { telemetryGains?: unknown }).telemetryGains === "function";
+}
+
+function hasAccountingStats(store: unknown): store is AccountingStatsStore {
+  return typeof store === "object" &&
+    store !== null &&
+    "accountingStats" in store &&
+    typeof (store as { accountingStats?: unknown }).accountingStats === "function";
 }
 
 interface WrappedCommandResult {
@@ -438,10 +448,14 @@ class LazyRspElisionStore implements ElisionStoreLike {
   constructor(private readonly openStore: () => Promise<ElisionStoreLike>) {}
 
   async mint(...args: Parameters<RspElisionStore["mint"]>): Promise<string> {
-    const store = await this.open();
-    const handle = await store.mint(...args);
-    this.metrics = store.lastResponseMetrics?.();
-    return handle;
+    try {
+      const store = await this.open();
+      const handle = await store.mint(...args);
+      this.metrics = store.lastResponseMetrics?.();
+      return handle;
+    } catch {
+      return `recovery unavailable (resident cold) — re-run: ${args[1].command}`;
+    }
   }
 
   async close(): Promise<void> {
@@ -543,6 +557,49 @@ async function runColdWrappedCommand(
   return await degradeToPassthrough("wrapper failed", args.positional, err, telemetryRoot);
 }
 
+async function readStatsSnapshot(
+  config: RspRuntimeConfig,
+  sinceDaysValue: number,
+): Promise<{ stats: RspAccountingLaneStats; telemetry: RspTelemetryStats }> {
+  const empty = {
+    stats: emptyAccountingStats(config.telemetryByteBudget),
+    telemetry: emptyTelemetryStats(sinceDaysValue),
+  };
+  if (!config.storeUri.startsWith("file://")) return empty;
+  const path = fileURLToPath(config.storeUri);
+  if (!existsSync(path)) return empty;
+  if (!path.endsWith("red-skills.rdb")) {
+    const { RspElisionStore } = await import("./elision-store.js");
+    const store = await RspElisionStore.open({
+      uri: config.storeUri,
+      ttlDays: config.ttlDays,
+      ephemeralTtlHours: config.ephemeralTtlHours,
+      byteBudget: config.byteBudget,
+    });
+    try {
+      return {
+        stats: await store.stats(),
+        telemetry: emptyTelemetryStats(sinceDaysValue),
+      };
+    } finally {
+      await store.close();
+    }
+  }
+
+  const { ensureReddbBinaryFromWarmCache } = await import("./elision-store.js");
+  await ensureReddbBinaryFromWarmCache();
+  const { readAccountingLaneStats, readTelemetryStats } = await import("./telemetry.js");
+  const db = await connect(config.storeUri);
+  try {
+    return {
+      stats: await readAccountingLaneStats(db, config.telemetryByteBudget),
+      telemetry: await readTelemetryStats(db, sinceDaysValue),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
 async function emitWrappedResult(
   args: ParsedArgs,
   result: WrappedCommandResult,
@@ -555,8 +612,8 @@ async function emitWrappedResult(
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (store) {
-    await appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics());
-    if (coldNudgeConfig) await nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
+    fireAndForget(appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics()));
+    if (coldNudgeConfig) nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
   } else {
     appendFastInvocationTelemetry(telemetryRoot, args, result, wrapperMs);
   }
@@ -567,24 +624,77 @@ async function emitWrappedResult(
   return result.status ?? 0;
 }
 
-async function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): Promise<void> {
+function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): void {
   try {
-    const spoolPath = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
+    const spoolPath = telemetrySpoolPath(telemetryRoot);
     const stat = statSync(spoolPath);
     const staleMs = config.telemetryDrainIntervalMs * 2;
     if (stat.size < config.telemetryByteBudget && !spoolHasEventOlderThan(spoolPath, Date.now() - staleMs)) return;
-    const { kickResidentServer, resolveResidentPaths } = await import("./resident-client.js");
-    await kickResidentServer(resolveResidentPaths(telemetryRoot), {
-      storeUri: config.storeUri,
-      ttlDays: config.ttlDays,
-      byteBudget: config.byteBudget,
-      telemetryTtlDays: config.telemetryTtlDays,
-      telemetryByteBudget: config.telemetryByteBudget,
-      telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
-      telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
-      idleMs: config.idleMs,
+    const rootDir = fastResidentRoot(telemetryRoot);
+    const socketDir = fastResidentSocketDir(rootDir);
+    const socketPath = join(socketDir, "rsp.sock");
+    const pidPath = join(socketDir, "rsp.pid");
+    const registryPath = join(rootDir, ".red", "tmp", "rsp-resident.pid.json");
+    const wakeLockPath = join(rootDir, ".red", "tmp", "rsp.wake.lock");
+    const child = spawn(process.execPath, [
+      ...process.execArgv,
+      process.argv[1] ?? "",
+      "warm-resident",
+      "--socket",
+      socketPath,
+      "--pid-file",
+      pidPath,
+      "--store-uri",
+      config.storeUri,
+      "--ttl-days",
+      String(config.ttlDays),
+      "--ephemeral-ttl-hours",
+      String(config.ephemeralTtlHours),
+      "--byte-budget",
+      String(config.byteBudget),
+      "--telemetry-ttl-days",
+      String(config.telemetryTtlDays),
+      "--telemetry-byte-budget",
+      String(config.telemetryByteBudget),
+      "--telemetry-drain-interval-ms",
+      String(config.telemetryDrainIntervalMs),
+      "--telemetry-drain-timeout-ms",
+      String(config.telemetryDrainTimeoutMs),
+      "--idle-ms",
+      String(config.idleMs),
+      "--registry",
+      registryPath,
+      "--wake-lock",
+      wakeLockPath,
+    ], {
+      cwd: rootDir,
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, RSP_RESIDENT_WARMER: "1" },
     });
+    child.unref();
   } catch {}
+}
+
+function fastResidentRoot(cwd: string): string {
+  let current = cwd;
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return cwd;
+    current = parent;
+  }
+}
+
+function fastResidentSocketDir(rootDir: string): string {
+  const hash = createHash("sha256").update(rootDir).digest("hex").slice(0, 20);
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  if (xdg) {
+    const candidate = join(xdg, "red-skills", hash);
+    if (join(candidate, "rsp.sock").length < 108) return candidate;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : "nouid";
+  return join(tmpdir(), `red-skills-${uid}`, hash);
 }
 
 function spoolHasEventOlderThan(path: string, cutoffMs: number): boolean {
@@ -614,7 +724,26 @@ async function appendInvocationTelemetry(
 ): Promise<void> {
   const emitted = Buffer.concat([result.stdout, result.stderr]);
   const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
-  const { appendTelemetryEvent, RSP_TELEMETRY_INVOCATIONS_COLLECTION } = await import("./telemetry.js");
+  const {
+    appendTelemetryEvent,
+    RSP_ACCOUNTING_EVENTS_COLLECTION,
+    RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  } = await import("./telemetry.js");
+  await appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+    event_type: "invocation",
+    ts: new Date().toISOString(),
+    command: telemetryCommand(args),
+    command_class: args.command ?? "unknown",
+    wrapper: args.command,
+    loss: args.level,
+    elided: Boolean(result.mintedHandle || result.bytesElided),
+    raw_bytes: raw.length,
+    emitted_bytes: emitted.length,
+    wrapper_ms: wrapperMs,
+    store_open_count: metrics?.storeOpenCount,
+    store_elapsed_ms: metrics?.storeElapsedMs,
+  });
   await appendTelemetryEvent(telemetryRoot, {
     collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
     ts: new Date().toISOString(),
@@ -629,6 +758,7 @@ async function appendInvocationTelemetry(
     wrapper_ms: wrapperMs,
     store_open_count: metrics?.storeOpenCount,
     store_elapsed_ms: metrics?.storeElapsedMs,
+    accounting_recorded: true,
   });
 }
 
@@ -641,8 +771,20 @@ function appendFastInvocationTelemetry(
   try {
     const emitted = Buffer.concat([result.stdout, result.stderr]);
     const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
-    const path = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
-    const line = `${JSON.stringify({
+    appendTelemetryEventSync(telemetryRoot, {
+      collection: "rsp_accounting_events_v1",
+      event_type: "invocation",
+      ts: new Date().toISOString(),
+      command: telemetryCommand(args),
+      command_class: args.command ?? "unknown",
+      wrapper: args.command,
+      loss: args.level,
+      elided: Boolean(result.mintedHandle || result.bytesElided),
+      raw_bytes: raw.length,
+      emitted_bytes: emitted.length,
+      wrapper_ms: wrapperMs,
+    });
+    appendTelemetryEventSync(telemetryRoot, {
       collection: "rsp_telemetry_invocations_v1",
       ts: new Date().toISOString(),
       command: telemetryCommand(args),
@@ -652,14 +794,8 @@ function appendFastInvocationTelemetry(
       raw_bytes: raw.length,
       emitted_bytes: emitted.length,
       wrapper_ms: wrapperMs,
-    })}\n`;
-    try {
-      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
-      mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
-    }
+      accounting_recorded: true,
+    });
   } catch {}
 }
 
@@ -670,15 +806,56 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   process.stderr.write(`rsp: ${reason}, passing through\n`);
   const status = await passthrough(argv);
   if (telemetryRoot) {
-    const { appendTelemetryEvent, RSP_TELEMETRY_DEGRADATIONS_COLLECTION } = await import("./telemetry.js");
-    await appendTelemetryEvent(telemetryRoot, {
+    const {
+      appendTelemetryEvent,
+      RSP_ACCOUNTING_EVENTS_COLLECTION,
+      RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+    } = await import("./telemetry.js");
+    fireAndForget(appendTelemetryEvent(telemetryRoot, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      event_type: "invocation",
+      ts: new Date().toISOString(),
+      command: passthroughTelemetryCommand(argv),
+      command_class: argv[0] ?? "unknown",
+      loss: "lossless",
+      raw_bytes: 0,
+      emitted_bytes: 0,
+      degradation_reason: reason,
+    }));
+    fireAndForget(appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
       command: passthroughTelemetryCommand(argv),
       reason,
-    });
+      accounting_recorded: true,
+    }));
   }
   return status;
+}
+
+function fireAndForget(promise: Promise<unknown>): void {
+  promise.catch(() => undefined);
+}
+
+async function appendShowAccountingEvent(
+  telemetryRoot: string,
+  handle: string,
+  hit: boolean,
+  emittedBytes: number,
+): Promise<void> {
+  const { appendTelemetryEvent, RSP_ACCOUNTING_EVENTS_COLLECTION } = await import("./telemetry.js");
+  await appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+    event_type: "show",
+    ts: new Date().toISOString(),
+    command: "rsp show",
+    command_class: "show",
+    handle,
+    hit,
+    loss: "lossless",
+    raw_bytes: hit ? emittedBytes : 0,
+    emitted_bytes: emittedBytes,
+  });
 }
 
 async function passthroughDisabledDirectory(argv: readonly string[]): Promise<number> {
@@ -692,22 +869,13 @@ function rspDisabledReason(): string {
   return "rsp is not enabled in this directory; run /red-setup";
 }
 
-async function suppressRspStderr<T>(fn: () => Promise<T>): Promise<T> {
-  const write = process.stderr.write;
-  process.stderr.write = (() => true) as typeof process.stderr.write;
-  try {
-    return await fn();
-  } finally {
-    process.stderr.write = write;
-  }
-}
-
 function isWrapperCommand(command: string | undefined): boolean {
-  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" || command === "exec";
+  return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" ||
+    command === "exec" || command === "proxy";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
-  if (argv[0] === "exec") return await passthroughShell(argv);
+  if (argv[0] === "exec" || argv[0] === "proxy") return await passthroughShell(argv);
   const command = argv[0];
   if (!command) return 2;
   const { spawn } = await import("node:child_process");
@@ -731,8 +899,13 @@ async function passthrough(argv: readonly string[]): Promise<number> {
 async function passthroughShell(argv: readonly string[]): Promise<number> {
   let commandLine: string;
   try {
-    const { parseExecCommandLine } = await import("./exec-wrapper.js");
-    commandLine = parseExecCommandLine(argv);
+    if (argv[0] === "proxy") {
+      const { parseProxyCommandLine } = await import("./proxy.js");
+      commandLine = parseProxyCommandLine(argv);
+    } else {
+      const { parseExecCommandLine } = await import("./exec-wrapper.js");
+      commandLine = parseExecCommandLine(argv);
+    }
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 2;
@@ -805,17 +978,20 @@ function statsFull(args: readonly string[]): boolean {
 }
 
 function renderStats(
-  stats: { records: number; bytes: number; oldest: string | null; budget: number },
+  stats: { records: number; bytes: number; oldest: string | null; budget: number; storage_classes?: RspStorageClassStats },
   telemetry = emptyTelemetryStats(30),
   full = false,
 ): string {
   const topCommands = telemetry.savings.top_commands.slice(0, full ? 10 : 3);
   const daily = full ? telemetry.savings.daily_tokens_saved : telemetry.savings.daily_tokens_saved.slice(-7);
+  const storageClasses = stats.storage_classes ?? emptyStorageClassStats();
   return [
     `records: ${stats.records}`,
     `bytes: ${stats.bytes}`,
     `oldest: ${stats.oldest ?? "none"}`,
     `budget: ${stats.budget}`,
+    "storage_classes:",
+    ...renderStorageClasses(storageClasses),
     "savings:",
     `  window_days: ${telemetry.window_days}`,
     `  empty: ${telemetry.empty}`,
@@ -839,10 +1015,22 @@ function renderStats(
     "health:",
     `  degradations: ${telemetry.health.degradations}`,
     `  degradation_rate: ${formatRate(telemetry.health.degradation_rate)}`,
+    `  show_total: ${telemetry.health.show_total}`,
+    `  show_hits: ${telemetry.health.show_hits}`,
+    `  show_misses: ${telemetry.health.show_misses}`,
+    `  show_hit_rate: ${formatRate(telemetry.health.show_hit_rate)}`,
     `  most_recent_degradation_at: ${telemetry.health.most_recent?.timestamp ?? "none"}`,
     `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
     "  degradations_by_reason:",
     ...renderReasons(telemetry.health.by_reason),
+    "decisions:",
+    `  seen: ${telemetry.decisions.seen}`,
+    `  contributed: ${telemetry.decisions.contributed}`,
+    `  passed: ${telemetry.decisions.passed}`,
+    `  failed_open: ${telemetry.decisions.failed_open}`,
+    `  contribution_rate: ${formatRate(telemetry.decisions.contribution_rate)}`,
+    "  top_pass_reasons:",
+    ...renderReasons(telemetry.decisions.top_pass_reasons.slice(0, full ? 10 : 3)),
     "latency:",
     `  wrapper_ms_p50: ${formatNullable(telemetry.latency.wrapper_ms_p50)}`,
     `  wrapper_ms_p95: ${formatNullable(telemetry.latency.wrapper_ms_p95)}`,
@@ -854,7 +1042,7 @@ function renderStats(
 }
 
 function renderGainsReportToon(report: RspTelemetryGainsReport): string {
-  return `${encode(report as unknown as JsonObject)}\n`;
+  return `${encodeSnapshotToon(report as unknown as JsonObject)}\n`;
 }
 
 function formatTokensSaved(savings: RspTelemetryStats["savings"]): string {
@@ -884,6 +1072,12 @@ function renderTopCommands(commands: Array<{ command: string; invocations: numbe
 function renderReasons(reasons: Array<{ reason: string; count: number }>): string[] {
   if (reasons.length === 0) return ["    empty: true"];
   return reasons.map((entry) => `    ${entry.reason}: ${entry.count}`);
+}
+
+function renderStorageClasses(stats: RspStorageClassStats): string[] {
+  return (["derivable", "re-executable", "ephemeral"] as const).map((storageClass) =>
+    `  ${storageClass}: records: ${stats[storageClass].records} bytes: ${stats[storageClass].bytes} raw_bytes: ${stats[storageClass].raw_bytes}`
+  );
 }
 
 function formatNullable(value: number | null): string {
@@ -921,6 +1115,10 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
     health: {
       degradations: 0,
       degradation_rate: 0,
+      show_total: 0,
+      show_hits: 0,
+      show_misses: 0,
+      show_hit_rate: 0,
       by_reason: [],
       most_recent: null,
     },
@@ -931,6 +1129,32 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       store_elapsed_ms_sum: 0,
       store_elapsed_ms_avg: null,
     },
+    decisions: {
+      seen: 0,
+      contributed: 0,
+      passed: 0,
+      failed_open: 0,
+      contribution_rate: 0,
+      top_pass_reasons: [],
+    },
+  };
+}
+
+function emptyAccountingStats(byteBudget: number): RspAccountingLaneStats {
+  return {
+    records: 0,
+    bytes: 0,
+    oldest: null,
+    budget: byteBudget,
+    storage_classes: emptyStorageClassStats(),
+  };
+}
+
+function emptyStorageClassStats(): RspStorageClassStats {
+  return {
+    derivable: { records: 0, bytes: 0, raw_bytes: 0 },
+    "re-executable": { records: 0, bytes: 0, raw_bytes: 0 },
+    ephemeral: { records: 0, bytes: 0, raw_bytes: 0 },
   };
 }
 

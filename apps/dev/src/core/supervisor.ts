@@ -24,6 +24,7 @@ import {
   type WakeStats,
 } from "./event-wake.js";
 import { buildEnvelope } from "./envelope.js";
+import { renderLogTailToon } from "./envelope-emit.js";
 import { dispose } from "./disposition.js";
 import { type RecoveryEnv } from "./recovery.js";
 import {
@@ -203,6 +204,18 @@ export interface DrainBudgetStatus {
   percent: number;
 }
 
+export interface ValidationAdmissionInput {
+  knownHeavy: boolean;
+  availableMemoryMb?: number;
+  minAvailableMemoryMb?: number;
+  activeHeavyValidations?: number;
+}
+
+export interface ValidationAdmissionDecision {
+  admit: boolean;
+  reason: "not-heavy" | "admit" | "serialize-heavy-validation" | "insufficient-memory";
+}
+
 function parsePositiveNumber(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const n = Number(raw);
@@ -224,6 +237,26 @@ export function evaluateDrainBudget(
     percent >= 0.75 ? "WARNING" :
     "OK";
   return { tier, spentUsd: spent, limitUsd, percent };
+}
+
+/**
+ * Resource-aware validation admission (#1758). Heavy suites are serialized by
+ * default, and may also be held until the host reports enough available memory.
+ * This is intentionally pure so fleet/runtime adapters can feed it ps/free
+ * samples without coupling command execution to the scheduler.
+ */
+export function evaluateValidationAdmission(
+  input: ValidationAdmissionInput,
+): ValidationAdmissionDecision {
+  if (!input.knownHeavy) return { admit: true, reason: "not-heavy" };
+  if ((input.activeHeavyValidations ?? 0) > 0) {
+    return { admit: false, reason: "serialize-heavy-validation" };
+  }
+  const min = input.minAvailableMemoryMb;
+  if (min !== undefined && min > 0 && (input.availableMemoryMb ?? 0) < min) {
+    return { admit: false, reason: "insufficient-memory" };
+  }
+  return { admit: true, reason: "admit" };
 }
 
 /**
@@ -914,7 +947,7 @@ export function buildReaperEnvelope(info: IterDirInfo): string {
     attempt: info.attempt,
     sections: [
       { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before stall-reap)" },
-      { name: "log", body: info.logTail, fenced: true },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
     ],
   });
 }
@@ -934,7 +967,7 @@ export function buildCrashEnvelope(info: IterDirInfo): string {
     attempt: info.attempt,
     sections: [
       { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before the orchestrator died)" },
-      { name: "log", body: info.logTail, fenced: true },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
     ],
   });
 }

@@ -9,6 +9,29 @@
 reversible elision store, so the agent reads a compact summary and can
 recover the original bytes on demand with `rsp show el:<id>`.
 
+## Permanent Proxy Model
+
+When `.red/config.yaml` sets `rsp.enabled: true` and `rsp.proxy.enabled: true`,
+the pre-exec hook routes eligible shell commands through `rsp proxy -- <command>`
+instead of matching only a top-level allowlist. The hook still passes through
+missing commands, background jobs, recursive `rsp` calls, known interactive
+commands, and commands opted out with `RSP_NO_PROXY=1` or
+`RED_SKILLS_RSP_NO_PROXY=1`.
+
+`rsp proxy` executes the shell command and only contributes where it recognizes
+a stdout-tail segment it can wrap. Recognized segment families are git
+`status|log|diff|show|blame`, GitHub `pr|issue|run list|view`, `vitest`,
+`vitest run`, `cargo test`, and simple `cat`/`head`/`tail` file reads.
+Pipeline producers are left raw, so bytes inside pipes remain untouched.
+`gh ... --json` and `gh ... --jq` selections are recorded as
+`lossless-gh-json-jq` passes and execute byte-identically.
+
+Decision telemetry is the truth source for proxy coverage. A `contributed`
+decision means rsp inserted a wrapper; `passed` means it deliberately left the
+command or segment raw; `failed-open` means rsp ran the original command after
+an internal proxy failure. Read `rsp stats` contribution metrics as measured
+routing evidence, not a promise that every command family was compressed.
+
 ## Wrapped commands
 
 When you would run one of these commands, run it through `rsp` instead:
@@ -98,6 +121,8 @@ truncate by default; pass `--full` when exact inline output is required.
 `rsp show el:<id>` writes the original bytes verbatim to stdout. Expired or
 evicted handles print `expired <ISO date> — re-run: <original command>` and
 exit 1, so the exact command to reproduce the output is always in reach.
+Ephemeral byte payloads are stored as short-TTL compressed content blobs;
+identical outputs share one stored blob without changing handle recovery.
 
 ## Failure behavior
 

@@ -529,11 +529,11 @@ function userPromptSubmitTemplate(input: {
  *  (exit 0 + non-empty stdout = rewrite; exit 1 = passthrough) rather
  *  than the block-deny JSON protocol the other hooks use.
  *
- *  The detection is intentionally conservative: only the well-known
- *  `hook claude-pre-exec` invocation qualifies; other rsp subcommands
- *  are pass-through-safe for the block-deny path. */
+ *  The detection is intentionally conservative: only the well-known Claude rsp
+ *  pre-exec invocation qualifies; other rsp subcommands are pass-through-safe
+ *  for the block-deny path. */
 export function isRspRewriteHook(inner: string): boolean {
-  return inner.includes("hook claude-pre-exec");
+  return inner.includes("hook claude-pre-exec") || (inner.includes("rsp-hook.sh") && inner.includes("claude-pre-exec"));
 }
 
 /** Translate a Claude/Codex matcher glob into a JS regex literal. The

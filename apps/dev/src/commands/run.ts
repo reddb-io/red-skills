@@ -51,7 +51,7 @@ import type { GhContext } from "../runtime/gh.js";
 import { buildReviewGh } from "../runtime/review-gh.js";
 import type { GitContext } from "../runtime/git.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../core/output-shaping.js";
@@ -83,7 +83,7 @@ import {
 } from "../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../core/host-identity.js";
-import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
+import { appendAgentRecord, appendRecordToonlTaggedRow } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
@@ -589,8 +589,10 @@ async function runReconcileWorker(
   };
 
   const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
     rebaseOnto: reconcileSettings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
   try {
     const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
@@ -1000,6 +1002,7 @@ export function buildProcessDeps(
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
+    validationResourceBudget: readValidationResourceBudget(config),
     layout: feedback.layout,
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.
@@ -1174,14 +1177,16 @@ export function buildProcessDeps(
       // the meter + iteration markers. Returning here also narrows `event` to the
       // non-raw variants for the rest of the handler.
       if (event.type === "raw") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", event.line, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "raw", {
+          iteration: event.iteration,
+          line: event.line,
+        }, {
           ts,
-          fields: { extra: { kind: "raw", iteration: String(event.iteration) } },
         }).catch(() => {});
         return;
       }
       if (event.type === "sessionId") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
           ts,
           fields: {
             extra: {
@@ -1224,7 +1229,7 @@ export function buildProcessDeps(
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
-          void appendRecord(join(dir0, "log.jsonl"), "iteration", line, {
+          void appendRecordToonlTaggedRow(join(dir0, "log.jsonl"), "iteration", line, {
             ts,
             fields: { extra: { iteration: String(n), phase } },
           }).catch(() => {});
@@ -1255,7 +1260,7 @@ export function buildProcessDeps(
       // Firehose lane (issue #250): every record in the uniform envelope. The
       // native port left this unopened; restore it so the post-mortem firehose
       // carries the agent turns alongside the (future) heartbeat/hook records.
-      void appendRecord(join(current.attemptDir, "log.jsonl"), "agent", msg, {
+      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "agent", msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
@@ -1318,7 +1323,7 @@ export function buildProcessDeps(
       const head = info.head ?? "";
       void (async () => {
         // sandcastle creates the agent's worktree at
-        // `{attemptDir}/.sandcastle/worktrees/{slug}`, NOT the legacy
+        // `{attemptDir}/.red-castle/worktrees/{slug}`, NOT the legacy
         // `{attemptDir}/worktree` the state seeds — diffing the latter fails
         // (it never exists) and every tick read a permanent `+0 -0` even with a
         // dirty worktree, which also starved the attempt-progress guard's
@@ -1386,7 +1391,7 @@ export function buildProcessDeps(
           removed,
           activity,
         });
-        await appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
+        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
           ts,
           fields: { extra: hb.extra },
         }).catch(() => {});
@@ -1928,8 +1933,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
   // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
   // (default behaviour unchanged).
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
     rebaseOnto: settings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
   });
 
   // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A

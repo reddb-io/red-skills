@@ -6,15 +6,20 @@ import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
+import { type JsonObject } from "@reddb-io/toon";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
 import { createResidentBrainStore } from "./resident-brain.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
+  readAccountingLaneStats,
   readTelemetryGainsReport,
   readTelemetryStats,
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
@@ -39,24 +44,10 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   const redRpcGuard = startRedRpcParentDeathGuard();
   installRedRpcExitCleanup();
 
-  const openedAt = process.hrtime.bigint();
-  const store = await RspElisionStore.open({
-    uri: opts.storeUri,
-    ttlDays: opts.ttlDays,
-    byteBudget: opts.byteBudget,
-    allowResidentOpen: true,
-  });
-  const storeElapsedMs = Number(process.hrtime.bigint() - openedAt) / 1_000_000;
-  let storeOpenCount = 1;
-  const bootTelemetryHeals = store.redDb() ? await ensureTelemetryKvCollections(store.redDb()!) : [];
-  const telemetry = new ResidentTelemetryDrain(store, {
-    rootDir: opts.rootDir ?? process.cwd(),
-    ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
-    byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
-    bootHeals: bootTelemetryHeals,
-  });
   const telemetryDrainTimeoutMs = opts.telemetryDrainTimeoutMs ?? TELEMETRY_DRAIN_TIMEOUT_MS;
-  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
+  let storeState: ResidentStoreState = { kind: "opening", startedAt: process.hrtime.bigint() };
+  let telemetryTimer: NodeJS.Timeout | undefined;
+  let shuttingDown = false;
 
   const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
@@ -64,24 +55,27 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   let idleShutdownStarted = false;
   const activeSockets = new Set<Socket>();
   const telemetryDrainIntervalMs = opts.telemetryDrainIntervalMs ?? 30_000;
-  const telemetryTimer = setInterval(() => {
-    void safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
-  }, telemetryDrainIntervalMs);
-  telemetryTimer.unref();
   const server = createServer((socket) => {
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
     touch();
     handleSocket(socket, async (request) => {
       touch();
-      const value = await handleRequest(store, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
-      const response: RspResidentResponse = { id: request.id, ok: true, value, storeOpenCount, storeElapsedMs };
-      socket.write(`${JSON.stringify(response)}\n`);
+      const value = await handleRequest(storeState, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
+      const response: RspResidentResponse = {
+        id: request.id,
+        ok: true,
+        value,
+        storeOpenCount: storeState.kind === "ready" ? storeState.storeOpenCount : undefined,
+        storeElapsedMs: storeState.kind === "ready" ? storeState.storeElapsedMs : undefined,
+      };
+      safeSocketWrite(socket, response);
       if (request.op === "handover") setImmediate(() => beginShutdown());
     });
   });
 
   function beginShutdown(): void {
+    shuttingDown = true;
     idleShutdownStarted = true;
     idleShutdownWatchdog = armIdleShutdownWatchdog(idleShutdownWatchdog);
     server.close();
@@ -89,6 +83,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   }
 
   function touch(): void {
+    if (storeState.kind === "opening") return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       beginShutdown();
@@ -115,6 +110,48 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
       resolve();
     });
   });
+
+  void (async () => {
+    const openedAt = process.hrtime.bigint();
+    if (process.env.RSP_TEST_HANG_RESIDENT_STORE_OPEN === "1") await new Promise(() => undefined);
+    const testDelayMs = Number(process.env.RSP_TEST_DELAY_RESIDENT_STORE_OPEN_MS ?? "0");
+    if (Number.isFinite(testDelayMs) && testDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, testDelayMs));
+    }
+    const store = await RspElisionStore.open({
+      uri: opts.storeUri,
+      ttlDays: opts.ttlDays,
+      ephemeralTtlHours: opts.ephemeralTtlHours,
+      byteBudget: opts.byteBudget,
+      allowResidentOpen: true,
+    });
+    const storeElapsedMs = Number(process.hrtime.bigint() - openedAt) / 1_000_000;
+    const telemetry = new ResidentTelemetryDrain(store, {
+      rootDir: opts.rootDir ?? process.cwd(),
+      ttlDays: opts.telemetryTtlDays ?? DEFAULT_RSP_TELEMETRY_TTL_DAYS,
+      byteBudget: opts.telemetryByteBudget ?? opts.byteBudget ?? DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
+    });
+    if (shuttingDown) {
+      await store.close();
+      return;
+    }
+    await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs);
+    if (shuttingDown) {
+      await store.close();
+      return;
+    }
+    storeState = { kind: "ready", store, telemetry, storeOpenCount: 1, storeElapsedMs };
+    telemetryTimer = setInterval(() => {
+      const ready = storeState.kind === "ready" ? storeState : undefined;
+      if (ready) void safeDrainTelemetry(ready.telemetry, telemetryDrainTimeoutMs);
+    }, telemetryDrainIntervalMs);
+    telemetryTimer.unref();
+    touch();
+  })().catch((err) => {
+    storeState = { kind: "failed", error: err instanceof Error ? err : new Error(String(err)) };
+    touch();
+  });
+
   if (opts.pidPath) {
     await writeFile(opts.pidPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
   }
@@ -127,15 +164,16 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
       resident_version: residentVersion,
     });
   } catch {}
-  touch();
 
   await new Promise<void>((resolve) => server.once("close", resolve));
-  storeOpenCount = 0;
   if (idleTimer) clearTimeout(idleTimer);
-  clearInterval(telemetryTimer);
+  if (telemetryTimer) clearInterval(telemetryTimer);
   await rm(opts.socketPath, { force: true });
-  await safeDrainTelemetry(telemetry, telemetryDrainTimeoutMs, idleShutdownStarted);
-  await store.close();
+  const finalStoreState = storeState as ResidentStoreState;
+  if (finalStoreState.kind === "ready") {
+    await safeDrainTelemetry(finalStoreState.telemetry, telemetryDrainTimeoutMs, idleShutdownStarted);
+    await finalStoreState.store.close();
+  }
   if (idleShutdownWatchdog) clearTimeout(idleShutdownWatchdog);
   for (const { signal, handler } of signalHandlers) process.off(signal, handler);
   redRpcGuard?.kill("SIGTERM");
@@ -152,7 +190,11 @@ interface ResidentTelemetryOptions {
 }
 
 interface TelemetryIndexEntry {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION;
   key: string;
   created_at: string;
   expires_at: string;
@@ -165,9 +207,19 @@ interface TelemetryIndexDocument {
 }
 
 interface TelemetryCollectionHeal {
-  collection: typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION | typeof RSP_TELEMETRY_INDEX_COLLECTION;
+  collection:
+    | typeof RSP_ACCOUNTING_EVENTS_COLLECTION
+    | typeof RSP_DECISIONS_COLLECTION
+    | typeof RSP_TELEMETRY_INVOCATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_DEGRADATIONS_COLLECTION
+    | typeof RSP_TELEMETRY_INDEX_COLLECTION;
   previousModel: string;
 }
+
+type ResidentStoreState =
+  | { kind: "opening"; startedAt: bigint }
+  | { kind: "ready"; store: RspElisionStore; telemetry: ResidentTelemetryDrain; storeOpenCount: number; storeElapsedMs: number }
+  | { kind: "failed"; error: Error };
 
 const TOKENIZATION_CAP_BYTES = 256 * 1024;
 const TOKENIZATION_TIMEOUT_MS = 500;
@@ -178,6 +230,8 @@ const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
 );
 const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
 const TELEMETRY_KV_COLLECTIONS = [
+  RSP_ACCOUNTING_EVENTS_COLLECTION,
+  RSP_DECISIONS_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
@@ -185,6 +239,7 @@ const TELEMETRY_KV_COLLECTIONS = [
 
 class ResidentTelemetryDrain {
   private running?: Promise<void>;
+  private pending = false;
   private pendingHeals: TelemetryCollectionHeal[];
 
   constructor(
@@ -195,7 +250,17 @@ class ResidentTelemetryDrain {
   }
 
   async drainAndSweep(): Promise<void> {
-    this.running ??= this.drainAndSweepOnce().finally(() => {
+    if (this.running) {
+      this.pending = true;
+      await this.running;
+      return;
+    }
+    this.running = (async () => {
+      do {
+        this.pending = false;
+        await this.drainAndSweepOnce();
+      } while (this.pending);
+    })().finally(() => {
       this.running = undefined;
     });
     await this.running;
@@ -208,6 +273,7 @@ class ResidentTelemetryDrain {
     healed.unshift(...this.pendingHeals);
     this.pendingHeals = [];
     const index = await this.readIndex(db);
+    const originalCount = index.records.length;
     const nextRecords = [...index.records];
     for (const entry of healed) {
       nextRecords.push(await this.writeDrainDegradation(db, {
@@ -232,6 +298,8 @@ class ResidentTelemetryDrain {
       try {
         const entry = await this.writeEvent(db, event);
         nextRecords.push(entry);
+        const mirror = await this.writeAccountingMirror(db, event);
+        if (mirror) nextRecords.push(mirror);
         return true;
       } catch (err) {
         const entry = await this.writeDrainDegradation(db, {
@@ -246,7 +314,8 @@ class ResidentTelemetryDrain {
         return true;
       }
     });
-    await this.prune(db, { version: 1, records: nextRecords });
+    const hadAdditions = nextRecords.length > originalCount;
+    await this.prune(db, { version: 1, records: nextRecords }, hadAdditions);
     await writeStatusSummary(db, this.opts.rootDir);
   }
 
@@ -267,10 +336,53 @@ class ResidentTelemetryDrain {
       key,
       created_at: createdAt,
       expires_at: expiresAt,
-      bytes: typeof event.bytes === "number" && Number.isFinite(event.bytes)
+      bytes: event.collection === RSP_ACCOUNTING_EVENTS_COLLECTION
+        ? 0
+        : typeof event.bytes === "number" && Number.isFinite(event.bytes)
         ? Math.max(0, event.bytes)
         : Buffer.byteLength(JSON.stringify(record), "utf8"),
     };
+  }
+
+  private async writeAccountingMirror(db: RedDB, event: RspTelemetryEvent): Promise<TelemetryIndexEntry | null> {
+    if (event.collection === RSP_ACCOUNTING_EVENTS_COLLECTION) return null;
+    if (event.accounting_recorded === true) return null;
+    if (event.collection === RSP_TELEMETRY_INVOCATIONS_COLLECTION) {
+      return await this.writeEvent(db, {
+        collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+        id: `mirror:${stringField(event.id) || randomUUID()}`,
+        created_at: stringField(event.created_at) || stringField(event.ts) || new Date().toISOString(),
+        event_type: "invocation",
+        command: stringField(event.command) || "unknown",
+        command_class: commandClass(stringField(event.command) || "unknown"),
+        wrapper: event.wrapper,
+        loss: event.loss,
+        elided: event.elided,
+        raw_bytes: event.raw_bytes,
+        emitted_bytes: event.emitted_bytes,
+        tokens_raw: event.tokens_raw,
+        tokens_emitted: event.tokens_emitted,
+        estimated: event.estimated,
+        wrapper_ms: event.wrapper_ms,
+        store_open_count: event.store_open_count,
+        store_elapsed_ms: event.store_elapsed_ms,
+      });
+    }
+    if (event.collection === RSP_TELEMETRY_DEGRADATIONS_COLLECTION) {
+      return await this.writeEvent(db, {
+        collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+        id: `mirror:${stringField(event.id) || randomUUID()}`,
+        created_at: stringField(event.created_at) || stringField(event.ts) || new Date().toISOString(),
+        event_type: "invocation",
+        command: stringField(event.command) || "unknown",
+        command_class: commandClass(stringField(event.command) || "unknown"),
+        loss: "lossless",
+        raw_bytes: 0,
+        emitted_bytes: 0,
+        degradation_reason: stringField(event.reason) || "unknown",
+      });
+    }
+    return null;
   }
 
   private async writeDrainDegradation(
@@ -284,7 +396,7 @@ class ResidentTelemetryDrain {
       error?: string;
     },
   ): Promise<TelemetryIndexEntry> {
-    return await this.writeEvent(db, {
+    const entry = await this.writeEvent(db, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       id: randomUUID(),
       created_at: new Date().toISOString(),
@@ -295,6 +407,22 @@ class ResidentTelemetryDrain {
       source_collection: event.source_collection,
       error: event.error,
     });
+    await this.writeEvent(db, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      id: `mirror:${randomUUID()}`,
+      created_at: entry.created_at,
+      event_type: "invocation",
+      command: event.command,
+      command_class: commandClass(event.command),
+      loss: "lossless",
+      raw_bytes: 0,
+      emitted_bytes: 0,
+      degradation_reason: event.reason,
+      source_id: event.source_id,
+      source_collection: event.source_collection,
+      error: event.error,
+    });
+    return entry;
   }
 
   private async readIndex(db: RedDB): Promise<TelemetryIndexDocument> {
@@ -307,7 +435,7 @@ class ResidentTelemetryDrain {
     await db.kv(RSP_TELEMETRY_INDEX_COLLECTION).put("index:v1", index);
   }
 
-  private async prune(db: RedDB, index: TelemetryIndexDocument): Promise<void> {
+  private async prune(db: RedDB, index: TelemetryIndexDocument, hadAdditions = false): Promise<void> {
     const nowMs = Date.now();
     const live: TelemetryIndexEntry[] = [];
     for (const entry of index.records) {
@@ -324,7 +452,9 @@ class ResidentTelemetryDrain {
       bytes -= evicted.bytes;
       await db.kv(evicted.collection).delete(evicted.key);
     }
-    await this.writeIndex(db, { version: 1, records: live });
+    if (hadAdditions || live.length < index.records.length) {
+      await this.writeIndex(db, { version: 1, records: live });
+    }
   }
 }
 
@@ -337,13 +467,22 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
     : 0;
   const path = join(rootDir, RSP_STATUS_SUMMARY);
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmp, JSON.stringify({
+  const payload: JsonObject = {
     version: 1,
     tokens_saved_today: tokensSavedToday,
     dollars_saved_today_usd: Math.round(dollarsSavedToday * 1_000_000) / 1_000_000,
+    show_total_today: stats.health.show_total,
     updated_at: now.toISOString(),
-  }), { encoding: "utf8", mode: 0o600 });
+  };
+  if (stats.health.show_total > 0) payload.show_hit_rate = stats.health.show_hit_rate;
+  if (stats.decisions.seen > 0) {
+    payload.decisions = {
+      seen: stats.decisions.seen,
+      contributed: stats.decisions.contributed,
+    };
+  }
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(tmp, `${encodeSnapshotToon(payload)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
@@ -575,6 +714,10 @@ function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
+function commandClass(command: string): string {
+  return command.trim().split(/\s+/).filter(Boolean)[0] ?? "unknown";
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -605,6 +748,8 @@ function isTelemetryIndex(value: unknown): value is TelemetryIndexDocument {
     value.records.every((entry) =>
       isRecord(entry) &&
       (
+        entry.collection === RSP_ACCOUNTING_EVENTS_COLLECTION ||
+        entry.collection === RSP_DECISIONS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_INVOCATIONS_COLLECTION ||
         entry.collection === RSP_TELEMETRY_DEGRADATIONS_COLLECTION
       ) &&
@@ -622,6 +767,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => Promise<void>): void {
   let buffer = "";
   socket.setEncoding("utf8");
+  socket.on("error", () => undefined);
   socket.on("data", (chunk) => {
     buffer += chunk;
     const newline = buffer.indexOf("\n");
@@ -640,7 +786,7 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
-        socket.write(`${JSON.stringify(response)}\n`);
+        safeSocketWrite(socket, response);
       } finally {
         socket.end();
       }
@@ -648,15 +794,30 @@ function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => 
   });
 }
 
+function safeSocketWrite(socket: Socket, response: RspResidentResponse): void {
+  if (socket.destroyed || !socket.writable) return;
+  try {
+    socket.write(`${JSON.stringify(response)}\n`);
+  } catch {}
+}
+
 async function handleRequest(
-  store: RspElisionStore,
+  state: ResidentStoreState,
   request: RspResidentRequest,
   storeUri: string,
   residentVersion: string,
 ): Promise<unknown> {
-  if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "handover") return { handover: true, version: residentVersion, clientVersion: request.clientVersion };
+  if (state.kind === "opening") throw new Error("rsp resident store is not ready");
+  if (state.kind === "failed") throw new Error(`rsp resident store failed to open: ${state.error.message}`);
+  const store = state.store;
+  if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "stats") return await store.stats();
+  if (request.op === "accounting-stats") {
+    const db = store.redDb();
+    if (!db) throw new Error("rsp accounting stats require the shared RedDB store");
+    return await readAccountingLaneStats(db, request.byteBudget);
+  }
   if (request.op === "telemetry-stats") {
     const db = store.redDb();
     if (!db) throw new Error("rsp telemetry stats require the shared RedDB store");

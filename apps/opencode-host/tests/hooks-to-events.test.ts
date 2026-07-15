@@ -293,17 +293,19 @@ describe("isRspRewriteHook (ADR 0095 Decision 7)", () => {
   it("identifies hook claude-pre-exec invocations", () => {
     expect(isRspRewriteHook("node rsp.bundle.min.mjs hook claude-pre-exec")).toBe(true);
     expect(isRspRewriteHook("for f in ...; do node \"$f\" hook claude-pre-exec <\"$tmp\"; exit $?; done")).toBe(true);
+    expect(isRspRewriteHook('"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh" claude-pre-exec')).toBe(true);
   });
 
   it("does not classify other rsp subcommands as rewrite hooks", () => {
     expect(isRspRewriteHook("node rsp.bundle.min.mjs git status")).toBe(false);
+    expect(isRspRewriteHook('"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh" claude-post-exec')).toBe(false);
     expect(isRspRewriteHook("bash branch-lock.sh")).toBe(false);
     expect(isRspRewriteHook("")).toBe(false);
   });
 });
 
 describe("planPluginHooks — rsp rewrite delegation (ADR 0095 Decision 7)", () => {
-  it("generates a rewrite module when the hook invokes hook claude-pre-exec", () => {
+  it("generates a rewrite module when the hook invokes rsp-hook.sh claude-pre-exec", () => {
     writeHookFile("claude.hooks.json", {
       hooks: {
         PreToolUse: [
@@ -312,7 +314,7 @@ describe("planPluginHooks — rsp rewrite delegation (ADR 0095 Decision 7)", () 
             hooks: [
               {
                 type: "command",
-                command: "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/../../dist/rsp.bundle.min.mjs\" hook claude-pre-exec'",
+                command: "sh -c '\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\" claude-pre-exec'",
               },
             ],
           },
@@ -324,7 +326,8 @@ describe("planPluginHooks — rsp rewrite delegation (ADR 0095 Decision 7)", () 
     expect(pre).toBeDefined();
     // Must contain the rewrite helper — the module delegates, not copies.
     expect(pre.source).toContain("__runRspRewrite");
-    expect(pre.source).toContain("hook claude-pre-exec");
+    expect(pre.source).toContain("rsp-hook.sh");
+    expect(pre.source).toContain("claude-pre-exec");
     // Must apply the rewrite to output.args.command.
     expect(pre.source).toContain("output.args = { ...output.args, command: __rewritten }");
     // Must return null on passthrough (exit 1) — not block.

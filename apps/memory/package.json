@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/memory",
-  "version": "2.55.0",
+  "version": "2.60.2",
   "private": true,
   "description": "reddb.io memory plugin — governed operational memory for code agents: markdown notes, RedDB graph memory, governed recall, lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
   "license": "Apache-2.0",
@@ -29,7 +29,7 @@
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/sdk": "1.23.1",
     "@reddb-io/shared": "workspace:*",
-    "@reddb-io/toon": "workspace:*",
+    "@reddb-io/toon": "catalog:",
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3",
     "js-tiktoken": "^1.0.21",

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RSP_WRAPPER_CAPABILITIES,
@@ -13,6 +14,10 @@ import {
   rewriteCommand,
   rewriteTableFromCapabilities,
 } from "../src/intercept.js";
+import {
+  RSP_DECISIONS_COLLECTION,
+  telemetrySpoolPath,
+} from "../src/telemetry.js";
 
 const roots: string[] = [];
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
@@ -51,12 +56,32 @@ describe("rsp interception pure rewrite table", () => {
 
   it.each([
     ["cat-simple-file", "cat apps/rsp/src/cli.ts", "rsp cat apps/rsp/src/cli.ts", "cat:file"],
+    ["cat-quoted-file", "cat 'two words.txt'", "rsp cat 'two words.txt'", "cat:file"],
     ["head-default-file", "head apps/rsp/src/cli.ts", "rsp cat --head 10 apps/rsp/src/cli.ts", "cat:head"],
     ["head-n-file", "head -n 25 apps/rsp/src/cli.ts", "rsp cat --head 25 apps/rsp/src/cli.ts", "cat:head"],
+    ["head-short-n-file", "head -25 apps/rsp/src/cli.ts", "rsp cat --head 25 apps/rsp/src/cli.ts", "cat:head"],
     ["tail-default-file", "tail apps/rsp/src/cli.ts", "rsp cat --tail 10 apps/rsp/src/cli.ts", "cat:tail"],
     ["tail-n-file", "tail -n 25 apps/rsp/src/cli.ts", "rsp cat --tail 25 apps/rsp/src/cli.ts", "cat:tail"],
+    ["tail-short-n-file", "tail -25 apps/rsp/src/cli.ts", "rsp cat --tail 25 apps/rsp/src/cli.ts", "cat:tail"],
   ])("rewrites conservative file dump shape %s", (_name, command, rewritten, capabilityId) => {
     expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it.each([
+    ["git-log-format-flags", "git log --oneline --decorate=short", "rsp git log --oneline --decorate=short", "git:log"],
+    ["git-diff-stat-range", "git diff --stat origin/main..HEAD", "rsp git diff --stat origin/main..HEAD", "git:diff"],
+    ["git-status-stderr-null", "git status --short 2>/dev/null", "rsp git status --short 2>/dev/null", "git:status"],
+    ["git-log-stderr-merge", "git log --oneline 2>&1", "rsp git log --oneline 2>&1", "git:log"],
+  ])("rewrites flagged or stderr-only family shape %s", (_name, command, rewritten, capabilityId) => {
+    expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it.each([
+    ["json-fields", "gh pr view 1747 --json number,title"],
+    ["jq-expression", "gh run view 9001 --json databaseId --jq '.databaseId'"],
+    ["api-jq", "gh api repos/reddb-io/red-skills --jq .name"],
+  ])("passes through lossless gh json/jq selector family %s", (_name, command) => {
+    expect(rewriteCommand(command)).toEqual({ kind: "passthrough", reason: "lossless-gh-json-jq" });
   });
 
   it.each([
@@ -66,7 +91,9 @@ describe("rsp interception pure rewrite table", () => {
     ["env-prefix-is-ambiguous", "GIT_DIR=.git git status"],
     ["silent-predicate-grep-q", "grep -q needle file"],
     ["redirection-is-ambiguous", "git status > status.txt"],
-    ["cat-space-path-is-ambiguous", "cat \"two words.txt\""],
+    ["stdout-redirection-is-ambiguous", "git status > status.txt"],
+    ["stdin-redirection-is-ambiguous", "git status < input.txt"],
+    ["stderr-file-redirection-is-ambiguous", "git status 2>err.txt"],
     ["cat-multiple-files-is-ambiguous", "cat a.txt b.txt"],
     ["head-option-shape-is-ambiguous", "head -c 20 file.txt"],
     ["subshell-is-ambiguous", "$(git status)"],
@@ -95,7 +122,6 @@ describe("rsp interception pure rewrite table", () => {
     ["command-substitution-capture", "foo $(git log)"],
     ["already-rsp", "cd apps && rsp git log"],
     ["here-doc", "cat <<EOF"],
-    ["single-noisy-command-with-args", "git log --oneline"],
     ["silent-predicate", "git log | grep -q fix"],
   ])("passes through unsafe compound fixture %s", (_name, command) => {
     expect(rewriteCommand(command)).toEqual({ kind: "passthrough" });
@@ -103,7 +129,50 @@ describe("rsp interception pure rewrite table", () => {
 });
 
 describe("rsp Claude pre-execution hook integration", () => {
-  it("accepts Claude hook JSON on stdin through the CLI and returns the stdout/exit contract", async () => {
+  it("routes eligible commands through the universal proxy only when the proxy flag is enabled", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const decision = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "printf ok | sed s/ok/OK/" } }),
+      { cwd: root, wakeResident: () => undefined },
+    );
+
+    expect(decision).toEqual({
+      kind: "rewrite",
+      command: "rsp proxy -- 'printf ok | sed s/ok/OK/'",
+      capabilityId: "proxy:universal",
+    });
+    expect(formatCodexHookDecision(decision)).toEqual({
+      stdout: `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp proxy -- 'printf ok | sed s/ok/OK/'" },
+        },
+      })}\n`,
+      status: 0,
+    });
+  });
+
+  it.each([
+    ["interactive", "vim file.txt", "interactive"],
+    ["background", "sleep 1 &", "background"],
+    ["opt-out-env", "RSP_NO_PROXY=1 git status", "opt-out"],
+    ["recursive-rsp", "rsp git status", "opt-out"],
+  ])("leaves %s commands unproxied under the universal proxy flag", async (_label, command, reason) => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    await expect(hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command } }),
+      { cwd: root },
+    )).resolves.toEqual({ kind: "passthrough", reason });
+  });
+
+  it("accepts Claude hook JSON on stdin through the CLI and emits updatedInput", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
@@ -113,13 +182,44 @@ describe("rsp Claude pre-execution hook integration", () => {
       input: Buffer.from(JSON.stringify({ cwd: root, tool_input: { command: "git status" } })),
     });
 
-    expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("prints only the rewritten command and exits 0 on a certain match when the resident is healthy", async () => {
+  it("reports rewrite and parse decisions under RSP_DEBUG", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const rewrite = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "claude-pre-exec"], {
+      cwd: root,
+      env: { ...process.env, RSP_DEBUG: "1" },
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_input: { command: "git status" } })),
+    });
+
+    expect(rewrite.status).toBe(0);
+    expect(rewrite.stderr.toString("utf8")).toContain("rsp hook claude-pre-exec: rewrite git:status\n");
+
+    const parseFailure = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "claude-pre-exec"], {
+      cwd: root,
+      env: { ...process.env, RSP_DEBUG: "1" },
+      input: Buffer.from("{"),
+    });
+
+    expect(parseFailure.status).toBe(0);
+    expect(parseFailure.stdout).toEqual(Buffer.alloc(0));
+    expect(parseFailure.stderr.toString("utf8")).toContain("rsp hook claude-pre-exec: passthrough payload-parse-error\n");
+  });
+
+  it("prints Claude updatedInput JSON and exits 0 on a certain match", async () => {
     const root = await tempRoot();
     let healthCalls = 0;
     let wakeCalls = 0;
@@ -138,12 +238,21 @@ describe("rsp Claude pre-execution hook integration", () => {
       },
     );
 
-    expect(formatHookDecision(result)).toEqual({ stdout: "rsp git status\n", status: 0 });
-    expect(healthCalls).toBe(1);
-    expect(wakeCalls).toBe(0);
+    expect(formatHookDecision(result)).toEqual({
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status" },
+        },
+      }) + "\n",
+      status: 0,
+    });
+    expect(healthCalls).toBe(0);
+    expect(wakeCalls).toBe(1);
   });
 
-  it("prints a shell-safe rsp exec rewrite for compound noisy commands when the resident is healthy", async () => {
+  it("prints a shell-safe rsp exec updatedInput for compound noisy commands", async () => {
     const root = await tempRoot();
     const result = await hookDecisionFromClaudePreExecJson(
       JSON.stringify({ cwd: root, tool_input: { command: "cd apps && git log --oneline" } }),
@@ -155,12 +264,18 @@ describe("rsp Claude pre-execution hook integration", () => {
     );
 
     expect(formatHookDecision(result)).toEqual({
-      stdout: "rsp exec -- 'cd apps && git log --oneline'\n",
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp exec -- 'cd apps && git log --oneline'" },
+        },
+      }) + "\n",
       status: 0,
     });
   });
 
-  it("prints nothing and exits non-zero on passthrough", async () => {
+  it("prints updatedInput for flagged family forms", async () => {
     const root = await tempRoot();
     let healthCalls = 0;
     let wakeCalls = 0;
@@ -179,13 +294,23 @@ describe("rsp Claude pre-execution hook integration", () => {
       },
     );
 
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(formatHookDecision(result)).toEqual({
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { command: "rsp git status --short" },
+        },
+      }) + "\n",
+      status: 0,
+    });
     expect(healthCalls).toBe(0);
-    expect(wakeCalls).toBe(0);
+    expect(wakeCalls).toBe(1);
   });
 
-  it("passes through and wakes the resident when the resident is not healthy", async () => {
+  it("rewrites and wakes the resident without health-gating the decision", async () => {
     const root = await tempRoot();
+    let healthCalls = 0;
     let wakeCalls = 0;
     const started = performance.now();
     const result = await hookDecisionFromClaudePreExecJson(
@@ -193,7 +318,10 @@ describe("rsp Claude pre-execution hook integration", () => {
       {
         cwd: root,
         isEnabled: () => true,
-        isResidentHealthy: async () => false,
+        isResidentHealthy: async () => {
+          healthCalls += 1;
+          return false;
+        },
         wakeResident: () => {
           wakeCalls += 1;
         },
@@ -201,8 +329,9 @@ describe("rsp Claude pre-execution hook integration", () => {
     );
     const elapsedMs = performance.now() - started;
 
-    expect(result).toEqual({ kind: "passthrough", reason: "resident-unhealthy" });
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(result).toEqual({ kind: "rewrite", command: "rsp git status", capabilityId: "git:status" });
+    expect(formatHookDecision(result).status).toBe(0);
+    expect(healthCalls).toBe(0);
     expect(wakeCalls).toBe(1);
     expect(elapsedMs).toBeLessThan(50);
   });
@@ -229,7 +358,7 @@ describe("rsp Claude pre-execution hook integration", () => {
     expect(result).toEqual({ kind: "passthrough", reason: "disabled" });
     expect(gateCalls).toBe(1);
     expect(rewriteCalls).toBe(0);
-    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 1 });
+    expect(formatHookDecision(result)).toEqual({ stdout: "", status: 0 });
   });
 });
 
@@ -288,8 +417,119 @@ describe("rsp Codex pre-execution hook integration", () => {
     });
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: "rsp git status" },
+      },
+    });
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(join(root, ".red", "tmp", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("records exactly one decision event for a Codex hook invocation", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "git status" } })),
+    });
+
+    expect(res.status).toBe(0);
+    const events = await readSpoolEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      collection: RSP_DECISIONS_COLLECTION,
+      hook: "codex-pre-exec",
+      command: "git status",
+      command_family: "git status",
+      decision: "contributed",
+      reason: "matched-capability",
+      capability_id: "git:status",
+    });
+  });
+
+  it("records gh json/jq selectors as lossless passthrough decisions", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "gh pr view 1747 --json number,title --jq .number" } })),
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    const events = await readSpoolEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      collection: RSP_DECISIONS_COLLECTION,
+      hook: "codex-pre-exec",
+      command: "gh pr view 1747 --json number,title --jq .number",
+      command_family: "gh pr view json-jq",
+      decision: "passed",
+      reason: "lossless-gh-json-jq",
+    });
+  });
+
+  it("records quarter-plus coverage when replaying representative agent command corpus", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    const corpus = [
+      "git log --oneline --decorate=short",
+      "git diff --stat origin/main..HEAD",
+      "gh pr view 1746 --json number,title",
+      "cat 'two words.txt'",
+      "echo ok",
+      "git status > status.txt",
+      "grep -q needle file.txt",
+      "sleep 1 &",
+    ];
+
+    for (const command of corpus) {
+      const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+        cwd: root,
+        input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command } })),
+      });
+      expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
+    }
+
+    const events = await readSpoolEvents(root) as Array<{ decision: string }>;
+    const contributed = events.filter((event) => event.decision === "contributed").length;
+    expect(events).toHaveLength(corpus.length);
+    expect(contributed / events.length).toBeGreaterThanOrEqual(0.25);
+  });
 });
+
+async function readSpoolEvents(root: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(telemetrySpoolPath(root), "utf8").catch(() => "");
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (!isRecord(row)) continue;
+      if (typeof row.event_json !== "string") {
+        const { spool_id: _spoolId, ...event } = row;
+        if (typeof event.collection === "string") rows.push(event);
+        continue;
+      }
+      const event = JSON.parse(row.event_json) as unknown;
+      if (isRecord(event)) rows.push(event);
+    }
+  }
+  return rows;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

@@ -9,6 +9,7 @@ import {
   DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS,
   DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
   DEFAULT_RSP_TELEMETRY_TTL_DAYS,
+  DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
   MIN_RSP_IDLE_MS,
   resolveRspConfig,
 } from "../src/config.js";
@@ -32,14 +33,16 @@ describe("resolveRspConfig", () => {
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(
       join(root, ".red", "config.yaml"),
-      "rsp:\n  ttlDays: 3\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  telemetryDrainTimeoutMs: 456\n  idleMs: 10000\n  heavyGitByteThreshold: 99\n",
+      "rsp:\n  ttlDays: 3\n  ephemeralTtlHours: 4\n  byteBudget: 42\n  telemetryTtlDays: 11\n  telemetryByteBudget: 100\n  telemetryDrainTimeoutMs: 456\n  idleMs: 10000\n  heavyGitByteThreshold: 99\n",
       "utf8",
     );
 
     expect(resolveRspConfig(join(root, "nested"), {}, undefined)).toEqual({
       enabled: false,
+      proxyEnabled: false,
       storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
       ttlDays: 3,
+      ephemeralTtlHours: 4,
       byteBudget: 42,
       telemetryTtlDays: 11,
       telemetryByteBudget: 100,
@@ -57,8 +60,10 @@ describe("resolveRspConfig", () => {
 
     expect(resolveRspConfig(root, {}, undefined)).toEqual({
       enabled: true,
+      proxyEnabled: false,
       storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
+      ephemeralTtlHours: DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,
       telemetryTtlDays: DEFAULT_RSP_TELEMETRY_TTL_DAYS,
       telemetryByteBudget: DEFAULT_RSP_TELEMETRY_BYTE_BUDGET,
@@ -67,6 +72,17 @@ describe("resolveRspConfig", () => {
       idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
     });
+  });
+
+  it("exposes the universal proxy flag separately from rsp enablement", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const config = resolveRspConfig(root, {}, undefined);
+
+    expect(config.enabled).toBe(true);
+    expect(config.proxyEnabled).toBe(true);
   });
 
   it("lets env override the heavy git truncation threshold", async () => {

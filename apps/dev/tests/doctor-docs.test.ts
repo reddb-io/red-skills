@@ -79,6 +79,24 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
   });
 
+  it("audits required host binaries read-only with red-setup as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Required host binaries");
+    expect(skill).toContain("TQ_VERSION");
+    expect(skill).toContain("Absence or version drift is a red finding");
+    expect(skill).toContain("catalog-derived pin, recorded config pin, and observed `tq --version`");
+    expect(skill).toContain("toolchain-drift");
+    expect(skill).toContain("names all three values");
+    expect(skill).toContain("apps/dev/src/core/host-binary-doctor.ts");
+    expect(skill).toContain("never run installer scripts during Pass 1");
+    expect(skill).toContain("Required host binaries");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Required host binaries `❌` (check 18)");
+    expect(apply).toContain("delegate to `/red-setup`");
+  });
+
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
     const skill = await readDoctorSkill();
 
@@ -105,6 +123,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("exclude parent Specs carrying `type:spec`");
     expect(skill).toContain("native blocked-by edge without the matching `req:N` label");
     expect(skill).toContain("`req:N` label without the matching native blocked-by edge");
+    expect(skill).toContain("gh issue list --state open --json number,labels");
+    expect(skill).toContain("repos/{owner}/{repo}/issues/<ticket-number>/dependencies/blocked_by");
+    expect(skill).toContain("nativeBlockedBy: [<blocker-number>, ...]");
+    expect(skill).not.toContain("making this audit execute that read directly is a follow-up Ticket");
     expect(skill).toContain("apps/dev/src/core/dependency-edge-doctor.ts");
     expect(skill).toContain("never add/remove labels and never create/delete native edges");
     expect(skill).toContain("native blocked-by vs `req:N` divergence (check 15)");
@@ -113,6 +135,33 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("Native blocked-by vs `req:N` divergence (check 15)");
     expect(apply).toContain("do not guess the canonical side");
     expect(apply).toContain("delegate to `/triage`");
+  });
+
+  it("audits native sub-issue vs spec:N divergence and fixes with the shared reconciler", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Native sub-issue vs `spec:N` divergence audit");
+    expect(skill).toContain("open plus recently-closed Specs carrying `type:spec`");
+    expect(skill).toContain("`spec:N` child without the matching native sub-issue edge");
+    expect(skill).toContain("native sub-issue child without the matching `spec:N` label");
+    expect(skill).toContain("still carries `needs-slicing` once it has at least one `spec:N` child");
+    expect(skill).toContain("gh issue list --label type:spec --state all --json number,state,closedAt,labels");
+    expect(skill).toContain("gh issue list --label spec:<spec-number> --state all --json number,labels");
+    expect(skill).toContain("repos/{owner}/{repo}/issues/<spec-number>/sub_issues");
+    expect(skill).toContain("labelChildren: [<ticket-number>, ...]");
+    expect(skill).toContain("nativeSubIssues: [<ticket-number>, ...]");
+    expect(skill).toContain("apps/dev/src/core/spec-subissue-reconciler.ts");
+    expect(skill).toContain("auditSpecSubIssueEdges");
+    expect(skill).toContain("executeSpecSubIssueReconcile");
+    expect(skill).toContain("never add/remove labels and never create/delete native edges");
+    expect(skill).toContain("native sub-issue vs `spec:N` divergence (check 16)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Native sub-issue vs `spec:N` divergence (check 16)");
+    expect(apply).toContain("run the shared Spec sub-issue reconciler");
+    expect(apply).toContain("attach missing native sub-issue edges");
+    expect(apply).toContain("remove stale `needs-slicing`");
+    expect(apply).toContain("Do not remove native-only edges or invent missing labels");
   });
 
   it("audits ask-red router coverage read-only with the maintenance rule as the fix-home", async () => {
@@ -124,10 +173,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("stale router entry");
     expect(skill).toContain("apps/dev/src/core/ask-red-router-doctor.ts");
     expect(skill).toContain("never edit manifests and never rewrite `ask-red`");
-    expect(skill).toContain("ask-red router coverage sync (check 16)");
+    expect(skill).toContain("ask-red router coverage sync (check 17)");
 
     const apply = await readDoctorApply();
-    expect(apply).toContain("ask-red router coverage sync (check 16)");
+    expect(apply).toContain("ask-red router coverage sync (check 17)");
     expect(apply).toContain("do not patch the router blindly");
     expect(apply).toContain("apply the ask-red maintenance rule");
   });

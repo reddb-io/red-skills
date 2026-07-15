@@ -68,6 +68,29 @@ describe("label vocabulary docs", () => {
     }
   });
 
+  it("centralizes GitHub native dependency and hierarchy operations in red-setup", async () => {
+    const tracker = await readRepoFile("plugins/dev/skills/engineering/red-setup/issue-tracker-github.md");
+    const toTickets = await readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md");
+    const triage = await readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md");
+    const wayfinder = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+    const doctor = await readRepoFile("plugins/dev/skills/engineering/red-doctor/SKILL.md");
+
+    expect(tracker).toContain("## Dependency & hierarchy operations");
+    expect(tracker).toContain("/issues/<parent-number>/sub_issues");
+    expect(tracker).toContain("-f \"sub_issue_id=$child_id\"");
+    expect(tracker).toContain("/issues/<child-number>/dependencies/blocked_by");
+    expect(tracker).toContain("-f \"issue_id=$blocker_id\"");
+    expect(tracker).toContain("numeric database id from the REST issue `.id` field");
+    expect(tracker).toContain("never the GitHub issue `#number`");
+    expect(tracker).toContain("never the GraphQL `node_id`");
+    expect(tracker).toContain("issue_dependencies_summary.blocked_by");
+    expect(tracker).toContain("open-blocker count only");
+
+    for (const skill of [toTickets, triage, wayfinder, doctor]) {
+      expect(skill).toContain("Dependency & hierarchy operations");
+    }
+  });
+
   it("keeps the Blocked by body fallback beside native dependency edges", async () => {
     const toTickets = await readRepoFile("plugins/dev/skills/engineering/to-tickets/SKILL.md");
     const triage = await readRepoFile("plugins/dev/skills/engineering/triage/SKILL.md");
@@ -77,6 +100,12 @@ describe("label vocabulary docs", () => {
       expect(skill).toContain("## Blocked by");
       expect(skill).toContain("- [ ] #N");
     }
+
+    expect(toTickets).toContain("GitHub task-list tracking entry");
+    expect(toTickets).toContain("not GitHub's issue-dependencies widget");
+    expect(toTickets).toContain("ADR 0094 body fallback");
+    expect(toTickets).toContain("boot sweep parses this exact section");
+    expect(toTickets).not.toContain("native dependency widget");
   });
 
   it("pins the external-PR triage surface as opt-in and never-execute", async () => {
@@ -178,6 +207,20 @@ describe("red-setup docs", () => {
     expect(script).toContain(".codex/plugins/cache/red-skills/dev");
     expect(script).toContain(".claude/plugins/cache/red-skills/dev");
     expect(script).toContain(".cache/red-skills/bundles");
+  });
+
+  it("documents tq as a pinned required host binary installed by setup", async () => {
+    const skill = await readSetupRedSkillsDocs();
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
+
+    expect(skill).toContain("**Section E2 — Required host binaries");
+    expect(skill).toContain("TQ_VERSION=v0.3.0");
+    expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh");
+    expect(skill).toContain("no jq fallback");
+    expect(skill).toContain("host_binaries:");
+    expect(template).toContain("host_binaries:");
+    expect(template).toContain("tq:");
+    expect(template).toContain("version: 0.3.0");
   });
 
   it("installs a runtime shim that prefers active env roots, then the highest host cache", () => {
