@@ -13,6 +13,11 @@ stale notes inline.
 > `daa3cc18`) that never landed on `main`; PRD #614 / issue #629 reassigned the
 > number to **AFK bundle release channels** (the goal-predicate branch must pick
 > a free number if it is ever revived).
+> **0074** has no ADR file in the local history available to this repository:
+> `git log --all -- .red/adr/0074*`, `git log --all --grep` for the number, and
+> a repository text search found no deleted, renamed, or reserved record. Treat
+> it as a documented numbering gap unless future remote history recovers the
+> original intent.
 > 2026-07-04 de-collisions: the duplicate **0067** workflow-naming ADR moved to
 > **0087**; the four duplicate **0082** records were split so **0082** remains the
 > structured-output completion contract, WorkItem moved to **0088**, AXI + TOON to
