@@ -75,6 +75,13 @@ describe("shared TOON migration registry", () => {
           kind: "toonl",
         }),
         expect.objectContaining({
+          id: "dev.code-understanding-bench-runs",
+          plugin: "dev",
+          legacyPath: ".red/tmp/bench/code-understanding/runs.jsonl",
+          toonPath: ".red/tmp/bench/code-understanding/runs.toonl",
+          kind: "toonl",
+        }),
+        expect.objectContaining({
           id: "dev.attempt-state",
           plugin: "dev",
           legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
@@ -120,6 +127,7 @@ describe("shared TOON migration registry", () => {
     );
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.agent-log");
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.code-understanding-bench-runs");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.attempt-state");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.rsp-wait-registry");
   });
@@ -238,6 +246,62 @@ describe("shared TOON migration registry", () => {
       value: [
         expect.objectContaining({ ts: "t1", worker: "wA", type: "agent", msg: "line A" }),
         expect.objectContaining({ ts: "t2", issue: 2, attempt: 1, type: "agent", msg: "line B" }),
+      ],
+    });
+  });
+
+  test("converts legacy code-understanding bench runs JSONL to TOONL through the registry", async () => {
+    const root = await scratch();
+    await write(
+      root,
+      ".red/tmp/bench/code-understanding/runs.jsonl",
+      [
+        JSON.stringify({
+          schema_version: "redskills.code_understanding_bench.run.v1",
+          generated_at: "2026-06-01T00:00:00.000Z",
+          benchmark: "code-understanding",
+          runner: "codex",
+          arm: "none",
+          corpus: "overlap",
+          case_id: "case",
+          language: "typescript",
+          repo: "repo",
+          repo_path: "repo-path",
+          question: "question",
+          run_index: 1,
+          status: "pass",
+          duration_ms: 100,
+          exit_code: 0,
+          signal: null,
+          log_path: null,
+          mcp_config_path: null,
+          command: ["codex"],
+          metrics: {
+            tools: { total: 0, read: 0, grep: 0, bash: 0, mcp: 0, byName: {} },
+            tokens: { input: 10, output: 5, cacheCreation: 0, cacheRead: 0, total: 15 },
+            cost_usd: null,
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+
+    const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    const toonPath = join(root, ".red/tmp/bench/code-understanding/runs.toonl");
+    const body = await readFile(toonPath, "utf8");
+
+    expect(report.converted).toContain("dev.code-understanding-bench-runs");
+    expect(body.trimStart()).toMatch(/^\[1\](?:\{|:)/);
+    await expect(readRegisteredToonSurface(root, "dev.code-understanding-bench-runs")).resolves.toMatchObject({
+      format: "toonl",
+      value: [
+        expect.objectContaining({
+          schema_version: "redskills.code_understanding_bench.run.v1",
+          arm: "none",
+          metrics: expect.objectContaining({
+            tokens: expect.objectContaining({ total: 15 }),
+          }),
+        }),
       ],
     });
   });

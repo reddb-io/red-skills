@@ -61,6 +61,13 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     kind: "toonl",
   },
   {
+    id: "dev.code-understanding-bench-runs",
+    plugin: "dev",
+    legacyPath: ".red/tmp/bench/code-understanding/runs.jsonl",
+    toonPath: ".red/tmp/bench/code-understanding/runs.toonl",
+    kind: "toonl",
+  },
+  {
     id: "dev.attempt-state",
     plugin: "dev",
     legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
