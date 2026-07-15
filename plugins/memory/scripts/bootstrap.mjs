@@ -436,6 +436,44 @@ function spawnBackgroundSelfUpdate() {
   }
 }
 
+function hasPendingToonMigration(cwd) {
+  return (
+    existsSync(join(cwd, ".red", "memory", "config.json")) &&
+    !existsSync(join(cwd, ".red", "memory", "config.toon"))
+  );
+}
+
+function resolveDevEntrypoint() {
+  const override = process.env.RED_DEV_ENTRYPOINT;
+  if (override && existsSync(override)) return override;
+  const candidates = [
+    join(REPO_ROOT, "plugins", "dev", "skills", "engineering", "afk", "bin", "afk.mjs"),
+    resolve(PLUGIN_ROOT, "..", "dev", "skills", "engineering", "afk", "bin", "afk.mjs"),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+/** Fire-and-forget the plugin-owned TOON migration trigger; never blocks hooks. */
+function spawnBackgroundToonMigration(cwd) {
+  try {
+    if (!hasPendingToonMigration(cwd)) return;
+    const entrypoint = resolveDevEntrypoint();
+    if (!entrypoint) return;
+    const child = spawn(
+      process.execPath,
+      [entrypoint, "toon-migrate", "--plugin", "memory", "--root", cwd, "--triggered-by", "bootstrap"],
+      {
+        detached: true,
+        stdio: "ignore",
+        env: process.env,
+      },
+    );
+    child.unref();
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ── Per-directory plugin gate (ADR 0067) ─────────────────────────────────────
 // Mirror of packages/shared/plugin-gate.ts (pluginEnabledInConfig + walk-up),
 // inlined because the launcher ships dependency-free in the plugin checkout and
@@ -594,6 +632,7 @@ async function main() {
     // On session start, kick a DETACHED background in-range self-update for the
     // NEXT boot. Detached + unref'd so it never delays the hook or any surface.
     if (argv[0] === "hook" && argv[1] === "SessionStart") spawnBackgroundSelfUpdate();
+    if (argv[0] === "hook" && argv[1] === "SessionStart") spawnBackgroundToonMigration(process.cwd());
     const runtime = await ensureRuntime(version, { mayFetch: mayFetchRuntime(argv) });
     if (!runtime) {
       // Render/hot-path hook on a cold cache: SessionStart will warm it. No-op.

@@ -24,6 +24,7 @@ import { rspInstructionsCommand } from "./commands/rsp-instructions.js";
 import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { triageCommand } from "./commands/triage.js";
+import { toonMigrateCommand } from "./commands/toon-migrate.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
 
@@ -54,6 +55,7 @@ export type CliCommand =
   | "statusline"
   | "statusline-refresh-counts"
   | "inject-development-workflow"
+  | "toon-migrate"
   | "version"
   | "__supervise";
 
@@ -99,6 +101,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     statusline: {},
     "statusline-refresh-counts": {},
     "inject-development-workflow": {},
+    "toon-migrate": {},
     version: {},
     __supervise: {},
   },
@@ -153,6 +156,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
   if (parsed.command === "statusline-refresh-counts") return statuslineRefreshCountsCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
+  if (parsed.command === "toon-migrate") return toonMigrateCommand(parsed.args);
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
   return runCommand({ args: parsed.args });
 }

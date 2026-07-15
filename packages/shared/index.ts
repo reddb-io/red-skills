@@ -87,3 +87,4 @@ export {
 export * from "./outcome-event.js";
 export * from "./resident-client.js";
 export * from "./resident-protocol.js";
+export * from "./toon-migration.js";
