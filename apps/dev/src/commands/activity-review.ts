@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
 import {
@@ -14,7 +14,11 @@ import {
   type ActivityReviewPullRequest,
   type ActivityReviewTokenSummary,
 } from "../core/activity-review.js";
-import { parseLane } from "../core/jsonl-log.js";
+import {
+  parseLaneSinceCursor,
+  ToonlCursorInvalidationError,
+  type ToonlLaneCursor,
+} from "../core/jsonl-log.js";
 import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
@@ -259,6 +263,92 @@ export function collectTokensFromObject(value: unknown): { input: number; output
   return { input, output, total, hits };
 }
 
+interface TokenCacheRow {
+  ts: string | null;
+  input: number;
+  output: number;
+  total: number;
+}
+
+interface TokenFileCache {
+  cursor: ToonlLaneCursor;
+  rows: TokenCacheRow[];
+}
+
+type TokenSummaryCache = Record<string, TokenFileCache>;
+
+function tokenCachePath(workersRoot: string): string {
+  return join(workersRoot, ".activity-review-token-cursors.json");
+}
+
+function validTokenCacheRow(value: unknown): TokenCacheRow | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  const input = Number(rec.input);
+  const output = Number(rec.output);
+  const total = Number(rec.total);
+  if (!Number.isFinite(input) || input < 0) return null;
+  if (!Number.isFinite(output) || output < 0) return null;
+  if (!Number.isFinite(total) || total < 0) return null;
+  return {
+    ts: typeof rec.ts === "string" ? rec.ts : null,
+    input,
+    output,
+    total,
+  };
+}
+
+function validToonlCursor(value: unknown): ToonlLaneCursor | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Partial<ToonlLaneCursor>;
+  const byteOffset = Number(rec.byteOffset);
+  const rowsSinceHeader = Number(rec.rowsSinceHeader);
+  if (!Number.isFinite(byteOffset) || byteOffset < 0) return null;
+  if (!Number.isFinite(rowsSinceHeader) || rowsSinceHeader < 0) return null;
+  return {
+    byteOffset,
+    rowsSinceHeader,
+    activeHeader: typeof rec.activeHeader === "string" ? rec.activeHeader : "",
+    taggedHeaders:
+      rec.taggedHeaders !== null && typeof rec.taggedHeaders === "object"
+        ? Object.fromEntries(
+            Object.entries(rec.taggedHeaders as Record<string, unknown>)
+              .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+          )
+        : {},
+  };
+}
+
+function validTokenFileCache(value: unknown): TokenFileCache | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as { cursor?: unknown; rows?: unknown };
+  const cursor = validToonlCursor(rec.cursor);
+  if (cursor === null || !Array.isArray(rec.rows)) return null;
+  return {
+    cursor,
+    rows: rec.rows.map(validTokenCacheRow).filter((row): row is TokenCacheRow => row !== null),
+  };
+}
+
+async function readTokenSummaryCache(path: string): Promise<TokenSummaryCache> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: TokenSummaryCache = {};
+    for (const [file, value] of Object.entries(parsed)) {
+      const cache = validTokenFileCache(value);
+      if (cache !== null) out[file] = cache;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function writeTokenSummaryCache(path: string, cache: TokenSummaryCache): Promise<void> {
+  await writeFile(path, `${JSON.stringify(cache)}\n`, "utf8");
+}
+
 async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
   const out: string[] = [];
   let workers: string[];
@@ -306,6 +396,9 @@ export async function collectTokenSummary(workersRoot: string, start: Date, end:
   let total = 0;
   let sourceRecords = 0;
   const files = await listRetainedLogFiles(workersRoot);
+  const cachePath = tokenCachePath(workersRoot);
+  const previous = await readTokenSummaryCache(cachePath);
+  const next: TokenSummaryCache = {};
   for (const file of files) {
     let text: string;
     try {
@@ -313,17 +406,37 @@ export async function collectTokenSummary(workersRoot: string, start: Date, end:
     } catch {
       continue;
     }
-    for (const parsed of parseLane(text)) {
-      if (!logRecordInInterval(parsed, start, end)) continue;
-      const found = collectTokensFromObject(parsed);
+    const prior = previous[file];
+    let parsed: ReturnType<typeof parseLaneSinceCursor>;
+    let rows = prior?.rows ?? [];
+    try {
+      parsed = parseLaneSinceCursor(text, prior?.cursor);
+    } catch (err) {
+      if (!(err instanceof ToonlCursorInvalidationError)) throw err;
+      parsed = parseLaneSinceCursor(text);
+      rows = [];
+    }
+    for (const record of parsed.records) {
+      const found = collectTokensFromObject(record);
       if (found.hits > 0) {
-        input += found.input;
-        output += found.output;
-        total += found.total;
-        sourceRecords += 1;
+        rows.push({
+          ts: timestampFromLogRecord(record)?.toISOString() ?? null,
+          input: found.input,
+          output: found.output,
+          total: found.total,
+        });
       }
     }
+    next[file] = { cursor: parsed.cursor, rows };
+    for (const row of rows) {
+      if (!logRecordInInterval({ ts: row.ts }, start, end)) continue;
+      input += row.input;
+      output += row.output;
+      total += row.total;
+      sourceRecords += 1;
+    }
   }
+  await writeTokenSummaryCache(cachePath, next).catch(() => undefined);
   const available = sourceRecords > 0;
   return {
     available,
