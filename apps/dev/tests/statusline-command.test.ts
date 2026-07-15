@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   statuslineCommand,
   resolveRoot,
@@ -588,7 +589,7 @@ describe("statusline command — rendered line", () => {
     const text = stripAnsi(out.text());
     expect(text).toContain("loc=+1");
     expect(text).not.toContain("loc=+2");
-    const cache = JSON.parse(await readFile(join(root, ".red", "tmp", "statusline-repo-cache.json"), "utf8")) as {
+    const cache = decode(await readFile(join(root, ".red", "tmp", "statusline-repo-cache.json"), "utf8")) as {
       baseRef: string;
       localAdded: number;
     };
