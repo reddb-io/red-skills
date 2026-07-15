@@ -13,7 +13,7 @@ describe("rsp docs surface", () => {
   it("describes the shipped rsp surface with stable contract headings", async () => {
     const readme = await doc("README.md");
 
-    expect(readme).toContain("99.4% decision-oracle capture");
+    expect(readme).toContain("99.8% decision-oracle capture");
     expect(readme).toContain("RTK 4.9%");
     expect(readme).toContain("Headroom 0.6%");
     expect(readme).toContain("docs/ARCHITECTURE.md");
@@ -23,6 +23,11 @@ describe("rsp docs surface", () => {
     expect(readme).toContain("resident");
     expect(readme).toContain("telemetry");
     expect(readme).toContain("rsp wait");
+    expect(readme).toContain("three storage classes");
+    expect(readme).toContain("derivable");
+    expect(readme).toContain("re-executable");
+    expect(readme).toContain("ephemeral");
+    expect(readme).toContain("64 MiB physical cap");
     for (const heading of [
       "## What rsp Does",
       "## Permanent Proxy Model",
@@ -73,6 +78,13 @@ describe("rsp docs surface", () => {
       "lossless-gh-json-jq",
       "contribution_rate",
       "failed-open",
+      "three storage classes",
+      "derivable",
+      "re-executable",
+      "ephemeral",
+      "accounting lane",
+      "physical cap",
+      "compressed content-hash blobs",
     ]) {
       expect(architecture).toContain(required);
     }
