@@ -235,4 +235,31 @@ describe("activity review", () => {
     );
     expect(summary).toEqual({ available: true, input: 10, output: 16, total: null, sourceRecords: 2 });
   });
+
+  it("activity-review token scan resumes from disposable cursor state without changing results", async () => {
+    const root = await mkdtemp(join(tmpdir(), "activity-review-cursor-"));
+    const attemptDir = join(root, "wAAAA", "1825-a1");
+    await mkdir(attemptDir, { recursive: true });
+    const log = join(attemptDir, "log.jsonl");
+    await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
+      ts: "2026-07-15T12:00:00.000Z",
+      fields: { extra: { iteration: "1" } },
+    });
+    const start = new Date("2026-07-15T00:00:00.000Z");
+    const end = new Date("2026-07-16T00:00:00.000Z");
+
+    const first = await collectTokenSummary(root, start, end);
+    expect(first).toEqual({ available: true, input: 7, output: 11, total: null, sourceRecords: 1 });
+
+    await appendRecordToonlTaggedRow(log, "raw", { iteration: 2, line: "{\"inputTokens\":13,\"outputTokens\":17}" }, {
+      ts: "2026-07-15T12:05:00.000Z",
+      fields: { extra: { iteration: "2" } },
+    });
+    const resumed = await collectTokenSummary(root, start, end);
+    expect(resumed).toEqual({ available: true, input: 20, output: 28, total: null, sourceRecords: 2 });
+
+    await writeFile(join(root, ".activity-review-token-cursors.json"), "", "utf8");
+    const cold = await collectTokenSummary(root, start, end);
+    expect(cold).toEqual(resumed);
+  });
 });

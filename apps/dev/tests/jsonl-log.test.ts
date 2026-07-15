@@ -16,6 +16,8 @@ import {
   fsAppendSink,
   JsonlLogError,
   parseLane,
+  parseLaneSinceCursor,
+  ToonlCursorInvalidationError,
 } from "../src/core/jsonl-log.js";
 
 const TS = "2026-05-30T12:00:00+00:00";
@@ -311,6 +313,42 @@ describe("jsonl-log append accumulation and readers", () => {
     expect(filterByWorker(records, "wAAAA").map((r) => r.msg)).toEqual(["a", "b", "e"]);
     expect(filterByType(records, "stage").map((r) => r.msg)).toEqual(["a", "c"]);
     expect(filterByType(records, "nonesuch")).toEqual([]);
+  });
+
+  it("resumes tagged-row TOONL reads from a reader-owned cursor across header rotation", async () => {
+    const chunks: string[] = [];
+    const sink = async (_p: string, line: string) => void chunks.push(line);
+    await appendRecordToonlTaggedRow("/attempt/log-cursor.jsonl", "raw", { iteration: 1, line: "{\"inputTokens\":3}" }, {
+      ts: TS,
+      fields: { extra: { iteration: "1" } },
+      sink,
+    });
+    const firstBody = `${chunks.join("\n")}\n`;
+    const first = parseLaneSinceCursor(firstBody);
+    expect(first.records.map((r) => r.iteration)).toEqual(["1"]);
+
+    await appendRecordToonlTaggedRow("/attempt/log-cursor.jsonl", "raw", { iteration: 2, line: "{\"outputTokens\":5}" }, {
+      ts: TS,
+      fields: { extra: { iteration: "2" } },
+      sink,
+    });
+    await appendRecordToonlTaggedRow("/attempt/log-cursor.jsonl", "agent", "new shape", {
+      ts: TS,
+      fields: { extra: { iteration: "2", kind: "text" } },
+      sink,
+    });
+    const resumed = parseLaneSinceCursor(`${chunks.join("\n")}\n`, first.cursor);
+    expect(resumed.records.map((r) => [r.type, r.iteration, r.kind ?? null])).toEqual([
+      ["raw", "2", null],
+      ["agent", "2", "text"],
+    ]);
+    expect(resumed.cursor.byteOffset).toBe(Buffer.byteLength(`${chunks.join("\n")}\n`, "utf8"));
+    expect(resumed.cursor.activeHeader).toContain("<agent>");
+  });
+
+  it("throws the cursor-invalidation error when a lane shrinks before the cursor", () => {
+    const first = parseLaneSinceCursor(`${formatRecordToonl(buildRecord("agent", "before", TS))}\n`);
+    expect(() => parseLaneSinceCursor("", first.cursor)).toThrow(ToonlCursorInvalidationError);
   });
 });
 

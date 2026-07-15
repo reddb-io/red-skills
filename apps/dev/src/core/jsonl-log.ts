@@ -67,6 +67,26 @@ export class JsonlLogError extends Error {
   }
 }
 
+export interface ToonlLaneCursor {
+  /** Byte offset immediately after the last fully-consumed line. */
+  byteOffset: number;
+  /** The active TOONL header needed to decode positional rows after resume. */
+  activeHeader: string;
+  /** Number of decoded rows since the active header was observed. */
+  rowsSinceHeader: number;
+  /** Tagged-row headers needed to decode `tag:...` rows after resume. */
+  taggedHeaders?: Record<string, string>;
+}
+
+export class ToonlCursorInvalidationError extends Error {
+  readonly code = "TOONL_CURSOR_INVALIDATED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ToonlCursorInvalidationError";
+  }
+}
+
 /** A non-negative integer string (no sign, allows 0) — the bash `_is_int` rule. */
 function isIntToken(token: string): boolean {
   return /^(0|[1-9][0-9]*)$/.test(token);
@@ -310,17 +330,85 @@ export function filterByType(records: readonly JsonlLogRecord[], type: string): 
 
 /** Parse a lane's contents into records (one per non-empty line). */
 export function parseLane(content: string): JsonlLogRecord[] {
-  const lines = content.split(/\r?\n/);
+  return parseLaneSinceCursor(content).records;
+}
+
+function normalizeCursor(cursor: ToonlLaneCursor | undefined, contentBytes: number): ToonlLaneCursor {
+  if (cursor === undefined) {
+    return { byteOffset: 0, activeHeader: "", rowsSinceHeader: 0, taggedHeaders: {} };
+  }
+  if (!Number.isSafeInteger(cursor.byteOffset) || cursor.byteOffset < 0 || cursor.byteOffset > contentBytes) {
+    throw new ToonlCursorInvalidationError(
+      `[jsonl-log] TOONL cursor invalidated: byte offset ${cursor.byteOffset} outside lane size ${contentBytes}`,
+    );
+  }
+  if (!Number.isSafeInteger(cursor.rowsSinceHeader) || cursor.rowsSinceHeader < 0) {
+    throw new ToonlCursorInvalidationError("[jsonl-log] TOONL cursor invalidated: rowsSinceHeader is invalid");
+  }
+  return {
+    byteOffset: cursor.byteOffset,
+    activeHeader: typeof cursor.activeHeader === "string" ? cursor.activeHeader : "",
+    rowsSinceHeader: cursor.rowsSinceHeader,
+    taggedHeaders: cursor.taggedHeaders && typeof cursor.taggedHeaders === "object" ? { ...cursor.taggedHeaders } : {},
+  };
+}
+
+function completeLinesFrom(content: string, startByteOffset: number, includeFinalLine = false): Array<{ line: string; nextOffset: number }> {
+  const buffer = Buffer.from(content, "utf8");
+  const out: Array<{ line: string; nextOffset: number }> = [];
+  let start = startByteOffset;
+  while (start < buffer.length) {
+    const newline = buffer.indexOf(10, start);
+    if (newline === -1) {
+      if (includeFinalLine) out.push({ line: buffer.subarray(start).toString("utf8"), nextOffset: buffer.length });
+      break;
+    }
+    const end = newline > start && buffer[newline - 1] === 13 ? newline - 1 : newline;
+    out.push({ line: buffer.subarray(start, end).toString("utf8"), nextOffset: newline + 1 });
+    start = newline + 1;
+  }
+  return out;
+}
+
+function decodeToonlRow(header: string, line: string): JsonlLogRecord | null {
+  try {
+    const value = decode(header.replace(/^\[(?:[0-9]+)?\]/, "[1]") + "\n" + line + "\n");
+    const row = Array.isArray(value) ? value[0] : value;
+    return row && typeof row === "object" ? row as JsonlLogRecord : null;
+  } catch {
+    // TOONL readers are crash-tail tolerant during rollout.
+    return null;
+  }
+}
+
+/**
+ * Parse complete records after a reader-owned TOONL cursor. The cursor captures
+ * only reader state: byte offset, active header, and rows-since-header. Losing
+ * it is safe because callers can re-run with no cursor and rescan the lane.
+ */
+export function parseLaneSinceCursor(
+  content: string,
+  cursor?: ToonlLaneCursor,
+): { records: JsonlLogRecord[]; cursor: ToonlLaneCursor } {
+  const contentBytes = Buffer.byteLength(content, "utf8");
+  const normalized = normalizeCursor(cursor, contentBytes);
   const records: JsonlLogRecord[] = [];
-  let header = "";
-  const taggedHeaders = new Map<string, string>();
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+  let header = normalized.activeHeader;
+  let rowsSinceHeader = normalized.rowsSinceHeader;
+  const taggedHeaders = new Map<string, string>(Object.entries(normalized.taggedHeaders ?? {}));
+  let byteOffset = normalized.byteOffset;
+  const lineEntries = completeLinesFrom(content, normalized.byteOffset, cursor === undefined);
+  for (const raw of lineEntries) {
+    const line = raw.line.trimEnd();
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      byteOffset = raw.nextOffset;
+      continue;
+    }
     if (trimmed.startsWith("{")) {
       try {
         records.push(JSON.parse(trimmed) as JsonlLogRecord);
+        byteOffset = raw.nextOffset;
       } catch {
         // Crash tails can leave a torn final row; keep the parseable prefix.
       }
@@ -328,34 +416,45 @@ export function parseLane(content: string): JsonlLogRecord[] {
     }
     if (/^\[(?:[0-9]+)?\]\{[^}]+\}:$/.test(trimmed)) {
       header = trimmed;
+      rowsSinceHeader = 0;
+      byteOffset = raw.nextOffset;
       continue;
     }
     const taggedHeader = trimmed.match(/^\[\]<([A-Za-z0-9_-]+)>(\{[^}]+\}:)$/);
     if (taggedHeader) {
       taggedHeaders.set(taggedHeader[1]!, `[1]${taggedHeader[2]}`);
+      header = trimmed;
+      rowsSinceHeader = 0;
+      byteOffset = raw.nextOffset;
       continue;
     }
     const taggedRow = line.match(/^([A-Za-z0-9_-]+):(.*)$/);
     if (taggedRow) {
       const tagged = taggedHeaders.get(taggedRow[1]!);
       if (!tagged) continue;
-      try {
-        const value = decode(`${tagged}\n  ${taggedRow[2]}\n`);
-        const row = Array.isArray(value) ? value[0] : value;
-        if (row && typeof row === "object") records.push(row as JsonlLogRecord);
-      } catch {
-        // TOONL readers are crash-tail tolerant during rollout.
+      const row = decodeToonlRow(tagged, `  ${taggedRow[2]}`);
+      if (row) {
+        records.push(row);
+        rowsSinceHeader += 1;
+        byteOffset = raw.nextOffset;
       }
       continue;
     }
     if (!header) continue;
-    try {
-      const value = decode(header.replace(/^\[(?:[0-9]+)?\]/, "[1]") + "\n" + line + "\n");
-      const row = Array.isArray(value) ? value[0] : value;
-      if (row && typeof row === "object") records.push(row as JsonlLogRecord);
-    } catch {
-      // TOONL readers are crash-tail tolerant during rollout.
+    const row = decodeToonlRow(header, line);
+    if (row) {
+      records.push(row);
+      rowsSinceHeader += 1;
+      byteOffset = raw.nextOffset;
     }
   }
-  return records;
+  return {
+    records,
+    cursor: {
+      byteOffset,
+      activeHeader: header,
+      rowsSinceHeader,
+      taggedHeaders: Object.fromEntries(taggedHeaders),
+    },
+  };
 }

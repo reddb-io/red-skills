@@ -1,10 +1,16 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  parseLaneSinceCursor,
+  ToonlCursorInvalidationError,
+  type ToonlLaneCursor,
+} from "../core/jsonl-log.js";
 
 export interface LogLineCursor {
   size: number;
   lines: number;
+  toonl?: ToonlLaneCursor;
 }
 
 export type LogLineCursorStore = Record<string, LogLineCursor>;
@@ -16,12 +22,32 @@ export interface LogLineCount {
 
 function validCursor(value: unknown): LogLineCursor | null {
   if (value === null || typeof value !== "object") return null;
-  const rec = value as { size?: unknown; lines?: unknown };
+  const rec = value as { size?: unknown; lines?: unknown; toonl?: unknown };
   const size = Number(rec.size);
   const lines = Number(rec.lines);
   if (!Number.isFinite(size) || size < 0) return null;
   if (!Number.isFinite(lines) || lines < 0) return null;
-  return { size, lines };
+  const out: LogLineCursor = { size, lines };
+  if (rec.toonl !== null && typeof rec.toonl === "object") {
+    const toonl = rec.toonl as Partial<ToonlLaneCursor>;
+    const byteOffset = Number(toonl.byteOffset);
+    const rowsSinceHeader = Number(toonl.rowsSinceHeader);
+    if (Number.isFinite(byteOffset) && byteOffset >= 0 && Number.isFinite(rowsSinceHeader) && rowsSinceHeader >= 0) {
+      out.toonl = {
+        byteOffset,
+        rowsSinceHeader,
+        activeHeader: typeof toonl.activeHeader === "string" ? toonl.activeHeader : "",
+        taggedHeaders:
+          toonl.taggedHeaders !== null && typeof toonl.taggedHeaders === "object"
+            ? Object.fromEntries(
+                Object.entries(toonl.taggedHeaders as Record<string, unknown>)
+                  .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+              )
+            : {},
+      };
+    }
+  }
+  return out;
 }
 
 export async function readLogLineCursors(path: string): Promise<LogLineCursorStore> {
@@ -74,6 +100,25 @@ export async function countLogLinesSinceCursor(
   } catch {
     return null;
   }
+  if (path.endsWith(".jsonl")) {
+    const text = await readFile(path, "utf8");
+    let parsed: ReturnType<typeof parseLaneSinceCursor>;
+    let reset = previous === undefined || size < previous.size || previous.toonl === undefined;
+    const previousCursor = previous?.toonl;
+    try {
+      parsed = parseLaneSinceCursor(text, reset ? undefined : previousCursor);
+    } catch (err) {
+      if (!(err instanceof ToonlCursorInvalidationError)) throw err;
+      reset = true;
+      parsed = parseLaneSinceCursor(text);
+    }
+    const totalLines = reset ? parsed.records.length : (previous?.lines ?? 0) + parsed.records.length;
+    return {
+      count: { lines: totalLines, newLines: parsed.records.length },
+      cursor: { size, lines: totalLines, toonl: parsed.cursor },
+    };
+  }
+
   const reset = previous === undefined || size < previous.size;
   const start = reset ? 0 : previous.size;
   const slice = size > start ? await readUtf8Range(path, start) : "";
