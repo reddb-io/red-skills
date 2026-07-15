@@ -146,6 +146,10 @@ _Avoid_: afk clone, sandbox checkout
 One of the canonical `.red/` lifecycles from ADR 0098: tracked knowledge/config, plugin stores, durable machine state under `.red/state/`, or disposable scratch under `.red/tmp/`. The lifecycle decides whether a path is versioned, plugin-owned, durable-local, or safely deletable.
 _Avoid_: tmp as a catch-all, state mixed with scratch
 
+**Contracts home**:
+The tracked knowledge/config directory at `.red/contracts/`, versioned in the repo and owned by the **dev** plugin. It holds test and validation fixtures (such as `.red/contracts/fixtures/quality-gate/`), contract assertions, and reference data that document interface boundaries and acceptance criteria. Content here is not disposable and must be backed by an Issue/Spec/ADR that states why the fixtures exist.
+_Avoid_: test data (use with care; contracts are *vetted* boundaries, not ad-hoc test input), fixtures root (this is the contracts home, not a general-purpose fixtures directory)
+
 **State tier**:
 The gitignored durable machine-state tier at `.red/state/`. Named lanes include `afk/`, `rsp/`, `statusline/`, `branch-lock.yaml`, and `red-skills.rdb`. It is never mass-deletable and must survive `rm -rf .red/tmp`.
 _Avoid_: cache, tmp state
