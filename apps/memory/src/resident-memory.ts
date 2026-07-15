@@ -1,11 +1,16 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  LEGACY_SHARED_STORE_REL,
+  SHARED_STORE_REL,
+  resolveSharedStorePath,
+} from "@reddb-io/shared/red-paths.js";
 import {
   ResidentRspClient,
   resolveResidentPaths,
 } from "@reddb-io/shared/resident-client.js";
 import type { MemoryConfig } from "./config.js";
 
-const DEFAULT_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
 const DEFAULT_RSP_TTL_DAYS = 7;
 const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 
@@ -26,8 +31,13 @@ export interface ResidentIngestPayload {
 export function shouldUseResidentMemory(rootDir: string, config: MemoryConfig): boolean {
   if (config.mode !== "graph") return false;
   const storePath = config.storePath ?? "";
-  if (storePath === DEFAULT_RSP_STORE_PATH) return true;
-  return resolve(rootDir, storePath).endsWith(`/${DEFAULT_RSP_STORE_PATH}`);
+  // Accept both the canonical state-tier path and the legacy tmp-tier path so a
+  // config pointed at either resolves to the resident during the transition.
+  for (const rel of [SHARED_STORE_REL, LEGACY_SHARED_STORE_REL]) {
+    if (storePath === rel) return true;
+    if (resolve(rootDir, storePath).endsWith(`/${rel}`)) return true;
+  }
+  return false;
 }
 
 export async function residentMemoryRequest(
@@ -38,7 +48,7 @@ export async function residentMemoryRequest(
 ): Promise<unknown> {
   const paths = resolveResidentPaths(rootDir);
   const client = new ResidentRspClient(paths, {
-    storeUri: `file://${resolve(rootDir, DEFAULT_RSP_STORE_PATH)}`,
+    storeUri: `file://${resolveSharedStorePath(resolve(rootDir), existsSync)}`,
     ttlDays: DEFAULT_RSP_TTL_DAYS,
     byteBudget: DEFAULT_RSP_BYTE_BUDGET,
     serverCommand: process.env.RSP_BIN ?? "rsp",
