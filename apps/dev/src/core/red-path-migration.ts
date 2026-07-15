@@ -18,7 +18,7 @@
 // registries, and the disposable scratch worktree lanes are NOT migrated: they
 // are already collision-safe, swept, and keep their names.
 import { join } from "node:path";
-import { afkStateDir, branchLockFile, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
+import { afkStateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
 
 /** How a migration entry is materialised on disk. */
 export type MigrationEntryKind = "file" | "dir";
@@ -61,7 +61,11 @@ export function planDevDurablePathMigration(root: string): DevPathMigrationEntry
     { id: "runner-circuit", legacy: join(tmp, "runner-circuit"), current: join(afkState, "runner-circuit"), kind: "dir" },
     file("statusline-cache.json", statusline),
     file("statusline-repo-cache.json", statusline),
-    { id: "branch-lock.yaml", legacy: join(tmp, "branch-lock.yaml"), current: branchLockFile(root), kind: "file" },
+    // NOTE: the branch lock is intentionally NOT migrated here. The branch-lock
+    // skill's shell writer still owns `.red/tmp/branch-lock.yaml`; moving it out
+    // from under that writer would silently break `/branch-lock`. The dev reader
+    // (runtime/lock.ts) funnels through the authority and prefers whichever copy
+    // exists, so it tracks the shell writer until that surface migrates too.
   ];
 }
 

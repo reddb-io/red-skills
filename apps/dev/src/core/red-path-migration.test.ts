@@ -40,11 +40,8 @@ describe("planDevDurablePathMigration", () => {
     );
   });
 
-  it("moves the branch lock to the state root", () => {
-    expect(byId.get("branch-lock.yaml")).toMatchObject({
-      legacy: "/repo/.red/tmp/branch-lock.yaml",
-      current: "/repo/.red/state/branch-lock.yaml",
-    });
+  it("does not migrate the branch lock (its shell writer still owns tmp)", () => {
+    expect(byId.has("branch-lock.yaml")).toBe(false);
   });
 
   it("never sources from outside .red/tmp nor targets outside .red/state", () => {

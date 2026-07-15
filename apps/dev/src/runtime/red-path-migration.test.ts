@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { afkStateDir, branchLockFile, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
+import { afkStateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
 
 const roots: string[] = [];
@@ -33,7 +33,6 @@ describe("migrateLegacyDevPaths", () => {
     const root = await freshRoot();
     const tmp = tmpDir(root);
     await writeFile(join(tmp, "afk-supervisor.pid"), "123", "utf8");
-    await writeFile(join(tmp, "branch-lock.yaml"), "feature/x\n", "utf8");
     await writeFile(join(tmp, "statusline-cache.json"), "{}", "utf8");
     await writeFile(join(tmp, "afk-supervisor.log"), "log", "utf8");
     await writeFile(join(tmp, "afk-supervisor.log.jsonl"), "{}", "utf8");
@@ -43,14 +42,12 @@ describe("migrateLegacyDevPaths", () => {
     const { moved } = await migrateLegacyDevPaths(root);
 
     expect(await readFile(join(afkStateDir(root), "afk-supervisor.pid"), "utf8")).toBe("123");
-    expect(await readFile(branchLockFile(root), "utf8")).toBe("feature/x\n");
     expect(await readFile(join(statuslineStateDir(root), "statusline-cache.json"), "utf8")).toBe("{}");
     expect(await readFile(join(afkStateDir(root), "afk-supervisor.log.jsonl"), "utf8")).toBe("{}");
     expect(await readFile(join(afkStateDir(root), "runner-circuit", "claude.json"), "utf8")).toBe("{}");
     // Legacy copies are gone (moved, not copied).
     expect(await exists(join(tmp, "afk-supervisor.pid"))).toBe(false);
     expect(moved).toContain("afk-supervisor.pid");
-    expect(moved).toContain("branch-lock.yaml");
     expect(moved).toContain("afk-supervisor.log.jsonl");
   });
 

@@ -1,5 +1,6 @@
 import { execTool, type ExecFn, type ExecOutput } from "../runtime/exec.js";
 import { join, dirname } from "node:path";
+import { tmpDir } from "@reddb-io/shared/red-paths.js";
 import { readAllWorkerStates } from "../core/worker-state-reader.js";
 import {
   branchMatchesIssue,
@@ -251,7 +252,7 @@ async function collectWorktrees(exec: ExecFn, cwd: string, issue: number): Promi
 }
 
 async function collectWorkerState(cwd: string, issue: number): Promise<RetakeWorkerState | undefined> {
-  const records = await readAllWorkerStates(join(cwd, ".red", "tmp")).catch(() => []);
+  const records = await readAllWorkerStates(tmpDir(cwd)).catch(() => []);
   const matches = records
     .filter((record) => Number(record.state.current.number) === issue)
     .sort((a, b) => String(b.state.current.last_event_at ?? "").localeCompare(String(a.state.current.last_event_at ?? "")));

@@ -325,7 +325,7 @@ async function runAdoptLanding(
   const ghCtx: GhContext = { cwd, repo };
   const gitCtx: GitContext = { cwd };
   const lockPath = branchLockPath(cwd);
-  const feedbackDir = join(paths.tmpDir, "adopt-landing", String(issue));
+  const feedbackDir = join(paths.adoptWorktreesDir, String(issue));
   const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {
     resourceBudget: readValidationResourceBudget(config),
@@ -394,7 +394,7 @@ async function runAdoptLanding(
       // Landing worktree for the locked (DIRECT) land path (#572).
       makeLandingWorktree: async (bas: string) => {
         const slug = bas.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
-        const dest = join(paths.tmpDir, "landing", `${slug}-adopt-${issue}`);
+        const dest = join(paths.landingWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, bas);
         return ok ? dest : null;
@@ -403,7 +403,7 @@ async function runAdoptLanding(
       // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006).
       makeRebaseWorktree: async (branch: string) => {
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
-        const dest = join(paths.tmpDir, "rebase", `${slug}-adopt-${issue}`);
+        const dest = join(paths.rebaseWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
         const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
         return ok ? dest : null;
@@ -441,7 +441,7 @@ async function runAdoptLanding(
       // Synthetic worker identity for logging/envelope — no real AFK worker ran.
       workerId: "requeue-adopt",
       attempt: 0,
-      attemptDir: join(paths.tmpDir, "adopt-landing", String(issue)),
+      attemptDir: join(paths.adoptWorktreesDir, String(issue)),
       runner: "claude" as Runner,
       // #1171: bypass doLanding's sensitive-path guard ONLY for a maintainer-
       // reviewed adopt of a `blocked:sensitive-path` park. Defaults false — a
