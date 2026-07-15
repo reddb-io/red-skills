@@ -9,6 +9,7 @@ import {
   ENVELOPE_FIELD_ORDER,
   filterByType,
   filterByWorker,
+  formatRecordToonl,
   fsAppendSink,
   JsonlLogError,
   parseLane,
@@ -61,6 +62,12 @@ describe("jsonl-log record shape", () => {
     const line = JSON.stringify(buildRecord("agent", evil, TS));
     expect(line.includes("\n")).toBe(false);
     expect((JSON.parse(line) as { msg: string }).msg).toBe(evil);
+  });
+
+  it("serializes agent records as spec-valid TOONL segments", () => {
+    const segment = formatRecordToonl(buildRecord("agent", "hello", TS, { worker: "wA1B9", extra: { iteration: "1", kind: "text" } }));
+    expect(segment.split("\n")[0]).toBe("[1]{ts,worker,type,msg,iteration,kind}:");
+    expect(parseLane(segment).map((r) => r.msg)).toEqual(["hello"]);
   });
 
   it("keeps raw firehose payloads structured and omits dead default fields", () => {
@@ -147,7 +154,7 @@ describe("jsonl-log lane routing", () => {
 });
 
 describe("jsonl-log append accumulation and readers", () => {
-  it("accumulates appended lines on disk and auto-creates the parent dir", async () => {
+  it("accumulates appended JSONL and TOONL segments on disk and auto-creates the parent dir", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-jsonl-"));
     const lane = join(dir, "a", "b", "c", "lane.jsonl");
     await appendRecord(lane, "stage", "a", { ts: TS, fields: { worker: "wAAAA" } });
@@ -156,6 +163,13 @@ describe("jsonl-log append accumulation and readers", () => {
     const records = parseLane(await readFile(lane, "utf8"));
     expect(records.map((r) => r.msg)).toEqual(["a", "b", "c"]);
     expect(records.map((r) => r.type)).toEqual(["stage", "agent", "stage"]);
+  });
+
+  it("opens a new parseable TOONL segment after restart and skips a torn crash tail", async () => {
+    const first = formatRecordToonl(buildRecord("agent", "before restart", TS, { worker: "wAAAA" }));
+    const second = formatRecordToonl(buildRecord("agent", "after restart", TS, { worker: "wAAAA", extra: { iteration: "2" } }));
+    const records = parseLane(`${first}\n[1]{ts,type,msg}:\nthis is not valid toon\n${second}\n`);
+    expect(records.map((r) => r.msg)).toEqual(["before restart", "after restart"]);
   });
 
   it("default fs sink writes one valid JSON line per append", async () => {
