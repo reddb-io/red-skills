@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { decode } from "@reddb-io/toon";
+import { decode, encode } from "@reddb-io/toon";
 import {
   statuslineCommand,
   resolveRoot,
@@ -753,6 +753,26 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
     expect(stripAnsi(out.text())).toContain("rsp=↓1.32M int=0/12");
+  });
+
+  it("reads a TOON rsp resident summary for statusline rendering", async () => {
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
+    await mkdir(dirname(resolveResidentPaths(root).summaryPath), { recursive: true });
+    await writeFile(resolveResidentPaths(root).summaryPath, encode({
+      version: 1,
+      tokens_saved_today: 2048,
+      decisions: { contributed: 2, seen: 3 },
+      updated_at: new Date().toISOString(),
+    }), "utf8");
+
+    expect(await resolveStatuslineRsp(root, {})).toEqual({
+      state: "ready",
+      tokensSavedToday: 2048,
+      decisions: { contributed: 2, seen: 3 },
+    });
   });
 
   it("renders rsp savings from an old summary when the resident is idle", async () => {

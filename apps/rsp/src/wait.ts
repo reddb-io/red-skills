@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 
 type WaitKind = "cmd" | "pr" | "run" | "release";
 type WaitStatus = "running" | "success" | "failure" | "timeout" | "indeterminate";
@@ -87,7 +87,7 @@ export async function runWait(argv: readonly string[], cwd = process.cwd()): Pro
   let verdict: Verdict = { status: "indeterminate", exitCode: 2, summary: "wait did not start" };
   try {
     await mkdir(await waitRegistryDir(cwd), { recursive: true });
-    await writeFile(registryPath, JSON.stringify(entry, null, 2), "utf8");
+    await writeRegistryEntry(registryPath, entry);
     verdict = await dispatchWait({ ...parsed, kind: waitKind }, cwd, registryPath, entry);
     process.stdout.write(`${encode(renderVerdict(waitKind, entry, verdict))}\n`);
     await signalCompletion(parsed.options);
@@ -350,9 +350,9 @@ async function listWaits(cwd: string): Promise<JsonObject[]> {
   if (!existsSync(dir)) return [];
   const files = await readdir(dir).catch(() => []);
   const waits: JsonObject[] = [];
-  for (const file of files.filter((name) => name.endsWith(".json"))) {
+  for (const file of files.filter((name) => name.endsWith(".json") || name.endsWith(".toon"))) {
     const path = join(dir, file);
-    const entry = parseRecord(await readFile(path, "utf8").catch(() => "{}"));
+    const entry = parseStructuredRecord(await readFile(path, "utf8").catch(() => "{}"));
     const pid = typeof entry.pid === "number" ? entry.pid : 0;
     if (!pid || !pidAlive(pid)) {
       await rm(path, { force: true });
@@ -378,7 +378,11 @@ async function repoRoot(cwd: string): Promise<string> {
 }
 
 async function writeStatus(path: string, entry: WaitRegistryEntry, status: WaitStatus): Promise<void> {
-  await writeFile(path, JSON.stringify({ ...entry, status }, null, 2), "utf8").catch(() => undefined);
+  await writeRegistryEntry(path, { ...entry, status }).catch(() => undefined);
+}
+
+async function writeRegistryEntry(path: string, entry: WaitRegistryEntry): Promise<void> {
+  await writeFile(path, `${encode(entry as unknown as JsonObject)}\n`, "utf8");
 }
 
 async function signalCompletion(options: WaitOptions): Promise<void> {
@@ -449,6 +453,18 @@ function parseRecord(raw: string): Record<string, unknown> {
   const parsed = JSON.parse(raw);
   if (!isRecord(parsed)) throw new Error("expected JSON object");
   return parsed;
+}
+
+function parseStructuredRecord(raw: string): Record<string, unknown> {
+  const body = raw.trim();
+  if (!body) return {};
+  try {
+    return parseRecord(body);
+  } catch {
+    const parsed = decode(body);
+    if (!isRecord(parsed)) throw new Error("expected structured object");
+    return parsed;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

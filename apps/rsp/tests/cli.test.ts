@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
@@ -446,7 +446,7 @@ async function waitForSummaryTokens(root: string, minTokens: number): Promise<nu
   let last = 0;
   while (Date.now() < deadline) {
     try {
-      const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { tokens_saved_today?: unknown };
+      const summary = parseStructured(await readFile(summaryPath, "utf8")) as { tokens_saved_today?: unknown };
       last = typeof summary.tokens_saved_today === "number" ? summary.tokens_saved_today : 0;
       if (last > minTokens) return last;
     } catch {}
@@ -454,6 +454,16 @@ async function waitForSummaryTokens(root: string, minTokens: number): Promise<nu
   }
   expect(last).toBeGreaterThan(minTokens);
   return last;
+}
+
+function parseStructured(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function readResidentVersion(root: string): Promise<string | undefined> {
@@ -1608,11 +1618,13 @@ describe("rsp cli", () => {
     );
     await waitForResidentSocket(root);
     expect(await readResidentVersion(root)).toBe(oldVersion);
-    const oldRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+    const oldRegistryRaw = await readFile(trackedResidentPaths(root).registryPath, "utf8");
+    const oldRegistry = parseStructured(oldRegistryRaw) as {
       pid: number;
       resident_version: string;
     };
     expect(oldRegistry.resident_version).toBe(oldVersion);
+    expect(oldRegistryRaw.trimStart().startsWith("{")).toBe(false);
     await expectWarmResident(root, { RED_SKILLS_CACHE_DIR: cacheDir });
 
     const compressed = runBundleFromCwd(root, ["git", "log", "--terse"], { RED_SKILLS_CACHE_DIR: cacheDir });
@@ -1625,7 +1637,7 @@ describe("rsp cli", () => {
     expect(shown.status, `${shown.stdout.toString("utf8")}${shown.stderr.toString("utf8")}`).toBe(0);
     expect(shown.stdout.length).toBeGreaterThan(compressed.stdout.length);
     expect(await readResidentVersion(root)).not.toBe(oldVersion);
-    const nextRegistry = JSON.parse(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
+    const nextRegistry = parseStructured(await readFile(trackedResidentPaths(root).registryPath, "utf8")) as {
       pid: number;
       resident_version: string;
     };
@@ -2045,11 +2057,13 @@ describe("rsp cli", () => {
     expect(statsText).toContain("command: git log --terse invocations: 1");
     expect(statsText).toContain("command: gh pr list invocations: 1");
     expect(statsText).toContain("degradations: 1\n");
-    const summary = JSON.parse(await readFile(resolveResidentPaths(root).summaryPath, "utf8")) as {
+    const summaryRaw = await readFile(resolveResidentPaths(root).summaryPath, "utf8");
+    const summary = parseStructured(summaryRaw) as {
       version: number;
       tokens_saved_today: number;
       updated_at: string;
     };
+    expect(summaryRaw.trimStart().startsWith("{")).toBe(false);
     expect(summary.version).toBe(1);
     expect(summary.tokens_saved_today).toBeGreaterThan(0);
     expect(Date.parse(summary.updated_at)).not.toBeNaN();
@@ -2344,7 +2358,8 @@ describe("rsp cli", () => {
 
   it("wait ls shows a live registry entry while a command wait is active", async () => {
     const root = await tempRoot();
-    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 3000)"`;
+    await mkdir(join(root, ".red"), { recursive: true });
+    const command = `${shellQuote(process.execPath)} -e "setTimeout(() => process.exit(0), 8000)"`;
     const child = spawn(process.execPath, ["--import", tsxLoader, cli, "wait", "cmd", "--reason", "registry probe", "--", command], {
       cwd: root,
       env: { ...process.env },
@@ -2359,6 +2374,10 @@ describe("rsp cli", () => {
     expect(listed.target).toContain("cmd:");
     expect(listed.status).toBe("running");
     expect(listed.poll_tier).toBe("local-cmd:2-5s");
+    const registryFiles = await readdir(join(root, ".red", "tmp", "waits"));
+    const registryBody = await readFile(join(root, ".red", "tmp", "waits", registryFiles[0]!), "utf8");
+    expect(registryBody.trimStart().startsWith("{")).toBe(false);
+    expect((decode(registryBody) as { reason?: string }).reason).toBe("registry probe");
 
     const status = await closeWithTimeout(child, normalizedDurationMs(10_000));
     expect(status, Buffer.concat(stderr).toString("utf8")).toBe(0);

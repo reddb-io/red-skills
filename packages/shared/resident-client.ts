@@ -6,6 +6,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 
@@ -184,7 +185,7 @@ export async function warmResidentServer(paths: RspResidentPaths, config: RspRes
 
 export async function readResidentRegistry(path: string): Promise<RspResidentRegistryEntry | null> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const parsed = parseStructuredDocument(await readFile(path, "utf8"));
     return isResidentRegistryEntry(parsed) ? parsed : null;
   } catch {
     return null;
@@ -208,7 +209,7 @@ export async function writeResidentRegistry(
   };
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(tmp, `${encode(payload as unknown as JsonObject)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
@@ -376,6 +377,16 @@ function tailString(value: string, maxBytes: number): string {
   const bytes = Buffer.byteLength(value, "utf8");
   if (bytes <= maxBytes) return value;
   return Buffer.from(value, "utf8").subarray(bytes - maxBytes).toString("utf8").replace(/^\uFFFD+/, "");
+}
+
+function parseStructuredDocument(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspResidentConfig): Promise<void> {

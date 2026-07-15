@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { connect } from "@reddb-io/sdk";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTelemetryEvent,
@@ -676,7 +677,7 @@ describe("rsp telemetry spool", () => {
       reason: "matched-capability",
       capability_id: "git:status",
     }));
-    const summary = JSON.parse(await readFile(paths.summaryPath, "utf8")) as {
+    const summary = parseStructured(await readFile(paths.summaryPath, "utf8")) as {
       decisions?: { seen?: number; contributed?: number };
     };
     expect(summary.decisions).toEqual({ seen: 1, contributed: 1 });
@@ -1158,10 +1159,20 @@ async function waitForStatusSummary(summaryPath: string, minMtimeMs = 0, timeout
       readFile(summaryPath, "utf8").catch(() => ""),
       fileMtimeMs(summaryPath),
     ]);
-    if (summary.includes("tokens_saved_today") && mtimeMs > minMtimeMs) return;
+    if (parseStructured(summary) && mtimeMs > minMtimeMs) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("rsp status summary did not refresh");
+}
+
+function parseStructured(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
+  }
 }
 
 async function fileMtimeMs(path: string): Promise<number> {
