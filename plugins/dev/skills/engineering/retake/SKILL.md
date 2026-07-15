@@ -103,9 +103,10 @@ structured output.
 ### `--apply` — safe local setup only
 
 `red-skills-dev retake 123 --apply` runs only the safe local `git` operations
-the diagnosis selected: create a missing `.red/tmp/work-ship-*` worktree,
-recreate it from a matching branch, or fetch a PR head branch into a fresh
-worktree. It then prints the next `cd`, `requeue`, or `/go` command.
+the diagnosis selected: create a missing manual worktree under
+`.red/tmp/worktrees/manual/<slug>`, recreate it from a matching branch, or fetch
+a PR head branch into a fresh worktree. It then prints the next `cd`, `requeue`,
+or `/go` command.
 
 - ✅ `--apply` is non-destructive by construction — local `git` setup, nothing else.
 - ❌ Do **not** expect `--apply` to merge, close issues, edit labels, run the requeue transition, or move the primary checkout's branch. It does none of them.
@@ -158,11 +159,13 @@ mismatch, or a blocked kind outside `validation` / `spec` / `sensitive-path`
 
 ## Where the work lives
 
-Hand-done work belongs in a worktree under `.red/tmp/work-*/`, never on the
-primary checkout's branch. When the diagnosis finds no local state at all, the
-next action is a fresh worktree from `origin/main` — or, for a brand-new one-off
-demand that never was an issue, `/go "<demand>"` instead of this skill. After an
-adopted branch lands, its worktree is pruned automatically.
+Hand-done work belongs in the manual-worktree lane
+`.red/tmp/worktrees/manual/<slug>`, never on the primary checkout's branch. Use a
+lowercase kebab-case slug, usually the issue number plus a short task name. When
+the diagnosis finds no local state at all, the next action is a fresh worktree
+from `origin/main` — or, for a brand-new one-off demand that never was an issue,
+`/go "<demand>"` instead of this skill. After an adopted branch lands through the
+no-agent landing lane, its worktree is pruned automatically.
 
 ## See also
 
