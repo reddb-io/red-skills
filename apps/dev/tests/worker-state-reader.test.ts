@@ -2,7 +2,9 @@ import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import { decode, encode } from "@reddb-io/toon";
 import { readWorkerState, readWorkerStates, readAllWorkerStates, isRenderableLive } from "../src/core/worker-state-reader.js";
+import { initStateSync } from "../src/core/state.js";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const NOW = Date.UTC(2026, 5, 22, 12, 0, 0);
@@ -116,6 +118,50 @@ describe("worker-state-reader", () => {
     expect(rec!.state.current.reasoning_events).toBe(5);
     expect(rec!.state.current.last_commit_at).toBe(fresh);
     expect(rec!.active).toBe(true);
+  });
+
+  it("reads a TOON attempt-state snapshot through the same schema path", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-toon-"));
+    const path = join(base, "afk.state.json");
+    await mkdir(base, { recursive: true });
+    await writeFile(
+      path,
+      encode({
+        worker_id: "wTOON",
+        pid: 4242,
+        current: {
+          number: 1783,
+          loc_added: 12,
+          loc_removed: 2,
+          last_event_at: fresh,
+        },
+      }),
+      "utf8",
+    );
+
+    const rec = readWorkerState(path, { nowMs: NOW, laneRecencyMs: LANE_FRESH_MS });
+    expect(rec).not.toBeNull();
+    expect(rec!.state.worker_id).toBe("wTOON");
+    expect(rec!.state.current.number).toBe(1783);
+    expect(rec!.state.current.loc_added).toBe(12);
+    expect(rec!.active).toBe(true);
+  });
+
+  it("writes the attempt-state snapshot as spec-valid TOON", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-write-toon-"));
+    const path = join(base, "afk.state.json");
+    initStateSync(path, {
+      worker_id: "wWRITE",
+      pid: 4242,
+      "current.number": 1783,
+      "current.activity": "setup",
+    });
+
+    const raw = await import("node:fs/promises").then((fs) => fs.readFile(path, "utf8"));
+    expect(raw.trimStart().startsWith("{")).toBe(false);
+    const decoded = decode(raw) as { worker_id?: string; current?: { number?: number } };
+    expect(decoded.worker_id).toBe("wWRITE");
+    expect(decoded.current?.number).toBe(1783);
   });
 
   it("returns null for a missing file", () => {
