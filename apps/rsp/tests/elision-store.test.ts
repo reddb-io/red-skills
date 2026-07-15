@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -442,6 +443,33 @@ describe("RspElisionStore", () => {
       }
 
       expect((await stat(storePath)).size).toBeLessThanOrEqual(2_000);
+      await expect(store.stats()).resolves.toMatchObject({ records: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("bounds the embedded RedDB file after repeated mint-expire-sweep cycles", async () => {
+    let now = new Date("2026-07-10T12:00:00.000Z");
+    const root = await tempRoot();
+    const storePath = join(root, "red-skills.rdb");
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      byteBudget: 512 * 1024,
+      ephemeralTtlHours: 1,
+      now: () => now,
+    });
+    try {
+      for (let cycle = 0; cycle < 20; cycle += 1) {
+        await store.mint(randomBytes(64 * 1024), {
+          command: `node noisy-${cycle}.mjs`,
+          loss: { level: "terse", bytes_elided: 64 * 1024 },
+        });
+        now = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        await store.stats();
+      }
+
+      expect((await stat(storePath)).size).toBeLessThanOrEqual(512 * 1024);
       await expect(store.stats()).resolves.toMatchObject({ records: 0 });
     } finally {
       await store.close();
