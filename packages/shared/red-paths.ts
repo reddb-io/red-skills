@@ -52,6 +52,16 @@ export function redDir(root: string): string {
   return join(normalizeRoot(root), RED_DIR);
 }
 
+/** The canonical plugin config file: `<root>/.red/config.yaml` (ADR 0042). */
+export function configFile(root: string): string {
+  return join(redDir(root), "config.yaml");
+}
+
+/** The project hooks directory: `<root>/.red/hooks`. */
+export function hooksDir(root: string): string {
+  return join(redDir(root), "hooks");
+}
+
 /** Tier 3: durable machine state under `<root>/.red/state`. Never mass-deletable. */
 export function stateDir(root: string): string {
   return join(redDir(root), "state");

@@ -17,6 +17,8 @@ import {
   cascadeWorktreesDir,
   claimsDir,
   classifyLegacyWorktreeName,
+  configFile,
+  hooksDir,
   diagnosticsDir,
   docsWorktreesDir,
   feedbackWorktreesDir,
@@ -52,6 +54,8 @@ describe("tier directories", () => {
     expect(stateDir(ROOT)).toBe("/repo/.red/state");
     expect(tmpDir(ROOT)).toBe("/repo/.red/tmp");
     expect(researchesDir(ROOT)).toBe("/repo/.red/researches");
+    expect(configFile(ROOT)).toBe("/repo/.red/config.yaml");
+    expect(hooksDir(ROOT)).toBe("/repo/.red/hooks");
   });
 
   it("normalizes a trailing slash on the root", () => {
