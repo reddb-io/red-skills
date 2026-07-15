@@ -216,6 +216,18 @@ _Avoid_: graph.rdb, the memory database, elision cache
 The single shared binary that wraps engineering CLIs behind agent-ergonomic subcommands (`rsp git status`, `rsp test`) and carries the interception hook's rewrite table in the same artifact, so the two can never version-skew. It lives in a neutral package consumed by `dev` and `memory`; its hook activates only in a repo whose `.red/config.yaml` opts in (ADR 0067 posture). Wrapper output is TOON per the public spec; every lossy level mints an **Elision handle**.
 _Avoid_: proxy, drop-in replacement, compression layer, when naming the whole surface — interception is only one of its three parts
 
+**TOONL**:
+The append-only streaming extension of TOON (`github:reddb-io/toon`, spec v0.1): segment headers declare a schema once, rows follow positionally, an optional verified trailer closes a segment, and a crash-truncated open tail is valid ("unverified", never corrupt). TOONL is the on-disk format for every uniform RedSkills append stream (ADR 0097); TOON covers snapshots.
+_Avoid_: TOON lines, JSONL replacement (it replaces JSONL here, but the term names the format, not the migration)
+
+**tq**:
+The jq-for-TOON CLI shipped by `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup` installs it via the toon repo's checksum-verified, version-pinned `install.sh`, and `/red-doctor` red-flags absence or drift. Skills docs teach `tq` pipelines with no jq fallback lane.
+_Avoid_: jq (for TOON/TOONL files), the toon CLI
+
+**Declared optimization**:
+The two-regime output contract every TOON/TOONL producer obeys (ADR 0089 Amendment 2): by default output is lossless (`decode(encode(x)) === x`; cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — happens only behind an explicit opt-in flag and is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; re-run without the flag where re-derivable). Silent lossy normalization on the default path is the forbidden pattern.
+_Avoid_: compact mode (names the flag, not the contract), lossy output
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
