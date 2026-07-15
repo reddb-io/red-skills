@@ -1158,10 +1158,15 @@ function emptyStorageClassStats(): RspStorageClassStats {
   };
 }
 
-function renderSetupResult(result: { configChanged: boolean; storeCreated: boolean }): string {
+function renderSetupResult(result: {
+  configChanged: boolean;
+  storeCreated: boolean;
+  legacyStoreMigrated?: boolean;
+}): string {
+  const storeState = result.legacyStoreMigrated ? "migrated" : result.storeCreated ? "created" : "existing";
   return [
     `config: ${result.configChanged ? "updated" : "unchanged"}`,
-    `store: ${result.storeCreated ? "created" : "existing"}`,
+    `store: ${storeState}`,
     "",
   ].join("\n");
 }
