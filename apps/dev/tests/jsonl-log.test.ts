@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   appendAgentRecord,
   appendRecord,
+  appendRecordToonl,
+  appendRecordToonlRow,
   buildRecord,
   ENVELOPE_FIELD_ORDER,
   filterByType,
@@ -114,6 +116,22 @@ describe("jsonl-log malformed input", () => {
     await expect(appendRecord("/lane.jsonl", "", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
     expect(writes).toEqual([]);
   });
+
+  it("appendRecordToonl requires path and type with code 2 and writes nothing", async () => {
+    const writes: string[] = [];
+    const sink = async (_p: string, line: string) => void writes.push(line);
+    await expect(appendRecordToonl("", "stage", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    await expect(appendRecordToonl("/lane.jsonl", "", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    expect(writes).toEqual([]);
+  });
+
+  it("appendRecordToonlRow requires path and type with code 2 and writes nothing", async () => {
+    const writes: string[] = [];
+    const sink = async (_p: string, line: string) => void writes.push(line);
+    await expect(appendRecordToonlRow("", "stage", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    await expect(appendRecordToonlRow("/lane.jsonl", "", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    expect(writes).toEqual([]);
+  });
 });
 
 describe("jsonl-log lane routing", () => {
@@ -140,7 +158,7 @@ describe("jsonl-log lane routing", () => {
 
     // Firehose accepts agent + synthetic + arbitrary record types.
     for (const t of ["agent", "heartbeat", "boot", "stage", "hook"]) {
-      await appendRecord("/fire.jsonl", t, `m-${t}`, { ts: TS, sink: fSink });
+      await appendRecordToonl("/fire.jsonl", t, `m-${t}`, { ts: TS, sink: fSink });
     }
     // Agent lane only ever takes agent records; synthetics are refused.
     await appendAgentRecord("/agent.jsonl", "turn", { ts: TS, sink: aSink });
@@ -163,6 +181,33 @@ describe("jsonl-log append accumulation and readers", () => {
     const records = parseLane(await readFile(lane, "utf8"));
     expect(records.map((r) => r.msg)).toEqual(["a", "b", "c"]);
     expect(records.map((r) => r.type)).toEqual(["stage", "agent", "stage"]);
+  });
+
+  it("parses legacy JSONL, pure TOONL, and mixed supervisor firehose files", async () => {
+    const json = JSON.stringify(buildRecord("heartbeat", "legacy", TS, { worker: "fleet" }));
+    const toonA = formatRecordToonl(buildRecord("heartbeat", "toon-a", TS, { worker: "fleet" }));
+    const toonB = formatRecordToonl(buildRecord("heartbeat", "toon-b", TS, { worker: "fleet", extra: { slots_busy: "1" } }));
+
+    expect(parseLane(`${json}\n`).map((r) => r.msg)).toEqual(["legacy"]);
+    expect(parseLane(`${toonA}\n${toonB}\n`).map((r) => r.msg)).toEqual(["toon-a", "toon-b"]);
+    expect(parseLane(`${json}\n${toonA}\n${toonB}\n`).map((r) => r.msg)).toEqual(["legacy", "toon-a", "toon-b"]);
+  });
+
+  it("writes stable-schema TOONL lanes with one header and appended rows", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-toonl-row-"));
+    const lane = join(dir, "afk-supervisor.log.jsonl");
+    await appendRecordToonlRow(lane, "heartbeat", "first", {
+      ts: TS,
+      fields: { worker: "fleet", extra: { scope: "fleet", runner: "codex" } },
+    });
+    await appendRecordToonlRow(lane, "heartbeat", "second", {
+      ts: TS,
+      fields: { worker: "fleet", extra: { scope: "fleet", runner: "codex" } },
+    });
+
+    const content = await readFile(lane, "utf8");
+    expect(content.split("\n").filter((line) => line.startsWith("[1]{"))).toHaveLength(1);
+    expect(parseLane(content).map((r) => r.msg)).toEqual(["first", "second"]);
   });
 
   it("opens a new parseable TOONL segment after restart and skips a torn crash tail", async () => {

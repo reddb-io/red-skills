@@ -1,4 +1,4 @@
-import { mkdir, appendFile } from "node:fs/promises";
+import { mkdir, appendFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
@@ -137,6 +137,13 @@ export function formatRecordToonl(record: JsonlLogRecord): string {
   return encode([record] as unknown as JsonValue).trimEnd();
 }
 
+function formatRecordToonlParts(record: JsonlLogRecord): { header: string; row: string } {
+  const lines = formatRecordToonl(record).split(/\r?\n/);
+  const header = lines[0] ?? "";
+  const row = lines.slice(1).join("\n");
+  return { header, row };
+}
+
 /**
  * The append IO: a thin injectable sink. The default writes to the filesystem
  * with O_APPEND semantics (Node's `appendFile` opens with `a`, so each write is
@@ -170,6 +177,54 @@ export async function appendRecord(
   if (!type) throw new JsonlLogError("[jsonl-log] appendRecord: need <type>", 2);
   const record = buildRecord(type, msg, options.ts, options.fields);
   await (options.sink ?? fsAppendSink)(path, formatRecordLine(record));
+  return record;
+}
+
+/**
+ * Append one envelope record as a standalone TOONL segment.
+ * Used by append-only lanes that have moved their writer to TOONL while keeping
+ * format-sniff readers tolerant of legacy JSONL and mixed transition files.
+ */
+export async function appendRecordToonl(
+  path: string,
+  type: string,
+  msg: JsonlLogValue,
+  options: AppendOptions,
+): Promise<JsonlLogRecord> {
+  if (!path) throw new JsonlLogError("[jsonl-log] appendRecordToonl: need <path>", 2);
+  if (!type) throw new JsonlLogError("[jsonl-log] appendRecordToonl: need <type>", 2);
+  const record = buildRecord(type, msg, options.ts, options.fields);
+  await (options.sink ?? fsAppendSink)(path, formatRecordToonl(record));
+  return record;
+}
+
+/**
+ * Append one envelope record to a stable-schema TOONL lane. The first append
+ * writes the TOONL header plus row; later appends write only rows. Callers must
+ * keep the record shape stable for the lifetime of the file.
+ */
+export async function appendRecordToonlRow(
+  path: string,
+  type: string,
+  msg: JsonlLogValue,
+  options: AppendOptions,
+): Promise<JsonlLogRecord> {
+  if (!path) throw new JsonlLogError("[jsonl-log] appendRecordToonlRow: need <path>", 2);
+  if (!type) throw new JsonlLogError("[jsonl-log] appendRecordToonlRow: need <type>", 2);
+  const record = buildRecord(type, msg, options.ts, options.fields);
+  const { header, row } = formatRecordToonlParts(record);
+  if (options.sink) {
+    await options.sink(path, `${header}\n${row}`);
+    return record;
+  }
+  await mkdir(dirname(path), { recursive: true });
+  let empty = true;
+  try {
+    empty = (await stat(path)).size === 0;
+  } catch {
+    empty = true;
+  }
+  await appendFile(path, `${empty ? `${header}\n` : ""}${row}\n`, "utf8");
   return record;
 }
 
@@ -229,13 +284,13 @@ export function parseLane(content: string): JsonlLogRecord[] {
       }
       continue;
     }
-    if (/^\[[0-9]+\]\{[^}]+\}:$/.test(trimmed)) {
+    if (/^\[(?:[0-9]+)?\]\{[^}]+\}:$/.test(trimmed)) {
       header = trimmed;
       continue;
     }
     if (!header) continue;
     try {
-      const value = decode(header.replace(/^\[[0-9]+\]/, "[1]") + "\n" + line + "\n");
+      const value = decode(header.replace(/^\[(?:[0-9]+)?\]/, "[1]") + "\n" + line + "\n");
       const row = Array.isArray(value) ? value[0] : value;
       if (row && typeof row === "object") records.push(row as JsonlLogRecord);
     } catch {

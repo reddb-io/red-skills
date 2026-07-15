@@ -12,6 +12,7 @@ export interface RegisteredToonSurface {
   legacyPath: string;
   toonPath: string;
   kind: RegisteredToonSurfaceKind;
+  migration?: "convert" | "sniff-read";
 }
 
 export interface ToonMigrationReport {
@@ -59,6 +60,14 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     legacyPath: ".red/tmp/agent.log.jsonl",
     toonPath: ".red/tmp/agent.log.toonl",
     kind: "toonl",
+  },
+  {
+    id: "dev.supervisor-firehose",
+    plugin: "dev",
+    legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
+    toonPath: ".red/tmp/afk-supervisor.log.jsonl",
+    kind: "toonl",
+    migration: "sniff-read",
   },
   {
     id: "dev.code-understanding-bench-runs",
@@ -150,6 +159,12 @@ export async function convertRegisteredToonSurfaces(
   const missing: string[] = [];
 
   for (const surface of selected) {
+    if (surface.migration === "sniff-read") {
+      if (await pathExists(join(opts.rootDir, surface.legacyPath))) skipped.push(surface.id);
+      else missing.push(surface.id);
+      continue;
+    }
+
     const targets = await expandSurfaceTargets(opts.rootDir, surface);
     if (targets.length === 0) {
       missing.push(surface.id);
@@ -201,6 +216,16 @@ export async function readRegisteredToonSurface(
 ): Promise<ToonSurfaceReadResult> {
   const surface = surfaces.find((candidate) => candidate.id === surfaceId);
   if (!surface) throw new Error(`unknown registered TOON surface: ${surfaceId}`);
+
+  if (surface.migration === "sniff-read") {
+    const path = join(rootDir, surface.toonPath);
+    return {
+      surface,
+      path,
+      format: surface.kind,
+      value: surface.kind === "toonl" ? await readSniffedToonlFile(path) : await readSnapshotDocument(await readFile(path, "utf8")),
+    };
+  }
 
   const converted = join(rootDir, surface.toonPath);
   if (await pathExists(converted) && await isReadableConvertedFile(converted, surface.kind)) {
@@ -320,6 +345,38 @@ async function readLegacyFile(path: string, kind: RegisteredToonSurfaceKind): Pr
     return rows;
   }
   return JSON.parse(body);
+}
+
+async function readSniffedToonlFile(path: string): Promise<unknown[]> {
+  const body = await readFile(path, "utf8");
+  const rows: unknown[] = [];
+  let header = "";
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("{")) {
+      try {
+        rows.push(JSON.parse(trimmed));
+      } catch {
+        // Append-only lanes may end with a torn crash-tail row.
+      }
+      continue;
+    }
+    if (/^\[(?:[0-9]+)?\](?:\{[^}]+\}:|:)$/.test(trimmed)) {
+      header = trimmed;
+      continue;
+    }
+    if (!header) continue;
+    try {
+      const normalizedHeader = header.replace(/^\[(?:[0-9]+)?\]/, "[1]");
+      const value = decode(`${normalizedHeader}\n${line}\n`);
+      rows.push(Array.isArray(value) ? value[0] : value);
+    } catch {
+      // TOONL readers are crash-tail tolerant during rollout.
+    }
+  }
+  return rows;
 }
 
 async function readConvertedFile(path: string, kind: RegisteredToonSurfaceKind): Promise<unknown> {

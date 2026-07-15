@@ -27,6 +27,7 @@ describe("TOONL operational docs", () => {
 
     expect(joined).toContain("tq -p toonl -o json -r .msg");
     expect(joined).toContain(".red/state/afk-history.toonl");
+    expect(joined).toContain(".red/tmp/afk-supervisor.log.jsonl");
     expect(joined).toContain("there is no jq fallback");
     expect(joined).not.toMatch(/afk-history\.jsonl/);
     const laneReaderLines = joined
@@ -40,6 +41,7 @@ describe("TOONL operational docs", () => {
     try {
       const agentLane = join(dir, "agent.log.jsonl");
       const historyLane = join(dir, "afk-history.toonl");
+      const supervisorFirehose = join(dir, "afk-supervisor.log.jsonl");
       await writeFile(
         agentLane,
         [
@@ -58,9 +60,21 @@ describe("TOONL operational docs", () => {
         ].join("\n"),
         "utf8",
       );
+      await writeFile(
+        supervisorFirehose,
+        [
+          "[]{ts,worker,type,msg,scope,runner,ready_for_agent,slots_busy,slots_free,slots_total,slots_parked,spawns_this_tick}:",
+          '"2026-07-15T00:00:00Z",fleet,heartbeat,"fleet tick ready=4 busy=1 free=1 spawns=1",fleet,codex,4,1,1,2,0,1',
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
       const agent = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-r", ".msg", agentLane]);
       expect(agent.stdout.trim()).toBe("hello");
+
+      const firehose = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-r", ".msg", supervisorFirehose]);
+      expect(firehose.stdout.trim()).toBe("fleet tick ready=4 busy=1 free=1 spawns=1");
 
       const history = await execFileAsync("tq", [
         "-p",
