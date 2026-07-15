@@ -8,33 +8,45 @@ async function readStartSkill(): Promise<string> {
   return readFile(join(ROOT, "plugins/dev/skills/engineering/start/SKILL.md"), "utf8");
 }
 
+async function readDocLandingProcedure(): Promise<string> {
+  return readFile(join(ROOT, "plugins/dev/skills/engineering/start/DOC-LANDING-FINALIZER.md"), "utf8");
+}
+
 describe("start docs contract", () => {
-  it("requires the end-of-session doc-landing finalizer", async () => {
+  it("references the shared end-of-session doc-landing finalizer", async () => {
     const skill = await readStartSkill();
 
     expect(skill).toContain("end-of-session doc-landing finalizer");
-    expect(skill).toContain("Stop when the user says stop");
-    expect(skill).toContain(".red/CONTEXT-MAP.md");
-    expect(skill).toContain(".red/contexts/**");
-    expect(skill).toContain(".red/adr/**");
-    expect(skill).toContain("Announce the file list");
-    expect(skill).toContain("ADR numbers");
-    expect(skill).toContain("decline leaves the docs unlanded");
-    expect(skill).toContain("base resolved lock > pin > main");
-    expect(skill).toContain("worktree under `.red/tmp/worktrees/docs/<slug>`");
-    expect(skill).toContain("docs-<YYYYMMDD>-<slug>");
-    expect(skill).toContain("docs:");
-    expect(skill).toContain("one batch PR per session");
-    expect(skill).toContain("no doc changes skips the finalizer silently");
+    expect(skill).toContain("DOC-LANDING-FINALIZER.md");
+    expect(skill).not.toContain("create one worktree under `.red/tmp/worktrees/docs/<slug>`");
+  });
+
+  it("keeps the shared end-of-session doc-landing finalizer contract", async () => {
+    const procedure = await readDocLandingProcedure();
+
+    expect(procedure).toContain("end-of-session doc-landing finalizer");
+    expect(procedure).toContain("the user stops or every reachable branch is resolved");
+    expect(procedure).toContain(".red/CONTEXT-MAP.md");
+    expect(procedure).toContain(".red/contexts/**");
+    expect(procedure).toContain(".red/adr/**");
+    expect(procedure).toContain("Announce the file list");
+    expect(procedure).toContain("ADR numbers");
+    expect(procedure).toContain("decline leaves the docs unlanded");
+    expect(procedure).toContain("base resolved lock > pin > main");
+    expect(procedure).toContain("worktree under `.red/tmp/worktrees/docs/<slug>`");
+    expect(procedure).toContain("docs-<YYYYMMDD>-<slug>");
+    expect(procedure).toContain("docs:");
+    expect(procedure).toContain("one batch PR per session");
+    expect(procedure).toContain("no doc changes skips the finalizer silently");
   });
 
   it("keeps the primary-checkout safety prohibitions explicit", async () => {
-    const skill = await readStartSkill();
+    const procedure = await readDocLandingProcedure();
 
-    expect(skill).toContain("never commit in the primary checkout");
-    expect(skill).toContain("never switch its branch");
-    expect(skill).toContain("never stash");
-    expect(skill).toContain("never reset");
+    expect(procedure).toContain("never commit in the primary checkout");
+    expect(procedure).toContain("never switch its branch");
+    expect(procedure).toContain("never stash");
+    expect(procedure).toContain("never reset");
   });
 
   it("carries the facts-vs-decisions distinction in the hard rules", async () => {

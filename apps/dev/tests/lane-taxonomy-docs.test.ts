@@ -22,18 +22,18 @@ describe("writer skill lane taxonomy docs", () => {
   });
 
   it("names the manual and docs worktree lanes explicitly", async () => {
-    const [implement, retake, start] = await Promise.all([
+    const [implement, retake, docLandingFinalizer] = await Promise.all([
       readRepoFile("plugins/dev/skills/engineering/implement/SKILL.md"),
       readRepoFile("plugins/dev/skills/engineering/retake/SKILL.md"),
-      readRepoFile("plugins/dev/skills/engineering/start/SKILL.md"),
+      readRepoFile("plugins/dev/skills/engineering/start/DOC-LANDING-FINALIZER.md"),
     ]);
 
     expect(implement).toContain(".red/tmp/worktrees/manual/<slug>");
     expect(implement).toContain("git worktree add .red/tmp/worktrees/manual/<slug>");
     expect(retake).toContain(".red/tmp/worktrees/manual/<slug>");
     expect(retake).toContain("no-agent landing lane");
-    expect(start).toContain(".red/tmp/worktrees/docs/<slug>");
-    expect(start).toContain("docs-<YYYYMMDD>-<slug>");
+    expect(docLandingFinalizer).toContain(".red/tmp/worktrees/docs/<slug>");
+    expect(docLandingFinalizer).toContain("docs-<YYYYMMDD>-<slug>");
   });
 
   it("points branch-lock docs at the state tier while noting legacy readers", async () => {
