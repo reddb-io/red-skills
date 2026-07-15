@@ -32,7 +32,7 @@ export interface HostBinaryReport {
 
 function canonicalInstallerFix(name: string, version: string): string {
   if (name === "tq") {
-    return `install pinned tq with: TQ_VERSION=${version} curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh | sh`;
+    return `install pinned tq with: TQ_VERSION=v${version} curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh | sh`;
   }
   return `install pinned ${name} version ${version}`;
 }

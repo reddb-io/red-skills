@@ -148,7 +148,7 @@ If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the s
 Install the pinned `tq` through the toon repo's checksum-verified installer:
 
 ```bash
-TQ_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
+TQ_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
 ```
 
 Then verify:

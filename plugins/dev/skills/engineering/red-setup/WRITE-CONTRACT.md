@@ -85,7 +85,7 @@ Install and record required host binaries (Section E2):
 1. Run the pinned toon installer exactly as documented:
 
    ```bash
-   TQ_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
+   TQ_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
    ```
 
 2. Verify `tq --version` reports `0.1.0`. If it does not, stop and report the mismatch; do not offer a jq fallback.

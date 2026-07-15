@@ -20,7 +20,7 @@ describe("auditHostBinaries — required host binary contract", () => {
         verdict: "error",
         reason: "required host binary tq is missing",
         remediation:
-          "install pinned tq with: TQ_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh",
+          "install pinned tq with: TQ_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh",
       },
     ]);
   });
@@ -34,7 +34,7 @@ describe("auditHostBinaries — required host binary contract", () => {
       verdict: "error",
       reason: "required host binary tq is 0.0.9, expected 0.1.0",
     });
-    expect(report.findings[0]?.remediation).toContain("TQ_VERSION=0.1.0");
+    expect(report.findings[0]?.remediation).toContain("TQ_VERSION=v0.1.0");
     expect(report.rows[0]).toEqual({ binary: "tq", required: "0.1.0", observed: "0.0.9", verdict: "error" });
   });
 

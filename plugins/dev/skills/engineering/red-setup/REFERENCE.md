@@ -13,7 +13,7 @@ Scaffold includes:
 - **Workflows** — GitHub Actions shipped by RedSkills (installed under the `rs-*` prefix), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — provision the repo-owned `rsp` opt-in (`rsp.enabled: true`) so supported noisy commands can use wrapper summaries, reversible elision handles, and hook rewrites without a third-party proxy
 - **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
-- **Required host binaries** — install pinned `tq` (`TQ_VERSION=0.1.0`) through the toon repo installer and record `host_binaries.tq.version` so `/red-doctor` can enforce the no-jq-fallback TOON/TOONL contract
+- **Required host binaries** — install pinned `tq` (`TQ_VERSION=v0.1.0`) through the toon repo installer and record `host_binaries.tq.version` so `/red-doctor` can enforce the no-jq-fallback TOON/TOONL contract
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
 - **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route one-off concrete work through `/go` (ADR 0081)
 

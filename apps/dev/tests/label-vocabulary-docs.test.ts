@@ -214,7 +214,7 @@ describe("red-setup docs", () => {
     const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
 
     expect(skill).toContain("**Section E2 — Required host binaries");
-    expect(skill).toContain("TQ_VERSION=0.1.0");
+    expect(skill).toContain("TQ_VERSION=v0.1.0");
     expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh");
     expect(skill).toContain("no jq fallback");
     expect(skill).toContain("host_binaries:");
