@@ -6,8 +6,9 @@ import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
-import { encode, type JsonObject } from "@reddb-io/toon";
+import { type JsonObject } from "@reddb-io/toon";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
 import { createResidentBrainStore } from "./resident-brain.js";
@@ -481,7 +482,7 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
     };
   }
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmp, `${encode(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(tmp, `${encodeSnapshotToon(payload)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
