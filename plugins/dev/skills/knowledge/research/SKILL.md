@@ -1,12 +1,12 @@
 ---
 name: research
-description: Performs deep official-source research on a technical topic and saves a structured Markdown report under `.red/tmp/researches/<slug>.md`. Use when the user invokes `/research`, asks for official documentation, primary-source research, repository/wiki documentation, specs, or high-depth source-backed notes.
+description: Performs deep official-source research on a technical topic and saves a structured Markdown report under `.red/researches/<YYYY-MM-DD>-<slug>.md`. Use when the user invokes `/research`, asks for official documentation, primary-source research, repository/wiki documentation, specs, or high-depth source-backed notes.
 argument-hint: "<topic> [--deep] [--save-as slug]"
 ---
 
 # /research
 
-**Research a technical topic from official primary sources only, then save a structured report to `.red/tmp/researches/<slug>.md`.**
+**Research a technical topic from official primary sources only, then save a structured, date-disambiguated report to `.red/researches/<YYYY-MM-DD>-<slug>.md`.**
 
 ## Source Policy
 
@@ -25,8 +25,11 @@ Never cite SEO blogs or Medium posts — they obscure official truth. Avoid gene
 1. Parse the topic and optional `--save-as <slug>`.
 2. Search broadly, then narrow to official/primary sources.
 3. Open and read the relevant pages; follow official links when they clarify API, config, behavior, versioning, or migration details.
-4. Create `.red/tmp/researches/` if needed.
-5. Save the report as `.red/tmp/researches/<slug>.md`.
+4. Create `.red/researches/` if needed.
+5. Save the report as `.red/researches/<YYYY-MM-DD>-<slug>.md`. If that path
+   already exists, append a numeric suffix such as
+   `.red/researches/<YYYY-MM-DD>-<slug>-2.md`; never silently overwrite an
+   earlier report.
 6. Reply with the saved path and the highest-signal findings.
 
 ## Report Template
