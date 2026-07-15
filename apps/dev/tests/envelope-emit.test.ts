@@ -161,10 +161,11 @@ describe("buildSections", () => {
     expect(s.map((x) => x.name)).toEqual(["notes", "validation", "diff"]);
   });
 
-  it("no-sentinel → notes + diff + log (log fenced)", () => {
+  it("no-sentinel → notes + diff + log (log fenced as TOON)", () => {
     const s = buildSections("no-sentinel", { notes: "n", log: "line C" }, diff, "remote");
     expect(s.map((x) => x.name)).toEqual(["notes", "diff", "log"]);
     expect(s.find((x) => x.name === "log")?.fenced).toBe(true);
+    expect(s.find((x) => x.name === "log")?.fenceLang).toBe("toon");
   });
 
   it("merge-conflict → diff + log (no notes)", () => {
@@ -272,7 +273,7 @@ describe("emitEnvelope — per-status summary + sections", () => {
     expect(res.body).toContain("grep saw #42");
   });
 
-  it("no-sentinel: notes < diff < log, log fenced", async () => {
+  it("no-sentinel: notes < diff < log, log fenced as TOON", async () => {
     const { deps } = makeDeps();
     const res = await emitEnvelope(deps, {
       status: "no-sentinel",
@@ -291,7 +292,7 @@ describe("emitEnvelope — per-status summary + sections", () => {
     });
     expect(res.body).toContain('<details data-attempt-status="no-sentinel">');
     expect(res.body).toContain('<details data-section="log">');
-    expect(res.body).toContain("```");
+    expect(res.body).toContain("```toon");
     expect(res.body).toContain("line C");
     const n = res.body.indexOf('data-section="notes"');
     const d = res.body.indexOf('data-section="diff"');
@@ -320,6 +321,7 @@ describe("emitEnvelope — per-status summary + sections", () => {
     expect(res.body).toContain('<details data-attempt-status="merge-conflict">');
     expect(res.body).toContain('<details data-section="diff">');
     expect(res.body).toContain('<details data-section="log">');
+    expect(res.body).toContain("```toon");
     expect(res.body).toContain("CONFLICT (content)");
     expect(res.body).not.toContain('data-section="notes"');
   });
