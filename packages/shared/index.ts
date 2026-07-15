@@ -84,6 +84,7 @@ export {
   type RedBinaryRuntime,
   type RedRuntimeIO,
 } from "./red-runtime.js";
+export * from "./red-paths.js";
 export * from "./outcome-event.js";
 export * from "./resident-client.js";
 export * from "./resident-protocol.js";
