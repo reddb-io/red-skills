@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { decode } from "@reddb-io/toon";
 import { resolveBase } from "../core/base-resolver.js";
 import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
@@ -156,7 +157,8 @@ interface RspSummaryFile {
 
 function parseRspSummary(path: string): RspSummaryFile | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const raw = readFileSync(path, "utf8").trim();
+    const parsed = raw.startsWith("{") ? JSON.parse(raw) as unknown : decode(raw);
     if (
       typeof parsed === "object" &&
       parsed !== null &&
