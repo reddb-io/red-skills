@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,6 +132,11 @@ interface StoreDocument {
   blobs: Record<string, StoredBlob>;
   tombstones: Record<string, RspExpiredHandle>;
   index: IndexDocument;
+}
+
+interface RedDbKvCollectionSnapshot {
+  name: string;
+  items: Array<{ key: string; value: unknown }>;
 }
 
 export class RspElisionStore {
@@ -701,7 +706,92 @@ export class RspElisionStore {
       await this.writeRedDbIndex(next);
     }
     await this.deleteUnreferencedRedDbBlobs(live);
+    await this.rotateRedDbGenerationIfOversized(next);
     return next;
+  }
+
+  private async rotateRedDbGenerationIfOversized(index: IndexDocument): Promise<void> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const currentBytes = await stat(this.path).then((value) => value.size, () => 0);
+    if (currentBytes <= this.opts.byteBudget) return;
+
+    const snapshot = await this.snapshotRedDbKvCollections(index);
+    if (!snapshot) return;
+
+    const suffix = `${process.pid}.${Date.now()}`;
+    const compactPath = `${this.path}.${suffix}.compact`;
+    const backupPath = `${this.path}.${suffix}.old`;
+    await rm(compactPath, { force: true });
+    await rm(backupPath, { force: true });
+
+    const compactDb = await connect(`file://${compactPath}`);
+    try {
+      for (const collection of snapshot) {
+        await compactDb.query(`CREATE KV IF NOT EXISTS ${redDbIdentifier(collection.name)}`);
+        const kv = compactDb.kv(collection.name);
+        for (const item of collection.items) await kv.put(item.key, item.value);
+      }
+    } finally {
+      await compactDb.close();
+    }
+
+    const compactBytes = await stat(compactPath).then((value) => value.size, () => 0);
+    if (compactBytes === 0 || compactBytes > this.opts.byteBudget || compactBytes >= currentBytes) {
+      await rm(compactPath, { force: true });
+      return;
+    }
+
+    await this.db.close();
+    this.db = undefined;
+    try {
+      await rename(this.path, backupPath);
+      await rename(compactPath, this.path);
+      await rm(backupPath, { force: true });
+    } catch (err) {
+      if (!existsSync(this.path) && existsSync(backupPath)) {
+        await rename(backupPath, this.path);
+      }
+      await rm(compactPath, { force: true });
+      throw err;
+    } finally {
+      this.db = await connect(`file://${this.path}`);
+    }
+  }
+
+  private async snapshotRedDbKvCollections(index: IndexDocument): Promise<RedDbKvCollectionSnapshot[] | null> {
+    if (!this.db) throw new Error("rsp RedDB store is not open");
+    const collections = await this.db.list();
+    if (collections.some((collection) => collection.model !== "kv")) return null;
+
+    const snapshots: RedDbKvCollectionSnapshot[] = [];
+    let sawElisionCollection = false;
+    for (const collection of collections) {
+      const name = String(collection.name ?? "").trim();
+      if (name === RSP_ELISION_COLLECTION) {
+        snapshots.push(await this.snapshotRedDbElisions(index));
+        sawElisionCollection = true;
+        continue;
+      }
+      const listed = await this.db.kv(name).list({ limit: 10_000 });
+      if (listed.items.length >= 10_000) return null;
+      snapshots.push({ name, items: listed.items });
+    }
+    if (!sawElisionCollection) snapshots.push(await this.snapshotRedDbElisions(index));
+    return snapshots;
+  }
+
+  private async snapshotRedDbElisions(index: IndexDocument): Promise<RedDbKvCollectionSnapshot> {
+    const items: Array<{ key: string; value: unknown }> = [{ key: indexKey(), value: index }];
+    const keys = new Set<string>();
+    for (const entry of index.records) {
+      keys.add(entry.key);
+      if (entry.blob_key) keys.add(entry.blob_key);
+    }
+    for (const key of keys) {
+      const value = await this.kvGet(key);
+      if (value != null) items.push({ key, value });
+    }
+    return { name: RSP_ELISION_COLLECTION, items };
   }
 
   private async expireRedDbEntry(entry: IndexEntry, expiredAt: string): Promise<void> {
@@ -761,6 +851,11 @@ function indexKey(): string {
 
 function blobKey(hash: string): string {
   return `blob:${hash}`;
+}
+
+function redDbIdentifier(value: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`invalid RedDB identifier: ${value}`);
+  return value;
 }
 
 export function storageClassForCommand(command: string): RspStorageClass {
