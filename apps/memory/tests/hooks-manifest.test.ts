@@ -69,6 +69,15 @@ describe("hook manifests", () => {
     }
   });
 
+  test("Codex documents the PreCompact degradation by wiring Stop and SessionStart only", async () => {
+    const manifest = await loadManifest(hookManifest("codex.hooks.json"));
+
+    expect(Object.keys(manifest.hooks).sort()).toEqual(["PostToolUse", "SessionStart", "Stop"]);
+    expect(manifest.hooks).not.toHaveProperty("PreCompact");
+    expect(commands(manifest).filter((command) => command.includes(" hook Stop "))).toHaveLength(1);
+    expect(commands(manifest).filter((command) => command.includes(" hook SessionStart "))).toHaveLength(1);
+  });
+
   test("Claude hooks fail open to {} when the runtime cannot be resolved", async () => {
     const root = await tempRoot();
     const manifest = await loadManifest(hookManifest("claude.hooks.json"));
