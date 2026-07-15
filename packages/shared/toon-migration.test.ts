@@ -95,11 +95,33 @@ describe("shared TOON migration registry", () => {
           toonPath: ".red/tmp/statusline-repo-cache.json",
           kind: "toon",
         }),
+        expect.objectContaining({
+          id: "dev.rsp-resident-registry",
+          plugin: "dev",
+          legacyPath: ".red/tmp/rsp-resident.pid.json",
+          toonPath: ".red/tmp/rsp-resident.pid.json",
+          kind: "toon",
+        }),
+        expect.objectContaining({
+          id: "dev.rsp-status-summary",
+          plugin: "dev",
+          legacyPath: ".red/tmp/rsp-status-summary.json",
+          toonPath: ".red/tmp/rsp-status-summary.json",
+          kind: "toon",
+        }),
+        expect.objectContaining({
+          id: "dev.rsp-wait-registry",
+          plugin: "dev",
+          legacyPath: ".red/tmp/waits/*.json",
+          toonPath: ".red/tmp/waits/*.json",
+          kind: "toon",
+        }),
       ]),
     );
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.agent-log");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.attempt-state");
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.rsp-wait-registry");
   });
 
   test("refuses while fleet or residents are active and explains why", async () => {
@@ -233,25 +255,59 @@ describe("shared TOON migration registry", () => {
       ".red/tmp/statusline-repo-cache.json",
       JSON.stringify({ baseRef: "origin/main", openPrs: 2, todayPrs: 1, openIssues: 8, localAdded: 5, localRemoved: 2, ts: 100 }),
     );
+    await write(
+      root,
+      ".red/tmp/rsp-resident.pid.json",
+      JSON.stringify({ version: 1, pid: 0, socket_path: "sock", store_uri: "file://store", resident_version: "old", started_at: "t" }),
+    );
+    await write(root, ".red/tmp/rsp-status-summary.json", JSON.stringify({ version: 1, tokens_saved_today: 12, updated_at: "t" }));
+    await write(
+      root,
+      ".red/tmp/waits/wait-a.json",
+      JSON.stringify({ id: "wait-a", target: "cmd:test", reason: "legacy", pid: 0, started_at: "t", poll_tier: "local", status: "running" }),
+    );
 
     const first = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
     const second = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
 
     expect(first.converted).toEqual(
-      expect.arrayContaining(["dev.attempt-state", "dev.statusline-count-cache", "dev.statusline-repo-cache"]),
+      expect.arrayContaining([
+        "dev.attempt-state",
+        "dev.statusline-count-cache",
+        "dev.statusline-repo-cache",
+        "dev.rsp-resident-registry",
+        "dev.rsp-status-summary",
+        "dev.rsp-wait-registry",
+      ]),
     );
     const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.json"), "utf8");
     const countRaw = await readFile(join(root, ".red/tmp/statusline-cache.json"), "utf8");
     const repoRaw = await readFile(join(root, ".red/tmp/statusline-repo-cache.json"), "utf8");
+    const residentRaw = await readFile(join(root, ".red/tmp/rsp-resident.pid.json"), "utf8");
+    const summaryRaw = await readFile(join(root, ".red/tmp/rsp-status-summary.json"), "utf8");
+    const waitRaw = await readFile(join(root, ".red/tmp/waits/wait-a.json"), "utf8");
     expect(stateRaw.trimStart().startsWith("{")).toBe(false);
     expect(countRaw.trimStart().startsWith("{")).toBe(false);
     expect(repoRaw.trimStart().startsWith("{")).toBe(false);
+    expect(residentRaw.trimStart().startsWith("{")).toBe(false);
+    expect(summaryRaw.trimStart().startsWith("{")).toBe(false);
+    expect(waitRaw.trimStart().startsWith("{")).toBe(false);
     expect((decode(stateRaw) as { current?: { number?: number } }).current?.number).toBe(1783);
     expect((decode(countRaw) as { queue?: number }).queue).toBe(4);
     expect((decode(repoRaw) as { openPrs?: number }).openPrs).toBe(2);
+    expect((decode(residentRaw) as { resident_version?: string }).resident_version).toBe("old");
+    expect((decode(summaryRaw) as { tokens_saved_today?: number }).tokens_saved_today).toBe(12);
+    expect((decode(waitRaw) as { reason?: string }).reason).toBe("legacy");
     expect(second.status).toBe("noop");
     expect(second.skipped).toEqual(
-      expect.arrayContaining(["dev.attempt-state", "dev.statusline-count-cache", "dev.statusline-repo-cache"]),
+      expect.arrayContaining([
+        "dev.attempt-state",
+        "dev.statusline-count-cache",
+        "dev.statusline-repo-cache",
+        "dev.rsp-resident-registry",
+        "dev.rsp-status-summary",
+        "dev.rsp-wait-registry",
+      ]),
     );
   });
 });
