@@ -451,5 +451,22 @@ export function renderActivityReviewReport(report: ActivityReviewReport): string
  * as the definitive `key[0]:` empty state.
  */
 export function renderActivityReviewReportToon(report: ActivityReviewReport): string {
-  return encodeToon(report as unknown as ToonValue);
+  return encodeToon(toToonSafeActivityReviewReport(report));
+}
+
+function toToonSafeActivityReviewReport(report: ActivityReviewReport): ToonValue {
+  const payload = {
+    ...report,
+    workers: report.workers.map((worker) => ({
+      ...worker,
+      issues: worker.issues.length > 0 ? worker.issues.map((issue) => `#${issue}`).join(",") : "",
+      runners: worker.runners.join(","),
+      events: Object.entries(worker.events).map(([event, count]) => `${event}:${count}`).join(","),
+    })),
+    challenges: report.challenges.map((challenge) => ({
+      ...challenge,
+      labels: challenge.labels.join(","),
+    })),
+  };
+  return JSON.parse(JSON.stringify(payload)) as ToonValue;
 }
