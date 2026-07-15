@@ -1,5 +1,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
@@ -10,12 +12,15 @@ import { decode, encode, type JsonValue } from "@reddb-io/toon";
 // Module stamps ts/epoch from its only ambient input.
 
 export const HISTORY_MAX_LINES_DEFAULT = 10000;
+export const HISTORY_TQ_TRIM_TIMEOUT_MS = 1000;
 
 export const SPARKLINE_BUCKETS_DEFAULT = 48;
 
 // The glyph ramp matches monitor.sh's render_sparkline byte-for-byte: index 0
 // is the empty middle-dot, indices 1..8 are the eighth-blocks ▁..█.
 export const SPARKLINE_GLYPHS = ["·", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
+
+const execFileAsync = promisify(execFile);
 
 /** A single terminal event in the ledger. */
 export type HistoryEvent = "done" | "blocked" | "exhausted" | (string & {});
@@ -275,6 +280,24 @@ export const defaultHistoryIO: HistoryIO = {
   },
 };
 
+export interface HistoryTrimTool {
+  trimKeepLast(path: string, keepLast: number): Promise<boolean>;
+}
+
+export const defaultHistoryTrimTool: HistoryTrimTool = {
+  async trimKeepLast(path, keepLast) {
+    try {
+      await execFileAsync("tq", ["trim", "--keep-last", String(keepLast), "--in-place", path], {
+        timeout: HISTORY_TQ_TRIM_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
 /**
  * Appends exactly one JSONL record to the ledger, creating the parent
  * directory if missing. Returns the record that was written.
@@ -320,11 +343,13 @@ export async function historyTrim(
   path: string,
   maxLines: number = HISTORY_MAX_LINES_DEFAULT,
   io: HistoryIO = defaultHistoryIO,
+  tool: HistoryTrimTool = defaultHistoryTrimTool,
 ): Promise<number | null> {
   const text = await io.read(path);
   if (text === null) return null;
   const records = parseHistoryLines(text);
   if (records.length <= maxLines) return null;
+  if (path.endsWith(".toonl") && await tool.trimKeepLast(path, maxLines)) return maxLines;
   const kept = records.slice(records.length - maxLines);
   if (path.endsWith(".toonl")) {
     await io.write(path, renderHistoryToonl(kept));

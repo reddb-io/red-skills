@@ -11,6 +11,7 @@ import {
   readDoneBuckets,
   renderSparkline,
   type HistoryRecord,
+  type HistoryTrimTool,
 } from "../src/core/history.js";
 
 // Mirrors plugins/dev/skills/engineering/afk/scripts/tests/fixtures/history/buckets.jsonl:
@@ -176,6 +177,53 @@ describe("history append", () => {
 });
 
 describe("history trim", () => {
+  it("delegates over-bound TOONL caps to the tq trim runner", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.toonl");
+    for (let i = 1; i <= 6; i += 1) {
+      await historyAppend(path, { ts: `t${i}`, epoch: i }, "done", {});
+    }
+    const calls: Array<{ path: string; keepLast: number }> = [];
+    const tool: HistoryTrimTool = {
+      async trimKeepLast(calledPath, keepLast) {
+        calls.push({ path: calledPath, keepLast });
+        await writeFile(
+          calledPath,
+          [
+            "[2]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:",
+            "  t5,5,,0,done,0,,null,null",
+            "  t6,6,,0,done,0,,null,null",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        return true;
+      },
+    };
+
+    expect(await historyTrim(path, 2, undefined, tool)).toBe(2);
+    expect(calls).toEqual([{ path, keepLast: 2 }]);
+    expect(parseHistoryLines(await readFile(path, "utf8")).map((record) => record.epoch)).toEqual([5, 6]);
+  });
+
+  it("falls back in-process when the tq trim runner is unavailable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.toonl");
+    for (let i = 1; i <= 6; i += 1) {
+      await historyAppend(path, { ts: `t${i}`, epoch: i }, "done", {});
+    }
+    const tool: HistoryTrimTool = {
+      async trimKeepLast() {
+        return false;
+      },
+    };
+
+    expect(await historyTrim(path, 3, undefined, tool)).toBe(3);
+    const body = await readFile(path, "utf8");
+    expect(body.split("\n")[0]).toBe("[3]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    expect(parseHistoryLines(body).map((record) => record.epoch)).toEqual([4, 5, 6]);
+  });
+
   it("caps to the bound, keeps newest, preserves the TOONL header, and returns the cap", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
     const path = join(dir, "afk-history.toonl");
