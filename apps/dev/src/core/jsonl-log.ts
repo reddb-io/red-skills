@@ -1,6 +1,6 @@
 import { mkdir, appendFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { decode, encode, encodeLines, type JsonValue, type ToonlLineEmitter, type ToonlRecord } from "@reddb-io/toon";
 
 // The JSONL Log Module: owns the AFK structured-log lane format end to end.
 //
@@ -163,6 +163,20 @@ export interface AppendOptions {
   sink?: AppendSink;
 }
 
+const taggedRowEmitters = new Map<string, ToonlLineEmitter>();
+
+function toToonlRecord(record: JsonlLogRecord): ToonlRecord {
+  const out: ToonlRecord = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    out[key] =
+      value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? value
+        : JSON.stringify(value);
+  }
+  return out;
+}
+
 /**
  * Append one envelope line to a per-attempt lane (single writer).
  * Mirrors bash `jsonl_log_append`.
@@ -229,6 +243,33 @@ export async function appendRecordToonlRow(
 }
 
 /**
+ * Append one record to a TOONL v0.2 tagged-row lane. Tags multiplex record
+ * shapes inside one append-only file: the first row for a tag declares
+ * `[]<tag>{fields}:`, then later rows use `tag:...` until that tag's shape
+ * changes. The emitter canonicalizes field order per shape, avoiding the
+ * old one-header-per-record thrash while keeping legacy `.jsonl` filenames.
+ */
+export async function appendRecordToonlTaggedRow(
+  path: string,
+  type: string,
+  msg: JsonlLogValue,
+  options: AppendOptions,
+): Promise<JsonlLogRecord> {
+  if (!path) throw new JsonlLogError("[jsonl-log] appendRecordToonlTaggedRow: need <path>", 2);
+  if (!type) throw new JsonlLogError("[jsonl-log] appendRecordToonlTaggedRow: need <type>", 2);
+  const record = buildRecord(type, msg, options.ts, options.fields);
+  const emitterKey = options.sink ? `${path}\0sink` : path;
+  let emitter = taggedRowEmitters.get(emitterKey);
+  if (!emitter) {
+    emitter = encodeLines({ trailer: false });
+    taggedRowEmitters.set(emitterKey, emitter);
+  }
+  const chunk = emitter.pushTagged(type, toToonlRecord(record)).trimEnd();
+  await (options.sink ?? fsAppendSink)(path, chunk);
+  return record;
+}
+
+/**
  * Append one `type=agent` envelope to the agent lane. The lane owns its type:
  * a synthetic type, or any explicit type other than `agent`, is a contract
  * violation. Mirrors bash `jsonl_log_append_agent`.
@@ -272,6 +313,7 @@ export function parseLane(content: string): JsonlLogRecord[] {
   const lines = content.split(/\r?\n/);
   const records: JsonlLogRecord[] = [];
   let header = "";
+  const taggedHeaders = new Map<string, string>();
   for (const raw of lines) {
     const line = raw.trimEnd();
     const trimmed = line.trim();
@@ -286,6 +328,24 @@ export function parseLane(content: string): JsonlLogRecord[] {
     }
     if (/^\[(?:[0-9]+)?\]\{[^}]+\}:$/.test(trimmed)) {
       header = trimmed;
+      continue;
+    }
+    const taggedHeader = trimmed.match(/^\[\]<([A-Za-z0-9_-]+)>(\{[^}]+\}:)$/);
+    if (taggedHeader) {
+      taggedHeaders.set(taggedHeader[1]!, `[1]${taggedHeader[2]}`);
+      continue;
+    }
+    const taggedRow = line.match(/^([A-Za-z0-9_-]+):(.*)$/);
+    if (taggedRow) {
+      const tagged = taggedHeaders.get(taggedRow[1]!);
+      if (!tagged) continue;
+      try {
+        const value = decode(`${tagged}\n  ${taggedRow[2]}\n`);
+        const row = Array.isArray(value) ? value[0] : value;
+        if (row && typeof row === "object") records.push(row as JsonlLogRecord);
+      } catch {
+        // TOONL readers are crash-tail tolerant during rollout.
+      }
       continue;
     }
     if (!header) continue;

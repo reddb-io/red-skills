@@ -83,7 +83,7 @@ import {
 } from "../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../core/host-identity.js";
-import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
+import { appendAgentRecord, appendRecordToonlTaggedRow } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
@@ -1177,7 +1177,7 @@ export function buildProcessDeps(
       // the meter + iteration markers. Returning here also narrows `event` to the
       // non-raw variants for the rest of the handler.
       if (event.type === "raw") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "raw", {
           iteration: event.iteration,
           line: event.line,
         }, {
@@ -1186,7 +1186,7 @@ export function buildProcessDeps(
         return;
       }
       if (event.type === "sessionId") {
-        void appendRecord(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
           ts,
           fields: {
             extra: {
@@ -1229,7 +1229,7 @@ export function buildProcessDeps(
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
-          void appendRecord(join(dir0, "log.jsonl"), "iteration", line, {
+          void appendRecordToonlTaggedRow(join(dir0, "log.jsonl"), "iteration", line, {
             ts,
             fields: { extra: { iteration: String(n), phase } },
           }).catch(() => {});
@@ -1260,7 +1260,7 @@ export function buildProcessDeps(
       // Firehose lane (issue #250): every record in the uniform envelope. The
       // native port left this unopened; restore it so the post-mortem firehose
       // carries the agent turns alongside the (future) heartbeat/hook records.
-      void appendRecord(join(current.attemptDir, "log.jsonl"), "agent", msg, {
+      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "agent", msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
@@ -1391,7 +1391,7 @@ export function buildProcessDeps(
           removed,
           activity,
         });
-        await appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
+        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
           ts,
           fields: { extra: hb.extra },
         }).catch(() => {});

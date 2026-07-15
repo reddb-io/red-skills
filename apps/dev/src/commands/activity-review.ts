@@ -14,6 +14,7 @@ import {
   type ActivityReviewPullRequest,
   type ActivityReviewTokenSummary,
 } from "../core/activity-review.js";
+import { parseLane } from "../core/jsonl-log.js";
 import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
@@ -299,7 +300,7 @@ function logRecordInInterval(value: unknown, start: Date, end: Date): boolean {
   return ts.getTime() >= start.getTime() && ts.getTime() <= end.getTime();
 }
 
-async function collectTokenSummary(workersRoot: string, start: Date, end: Date): Promise<ActivityReviewTokenSummary> {
+export async function collectTokenSummary(workersRoot: string, start: Date, end: Date): Promise<ActivityReviewTokenSummary> {
   let input = 0;
   let output = 0;
   let total = 0;
@@ -312,21 +313,14 @@ async function collectTokenSummary(workersRoot: string, start: Date, end: Date):
     } catch {
       continue;
     }
-    for (const raw of text.split("\n")) {
-      const line = raw.trim();
-      if (!line.startsWith("{")) continue;
-      try {
-        const parsed = JSON.parse(line);
-        if (!logRecordInInterval(parsed, start, end)) continue;
-        const found = collectTokensFromObject(parsed);
-        if (found.hits > 0) {
-          input += found.input;
-          output += found.output;
-          total += found.total;
-          sourceRecords += 1;
-        }
-      } catch {
-        // Ignore malformed log lines. The token section is advisory.
+    for (const parsed of parseLane(text)) {
+      if (!logRecordInInterval(parsed, start, end)) continue;
+      const found = collectTokensFromObject(parsed);
+      if (found.hits > 0) {
+        input += found.input;
+        output += found.output;
+        total += found.total;
+        sourceRecords += 1;
       }
     }
   }
