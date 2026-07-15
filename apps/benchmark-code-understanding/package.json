@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/shared": "workspace:*"
+    "@reddb-io/shared": "workspace:*",
+    "@reddb-io/toon": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
