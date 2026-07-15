@@ -214,13 +214,13 @@ describe("red-setup docs", () => {
     const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
 
     expect(skill).toContain("**Section E2 — Required host binaries");
-    expect(skill).toContain("TQ_VERSION=v0.2.6");
-    expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.2.6/install.sh");
+    expect(skill).toContain("TQ_VERSION=v0.3.0");
+    expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh");
     expect(skill).toContain("no jq fallback");
     expect(skill).toContain("host_binaries:");
     expect(template).toContain("host_binaries:");
     expect(template).toContain("tq:");
-    expect(template).toContain("version: 0.2.6");
+    expect(template).toContain("version: 0.3.0");
   });
 
   it("installs a runtime shim that prefers active env roots, then the highest host cache", () => {
