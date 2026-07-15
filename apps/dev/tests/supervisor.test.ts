@@ -1589,6 +1589,7 @@ describe("envelope builders", () => {
     expect(body).toContain("worker `wTEST`");
     expect(body).toContain('data-section="notes"');
     expect(body).toContain('data-section="log"');
+    expect(body).toContain("```toon");
     expect(body).toContain("stalled tool call");
   });
 });
