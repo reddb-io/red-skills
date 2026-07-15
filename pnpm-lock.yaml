@@ -58,7 +58,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.6
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
