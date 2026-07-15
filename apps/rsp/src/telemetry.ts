@@ -1,11 +1,15 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { randomUUID, createHash } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
+import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
 import { storageClassForCommand, type RspStorageClass, type RspStorageClassStats } from "./elision-store.js";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
-export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
+export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.toonl");
+export const RSP_TELEMETRY_LEGACY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
+export const RSP_TELEMETRY_SPOOL_CORRECTIONS = join(".red", "tmp", "rsp-telemetry.spool.corrections.toonl");
 export const RSP_ACCOUNTING_EVENTS_COLLECTION = "rsp_accounting_events_v1";
 export const RSP_DECISIONS_COLLECTION = "rsp_decisions_v1";
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
@@ -90,6 +94,21 @@ export interface RspTelemetryStats {
 }
 
 const SPOOL_TEXT_INLINE_CAP_BYTES = 64 * 1024;
+interface RspTelemetryCorrectionRow {
+  correction_id: string;
+  target_spool_id: string;
+  action: "retry" | "resolved";
+  created_at: string;
+  event_json?: string;
+}
+
+interface RspTelemetrySpoolEntry {
+  spool_id: string;
+  event?: RspTelemetryEvent;
+  raw_line?: string;
+}
+
+type FlatToonlRecord = Record<string, string | number | boolean | null>;
 
 export interface RspTelemetryGainsReport {
   schema_version: "red.rsp.gains.v1";
@@ -145,11 +164,26 @@ export function telemetrySpoolPath(rootDir: string): string {
   return join(rootDir, RSP_TELEMETRY_SPOOL);
 }
 
+export function telemetryLegacySpoolPath(rootDir: string): string {
+  return join(rootDir, RSP_TELEMETRY_LEGACY_SPOOL);
+}
+
+export function telemetrySpoolCorrectionsPath(rootDir: string): string {
+  return join(rootDir, RSP_TELEMETRY_SPOOL_CORRECTIONS);
+}
+
 export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryEvent): Promise<void> {
+  appendTelemetryEventSync(rootDir, event);
+}
+
+export function appendTelemetryEventSync(rootDir: string, event: RspTelemetryEvent): void {
   try {
     const path = telemetrySpoolPath(rootDir);
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(compactTelemetryEventForSpool(event))}\n`, { encoding: "utf8", mode: 0o600 });
+    appendFileSync(path, formatSpoolRow({
+      spool_id: randomUUID(),
+      event: compactTelemetryEventForSpool(event),
+    }), { encoding: "utf8", mode: 0o600 });
   } catch {}
 }
 
@@ -175,24 +209,14 @@ function compactTextField(
 
 export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
   const path = telemetrySpoolPath(rootDir);
-  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await rename(path, drainingPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    return [];
-  }
-
-  try {
-    await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
-    const text = await readSettledFile(drainingPath);
-    return text.split(/\r?\n/).filter((line) => line.trim() !== "");
-  } finally {
-    await rm(drainingPath, { force: true });
-  }
+  await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
+  const files = await renameActiveSpools(rootDir);
+  const entries = [
+    ...await readPendingCorrectionEntries(rootDir),
+    ...await readDrainEntries(files),
+  ];
+  await Promise.all(files.map((file) => rm(file, { force: true })));
+  return entries.map((entry) => JSON.stringify(entry.event));
 }
 
 export async function drainTelemetrySpool(
@@ -201,32 +225,36 @@ export async function drainTelemetrySpool(
 ): Promise<void> {
   const path = telemetrySpoolPath(rootDir);
   await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
+  await ensureActiveSpoolFiles(rootDir);
 
-  for (const orphan of await orphanedDrainFiles(path)) {
-    await drainFile(path, orphan, drainLine);
+  for (const orphan of await orphanedDrainFiles(rootDir)) {
+    await drainFile(rootDir, orphan, drainLine);
   }
 
-  const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
-  try {
-    await rename(path, drainingPath);
-  } catch {
-    return;
+  for (const entry of await readPendingCorrectionEntries(rootDir)) {
+    await drainEntry(rootDir, entry, drainLine, true);
   }
-  await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
-  await drainFile(path, drainingPath, drainLine);
+
+  for (const drainingPath of await renameActiveSpools(rootDir)) {
+    await drainFile(rootDir, drainingPath, drainLine);
+  }
 }
 
 /**
  * A crash between the spool rename and the ingest leaves a `<spool>.<pid>.<ts>.drain` file behind.
  * Adopt those leftovers, skipping any still owned by a live process other than us.
  */
-async function orphanedDrainFiles(spoolPath: string): Promise<string[]> {
-  const dir = dirname(spoolPath);
-  const prefix = `${basename(spoolPath)}.`;
+async function orphanedDrainFiles(rootDir: string): Promise<string[]> {
+  const spoolPaths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const dir = dirname(spoolPaths[0]!);
   const names = await readdir(dir).catch(() => [] as string[]);
-  return names
-    .filter((name) => name.startsWith(prefix) && name.endsWith(".drain"))
+  return names.filter((name) =>
+    spoolPaths.some((spoolPath) => name.startsWith(`${basename(spoolPath)}.`) && name.endsWith(".drain"))
+  )
     .filter((name) => {
+      const base = spoolPaths.find((spoolPath) => name.startsWith(`${basename(spoolPath)}.`));
+      if (!base) return false;
+      const prefix = `${basename(base)}.`;
       const pid = Number(name.slice(prefix.length).split(".")[0]);
       return !(Number.isInteger(pid) && pid !== process.pid && isProcessAlive(pid));
     })
@@ -244,35 +272,47 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function drainFile(
-  spoolPath: string,
+  rootDir: string,
   drainingPath: string,
   drainLine: (line: string) => Promise<boolean>,
 ): Promise<void> {
-  const retryLines: string[] = [];
   try {
     const text = await readSettledFile(drainingPath);
-    const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
-    for (const line of lines) {
-      try {
-        if (await drainLine(line)) continue;
-      } catch {}
-      retryLines.push(line);
+    for (const entry of parseSpoolEntries(text)) {
+      await drainEntry(rootDir, entry, drainLine, false);
     }
   } finally {
-    if (retryLines.length > 0) {
-      const current = safeReadFileSync(spoolPath);
-      await writeFile(spoolPath, `${retryLines.join("\n")}\n${current}`, "utf8");
-    }
     await rm(drainingPath, { force: true });
   }
 }
 
-function safeReadFileSync(path: string): string {
+async function drainEntry(
+  rootDir: string,
+  entry: RspTelemetrySpoolEntry,
+  drainLine: (line: string) => Promise<boolean>,
+  fromCorrection: boolean,
+): Promise<void> {
+  const line = entry.event ? JSON.stringify(entry.event) : entry.raw_line ?? "";
   try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
+    if (await drainLine(line)) {
+      if (fromCorrection) {
+        appendCorrection(rootDir, {
+          correction_id: randomUUID(),
+          target_spool_id: entry.spool_id,
+          action: "resolved",
+          created_at: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+  } catch {}
+  appendCorrection(rootDir, {
+    correction_id: randomUUID(),
+    target_spool_id: entry.spool_id,
+    action: "retry",
+    created_at: new Date().toISOString(),
+    event_json: entry.event ? JSON.stringify(entry.event) : undefined,
+  });
 }
 
 async function readSettledFile(path: string): Promise<string> {
@@ -300,6 +340,196 @@ export function parseTelemetryEvent(line: string): RspTelemetryEvent | null {
   } catch {
     return null;
   }
+}
+
+function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
+  const spoolEmitter: ToonlLineEmitter = encodeLines();
+  return spoolEmitter.push(spoolEntryToToonlRow(row));
+}
+
+function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow): void {
+  try {
+    const path = telemetrySpoolCorrectionsPath(rootDir);
+    mkdirSync(dirname(path), { recursive: true });
+    const correctionEmitter: ToonlLineEmitter = encodeLines();
+    appendFileSync(path, correctionEmitter.push({
+      correction_id: correction.correction_id,
+      target_spool_id: correction.target_spool_id,
+      action: correction.action,
+      created_at: correction.created_at,
+      event_json: correction.event_json ?? null,
+    }), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+  } catch {}
+}
+
+async function renameActiveSpools(rootDir: string): Promise<string[]> {
+  const paths = [telemetrySpoolPath(rootDir), telemetryLegacySpoolPath(rootDir)];
+  const renamed: string[] = [];
+  for (const path of paths) {
+    const drainingPath = `${path}.${process.pid}.${Date.now()}.drain`;
+    try {
+      await rename(path, drainingPath);
+      await writeFile(path, "", { flag: "wx" }).catch(() => undefined);
+      renamed.push(drainingPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
+    }
+  }
+  return renamed;
+}
+
+async function ensureActiveSpoolFiles(rootDir: string): Promise<void> {
+  await Promise.all([
+    writeFile(telemetrySpoolPath(rootDir), "", { flag: "a" }),
+    writeFile(telemetryLegacySpoolPath(rootDir), "", { flag: "a" }),
+  ]).catch(() => undefined);
+}
+
+async function readDrainEntries(paths: readonly string[]): Promise<RspTelemetrySpoolEntry[]> {
+  const entries: RspTelemetrySpoolEntry[] = [];
+  for (const path of paths) {
+    entries.push(...parseSpoolEntries(await readSettledFile(path)));
+  }
+  return entries;
+}
+
+async function readPendingCorrectionEntries(rootDir: string): Promise<RspTelemetrySpoolEntry[]> {
+  const text = await readFile(telemetrySpoolCorrectionsPath(rootDir), "utf8").catch(() => "");
+  const latest = new Map<string, RspTelemetryCorrectionRow>();
+  for (const row of parseCorrectionRows(text)) latest.set(row.target_spool_id, row);
+  return [...latest.values()]
+    .filter((row) => row.action === "retry" && row.event_json)
+    .map((row) => ({ spool_id: row.target_spool_id, event: parseTelemetryEvent(row.event_json!) ?? undefined }))
+    .filter((entry) => entry.event !== undefined);
+}
+
+function parseSpoolEntries(text: string): RspTelemetrySpoolEntry[] {
+  const entries: RspTelemetrySpoolEntry[] = [];
+  let header = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isRecord(parsed)) {
+        const event = parseTelemetryEvent(JSON.stringify(parsed));
+        entries.push(event
+          ? { spool_id: legacySpoolId(JSON.stringify(parsed)), event }
+          : { spool_id: legacySpoolId(line), raw_line: line });
+      }
+      continue;
+    } catch {}
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) {
+      entries.push({ spool_id: legacySpoolId(line), raw_line: line });
+      continue;
+    }
+    try {
+      for (const row of parseRecords(`${header}\n${line}\n`)) {
+        if (isFlatToonlRecord(row) && isSpoolRow(row)) {
+          entries.push({ spool_id: row.spool_id, event: eventFromSpoolRow(row)! });
+        }
+      }
+    } catch {
+      if (line.startsWith("{")) entries.push({ spool_id: legacySpoolId(line), raw_line: line });
+    }
+  }
+  return entries;
+}
+
+function parseCorrectionRows(text: string): RspTelemetryCorrectionRow[] {
+  return parseSniffedRecords(text).map(toCorrectionRow).filter((row): row is RspTelemetryCorrectionRow => row !== null);
+}
+
+function parseSniffedRecords(text: string): FlatToonlRecord[] {
+  const records: FlatToonlRecord[] = [];
+  let header = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isFlatToonlRecord(parsed)) records.push(parsed);
+    } catch {
+      if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+        header = line;
+        continue;
+      }
+      if (!header) continue;
+      try {
+        for (const rec of parseRecords(`${header}\n${line}\n`)) {
+          if (isFlatToonlRecord(rec)) records.push(rec);
+        }
+      } catch {}
+    }
+  }
+  return records;
+}
+
+function legacySpoolId(line: string): string {
+  return `legacy:${createHash("sha256").update(line).digest("hex").slice(0, 24)}`;
+}
+
+function spoolEntryToToonlRow(entry: RspTelemetrySpoolEntry): FlatToonlRecord {
+  const row: FlatToonlRecord = { spool_id: entry.spool_id };
+  for (const [key, value] of Object.entries(entry.event ?? {})) {
+    if (key === "spool_id") continue;
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      value === null
+    ) {
+      row[key] = value;
+    } else if (value !== undefined) {
+      row[key] = JSON.stringify(value);
+    }
+  }
+  return row;
+}
+
+function eventFromSpoolRow(row: FlatToonlRecord): RspTelemetryEvent | null {
+  const { spool_id: _spoolId, ...event } = row;
+  return parseTelemetryEvent(JSON.stringify(event));
+}
+
+function isSpoolRow(value: FlatToonlRecord): value is FlatToonlRecord & { spool_id: string } {
+  return typeof value.spool_id === "string" && eventFromSpoolRow(value) !== null;
+}
+
+function toCorrectionRow(value: FlatToonlRecord): RspTelemetryCorrectionRow | null {
+  if (
+    typeof value.correction_id === "string" &&
+    typeof value.target_spool_id === "string" &&
+    (value.action === "retry" || value.action === "resolved") &&
+    typeof value.created_at === "string" &&
+    (value.event_json === null || typeof value.event_json === "string")
+  ) {
+    return {
+      correction_id: value.correction_id,
+      target_spool_id: value.target_spool_id,
+      action: value.action,
+      created_at: value.created_at,
+      event_json: value.event_json ?? undefined,
+    };
+  }
+  return null;
+}
+
+function isFlatToonlRecord(value: unknown): value is FlatToonlRecord {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((entry) =>
+    typeof entry === "string" ||
+    typeof entry === "number" ||
+    typeof entry === "boolean" ||
+    entry === null
+  );
 }
 
 export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new Date()): Promise<RspTelemetryStats> {

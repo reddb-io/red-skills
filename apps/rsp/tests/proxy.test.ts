@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
@@ -121,12 +122,15 @@ describe("rsp proxy segment recognition", () => {
       expect(recovered.status, recovered.stderr).toBe(0);
       expect(recovered.stdout).toContain("commits");
 
-      const decisions = await readFile(telemetrySpoolPath(root), "utf8");
-      expect(decisions).toContain('"hook":"proxy"');
-      expect(decisions).toContain('"command":"git log"');
-      expect(decisions).toContain('"command_family":"git log"');
-      expect(decisions).toContain('"decision":"contributed"');
-      expect(decisions).toContain('"capability_id":"git:log"');
+      await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          hook: "proxy",
+          command: "git log",
+          command_family: "git log",
+          decision: "contributed",
+          capability_id: "git:log",
+        }),
+      ]));
     } finally {
       await shutdownResident(paths.socketPath);
       await waitForExit(server);
@@ -153,14 +157,45 @@ describe("rsp proxy segment recognition", () => {
 
     expect(proxied.status, `${proxied.stdout}${proxied.stderr}`).toBe(0);
     expect(proxied.stdout).toBe("[{\"number\":1747,\"title\":\"lossless\"}]\n");
-    const decisions = await readFile(telemetrySpoolPath(root), "utf8");
-    expect(decisions).toContain('"hook":"proxy"');
-    expect(decisions).toContain('"command":"gh pr list --json number,title --jq \'.[0]\'"');
-    expect(decisions).toContain('"command_family":"gh pr list json-jq"');
-    expect(decisions).toContain('"decision":"passed"');
-    expect(decisions).toContain('"reason":"lossless-gh-json-jq"');
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        hook: "proxy",
+        command: "gh pr list --json number,title --jq '.[0]'",
+        command_family: "gh pr list json-jq",
+        decision: "passed",
+        reason: "lossless-gh-json-jq",
+      }),
+    ]));
   }, 30_000);
 });
+
+async function readSpoolEvents(root: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(telemetrySpoolPath(root), "utf8").catch(() => "");
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (!isRecord(row)) continue;
+      if (typeof row.event_json !== "string") {
+        const { spool_id: _spoolId, ...event } = row;
+        if (typeof event.collection === "string") rows.push(event);
+        continue;
+      }
+      const event = JSON.parse(row.event_json) as unknown;
+      if (isRecord(event)) rows.push(event);
+    }
+  }
+  return rows;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 async function installRspShim(root: string, bundle: string): Promise<void> {
   const binDir = join(root, "bin");

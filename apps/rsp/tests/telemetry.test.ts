@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { connect } from "@reddb-io/sdk";
-import { decode } from "@reddb-io/toon";
+import { decode, parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTelemetryEvent,
@@ -17,6 +17,8 @@ import {
   RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+  telemetryLegacySpoolPath,
+  telemetrySpoolCorrectionsPath,
   telemetrySpoolPath,
 } from "../src/telemetry.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS, RSP_ELISION_COLLECTION } from "../src/elision-store.js";
@@ -67,14 +69,18 @@ describe("rsp telemetry spool", () => {
     });
   });
 
-  it("appends JSONL without throwing when the target is unavailable", async () => {
+  it("appends TOONL rows without throwing when the target is unavailable", async () => {
     const root = await tempRoot();
     await appendTelemetryEvent(root, {
       collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
       id: "ok",
       command: "git status",
     });
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"id":"ok"');
+    await expect(readSpoolRows(root)).resolves.toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({ id: "ok", command: "git status" }),
+      }),
+    ]);
 
     await writeFile(join(root, ".red", "tmp", "not-a-dir"), "x", "utf8");
     await expect(appendTelemetryEvent(join(root, "not-there"), {
@@ -98,9 +104,42 @@ describe("rsp telemetry spool", () => {
 
     await drainTelemetrySpool(root, async (line) => !line.includes("retry-me"));
 
-    const spool = await readFile(telemetrySpoolPath(root), "utf8");
-    expect(spool).toContain('"id":"retry-me"');
-    expect(spool).not.toContain('"id":"ok"');
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    const corrections = await readCorrectionRows(root);
+    expect(corrections).toEqual([
+      expect.objectContaining({
+        action: "retry",
+        event: expect.objectContaining({ id: "retry-me" }),
+      }),
+    ]);
+
+    const retried: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      retried.push(line);
+      return true;
+    });
+    expect(retried.join("\n")).toContain('"id":"retry-me"');
+    const afterRetry = await readCorrectionRows(root);
+    expect(afterRetry.at(-1)).toEqual(expect.objectContaining({ action: "resolved" }));
+  });
+
+  it("drains legacy JSONL spools by sniffing format without rewriting them", async () => {
+    const root = await tempRoot();
+    await writeFile(telemetryLegacySpoolPath(root), `${JSON.stringify({
+      collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+      id: "legacy-jsonl",
+      command: "git status",
+    })}\n`, "utf8");
+
+    const drained: string[] = [];
+    await drainTelemetrySpool(root, async (line) => {
+      drained.push(line);
+      return true;
+    });
+
+    expect(drained.join("\n")).toContain('"id":"legacy-jsonl"');
+    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toBe("");
+    await expect(readFile(telemetryLegacySpoolPath(root), "utf8")).resolves.toBe("");
   });
 
   it("ingests orphaned .drain files left behind by a crashed drain", async () => {
@@ -170,12 +209,14 @@ describe("rsp telemetry spool", () => {
 
     const spool = await readFile(telemetrySpoolPath(root), "utf8");
     expect(spool).not.toContain(huge);
-    expect(JSON.parse(spool)).toMatchObject({
-      id: "oversized",
-      command: "git log",
-      raw_bytes: Buffer.byteLength(huge, "utf8"),
-      emitted_bytes: Buffer.byteLength(huge, "utf8"),
-      estimated: true,
+    expect((await readSpoolRows(root))[0]).toMatchObject({
+      event: {
+        id: "oversized",
+        command: "git log",
+        raw_bytes: Buffer.byteLength(huge, "utf8"),
+        emitted_bytes: Buffer.byteLength(huge, "utf8"),
+        estimated: true,
+      },
     });
   });
 
@@ -715,7 +756,13 @@ describe("rsp telemetry spool", () => {
     expect(proxied.stderr).toEqual(raw.stderr);
     expect(proxied.status).toBe(raw.status);
     expect(proxied.signal).toBe(raw.signal);
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"reason":"universal-proxy"');
+    await expect(readSpoolRows(root)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ reason: "universal-proxy" }),
+        }),
+      ]),
+    );
   }, 40_000);
 
   it("self-heals old-model rsp collections in the built bundle resident without losing elisions", async () => {
@@ -1067,6 +1114,47 @@ async function readTelemetry(storeUri: string, collection: string, key: string):
   } finally {
     await db.close();
   }
+}
+
+async function readSpoolRows(root: string): Promise<Array<Record<string, unknown>>> {
+  return (await readToonlRows(telemetrySpoolPath(root))).map((row) => {
+    if ("event" in row) return row;
+    const { spool_id: _spoolId, ...event } = row;
+    return { ...row, event };
+  });
+}
+
+async function readCorrectionRows(root: string): Promise<Array<Record<string, unknown>>> {
+  return readToonlRows(telemetrySpoolCorrectionsPath(root));
+}
+
+async function readToonlRows(path: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(path, "utf8").catch(() => "");
+  if (!raw.trim()) return [];
+  return parseSniffedToonlRows(raw).map((row) => {
+    if (typeof row.event_json !== "string") return row;
+    try {
+      return { ...row, event: JSON.parse(row.event_json) as unknown };
+    } catch {
+      return row;
+    }
+  });
+}
+
+function parseSniffedToonlRows(raw: string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (isRecord(row)) rows.push(row);
+    }
+  }
+  return rows;
 }
 
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {

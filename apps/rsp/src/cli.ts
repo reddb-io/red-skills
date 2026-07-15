@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,13 @@ import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
-import type { RspAccountingLaneStats, RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
+import {
+  appendTelemetryEventSync,
+  telemetrySpoolPath,
+  type RspAccountingLaneStats,
+  type RspTelemetryGainsReport,
+  type RspTelemetryStats,
+} from "./telemetry.js";
 
 interface ParsedArgs {
   command?: string;
@@ -619,7 +625,7 @@ async function emitWrappedResult(
 
 function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig): void {
   try {
-    const spoolPath = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
+    const spoolPath = telemetrySpoolPath(telemetryRoot);
     const stat = statSync(spoolPath);
     const staleMs = config.telemetryDrainIntervalMs * 2;
     if (stat.size < config.telemetryByteBudget && !spoolHasEventOlderThan(spoolPath, Date.now() - staleMs)) return;
@@ -764,8 +770,7 @@ function appendFastInvocationTelemetry(
   try {
     const emitted = Buffer.concat([result.stdout, result.stderr]);
     const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
-    const path = join(telemetryRoot, ".red", "tmp", "rsp-telemetry.spool.jsonl");
-    const accountingLine = JSON.stringify({
+    appendTelemetryEventSync(telemetryRoot, {
       collection: "rsp_accounting_events_v1",
       event_type: "invocation",
       ts: new Date().toISOString(),
@@ -778,7 +783,7 @@ function appendFastInvocationTelemetry(
       emitted_bytes: emitted.length,
       wrapper_ms: wrapperMs,
     });
-    const legacyLine = JSON.stringify({
+    appendTelemetryEventSync(telemetryRoot, {
       collection: "rsp_telemetry_invocations_v1",
       ts: new Date().toISOString(),
       command: telemetryCommand(args),
@@ -790,14 +795,6 @@ function appendFastInvocationTelemetry(
       wrapper_ms: wrapperMs,
       accounting_recorded: true,
     });
-    const line = `${accountingLine}\n${legacyLine}\n`;
-    try {
-      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
-      mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
-    }
   } catch {}
 }
 

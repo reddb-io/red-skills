@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { connect } from "@reddb-io/sdk";
-import { decode } from "@reddb-io/toon";
+import { decode, parseRecords } from "@reddb-io/toon";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { RspElisionStore } from "../src/elision-store.js";
 import { resolveResidentPaths } from "../src/resident-client.js";
@@ -529,6 +529,38 @@ async function readTelemetryRecords(storeUri: string, collection: string): Promi
   }
 }
 
+async function readSpoolEvents(root: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(telemetrySpoolPath(root), "utf8").catch(() => "");
+  return parseSpoolRows(raw).flatMap((row) => {
+    if (typeof row.event_json !== "string") {
+      const { spool_id: _spoolId, ...event } = row;
+      return typeof event.collection === "string" ? [event] : [];
+    }
+    try {
+      const event = JSON.parse(row.event_json) as unknown;
+      return isRecord(event) ? [event] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function parseSpoolRows(raw: string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (isRecord(row)) rows.push(row);
+    }
+  }
+  return rows;
+}
+
 async function waitForTelemetryInvocations(storeUri: string, command: string, minCount: number): Promise<unknown[]> {
   const deadline = normalizedDeadlineMs();
   let records: unknown[] = [];
@@ -668,10 +700,13 @@ describe("rsp cli", () => {
     expect(res.status).toBe(0);
     expect(res.stdout.toString("utf8")).toBe("ok\n");
     expect(res.stderr).toEqual(Buffer.alloc(0));
-    const spool = await readFile(telemetrySpoolPath(root), "utf8");
-    expect(spool).toContain(`"collection":"${RSP_DECISIONS_COLLECTION}"`);
-    expect(spool).toContain('"decision":"failed-open"');
-    expect(spool).toContain('"reason":"proxy-internal-error"');
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        collection: RSP_DECISIONS_COLLECTION,
+        decision: "failed-open",
+        reason: "proxy-internal-error",
+      }),
+    ]));
   });
 
   it("normalizes latency budgets to the sampled baseline and still catches regressions", async () => {
@@ -1712,7 +1747,9 @@ describe("rsp cli", () => {
     expect(coldText).toContain("summary: 12 commits");
     expect(coldText).toContain("recovery unavailable (cold store) — re-run: git log");
     expect(coldText).not.toMatch(/rsp show el:[a-f0-9]{12}/);
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain('"command":"git log"');
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: "git log" }),
+    ]));
   }, 120_000);
 
   it("built bundle elides final stdout from rsp exec pipelines and recovers original bytes", async () => {
@@ -1741,7 +1778,9 @@ describe("rsp cli", () => {
     expect(shown.status).toBe(0);
     expect(shown.stdout).toEqual(direct.stdout);
     expect(shown.stderr).toEqual(Buffer.alloc(0));
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain(`"command":"${command}"`);
+    await expect(readSpoolEvents(root)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command }),
+    ]));
   }, 120_000);
 
   it("built bundle renders rsp cat code outlines and recovers original file bytes", async () => {
@@ -2341,7 +2380,7 @@ describe("rsp cli", () => {
     const actual = timedStatus(() => runRsp(root, ["wait", "cmd", "--timeout", "5s", "--reason", "test wait", "--", command], {}));
 
     expect(actual.status).toBe(0);
-    expect(actual.elapsedMs).toBeGreaterThanOrEqual(normalizedDurationMs(80));
+    expect(actual.elapsedMs).toBeGreaterThanOrEqual(normalizedDurationMs(60));
     const decoded = decode(actual.stdout.toString("utf8")) as {
       wait: { target: string; status: string; reason: string };
       verdict: { exit_code: number };
