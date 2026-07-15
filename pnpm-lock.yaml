@@ -58,7 +58,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.6
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -379,6 +379,9 @@ importers:
       '@effect/printer-ansi':
         specifier: ^0.48.0
         version: 0.48.0(@effect/typeclass@0.39.0(effect@3.22.0))(effect@3.22.0)
+      '@reddb-io/toon':
+        specifier: 0.2.6
+        version: 0.2.6
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
