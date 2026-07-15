@@ -589,7 +589,9 @@ describe("statusline command — rendered line", () => {
     const text = stripAnsi(out.text());
     expect(text).toContain("loc=+1");
     expect(text).not.toContain("loc=+2");
-    const cache = decode(await readFile(join(root, ".red", "tmp", "statusline-repo-cache.json"), "utf8")) as {
+    const cache = decode(
+      await readFile(join(root, ".red", "state", "statusline", "statusline-repo-cache.json"), "utf8"),
+    ) as {
       baseRef: string;
       localAdded: number;
     };

@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afkPaths } from "../runtime/wire.js";
+import { afkPaths, preferExistingPath } from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
@@ -99,8 +99,11 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
   const paths = afkPaths(root);
   const tmp = paths.tmpDir;
   const stateAfk = dirname(paths.supervisorPidPath);
-  const pidFile = paths.supervisorPidPath;
-  const stopFile = paths.supervisorStopPath;
+  // Speak to the supervisor at whichever layout it wrote its pid — a legacy (tmp)
+  // supervisor watches the tmp stop file, a migrated one watches state/afk. Write
+  // the stop sentinel adjacent to the live pid so either generation sees it.
+  const pidFile = preferExistingPath(paths.supervisorPidPath, join(tmp, "afk-supervisor.pid"));
+  const stopFile = join(dirname(pidFile), "afk-supervisor.stop");
   const supervisor = await reapStaleSupervisorState([stateAfk, tmp], isLivePid);
   if (supervisor.status === "stale") {
     stdout.write(`no fleet running (stale supervisor files — cleaned).\n`);
