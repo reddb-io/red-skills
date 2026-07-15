@@ -162,6 +162,18 @@ async function warmCache(cacheDir: string): Promise<void> {
   await chmod(red, 0o755);
 }
 
+async function waitForFile(path: string, deadlineMs = 2_000): Promise<string> {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    try {
+      return await readFile(path, "utf8");
+    } catch {
+      if (Date.now() >= deadline) throw new Error(`file was not written: ${path}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+}
+
 const cliPath = (cacheDir: string) =>
   join(cacheDir, "reddb-memory", VERSION, "memory-cli.mjs");
 const markerPath = (cacheDir: string) =>
@@ -339,6 +351,52 @@ describe("memory launcher distribution (ADR 0084, #1030)", () => {
       expect(r.stdout).toBe("{}");
       expect(release.hits()).toBe(0);
       expect(existsSync(cliPath(cacheDir))).toBe(false);
+    } finally {
+      await release.close();
+    }
+  });
+
+  test("SessionStart triggers plugin-owned TOON migration through detached dev command", async () => {
+    const cacheDir = await makeCacheDir();
+    await warmCache(cacheDir);
+    const cwd = await enabledCwd();
+    await mkdir(join(cwd, ".red", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".red", "memory", "config.json"), JSON.stringify({ mode: "graph" }), "utf8");
+    const probe = join(cwd, ".red", "tmp", "migration-probe.txt");
+    const fakeDev = join(cwd, ".red", "tmp", "fake-dev-entrypoint.mjs");
+    await mkdir(join(cwd, ".red", "tmp"), { recursive: true });
+    await writeFile(
+      fakeDev,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(probe)}, process.argv.slice(2).join(" ") + "\\n");
+`,
+      "utf8",
+    );
+    const release = await startRelease();
+    try {
+      const child = spawn(process.execPath, [BOOTSTRAP, "hook", "SessionStart", "--runner", "claude"], {
+        cwd,
+        env: {
+          ...process.env,
+          RED_MEMORY_CACHE_DIR: cacheDir,
+          RED_MEMORY_RELEASE_BASE: release.url,
+          RED_NPM_REGISTRY_BASE: release.url,
+          RED_DEV_ENTRYPOINT: fakeDev,
+          CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+          NODE_ENV: "test",
+        },
+      });
+      let stdout = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (d) => (stdout += d));
+      const code = await new Promise<number | null>((res) => child.on("close", res));
+
+      expect(code).toBe(0);
+      expect(stdout).toBe("MEMORY-RUNTIME-RAN hook SessionStart --runner claude\n");
+      const observed = await waitForFile(probe);
+      expect(observed).toContain("toon-migrate --plugin memory");
+      expect(observed).toContain("--triggered-by bootstrap");
     } finally {
       await release.close();
     }
