@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
@@ -250,6 +250,37 @@ async function commitMany(root: string, count: number): Promise<void> {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function fakeGhPath(root: string, responses: Array<Record<string, unknown>>): Promise<{ path: string; responsesDir: string; countFile: string }> {
+  const bin = join(root, "bin");
+  const responsesDir = join(root, "gh-responses");
+  await mkdir(bin, { recursive: true });
+  await mkdir(responsesDir, { recursive: true });
+  for (let i = 0; i < responses.length; i++) {
+    await writeFile(join(responsesDir, `${i + 1}.json`), JSON.stringify(responses[i]), "utf8");
+  }
+  await writeFile(join(responsesDir, "default.json"), JSON.stringify(responses.at(-1) ?? {}), "utf8");
+  const gh = join(bin, "gh");
+  await writeFile(
+    gh,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'count_file="$GH_FAKE_RESPONSES/count"',
+      "count=0",
+      'if [ -f "$count_file" ]; then count="$(cat "$count_file")"; fi',
+      'next="$((count + 1))"',
+      'printf "%s" "$next" > "$count_file"',
+      'response="$GH_FAKE_RESPONSES/$next.json"',
+      'if [ ! -f "$response" ]; then response="$GH_FAKE_RESPONSES/default.json"; fi',
+      'cat "$response"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(gh, 0o755);
+  return { path: `${bin}:${process.env.PATH ?? ""}`, responsesDir, countFile: join(responsesDir, "count") };
 }
 
 async function runMcpRequests(
@@ -2241,6 +2272,53 @@ describe("rsp cli", () => {
     expect(stdout).toContain("rsp wait release --tag \"v2.*\"");
     expect(stdout).toContain("rsp wait cmd -- \"pnpm -C apps/rsp build\"");
     expect(stdout).toContain("Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.");
+  });
+
+  it("wait pr keeps polling when GitHub has not registered checks for the head SHA yet", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [
+      { number: 123, state: "OPEN", mergeable: "UNKNOWN", statusCheckRollup: [] },
+      { number: 123, state: "OPEN", mergeable: "MERGEABLE", statusCheckRollup: [{ conclusion: "SUCCESS" }] },
+    ]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.verdict.summary).toBe("PR #123 checks passed");
+    expect(decoded.verdict.details).toMatchObject({ checks: 1, mergeable: "MERGEABLE" });
+  });
+
+  it("wait pr resolves no-check repositories only through the empty-check grace path", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [{ number: 123, state: "OPEN", mergeable: "MERGEABLE", statusCheckRollup: [] }]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "2s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1s",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(1);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.verdict.summary).toBe("PR #123 has no checks configured");
+    expect(decoded.verdict.details).toMatchObject({ checks: 0, mergeable: "MERGEABLE" });
   });
 
   it("wait cmd exits with TOON success and removes its registry entry", async () => {

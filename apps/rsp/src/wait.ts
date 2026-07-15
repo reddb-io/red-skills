@@ -167,7 +167,15 @@ async function dispatchWait(
     case "cmd":
       return await waitCmd(parsed.commandLine ?? "", parsed.options.timeoutMs, cwd, registryPath, entry);
     case "pr":
-      return await pollUntilDone(() => probePr(parsed.target ?? "", cwd), parsed.options.timeoutMs, 15_000, registryPath, entry);
+      return await pollUntilDone(
+        createPrProbe(parsed.target ?? "", cwd, {
+          emptyChecksGraceMs: envDuration("RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS", 30_000),
+        }),
+        parsed.options.timeoutMs,
+        envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
+        registryPath,
+        entry,
+      );
     case "run":
       return await pollUntilDone(() => probeRun(parsed, cwd), parsed.options.timeoutMs, 15_000, registryPath, entry);
     case "release":
@@ -238,21 +246,47 @@ async function pollUntilDone(
   return { status: "timeout", exitCode: 2, summary: `timed out after ${formatDuration(timeoutMs)}` };
 }
 
-async function probePr(number: string, cwd: string): Promise<Verdict> {
+function createPrProbe(number: string, cwd: string, options: { emptyChecksGraceMs: number }): () => Promise<Verdict> {
+  const startedAt = Date.now();
+  return () => probePr(number, cwd, options, startedAt);
+}
+
+async function probePr(number: string, cwd: string, options: { emptyChecksGraceMs: number }, startedAt: number): Promise<Verdict> {
   if (!/^[1-9][0-9]*$/.test(number)) return { status: "indeterminate", exitCode: 2, summary: "missing PR number" };
   const result = await ghJson(["pr", "view", number, "--json", "number,state,mergeable,statusCheckRollup,url"], cwd);
   if (result.status !== 0) return { status: "indeterminate", exitCode: 2, summary: result.stderr || "gh pr view failed" };
   const row = parseRecord(result.stdout);
   const checks = Array.isArray(row.statusCheckRollup) ? row.statusCheckRollup : [];
+  const mergeable = String(row.mergeable ?? "");
   const states = checks.map(checkState);
   const failing = states.filter((state) => state === "failure").length;
   const pending = states.filter((state) => state === "pending").length;
   if (String(row.state) !== "OPEN") {
-    return verdict("failure", `PR #${number} is ${String(row.state).toLowerCase()}`, { mergeable: String(row.mergeable ?? "") });
+    return verdict("failure", `PR #${number} is ${String(row.state).toLowerCase()}`, { mergeable });
   }
-  if (failing > 0) return verdict("failure", `PR #${number} has failing checks`, { failing, pending, mergeable: String(row.mergeable ?? "") });
+  if (failing > 0) return verdict("failure", `PR #${number} has failing checks`, { failing, pending, mergeable });
   if (pending > 0) return { status: "running", exitCode: 2, summary: `PR #${number} has ${pending} pending checks` };
-  return verdict("success", `PR #${number} checks passed`, { checks: checks.length, mergeable: String(row.mergeable ?? "") });
+  if (checks.length === 0) {
+    const elapsedMs = Date.now() - startedAt;
+    if (mergeable === "UNKNOWN" || elapsedMs < options.emptyChecksGraceMs) {
+      return {
+        status: "running",
+        exitCode: 2,
+        summary: `PR #${number} has no registered checks yet`,
+        details: { checks: 0, mergeable, empty_checks_elapsed_ms: elapsedMs },
+      };
+    }
+    return verdict("success", `PR #${number} has no checks configured`, { checks: 0, mergeable });
+  }
+  if (mergeable === "UNKNOWN") {
+    return {
+      status: "running",
+      exitCode: 2,
+      summary: `PR #${number} mergeability is still unknown`,
+      details: { checks: checks.length, mergeable },
+    };
+  }
+  return verdict("success", `PR #${number} checks passed`, { checks: checks.length, mergeable });
 }
 
 async function probeRun(parsed: ParsedWait, cwd: string): Promise<Verdict> {
@@ -430,6 +464,16 @@ function parseDuration(value: string): number {
   if (unit === "s") return n * 1_000;
   if (unit === "m") return n * 60_000;
   return n * 60 * 60_000;
+}
+
+function envDuration(name: string, fallbackMs: number): number {
+  const value = process.env[name];
+  if (!value) return fallbackMs;
+  try {
+    return parseDuration(value);
+  } catch {
+    return fallbackMs;
+  }
 }
 
 function normalizeSignal(value: string): NodeJS.Signals {
