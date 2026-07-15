@@ -425,6 +425,9 @@ importers:
 
   packages/shared:
     dependencies:
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.1.0
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
