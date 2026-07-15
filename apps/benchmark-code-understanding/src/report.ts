@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { decode } from "@reddb-io/toon";
 import type { AggregateRow, ArmId, BenchmarkReport, ComparisonRow, RunRecord, TokenUsage, ToolCounts } from "./types.js";
 
 const ZERO_TOOLS: ToolCounts = { total: 0, read: 0, grep: 0, bash: 0, mcp: 0, byName: {} };
@@ -88,17 +89,51 @@ export async function loadRunRecords(path: string): Promise<RunRecord[]> {
 }
 
 export function parseRunRecords(body: string): RunRecord[] {
+  const first = body.trimStart()[0];
+  if (first === "[") return parseRunRecordsToonl(body);
+  return parseRunRecordsJsonl(body);
+}
+
+function parseRunRecordsJsonl(body: string): RunRecord[] {
   const records: RunRecord[] = [];
   for (const line of body.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const parsed = JSON.parse(trimmed) as RunRecord;
-    if (parsed.schema_version !== "redskills.code_understanding_bench.run.v1") {
-      throw new Error(`unsupported run record schema: ${String(parsed.schema_version)}`);
-    }
-    records.push(parsed);
+    records.push(assertRunRecord(parsed));
   }
   return records;
+}
+
+function parseRunRecordsToonl(body: string): RunRecord[] {
+  return toonlSegments(body).flatMap((segment) => {
+    const decoded = decode(segment);
+    const rows = Array.isArray(decoded) ? decoded : [decoded];
+    return rows.map((row) => assertRunRecord(row as unknown as RunRecord));
+  });
+}
+
+function toonlSegments(body: string): string[] {
+  const segments: string[] = [];
+  let current: string[] = [];
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line.trim()) continue;
+    if (/^\[[0-9]+\](?:\{.*\})?:$/.test(line) && current.length > 0) {
+      segments.push(`${current.join("\n")}\n`);
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length > 0) segments.push(`${current.join("\n")}\n`);
+  return segments;
+}
+
+function assertRunRecord(parsed: RunRecord): RunRecord {
+  if (parsed.schema_version !== "redskills.code_understanding_bench.run.v1") {
+    throw new Error(`unsupported run record schema: ${String(parsed.schema_version)}`);
+  }
+  return parsed;
 }
 
 export function buildReport(records: RunRecord[], generatedAt = new Date().toISOString()): BenchmarkReport {
