@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
+import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
+import { encodeDevSnapshotToon } from "./toon-snapshot.js";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
 
 export function defaultState(): AfkState {
@@ -209,7 +210,7 @@ function preserveStampedIdentity(
 export async function writeStateAtomic(path: string, state: AfkState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-  await writeFile(tmp, encodeToon(AfkStateSchema.parse(state) as unknown as ToonValue), "utf8");
+  await writeFile(tmp, encodeDevSnapshotToon(AfkStateSchema.parse(state) as unknown as ToonValue), "utf8");
   await rename(tmp, path);
 }
 
@@ -242,7 +243,7 @@ export function initStateSync(path: string, updates: Record<string, unknown> = {
   const parsed = parseState(state);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.sync`;
-  writeFileSync(tmp, encodeToon(AfkStateSchema.parse(parsed) as unknown as ToonValue), "utf8");
+  writeFileSync(tmp, encodeDevSnapshotToon(AfkStateSchema.parse(parsed) as unknown as ToonValue), "utf8");
   renameSync(tmp, path);
   return parsed;
 }
