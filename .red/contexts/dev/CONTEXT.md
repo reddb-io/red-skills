@@ -224,6 +224,10 @@ _Avoid_: TOON lines, JSONL replacement (it replaces JSONL here, but the term nam
 The jq-for-TOON CLI shipped by `github:reddb-io/toon`: query, convert (TOON/TOONL/JSON any-to-any), and stream. A required host binary — `/red-setup` installs it via the toon repo's checksum-verified, version-pinned `install.sh`, and `/red-doctor` red-flags absence or drift. Skills docs teach `tq` pipelines with no jq fallback lane.
 _Avoid_: jq (for TOON/TOONL files), the toon CLI
 
+**Release watcher**:
+The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.
+_Avoid_: manual version sweep, toon bump script, red-castle repinner
+
 **Declared optimization**:
 The two-regime output contract every TOON/TOONL producer obeys (ADR 0089 Amendment 2): by default output is lossless (`decode(encode(x)) === x`; cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — happens only behind an explicit opt-in flag and is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; re-run without the flag where re-derivable). Silent lossy normalization on the default path is the forbidden pattern.
 _Avoid_: compact mode (names the flag, not the contract), lossy output
@@ -248,6 +252,7 @@ _Avoid_: compact mode (names the flag, not the contract), lossy output
 - **Ship (interactive landing)** is retired (ADR 0081); hand-done work reaches the shared validation gate via requeue, and dispatch happens through `/go` or `/afk`.
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
+- The **Release watcher** observes toon releases, updates the catalog, and lets the consuming workspace lockfile choose the exact red-castle-resolved toon version.
 
 ## Example dialogue
 
