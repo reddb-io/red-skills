@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
@@ -60,6 +60,27 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     toonPath: ".red/tmp/agent.log.toonl",
     kind: "toonl",
   },
+  {
+    id: "dev.attempt-state",
+    plugin: "dev",
+    legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+    toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+    kind: "toon",
+  },
+  {
+    id: "dev.statusline-count-cache",
+    plugin: "dev",
+    legacyPath: ".red/tmp/statusline-cache.json",
+    toonPath: ".red/tmp/statusline-cache.json",
+    kind: "toon",
+  },
+  {
+    id: "dev.statusline-repo-cache",
+    plugin: "dev",
+    legacyPath: ".red/tmp/statusline-repo-cache.json",
+    toonPath: ".red/tmp/statusline-repo-cache.json",
+    kind: "toon",
+  },
 ];
 
 export const REGISTERED_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
@@ -101,22 +122,39 @@ export async function convertRegisteredToonSurfaces(
   const missing: string[] = [];
 
   for (const surface of selected) {
-    const target = join(opts.rootDir, surface.toonPath);
-    if (await pathExists(target)) {
-      skipped.push(surface.id);
-      continue;
-    }
-
-    const legacy = join(opts.rootDir, surface.legacyPath);
-    if (!(await pathExists(legacy))) {
+    const targets = await expandSurfaceTargets(opts.rootDir, surface);
+    if (targets.length === 0) {
       missing.push(surface.id);
       continue;
     }
 
-    const value = await readLegacyFile(legacy, surface.kind);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, renderSurface(value, surface), "utf8");
-    converted.push(surface.id);
+    let convertedAny = false;
+    let skippedAny = false;
+    for (const targetInfo of targets) {
+      const target = targetInfo.toonPath;
+      if (await targetAlreadyConverted(targetInfo)) {
+        skippedAny = true;
+        continue;
+      }
+
+      const legacy = targetInfo.legacyPath;
+      if (!(await pathExists(legacy))) {
+        continue;
+      }
+
+      const value = await readLegacyFile(legacy, surface.kind);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, renderSurface(value, surface), "utf8");
+      convertedAny = true;
+    }
+
+    if (convertedAny) {
+      converted.push(surface.id);
+    } else if (skippedAny) {
+      skipped.push(surface.id);
+    } else {
+      missing.push(surface.id);
+    }
   }
 
   return {
@@ -137,7 +175,7 @@ export async function readRegisteredToonSurface(
   if (!surface) throw new Error(`unknown registered TOON surface: ${surfaceId}`);
 
   const converted = join(rootDir, surface.toonPath);
-  if (await pathExists(converted)) {
+  if (await pathExists(converted) && await isReadableConvertedFile(converted, surface.kind)) {
     return {
       surface,
       path: converted,
@@ -153,6 +191,57 @@ export async function readRegisteredToonSurface(
     format: surface.kind === "toonl" ? "jsonl" : "json",
     value: await readLegacyFile(legacy, surface.kind),
   };
+}
+
+interface SurfaceTarget {
+  surface: RegisteredToonSurface;
+  legacyPath: string;
+  toonPath: string;
+}
+
+async function expandSurfaceTargets(rootDir: string, surface: RegisteredToonSurface): Promise<SurfaceTarget[]> {
+  if (surface.id !== "dev.attempt-state") {
+    return [{ surface, legacyPath: join(rootDir, surface.legacyPath), toonPath: join(rootDir, surface.toonPath) }];
+  }
+  const out: SurfaceTarget[] = [];
+  for (const namespace of ["workers", "go-workers", "scout-workers"]) {
+    const nsRoot = join(rootDir, ".red", "tmp", namespace);
+    let workers: string[];
+    try {
+      workers = await readdir(nsRoot);
+    } catch {
+      continue;
+    }
+    for (const worker of workers) {
+      const workerRoot = join(nsRoot, worker);
+      let attempts: string[];
+      try {
+        attempts = await readdir(workerRoot);
+      } catch {
+        continue;
+      }
+      for (const attempt of attempts) {
+        const path = join(workerRoot, attempt, "afk.state.json");
+        if (await pathExists(path)) out.push({ surface, legacyPath: path, toonPath: path });
+      }
+    }
+  }
+  return out;
+}
+
+async function targetAlreadyConverted(target: SurfaceTarget): Promise<boolean> {
+  if (!(await pathExists(target.toonPath))) return false;
+  if (target.legacyPath !== target.toonPath) return true;
+  return isReadableConvertedFile(target.toonPath, target.surface.kind);
+}
+
+async function isReadableConvertedFile(path: string, kind: RegisteredToonSurfaceKind): Promise<boolean> {
+  try {
+    await readConvertedFile(path, kind);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function quiescenceReasons(rootDir: string): Promise<string[]> {

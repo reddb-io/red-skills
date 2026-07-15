@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import {
   initState,
   initStateSync,
@@ -32,7 +33,8 @@ describe("state", () => {
     expect(state.current.activity).toBe("tests");
     expect(state.envelope.posted).toBe(true);
     expect(state.queue).toEqual([2, 3]);
-    expect(await readFile(path, "utf8")).toContain('"version":1');
+    const onDisk = decode(await readFile(path, "utf8")) as { version?: number };
+    expect(onDisk.version).toBe(1);
   });
 
   it("round-trips resolved base provenance fields through state updates", async () => {
@@ -77,9 +79,12 @@ describe("state", () => {
       "current.activity": "setup",
     });
     expect(seeded.pid).toBe(4242);
-    const onDisk = JSON.parse(await readFile(path, "utf8"));
+    const onDisk = decode(await readFile(path, "utf8")) as {
+      worker_id?: string;
+      current?: { number?: number };
+    };
     expect(onDisk.worker_id).toBe("wL30L");
-    expect(onDisk.current.number).toBe(583);
+    expect(onDisk.current?.number).toBe(583);
 
     // A subsequent vitals patch must NOT clobber the identity (the bug was the
     // sink seeding from DEFAULT and stranding the worker with no pid/number).

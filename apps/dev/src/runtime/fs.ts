@@ -21,7 +21,7 @@ import {
 import { dirname, join } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
-import { updateState } from "../core/state.js";
+import { readState, updateState } from "../core/state.js";
 import { allWorkersRoots } from "../core/worker-paths.js";
 
 export async function ensureDir(path: string): Promise<void> {
@@ -210,11 +210,8 @@ export async function writeEnvelopePosted(attemptDir: string, posted: boolean): 
 /** Read the `envelope.posted` flag from an attempt state file (false when
  * absent/malformed). */
 export async function readEnvelopePosted(attemptDir: string): Promise<boolean> {
-  const text = await readText(join(attemptDir, "afk.state.json"));
-  if (text === null) return false;
   try {
-    const parsed = JSON.parse(text) as { envelope?: { posted?: unknown } };
-    return parsed.envelope?.posted === true;
+    return (await readState(join(attemptDir, "afk.state.json"))).envelope.posted === true;
   } catch {
     return false;
   }

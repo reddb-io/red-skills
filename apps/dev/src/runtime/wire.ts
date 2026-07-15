@@ -14,6 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
+import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -850,9 +851,17 @@ export function statuslineCountCachePath(root: string): string {
   return join(afkPaths(root).tmpDir, "statusline-cache.json");
 }
 
+function decodeCacheDocument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return decodeToon(text);
+  }
+}
+
 function readStatuslineCache(path: string): StatuslineCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
     return {
       queue: Number(parsed.queue ?? 0),
       human: Number(parsed.human ?? 0),
@@ -867,7 +876,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
   try {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1308,7 +1317,7 @@ interface RepoStatsCache {
 
 function readRepoStatsCache(path: string): RepoStatsCache | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
+    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
     return {
       baseRef: typeof parsed.baseRef === "string" && parsed.baseRef.trim() ? parsed.baseRef.trim() : "origin/main",
       openPrs: Number(parsed.openPrs ?? 0),
@@ -1325,8 +1334,9 @@ function readRepoStatsCache(path: string): RepoStatsCache | null {
 
 function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
   try {
+    mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
