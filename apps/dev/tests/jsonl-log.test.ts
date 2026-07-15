@@ -7,6 +7,7 @@ import {
   appendRecord,
   appendRecordToonl,
   appendRecordToonlRow,
+  appendRecordToonlTaggedRow,
   buildRecord,
   ENVELOPE_FIELD_ORDER,
   filterByType,
@@ -132,6 +133,14 @@ describe("jsonl-log malformed input", () => {
     await expect(appendRecordToonlRow("/lane.jsonl", "", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
     expect(writes).toEqual([]);
   });
+
+  it("appendRecordToonlTaggedRow requires path and type with code 2 and writes nothing", async () => {
+    const writes: string[] = [];
+    const sink = async (_p: string, line: string) => void writes.push(line);
+    await expect(appendRecordToonlTaggedRow("", "stage", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    await expect(appendRecordToonlTaggedRow("/lane.jsonl", "", "x", { ts: TS, sink })).rejects.toMatchObject({ code: 2 });
+    expect(writes).toEqual([]);
+  });
 });
 
 describe("jsonl-log lane routing", () => {
@@ -169,6 +178,49 @@ describe("jsonl-log lane routing", () => {
     expect(parseLane(firehose.join("\n")).map((r) => r.type)).toEqual(["agent", "heartbeat", "boot", "stage", "hook"]);
     expect(parseLane(agent.join("\n")).map((r) => r.type)).toEqual(["agent"]);
   });
+
+  it("attempt firehose uses tagged-row TOONL multiplexing with canonical per-shape field order", async () => {
+    const firehose: string[] = [];
+    const sink = async (_p: string, line: string) => void firehose.push(line);
+
+    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "raw", { iteration: 1, line: "{\"inputTokens\":3}" }, {
+      ts: TS,
+      fields: { extra: { iteration: "1" } },
+      sink,
+    });
+    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "agent", "hello", {
+      ts: TS,
+      fields: { extra: { iteration: "1", kind: "text" } },
+      sink,
+    });
+    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "raw", { iteration: 2, line: "{\"outputTokens\":5}" }, {
+      ts: TS,
+      fields: { extra: { iteration: "2" } },
+      sink,
+    });
+    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "agent", "again", {
+      ts: TS,
+      fields: { extra: { kind: "text", iteration: "2" } },
+      sink,
+    });
+
+    const content = firehose.join("\n");
+    const lines = content.split("\n").filter(Boolean);
+    const headers = lines.filter((line) => line.startsWith("[]<"));
+    expect(headers).toEqual([
+      "[]<raw>{ts,type,msg,iteration}:",
+      "[]<agent>{ts,type,msg,iteration,kind}:",
+    ]);
+    expect(lines.filter((line) => /^raw:/.test(line))).toHaveLength(2);
+    expect(lines.filter((line) => /^agent:/.test(line))).toHaveLength(2);
+    expect(headers.length / lines.length).toBeLessThanOrEqual(0.34);
+    expect(parseLane(content).map((r) => [r.type, r.iteration, r.kind ?? null])).toEqual([
+      ["raw", "1", null],
+      ["agent", "1", "text"],
+      ["raw", "2", null],
+      ["agent", "2", "text"],
+    ]);
+  });
 });
 
 describe("jsonl-log append accumulation and readers", () => {
@@ -191,6 +243,24 @@ describe("jsonl-log append accumulation and readers", () => {
     expect(parseLane(`${json}\n`).map((r) => r.msg)).toEqual(["legacy"]);
     expect(parseLane(`${toonA}\n${toonB}\n`).map((r) => r.msg)).toEqual(["toon-a", "toon-b"]);
     expect(parseLane(`${json}\n${toonA}\n${toonB}\n`).map((r) => r.msg)).toEqual(["legacy", "toon-a", "toon-b"]);
+  });
+
+  it("parses legacy JSONL mixed with tagged-row attempt firehose files", async () => {
+    const json = JSON.stringify(buildRecord("heartbeat", "legacy", TS, { worker: "wAAAA" }));
+    const tagged: string[] = [];
+    const sink = async (_p: string, line: string) => void tagged.push(line);
+    await appendRecordToonlTaggedRow("/attempt/log-mixed.jsonl", "agent", "toon-a", {
+      ts: TS,
+      fields: { worker: "wAAAA", extra: { iteration: "1", kind: "text" } },
+      sink,
+    });
+    await appendRecordToonlTaggedRow("/attempt/log-mixed.jsonl", "heartbeat", "toon-b", {
+      ts: TS,
+      fields: { worker: "wAAAA", extra: { head: "abc123" } },
+      sink,
+    });
+
+    expect(parseLane(`${json}\n${tagged.join("\n")}\n`).map((r) => r.msg)).toEqual(["legacy", "toon-a", "toon-b"]);
   });
 
   it("writes stable-schema TOONL lanes with one header and appended rows", async () => {
