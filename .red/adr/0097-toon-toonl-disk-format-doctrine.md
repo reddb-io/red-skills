@@ -1,8 +1,10 @@
 # TOON/TOONL is the on-disk format doctrine — big-bang cutover, sole-publisher dependency, wave-2 gate on TOONL v0.2
 
+> **Amended by [Amendment 1 (2026-07-15)](#amendment-1-2026-07-15--toon-toolchain-version-sync-doctrine).** The pnpm catalog is the single version truth for the toon toolchain; derived pin sites are generated or guard-checked; routine upstream releases arrive through the Release watcher; red-castle keeps semver ranges and is re-pinned only by the consuming workspace lockfile.
+
 ## Status
 
-Accepted. Decisions resolved in the wayfinder charting + grilling sessions of 2026-07-14 (map #1765, tickets #1766–#1770). Extends ADR 0089 (Amendment 2 rebinds the encoder authority) from stdout to disk: ADR 0089 governs what agent-facing CLIs *emit*; this ADR governs what RedSkills *writes and keeps*. The execution Spec is #1773.
+Accepted, with Amendment 1 (2026-07-15). Decisions resolved in the wayfinder charting + grilling sessions of 2026-07-14 (map #1765, tickets #1766–#1770). Extends ADR 0089 (Amendment 2 rebinds the encoder authority) from stdout to disk: ADR 0089 governs what agent-facing CLIs *emit*; this ADR governs what RedSkills *writes and keeps*. The execution Spec is #1773.
 
 ## Context
 
@@ -79,3 +81,25 @@ When `agent.log.jsonl` migrates, the log tails posted into terminal-event envelo
 - **Bytes ≠ tokens.** The measurement round's core honesty: BPE already compresses escaped JSON punctuation, so byte-heavy wins (firehose flatten, −51% bytes on afk-history) do not translate 1:1 into token wins. Disk relief and token relief are separate ledgers; this ADR claims each only where measured.
 - **The wave-2 gate is a format-evolution bet, not a deferral.** If TOONL v0.2 rejects a requirement (e.g. multiplexing), the affected surface's fallback is a *new decision*, not a silent JSONL exception.
 - **History is never rewritten twice.** The one-time big-bang conversion is idempotent per file; already-TOONL files are never re-converted, and closed historical artifacts (GitHub comments, old envelopes) keep whatever format they were written in.
+
+## Amendment 1 (2026-07-15) — toon toolchain version-sync doctrine
+
+Two version-sync incidents during the 2026-07-15 wave-1 landings exposed failure modes in the original "one dependency, one publisher" decision: CI could still gain a **missing-`tq` gap** when a workflow read TOON/TOONL without the pinned host binary installed, and a **stale-lockfile landing race** could land a catalog/package bump before every consuming lockfile and derived pin site had converged. The fix is doctrine, not another hand-maintained checklist.
+
+### 1. The pnpm catalog is the single version truth for the toon toolchain
+
+The root `pnpm-workspace.yaml` catalog entry for `@reddb-io/toon` is the one source of the RedSkills toon toolchain version. Every other RedSkills-owned site that names the toon version or tag is derived from that catalog value or guarded against it: `TQ_VERSION` install steps, `/red-setup` remediation text, `/red-doctor` host-binary expectations, workflow pins, and docs examples.
+
+No RedSkills surface owns an independent `tq` or `@reddb-io/toon` version. A mismatch is drift from the catalog, not a local override.
+
+### 2. Upstream releases arrive as Release watcher auto-bump PRs
+
+Routine `github:reddb-io/toon` releases enter RedSkills through the Release watcher. The watcher opens the auto-bump PR that updates the catalog version and the derived/guard-checked pin sites together, with the existing version-contract tests as the acceptance check.
+
+Humans review and land the PR; AFK may fix a broken watcher PR. Humans and agents do not hand-sweep toon/tq pins as the normal release path, because that recreates the 2026-07-15 stale-lockfile race.
+
+### 3. red-castle tracks ranges; consumers pin through lockfiles
+
+red-castle expresses compatibility with `@reddb-io/toon` as a caret range. The exact version that executes in a RedSkills attempt is the consuming workspace's resolved lockfile entry, not a red-castle source edit. Re-pinning red-castle means updating the consuming workspace lockfile through the same catalog/watcher lane, never force-pinning the vendored source to chase an upstream release.
+
+This keeps the producer contract and the consumer resolution separate: red-castle declares the range it supports; RedSkills decides the exact tested toolchain version at the workspace boundary.
