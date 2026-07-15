@@ -13,4 +13,6 @@ Ask the questions one at a time. Wait for the user's reply before proceeding.
 
 If a question can be answered by exploring the codebase, explore the codebase instead of asking.
 
+When the reflection session ends, run the shared end-of-session doc-landing finalizer in [`/start`'s DOC-LANDING-FINALIZER.md](../../engineering/start/DOC-LANDING-FINALIZER.md) before exiting.
+
 </what-to-do>
