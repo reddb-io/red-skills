@@ -84,7 +84,7 @@ When `agent.log.jsonl` migrates, the log tails posted into terminal-event envelo
 
 ## Amendment 1 (2026-07-15) — toon toolchain version-sync doctrine
 
-The S5 version-sync incident on 2026-07-15 exposed two failure modes in the original "one dependency, one publisher" decision: CI could still gain a **missing-`tq` gap** when a workflow read TOON/TOONL without the pinned host binary installed, and a **stale-lockfile landing race** could land a catalog/package bump before every consuming lockfile and derived pin site had converged. The fix is doctrine, not another hand-maintained checklist.
+Two version-sync incidents during the 2026-07-15 wave-1 landings exposed failure modes in the original "one dependency, one publisher" decision: CI could still gain a **missing-`tq` gap** when a workflow read TOON/TOONL without the pinned host binary installed, and a **stale-lockfile landing race** could land a catalog/package bump before every consuming lockfile and derived pin site had converged. The fix is doctrine, not another hand-maintained checklist.
 
 ### 1. The pnpm catalog is the single version truth for the toon toolchain
 
