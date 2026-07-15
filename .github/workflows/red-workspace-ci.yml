@@ -83,6 +83,15 @@ jobs:
         with:
           node-version: 22
 
+      # The apps/dev suite includes tq-contract tests (toon-docs.test.ts spawns
+      # the real binary against produced TOONL lane files), so the required host
+      # binary must exist here exactly as it does on dev machines (/red-setup)
+      # and in red-rsp-benchmark-ci.yml. Same pinned installer, no fallback.
+      - name: Install pinned tq
+        env:
+          TQ_VERSION: v0.1.0
+        run: curl -fsSL "https://raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh" | sh
+
       - name: Install workspace dependencies
         env:
           # This PR gate typechecks/tests apps/dev; it does not execute the
