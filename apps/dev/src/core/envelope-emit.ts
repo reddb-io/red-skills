@@ -24,6 +24,8 @@ import { buildEnvelope, type AttemptStatus, type EnvelopeSection } from "./envel
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { historyAppend, type HistoryAppendFields, type HistoryClock, type HistoryEvent, type HistoryIO } from "./history.js";
 import { enrichIssueReferences, type IssueReferenceLookup } from "./issue-reference.js";
+import { parseLane } from "./jsonl-log.js";
+import { encode, type JsonValue } from "@reddb-io/toon";
 
 /** Render N seconds as `<m>m<s>s`. Mirrors envelope_fmt_duration. */
 export function fmtDuration(seconds: number): string {
@@ -151,11 +153,11 @@ export function buildSections(
   } else if (status === "no-sentinel") {
     out.push({ name: "notes", body: sections.notes ?? "" });
     out.push({ name: "diff", body: diffBody() });
-    out.push({ name: "log", body: sections.log ?? "", fenced: true });
+    out.push({ name: "log", body: renderLogTailToon(sections.log ?? ""), fenced: true, fenceLang: "toon" });
     if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   } else if (status === "merge-conflict") {
     out.push({ name: "diff", body: diffBody() });
-    out.push({ name: "log", body: sections.log ?? "", fenced: true });
+    out.push({ name: "log", body: renderLogTailToon(sections.log ?? ""), fenced: true, fenceLang: "toon" });
     if (sections.base !== undefined) out.push({ name: "base", body: sections.base });
   }
 
@@ -165,6 +167,12 @@ export function buildSections(
     out.push({ name: "hooks", body: sections.hooks });
   }
   return out;
+}
+
+export function renderLogTailToon(log: string): string {
+  const records = parseLane(log);
+  if (records.length > 0) return encode(records as unknown as JsonValue);
+  return encode({ tail: log } as JsonValue);
 }
 
 /** Injected `gh issue comment` poster. Returns true on a successful (2xx) post.

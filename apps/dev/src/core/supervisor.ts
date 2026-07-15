@@ -24,6 +24,7 @@ import {
   type WakeStats,
 } from "./event-wake.js";
 import { buildEnvelope } from "./envelope.js";
+import { renderLogTailToon } from "./envelope-emit.js";
 import { dispose } from "./disposition.js";
 import { type RecoveryEnv } from "./recovery.js";
 import {
@@ -946,7 +947,7 @@ export function buildReaperEnvelope(info: IterDirInfo): string {
     attempt: info.attempt,
     sections: [
       { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before stall-reap)" },
-      { name: "log", body: info.logTail, fenced: true },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
     ],
   });
 }
@@ -966,7 +967,7 @@ export function buildCrashEnvelope(info: IterDirInfo): string {
     attempt: info.attempt,
     sections: [
       { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before the orchestrator died)" },
-      { name: "log", body: info.logTail, fenced: true },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
     ],
   });
 }

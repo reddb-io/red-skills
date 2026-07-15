@@ -67,9 +67,17 @@ describe("shared TOON migration registry", () => {
           toonPath: ".red/state/afk-history.toonl",
           kind: "toonl",
         }),
+        expect.objectContaining({
+          id: "dev.agent-log",
+          plugin: "dev",
+          legacyPath: ".red/tmp/agent.log.jsonl",
+          toonPath: ".red/tmp/agent.log.toonl",
+          kind: "toonl",
+        }),
       ]),
     );
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.agent-log");
   });
 
   test("refuses while fleet or residents are active and explains why", async () => {
@@ -158,6 +166,34 @@ describe("shared TOON migration registry", () => {
       value: [
         expect.objectContaining({ ts: "t1", issue: 1 }),
         expect.objectContaining({ ts: "t2", issue: 2, reason: "no-sentinel" }),
+      ],
+    });
+  });
+
+  test("converts legacy agent lane JSONL to TOONL through the registry and skips crash tails", async () => {
+    const root = await scratch();
+    await write(
+      root,
+      ".red/tmp/agent.log.jsonl",
+      [
+        JSON.stringify({ ts: "t1", worker: "wA", type: "agent", msg: "line A", iteration: "1", kind: "text" }),
+        "{torn crash tail",
+        JSON.stringify({ ts: "t2", worker: "wA", issue: 2, attempt: 1, type: "agent", msg: "line B", iteration: "2", kind: "toolCall" }),
+        "",
+      ].join("\n"),
+    );
+
+    const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    const toonPath = join(root, ".red/tmp/agent.log.toonl");
+    const body = await readFile(toonPath, "utf8");
+
+    expect(report.converted).toContain("dev.agent-log");
+    expect(body.split("\n")[0]).toBe("[2]{ts,lvl,worker,issue,attempt,type,msg,iteration,kind}:");
+    await expect(readRegisteredToonSurface(root, "dev.agent-log")).resolves.toMatchObject({
+      format: "toonl",
+      value: [
+        expect.objectContaining({ ts: "t1", worker: "wA", type: "agent", msg: "line A" }),
+        expect.objectContaining({ ts: "t2", issue: 2, attempt: 1, type: "agent", msg: "line B" }),
       ],
     });
   });
