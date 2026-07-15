@@ -2,7 +2,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { encode } from "@reddb-io/toon";
+import { decode, encode } from "@reddb-io/toon";
 import {
   DEV_TOON_MIGRATION_SURFACES,
   MEMORY_TOON_MIGRATION_SURFACES,
@@ -74,10 +74,32 @@ describe("shared TOON migration registry", () => {
           toonPath: ".red/tmp/agent.log.toonl",
           kind: "toonl",
         }),
+        expect.objectContaining({
+          id: "dev.attempt-state",
+          plugin: "dev",
+          legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+          toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+          kind: "toon",
+        }),
+        expect.objectContaining({
+          id: "dev.statusline-count-cache",
+          plugin: "dev",
+          legacyPath: ".red/tmp/statusline-cache.json",
+          toonPath: ".red/tmp/statusline-cache.json",
+          kind: "toon",
+        }),
+        expect.objectContaining({
+          id: "dev.statusline-repo-cache",
+          plugin: "dev",
+          legacyPath: ".red/tmp/statusline-repo-cache.json",
+          toonPath: ".red/tmp/statusline-repo-cache.json",
+          kind: "toon",
+        }),
       ]),
     );
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
     expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.agent-log");
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.attempt-state");
   });
 
   test("refuses while fleet or residents are active and explains why", async () => {
@@ -196,5 +218,40 @@ describe("shared TOON migration registry", () => {
         expect.objectContaining({ ts: "t2", issue: 2, attempt: 1, type: "agent", msg: "line B" }),
       ],
     });
+  });
+
+  test("converts legacy dev snapshot states and statusline caches in place", async () => {
+    const root = await scratch();
+    await write(
+      root,
+      ".red/tmp/workers/wA/1783-a1/afk.state.json",
+      JSON.stringify({ worker_id: "wA", pid: 0, current: { number: 1783, activity: "impl" } }),
+    );
+    await write(root, ".red/tmp/statusline-cache.json", JSON.stringify({ queue: 4, human: 1, ts: 100 }));
+    await write(
+      root,
+      ".red/tmp/statusline-repo-cache.json",
+      JSON.stringify({ baseRef: "origin/main", openPrs: 2, todayPrs: 1, openIssues: 8, localAdded: 5, localRemoved: 2, ts: 100 }),
+    );
+
+    const first = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    const second = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+
+    expect(first.converted).toEqual(
+      expect.arrayContaining(["dev.attempt-state", "dev.statusline-count-cache", "dev.statusline-repo-cache"]),
+    );
+    const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.json"), "utf8");
+    const countRaw = await readFile(join(root, ".red/tmp/statusline-cache.json"), "utf8");
+    const repoRaw = await readFile(join(root, ".red/tmp/statusline-repo-cache.json"), "utf8");
+    expect(stateRaw.trimStart().startsWith("{")).toBe(false);
+    expect(countRaw.trimStart().startsWith("{")).toBe(false);
+    expect(repoRaw.trimStart().startsWith("{")).toBe(false);
+    expect((decode(stateRaw) as { current?: { number?: number } }).current?.number).toBe(1783);
+    expect((decode(countRaw) as { queue?: number }).queue).toBe(4);
+    expect((decode(repoRaw) as { openPrs?: number }).openPrs).toBe(2);
+    expect(second.status).toBe("noop");
+    expect(second.skipped).toEqual(
+      expect.arrayContaining(["dev.attempt-state", "dev.statusline-count-cache", "dev.statusline-repo-cache"]),
+    );
   });
 });
