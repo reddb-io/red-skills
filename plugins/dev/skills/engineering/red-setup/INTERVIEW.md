@@ -141,6 +141,24 @@ rsp git status
 
 If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the shell `PATH`. Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally as a substitute.
 
+**Section E2 — Required host binaries (mandatory).**
+
+> Explainer: TOON/TOONL files are first-class RedSkills state. `tq` is the jq-for-TOON CLI from `github:reddb-io/toon`; after ADR 0097 there is no jq fallback for RedSkills-owned TOON/TOONL logs. A host without the pinned `tq` cannot inspect its own TOONL state, so setup installs the binary and records the expected version for `/red-doctor`.
+
+Install the pinned `tq` through the toon repo's checksum-verified installer:
+
+```bash
+TQ_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
+```
+
+Then verify:
+
+```bash
+tq --version
+```
+
+The installed version must be `0.1.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
+
 **Section F — RedSkills statusline (optional).**
 
 > Explainer: RedSkills has one shared statusline producer in the dev bundle: the `statusline` subcommand reads each worker's `.red/tmp/workers/*/*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget. Host adapters differ. Claude Code can run that producer through a command-backed `statusLine`, so it can show live worker count, queue depth, and aggregated diffstat at a glance. Codex currently exposes native `tui.status_line` footer widgets instead of a command hook; under Codex, use `$red-statusline` to inspect or configure the footer and rely on `/afk monitor` for the live AFK block.
