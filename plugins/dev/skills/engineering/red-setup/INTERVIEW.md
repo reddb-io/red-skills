@@ -104,7 +104,7 @@ The loss levels are:
 
 Three things to verify after setup:
 
-1. **Repo store is provisioned.** `rsp` with no arguments should print store stats. If it says the repo store is not provisioned, finish `/red-setup` so `.red/red.rdb` exists.
+1. **Repo store is provisioned.** `rsp` with no arguments should print store stats. If it says the repo store is not provisioned, finish `/red-setup` so `.red/state/red-skills.rdb` exists.
 2. **Config opt-in is explicit.** `.red/config.yaml` should carry `rsp.enabled: true`, `rsp.ttlDays: 7`, `rsp.ephemeralTtlHours: 6`, and `rsp.byteBudget: 67108864` unless the operator deliberately changed retention.
 3. **Hook behavior is scoped.** In opted-in repos, the pre-exec hook may rewrite simple supported commands such as `git status`, `gh pr list`, `vitest`, and `cargo test` to their `rsp` forms. In non-opted-in repos, the hook is inert and agents should call `rsp` explicitly only when available.
 
@@ -195,7 +195,7 @@ The template carries a **commented `afk.backpressure`** block (#430 / PRD #429):
 
 > Explainer: RedSkills ships the maximum practical shell-command hook coverage for each supported CLI (Claude Code, Codex, and opencode). Those hooks are **proxy guarantees**, not the policy source: they extract the command and cwd, find the repo root, read `.red/config.yaml`, then evaluate `command_guard`. This keeps AFK workers and the main interactive session on the same repo-owned policy, and it keeps per-CLI hook files as thin adapters instead of places where safety rules drift.
 
-Built-in invariant: when `plugins.dev.enabled: true`, the dev proxy always enforces the RedSkills worktree boundary before any repo-authored `command_guard` rule runs. Agent-created `git worktree add` destinations must resolve under the repo's `.red/tmp/`, and branch-moving commands in the primary checkout (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`, `gh pr checkout`) are blocked so interactive work starts with `git worktree add .red/tmp/work-<slug> -b <branch> ...`. This invariant is not written into `command_guard` and has no example defaults to copy; it is part of enabling `dev`.
+Built-in invariant: when `plugins.dev.enabled: true`, the dev proxy always enforces the RedSkills worktree boundary before any repo-authored `command_guard` rule runs. Agent-created `git worktree add` destinations must resolve under a registered lane in the repo's `.red/tmp/`, and branch-moving commands in the primary checkout (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`, `gh pr checkout`) are blocked so interactive work starts with `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> ...`. This invariant is not written into `command_guard` and has no example defaults to copy; it is part of enabling `dev`.
 
 Offer to configure additional `command_guard` rules now. Default: **no extra active rules** unless the user confirms specific commands. Examples are examples only — do not write them as defaults.
 
@@ -230,7 +230,7 @@ Do not write the example blindly. The right policy is repo-specific.
 
 **Section H — Development workflow.**
 
-> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and land via a PR — with one-off concrete work dispatched through `/go` rather than hand-rolled worktrees. With `plugins.dev.enabled: true`, the shell proxy already blocks agent-created worktrees outside `.red/tmp/` and branch movement in the primary checkout. Turning on `plugins.dev.lock.primary-branch: true` in `.red/config.yaml` also activates the branch-lock compatibility flag used by older adapters and base-pinning integrations; the runtime folds it onto the legacy `dev.lock.primary-branch` accessor for back-compat. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
+> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and land via a PR — with one-off concrete work dispatched through `/go` rather than hand-rolled worktrees. With `plugins.dev.enabled: true`, the shell proxy already blocks agent-created worktrees outside registered `.red/tmp/` lanes and branch movement in the primary checkout. Turning on `plugins.dev.lock.primary-branch: true` in `.red/config.yaml` also activates the branch-lock compatibility flag used by older adapters and base-pinning integrations; the runtime folds it onto the legacy `dev.lock.primary-branch` accessor for back-compat. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
 
 Confirm with the user:
 
