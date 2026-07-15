@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { encode } from "@reddb-io/toon";
 import {
+  DEV_TOON_MIGRATION_SURFACES,
   MEMORY_TOON_MIGRATION_SURFACES,
   convertRegisteredToonSurfaces,
   readRegisteredToonSurface,
@@ -57,6 +58,18 @@ describe("shared TOON migration registry", () => {
       ]),
     );
     expect(registeredToonSurfacesForPlugin("memory").map((surface) => surface.id)).toContain("memory.config");
+    expect(DEV_TOON_MIGRATION_SURFACES).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "dev.afk-history",
+          plugin: "dev",
+          legacyPath: ".red/state/afk-history.jsonl",
+          toonPath: ".red/state/afk-history.toonl",
+          kind: "toonl",
+        }),
+      ]),
+    );
+    expect(registeredToonSurfacesForPlugin("dev").map((surface) => surface.id)).toContain("dev.afk-history");
   });
 
   test("refuses while fleet or residents are active and explains why", async () => {
@@ -106,6 +119,46 @@ describe("shared TOON migration registry", () => {
     await expect(readRegisteredToonSurface(root, "memory.config")).resolves.toMatchObject({
       format: "toon",
       value: { mode: "graph", storePath: ".red/memory/graph.rdb" },
+    });
+  });
+
+  test("converts legacy AFK history JSONL to TOONL once and reads the converted file", async () => {
+    const root = await scratch();
+    await write(
+      root,
+      ".red/state/afk-history.jsonl",
+      [
+        JSON.stringify({ ts: "t1", epoch: 1, worker: "wA", issue: 1, event: "done", duration_s: 0, runner: "codex" }),
+        JSON.stringify({ ts: "t2", epoch: 2, worker: "wB", issue: 2, event: "blocked", duration_s: 3, runner: "claude", reason: "no-sentinel" }),
+        "",
+      ].join("\n"),
+    );
+
+    await expect(readRegisteredToonSurface(root, "dev.afk-history")).resolves.toMatchObject({
+      format: "jsonl",
+      value: [
+        expect.objectContaining({ ts: "t1", issue: 1 }),
+        expect.objectContaining({ ts: "t2", issue: 2, reason: "no-sentinel" }),
+      ],
+    });
+
+    const first = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+    const toonPath = join(root, ".red/state/afk-history.toonl");
+    const afterFirst = await readFile(toonPath, "utf8");
+    const second = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
+
+    expect(first.status).toBe("converted");
+    expect(first.converted).toEqual(["dev.afk-history"]);
+    expect(afterFirst.split("\n")[0]).toBe("[2]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    expect(second.status).toBe("noop");
+    expect(second.skipped).toEqual(["dev.afk-history"]);
+    expect(await readFile(toonPath, "utf8")).toBe(afterFirst);
+    await expect(readRegisteredToonSurface(root, "dev.afk-history")).resolves.toMatchObject({
+      format: "toonl",
+      value: [
+        expect.objectContaining({ ts: "t1", issue: 1 }),
+        expect.objectContaining({ ts: "t2", issue: 2, reason: "no-sentinel" }),
+      ],
     });
   });
 });
