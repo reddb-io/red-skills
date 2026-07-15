@@ -85,6 +85,9 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("Required host binaries");
     expect(skill).toContain("TQ_VERSION");
     expect(skill).toContain("Absence or version drift is a red finding");
+    expect(skill).toContain("catalog-derived pin, recorded config pin, and observed `tq --version`");
+    expect(skill).toContain("toolchain-drift");
+    expect(skill).toContain("names all three values");
     expect(skill).toContain("apps/dev/src/core/host-binary-doctor.ts");
     expect(skill).toContain("never run installer scripts during Pass 1");
     expect(skill).toContain("Required host binaries");
