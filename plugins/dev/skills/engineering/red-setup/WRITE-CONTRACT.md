@@ -7,6 +7,7 @@ Show the user a draft of:
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
 - The Section H development-workflow changes: `plugins.dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
+- The Section E2 required-host-binary record: `host_binaries.tq.version: 0.1.0`
 - The Section G1 command-guard changes if the user accepted them: the exact `command_guard` block or scoped entries that will be written to `.red/config.yaml`
 
 Let them edit before writing.
@@ -78,6 +79,25 @@ and the `rsp` opt-in block:
 5. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 6. **Command guard write (only when Section G1 was explicitly accepted).** Update `.red/config.yaml` with the confirmed `command_guard` policy. If the file is fresh, replace the commented placeholder with the confirmed block. If the file already existed, merge only the accepted `command_guard.global`, `command_guard.main`, and/or `command_guard.worktree` entries, appending without duplicates and preserving unrelated content. If a legacy `command_guard.deny` block exists, leave it intact unless the user explicitly approved migrating it to `global`.
 7. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
+
+Install and record required host binaries (Section E2):
+
+1. Run the pinned toon installer exactly as documented:
+
+   ```bash
+   TQ_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.1.0/install.sh | sh
+   ```
+
+2. Verify `tq --version` reports `0.1.0`. If it does not, stop and report the mismatch; do not offer a jq fallback.
+3. Ensure `.red/config.yaml` records the pin:
+
+   ```yaml
+   host_binaries:
+     tq:
+       version: 0.1.0
+   ```
+
+   If `.red/config.yaml` already exists, merge only that `host_binaries.tq.version` entry and preserve unrelated content.
 
 If the user accepted Section H, activate the development workflow:
 
