@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RSP_WRAPPER_CAPABILITIES,
@@ -438,9 +439,9 @@ describe("rsp Codex pre-execution hook integration", () => {
     });
 
     expect(res.status).toBe(0);
-    const lines = (await readFile(telemetrySpoolPath(root), "utf8")).trim().split(/\r?\n/);
-    expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)).toMatchObject({
+    const events = await readSpoolEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
       collection: RSP_DECISIONS_COLLECTION,
       hook: "codex-pre-exec",
       command: "git status",
@@ -463,9 +464,9 @@ describe("rsp Codex pre-execution hook integration", () => {
 
     expect(res.status).toBe(0);
     expect(res.stdout).toEqual(Buffer.alloc(0));
-    const lines = (await readFile(telemetrySpoolPath(root), "utf8")).trim().split(/\r?\n/);
-    expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)).toMatchObject({
+    const events = await readSpoolEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
       collection: RSP_DECISIONS_COLLECTION,
       hook: "codex-pre-exec",
       command: "gh pr view 1747 --json number,title --jq .number",
@@ -498,12 +499,37 @@ describe("rsp Codex pre-execution hook integration", () => {
       expect(res.status, `${res.stdout.toString("utf8")}${res.stderr.toString("utf8")}`).toBe(0);
     }
 
-    const events = (await readFile(telemetrySpoolPath(root), "utf8"))
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => JSON.parse(line) as { decision: string });
+    const events = await readSpoolEvents(root) as Array<{ decision: string }>;
     const contributed = events.filter((event) => event.decision === "contributed").length;
     expect(events).toHaveLength(corpus.length);
     expect(contributed / events.length).toBeGreaterThanOrEqual(0.25);
   });
 });
+
+async function readSpoolEvents(root: string): Promise<Array<Record<string, unknown>>> {
+  const raw = await readFile(telemetrySpoolPath(root), "utf8").catch(() => "");
+  const rows: Array<Record<string, unknown>> = [];
+  let header = "";
+  for (const line of raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    if (/^\[(?:\d*)\]\{[^}]+\}:$/.test(line)) {
+      header = line;
+      continue;
+    }
+    if (!header) continue;
+    for (const row of parseRecords(`${header}\n${line}\n`)) {
+      if (!isRecord(row)) continue;
+      if (typeof row.event_json !== "string") {
+        const { spool_id: _spoolId, ...event } = row;
+        if (typeof event.collection === "string") rows.push(event);
+        continue;
+      }
+      const event = JSON.parse(row.event_json) as unknown;
+      if (isRecord(event)) rows.push(event);
+    }
+  }
+  return rows;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
