@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
@@ -162,6 +162,28 @@ export interface LatencyPercentiles {
   wrapper_ms_p99: number | null;
 }
 
+/**
+ * Walk up from startDir to find the first directory that already contains a
+ * `.red` child. Returns the repo root if found, null otherwise.
+ *
+ * Never creates or modifies the filesystem — only existsSync probes. Safe for
+ * deleted paths because path.resolve() is string-only and existsSync returns
+ * false (never throws) for absent entries. This upholds ADR 0067: rsp never
+ * mints a `.red/` directory; if none is found in the hierarchy, the caller
+ * must drop the telemetry event.
+ */
+function resolveRootForTelemetryWrite(startDir: string): string | null {
+  if (!startDir) return null;
+  let current = resolve(startDir);
+  while (true) {
+    if (existsSync(join(current, ".red"))) return current;
+    const parent = resolve(join(current, ".."));
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
 export function telemetrySpoolPath(rootDir: string): string {
   return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_FILE);
 }
@@ -180,7 +202,9 @@ export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryE
 
 export function appendTelemetryEventSync(rootDir: string, event: RspTelemetryEvent): void {
   try {
-    const path = telemetrySpoolPath(rootDir);
+    const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+    if (!resolvedRoot) return;
+    const path = telemetrySpoolPath(resolvedRoot);
     mkdirSync(dirname(path), { recursive: true });
     appendFileSync(path, formatSpoolRow({
       spool_id: randomUUID(),
@@ -210,11 +234,13 @@ function compactTextField(
 }
 
 export async function takeTelemetrySpool(rootDir: string): Promise<string[]> {
-  const path = telemetrySpoolPath(rootDir);
+  const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+  if (!resolvedRoot) return [];
+  const path = telemetrySpoolPath(resolvedRoot);
   await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
-  const files = await renameActiveSpools(rootDir);
+  const files = await renameActiveSpools(resolvedRoot);
   const entries = [
-    ...await readPendingCorrectionEntries(rootDir),
+    ...await readPendingCorrectionEntries(resolvedRoot),
     ...await readDrainEntries(files),
   ];
   await Promise.all(files.map((file) => rm(file, { force: true })));
@@ -225,20 +251,22 @@ export async function drainTelemetrySpool(
   rootDir: string,
   drainLine: (line: string) => Promise<boolean>,
 ): Promise<void> {
-  const path = telemetrySpoolPath(rootDir);
+  const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+  if (!resolvedRoot) return;
+  const path = telemetrySpoolPath(resolvedRoot);
   await mkdir(dirname(path), { recursive: true }).catch(() => undefined);
-  await ensureActiveSpoolFiles(rootDir);
+  await ensureActiveSpoolFiles(resolvedRoot);
 
-  for (const orphan of await orphanedDrainFiles(rootDir)) {
-    await drainFile(rootDir, orphan, drainLine);
+  for (const orphan of await orphanedDrainFiles(resolvedRoot)) {
+    await drainFile(resolvedRoot, orphan, drainLine);
   }
 
-  for (const entry of await readPendingCorrectionEntries(rootDir)) {
-    await drainEntry(rootDir, entry, drainLine, true);
+  for (const entry of await readPendingCorrectionEntries(resolvedRoot)) {
+    await drainEntry(resolvedRoot, entry, drainLine, true);
   }
 
-  for (const drainingPath of await renameActiveSpools(rootDir)) {
-    await drainFile(rootDir, drainingPath, drainLine);
+  for (const drainingPath of await renameActiveSpools(resolvedRoot)) {
+    await drainFile(resolvedRoot, drainingPath, drainLine);
   }
 }
 
@@ -351,7 +379,9 @@ function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
 
 function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow): void {
   try {
-    const path = telemetrySpoolCorrectionsPath(rootDir);
+    const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
+    if (!resolvedRoot) return;
+    const path = telemetrySpoolCorrectionsPath(resolvedRoot);
     mkdirSync(dirname(path), { recursive: true });
     const correctionEmitter: ToonlLineEmitter = encodeLines();
     appendFileSync(path, correctionEmitter.push({
