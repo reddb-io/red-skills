@@ -24,7 +24,7 @@
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
-    "@reddb-io/toon": "workspace:*",
+    "@reddb-io/toon": "catalog:",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/sdk": "1.23.1",

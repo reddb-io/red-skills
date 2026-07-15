@@ -9,9 +9,9 @@ catalogs:
     '@modelcontextprotocol/sdk':
       specifier: ^1.0.0
       version: 1.29.0
-    '@toon-format/toon':
-      specifier: ^2.3.0
-      version: 2.3.0
+    '@reddb-io/toon':
+      specifier: 0.1.0
+      version: 0.1.0
     '@types/node':
       specifier: ^22.0.0
       version: 22.19.19
@@ -175,8 +175,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       '@reddb-io/toon':
-        specifier: workspace:*
-        version: link:../../packages/toon
+        specifier: 'catalog:'
+        version: 0.1.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -215,8 +215,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       '@reddb-io/toon':
-        specifier: workspace:*
-        version: link:../../packages/toon
+        specifier: 'catalog:'
+        version: 0.1.0
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
@@ -305,8 +305,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       '@reddb-io/toon':
-        specifier: workspace:*
-        version: link:../../packages/toon
+        specifier: 'catalog:'
+        version: 0.1.0
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
@@ -428,22 +428,6 @@ importers:
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
-
-  packages/toon:
-    dependencies:
-      '@toon-format/toon':
-        specifier: 'catalog:'
-        version: 2.3.0
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
-      vitest:
-        specifier: 'catalog:'
-        version: 2.1.9(@types/node@22.19.19)
 
 packages:
 
@@ -1739,6 +1723,10 @@ packages:
     resolution: {integrity: sha512-aPXh8WeP5SSu17SBU8e2kOgZMuKnrTW/qYviD3zu7LLoAP5cOP6rDRl7C/6LreixHepNc+vwkyVILfK0RTJtLQ==}
     engines: {node: '>=18'}
 
+  '@reddb-io/toon@0.1.0':
+    resolution: {integrity: sha512-7tIrE7XgpRVDo0JidC0oYnPmMDuB94YtmZ9N2QW2P7yjjc4RB3/UA0MeLy1M/2kpSy/9HVxcsIhsr0SwuD5txQ==}
+    engines: {node: '>=18'}
+
   '@rollup/rollup-android-arm-eabi@4.60.4':
     resolution: {integrity: sha512-F5QXMSiFebS9hKZj02XhWLLnRpJ3B3AROP0tWbFBSj+6kCbg5m9j5JoHKd4mmSVy5mS/IMQloYgYxCuJC0fxEQ==}
     cpu: [arm]
@@ -1915,9 +1903,6 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
-
-  '@toon-format/toon@2.3.0':
-    resolution: {integrity: sha512-/Ew9etdRQKVMnm9fDaCG0JjyAOK/O7T0M97oum1aW4W+UR8ZhVVPBanIV7oWgHBiGlnVxV9M55PWQCHofDV07w==}
 
   '@turbo/darwin-64@2.9.16':
     resolution: {integrity: sha512-jLjApWTSNd7JZ5JaLYfelW1ytnGQOvB7ivl+2RD1xQvJTbi8I9gBjzcga7tDZVPyaxpl10YTfJt3BrYXR18KDw==}
@@ -4979,6 +4964,8 @@ snapshots:
 
   '@reddb-io/sdk@1.23.1': {}
 
+  '@reddb-io/toon@0.1.0': {}
+
   '@rollup/rollup-android-arm-eabi@4.60.4':
     optional: true
 
@@ -5103,8 +5090,6 @@ snapshots:
       tslib: 2.8.1
 
   '@standard-schema/spec@1.1.0': {}
-
-  '@toon-format/toon@2.3.0': {}
 
   '@turbo/darwin-64@2.9.16':
     optional: true

@@ -66,7 +66,7 @@ export function transcodeJsonToToon(
   }
   let encoded: string;
   try {
-    encoded = enc(parsed);
+    encoded = enc(parsed as JsonValue);
   } catch {
     return input;
   }
@@ -77,7 +77,7 @@ export function transcodeJsonToToon(
     return input;
   }
   if (!deepEqual(parsed, roundTripped)) return input;
-  return encoded;
+  return encoded.trimEnd();
 }
 
 export const NORMALIZE_JSON_TOON: NormalizeEntry = {
@@ -114,7 +114,7 @@ export async function renderGenericJsonLane(
 
   const value = parsed.value;
   if (!Array.isArray(value)) {
-    return { output: encode(value as JsonValue), detected: true, lossy: false };
+    return { output: encode(value as JsonValue).trimEnd(), detected: true, lossy: false };
   }
 
   const total = value.length;
@@ -122,7 +122,7 @@ export async function renderGenericJsonLane(
   const maxItems = positiveInteger(options.maxItems, DEFAULT_JSON_MAX_ITEMS);
   const shouldSelect = total > maxItems && estimateTokens(input) >= minTokens;
   if (!shouldSelect) {
-    return { output: encode(value as JsonValue), detected: true, lossy: false, totalItems: total, keptItems: total };
+    return { output: encode(value as JsonValue).trimEnd(), detected: true, lossy: false, totalItems: total, keptItems: total };
   }
 
   const kept = selectJsonItems(value, maxItems);
@@ -140,8 +140,9 @@ export async function renderGenericJsonLane(
   const handleLine = handle
     ? `original: rsp show ${handle}`
     : `original: unavailable - re-run: ${options.command ?? "command"}`;
+  const toonPayload = encode(payload).trimEnd();
   return {
-    output: [marker, handleLine, encode(payload)].filter(Boolean).join("\n"),
+    output: [marker, handleLine, toonPayload].filter(Boolean).join("\n"),
     detected: true,
     lossy: true,
     totalItems: total,
