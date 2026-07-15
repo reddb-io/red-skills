@@ -199,4 +199,25 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("do not auto-move content");
     expect(apply).toContain("Delegate to the owning writer");
   });
+
+  it("audits unlanded .red docs with the shared Docs Sweep detector and gated ADR 0092 fix", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Unlanded `.red/` docs");
+    expect(skill).toContain("primary checkout but are not landed on `origin/{base}`");
+    expect(skill).toContain("apps/dev/src/core/docs-sweep.ts");
+    expect(skill).toContain("apps/dev/src/core/unlanded-docs-doctor.ts");
+    expect(skill).toContain("never implement a second `.red/` docs comparison");
+    expect(skill).toContain("includes untracked files");
+    expect(skill).toContain("rendered file list (`state:path`)");
+    expect(skill).toContain("`→ ADR 0092 doc-landing lane`");
+    expect(skill).toContain("never create a branch, push, open a PR, merge, or mutate the primary checkout");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Unlanded `.red/` docs (check 20)");
+    expect(apply).toContain("run the ADR 0092 doc-landing lane");
+    expect(apply).toContain("Reuse the shared Docs Sweep plan");
+    expect(apply).toContain("confirm each");
+    expect(apply).toContain("pushes a branch, opens a PR, and merges it");
+  });
 });
