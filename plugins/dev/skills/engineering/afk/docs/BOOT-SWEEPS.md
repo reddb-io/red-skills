@@ -2,7 +2,14 @@
 
 > Extracted from `afk/SKILL.md` for progressive disclosure. Consulted on demand — not the agent's step-by-step loop.
 >
-> How the bundle reclaims stale state at boot. The agent never runs these by hand — they are the bundle's startup hygiene. Referenced from *Bootstrap* and the *Per-Issue Loop* close step.
+> How the bundle reclaims stale tmp-lane state at boot. Durable AFK process state
+> lives in the state tier under `.red/state/afk/`; the agent never runs these by
+> hand because they are the bundle's startup hygiene. Referenced from *Bootstrap*
+> and the *Per-Issue Loop* close step.
+
+The lane janitor only acts on registered disposable lanes under `.red/tmp/`.
+Tmp lane cleanup never deletes `.red/state/`, plugin stores, tracked config, or
+`.red/researches/`.
 
 ## Orphan Cleanup (boot-time)
 

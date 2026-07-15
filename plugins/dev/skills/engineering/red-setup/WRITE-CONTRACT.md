@@ -14,7 +14,7 @@ Let them edit before writing.
 
 ## Write
 
-**No-clobber rule (governs every write below).** Never overwrite, rewrite, or reorder content in a file this skill did not just create: if a target already exists, skip it, log a one-line notice, and move on — no second ask, and never `git add` on the user's behalf. Two surgical merges are the *only* exceptions, flagged at the steps that own them: updating `plugins.<name>.enabled` flags in an existing `.red/config.yaml`, and appending a missing `tmp/`/`state/` line to an existing `.red/.gitignore`. (Copied workflow YAML is the one "ask, don't silently skip" case — diff and ask first.)
+**No-clobber rule (governs every write below).** Never overwrite, rewrite, or reorder content in a file this skill did not just create: if a target already exists, skip it, log a one-line notice, and move on — no second ask, and never `git add` on the user's behalf. Two surgical merges are the *only* exceptions, flagged at the steps that own them: updating `plugins.<name>.enabled` flags in an existing `.red/config.yaml`, and appending a missing `tmp/`, `state/`, or `researches/` line to an existing `.red/.gitignore`. (Copied workflow YAML is the one "ask, don't silently skip" case — diff and ask first.)
 
 **Pick the file to edit:**
 

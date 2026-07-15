@@ -21,7 +21,8 @@ describe("start docs contract", () => {
     expect(skill).toContain("ADR numbers");
     expect(skill).toContain("decline leaves the docs unlanded");
     expect(skill).toContain("base resolved lock > pin > main");
-    expect(skill).toContain("worktree under `.red/tmp/`");
+    expect(skill).toContain("worktree under `.red/tmp/worktrees/docs/<slug>`");
+    expect(skill).toContain("docs-<YYYYMMDD>-<slug>");
     expect(skill).toContain("docs:");
     expect(skill).toContain("one batch PR per session");
     expect(skill).toContain("no doc changes skips the finalizer silently");

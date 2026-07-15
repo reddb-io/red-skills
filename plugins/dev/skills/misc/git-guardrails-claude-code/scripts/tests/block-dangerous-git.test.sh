@@ -110,9 +110,9 @@ expect_eq "AC1/push blocked while locked"           "2" "$(run_hook "$RL" "git p
 expect_eq "AC1/reset --hard blocked while locked"   "2" "$(run_hook "$RL" "git reset --hard")"
 
 # ===========================================================================
-# Scope — /afk worktrees under .red/tmp/work-*/ are exempt even with a lock.
+# Scope — registered worktree lanes under .red/tmp/worktrees/ are exempt even with a lock.
 # ===========================================================================
-WT="$(mktemp -d)/red-skills/.red/tmp/work-abc-i1/worktree"
+WT="$(mktemp -d)/red-skills/.red/tmp/worktrees/manual/fix-docs"
 mkdir -p "$(dirname "$WT")"
 mk_repo "$WT" main                                     # lockfile present, but it's a worktree path
 expect_eq "scope/worktree switch other allowed"     "0" "$(run_hook "$WT" "git switch feature")"

@@ -13,7 +13,7 @@ the action and gate on top of it.
 | AGENTS≡CLAUDE Agent-skills / Development-workflow parity | run the development-workflow injector (`inject-development-workflow --root <repo>`) — upserts both blocks in place | **safe** (batch; idempotent) |
 | `dev.lock.primary-branch` unset | same injector (it sets the nested flag) | **safe** (batch) |
 | Statusline drift | rewrite the `.claude/settings.json` `statusLine` to the cached-bundle form (jq merge, preserve other keys) | **safe** (batch) |
-| `.red/.gitignore` self-ignore missing/incomplete | write `.red/.gitignore` (header + `tmp/` + `state/`) if absent, else append only the missing pattern(s) — never reorder or clobber existing lines; don't `git add` it; print a one-line receipt | **safe** (batch; idempotent) |
+| `.red/.gitignore` self-ignore missing/incomplete | write `.red/.gitignore` (header + `tmp/` + `state/` + `researches/`) if absent, else append only the missing pattern(s) — never reorder or clobber existing lines; don't `git add` it; print a one-line receipt | **safe** (batch; idempotent) |
 | Label synonym / legacy / naming | `gh label rename <old> <new>` (or create canonical + migrate, then retire the old) | **confirm each** — re-tags every issue carrying the old label |
 | Legacy/top-level dev-plugin config (flat `lock-primary-branch`, top-level `dev.lock.*`, top-level `afk:`) | migrate the key(s) into the canonical `plugins.dev.*` namespace + delete the top-level orphan in `.red/config.yaml` (safe: the #697 fold reads both, the namespaced form wins) | **confirm each** |
 | `blocked:*` on a `ready-for-agent`/`running` issue | `gh issue edit <N> --remove-label blocked:<reason>` (rotate the stale reason) | **confirm each** |
