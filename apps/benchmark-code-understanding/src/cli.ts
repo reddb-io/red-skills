@@ -48,7 +48,7 @@ async function runDoctor(args: LooseParsedArgs): Promise<number> {
 async function runRun(args: LooseParsedArgs): Promise<number> {
   const workspace = workspaceRoot(process.cwd());
   const benchRoot = join(workspace, ".red", "tmp", "bench", "code-understanding");
-  const out = stringFlag(args, "out") ?? join(benchRoot, "runs.jsonl");
+  const out = stringFlag(args, "out") ?? join(benchRoot, "runs.toonl");
   const records = await runBenchmark({
     runner: runnerFlag(args),
     corpus: "overlap",
