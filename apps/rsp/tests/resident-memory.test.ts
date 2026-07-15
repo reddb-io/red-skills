@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { connect } from "@reddb-io/sdk";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { graphRecall } from "../../memory/src/graph-recall.js";
 import { MemoryStore } from "../../memory/src/graph-store.js";
@@ -227,7 +228,8 @@ async function waitForRegistry(path: string, timeoutMs = 5_000): Promise<{
   let last: unknown;
   while (Date.now() < deadline) {
     try {
-      return JSON.parse(await readFile(path, "utf8")) as {
+      const raw = await readFile(path, "utf8");
+      return parseRegistryDocument(raw) as {
         pid: number;
         socket_path: string;
         store_uri: string;
@@ -240,6 +242,14 @@ async function waitForRegistry(path: string, timeoutMs = 5_000): Promise<{
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw last instanceof Error ? last : new Error("resident registry did not appear");
+}
+
+function parseRegistryDocument(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return decode(raw.trim());
+  }
 }
 
 async function shutdownResident(socketPath: string, timeoutMs = 5_000): Promise<void> {
