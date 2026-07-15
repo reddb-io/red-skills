@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
 import { type JsonObject } from "@reddb-io/toon";
+import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
@@ -156,7 +157,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     await writeFile(opts.pidPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
   }
   const residentVersion = opts.residentVersion ?? "0.0.0-dev";
-  const registryPath = opts.registryPath ?? join(opts.rootDir ?? process.cwd(), ".red", "tmp", "rsp-resident.pid.json");
+  const registryPath = opts.registryPath ?? join(rspStateDir(opts.rootDir ?? process.cwd()), "rsp-resident.pid.json");
   try {
     await writeResidentRegistry(registryPath, {
       socket_path: opts.socketPath,
@@ -228,7 +229,7 @@ const IDLE_SHUTDOWN_WATCHDOG_MS = Math.max(
   1,
   Number(process.env.RSP_TEST_IDLE_SHUTDOWN_WATCHDOG_MS ?? "10000"),
 );
-const RSP_STATUS_SUMMARY = join(".red", "tmp", "rsp-status-summary.json");
+const RSP_STATUS_SUMMARY_FILE = "rsp-status-summary.json";
 const TELEMETRY_KV_COLLECTIONS = [
   RSP_ACCOUNTING_EVENTS_COLLECTION,
   RSP_DECISIONS_COLLECTION,
@@ -465,7 +466,7 @@ async function writeStatusSummary(db: RedDB, rootDir: string, now = new Date()):
   const dollarsSavedToday = stats.savings.tokens_saved > 0
     ? (tokensSavedToday / stats.savings.tokens_saved) * stats.savings.dollars_saved_estimate_usd
     : 0;
-  const path = join(rootDir, RSP_STATUS_SUMMARY);
+  const path = join(rspStateDir(rootDir), RSP_STATUS_SUMMARY_FILE);
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   const payload: JsonObject = {
     version: 1,
