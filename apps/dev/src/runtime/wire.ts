@@ -14,9 +14,10 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
-import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
+import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { resolveBase } from "../core/base-resolver.js";
+import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
@@ -876,7 +877,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
   try {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
+    writeFileSync(tmp, encodeDevSnapshotToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
@@ -1336,7 +1337,7 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
   try {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, encodeToon(cache as unknown as ToonValue), "utf8");
+    writeFileSync(tmp, encodeDevSnapshotToon(cache as unknown as ToonValue), "utf8");
     renameSync(tmp, path);
   } catch {
     // best-effort, like the bash `|| true`
