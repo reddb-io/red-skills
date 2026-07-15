@@ -81,6 +81,27 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     toonPath: ".red/tmp/statusline-repo-cache.json",
     kind: "toon",
   },
+  {
+    id: "dev.rsp-resident-registry",
+    plugin: "dev",
+    legacyPath: ".red/tmp/rsp-resident.pid.json",
+    toonPath: ".red/tmp/rsp-resident.pid.json",
+    kind: "toon",
+  },
+  {
+    id: "dev.rsp-status-summary",
+    plugin: "dev",
+    legacyPath: ".red/tmp/rsp-status-summary.json",
+    toonPath: ".red/tmp/rsp-status-summary.json",
+    kind: "toon",
+  },
+  {
+    id: "dev.rsp-wait-registry",
+    plugin: "dev",
+    legacyPath: ".red/tmp/waits/*.json",
+    toonPath: ".red/tmp/waits/*.json",
+    kind: "toon",
+  },
 ];
 
 export const REGISTERED_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
@@ -200,6 +221,21 @@ interface SurfaceTarget {
 }
 
 async function expandSurfaceTargets(rootDir: string, surface: RegisteredToonSurface): Promise<SurfaceTarget[]> {
+  if (surface.id === "dev.rsp-wait-registry") {
+    const waitsRoot = join(rootDir, ".red", "tmp", "waits");
+    let entries: string[];
+    try {
+      entries = await readdir(waitsRoot);
+    } catch {
+      return [];
+    }
+    return entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map((entry) => {
+        const path = join(waitsRoot, entry);
+        return { surface, legacyPath: path, toonPath: path };
+      });
+  }
   if (surface.id !== "dev.attempt-state") {
     return [{ surface, legacyPath: join(rootDir, surface.legacyPath), toonPath: join(rootDir, surface.toonPath) }];
   }
@@ -336,10 +372,20 @@ async function readPidFile(path: string): Promise<number | null> {
 
 async function readJsonPid(path: string): Promise<number | null> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as { pid?: unknown };
+    const parsed = readSnapshotDocument(await readFile(path, "utf8")) as { pid?: unknown };
     return typeof parsed.pid === "number" ? parsePid(String(parsed.pid)) : null;
   } catch {
     return null;
+  }
+}
+
+function readSnapshotDocument(raw: string): unknown {
+  const body = raw.trim();
+  if (!body) return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return decode(body);
   }
 }
 
