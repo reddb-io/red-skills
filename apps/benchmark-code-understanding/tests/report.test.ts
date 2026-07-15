@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { encode, type JsonValue } from "@reddb-io/toon";
 import { buildReport, parseAgentJsonl, parseRunRecords, renderReportMarkdown } from "../src/report.js";
 import type { RunRecord } from "../src/types.js";
 
@@ -145,5 +146,42 @@ describe("benchmark report", () => {
     const rows = parseRunRecords(`${JSON.stringify(record({ arm: "codegraph" }))}\n`);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.arm).toBe("codegraph");
+  });
+
+  test("parses spec-valid TOONL run records and aggregates them", () => {
+    const rows = parseRunRecords(encode([
+      record({
+        arm: "none",
+        metrics: {
+          tools: { total: 10, read: 4, grep: 2, bash: 1, mcp: 0, byName: {} },
+          tokens: { input: 900, output: 100, cacheCreation: 0, cacheRead: 0, total: 1000 },
+          cost_usd: 0.4,
+        },
+      }),
+      record({
+        arm: "redskills",
+        metrics: {
+          tools: { total: 4, read: 1, grep: 0, bash: 0, mcp: 2, byName: {} },
+          tokens: { input: 500, output: 100, cacheCreation: 0, cacheRead: 0, total: 600 },
+          cost_usd: 0.2,
+        },
+      }),
+    ] as unknown as JsonValue));
+
+    expect(rows.map((row) => row.arm)).toEqual(["none", "redskills"]);
+    expect(buildReport(rows).comparisons.find((row) => row.id === "redskills_vs_none")).toMatchObject({
+      token_delta_pct: -40,
+      read_grep_delta: -5,
+    });
+  });
+
+  test("parses appended standalone TOONL run segments", () => {
+    const rows = parseRunRecords([
+      encode([record({ arm: "none" })] as unknown as JsonValue).trimEnd(),
+      encode([record({ arm: "redskills", run_index: 2 })] as unknown as JsonValue).trimEnd(),
+      "",
+    ].join("\n"));
+
+    expect(rows.map((row) => `${row.arm}:${row.run_index}`)).toEqual(["none:1", "redskills:2"]);
   });
 });
