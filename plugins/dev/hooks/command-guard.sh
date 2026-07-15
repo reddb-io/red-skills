@@ -468,6 +468,122 @@ EOF
 
 enforce_no_leak_gh_write_policy
 
+# Returns the filename component if path targets the .red/tmp/ root directly
+# (no named-lane subdirectory after the root).  Returns nothing otherwise.
+tmp_root_blocked_path() {
+  local raw="$1"
+  local s="$raw"
+  [[ "$s" == \'* ]] && s="${s:1}" && s="${s%\'}"
+  [[ "$s" == \"* ]] && s="${s:1}" && s="${s%\"}"
+  local rel
+  case "$s" in
+    "$REPO_ROOT/.red/tmp/"*)
+      rel="${s#$REPO_ROOT/.red/tmp/}"
+      ;;
+    ".red/tmp/"*)
+      rel="${s#.red/tmp/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  [[ -n "$rel" && "$rel" != */* ]] || return 1
+  printf '%s' "$rel"
+}
+
+deny_tmp_root_write() {
+  local path="$1"
+  deny "$(cat <<EOF
+BLOCKED by RedSkills tmp-root write guard.
+plugins.dev.enabled is true, so files must not be created directly at .red/tmp/.
+
+Requested path: $path
+Correct lanes:  .red/tmp/logs/<YYYY-MM-DD>/ for session logs
+                .red/tmp/scratch/ for ad-hoc scratch files
+
+Write to the appropriate named lane instead.
+EOF
+  )"
+}
+
+enforce_tmp_root_write_policy() {
+  local -a tokens
+  read -ra tokens <<<"$COMMAND"
+  local n=${#tokens[@]}
+  ((n > 0)) || return 0
+
+  local i j leaf
+
+  for ((i = 0; i < n; i++)); do
+    local tok="${tokens[i]}"
+    local redir_target=""
+
+    # Standalone or concatenated redirection operators
+    case "$tok" in
+      '>'|'>>'|[0-9]'>'|[0-9]'>>'|'&>'|'&>>')
+        redir_target="${tokens[i+1]:-}"
+        ;;
+      '>'?*|'>>'?*)
+        if [[ "$tok" == '>>'* ]]; then
+          redir_target="${tok#>>}"
+        else
+          redir_target="${tok#>}"
+        fi
+        ;;
+      [0-9]'>'?*|[0-9]'>>'?*)
+        local re_fd_append='^[0-9]+>>(.+)'
+        local re_fd_write='^[0-9]+>(.+)'
+        if [[ "$tok" =~ $re_fd_append ]]; then
+          redir_target="${BASH_REMATCH[1]}"
+        elif [[ "$tok" =~ $re_fd_write ]]; then
+          redir_target="${BASH_REMATCH[1]}"
+        fi
+        ;;
+      '&>'?*|'&>>'?*)
+        if [[ "$tok" == '&>>'* ]]; then
+          redir_target="${tok#&>>}"
+        else
+          redir_target="${tok#&>}"
+        fi
+        ;;
+    esac
+
+    if [[ -n "$redir_target" ]]; then
+      leaf="$(tmp_root_blocked_path "$redir_target" || true)"
+      [[ -n "$leaf" ]] && deny_tmp_root_write "$redir_target"
+    fi
+
+    # File-creating commands: touch, tee, cp, mv
+    case "$tok" in
+      touch|tee)
+        for ((j = i + 1; j < n; j++)); do
+          local arg="${tokens[j]}"
+          case "$arg" in '>'|'>>'|'|'|'&&'|'||'|';') break ;; esac
+          [[ "${arg:0:1}" == "-" ]] && continue
+          leaf="$(tmp_root_blocked_path "$arg" || true)"
+          [[ -n "$leaf" ]] && deny_tmp_root_write "$arg"
+        done
+        ;;
+      cp|mv)
+        local -a positional=()
+        for ((j = i + 1; j < n; j++)); do
+          local arg="${tokens[j]}"
+          case "$arg" in '>'|'>>'|'|'|'&&'|'||'|';') break ;; esac
+          [[ "${arg:0:1}" == "-" ]] && continue
+          positional+=("$arg")
+        done
+        if [[ ${#positional[@]} -ge 2 ]]; then
+          local dest="${positional[${#positional[@]}-1]}"
+          leaf="$(tmp_root_blocked_path "$dest" || true)"
+          [[ -n "$leaf" ]] && deny_tmp_root_write "$dest"
+        fi
+        ;;
+    esac
+  done
+}
+
+enforce_tmp_root_write_policy
+
 guard_scope_for_path() {
   local path="$1"
   case "$path" in
