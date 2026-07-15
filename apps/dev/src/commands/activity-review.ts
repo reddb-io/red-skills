@@ -214,12 +214,23 @@ function asPositiveNumber(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function collectTokensFromObject(value: unknown): { input: number; output: number; total: number; hits: number } {
+export function collectTokensFromObject(value: unknown): { input: number; output: number; total: number; hits: number } {
   let input = 0;
   let output = 0;
   let total = 0;
   let hits = 0;
   const visit = (node: unknown): void => {
+    if (typeof node === "string") {
+      const trimmed = node.trim();
+      if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return;
+      try {
+        visit(JSON.parse(trimmed));
+      } catch {
+        // Old raw firehose records carried arbitrary text in `msg`; only parse
+        // JSON-looking strings so regular output remains advisory and ignored.
+      }
+      return;
+    }
     if (node === null || typeof node !== "object") return;
     if (Array.isArray(node)) {
       for (const item of node) visit(item);
