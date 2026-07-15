@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 // uniform envelope so a rollup reader never has to special-case a line's shape.
 // The envelope is defined exactly once, here, with this field order:
 //
-//   {ts, lvl, worker, issue, attempt, type, msg, …extra}
+//   {ts, lvl?, worker?, issue?, attempt?, type, msg, …extra}
 //
 // `ts` (ISO-8601) is the Module's only ambient input in bash; here it is always
 // passed in as an explicit argument so the whole surface is pure and the test
@@ -34,20 +34,28 @@ export interface JsonlLogFields {
   worker?: string;
   issue?: number | string;
   attempt?: number | string;
-  /** Verbatim extra string fields (the "…extra" of the schema). */
-  extra?: Record<string, string>;
+  /** Verbatim extra JSON fields (the "…extra" of the schema). */
+  extra?: Record<string, JsonlLogValue>;
 }
+
+export type JsonlLogValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonlLogValue[]
+  | { [key: string]: JsonlLogValue };
 
 /** The uniform envelope object, in canonical field order. */
 export interface JsonlLogRecord {
   ts: string;
-  lvl: string;
-  worker: string;
-  issue: number;
-  attempt: number;
+  lvl?: string;
+  worker?: string;
+  issue?: number;
+  attempt?: number;
   type: string;
-  msg: string;
-  [extra: string]: string | number;
+  msg: JsonlLogValue;
+  [extra: string]: JsonlLogValue | undefined;
 }
 
 /** Thrown when input is malformed; `code` mirrors the bash return codes (2/3). */
@@ -88,17 +96,19 @@ function coerceInt(label: string, value: number | string | undefined): number {
  * order, then validated extras ride along verbatim as string fields. Throws a
  * {@link JsonlLogError} on malformed input — nothing is written by callers.
  */
-export function buildRecord(type: string, msg: string, ts: string, fields: JsonlLogFields = {}): JsonlLogRecord {
+export function buildRecord(type: string, msg: JsonlLogValue, ts: string, fields: JsonlLogFields = {}): JsonlLogRecord {
   if (!type) throw new JsonlLogError("[jsonl-log] buildRecord: need <type>", 2);
-  const record: JsonlLogRecord = {
+  const record: Partial<JsonlLogRecord> = {
     ts,
-    lvl: fields.lvl ?? "info",
-    worker: fields.worker ?? "",
-    issue: coerceInt("issue", fields.issue),
-    attempt: coerceInt("attempt", fields.attempt),
-    type,
-    msg,
   };
+  if (fields.lvl !== undefined && fields.lvl !== "info") record.lvl = fields.lvl;
+  if (fields.worker !== undefined && fields.worker !== "") record.worker = fields.worker;
+  const issue = coerceInt("issue", fields.issue);
+  if (issue !== 0) record.issue = issue;
+  const attempt = coerceInt("attempt", fields.attempt);
+  if (attempt !== 0) record.attempt = attempt;
+  record.type = type;
+  record.msg = msg;
   for (const [key, value] of Object.entries(fields.extra ?? {})) {
     if (RESERVED_KEYS.has(key)) {
       throw new JsonlLogError(`[jsonl-log] reserved key ${JSON.stringify(key)} cannot be set via extra`, 3);
@@ -111,7 +121,7 @@ export function buildRecord(type: string, msg: string, ts: string, fields: Jsonl
     }
     record[key] = value;
   }
-  return record;
+  return record as JsonlLogRecord;
 }
 
 /** Serialize a record to its single compact JSONL line (no trailing newline). */
@@ -145,7 +155,7 @@ export interface AppendOptions {
 export async function appendRecord(
   path: string,
   type: string,
-  msg: string,
+  msg: JsonlLogValue,
   options: AppendOptions,
 ): Promise<JsonlLogRecord> {
   if (!path) throw new JsonlLogError("[jsonl-log] appendRecord: need <path>", 2);
