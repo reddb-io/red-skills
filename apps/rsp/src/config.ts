@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { findUp, flatConfigValue } from "@reddb-io/shared/plugin-gate.js";
+import { SHARED_STORE_REL, resolveSharedStorePath } from "@reddb-io/shared/red-paths.js";
 import { resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
 
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
-export const DEFAULT_RSP_STORE_PATH = ".red/tmp/red-skills.rdb";
+/** Canonical shared RedDB store location (state tier); see {@link SHARED_STORE_REL}. */
+export const DEFAULT_RSP_STORE_PATH = SHARED_STORE_REL;
 export const DEFAULT_RSP_TTL_DAYS = 7;
 export const DEFAULT_RSP_EPHEMERAL_TTL_HOURS = 6;
 export const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
@@ -67,7 +69,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   );
   const storeRoot = resolveResidentPaths(cwd).rootDir;
-  const storeUri = explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${join(resolve(storeRoot), DEFAULT_RSP_STORE_PATH)}`;
+  // Honor the transition window: open the legacy tmp-tier store if it still
+  // exists and setup has not yet migrated it to the state tier.
+  const storeUri =
+    explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${resolveSharedStorePath(resolve(storeRoot), existsSync)}`;
 
   return {
     enabled,

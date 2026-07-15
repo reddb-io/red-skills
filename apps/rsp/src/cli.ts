@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "@reddb-io/sdk";
 import { type JsonObject } from "@reddb-io/toon";
+import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
@@ -634,7 +635,7 @@ function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig
     const socketDir = fastResidentSocketDir(rootDir);
     const socketPath = join(socketDir, "rsp.sock");
     const pidPath = join(socketDir, "rsp.pid");
-    const registryPath = join(rootDir, ".red", "tmp", "rsp-resident.pid.json");
+    const registryPath = join(rspStateDir(rootDir), "rsp-resident.pid.json");
     const wakeLockPath = join(rootDir, ".red", "tmp", "rsp.wake.lock");
     const child = spawn(process.execPath, [
       ...process.execArgv,
@@ -1158,10 +1159,15 @@ function emptyStorageClassStats(): RspStorageClassStats {
   };
 }
 
-function renderSetupResult(result: { configChanged: boolean; storeCreated: boolean }): string {
+function renderSetupResult(result: {
+  configChanged: boolean;
+  storeCreated: boolean;
+  legacyStoreMigrated?: boolean;
+}): string {
+  const storeState = result.legacyStoreMigrated ? "migrated" : result.storeCreated ? "created" : "existing";
   return [
     `config: ${result.configChanged ? "updated" : "unchanged"}`,
-    `store: ${result.storeCreated ? "created" : "existing"}`,
+    `store: ${storeState}`,
     "",
   ].join("\n");
 }

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decode, encode, type JsonObject } from "@reddb-io/toon";
+import { rspStateDir } from "./red-paths.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 
@@ -48,14 +49,17 @@ export interface RspResidentRegistryStatus {
 export function resolveResidentPaths(cwd: string): RspResidentPaths {
   const rootDir = findRepoRoot(cwd) ?? resolve(cwd);
   const socketDir = resolveRuntimeSocketDir(rootDir);
+  const rspState = rspStateDir(rootDir);
   return {
     rootDir,
     socketPath: join(socketDir, "rsp.sock"),
     pidPath: join(socketDir, "rsp.pid"),
     lockPath: join(socketDir, "rsp.lock"),
+    // The wake lock is a genuinely ephemeral guard, so it stays in the tmp tier.
     wakeLockPath: join(rootDir, ".red", "tmp", "rsp.wake.lock"),
-    summaryPath: join(rootDir, ".red", "tmp", "rsp-status-summary.json"),
-    registryPath: join(rootDir, ".red", "tmp", "rsp-resident.pid.json"),
+    // Durable status + resident metadata live in the rsp state lane (ADR 0098).
+    summaryPath: join(rspState, "rsp-status-summary.json"),
+    registryPath: join(rspState, "rsp-resident.pid.json"),
   };
 }
 

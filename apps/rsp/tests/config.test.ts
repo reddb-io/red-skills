@@ -40,7 +40,7 @@ describe("resolveRspConfig", () => {
     expect(resolveRspConfig(join(root, "nested"), {}, undefined)).toEqual({
       enabled: false,
       proxyEnabled: false,
-      storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
+      storeUri: `file://${join(root, ".red", "state", "red-skills.rdb")}`,
       ttlDays: 3,
       ephemeralTtlHours: 4,
       byteBudget: 42,
@@ -61,7 +61,7 @@ describe("resolveRspConfig", () => {
     expect(resolveRspConfig(root, {}, undefined)).toEqual({
       enabled: true,
       proxyEnabled: false,
-      storeUri: `file://${join(root, ".red", "tmp", "red-skills.rdb")}`,
+      storeUri: `file://${join(root, ".red", "state", "red-skills.rdb")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       ephemeralTtlHours: DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
       byteBudget: DEFAULT_RSP_BYTE_BUDGET,

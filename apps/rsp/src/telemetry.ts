@@ -3,13 +3,15 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { RedDB } from "@reddb-io/sdk";
+import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
 import { storageClassForCommand, type RspStorageClass, type RspStorageClassStats } from "./elision-store.js";
 import { tokenSavingsEstimate, type TokenSavingsEstimate } from "./pricing.js";
 
-export const RSP_TELEMETRY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.toonl");
-export const RSP_TELEMETRY_LEGACY_SPOOL = join(".red", "tmp", "rsp-telemetry.spool.jsonl");
-export const RSP_TELEMETRY_SPOOL_CORRECTIONS = join(".red", "tmp", "rsp-telemetry.spool.corrections.toonl");
+/** Durable telemetry spool filenames; they live in the rsp state lane (ADR 0098). */
+export const RSP_TELEMETRY_SPOOL_FILE = "rsp-telemetry.spool.toonl";
+export const RSP_TELEMETRY_LEGACY_SPOOL_FILE = "rsp-telemetry.spool.jsonl";
+export const RSP_TELEMETRY_SPOOL_CORRECTIONS_FILE = "rsp-telemetry.spool.corrections.toonl";
 export const RSP_ACCOUNTING_EVENTS_COLLECTION = "rsp_accounting_events_v1";
 export const RSP_DECISIONS_COLLECTION = "rsp_decisions_v1";
 export const RSP_TELEMETRY_INVOCATIONS_COLLECTION = "rsp_telemetry_invocations_v1";
@@ -161,15 +163,15 @@ export interface LatencyPercentiles {
 }
 
 export function telemetrySpoolPath(rootDir: string): string {
-  return join(rootDir, RSP_TELEMETRY_SPOOL);
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_FILE);
 }
 
 export function telemetryLegacySpoolPath(rootDir: string): string {
-  return join(rootDir, RSP_TELEMETRY_LEGACY_SPOOL);
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_LEGACY_SPOOL_FILE);
 }
 
 export function telemetrySpoolCorrectionsPath(rootDir: string): string {
-  return join(rootDir, RSP_TELEMETRY_SPOOL_CORRECTIONS);
+  return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_CORRECTIONS_FILE);
 }
 
 export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryEvent): Promise<void> {

@@ -34,6 +34,8 @@ async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rsp-telemetry-"));
   roots.push(root);
   await mkdir(join(root, ".red", "tmp"), { recursive: true });
+  // Durable telemetry spools live in the rsp state lane (ADR 0098).
+  await mkdir(join(root, ".red", "state", "rsp"), { recursive: true });
   await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
   return root;
 }

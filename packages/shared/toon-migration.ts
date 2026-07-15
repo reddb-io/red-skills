@@ -2,6 +2,7 @@ import { accessSync, constants } from "node:fs";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { rspStateDir } from "./red-paths.js";
 
 /**
  * Encodes an rsp snapshot surface as TOON with keyed-map collapse enabled
@@ -114,15 +115,15 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
   {
     id: "dev.rsp-resident-registry",
     plugin: "dev",
-    legacyPath: ".red/tmp/rsp-resident.pid.json",
-    toonPath: ".red/tmp/rsp-resident.pid.json",
+    legacyPath: ".red/state/rsp/rsp-resident.pid.json",
+    toonPath: ".red/state/rsp/rsp-resident.pid.json",
     kind: "toon",
   },
   {
     id: "dev.rsp-status-summary",
     plugin: "dev",
-    legacyPath: ".red/tmp/rsp-status-summary.json",
-    toonPath: ".red/tmp/rsp-status-summary.json",
+    legacyPath: ".red/state/rsp/rsp-status-summary.json",
+    toonPath: ".red/state/rsp/rsp-status-summary.json",
     kind: "toon",
   },
   {
@@ -334,7 +335,7 @@ async function quiescenceReasons(rootDir: string): Promise<string[]> {
     reasons.push("active fleet supervisor is running");
   }
 
-  const rspResidentPid = await readJsonPid(join(tmpDir, "rsp-resident.pid.json"));
+  const rspResidentPid = await readJsonPid(join(rspStateDir(rootDir), "rsp-resident.pid.json"));
   if (rspResidentPid !== null && isLivePid(rspResidentPid)) {
     reasons.push("active rsp resident is running");
   }

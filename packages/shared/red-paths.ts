@@ -118,6 +118,35 @@ export function sharedStorePath(root: string): string {
   return join(stateDir(root), "red-skills.rdb");
 }
 
+/**
+ * The pre-ADR-0098 shared store location under the disposable tmp tier. Kept as
+ * a named constant so the one-time setup migration and the transition-window
+ * fallback read ({@link resolveSharedStorePath}) point at the SAME legacy path
+ * instead of each re-spelling `.red/tmp/red-skills.rdb`.
+ */
+export const LEGACY_SHARED_STORE_REL = ".red/tmp/red-skills.rdb";
+
+/** Absolute path to the legacy (tmp-tier) shared RedDB store. */
+export function legacySharedStorePath(root: string): string {
+  return join(tmpDir(root), "red-skills.rdb");
+}
+
+/**
+ * Resolve the shared store path a consumer should OPEN, honoring the migration
+ * transition window: prefer the canonical state-tier location, fall back to the
+ * legacy tmp-tier file when only that exists, and default to the state-tier path
+ * when neither is present (so a fresh store is created in the new home).
+ *
+ * `exists` is injected so this stays pure and unit-testable without mocks.
+ */
+export function resolveSharedStorePath(root: string, exists: (path: string) => boolean): string {
+  const primary = sharedStorePath(root);
+  if (exists(primary)) return primary;
+  const legacy = legacySharedStorePath(root);
+  if (exists(legacy)) return legacy;
+  return primary;
+}
+
 // ── Tmp-tier worker lanes (ADR 0098 §2) ─────────────────────────────────────
 
 /**
