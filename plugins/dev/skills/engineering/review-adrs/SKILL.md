@@ -88,6 +88,10 @@ Hand the accumulated agreed actions to `/to-spec`:
 
 Publish with `type:spec` + `needs-slicing` (never `ready-for-agent` — `/to-spec` handles the labels). Then in chat: a short receipt of each `Q##` and the action it produced, the link to the published Spec, what was **deferred** (left out), and the single highest-impact finding to reconcile first.
 
+### End-of-session doc-landing finalizer
+
+When the ADR review session ends, run the shared end-of-session doc-landing finalizer in [`/start`'s DOC-LANDING-FINALIZER.md](../start/DOC-LANDING-FINALIZER.md) before exiting.
+
 </what-to-do>
 
 <supporting-info>
