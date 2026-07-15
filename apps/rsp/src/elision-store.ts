@@ -165,6 +165,9 @@ export class RspElisionStore {
     });
     if (usesEmbeddedRedDb(path)) {
       await ensureReddbBinaryFromWarmCache();
+      // The SDK creates the .rdb file but not its parent directory; the store now
+      // lives in the state tier (.red/state), which may not exist yet.
+      await mkdir(dirname(path), { recursive: true });
       store.db = await connect(`file://${path}`);
       await store.ensureRedDbCollections();
       await store.ensureRedDbStore();
