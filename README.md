@@ -388,10 +388,10 @@ Dev guard rails:
 
 - When `plugins.dev.enabled: true`, the dev PreToolUse proxy enforces the
   worktree boundary for agent shell commands: `git worktree add` must target a
-  path under `.red/tmp/`, and branch-moving commands in the primary checkout
+  registered lane under `.red/tmp/`, and branch-moving commands in the primary checkout
   (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`,
   `gh pr checkout`) are blocked. Create branches through
-  `git worktree add .red/tmp/work-<slug> -b <branch> ...` instead.
+  `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> ...` instead.
 - `plugins.dev.lock.primary-branch` remains the explicit branch-lock workflow
   flag that setup writes for compatibility and base-pinning integrations.
 - The dev shell-command guard is controlled by `command_guard` in
