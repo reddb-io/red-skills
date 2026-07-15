@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
 import { resolveBase } from "../core/base-resolver.js";
@@ -118,7 +119,7 @@ export function resolveRoot(rootArg: string | undefined, payload: ClaudePayload,
  * Returns true when the statusline should be emitted.
  */
 export function statuslineEnabled(root: string): boolean {
-  const configPath = join(root, ".red", "config.yaml");
+  const configPath = configFile(root);
   if (!existsSync(configPath)) return true;
   const cfg = loadConfig(configPath, { warn: () => undefined });
   if (getConfig(cfg, "statusline") === "false") return false;
@@ -315,7 +316,7 @@ export async function statuslineCommand(
   // Resolve the cache TTL ONCE here (env > afk.statusline_cache_ttl config > 180,
   // #1217) and thread it into both collectors — the hot render path never loads
   // config a second time per collector.
-  const cfg = loadConfig(join(root, ".red", "config.yaml"), { warn: () => undefined });
+  const cfg = loadConfig(configFile(root), { warn: () => undefined });
   const preset = resolveStatuslinePreset(cfg);
   const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(cfg, key));
   const base = await resolveBase(

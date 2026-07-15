@@ -49,6 +49,7 @@ import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import type { GhContext } from "../runtime/gh.js";
 import { buildReviewGh } from "../runtime/review-gh.js";
 import type { GitContext } from "../runtime/git.js";
@@ -1644,7 +1645,7 @@ function makeRecordOutcomeEvent(
 ): (event: OutcomeEvent) => Promise<void> {
   return async (event: OutcomeEvent): Promise<void> => {
     try {
-      const configPath = join(gitRoot, ".red", "config.yaml");
+      const configPath = configFile(gitRoot);
       const configText = readFileSync(configPath, "utf8");
       if (!pluginEnabledInConfig(configText, "brain")) return;
       const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
