@@ -24,7 +24,7 @@ jobs:
 
       - name: Install pinned tq
         env:
-          TQ_VERSION: v0.1.0
+          TQ_VERSION: v0.2.6
         run: curl -fsSL "https://raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh" | sh
 
       - name: Install workspace dependencies
