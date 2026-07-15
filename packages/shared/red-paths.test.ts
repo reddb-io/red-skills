@@ -26,6 +26,7 @@ import {
   manualWorktreesDir,
   memoryDir,
   rebaseWorktreesDir,
+  reconcileWorktreesDir,
   redDir,
   researchesDir,
   resolveRedRoot,
@@ -132,6 +133,7 @@ describe("tmp tier lanes", () => {
     expect(rebaseWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/rebase");
     expect(cascadeWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/cascade");
     expect(adoptWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/adopt");
+    expect(reconcileWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/reconcile");
     expect(docsWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/docs");
   });
 

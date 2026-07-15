@@ -252,6 +252,11 @@ export function adoptWorktreesDir(root: string): string {
   return join(worktreesDir(root), "adopt");
 }
 
+/** Merge-conflict / boot reconcile worktrees: `.red/tmp/worktrees/reconcile`. */
+export function reconcileWorktreesDir(root: string): string {
+  return join(worktreesDir(root), "reconcile");
+}
+
 /** `/start` docs-finalizer landing worktrees: `.red/tmp/worktrees/docs`. */
 export function docsWorktreesDir(root: string): string {
   return join(worktreesDir(root), "docs");
