@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   BRAIN_ROOT_ENV,
+  LEGACY_SHARED_STORE_REL,
   MEMORY_ROOT_ENV,
   ROOT_OVERRIDE_ENV_VARS,
   SHARED_STORE_REL,
+  legacySharedStorePath,
+  resolveSharedStorePath,
   WORKERS_NAMESPACE_ENV,
   WORKER_NAMESPACES,
   activeWorkersDir,
@@ -78,6 +81,31 @@ describe("state tier lanes", () => {
   it("keeps the shared store under the state tier, never tmp", () => {
     expect(sharedStorePath(ROOT).startsWith(stateDir(ROOT))).toBe(true);
     expect(sharedStorePath(ROOT).startsWith(tmpDir(ROOT))).toBe(false);
+  });
+
+  it("names the legacy tmp-tier shared store as a single constant", () => {
+    expect(LEGACY_SHARED_STORE_REL).toBe(".red/tmp/red-skills.rdb");
+    expect(legacySharedStorePath(ROOT)).toBe("/repo/.red/tmp/red-skills.rdb");
+  });
+});
+
+describe("resolveSharedStorePath (transition-window fallback)", () => {
+  it("prefers the state-tier store when it exists", () => {
+    const resolved = resolveSharedStorePath(ROOT, (p) => p === sharedStorePath(ROOT));
+    expect(resolved).toBe(sharedStorePath(ROOT));
+  });
+
+  it("falls back to the legacy tmp store when only that exists", () => {
+    const resolved = resolveSharedStorePath(ROOT, (p) => p === legacySharedStorePath(ROOT));
+    expect(resolved).toBe(legacySharedStorePath(ROOT));
+  });
+
+  it("defaults to the state-tier store when neither exists", () => {
+    expect(resolveSharedStorePath(ROOT, () => false)).toBe(sharedStorePath(ROOT));
+  });
+
+  it("prefers state over legacy when both exist", () => {
+    expect(resolveSharedStorePath(ROOT, () => true)).toBe(sharedStorePath(ROOT));
   });
 });
 
