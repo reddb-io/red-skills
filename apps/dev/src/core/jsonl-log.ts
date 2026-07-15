@@ -1,5 +1,6 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
 // The JSONL Log Module: owns the AFK structured-log lane format end to end.
 //
@@ -129,6 +130,13 @@ export function formatRecordLine(record: JsonlLogRecord): string {
   return JSON.stringify(record);
 }
 
+/** Serialize one agent-lane record as a standalone TOONL segment. Concatenating
+ * segments keeps appends O_APPEND-safe and lets a restart naturally open a new
+ * segment without rewriting earlier rows. */
+export function formatRecordToonl(record: JsonlLogRecord): string {
+  return encode([record] as unknown as JsonValue).trimEnd();
+}
+
 /**
  * The append IO: a thin injectable sink. The default writes to the filesystem
  * with O_APPEND semantics (Node's `appendFile` opens with `a`, so each write is
@@ -190,7 +198,7 @@ export async function appendAgentRecord(
     fields = { ...fields, extra: rest };
   }
   const record = buildRecord("agent", msg, options.ts, fields);
-  await (options.sink ?? fsAppendSink)(path, formatRecordLine(record));
+  await (options.sink ?? fsAppendSink)(path, formatRecordToonl(record));
   return record;
 }
 
@@ -206,8 +214,33 @@ export function filterByType(records: readonly JsonlLogRecord[], type: string): 
 
 /** Parse a lane's contents into records (one per non-empty line). */
 export function parseLane(content: string): JsonlLogRecord[] {
-  return content
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as JsonlLogRecord);
+  const lines = content.split(/\r?\n/);
+  const records: JsonlLogRecord[] = [];
+  let header = "";
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("{")) {
+      try {
+        records.push(JSON.parse(trimmed) as JsonlLogRecord);
+      } catch {
+        // Crash tails can leave a torn final row; keep the parseable prefix.
+      }
+      continue;
+    }
+    if (/^\[[0-9]+\]\{[^}]+\}:$/.test(trimmed)) {
+      header = trimmed;
+      continue;
+    }
+    if (!header) continue;
+    try {
+      const value = decode(header.replace(/^\[[0-9]+\]/, "[1]") + "\n" + line + "\n");
+      const row = Array.isArray(value) ? value[0] : value;
+      if (row && typeof row === "object") records.push(row as JsonlLogRecord);
+    } catch {
+      // TOONL readers are crash-tail tolerant during rollout.
+    }
+  }
+  return records;
 }
