@@ -1,6 +1,6 @@
 # /hitl Troubleshooting
 
-Use this reference when a `ready-for-human` park looks stale, inconsistent, or recoverable through the HITL card contract. Each entry follows Symptom -> Confirm -> Recover -> Root-fix.
+Use this reference when a `ready-for-human` park looks stale, inconsistent, or recoverable through the HITL card contract. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Verify-before-trusting
 
@@ -31,7 +31,7 @@ When the PR is green and mergeable, resolve the park through the normal `/hitl` 
 
 Do not raw-flip labels without the blocker-state update. AFK preflight re-reads the active blocker and will re-park an issue whose body still says it is blocked.
 
-### Root-fix
+### Root fix
 
 This manual re-check is a stopgap for the broader operational playbook work tracked by #1741 and the sibling AFK troubleshooting/root-fix doc in #1863. Long term, parks caused by transient check visibility should be refreshed from live PR state before the issue is trusted as blocked.
 
@@ -71,6 +71,6 @@ If a park was resolved outside the card contract, repair the full state instead 
 4. Make labels match the disposition: remove stale `blocked:*` labels when the blocker is gone, remove `ready-for-human` when requeued, and add `ready-for-agent` only when the Agent brief is delegable.
 5. Refresh the card status after PR state changes so the next reader sees current checks and mergeability.
 
-### Root-fix
+### Root fix
 
 This manual reconciliation is a stopgap for #1741. The card implementation should keep making the verb-to-transition contract explicit so humans do not have to infer label and blocker-state updates from a raw comment alone.

@@ -28,7 +28,7 @@ describe("skill progressive-disclosure docs", () => {
       "### Symptom",
       "### Confirm",
       "### Recover",
-      "### Root-fix",
+      "### Root fix",
     ]) {
       expect(troubleshooting).toContain(heading);
     }
@@ -51,7 +51,7 @@ describe("skill progressive-disclosure docs", () => {
       "### Symptom",
       "### Confirm",
       "### Recover",
-      "### Root-fix",
+      "### Root fix",
       "## Engine-exit-0-but-parked reading",
     ]) {
       expect(troubleshooting).toContain(heading);

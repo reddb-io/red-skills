@@ -29,7 +29,7 @@ describe("hitl troubleshooting docs contract (#1865)", () => {
     expect(doc).toContain("### Symptom");
     expect(doc).toContain("### Confirm");
     expect(doc).toContain("### Recover");
-    expect(doc).toContain("### Root-fix");
+    expect(doc).toContain("### Root fix");
     expect(doc).toContain("gh pr checks");
     expect(doc).toContain("mergeable");
 
