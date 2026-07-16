@@ -1,6 +1,6 @@
 # rsp Troubleshooting
 
-Use this reference when rsp hook routing, resident service behavior, or elision storage looks silent, stale, or unbounded. Each entry follows Symptom -> Confirm -> Recover -> Root-fix.
+Use this reference when rsp hook routing, resident service behavior, or elision storage looks silent, stale, or unbounded. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Hook silence
 
@@ -24,7 +24,7 @@ The synthetic PreToolUse payload should show whether the shipped hook bundle can
 
 If only the current repo is silent, re-run setup for the repo and restart the host session so the generated hook path and `.red/config.yaml` opt-in are reloaded. If both repos are silent but the synthetic payload rewrites, restart the host session and confirm the hook bundle installed by the host points at the current dev bundle. If the synthetic payload fails, treat the shipped bundle or hook contract as broken and use direct `rsp ...` wrappers until the hook is fixed.
 
-### Root-fix
+### Root fix
 
 This manual split is a stopgap for the hook diagnosis and intercept hardening tracked by #1731 and #1726. The durable fix is for hook telemetry and setup validation to make fail-open silence distinguishable without a hand-built payload/control test.
 
@@ -50,7 +50,7 @@ The registry status should identify whether a resident is registered, reachable,
 
 For daemon failures, stop the stale resident if one is registered and let the next rsp command start a fresh process. For store failures, check that `.red/state/red-skills.rdb` exists, is writable, and was provisioned by setup; keep using raw commands or direct non-eliding wrappers while the shared store is unavailable. Do not delete the durable store as a first recovery step because it also carries other repo state collections.
 
-### Root-fix
+### Root fix
 
 This manual split is a stopgap for the resident and store diagnosis work tracked by #1731 and #1726. The root fix is for registry status, foreground serving, and store health checks to report a single actionable classification.
 
@@ -76,6 +76,6 @@ The live view should show handle counts, bytes retained, and budget/TTL posture.
 
 If logical retained bytes are below budget but the file keeps growing, capture the stats and before/after `du` measurements, then stop producing large elisions in that repo until compaction or rotation catches up. If both logical and physical sizes exceed the configured budget, lower the rsp byte budget temporarily or disable proxy contribution for noisy sessions while preserving the store for diagnosis.
 
-### Root-fix
+### Root fix
 
 This manual bound check is a stopgap for #1704. The root fix is the physical-cap contract: store compaction or rotation must enforce the on-disk ceiling, not only logical expiry.
