@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyFinding,
@@ -15,6 +18,8 @@ import {
   type SharedGateDeps,
 } from "../src/core/shared-gate.js";
 import { FOWLER_REFACTORING_SMELLS } from "../src/core/review-extract.js";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 // shared-gate — closed mechanical allowlist + context-aware escalation (#931).
 //
@@ -315,6 +320,14 @@ describe("SENSITIVE_PATH_PATTERNS — closed auditable set", () => {
       expect(name.length).toBeGreaterThan(0);
     }
   });
+
+  it("keeps the .red/tmp worktree literal in lockstep with command-guard.sh", () => {
+    const commandGuard = readFileSync(join(REPO_ROOT, "plugins/dev/hooks/command-guard.sh"), "utf8");
+    const commandGuardRoot = extractCommandGuardWorktreeRootLiteral(commandGuard);
+    const sensitiveRoot = extractSensitivePathTmpRootLiteral(SENSITIVE_PATH_PATTERNS);
+
+    expect(sensitiveRoot).toBe(commandGuardRoot);
+  });
 });
 
 describe("isSensitivePath — path pattern matching", () => {
@@ -511,3 +524,18 @@ describe("default = intent boundary", () => {
     }
   });
 });
+
+function extractCommandGuardWorktreeRootLiteral(source: string): string {
+  const match = source.match(/allowed_root="\$\(canonical_path "\$REPO_ROOT" "([^"]+)"\)"/);
+  expect(match).not.toBeNull();
+  return `${match![1].replace(/\/+$/, "")}/`;
+}
+
+function extractSensitivePathTmpRootLiteral(patterns: readonly RegExp[]): string {
+  const pattern = patterns.find((p) => p.source.startsWith("^\\.red\\/tmp\\/"));
+  expect(pattern).toBeDefined();
+  return pattern!.source
+    .replace(/^\^/, "")
+    .replace(/\\\//g, "/")
+    .replace(/\\\./g, ".");
+}
