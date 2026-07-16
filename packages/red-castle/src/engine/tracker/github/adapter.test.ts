@@ -1,36 +1,152 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createGitHubTrackerAdapter, type GhExec } from "./adapter.js";
 
 describe("GitHub tracker adapter", () => {
   it("quarantines tracker IO behind gh CLI calls", async () => {
     const calls: string[][] = [];
+    const comments: Array<{ id: number; body: string; createdAt: string }> = [];
     const gh: GhExec = async (args) => {
       calls.push([...args]);
       if (args[0] === "issue" && args[1] === "list") {
         return JSON.stringify([
-          { number: 12, body: "Body", labels: [{ name: "wait:dependency" }, { name: "depends-on:7" }] },
+          {
+            number: 12,
+            body: "Body",
+            labels: [{ name: "wait:dependency" }, { name: "depends-on:7" }],
+          },
         ]);
       }
+      if (
+        args[0] === "issue" &&
+        args[1] === "view" &&
+        args.includes("comments")
+      ) {
+        return JSON.stringify({ comments });
+      }
       if (args[0] === "issue" && args[1] === "view") {
-        return JSON.stringify({ state: "CLOSED", number: 7, title: "Base", url: "https://example.invalid/7" });
+        return JSON.stringify({
+          state: "CLOSED",
+          number: 7,
+          title: "Base",
+          url: "https://example.invalid/7",
+        });
+      }
+      if (args[0] === "api") {
+        const bodyArg = args.find((arg) => arg.startsWith("body=")) ?? "body=";
+        const id = 500 + comments.length;
+        comments.push({
+          id,
+          body: bodyArg.slice("body=".length),
+          createdAt: "2026-07-16T00:00:00Z",
+        });
+        return `${id}\n`;
       }
       return "";
     };
 
-    const tracker = createGitHubTrackerAdapter({ gh, repo: "owner/repo" });
+    const claimLockRoot = await mkdtemp(
+      join(tmpdir(), "red-castle-gh-tracker-"),
+    );
+    const tracker = createGitHubTrackerAdapter({
+      gh,
+      repo: "owner/repo",
+      claimLockRoot,
+    });
 
-    await expect(tracker.listOpenIssuesByLabel("wait:dependency")).resolves.toEqual([
-      { number: 12, body: "Body", labels: ["wait:dependency", "depends-on:7"] },
+    try {
+      await expect(
+        tracker.listOpenIssuesByLabel("wait:dependency"),
+      ).resolves.toEqual([
+        {
+          number: 12,
+          body: "Body",
+          labels: ["wait:dependency", "depends-on:7"],
+        },
+      ]);
+      await expect(tracker.isIssueClosed(7)).resolves.toBe(true);
+      await tracker.editIssueLabels(12, {
+        remove: ["wait:dependency"],
+        add: ["queue:agent"],
+      });
+      await tracker.commentOnIssue(12, "done");
+      await expect(
+        tracker.claimIssueLease?.({
+          issue: 12,
+          worker: "host:w1",
+          runner: "codex",
+          liveness: (worker) => (worker === "host:w1" ? "alive" : "unknown"),
+        }),
+      ).resolves.toMatchObject({ verdict: "won", winner: "host:w1" });
+      await tracker.retireIssueLease?.({
+        issue: 12,
+        worker: "host:w1",
+        runner: "codex",
+      });
+    } finally {
+      await rm(claimLockRoot, { recursive: true, force: true });
+    }
+
+    expect(comments.map((comment) => comment.body)).toEqual([
+      expect.stringContaining(
+        "<!-- afk:claim v1 worker=host:w1 kind=claim runner=codex -->",
+      ),
+      expect.stringContaining(
+        "<!-- afk:claim v1 worker=host:w1 kind=concede runner=codex -->",
+      ),
     ]);
-    await expect(tracker.isIssueClosed(7)).resolves.toBe(true);
-    await tracker.editIssueLabels(12, { remove: ["wait:dependency"], add: ["queue:agent"] });
-    await tracker.commentOnIssue(12, "done");
 
     expect(calls).toEqual([
-      ["issue", "list", "--state", "open", "--label", "wait:dependency", "--json", "number,body,labels", "--limit", "1000", "--repo", "owner/repo"],
+      [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--label",
+        "wait:dependency",
+        "--json",
+        "number,body,labels",
+        "--limit",
+        "1000",
+        "--repo",
+        "owner/repo",
+      ],
       ["issue", "view", "7", "--json", "state", "--repo", "owner/repo"],
-      ["issue", "edit", "12", "--remove-label", "wait:dependency", "--add-label", "queue:agent", "--repo", "owner/repo"],
+      [
+        "issue",
+        "edit",
+        "12",
+        "--remove-label",
+        "wait:dependency",
+        "--add-label",
+        "queue:agent",
+        "--repo",
+        "owner/repo",
+      ],
       ["issue", "comment", "12", "--body", "done", "--repo", "owner/repo"],
+      [
+        "api",
+        "repos/owner/repo/issues/12/comments",
+        "-f",
+        expect.stringContaining(
+          "body=<!-- afk:claim v1 worker=host:w1 kind=claim runner=codex -->",
+        ),
+        "--jq",
+        ".id",
+      ],
+      ["issue", "view", "12", "--json", "comments", "--repo", "owner/repo"],
+      [
+        "api",
+        "repos/owner/repo/issues/12/comments",
+        "-f",
+        expect.stringContaining(
+          "body=<!-- afk:claim v1 worker=host:w1 kind=concede runner=codex -->",
+        ),
+        "--jq",
+        ".id",
+      ],
     ]);
   });
 });
