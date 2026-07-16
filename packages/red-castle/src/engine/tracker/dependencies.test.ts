@@ -17,9 +17,21 @@ const labels: EngineLabelVocabulary = {
 };
 
 function fakeTracker(state: {
-  issues: Map<number, { body: string; labels: string[]; closed: boolean; title?: string; url?: string }>;
+  issues: Map<
+    number,
+    {
+      body: string;
+      labels: string[];
+      closed: boolean;
+      title?: string;
+      url?: string;
+    }
+  >;
   labelIndex: Map<string, number[]>;
-}): TrackerPort & { edits: Array<{ issue: number; remove: string[]; add: string[] }>; comments: Array<{ issue: number; body: string }> } {
+}): TrackerPort & {
+  edits: Array<{ issue: number; remove: string[]; add: string[] }>;
+  comments: Array<{ issue: number; body: string }>;
+} {
   const edits: Array<{ issue: number; remove: string[]; add: string[] }> = [];
   const comments: Array<{ issue: number; body: string }> = [];
   return {
@@ -36,21 +48,36 @@ function fakeTracker(state: {
       return state.issues.get(issue)?.closed ?? false;
     },
     async editIssueLabels(issue, mutation) {
-      edits.push({ issue, remove: [...mutation.remove], add: [...mutation.add] });
+      edits.push({
+        issue,
+        remove: [...mutation.remove],
+        add: [...mutation.add],
+      });
     },
     async commentOnIssue(issue, body) {
       comments.push({ issue, body });
     },
+    async closeIssue(issue) {
+      const row = state.issues.get(issue);
+      if (row) row.closed = true;
+    },
     async issueReference(issue) {
       const row = state.issues.get(issue);
-      return row ? { number: issue, title: row.title, url: row.url } : undefined;
+      return row
+        ? { number: issue, title: row.title, url: row.url }
+        : undefined;
     },
   };
 }
 
 describe("tracker dependency labels", () => {
   it("parses configured req labels only", () => {
-    expect(parseDependencyLabels(["depends-on:10", "req:99", "depends-on:2"], labels)).toEqual([2, 10]);
+    expect(
+      parseDependencyLabels(
+        ["depends-on:10", "req:99", "depends-on:2"],
+        labels,
+      ),
+    ).toEqual([2, 10]);
     expect(labelForDependency(42, labels)).toBe("depends-on:42");
   });
 });
@@ -59,18 +86,47 @@ describe("tracker close cascade", () => {
   it("promotes a dependency-blocked issue through the tracker port with configured labels", async () => {
     const tracker = fakeTracker({
       issues: new Map([
-        [7, { body: "", labels: [], closed: true, title: "Foundation", url: "https://example.invalid/7" }],
-        [20, { body: "", labels: ["wait:dependency", "depends-on:7"], closed: false }],
+        [
+          7,
+          {
+            body: "",
+            labels: [],
+            closed: true,
+            title: "Foundation",
+            url: "https://example.invalid/7",
+          },
+        ],
+        [
+          20,
+          {
+            body: "",
+            labels: ["wait:dependency", "depends-on:7"],
+            closed: false,
+          },
+        ],
       ]),
       labelIndex: new Map([["depends-on:7", [20]]]),
     });
 
-    const promoted = await executeCloseCascade({ closedIssue: 7, tracker, labels });
+    const promoted = await executeCloseCascade({
+      closedIssue: 7,
+      tracker,
+      labels,
+    });
 
     expect(promoted).toEqual([20]);
-    expect(tracker.edits).toEqual([{ issue: 20, remove: ["wait:dependency", "depends-on:7"], add: ["queue:agent"] }]);
+    expect(tracker.edits).toEqual([
+      {
+        issue: 20,
+        remove: ["wait:dependency", "depends-on:7"],
+        add: ["queue:agent"],
+      },
+    ]);
     expect(tracker.comments).toEqual([
-      { issue: 20, body: "🤖 /afk unblocked: all dependencies closed ([Foundation (#7)](https://example.invalid/7))." },
+      {
+        issue: 20,
+        body: "🤖 /afk unblocked: all dependencies closed ([Foundation (#7)](https://example.invalid/7)).",
+      },
     ]);
   });
 
@@ -79,12 +135,21 @@ describe("tracker close cascade", () => {
       issues: new Map([
         [7, { body: "", labels: [], closed: true }],
         [8, { body: "", labels: [], closed: false }],
-        [20, { body: "", labels: ["wait:dependency", "depends-on:7", "depends-on:8"], closed: false }],
+        [
+          20,
+          {
+            body: "",
+            labels: ["wait:dependency", "depends-on:7", "depends-on:8"],
+            closed: false,
+          },
+        ],
       ]),
       labelIndex: new Map([["depends-on:7", [20]]]),
     });
 
-    await expect(executeCloseCascade({ closedIssue: 7, tracker, labels })).resolves.toEqual([]);
+    await expect(
+      executeCloseCascade({ closedIssue: 7, tracker, labels }),
+    ).resolves.toEqual([]);
     expect(tracker.edits).toEqual([]);
   });
 });
@@ -94,12 +159,27 @@ describe("tracker unblock sweep", () => {
     const tracker = fakeTracker({
       issues: new Map([
         [7, { body: "", labels: [], closed: true }],
-        [20, { body: "", labels: ["wait:dependency", "depends-on:7"], closed: false }],
+        [
+          20,
+          {
+            body: "",
+            labels: ["wait:dependency", "depends-on:7"],
+            closed: false,
+          },
+        ],
       ]),
       labelIndex: new Map([["wait:dependency", [20]]]),
     });
 
-    await expect(executeUnblockSweep({ tracker, labels })).resolves.toEqual([20]);
-    expect(tracker.edits).toEqual([{ issue: 20, remove: ["wait:dependency", "depends-on:7"], add: ["queue:agent"] }]);
+    await expect(executeUnblockSweep({ tracker, labels })).resolves.toEqual([
+      20,
+    ]);
+    expect(tracker.edits).toEqual([
+      {
+        issue: 20,
+        remove: ["wait:dependency", "depends-on:7"],
+        add: ["queue:agent"],
+      },
+    ]);
   });
 });
