@@ -1,0 +1,102 @@
+import { describe, expect, it } from "vitest";
+import {
+  BLOCKED_SIGNAL,
+  CODEX_EFFORTS,
+  COMPLETION_SIGNALS,
+  DONE_SIGNAL,
+  MINIMAX_M3_MODEL,
+  MINIMAX_EFFORTS,
+  NO_MORE_TASKS_SIGNAL,
+  RUNNER_SPECS,
+  claudeSpawnArgs,
+  codexSpawnArgs,
+  detectRunner,
+  detectSentinelLine,
+  isRunnerExhausted,
+  openCodeAuthEnv,
+  parseRunnerFlag,
+  resolveMiniMaxClaudeEnv,
+  resolveOpenCodeAuth,
+  runnerSupportsStructuredOutput,
+  toAgentRunner,
+  type AgentRunner,
+  type AgentStreamEvent,
+  type LivenessVerdict,
+  type RunResult,
+} from "./index.js";
+import { runners, type Runner } from "./runner-types.js";
+
+describe("engine runner registry", () => {
+  it("owns the runner rows and provider-less projection", () => {
+    const cases: Array<[Runner, AgentRunner]> = [
+      ["claude", "claude"],
+      ["codex", "codex"],
+      ["opencode", "opencode"],
+      ["claude-minimax", "claude-minimax"],
+      ["hermes", "claude"],
+    ];
+    expect(cases.map(([r]) => r).sort()).toEqual([...runners].sort());
+    for (const [input, expected] of cases) expect(toAgentRunner(input)).toBe(expected);
+    expect(Object.keys(RUNNER_SPECS).sort()).toEqual(
+      (["claude", "codex", "opencode", "claude-minimax"] satisfies AgentRunner[]).sort(),
+    );
+  });
+
+  it("keeps auth resolvers and structured-output policy in the engine unit", () => {
+    expect(RUNNER_SPECS.codex.efforts).toEqual(CODEX_EFFORTS);
+    expect(RUNNER_SPECS.codex.efforts).not.toContain("max");
+    expect(RUNNER_SPECS["claude-minimax"].forcedModel).toBe(MINIMAX_M3_MODEL);
+    expect(RUNNER_SPECS["claude-minimax"].efforts).toEqual(MINIMAX_EFFORTS);
+    expect(resolveMiniMaxClaudeEnv({ MINIMAX_API_KEY: "mm-key" })).toEqual({
+      ANTHROPIC_API_KEY: "mm-key",
+      ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
+      CLAUDE_CODE_SIMPLE: "1",
+    });
+    expect(openCodeAuthEnv(resolveOpenCodeAuth({ MINIMAX_API_KEY: "mm" }))).toEqual({ MINIMAX_API_KEY: "mm" });
+    expect(runnerSupportsStructuredOutput("claude")).toBe(true);
+    expect(runnerSupportsStructuredOutput("codex")).toBe(false);
+  });
+
+  it("keeps runner detection and spawn argv parity in the engine unit", () => {
+    expect(detectRunner({ flag: "opencode" })).toMatchObject({ runner: "opencode", method: "flag" });
+    expect(detectRunner({ env: { CODEX_SANDBOX: "danger-full-access" } })).toMatchObject({
+      runner: "codex",
+      method: "env-var",
+    });
+    expect(detectRunner({ env: {}, processTree: "node /opt/opencode/bin/opencode" })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+    expect(parseRunnerFlag(["--runner=claude-minimax"])).toBe("claude-minimax");
+    expect(claudeSpawnArgs({ prompt: "PROMPT", worktree: "/wt" }).args).toEqual([
+      "--model",
+      "opus",
+      "--effort",
+      "medium",
+      "--permission-mode",
+      "bypassPermissions",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--print",
+      "PROMPT",
+    ]);
+    expect(codexSpawnArgs({ prompt: "PROMPT", worktree: "/wt", lastMessagePath: "/last", effort: "high" }).args).toContain(
+      "model_reasoning_effort=high",
+    );
+    expect(isRunnerExhausted("Weekly cap reached")).toBe(true);
+  });
+
+  it("exports completion sentinels and stream/result/liveness types from the engine barrel", () => {
+    expect(DONE_SIGNAL).toBe("<promise>DONE</promise>");
+    expect(BLOCKED_SIGNAL).toBe("<promise>BLOCKED</promise>");
+    expect(NO_MORE_TASKS_SIGNAL).toBe("<promise>NO MORE TASKS</promise>");
+    expect(COMPLETION_SIGNALS).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
+    expect(detectSentinelLine("x <promise>NO MORE TASKS</promise> y")?.kind).toBe("no_more_tasks");
+
+    const _stream: AgentStreamEvent | undefined = undefined;
+    const _result: RunResult | undefined = undefined;
+    const _liveness: LivenessVerdict | undefined = undefined;
+    expect([_stream, _result, _liveness]).toEqual([undefined, undefined, undefined]);
+  });
+});
