@@ -146,4 +146,5 @@ export * from "./engine/gate-executor.js";
 export * from "./engine/gate-sink.js";
 export * from "./engine/lane-writers.js";
 export * from "./engine/lifecycle-hooks.js";
+export * from "./engine/terminal-events.js";
 export * from "./engine/validation-cone.js";
