@@ -141,3 +141,4 @@ export type {
   NamedBranchStrategy,
 } from "./SandboxProvider.js";
 export * from "./engine/contracts/index.js";
+export * from "./engine/lane-writers.js";
