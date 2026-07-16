@@ -6,12 +6,10 @@
 # (the tracked copy is the source of truth; if you have a local customisation,
 # edit scripts/git-hooks/<name> and re-run this).
 #
-# Why this exists: AFK worker worktrees (`git worktree add` from
-# feedback-worktree.ts) need submodules + pnpm install at worktree-creation
-# time. CI gets this from `actions/checkout submodules:recursive`; a local
-# checkout needs a post-checkout hook to do the same. Tracking the hook in the
-# repo + shipping an installer means a fresh clone (or a contributor's first
-# pull) gets the right shape immediately, no manual hook copying required.
+# Why this exists: AFK worker worktrees need workspace dependencies before
+# local validation can run. Tracking the hook in the repo + shipping an
+# installer means a fresh clone (or a contributor's first pull) gets the right
+# shape immediately, no manual hook copying required.
 
 set -eu
 

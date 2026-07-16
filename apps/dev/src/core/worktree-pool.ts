@@ -2,18 +2,17 @@
 // PRD #907 Track 1B).
 //
 // Today every AFK attempt gets a COLD worktree: `git worktree add` from scratch,
-// then `git submodule update --init` and a package install before the gate can
-// run. That cold setup is our worst footgun class — a worktree that misses the
-// red-castle submodule init or its `node_modules` fails the feedback gate with a
-// false `blocked:validation`, and even when it works it pays the full setup cost
-// every attempt.
+// then a package install before the gate can run. That cold setup is a recurring
+// footgun class — a worktree that misses `node_modules` fails the feedback gate
+// with a false `blocked:validation`, and even when it works it pays the full
+// setup cost every attempt.
 //
 // This module absorbs the worktree-POOL model (the treehouse approach), not any
 // Go binary: instead of one cold worktree per attempt, keep a small pool of
 // WARM, dependency-preserving worktrees. A worker ACQUIRES one by LEASE and,
 // when the attempt ends, RETURNS it (clears the lease) rather than destroying
-// it — so the red-castle submodule checkout and the installed `node_modules`
-// survive into the next lease. Concurrency is governed by a per-worktree lease
+// it — so the installed `node_modules` survive into the next lease.
+// Concurrency is governed by a per-worktree lease
 // sidecar plus PROCESS-based in-use detection (the holder pid), so two live
 // workers never collide on the same slot. A safe pruner removes ONLY worktrees
 // that are clean (no uncommitted work), merged (branch contained in base), and
@@ -156,11 +155,10 @@ export function selectLeasable(
 }
 
 /** The materialisation steps an acquisition runs — what the benchmark counts.
- * The COLD path pays the expensive `submodule-init` + `deps-install`; the WARM
+ * The COLD path pays the expensive `deps-install`; the WARM
  * (reused) path skips both because the prior lease preserved them. */
 export type AcquireStep =
   | "worktree-add"
-  | "submodule-init"
   | "deps-install"
   | "fetch-base"
   | "checkout-branch"
@@ -168,14 +166,14 @@ export type AcquireStep =
 
 /**
  * The ordered step plan for an acquisition. `reused === true` (a warm leased
- * worktree) skips `worktree-add`, `submodule-init`, and `deps-install` — those
+ * worktree) skips `worktree-add` and `deps-install` — those
  * artefacts survived the previous lease — so a pool acquisition is strictly
  * cheaper than the cold path (the benchmark criterion). The cold path is exactly
  * today's per-attempt setup.
  */
 export function planAcquisition(reused: boolean): AcquireStep[] {
   if (reused) return ["fetch-base", "checkout-branch", "write-lease"];
-  return ["worktree-add", "submodule-init", "deps-install", "fetch-base", "checkout-branch", "write-lease"];
+  return ["worktree-add", "deps-install", "fetch-base", "checkout-branch", "write-lease"];
 }
 
 /** Inputs the prune decision weighs for one candidate worktree. */
@@ -216,14 +214,14 @@ export interface WorktreePoolDeps {
   clearLease: (path: string, releasedAt: number) => Promise<void>;
   /**
    * Cold-materialise a brand-new warm worktree at `path` on `branch` from
-   * `base`: `git worktree add`, submodule init, deps install. Runs only when the
+   * `base`: `git worktree add`, deps install. Runs only when the
    * pool has no leasable slot and is below `maxSize`.
    */
   materializeCold: (path: string, branch: string, base: string) => Promise<void>;
   /**
    * Refresh an EXISTING warm worktree for a new lease: fetch base + check out
-   * `branch`. MUST NOT run `git clean` or deinit the submodule — that is what
-   * preserves `node_modules` and the red-castle checkout across the lease cycle.
+   * `branch`. MUST NOT run `git clean` — that is what preserves
+   * `node_modules` across the lease cycle.
    */
   refreshWarm: (path: string, branch: string, base: string) => Promise<void>;
   /** Reset a returned worktree to a clean base state WITHOUT deleting ignored
@@ -268,7 +266,7 @@ export interface AcquiredLease {
  * Acquire a leased worktree for an attempt.
  *
  * Reuses the first leasable warm worktree (`selectLeasable`) when one exists —
- * the cheap WARM path that skips submodule init + deps install. Otherwise, if
+ * the cheap WARM path that skips deps install. Otherwise, if
  * the pool is below `maxSize`, cold-materialises a new warm worktree. Returns
  * `undefined` when the pool is saturated (all slots live and at capacity) so the
  * caller can fall back to today's cold per-attempt worktree.

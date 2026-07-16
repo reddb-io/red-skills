@@ -1,0 +1,242 @@
+// Parallel Planner — three-phase orchestration loop
+//
+// This template drives a multi-phase workflow:
+//   Phase 1 (Plan):    An opus agent analyzes open issues, builds a dependency
+//                      graph, and outputs a <plan> JSON listing unblocked issues
+//                      with their target branch names.
+//   Phase 2 (Execute): N sonnet agents run in parallel via Promise.allSettled,
+//                      each working a single issue on its own branch.
+//   Phase 3 (Merge):   A sonnet agent merges all branches that produced commits.
+//
+// The outer loop repeats up to MAX_ITERATIONS times so that newly unblocked
+// issues are picked up after each round of merges.
+//
+// Usage:
+//   npx tsx .red-castle/main.mts
+// Or add to package.json:
+//   "scripts": { "sandcastle": "npx tsx .red-castle/main.mts" }
+
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+import * as sandcastle from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { z } from "zod";
+
+// The planner emits its plan as JSON inside <plan> tags; Output.object extracts
+// and validates it against this schema. We use Zod here, but any Standard
+// Schema validator works just as well — Valibot, ArkType, etc. See
+// https://standardschema.dev.
+const planSchema = z.object({
+  issues: z.array(
+    z.object({ id: z.string(), title: z.string(), branch: z.string() }),
+  ),
+});
+
+const execFile = promisify(execFileCb);
+
+// True if `branch` has commits not yet on `main`. We ask git directly rather
+// than relying on the implementer's `commits.length` from this iteration —
+// a branch may already be ahead from a previous iteration whose merger
+// never picked it up, in which case the next iteration's implementer finds
+// the fix already in place, produces zero new commits, and (without this
+// check) the branch silently drops out of the merger's input forever.
+async function branchIsAheadOfMain(branch: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFile("git", [
+      "rev-list",
+      "--count",
+      `main..${branch}`,
+    ]);
+    return parseInt(stdout.trim(), 10) > 0;
+  } catch (err) {
+    console.warn(`  ⚠ couldn't check ${branch} ahead-of-main: ${err}`);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+// Maximum number of plan→execute→merge cycles before stopping.
+// Raise this if your backlog is large; lower it for a quick smoke-test run.
+const MAX_ITERATIONS = 10;
+
+const sandboxConfig = {
+  env: {
+    GIT_CONFIG_GLOBAL: "/home/agent/workspace/.red-castle/.gitconfig",
+    /* {{SANDBOX_ENV_ENTRIES}} */
+  },
+  mounts: [
+    /* {{SANDBOX_MOUNT_ENTRIES}} */
+  ],
+};
+
+// Hooks run inside the sandbox before the agent starts each iteration.
+// npm install ensures the sandbox always has fresh dependencies.
+const hooks = {
+  sandbox: {
+    onSandboxReady: [
+      /* {{CODEX_AUTH_READY_HOOK}} */ { command: "npm install" },
+    ],
+  },
+};
+
+// Copy node_modules from the host into the worktree before each sandbox
+// starts. Avoids a full npm install from scratch; the hook above handles
+// platform-specific binaries and any packages added since the last copy.
+const copyToWorktree = ["node_modules"];
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+
+for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+  console.log(`\n=== Iteration ${iteration}/${MAX_ITERATIONS} ===\n`);
+
+  // -------------------------------------------------------------------------
+  // Phase 1: Plan
+  //
+  // The planning agent (opus, for deeper reasoning) reads the open issue list,
+  // builds a dependency graph, and selects the issues that can be worked in
+  // parallel right now (i.e., no blocking dependencies on other open issues).
+  //
+  // It outputs a <plan> JSON block — Output.object parses and validates it.
+  // -------------------------------------------------------------------------
+  const plan = await sandcastle.run({
+    hooks,
+    sandbox: docker(sandboxConfig),
+    name: "planner",
+    // One iteration is enough: the planner just needs to read and reason,
+    // not write code. (Structured output requires maxIterations: 1.)
+    maxIterations: 1,
+    // Opus for planning: dependency analysis benefits from deeper reasoning.
+    agent: sandcastle.claudeCode("claude-opus-4-8"),
+    promptFile: "./.red-castle/plan-prompt.md",
+    // Extract and validate the <plan> JSON into a typed object. Throws
+    // StructuredOutputError if the tag is missing, the JSON is malformed, or
+    // validation fails — which aborts the loop.
+    output: sandcastle.Output.object({ tag: "plan", schema: planSchema }),
+  });
+
+  const issues = plan.output.issues;
+
+  if (issues.length === 0) {
+    // No unblocked work — either everything is done or everything is blocked.
+    console.log("No unblocked issues to work on. Exiting.");
+    break;
+  }
+
+  console.log(
+    `Planning complete. ${issues.length} issue(s) to work in parallel:`,
+  );
+  for (const issue of issues) {
+    console.log(`  ${issue.id}: ${issue.title} → ${issue.branch}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 2: Execute
+  //
+  // Spawn one sonnet agent per issue, all running concurrently.
+  // Each agent works on its own branch so there are no conflicts during
+  // execution — merging happens in Phase 3.
+  //
+  // Promise.allSettled means one failing agent doesn't cancel the others.
+  // -------------------------------------------------------------------------
+  const settled = await Promise.allSettled(
+    issues.map((issue) =>
+      sandcastle.run({
+        hooks,
+        copyToWorktree,
+        // Each agent starts on its own branch via branchStrategy on run().
+        sandbox: docker(sandboxConfig),
+        branchStrategy: { type: "branch", branch: issue.branch },
+        name: "implementer",
+        // Give each agent plenty of room to implement and iterate on tests.
+        maxIterations: 100,
+        // Sonnet for execution: fast and capable enough for typical issue work.
+        agent: sandcastle.claudeCode("claude-sonnet-4-6"),
+        promptFile: "./.red-castle/implement-prompt.md",
+        // Prompt arguments substitute {{TASK_ID}}, {{ISSUE_TITLE}},
+        // and {{BRANCH}} placeholders in implement-prompt.md before the
+        // agent sees the prompt.
+        promptArgs: {
+          TASK_ID: issue.id,
+          ISSUE_TITLE: issue.title,
+          BRANCH: issue.branch,
+        },
+      }),
+    ),
+  );
+
+  // Log any agents that threw (network error, sandbox crash, etc.).
+  for (const [i, outcome] of settled.entries()) {
+    if (outcome.status === "rejected") {
+      console.error(
+        `  ✗ ${issues[i]!.id} (${issues[i]!.branch}) failed: ${outcome.reason}`,
+      );
+    }
+  }
+
+  // Only pass branches whose tip is ahead of `main` to the merge phase. We
+  // ask git directly rather than gating on `commits.length` from this
+  // iteration's implementer — a branch may have been advanced by a previous
+  // iteration whose merger never landed it, in which case the implementer
+  // re-runs, finds the fix already in place, produces zero new commits, and
+  // (without this check) the branch silently disappears from the merger's
+  // input set forever.
+  const fulfilledIssues = settled
+    .map((outcome, i) => ({ outcome, issue: issues[i]! }))
+    .filter((entry) => entry.outcome.status === "fulfilled")
+    .map((entry) => entry.issue);
+
+  const aheadFlags = await Promise.all(
+    fulfilledIssues.map((issue) => branchIsAheadOfMain(issue.branch)),
+  );
+  const completedIssues = fulfilledIssues.filter((_, i) => aheadFlags[i]!);
+  const completedBranches = completedIssues.map((i) => i.branch);
+
+  console.log(
+    `\nExecution complete. ${completedBranches.length} branch(es) ahead of main:`,
+  );
+  for (const branch of completedBranches) {
+    console.log(`  ${branch}`);
+  }
+
+  if (completedBranches.length === 0) {
+    // Nothing ahead of main — either all agents were no-ops this cycle or
+    // their work has already been merged in a prior cycle.
+    console.log("No branches ahead of main. Nothing to merge.");
+    continue;
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 3: Merge
+  //
+  // One sonnet agent merges all completed branches into the current branch,
+  // resolving any conflicts and running tests to confirm everything still works.
+  //
+  // The {{BRANCHES}} and {{ISSUES}} prompt arguments are lists that the agent
+  // uses to know which branches to merge and which issues to close.
+  // -------------------------------------------------------------------------
+  await sandcastle.run({
+    hooks,
+    sandbox: docker(sandboxConfig),
+    name: "merger",
+    maxIterations: 1,
+    // Sonnet is sufficient for merge conflict resolution.
+    agent: sandcastle.claudeCode("claude-sonnet-4-6"),
+    promptFile: "./.red-castle/merge-prompt.md",
+    promptArgs: {
+      // A markdown list of branch names, one per line.
+      BRANCHES: completedBranches.map((b) => `- ${b}`).join("\n"),
+      // A markdown list of issue IDs and titles, one per line.
+      ISSUES: completedIssues.map((i) => `- ${i.id}: ${i.title}`).join("\n"),
+    },
+  });
+
+  console.log("\nBranches merged.");
+}
+
+console.log("\nAll done.");

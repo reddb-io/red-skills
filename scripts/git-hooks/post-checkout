@@ -1,16 +1,13 @@
 #!/bin/sh
 # .git/hooks/post-checkout — tracked in scripts/git-hooks/ and installed by
 # scripts/install-git-hooks.sh. Lives in the repo so a fresh clone of red-skills
-# (or a contributor's first git pull) gets the same checkout behaviour as CI,
-# which uses `actions/checkout submodules:recursive` (#AFK improvement).
+# (or a contributor's first git pull) gets the same dependency bootstrap
+# behaviour as CI.
 #
-# Why this exists: `git worktree add` does NOT populate submodules, so a fresh
-# AFK feedback worktree has `packages/red-castle/` as an empty dir and `pnpm
-# install` cannot resolve the `@reddb-io/red-castle` workspace dep — every gate
-# check (tsc / build / vitest) then fails with "Cannot find module" and a green
-# worker branch gets parked as `blocked:validation`. Auto-init submodules on
-# every checkout so any worktree, in any host, in any orchestrator session, has
-# the right shape before pnpm even looks.
+# Why this exists: a fresh AFK worktree has no top-level `node_modules`, so
+# local validation commands fail before they can test the worker's code. Install
+# dependencies when they are absent so any worktree, in any host, has the right
+# shape before validation runs.
 #
 # Args per `githooks(5)`: $1=prev HEAD, $2=new HEAD, $3=flag (1=branch checkout,
 # 0=file checkout, 2=clone). Idempotent; failures swallowed — a broken hook
@@ -25,12 +22,6 @@ case "$flag" in
   1|2) ;;
   *) exit 0 ;;
 esac
-
-# Initialise the red-castle submodule (the @reddb-io/red-castle workspace:*
-# source consumed by every package, ADR 0061). `git submodule update` is
-# idempotent on an already-initialised submodule; `> /dev/null 2>&1` keeps the
-# hook silent on the common no-op path.
-git submodule update --init --recursive >/dev/null 2>&1 || true
 
 # For worktree adds only (the new worktree has no node_modules), pnpm install
 # is also needed. We can't perfectly detect a worktree add from this hook

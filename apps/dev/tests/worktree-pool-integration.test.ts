@@ -3,8 +3,8 @@
 // cover as a single flow:
 //
 //   1. A full lease → return → acquire cycle reuses the SAME warm worktree with
-//      `node_modules` and the red-castle submodule still present (no cold setup,
-//      no reinstall), and the warm acquisition is measurably cheaper than the
+//      `node_modules` still present (no cold setup, no reinstall), and the warm
+//      acquisition is measurably cheaper than the
 //      cold one it replaces.
 //   2. Two concurrent workers never acquire the same pool slot — process-based
 //      in-use detection keeps a live holder's worktree off-limits — across an
@@ -12,10 +12,10 @@
 //
 // Rather than fake each seam call in isolation, this drives the REAL
 // `acquireLease` / `releaseLease` orchestration against a small in-memory model
-// of the worktree world (each worktree carries its own `node_modules` and
-// submodule state plus a live-pid registry). The model faithfully mirrors the
-// production contract: `materializeCold` INSTALLS deps, `refreshWarm` and
-// `resetForReturn` NEVER touch them (no `git clean` / submodule deinit). If the
+// of the worktree world (each worktree carries its own `node_modules` state plus
+// a live-pid registry). The model faithfully mirrors the production contract:
+// `materializeCold` INSTALLS deps, `refreshWarm` and `resetForReturn` NEVER
+// touch them (no `git clean`). If the
 // orchestration ever reinstalled or wiped deps on the warm path, these tests
 // break.
 
@@ -36,15 +36,13 @@ function cfg(over: Partial<WorktreePoolConfig> = {}): WorktreePoolConfig {
   return { enabled: true, maxSize: 4, leaseTtlS: 3600, minIdleS: 1800, ...over };
 }
 
-/** One worktree in the in-memory world — the durable artefacts (`node_modules`,
- * the red-castle submodule checkout) live HERE, so a lease→return→acquire cycle
- * that preserves them is observable directly. */
+/** One worktree in the in-memory world — the durable artefact (`node_modules`)
+ * lives HERE, so a lease→return→acquire cycle that preserves it is observable
+ * directly. */
 interface WorldWorktree {
   path: string;
   /** True once `node_modules` has been installed (cold setup). */
   nodeModules: boolean;
-  /** True once the red-castle submodule is checked out (cold setup). */
-  submodule: boolean;
   /** Uncommitted tracked changes present (cleared by a return's reset). */
   dirty: boolean;
   branch?: string;
@@ -91,13 +89,13 @@ class World {
         if (l) l.releasedAt = releasedAt;
       },
       materializeCold: async (path, branch) => {
-        // Cold setup: create the worktree AND install both durable artefacts.
+        // Cold setup: create the worktree AND install the durable artefact.
         this.coldCount++;
-        this.worktrees.push({ path, nodeModules: true, submodule: true, dirty: false, branch });
+        this.worktrees.push({ path, nodeModules: true, dirty: false, branch });
       },
       refreshWarm: async (path, branch) => {
-        // Warm reuse: only re-point the branch. MUST NOT touch node_modules /
-        // the submodule — that is what preserves them across the lease cycle.
+        // Warm reuse: only re-point the branch. MUST NOT touch node_modules —
+        // that is what preserves it across the lease cycle.
         this.warmCount++;
         const wt = this.find(path);
         wt.branch = branch;
@@ -105,7 +103,7 @@ class World {
       },
       resetForReturn: async (path) => {
         // Return reset: drop uncommitted tracked work only (no `git clean`), so
-        // ignored artefacts (node_modules, submodule checkout) survive.
+        // ignored artefacts (node_modules) survive.
         this.find(path).dirty = false;
       },
       removeWorktree: async (path) => {
@@ -119,30 +117,27 @@ class World {
 }
 
 describe("worktree pool — lease→return→acquire preserves deps and is cheaper", () => {
-  it("a second attempt on the same issue reuses the warm slot with deps + submodule intact, no reinstall", async () => {
+  it("a second attempt on the same issue reuses the warm slot with deps intact, no reinstall", async () => {
     const world = new World();
     const deps = world.deps();
     const req = { owner: "w987", branch: "afk/987", base: "main" };
 
-    // First attempt: empty pool → COLD setup (installs node_modules + submodule).
+    // First attempt: empty pool → COLD setup (installs node_modules).
     world.live.add(100);
     const cold = (await acquireLease(deps, cfg(), { ...req, pid: 100 })) as AcquiredLease;
     expect(cold.reused).toBe(false);
-    expect(cold.steps).toContain("submodule-init");
     expect(cold.steps).toContain("deps-install");
     const slot = cold.path;
     const wt = world.find(slot);
     // Simulate the attempt doing work in the tree.
     wt.dirty = true;
     expect(wt.nodeModules).toBe(true);
-    expect(wt.submodule).toBe(true);
 
     // Attempt ends: worker dies, worktree returned (not destroyed).
     world.live.delete(100);
     await releaseLease(deps, slot, "main");
-    // Deps + submodule survive the return; tracked work is reset.
+    // Deps survive the return; tracked work is reset.
     expect(wt.nodeModules).toBe(true);
-    expect(wt.submodule).toBe(true);
     expect(wt.dirty).toBe(false);
     expect(world.worktrees).toHaveLength(1); // slot kept, not removed
 
@@ -152,13 +147,11 @@ describe("worktree pool — lease→return→acquire preserves deps and is cheap
     expect(warm.reused).toBe(true);
     expect(warm.path).toBe(slot); // same physical worktree
     // No cold setup on the warm path.
-    expect(warm.steps).not.toContain("submodule-init");
     expect(warm.steps).not.toContain("deps-install");
     // Measurably cheaper than the cold acquisition it replaced.
     expect(warm.steps.length).toBeLessThan(cold.steps.length);
-    // node_modules + submodule are STILL the originals — never reinstalled.
+    // node_modules is STILL the original install — never reinstalled.
     expect(wt.nodeModules).toBe(true);
-    expect(wt.submodule).toBe(true);
     expect(world.coldCount).toBe(1); // exactly one install across the whole cycle
     expect(world.warmCount).toBe(1);
   });

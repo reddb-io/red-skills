@@ -152,11 +152,10 @@ export const CONFIG_DEFAULTS = {
   "afk.claim_reaper.recent_commit_s": "2700",
   // Warm worktree-pool model (treehouse, ADR Track 1B / issue #909). When false
   // (default) AFK uses today's cold per-attempt worktree (`git worktree add` +
-  // submodule init + deps install every attempt). When true, attempts ACQUIRE a
+  // deps install every attempt). When true, attempts ACQUIRE a
   // warm, dependency-preserving worktree from a pool by LEASE and RETURN it on
-  // completion (not destroy), so the red-castle submodule checkout and
-  // `node_modules` survive into the next lease — removing the lost-deps /
-  // submodule-not-init false-`blocked:validation` footgun and the cold setup
+  // completion (not destroy), so `node_modules` survives into the next lease —
+  // removing the lost-deps false-`blocked:validation` footgun and the cold setup
   // cost. `max_size` caps the live pool; `lease_ttl_s` reclaims a lease whose
   // holder pid died or that outlived the TTL; `min_idle_s` is the idle floor a
   // clean/merged worktree must sit before the safe pruner may remove it.

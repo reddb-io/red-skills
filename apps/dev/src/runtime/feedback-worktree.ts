@@ -19,13 +19,12 @@
 //
 // AFK runner improvement — cross-session worktree cache: by default, a
 // materialised worktree whose branch HEAD matches the live branch's HEAD
-// is REUSED across sessions (no `worktree add` / `submodule update` /
-// `pnpm install` on re-claim). The worktree itself is the cache — it just
+// is REUSED across sessions (no `worktree add` / `pnpm install` on re-claim).
+// The worktree itself is the cache — it just
 // isn't torn down if it was a cache hit. SHA mismatch (force-push, new
 // commit) is the only invalidation signal; there is no mtime/TTL GC. The
-// cost saved is `git submodule update --init --recursive` (5-30s) +
-// `pnpm install --frozen-lockfile` (60-180s) per re-claim — the dominant
-// cost when 5+ workers race-claim the same branch (Pattern 7 of the
+// cost saved is `pnpm install --frozen-lockfile` (60-180s) per re-claim — the
+// dominant cost when 5+ workers race-claim the same branch (Pattern 7 of the
 // claude-minimax spike investigation). The flag is opt-out via
 // `cacheEnabled: false` for callers that need a strict per-session manager.
 
@@ -85,7 +84,7 @@ export function splitBranchDir(
  * AFK runner improvement: `branchHead` + `worktreeHead` enable the cross-session
  * cache. The manager calls `branchHead(gitCtx, branch)` to get the live branch's
  * HEAD SHA, then `worktreeHead(gitCtx, dest)` to read the SHA the cached
- * worktree is actually at. A match → cache hit (no install, no submodule init).
+ * worktree is actually at. A match → cache hit (no install).
  * Mismatch (force-push, new commit) → cache miss (full re-materialise). Both
  * helpers return `null` on failure; the manager treats `null` as a cache miss
  * (the safe default — re-materialise from scratch).
@@ -182,7 +181,7 @@ export interface FeedbackWorktreeOptions {
   /**
    * AFK runner improvement: when true (the default), a materialised worktree
    * whose branch HEAD matches the live branch's HEAD is REUSED across sessions
-   * (no `worktree add` / `submodule update` / `pnpm install` on re-claim).
+   * (no `worktree add` / `pnpm install` on re-claim).
    * Set to false for callers that need a strict per-session manager — the
    * worktree is torn down on `cleanup()` and the next session materialises
    * fresh. Tests typically want the per-session behaviour to keep fixtures
@@ -240,12 +239,11 @@ export function makeFeedbackWorktree(
 
     // AFK runner improvement — cross-session cache: a worktree already at
     // `dest` whose HEAD matches the live branch's HEAD is a cache hit. The
-    // cost saved is `git submodule update --init --recursive` (5-30s) +
-    // `pnpm install --frozen-lockfile` (60-180s) per re-claim — the dominant
-    // cost when 5+ workers race-claim the same branch (Pattern 7 of the
-    // claude-minimax spike investigation). SHA mismatch is the only
-    // invalidation signal; no mtime/TTL GC. Cached worktrees are not torn
-    // down by `cleanup()` so the next session reuses them.
+    // cost saved is `pnpm install --frozen-lockfile` (60-180s) per re-claim —
+    // the dominant cost when 5+ workers race-claim the same branch (Pattern 7
+    // of the claude-minimax spike investigation). SHA mismatch is the only
+    // invalidation signal; no mtime/TTL GC. Cached worktrees are not torn down
+    // by `cleanup()` so the next session reuses them.
     if (cacheEnabled) {
       const expectedSha = await io.branchHead(gitCtx, branch);
       const actualSha = await io.worktreeHead(gitCtx, dest);
@@ -261,24 +259,6 @@ export function makeFeedbackWorktree(
     if (!ok) {
       process.stderr.write(
         `error: feedback worktree add failed for ${branch}; blocking validation\n`,
-      );
-      resolved.set(branch, null);
-      return null;
-    }
-    // A freshly added git worktree does NOT populate submodules: packages/red-castle
-    // (the `@reddb-io/red-castle` workspace:* SOURCE, ADR 0061) is an empty dir. The
-    // pnpm install below then cannot resolve that workspace dep, so every gate check
-    // (tsc / build / vitest) fails with `Cannot find module '@reddb-io/red-castle'`
-    // — a FALSE blocked:validation on otherwise-green apps/dev work. CI sidesteps
-    // this with `actions/checkout submodules:recursive`; a local `git worktree add`
-    // has no such convenience, so initialise the submodule into the worktree before
-    // installing. Fails closed, like the install below.
-    const sub = await io.exec("git", ["submodule", "update", "--init", "--recursive"], { cwd: dest });
-    if (sub.code !== 0) {
-      await io.worktreeRemove(gitCtx, dest);
-      process.stderr.write(
-        `error: feedback worktree submodule init failed for ${branch} (exit ${sub.code}); ` +
-          `blocking validation\n${sub.stderr.trim()}\n`,
       );
       resolved.set(branch, null);
       return null;

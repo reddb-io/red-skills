@@ -124,11 +124,11 @@ describe("selectLeasable", () => {
 // Benchmark — pool acquisition is strictly cheaper than cold setup.
 // ---------------------------------------------------------------------------
 describe("planAcquisition (benchmark)", () => {
-  it("warm reuse skips the expensive submodule-init + deps-install steps", () => {
+  it("warm reuse skips the expensive cold setup steps", () => {
     const cold = planAcquisition(false);
     const warm = planAcquisition(true);
     expect(warm.length).toBeLessThan(cold.length);
-    const expensive: AcquireStep[] = ["worktree-add", "submodule-init", "deps-install"];
+    const expensive: AcquireStep[] = ["worktree-add", "deps-install"];
     for (const step of expensive) {
       expect(cold).toContain(step);
       expect(warm).not.toContain(step);
@@ -267,11 +267,11 @@ describe("releaseLease", () => {
     expect(r.removed).toEqual([]); // the slot survives for the next lease
   });
 
-  it("does NOT run git clean / submodule deinit (deps survive the cycle)", async () => {
+  it("does NOT run git clean (deps survive the cycle)", async () => {
     // The contract is enforced by the seam shape: releaseLease only ever calls
     // resetForReturn (a `git reset --hard <base>`, no `git clean`) + clearLease.
-    // A real resetForReturn keeping node_modules / the submodule checkout is the
-    // production wiring's job; here we assert no destructive call is issued.
+    // A real resetForReturn keeping node_modules is the production wiring's job;
+    // here we assert no destructive call is issued.
     const r = recorder([{ path: "/pool/wt-0", lease: lease() }]);
     await releaseLease(r.deps, "/pool/wt-0", "main");
     expect(r.calls.some((c) => c.startsWith("removeWorktree"))).toBe(false);

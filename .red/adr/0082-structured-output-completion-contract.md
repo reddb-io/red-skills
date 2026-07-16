@@ -222,8 +222,8 @@ backward-compatible:
 - ADR 0055 / 0056 — the no-agent reconcile lane and landability reconciler (kept
   as defence-in-depth; no longer the primary correctness mechanism for adopting
   runners).
-- ADR 0061 — AFK runs on the vendored red-castle submodule; the `RunOptions` /
-  runner-adapter changes land there via the two-repo flow.
+- ADR 0061 / ADR 0101 — AFK runs on the vendored red-castle source package; the
+  `RunOptions` / runner-adapter changes land in this monorepo.
 - ADR 0081 §Related — cites this contract as the sibling addressing the `/afk`
   completion signal with a validated `AgentOutput` schema.
 - PRD #907 — parent program (Track E — obedience).

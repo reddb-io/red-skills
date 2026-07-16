@@ -33,7 +33,7 @@ red-skills/                         ← repo root + marketplace
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers
-│   └── red-castle/                 ← git submodule: AFK execution substrate (@reddb-io/red-castle, ADR 0061)
+│   └── red-castle/                 ← vendored AFK execution substrate source (@reddb-io/red-castle, ADR 0061/0101)
 ├── dist/                           ← generated release bundles and manifests
 └── plugins/
     ├── dev/                        ← shipped `dev` plugin definition

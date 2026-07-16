@@ -180,25 +180,14 @@ describe("recoverWorktree", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Provisioning guarantee — submodule-init + node_modules linking.
+// Provisioning guarantee — node_modules linking.
 // ---------------------------------------------------------------------------
 describe("planProvisioning", () => {
   it("plans nothing when fully provisioned", () => {
-    expect(planProvisioning({ submoduleInitialized: true, nodeModulesPresent: true })).toEqual([]);
-  });
-  it("plans a submodule init when the submodule is missing", () => {
-    expect(planProvisioning({ submoduleInitialized: false, nodeModulesPresent: true })).toEqual([
-      "submodule-init",
-    ]);
+    expect(planProvisioning({ nodeModulesPresent: true })).toEqual([]);
   });
   it("plans a node_modules link when deps are missing", () => {
-    expect(planProvisioning({ submoduleInitialized: true, nodeModulesPresent: false })).toEqual([
-      "link-node-modules",
-    ]);
-  });
-  it("plans both when both are missing", () => {
-    expect(planProvisioning({ submoduleInitialized: false, nodeModulesPresent: false })).toEqual([
-      "submodule-init",
+    expect(planProvisioning({ nodeModulesPresent: false })).toEqual([
       "link-node-modules",
     ]);
   });
@@ -209,9 +198,6 @@ describe("ensureProvisioned", () => {
     const calls: string[] = [];
     const deps: ProvisionDeps = {
       inspect: async () => state,
-      initSubmodule: async (path) => {
-        calls.push(`submodule:${path}`);
-      },
       linkNodeModules: async (path) => {
         calls.push(`link:${path}`);
       },
@@ -220,16 +206,16 @@ describe("ensureProvisioned", () => {
   }
 
   it("runs no remediation on a fully provisioned worktree", async () => {
-    const p = provisionDeps({ submoduleInitialized: true, nodeModulesPresent: true });
+    const p = provisionDeps({ nodeModulesPresent: true });
     const steps = await ensureProvisioned(p.deps, "/p/a");
     expect(steps).toEqual([]);
     expect(p.calls).toEqual([]);
   });
 
-  it("guarantees submodule init + node_modules on a bare worktree", async () => {
-    const p = provisionDeps({ submoduleInitialized: false, nodeModulesPresent: false });
+  it("guarantees node_modules on a bare worktree", async () => {
+    const p = provisionDeps({ nodeModulesPresent: false });
     const steps = await ensureProvisioned(p.deps, "/p/a");
-    expect(steps).toEqual(["submodule-init", "link-node-modules"]);
-    expect(p.calls).toEqual(["submodule:/p/a", "link:/p/a"]);
+    expect(steps).toEqual(["link-node-modules"]);
+    expect(p.calls).toEqual(["link:/p/a"]);
   });
 });

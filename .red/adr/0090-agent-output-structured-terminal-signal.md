@@ -101,7 +101,8 @@ deprecated runner-by-runner as each flips the flag on.
   to; a forgotten block degrades gracefully to `no-sentinel` (bounded retry),
   the same as a forgotten sentinel today — no new terminal failure mode.
 - The schema is a cross-repo contract: changing its fields is a red-castle change
-  landed via the 2-repo flow, and consumers pick it up on the pointer bump.
+  landed in the RedSkills monorepo after ADR 0101, and consumers pick it up in
+  the same PR as the runtime change.
 - Downstream outcome handling is unchanged: the gate reuses the existing
   `no-sentinel` outcome rather than introducing a new one, so no switch in
   `attempt-outcome.ts` / `process-issue.ts` needs to grow a branch.

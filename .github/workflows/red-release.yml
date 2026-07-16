@@ -53,9 +53,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          # red-castle is a submodule under packages/; the dev bundle + pnpm
-          # install resolve it as the @reddb-io/red-castle workspace package.
-          submodules: recursive
 
       - name: Defer if /afk fleet is active
         id: fleet
@@ -86,6 +83,10 @@ jobs:
       - name: Test red-release npm publish contract
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-npm-publish-contract.sh
+
+      - name: Test red-castle vendor contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-red-castle-vendor-contract.sh
 
       - name: Test red-release bump-kind contract
         if: steps.fleet.outputs.running == '0'

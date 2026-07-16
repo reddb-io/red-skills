@@ -256,6 +256,10 @@ _Avoid_: jq (for TOON/TOONL files), the toon CLI
 The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.
 _Avoid_: manual version sweep, toon bump script, red-castle repinner
 
+**Vendored source package**:
+A workspace package whose source tree is committed directly in this monorepo while preserving an upstream marker for provenance. `packages/red-castle` is the canonical example after ADR 0101: `.upstream` tracks the reviewed sandcastle upstream SHA, while the archived `reddb-io/red-castle` repo no longer supplies a live submodule pin.
+_Avoid_: submodule, pointer bump, two-repo flow
+
 **Declared optimization**:
 The two-regime output contract every TOON/TOONL producer obeys (ADR 0089 Amendment 2): by default output is lossless (`decode(encode(x)) === x`; cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — happens only behind an explicit opt-in flag and is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; re-run without the flag where re-derivable). Silent lossy normalization on the default path is the forbidden pattern.
 _Avoid_: compact mode (names the flag, not the contract), lossy output
@@ -283,6 +287,7 @@ _Avoid_: compact mode (names the flag, not the contract), lossy output
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
 - The **Release watcher** observes toon releases, updates the catalog, and lets the consuming workspace lockfile choose the exact red-castle-resolved toon version.
+- A **Vendored source package** keeps source local to RedSkills while using an explicit upstream marker for provenance.
 
 ## Example dialogue
 

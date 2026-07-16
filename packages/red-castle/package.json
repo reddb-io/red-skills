@@ -1,0 +1,79 @@
+{
+  "name": "@reddb-io/red-castle",
+  "version": "0.11.0",
+  "description": "reddb.io fork of sandcastle — CLI/library for orchestrating AI agents in isolated sandbox environments. Consumed as TypeScript source by the RedSkills dev plugin.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandboxes/docker": "./src/sandboxes/docker.ts",
+    "./sandboxes/vercel": "./src/sandboxes/vercel.ts",
+    "./sandboxes/podman": "./src/sandboxes/podman.ts",
+    "./sandboxes/daytona": "./src/sandboxes/daytona.ts",
+    "./sandboxes/no-sandbox": "./src/sandboxes/no-sandbox.ts"
+  },
+  "scripts": {
+    "build": "npm run build:dist",
+    "build:dist": "tsup && node scripts/copy-templates.mjs && node scripts/check-public-types-effect-free.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsgo --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "sandcastle": "npm run build:dist && tsx .red-castle/run.ts",
+    "test-podman": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-podman.ts",
+    "test-vercel": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-vercel.ts",
+    "test-interactive": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-interactive.ts"
+  },
+  "keywords": [
+    "cli",
+    "sandbox",
+    "docker",
+    "ai",
+    "agent"
+  ],
+  "packageManager": "pnpm@11.5.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/reddb-io/red-castle"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "@effect/cli": "^0.74.0",
+    "@effect/platform": "^0.95.0",
+    "@effect/platform-node": "^0.105.0",
+    "@effect/printer": "^0.48.0",
+    "@effect/printer-ansi": "^0.48.0",
+    "@reddb-io/toon": "^0.3.0",
+    "@standard-schema/spec": "^1.0.0",
+    "effect": "^3.20.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@daytona/sdk": "^0.164.0",
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260317.1",
+    "prettier": "^3.5.3",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.0"
+  },
+  "peerDependencies": {
+    "@daytona/sdk": "^0.164.0",
+    "@vercel/sandbox": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@vercel/sandbox": {
+      "optional": true
+    },
+    "@daytona/sdk": {
+      "optional": true
+    }
+  },
+  "files": [
+    "src"
+  ]
+}

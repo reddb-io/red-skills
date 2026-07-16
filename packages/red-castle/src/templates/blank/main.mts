@@ -1,0 +1,31 @@
+import { run, claudeCode } from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+
+// Blank template: customize this to build your own orchestration.
+// Run this with: npx tsx .red-castle/main.mts
+// Or add to package.json scripts: "sandcastle": "npx tsx .red-castle/main.mts"
+
+const sandboxConfig = {
+  env: {
+    GIT_CONFIG_GLOBAL: "/home/agent/workspace/.red-castle/.gitconfig",
+    /* {{SANDBOX_ENV_ENTRIES}} */
+  },
+  mounts: [
+    /* {{SANDBOX_MOUNT_ENTRIES}} */
+  ],
+};
+
+const hooks = {
+  sandbox: {
+    onSandboxReady: [
+      /* {{CODEX_AUTH_READY_HOOK}} */
+    ],
+  },
+};
+
+await run({
+  agent: claudeCode("claude-opus-4-8"),
+  sandbox: docker(sandboxConfig),
+  hooks,
+  promptFile: "./.red-castle/prompt.md",
+});

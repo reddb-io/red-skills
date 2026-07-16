@@ -84,7 +84,7 @@ The gate runs in an isolated feedback worktree (`makeFeedbackWorktree`, ADR 0008
 
 - Mechanical findings auto-apply and auto-commit across all three tiers. Intent findings are escalated contextually: pause-and-ask in interactive `/go`, park-to-HITL in headless `/afk`.
 
-- Worktrees are spawned for both `/go` and `/afk`, with isolated namespacing (`go-workers/` vs. `workers/`) preventing collision. Both tiers gain the worktree manager benefits (submodule-init, `node_modules` linking, orphan recovery, mid-run-deletion recovery).
+- Worktrees are spawned for both `/go` and `/afk`, with isolated namespacing (`go-workers/` vs. `workers/`) preventing collision. Both tiers gain the worktree manager benefits (`node_modules` linking, orphan recovery, mid-run-deletion recovery).
 
 - The no-agent landing lane (ADR 0055 reconcile) becomes the home for hand-done work, called via requeue. The same `doLanding` path lands all work — no new merge logic.
 
