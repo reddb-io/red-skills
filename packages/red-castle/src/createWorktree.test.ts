@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createWorktree } from "./createWorktree.js";
@@ -47,6 +48,14 @@ const commitFile = async (
   await writeFile(join(dir, name), content);
   await execAsync(`git add "${name}"`, { cwd: dir });
   await execAsync(`git commit -m "${message}"`, { cwd: dir });
+};
+
+const waitForFile = async (path: string): Promise<void> => {
+  for (let i = 0; i < 2_000; i++) {
+    if (existsSync(path)) return;
+    await delay(10);
+  }
+  throw new Error("Timed out waiting for contention barrier");
 };
 
 describe("createWorktree", () => {
@@ -1347,37 +1356,93 @@ describe("worktree.createSandbox()", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const results = await Promise.allSettled([
-      createWorktree({
-        branchStrategy: { type: "branch", branch: "contention-branch" },
-        cwd: hostDir,
-      }),
-      createWorktree({
-        branchStrategy: { type: "branch", branch: "contention-branch" },
-        cwd: hostDir,
-      }),
-    ]);
+    const barrierDir = join(hostDir, ".red-castle", "test-barrier");
+    await mkdir(barrierDir, { recursive: true });
+    const enteredPath = join(barrierDir, "entered");
+    const releasePath = join(barrierDir, "release");
+    const holdLockScriptPath = join(barrierDir, "hold-lock.cjs");
+    const holdLockScript = `
+const fs = require("node:fs");
+const { setTimeout: delay } = require("node:timers/promises");
+(async () => {
+  fs.writeFileSync(${JSON.stringify(enteredPath)}, "entered");
+  while (!fs.existsSync(${JSON.stringify(releasePath)})) {
+    await delay(10);
+  }
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+`;
+    await writeFile(holdLockScriptPath, holdLockScript);
 
-    const fulfilled = results.filter(
-      (
-        r,
-      ): r is PromiseSettledResult<
-        Awaited<ReturnType<typeof createWorktree>>
-      > & { status: "fulfilled" } => r.status === "fulfilled",
-    );
-    const rejected = results.filter(
-      (r): r is PromiseRejectedResult => r.status === "rejected",
-    );
+    const first = createWorktree({
+      branchStrategy: { type: "branch", branch: "contention-branch" },
+      cwd: hostDir,
+      hooks: {
+        host: {
+          onWorktreeReady: [{ command: `node "${holdLockScriptPath}"` }],
+        },
+      },
+    });
 
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    // Effect wraps the error in a FiberFailure — check the message directly
-    expect(String(rejected[0]!.reason)).toMatch(
-      /Worktree is in use by process/,
-    );
+    let results: PromiseSettledResult<
+      Awaited<ReturnType<typeof createWorktree>>
+    >[] = [];
+    const worktreesToClose = new Set<
+      Awaited<ReturnType<typeof createWorktree>>
+    >();
 
-    // Clean up
-    await fulfilled[0]!.value.close();
-    await rm(hostDir, { recursive: true, force: true });
-  });
+    try {
+      await waitForFile(enteredPath);
+
+      const second = await Promise.allSettled([
+        createWorktree({
+          branchStrategy: { type: "branch", branch: "contention-branch" },
+          cwd: hostDir,
+        }),
+      ]);
+
+      await writeFile(releasePath, "release");
+      results = [
+        await first.then(
+          (value) => {
+            worktreesToClose.add(value);
+            return { status: "fulfilled", value } as const;
+          },
+          (reason) => ({ status: "rejected", reason }) as const,
+        ),
+        second[0]!,
+      ];
+      for (const result of results) {
+        if (result.status === "fulfilled") worktreesToClose.add(result.value);
+      }
+
+      const fulfilled = results.filter(
+        (
+          r,
+        ): r is PromiseSettledResult<
+          Awaited<ReturnType<typeof createWorktree>>
+        > & { status: "fulfilled" } => r.status === "fulfilled",
+      );
+      const rejected = results.filter(
+        (r): r is PromiseRejectedResult => r.status === "rejected",
+      );
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      // Effect wraps the error in a FiberFailure — check the message directly
+      expect(String(rejected[0]!.reason)).toMatch(
+        /Worktree is in use by process/,
+      );
+    } finally {
+      await writeFile(releasePath, "release").catch(() => {});
+      const firstValue = await first.catch(() => undefined);
+      if (firstValue) worktreesToClose.add(firstValue);
+      await Promise.all(
+        [...worktreesToClose].map((worktree) => worktree.close()),
+      );
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
