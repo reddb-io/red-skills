@@ -420,7 +420,15 @@ async function waitForResidentReady(root: string): Promise<void> {
     try {
       const response = await sendResidentRequest(
         { socketPath, timeoutMs: 500 },
-        { id: randomUUID(), op: "ping" },
+        {
+          id: randomUUID(),
+          op: "mint",
+          original: Buffer.from("resident-ready").toString("base64"),
+          meta: {
+            command: "resident-ready",
+            loss: { level: "terse", bytes_elided: Buffer.byteLength("resident-ready") },
+          },
+        },
       );
       if (response.ok) return;
       last = new Error(response.error);
