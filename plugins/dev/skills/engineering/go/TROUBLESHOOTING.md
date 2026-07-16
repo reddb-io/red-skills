@@ -1,8 +1,6 @@
 # /go Troubleshooting
 
-Use these playbooks when `/go` or `/go --scout` reaches a confusing terminal
-state. Each entry uses the fixed Symptom, Confirm, Recover, Root-fix format so
-operators can distinguish salvage from the durable fix.
+Use these playbooks when `/go` or `/go --scout` reaches a confusing terminal state. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Crashed-scout salvage
 
@@ -36,7 +34,7 @@ completed the investigation and produced a final markdown report.
 3. If the report found follow-up work, file or link a normal tracked issue for
    that work instead of reopening the scout lane.
 
-### Root-fix
+### Root fix
 
 This manual salvage is a stopgap for the scout envelope and sentinel handling
 tracked in #1695. Once that root fix ships, a completed scout report must post
@@ -75,7 +73,7 @@ looks inconsistent with the successful process exit.
 3. When posting public notes, describe the observable state without leaking
    local machine details or private transcript links.
 
-### Root-fix
+### Root fix
 
 This reading procedure is a stopgap until the `/go` outcome envelope records
 separate launcher, agent, validation, and issue-state outcomes. Track this
