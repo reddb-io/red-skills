@@ -82,7 +82,7 @@ Controls:
 
 - release bundles are versioned artifacts fetched through the launcher pattern
   rather than ad hoc source execution (ADRs 0038, 0039, 0084);
-- the red-castle substrate is pinned as a submodule (ADR 0061);
+- the red-castle substrate is vendored as source in the monorepo (ADR 0061/0101);
 - package-manager checks should use the lockfile and avoid implicit dependency
   upgrades during validation;
 - workflows and reusable actions are documented as version-pinned adoption
@@ -116,4 +116,4 @@ continuing to run agents on it.
 - ADR 0073 — injection-safe untrusted payload framing.
 - ADR 0062 — AFK Actions lane composite action and reusable workflow split.
 - ADR 0067 — per-directory plugin activation gate.
-- ADR 0061 — AFK runs on the vendored red-castle submodule.
+- ADR 0061 / ADR 0101 — AFK runs on the vendored red-castle source package.

@@ -73,7 +73,7 @@ describe("splitBranchDir (#437)", () => {
 function fakeIO(
   installCode = 0,
   addOk = true,
-  submoduleCode = 0,
+  _legacySubmoduleCode = 0,
   cache: {
     enabled?: boolean;
     shas?: Record<string, string>;
@@ -107,12 +107,9 @@ function fakeIO(
       const code = isInstall ? installCode : 0;
       return { code, stdout: "", stderr: code === 0 ? "" : "boom" };
     },
-    // The submodule init (git submodule update --init --recursive) runs between
-    // worktreeAdd and install; `submoduleCode` scripts its exit so the
-    // init-failure path is exercisable.
     exec: async (_cmd, _args, opts) => {
-      calls.push({ op: "submodule", dest: opts.cwd ?? "" });
-      return { code: submoduleCode, stdout: "", stderr: submoduleCode === 0 ? "" : "boom" };
+      calls.push({ op: "script", dest: opts.cwd ?? "" });
+      return { code: 0, stdout: "", stderr: "" };
     },
     worktreeRemove: async (_ctx, dest) => {
       calls.push({ op: "remove", dest });
@@ -146,7 +143,7 @@ function fakeIO(
   };
 }
 
-type Op = "add" | "submodule" | "install" | "script" | "remove" | "branchHead" | "worktreeHead" | "rebase";
+type Op = "add" | "install" | "script" | "remove" | "branchHead" | "worktreeHead" | "rebase";
 
 describe("makeFeedbackWorktree install (#458)", () => {
   // All tests in this block use `cacheEnabled: false` to keep the existing
@@ -160,11 +157,10 @@ describe("makeFeedbackWorktree install (#458)", () => {
     // it must materialise + install the checkout, then run the script there.
     await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
 
-    // add → submodule init → install BEFORE the script runs, all keyed to the worktree.
-    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "script"]);
+    // add → install BEFORE the script runs, all keyed to the worktree.
+    expect(calls.map((c) => c.op)).toEqual(["add", "install", "script"]);
     expect(calls[0]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
     expect(calls[1]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
-    expect(calls[2]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
   });
 
   it("installs the materialised checkout exactly once across reused branches", async () => {
@@ -196,25 +192,6 @@ describe("makeFeedbackWorktree install (#458)", () => {
     expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
   });
 
-  it("blocks validation (returns exit code 1) when submodule init fails", async () => {
-    const { io, calls } = fakeIO(0, true, 1, { enabled: false });
-    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
-
-    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
-    await fb.cleanup();
-
-    // A failed submodule init must block (else @reddb-io/red-castle is unresolved
-    // and the gate fails on every check — a false blocked:validation).
-    expect(result.code).toBe(1);
-    // The partial worktree is torn down immediately, and neither install nor the
-    // script ever runs.
-    expect(calls.filter((c) => c.op === "remove")).toEqual([
-      { op: "remove", dest: "/root/.red/tmp/feedback/afk-w1-42-fix" },
-    ]);
-    expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
-    expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
-  });
-
   it("blocks validation (returns exit code 1) when worktree-add fails", async () => {
     const { io, calls } = fakeIO(0, false, 0, { enabled: false });
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
@@ -231,7 +208,7 @@ describe("makeFeedbackWorktree install (#458)", () => {
 
 // AFK runner improvement: cross-session worktree cache. A materialised worktree
 // whose branch HEAD matches the live branch's HEAD is REUSED across sessions
-// (no `worktree add` / `submodule update` / `pnpm install` on re-claim). The
+// (no `worktree add` / `pnpm install` on re-claim). The
 // worktree itself is the cache — `cleanup()` only removes worktrees the
 // session created, so cached worktrees from prior sessions persist.
 describe("makeFeedbackWorktree — cross-session worktree cache", () => {
@@ -239,7 +216,7 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
   const DEST = "/root/.red/tmp/feedback/afk-w1-42-fix";
   const SHA = "abc1234";
 
-  it("cache HIT: same branch HEAD + same worktree HEAD → no add/submodule/install on a re-claim", async () => {
+  it("cache HIT: same branch HEAD + same worktree HEAD → no add/install on a re-claim", async () => {
     // Model a fresh worktree from a prior session: dest is at SHA, branch is at
     // SHA. New session: should hit the cache, skip the full materialise.
     const { io, calls } = fakeIO(0, true, 0, {
@@ -250,10 +227,9 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
 
     await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
 
-    // The cache check (branchHead + worktreeHead) ran, but no add / submodule /
-    // install. Only the script runs against the cached checkout.
+    // The cache check (branchHead + worktreeHead) ran, but no add / install.
+    // Only the script runs against the cached checkout.
     expect(calls.filter((c) => c.op === "add")).toHaveLength(0);
-    expect(calls.filter((c) => c.op === "submodule")).toHaveLength(0);
     expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
     expect(calls.filter((c) => c.op === "script")).toHaveLength(1);
     // Both SHA lookups happened.
@@ -271,9 +247,8 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
 
     await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
 
-    // Cache invalidation: the full add + submodule + install path runs again.
+    // Cache invalidation: the full add + install path runs again.
     expect(calls.filter((c) => c.op === "add")).toHaveLength(1);
-    expect(calls.filter((c) => c.op === "submodule")).toHaveLength(1);
     expect(calls.filter((c) => c.op === "install")).toHaveLength(1);
     expect(calls.filter((c) => c.op === "script")).toHaveLength(1);
   });
@@ -290,7 +265,6 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
     await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
 
     expect(calls.filter((c) => c.op === "add")).toHaveLength(1);
-    expect(calls.filter((c) => c.op === "submodule")).toHaveLength(1);
     expect(calls.filter((c) => c.op === "install")).toHaveLength(1);
   });
 
@@ -320,7 +294,7 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
     await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
     await fb.pnpm(["pnpm", "-C", "afk/w2/99-other", "build"]);
 
-    // Two full materialise cycles: add+submodule+install runs twice.
+    // Two full materialise cycles: add+install runs twice.
     expect(calls.filter((c) => c.op === "add")).toHaveLength(2);
     expect(calls.filter((c) => c.op === "install")).toHaveLength(2);
   });
@@ -419,8 +393,8 @@ describe("makeFeedbackWorktree — rebaseOnto (Pattern 2 drift mitigation)", () 
 
     await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
 
-    // Order: add → submodule → install → rebase → script.
-    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "rebase", "script"]);
+    // Order: add → install → rebase → script.
+    expect(calls.map((c) => c.op)).toEqual(["add", "install", "rebase", "script"]);
     const rebaseCall = calls.find((c) => c.op === "rebase")!;
     expect(rebaseCall.dest).toBe(DEST);
     expect(rebaseCall.base).toBe("main");
@@ -433,7 +407,7 @@ describe("makeFeedbackWorktree — rebaseOnto (Pattern 2 drift mitigation)", () 
     await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
 
     expect(calls.filter((c) => c.op === "rebase")).toHaveLength(0);
-    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "script"]);
+    expect(calls.map((c) => c.op)).toEqual(["add", "install", "script"]);
   });
 
   it("a rebase CONFLICT does not block the gate — the script still runs (best-effort)", async () => {

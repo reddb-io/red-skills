@@ -122,7 +122,8 @@ bypasses the barrier is a bug by definition.
 Liveness lives in red-castle because the substrate owns the process and the
 event stream; trunk, primary protection, and the exit barrier live in
 `apps/dev` because claim/land/reconcile/teardown are orchestration concerns.
-This accepts the two-repo submodule flow for liveness slices only.
+ADR 0101 later moved red-castle into this monorepo, so liveness slices now land
+through the same RedSkills PR flow as their consumers.
 
 ## Consequences
 
@@ -132,8 +133,8 @@ This accepts the two-repo submodule flow for liveness slices only.
   `/setup-red-skills` must teach it.
 - Pushing every attempt branch (including failed ones) adds remote branch
   noise; acceptable trade against lost work, and prunable.
-- Liveness changes ride the two-repo red-castle flow (slower slices, submodule
-  init footgun applies — post-checkout hook required in worker worktrees).
+- Liveness changes ride the monorepo red-castle flow; the old submodule init
+  footgun is retired by ADR 0101.
 - The landing precondition converts silent WIP-eating into loud parks; a
   diverged local trunk now requires an explicit human decision.
 - Existing ADR 0030/0031 landing semantics are refined, not replaced; the

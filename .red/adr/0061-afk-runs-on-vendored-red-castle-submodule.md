@@ -1,5 +1,9 @@
 # AFK execution runs on the vendored `@reddb-io/red-castle` submodule, consumed as source
 
+> Amended by ADR 0101: `packages/red-castle` is now a vendored source tree in
+> this monorepo, not a git submodule. The source-consumed workspace package
+> decision remains.
+
 ## Context
 
 ADR 0033 put AFK's execution substrate on the npm package `@ai-hero/sandcastle` —

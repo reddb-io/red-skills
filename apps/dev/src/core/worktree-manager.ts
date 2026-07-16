@@ -7,17 +7,17 @@
 //      per (worker, issue-ref), so two live workers never materialise the same
 //      slot. Distinct raw inputs that sanitise to the same readable token are
 //      still kept apart by a stable hash suffix.
-//   2. PROVISIONING guarantee — submodule init + `node_modules` linking are
-//      verified on every acquired worktree and remediated if missing, removing
-//      the lost-deps / submodule-not-init false-`blocked:validation` footgun.
+//   2. PROVISIONING guarantee — `node_modules` linking is verified on every
+//      acquired worktree and remediated if missing, removing the lost-deps
+//      false-`blocked:validation` footgun.
 //   3. ORPHAN detection + safe prune — distinguishes a git-registered worktree
 //      whose dir is gone (`registered-missing`, a `git worktree prune`
 //      candidate) from a present dir git no longer tracks (`untracked-present`,
 //      a leftover to remove). The prune is PROCESS-in-use aware: an untracked
 //      dir whose lease holder pid is still alive is always kept.
 //   4. RECOVERY — a worktree whose dir vanished mid-run is re-materialised cold
-//      (its `node_modules` + submodule checkout died with the dir), so a deleted
-//      worktree never strands an attempt.
+//      (its `node_modules` died with the dir), so a deleted worktree never
+//      strands an attempt.
 //
 // Like the pool, every effect (git, fs, pid liveness) is an injected seam, so
 // the decision logic — namespacing, orphan classification, the recovery and
@@ -81,39 +81,33 @@ export function namespacedWorktreePath(root: string, worker: string, ref: string
 }
 
 // ---------------------------------------------------------------------------
-// Provisioning guarantee — submodule init + node_modules linking.
+// Provisioning guarantee — node_modules linking.
 // ---------------------------------------------------------------------------
 
 /** What an inspection of a worktree reports about its provisioned state. */
 export interface ProvisionState {
-  /** True when the red-castle submodule is checked out (not an empty gitlink). */
-  submoduleInitialized: boolean;
   /** True when `node_modules` is present (linked or installed). */
   nodeModulesPresent: boolean;
 }
 
 /** The remediation steps that make a worktree fully provisioned. */
-export type ProvisionStep = "submodule-init" | "link-node-modules";
+export type ProvisionStep = "link-node-modules";
 
 /**
  * The ordered remediation plan that brings `state` up to fully-provisioned:
- * a missing submodule → `submodule-init`, missing deps → `link-node-modules`.
- * An already-provisioned worktree plans nothing. Submodule init is ordered
- * first because the linked `node_modules` may resolve a submodule workspace.
+ * missing deps → `link-node-modules`. An already-provisioned worktree plans
+ * nothing.
  */
 export function planProvisioning(state: ProvisionState): ProvisionStep[] {
   const steps: ProvisionStep[] = [];
-  if (!state.submoduleInitialized) steps.push("submodule-init");
   if (!state.nodeModulesPresent) steps.push("link-node-modules");
   return steps;
 }
 
 /** Effects the provisioning guarantee injects. Faked in tests. */
 export interface ProvisionDeps {
-  /** Inspect a worktree's submodule + node_modules state. */
+  /** Inspect a worktree's node_modules state. */
   inspect: (path: string) => Promise<ProvisionState>;
-  /** `git submodule update --init` for the worktree. */
-  initSubmodule: (path: string) => Promise<void>;
   /** Link (or install) `node_modules` into the worktree. */
   linkNodeModules: (path: string) => Promise<void>;
 }
@@ -122,14 +116,12 @@ export interface ProvisionDeps {
  * Guarantee a worktree is provisioned: inspect it, run exactly the missing
  * remediation steps (idempotent — a provisioned worktree runs nothing), and
  * return the steps actually applied for telemetry. This is the contract behind
- * "submodule-init guaranteed on every acquired worktree" and "`node_modules`
- * available (linked)".
+ * "`node_modules` available (linked)".
  */
 export async function ensureProvisioned(deps: ProvisionDeps, path: string): Promise<ProvisionStep[]> {
   const steps = planProvisioning(await deps.inspect(path));
   for (const step of steps) {
-    if (step === "submodule-init") await deps.initSubmodule(path);
-    else await deps.linkNodeModules(path);
+    if (step === "link-node-modules") await deps.linkNodeModules(path);
   }
   return steps;
 }

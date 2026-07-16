@@ -4,6 +4,11 @@
 
 accepted.
 
+> Amended by ADR 0101: red-castle is now vendored as an in-repo source tree, so
+> the red-castle-specific submodule initialization hook and CI checkout
+> accommodations are retired. The broader dependency-install, cache, baseline,
+> and infra/semantic split decisions remain current.
+
 Relates: [ADR 0008](0008-afk-feedback-is-the-merge-gate.md) (feedback is the merge
 gate), [ADR 0055](0055-afk-reconcile-no-agent-worker-mode.md) (no-agent reconcile),
 [ADR 0061](0061-afk-execution-substrate-is-vendored-red-castle.md) (red-castle
