@@ -105,7 +105,7 @@ describe("rsp docs surface", () => {
       "### Symptom",
       "### Confirm",
       "### Recover",
-      "### Root-fix",
+      "### Root fix",
     ]) {
       expect(troubleshooting).toContain(heading);
     }
