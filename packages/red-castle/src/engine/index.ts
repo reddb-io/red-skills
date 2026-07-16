@@ -15,6 +15,7 @@ export * from "./gate-executor.js";
 export * from "./gate-sink.js";
 export * from "./lane-writers.js";
 export * from "./lifecycle-hooks.js";
+export * from "./terminal-events.js";
 export * from "./validation-cone.js";
 export * from "./config.js";
 export * from "./contracts/index.js";
