@@ -1,0 +1,221 @@
+# /afk Troubleshooting
+
+Use these playbooks when `/afk` reaches a confusing terminal state. Each entry
+uses the fixed Symptom, Confirm, Recover, Root-fix format so operators can
+separate a durable manual procedure from a stopgap that needs a tracked repair.
+
+## Gate census when ready-for-agent is empty
+
+### Symptom
+
+`/afk` reports zero `ready-for-agent` issues while the open non-Spec backlog is
+not empty.
+
+### Confirm
+
+1. Run the read-only queue view: `red-skills-dev monitor --once`.
+2. Compare `ready-for-agent` with open non-Spec issues in the issue tracker.
+3. Census the gates by label family: `blocked:dependency`, `needs-triage`,
+   `ready-for-human`, `type:spec`, and any unsupported `blocked:*` label.
+4. For each `blocked:dependency`, inspect every `req:N` target. A delivered but
+   still-open Spec can strand dependents even when the dependency is complete.
+
+### Recover
+
+1. Do not stop as a clean drain while executable backlog remains.
+2. Clear the highest-leverage false gate first: finish triage, close delivered
+   dependency targets, resolve stale human parks, or move eligible work back to
+   `ready-for-agent`.
+3. Re-run the queue view after each batch and continue until every open
+   executable issue is either agent-ready or gated for a real pending reason.
+
+### Root-fix
+
+This manual census is a stopgap for the queue reconciler tracked in #1739.
+
+## False main-red verification
+
+### Symptom
+
+Validation claims `main` is red, but the failure appears only in a local or
+agent-specific probe environment.
+
+### Confirm
+
+1. Check the actual GitHub Actions runs for `main`, not only the local command
+   tail.
+2. Check whether recent release tags were cut from the same `main` lineage.
+3. Re-run the exact configured gate command. Do not add wider target sets,
+   stricter flags, or extra lint rules.
+4. If the exact gate is green and the stricter local probe is the only failure,
+   classify the finding as a probe-environment mirage.
+
+### Recover
+
+1. Close the validation park with concrete evidence: current `main` CI state,
+   relevant release tag, and the exact gate command that passed.
+2. Link the probe-environment bug instead of blocking the validation lane on a
+   check the gate does not run.
+3. Resume or requeue the issue only after the real configured gate is green.
+
+### Root-fix
+
+This manual verification is a stopgap for the queue reconciler and validation
+authority hardening tracked in #1739.
+
+## Scout and worker salvage after crashed or no-sentinel runs
+
+### Symptom
+
+An attempt is marked crashed or no-sentinel, but the worker lane may contain a
+completed report, useful notes, or finished work.
+
+### Confirm
+
+1. Inspect the attempt log and grep for `<promise>DONE</promise>` or
+   `<promise>BLOCKED</promise>` in `afk.log`.
+2. Extract final `kind=text` events from the agent lane and read the last useful
+   agent message.
+3. Check whether the branch contains unique commits or an uncommitted diff.
+4. Distinguish envelope failure from real failure: a completed report or DONE
+   followed only by sentinel handling failure is salvageable; an explicit
+   unresolved blocker remains blocked.
+
+### Recover
+
+1. For scout reports, post the sanitized report to the disposable scout issue
+   and close it. Scout work has no PR to land.
+2. For worker branches with useful commits, salvage the branch through the
+   normal PR and CI path.
+3. For no useful work, close the disposable issue with the sanitized evidence
+   and requeue the original tracked issue.
+4. Record recurrence against the root-fix issue so repeated envelope failures
+   are visible.
+
+### Root-fix
+
+This manual salvage is a stopgap for the scout and worker envelope hardening
+tracked in #1695.
+
+## Park-resolution contract
+
+### Symptom
+
+An issue's labels are flipped out of a parked state without a matching
+`## Current blocker` update, or the blocker block is edited while labels still
+claim the old state.
+
+### Confirm
+
+1. Read the issue body and find the `## Current blocker` block.
+2. Compare the blocker kind with the live labels: `ready-for-human`,
+   `blocked:*`, `ready-for-agent`, and any `req:N` dependency edges.
+3. Check comments for a HITL directive or maintainer decision that resolves the
+   parked reason.
+
+### Recover
+
+1. Resolve both surfaces in the same operation: update `## Current blocker` and
+   flip labels together.
+2. Move the resolved blocker into the resolved-blockers history when the issue
+   template has that section.
+3. Never perform a raw label-only requeue or unblock. The issue body is the
+   durable contract that explains why the labels changed.
+
+### Root-fix
+
+This paired-update procedure is a durable manual procedure. The broader
+automation reconciliation is tracked in #1739.
+
+## Base-stale decision procedure
+
+### Symptom
+
+An issue or PR is parked as `base-stale`, or an old AFK branch exists after
+`main` has moved.
+
+### Confirm
+
+1. Fast-forward local `main` from origin before comparing branches.
+2. Find the parked branch and compute its merge-base with current `main`.
+3. Inspect commits unique to the parked branch. Also check for uncommitted
+   worker artifacts if the attempt directory still exists.
+4. Decide whether the branch contains user-facing work, only generated churn, or
+   no unique work.
+
+### Recover
+
+1. If unique work exists, adopt it through a normal branch, PR, and CI run
+   against current `main`.
+2. If the branch is empty or contains no useful work, do a plain requeue of the
+   tracked issue instead of preserving the stale branch.
+3. If generated churn obscures the decision, isolate the human-authored files
+   and document what was kept or discarded.
+
+### Root-fix
+
+This decision tree is a durable manual procedure. Automatic stale-branch
+reconciliation remains part of the broader reconciler tracked in #1739.
+
+## Requeue escalation map
+
+### Symptom
+
+A parked issue carries `blocked:<kind>` outside the supported automatic requeue
+set, or a HITL card refuses `/requeue` for that blocker kind.
+
+### Confirm
+
+1. Identify the exact blocker label and the issue body's `## Current blocker`.
+2. Try the narrowest supported CLI verb first when one exists, such as `/afk
+   retake N` for resumable AFK work.
+3. If the CLI cannot act, inspect the HITL card for supported comment verbs:
+   `/approve`, `/approve-ci`, `/reject`, and `/requeue`.
+4. If the card rejects the blocker kind, classify it as a full-contract manual
+   resolution rather than repeating the same unsupported command.
+
+### Recover
+
+1. Use the CLI verb when the blocker kind is supported.
+2. Use a HITL card comment verb when the card supports the transition.
+3. For unsupported `blocked:<kind>` labels, manually update the blocker-state
+   block and labels together, then add a concise sanitized comment explaining
+   the resolution.
+4. Re-run the gate census so the issue returns to the correct lane.
+
+### Root-fix
+
+This escalation map is a stopgap for unsupported blocker reconciliation tracked
+in #1739.
+
+## Release-pipeline playbook
+
+### Symptom
+
+The release pipeline does not publish the expected fix, or a change needs a
+release trigger even though the code diff is already on `main`.
+
+### Confirm
+
+1. Check conventional-commit bump rules for the merged commits. A `fix:` commit
+   should trigger a patch release; `feat:` should trigger a minor release.
+2. Check whether AFK fleet workers are still running. Defer release-trigger
+   commits while fleet activity could race with branch or tag state.
+3. If no bump-worthy commit exists for an already-merged fix, prepare an empty
+   `fix:` trigger commit that references the issue.
+4. After the release appears, verify the fix-in-tag with an ancestor check from
+   the release tag back to the fixing commit.
+
+### Recover
+
+1. Wait for fleet workers to drain before creating release-trigger commits.
+2. Use an empty `fix:` commit only when the code change is already present on
+   `main` and the release pipeline needs a conventional-commit signal.
+3. Verify the published tag contains the fix before closing the release lane.
+4. If the tag does not contain the fix, stop and repair the release lineage
+   instead of announcing success.
+
+### Root-fix
+
+This playbook establishes the documentation contract for release troubleshooting
+in #1863; the durable release policy remains the conventional-commit pipeline.
