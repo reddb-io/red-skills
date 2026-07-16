@@ -43,6 +43,7 @@ export interface TrackerPort {
   isIssueClosed(issue: number): Promise<boolean>;
   editIssueLabels(issue: number, mutation: TrackerLabelMutation): Promise<void>;
   commentOnIssue(issue: number, body: string): Promise<void>;
+  closeIssue(issue: number): Promise<void>;
   issueReference?(issue: number): Promise<TrackerIssueReference | undefined>;
   claimIssueLease?(
     request: TrackerClaimLeaseRequest,
