@@ -3,3 +3,5 @@ dist
 .env.*
 .vercel
 .claude/settings.local.json
+.red/tmp/
+.red/state/

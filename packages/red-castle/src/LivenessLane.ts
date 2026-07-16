@@ -1,11 +1,10 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import {
-  encodeLines,
-  parseRecords,
-  type ToonlLineEmitter,
-} from "@reddb-io/toon";
+import { readFile } from "node:fs/promises";
+import { parseRecords } from "@reddb-io/toon";
 import type { AgentStreamEvent } from "./AgentStreamEmitter.js";
+import {
+  appendCastleLaneRecord,
+  CASTLE_LANE_FILENAMES,
+} from "./engine/lane-writers.js";
 
 /**
  * The liveness lane — a dedicated, append-only activity record for one attempt,
@@ -23,10 +22,7 @@ import type { AgentStreamEvent } from "./AgentStreamEmitter.js";
  * reach the lane.
  */
 export type LivenessSignalKind =
-  | "iteration-start"
-  | "iteration-end"
-  | "tool-start"
-  | "tool-end";
+  "iteration-start" | "iteration-end" | "tool-start" | "tool-end";
 
 /** One append-only lane record. `at` is epoch-ms from the lane's injected clock. */
 export interface LivenessRecord {
@@ -40,10 +36,10 @@ export interface LivenessRecord {
  * so nothing that writes those can refresh the lane by accident.
  *
  * The filename keeps its `.jsonl` suffix for compatibility, but the content is
- * now TOONL (one positional record per line under a leading schema header) —
- * readers sniff by content, not by extension. See {@link parseLivenessRecords}.
+ * now TOONL under the shared `red.castle.lane.v1` family — readers sniff by
+ * content, not by extension. See {@link parseLivenessRecords}.
  */
-export const LIVENESS_LANE_FILENAME = "liveness.lane.jsonl";
+export const LIVENESS_LANE_FILENAME = CASTLE_LANE_FILENAMES.liveness;
 
 export interface LivenessLaneOptions {
   /** Absolute path to the lane file (append-only TOONL, one record per line). */
@@ -66,16 +62,6 @@ export interface LivenessLaneOptions {
 export class LivenessLane {
   readonly path: string;
   private readonly clock: () => number;
-  private ensuredDir = false;
-  /**
-   * Per-lane TOONL emitter. The lane's record shape is fixed (`{at,kind}`), so
-   * the header is emitted lazily on the first `push` and every later `push`
-   * returns just the positional row — one append-only write per record, exactly
-   * as the JSONL writer behaved. One emitter per lane instance keeps the header
-   * at the top of this attempt's file.
-   */
-  private readonly emitter: ToonlLineEmitter = encodeLines();
-
   constructor(options: LivenessLaneOptions) {
     this.path = options.path;
     this.clock = options.clock ?? (() => Date.now());
@@ -87,14 +73,11 @@ export class LivenessLane {
    */
   async record(kind: LivenessSignalKind): Promise<LivenessRecord> {
     const record: LivenessRecord = { at: this.clock(), kind };
-    if (!this.ensuredDir) {
-      await mkdir(dirname(this.path), { recursive: true });
-      this.ensuredDir = true;
-    }
-    // `push` returns newline-terminated TOONL text (header + first row on the
-    // first call, a bare positional row thereafter); write it verbatim so each
-    // record is one atomic append.
-    await appendFile(this.path, this.emitter.push({ ...record }));
+    await appendCastleLaneRecord(this.path, {
+      at: new Date(record.at).toISOString(),
+      kind: "worker.heartbeat",
+      payload: { signal: kind },
+    });
     return record;
   }
 }
@@ -115,9 +98,31 @@ export function parseLivenessRecords(raw: string): LivenessRecord[] {
   const records: LivenessRecord[] = [];
   let toonlBuffer: string[] = [];
 
-  const pushIfValid = (rec: Partial<LivenessRecord>): void => {
+  const pushIfValid = (rec: Record<string, unknown>): void => {
     if (typeof rec.at === "number" && typeof rec.kind === "string") {
       records.push({ at: rec.at, kind: rec.kind as LivenessSignalKind });
+      return;
+    }
+    if (typeof rec.at === "string" && rec.kind === "worker.heartbeat") {
+      const payload =
+        typeof rec.payload === "string"
+          ? safeJsonObject(rec.payload)
+          : rec.payload;
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        typeof (payload as Record<string, unknown>).signal === "string"
+      ) {
+        const at = Date.parse(rec.at);
+        if (Number.isFinite(at)) {
+          records.push({
+            at,
+            kind: (payload as Record<string, unknown>)
+              .signal as LivenessSignalKind,
+          });
+        }
+      }
     }
   };
 
@@ -149,6 +154,18 @@ export function parseLivenessRecords(raw: string): LivenessRecord[] {
   }
   flushToonl();
   return records;
+}
+
+function safeJsonObject(raw: string): Record<string, unknown> | undefined {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 /** Read and parse every lane record. Returns `[]` when the lane file is absent. */
