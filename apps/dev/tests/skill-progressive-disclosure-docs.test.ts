@@ -9,6 +9,29 @@ function readRepoFile(path: string) {
 }
 
 describe("skill progressive-disclosure docs", () => {
+  it("keeps /go troubleshooting discoverable and pins the stopgap playbooks", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/go/SKILL.md");
+    const troubleshooting = await readRepoFile("plugins/dev/skills/engineering/go/TROUBLESHOOTING.md");
+
+    expect(skill).toContain("<supporting-info>");
+    expect(skill).toContain("[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)");
+
+    for (const heading of [
+      "# /go Troubleshooting",
+      "## Crashed-scout salvage",
+      "### Symptom",
+      "### Confirm",
+      "### Recover",
+      "### Root-fix",
+      "## Engine-exit-0-but-parked reading",
+    ]) {
+      expect(troubleshooting).toContain(heading);
+    }
+
+    expect(troubleshooting).toContain("#1695");
+    expect(troubleshooting).toContain("#1864");
+  });
+
   it("keeps red-statusline routing hot while preserving host recipes in HOST-NOTES", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/red-statusline/SKILL.md");
     const hostNotes = await readRepoFile("plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md");
