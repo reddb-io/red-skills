@@ -90,6 +90,9 @@ export function createGitHubTrackerAdapter(
     async commentOnIssue(issue, body) {
       await gh(withRepo(["issue", "comment", String(issue), "--body", body]));
     },
+    async closeIssue(issue) {
+      await gh(withRepo(["issue", "close", String(issue)]));
+    },
     async issueReference(issue) {
       const stdout = await gh(
         withRepo([
