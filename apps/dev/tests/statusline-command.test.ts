@@ -22,6 +22,11 @@ import { resolveResidentPaths } from "../../rsp/src/resident-client.js";
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
+function startOfCurrentUtcDay(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 /** A non-TTY readable carrying the Claude Code payload on stdin. */
 function fakeStdin(text: string): NodeJS.ReadableStream & { isTTY?: boolean } {
   const stream = Readable.from([text]) as Readable & { isTTY?: boolean };
@@ -815,7 +820,7 @@ describe("statusline command — rendered line", () => {
     await writeFile(resolveResidentPaths(root).summaryPath, JSON.stringify({
       version: 1,
       tokens_saved_today: 4242,
-      updated_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      updated_at: startOfCurrentUtcDay().toISOString(),
     }), "utf8");
 
     expect(await resolveStatuslineRsp(root, {})).toEqual({ state: "ready", tokensSavedToday: 4242 });
