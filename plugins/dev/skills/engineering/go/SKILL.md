@@ -92,6 +92,8 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 
 <supporting-info>
 
+For failure-state playbooks, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
+
 ## Where `/go` sits — the dispatch spectrum
 
 | Tier | Input | Artifact | Worker | Gate sink | When to use |
