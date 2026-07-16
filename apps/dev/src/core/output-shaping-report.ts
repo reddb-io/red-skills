@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
-import { parseState } from "./state.js";
+import { parseStateDocument } from "./state.js";
 import type { OutputShapingVariant } from "./output-shaping.js";
 
 export interface OutputShapingSample {
@@ -32,7 +32,7 @@ export function collectOutputShapingSamples(tmpDir: string): OutputShapingSample
   const samples: OutputShapingSample[] = [];
   for (const path of states) {
     try {
-      const state = parseState(JSON.parse(readFileSync(path, "utf8")));
+      const state = parseStateDocument(readFileSync(path, "utf8"));
       const variant = state.current.output_shaping_variant;
       if (variant !== "steered" && variant !== "holdout") continue;
       samples.push({
