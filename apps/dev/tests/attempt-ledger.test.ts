@@ -70,6 +70,18 @@ describe("attempt-ledger next number (FS-backed)", () => {
     expect(await attemptLedgerNextNumber(root, 249)).toBe(1);
   });
 
+  it("reads the workerId-issueId directory as the first retained run", async () => {
+    const root = await tmpRoot();
+    const dir = join(root, "workers", "wC7D2", "249");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "failure.reason"), "runner-transient\n", "utf8");
+
+    expect(await attemptLedgerNextNumber(root, 249)).toBe(2);
+    const context = await attemptLedgerContext(root, 249);
+    expect(context?.prevAttempt).toBe(1);
+    expect(context?.prevFailureReason).toBe("runner-transient\n");
+  });
+
   it("derives max+1 across workers, numeric not lexical, independent per issue", async () => {
     const root = await tmpRoot();
     await mkAttempt(root, { worker: "wA1B9", issue: 249, attempt: 1, branch: "afk-attempts/wA1B9/249-foo", reason: "BLOCKED: typecheck failed" });
