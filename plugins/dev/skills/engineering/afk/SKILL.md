@@ -133,3 +133,10 @@ the same claim safety. Choose fleet width by disjointness; read
 
 See [`SAFETY.md`](SAFETY.md). The orchestrator and inner agent both inherit
 those rules; violations abort the loop.
+
+<supporting-info>
+
+For failure-state playbooks and operator recovery procedures, see
+[TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
+
+</supporting-info>

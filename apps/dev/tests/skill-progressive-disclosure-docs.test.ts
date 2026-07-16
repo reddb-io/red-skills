@@ -9,6 +9,35 @@ function readRepoFile(path: string) {
 }
 
 describe("skill progressive-disclosure docs", () => {
+  it("keeps /afk troubleshooting discoverable and pins operational playbooks", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/afk/SKILL.md");
+    const troubleshooting = await readRepoFile("plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md");
+
+    expect(skill).toContain("<supporting-info>");
+    expect(skill).toContain("[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)");
+
+    for (const heading of [
+      "# /afk Troubleshooting",
+      "## Gate census when ready-for-agent is empty",
+      "## False main-red verification",
+      "## Scout and worker salvage after crashed or no-sentinel runs",
+      "## Park-resolution contract",
+      "## Base-stale decision procedure",
+      "## Requeue escalation map",
+      "## Release-pipeline playbook",
+      "### Symptom",
+      "### Confirm",
+      "### Recover",
+      "### Root-fix",
+    ]) {
+      expect(troubleshooting).toContain(heading);
+    }
+
+    for (const issue of ["#1739", "#1695", "#1863"]) {
+      expect(troubleshooting).toContain(issue);
+    }
+  });
+
   it("keeps /go troubleshooting discoverable and pins the stopgap playbooks", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/go/SKILL.md");
     const troubleshooting = await readRepoFile("plugins/dev/skills/engineering/go/TROUBLESHOOTING.md");
