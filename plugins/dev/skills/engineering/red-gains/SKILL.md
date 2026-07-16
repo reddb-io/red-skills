@@ -43,4 +43,7 @@ Short windows are normal after setup or pruning. Use the `window.label` value,
 for example "window: 28d, data: 3d", so the reader sees requested history
 versus available history.
 
+For rsp hook silence, resident/store splits, and store-growth recovery, see
+[TROUBLESHOOTING.md](../../../../../apps/rsp/docs/TROUBLESHOOTING.md).
+
 </supporting-info>
