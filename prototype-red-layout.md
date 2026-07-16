@@ -21,19 +21,18 @@ namespace; liveness lane stays separate).
 └── tmp/                            # Tier 4 — rm -rf safe
     ├── supervisors/$id/
     │   ├── supervisor.pid
-    │   ├── supervisor.log.toonl    # structured firehose (was afk-supervisor.log.jsonl)
-    │   └── supervisor.log          # human prose
+    │   └── supervisor.log.toonl    # structured firehose (was afk-supervisor.log.jsonl); human view = render-on-read
     ├── workers/$workerId/          # ONE lane; kind (afk|go|scout) lives in state.toon
     │   ├── worker.pid
     │   ├── state.toon              # identity + kind + vitals (merges afk.state.json + identity.json)
-    │   ├── worker.log.toonl        # lifecycle + vitals + scale/steer/escalate events
-    │   ├── worker.log              # human log (was afk.log)
+    │   ├── worker.log.toonl        # lifecycle + vitals + scale/steer/escalate events; human view = render-on-read
     │   └── liveness.toonl          # castle substrate lane — SEPARATE file (un-poisonable, ADR 0083 §3)
     ├── worktrees/
     │   ├── workers/$workerId-$issueId/   # engine worktrees sub-lane (no attempt level)
     │   │   ├── worktree/           # the git checkout
     │   │   ├── state.toon          # issue-scoped phase + validation refs
-    │   │   └── validation.toonl    # gate sidecar (was validation.jsonl)
+    │   │   ├── validation.toonl    # gate sidecar (was validation.jsonl)
+    │   │   └── agent.log           # raw agent stream (TOON-exempt bytes; was in afk.log)
     │   └── manual/ feedback/ landing/ rebase/ cascade/ adopt/ docs/   # human/aux lanes unchanged
     ├── monitors/$id/
     │   ├── monitor.pid
@@ -83,3 +82,13 @@ export function enginePaths(redRoot: string): EnginePaths;
 - **Sidecar grammar**: `worker-state-reader`'s `<worker>/<issue>-a<N>` parsing is replaced by the
   `workers/<id>/state.toon` + `worktrees/workers/<wid>-<issue>/state.toon` pair (contracts ticket
   versions the schemas).
+
+## Amendment (logging unification ticket, same day)
+
+- **Render-on-read**: human prose `.log` files are dropped — the `.toonl` lanes are the single
+  source of truth; a `castle logs <entity>` renderer produces the human view.
+- **Raw agent stream** lives issue-scoped at `worktrees/workers/$wid-$issue/agent.log`
+  (TOON-exempt raw bytes; referenced from `worker.log.toonl`).
+- **Single namespaced record family** across all engine `.toonl` lanes: `{at, kind, ...payload}`
+  with kinds like `worker.claimed`, `supervisor.scaled`, `worker.steered` (schemas versioned by
+  the data-contracts ticket).
