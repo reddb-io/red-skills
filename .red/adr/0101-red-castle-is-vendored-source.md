@@ -2,12 +2,13 @@
 
 ## Status
 
-accepted.
+accepted. Records the repo-topology decision from wayfinder map #1875 and
+source Tickets #1882 and #1892.
 
 ## Context
 
-ADR 0061 moved AFK execution from the public `@ai-hero/sandcastle` package to
-reddb.io's fork, `@reddb-io/red-castle`, consumed as TypeScript source from
+ADR 0061 moved AFK execution from the public sandcastle package to the
+RedSkills fork, `@reddb-io/red-castle`, consumed as TypeScript source from
 `packages/red-castle`. The first topology used a git submodule pinned at an
 exact red-castle commit.
 
@@ -20,12 +21,13 @@ commit + pointer-bump flow even though RedSkills is the only consumer.
 
 Replace the `packages/red-castle` git submodule with the full red-castle file
 tree in this monorepo. The squash import records the final standalone commit:
-`977af58444ff18810ffa25fd698035ab5e548746` from
-`https://github.com/reddb-io/red-castle`.
+`977af58444ff18810ffa25fd698035ab5e548746`.
 
 `packages/red-castle/.upstream` remains as the upstream sandcastle marker.
-Standalone changesets are not imported, and the standalone `reddb-io/red-castle`
-repository is archived after this import lands.
+Upstream sync is a file-tree ritual: review upstream sandcastle diffs, apply
+them as ordinary monorepo commits, and advance the marker. Standalone changesets
+are not imported, and the standalone red-castle repository is archived after
+this import lands.
 
 ## Consequences
 
@@ -37,8 +39,15 @@ repository is archived after this import lands.
   existing CI memory budget is unchanged; package-local `test` and `typecheck`
   remain available through normal package scripts.
 - Changes to the AFK substrate now land in one PR against this monorepo.
+- Engine relocation slices drain natively in the RedSkills fleet. There are no
+  pin bumps, two-PR dances, or consumed-branch lineage risks.
 
 ## Amends
 
 - ADR 0061 — preserves the source-consumed package decision, replaces the
   submodule topology with an in-repo vendored source tree.
+
+## Sources
+
+- Wayfinder map #1875.
+- Tickets #1882 and #1892.
