@@ -140,6 +140,8 @@ If non-delegable:
 
 <supporting-info>
 
+For stale parks, card verbs, and recovery checks, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
+
 ## `/hitl` vs `/retake`
 
 Use `/hitl` when the pending human decision still has to be **extracted and answered** — it interviews you, decides delegability, then (when delegable) clears the active `## Current blocker` and requeues. When the decision is **already made** and you only need to put a parked `blocked:validation`/`blocked:spec` issue back in the queue, reach for [`/retake`](../retake/SKILL.md) instead — its **`/retake` vs `/hitl` — the decision boundary** section is the authoritative split. Both end in the same safe state; never flip labels by hand, because AFK preflight re-reads the active blocker and re-parks the issue.
