@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./engine/contracts": "./src/engine/contracts/index.ts",
+    "./engine/terminal-events": "./src/engine/terminal-events.ts",
     "./engine/lifecycle-hooks": "./src/engine/lifecycle-hooks.ts",
     "./sandboxes/docker": "./src/sandboxes/docker.ts",
     "./sandboxes/vercel": "./src/sandboxes/vercel.ts",
