@@ -21,6 +21,7 @@
     "bench:two-axis:check": "node --import tsx src/two-axis-benchmark-cli.ts --check --out bench/results/rsp-two-axis.toon --summary bench/results/rsp-two-axis.md",
     "gen:ambient-skill": "node --import tsx scripts/gen-ambient-skill.mjs",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
