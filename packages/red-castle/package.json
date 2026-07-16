@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./engine/contracts": "./src/engine/contracts/index.ts",
     "./sandboxes/docker": "./src/sandboxes/docker.ts",
     "./sandboxes/vercel": "./src/sandboxes/vercel.ts",
     "./sandboxes/podman": "./src/sandboxes/podman.ts",
