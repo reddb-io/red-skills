@@ -152,6 +152,15 @@ In-repo exemplars: `/start` (grill and sharpen the plan) hands off to `/to-spec`
 pull toward shipping; and `writing-fragments` is separate from `writing-shape` /
 `writing-beats` so the raw-material gather isn't rushed toward the finished piece.
 
+## TROUBLESHOOTING references
+
+Operational TROUBLESHOOTING references use one fixed playbook entry format:
+Symptom -> Confirm -> Recover -> Root fix. Define that convention here, and have
+each reference link back to `write-a-skill` instead of re-explaining the format.
+
+Docs-contract tests for TROUBLESHOOTING references assert file existence, the SKILL.md link, and stable load-bearing headings. They do not assert prose wording;
+pinning prose turns a documentation contract into a stale-doc test.
+
 ## SKILL.md writing style
 
 Section structure (`<what-to-do>` / `<supporting-info>`) decides *where* a
