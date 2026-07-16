@@ -9,6 +9,10 @@
 reversible elision store, so the agent reads a compact summary and can
 recover the original bytes on demand with `rsp show el:<id>`.
 
+<supporting-info>
+Troubleshooting recipes for hook silence, resident/store splits, and store growth live in `apps/rsp/docs/TROUBLESHOOTING.md`.
+</supporting-info>
+
 ## Permanent Proxy Model
 
 When `.red/config.yaml` sets `rsp.enabled: true` and `rsp.proxy.enabled: true`,
