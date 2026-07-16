@@ -90,6 +90,42 @@ describe("rsp docs surface", () => {
     }
   });
 
+  it("links and pins the rsp troubleshooting playbooks", async () => {
+    const ambient = await doc("generated/AMBIENT-SKILL.md");
+    const troubleshooting = await doc("docs/TROUBLESHOOTING.md");
+
+    expect(ambient).toContain("<supporting-info>");
+    expect(ambient).toContain("apps/rsp/docs/TROUBLESHOOTING.md");
+    expect(ambient).toContain("hook silence, resident/store splits, and store growth");
+
+    for (const heading of [
+      "## Hook silence",
+      "## Resident/store split",
+      "## Store growth",
+      "### Symptom",
+      "### Confirm",
+      "### Recover",
+      "### Root-fix",
+    ]) {
+      expect(troubleshooting).toContain(heading);
+    }
+    for (const required of [
+      "synthetic PreToolUse payload",
+      "second enabled repo",
+      "RSP_DEBUG=1",
+      "rsp status",
+      "rsp server",
+      "idle byte-stability measurement",
+      "live view",
+      "physical-cap contract",
+      "#1731",
+      "#1726",
+      "#1704",
+    ]) {
+      expect(troubleshooting).toContain(required);
+    }
+  });
+
   it("explains how to run and interpret the two-axis benchmark", async () => {
     const bench = await doc("bench/README.md");
 
