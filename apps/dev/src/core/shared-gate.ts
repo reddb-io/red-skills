@@ -191,6 +191,7 @@ export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   /(?:^|\/)\.git\/hooks\//,    // git hooks directory
   /^\.husky\//,                // Husky hooks
   /^\.githooks\//,             // alternative git hooks directory
+  /^\.red\/tmp\//,              // RedSkills runtime worktree lane; lockstep with command-guard.sh
   /^\.red\//,                  // .red/ trust/gate config and gate's own config
   /^plugins\/[^/]+\/hooks\//,  // agent plugin hooks — execute on every agent action
   /^plugins\/[^/]+\/scripts\//, // agent plugin launcher scripts invoked by hooks
