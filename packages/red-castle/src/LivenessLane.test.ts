@@ -64,12 +64,26 @@ describe("LivenessLane.record", () => {
     const raw = await readFile(path, "utf-8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
     // A leading TOONL schema header, not a JSON object per line.
-    expect(lines[0]).toBe("[]{at,kind}:");
+    expect(lines[0]).toBe("[]{at,kind,payload}:");
     expect(() => JSON.parse(lines[0]!)).toThrow();
-    expect(lines.slice(1)).toEqual(["1000,iteration-start", "2000,tool-start"]);
+    expect(lines[1]).toContain("worker.heartbeat");
+    expect(lines[1]).toContain("iteration-start");
+    expect(lines[3]).toContain("tool-start");
 
-    // The library round-trips the whole lane back to the original records.
+    // The library round-trips the whole lane back to the shared castle family.
     expect(parseRecords(raw)).toEqual([
+      {
+        at: "1970-01-01T00:00:01.000Z",
+        kind: "worker.heartbeat",
+        payload: '{"signal":"iteration-start"}',
+      },
+      {
+        at: "1970-01-01T00:00:02.000Z",
+        kind: "worker.heartbeat",
+        payload: '{"signal":"tool-start"}',
+      },
+    ]);
+    expect(await readLivenessRecords(path)).toEqual([
       { at: 1000, kind: "iteration-start" },
       { at: 2000, kind: "tool-start" },
     ]);
