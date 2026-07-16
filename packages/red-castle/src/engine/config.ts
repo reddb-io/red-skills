@@ -26,6 +26,11 @@ export const ENGINE_CONFIG_DEFAULTS = {
   "afk.validation.node_max_old_space_mb": "2048",
   "afk.validation.vitest_max_workers": "1",
   "afk.validation.heavy_available_memory_mb": "4096",
+  "afk.labels.ready": "ready-for-agent",
+  "afk.labels.running": "running",
+  "afk.labels.human": "ready-for-human",
+  "afk.labels.dependency_blocked": "blocked:dependency",
+  "afk.labels.req_prefix": "req:",
 } as const;
 
 const RED_AFK_ENV_ACCESSORS = {
@@ -52,6 +57,14 @@ export interface EngineConfig {
   readonly configPath: string;
   readonly values: EngineConfigValues;
   readonly get: (key: string) => string;
+}
+
+export interface EngineLabelVocabulary {
+  readonly ready: string;
+  readonly running: string;
+  readonly human: string;
+  readonly dependencyBlocked: string;
+  readonly reqPrefix: string;
 }
 
 const defaultReader: EngineConfigReader = (path) => {
@@ -229,4 +242,14 @@ export function readEngineBackpressure(config: EngineConfig): string[] {
 
   const scalar = config.values["afk.backpressure"];
   return scalar && scalar.trim() !== "" ? [scalar] : [];
+}
+
+export function readEngineLabelVocabulary(config: EngineConfig): EngineLabelVocabulary {
+  return {
+    ready: config.get("afk.labels.ready"),
+    running: config.get("afk.labels.running"),
+    human: config.get("afk.labels.human"),
+    dependencyBlocked: config.get("afk.labels.dependency_blocked"),
+    reqPrefix: config.get("afk.labels.req_prefix"),
+  };
 }

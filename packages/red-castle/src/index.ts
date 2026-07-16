@@ -141,4 +141,9 @@ export type {
   NamedBranchStrategy,
 } from "./SandboxProvider.js";
 export * from "./engine/contracts/index.js";
+export * from "./engine/gate-constants.js";
+export * from "./engine/gate-executor.js";
+export * from "./engine/gate-sink.js";
 export * from "./engine/lane-writers.js";
+export * from "./engine/lifecycle-hooks.js";
+export * from "./engine/validation-cone.js";
