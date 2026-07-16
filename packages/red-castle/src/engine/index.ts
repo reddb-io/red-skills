@@ -25,3 +25,25 @@ export * from "./runner-detection.js";
 export * from "./runner-spawn.js";
 export * from "./runner-spec.js";
 export * from "./runner-types.js";
+export {
+  acquireIssueLease,
+  createFsIssueLeaseStore,
+  parseTrackerClaimRecords,
+  reconcileTrackerClaims,
+  renderTrackerClaimComment,
+  retireIssueLease,
+  TRACKER_CLAIM_MARKER_VERSION,
+} from "./tracker/claim.js";
+export type {
+  LocalIssueLeaseStore,
+  LocalLeaseDecision,
+  RetireIssueLeaseOptions,
+  TrackerClaimComment,
+  TrackerClaimIdentity,
+  TrackerClaimKind,
+  TrackerClaimRecord,
+  TrackerClaimStore,
+  TrackerClaimVerdict,
+  AcquireIssueLeaseOptions,
+} from "./tracker/claim.js";
+export * from "./tracker/port.js";
