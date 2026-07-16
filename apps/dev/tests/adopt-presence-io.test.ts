@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 const attemptDir = (tmpDir: string, issue: number): string =>
-  join(tmpDir, "workers", "requeue-adopt", `${issue}-a1`);
+  join(tmpDir, "workers", "requeue-adopt", String(issue));
 
 describe("makeAdoptPresenceIo — real state file, read through the shipped reader", () => {
   it("renders a live requeue-origin row mid-run, advances stage, then tears down on the landed path", async () => {
