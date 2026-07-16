@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   loadEngineConfig,
   parseEngineConfigYaml,
+  readEngineLabelVocabulary,
   readEngineBackpressure,
 } from "./config.js";
 
@@ -99,6 +100,34 @@ describe("engine config reader", () => {
     ).toMatchObject({
       "afk.backpressure.0": "pnpm test",
       "afk.backpressure.1": "pnpm lint",
+    });
+  });
+
+  it("reads tracker label vocabulary from config instead of engine constants", () => {
+    const redRoot = redRootWithConfig(
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      labels:",
+        "        ready: queue:agent",
+        "        running: state:running",
+        "        human: queue:human",
+        "        dependency_blocked: wait:dependency",
+        "        req_prefix: depends-on:",
+        "",
+      ].join("\n"),
+    );
+
+    const cfg = loadEngineConfig(redRoot, { env: {} });
+
+    expect(readEngineLabelVocabulary(cfg)).toEqual({
+      ready: "queue:agent",
+      running: "state:running",
+      human: "queue:human",
+      dependencyBlocked: "wait:dependency",
+      reqPrefix: "depends-on:",
     });
   });
 });
