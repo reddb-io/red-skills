@@ -1,8 +1,6 @@
 # /afk Troubleshooting
 
-Use these playbooks when `/afk` reaches a confusing terminal state. Each entry
-uses the fixed Symptom, Confirm, Recover, Root-fix format so operators can
-separate a durable manual procedure from a stopgap that needs a tracked repair.
+Use these playbooks when `/afk` reaches a confusing terminal state. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Gate census when ready-for-agent is empty
 
@@ -29,7 +27,7 @@ not empty.
 3. Re-run the queue view after each batch and continue until every open
    executable issue is either agent-ready or gated for a real pending reason.
 
-### Root-fix
+### Root fix
 
 This manual census is a stopgap for the queue reconciler tracked in #1739.
 
@@ -58,7 +56,7 @@ agent-specific probe environment.
    check the gate does not run.
 3. Resume or requeue the issue only after the real configured gate is green.
 
-### Root-fix
+### Root fix
 
 This manual verification is a stopgap for the queue reconciler and validation
 authority hardening tracked in #1739.
@@ -92,7 +90,7 @@ completed report, useful notes, or finished work.
 4. Record recurrence against the root-fix issue so repeated envelope failures
    are visible.
 
-### Root-fix
+### Root fix
 
 This manual salvage is a stopgap for the scout and worker envelope hardening
 tracked in #1695.
@@ -122,7 +120,7 @@ claim the old state.
 3. Never perform a raw label-only requeue or unblock. The issue body is the
    durable contract that explains why the labels changed.
 
-### Root-fix
+### Root fix
 
 This paired-update procedure is a durable manual procedure. The broader
 automation reconciliation is tracked in #1739.
@@ -152,7 +150,7 @@ An issue or PR is parked as `base-stale`, or an old AFK branch exists after
 3. If generated churn obscures the decision, isolate the human-authored files
    and document what was kept or discarded.
 
-### Root-fix
+### Root fix
 
 This decision tree is a durable manual procedure. Automatic stale-branch
 reconciliation remains part of the broader reconciler tracked in #1739.
@@ -183,7 +181,7 @@ set, or a HITL card refuses `/requeue` for that blocker kind.
    the resolution.
 4. Re-run the gate census so the issue returns to the correct lane.
 
-### Root-fix
+### Root fix
 
 This escalation map is a stopgap for unsupported blocker reconciliation tracked
 in #1739.
@@ -215,7 +213,7 @@ release trigger even though the code diff is already on `main`.
 4. If the tag does not contain the fix, stop and repair the release lineage
    instead of announcing success.
 
-### Root-fix
+### Root fix
 
 This playbook establishes the documentation contract for release troubleshooting
 in #1863; the durable release policy remains the conventional-commit pipeline.
