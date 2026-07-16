@@ -43,7 +43,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   pair it with `/ground-truth`.
 - **Operations state** -> `/dashboard`, `/daily-review`, `/red-gains`, `/audit-skills`, or
   `/context` depending on whether the question is queue health, period review,
-  rsp usage gains, skill quality, or repository context.
+  rsp usage gains, skill quality, or repository context. For operational
+  troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
+  rsp.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
 - **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
@@ -87,6 +89,12 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
+Troubleshooting references registered by owner:
+`/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
+`/go` -> `plugins/dev/skills/engineering/go/TROUBLESHOOTING.md`;
+`/hitl` -> `plugins/dev/skills/engineering/hitl/TROUBLESHOOTING.md`;
+rsp -> `apps/rsp/docs/TROUBLESHOOTING.md`.
+
 Cross-plugin capability route: `corpus-to-knowledge-graph` lives in the
 `memory` plugin. Route by the capability description, not by implementation
 vocabulary: corpus ingest goes through `/memory:ingest`; graph inspection goes
@@ -99,7 +107,9 @@ through `/memory:view`, `memory docs reference-graph`, and
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set.
 - `/red-gains` reports whether rsp is paying for itself: latency, throughput,
-  token savings, command-family winners, and degradation health from telemetry.
+  token savings, command-family winners, and degradation health from telemetry;
+  use `apps/rsp/docs/TROUBLESHOOTING.md` for rsp hook silence, resident/store,
+  and store-growth incidents.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes.
 - TOON/TOONL operational reader changes are documentation-maintenance work:
