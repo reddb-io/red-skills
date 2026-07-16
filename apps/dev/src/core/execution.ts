@@ -21,6 +21,11 @@ import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js
 import { deriveSnapshot } from "./reaper-signal.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "./runner-spec.js";
 import {
+  BLOCKED_SIGNAL,
+  COMPLETION_SIGNALS,
+  DONE_SIGNAL,
+} from "@reddb-io/red-castle/engine";
+import {
   AGENT_OUTPUT_CLOSE,
   parseAgentOutput,
   type AgentOutput,
@@ -79,9 +84,7 @@ export type AgentOutcome =
   | "goal-moot";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
-export const DONE_SIGNAL = "<promise>DONE</promise>";
-export const BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
-export const COMPLETION_SIGNALS: readonly string[] = [DONE_SIGNAL, BLOCKED_SIGNAL];
+export { BLOCKED_SIGNAL, COMPLETION_SIGNALS, DONE_SIGNAL } from "@reddb-io/red-castle/engine";
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
 const SIGNAL_EXIT_NAMES: Record<number, string> = {
