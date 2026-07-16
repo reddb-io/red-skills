@@ -1,0 +1,24 @@
+export interface TrackerIssue {
+  readonly number: number;
+  readonly body: string;
+  readonly labels: readonly string[];
+}
+
+export interface TrackerIssueReference {
+  readonly number: number;
+  readonly title?: string;
+  readonly url?: string;
+}
+
+export interface TrackerLabelMutation {
+  readonly remove: readonly string[];
+  readonly add: readonly string[];
+}
+
+export interface TrackerPort {
+  listOpenIssuesByLabel(label: string): Promise<TrackerIssue[]>;
+  isIssueClosed(issue: number): Promise<boolean>;
+  editIssueLabels(issue: number, mutation: TrackerLabelMutation): Promise<void>;
+  commentOnIssue(issue: number, body: string): Promise<void>;
+  issueReference?(issue: number): Promise<TrackerIssueReference | undefined>;
+}
