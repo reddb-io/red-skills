@@ -91,6 +91,7 @@ import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from 
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
+import { createCastleWorkerLaneBridge } from "../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
@@ -763,10 +764,16 @@ export function buildProcessDeps(
   laneIdle?: LaneIdleStallConfig,
   inlineVerifyCommand?: string,
   goVerifyRetries?: number,
+  workerId = "unknown",
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
   const paths = afkPaths(ctx.root);
+  const castleBridge = createCastleWorkerLaneBridge({
+    redRoot: join(ctx.root, ".red"),
+    workerId,
+    attemptDir: () => current.attemptDir,
+  });
   const lockPath = branchLockPath(ctx.root);
   // Per-agentic-iteration boundary tracking (observability): when sandcastle's
   // re-invocation count (event.iteration) ticks, emit "iteration N ended/started"
@@ -1271,6 +1278,10 @@ export function buildProcessDeps(
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
+      void castleBridge.record("worker.heartbeat", {
+        event: event.type,
+        iteration: String(event.iteration),
+      }).catch(() => {});
       // Firehose lane (issue #250): every record in the uniform envelope. The
       // native port left this unopened; restore it so the post-mortem firehose
       // carries the agent turns alongside the (future) heartbeat/hook records.
@@ -1417,6 +1428,11 @@ export function buildProcessDeps(
           "current.worktree": worktree,
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
+        await castleBridge.record("worker.heartbeat", {
+          signal: "attempt-guard",
+          seconds_since_progress: secs,
+          head,
+        }).catch(() => {});
       })();
     },
     // Worker-vitals provider for the on_heartbeat hook context (ADR 0065/#832):
@@ -1456,12 +1472,21 @@ export function buildProcessDeps(
     // feedback gate, `merging` at landing. Best-effort, swallowed; the calm title
     // signal must never fail the run.
     markPhase: (phase) => {
-      void updateState(join(current.attemptDir, "afk.state.json"), {
-        "current.phase": phase,
-      }).catch(() => {});
+      void (async () => {
+        await updateState(join(current.attemptDir, "afk.state.json"), {
+          "current.phase": phase,
+        }).catch(() => {});
+        await castleBridge.snapshot().catch(() => {});
+      })();
     },
     markState: (patch) => {
-      void updateState(join(current.attemptDir, "afk.state.json"), patch).catch(() => {});
+      void (async () => {
+        await updateState(join(current.attemptDir, "afk.state.json"), patch).catch(() => {});
+        await castleBridge.snapshot().catch(() => {});
+      })();
+    },
+    recordWorkerEvent: (kind, payload) => {
+      void castleBridge.record(kind, payload).catch(() => {});
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
@@ -1970,6 +1995,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
   // over; buildProcessInput resets it before each processIssue call.
   const current: CurrentAttempt = { attemptDir: "" };
+  const castleBridge = createCastleWorkerLaneBridge({
+    redRoot: join(ctx.root, ".red"),
+    workerId,
+    attemptDir: () => current.attemptDir,
+  });
 
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
@@ -2015,7 +2045,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
         return result;
       }
       const sp = join(pi.attemptDir, "afk.state.json");
-      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
+      if (await fsx.pathExists(sp)) {
+        await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
+        await castleBridge.snapshot().catch(() => {});
+      }
       return result;
     },
     processDeps: buildProcessDeps(
@@ -2031,6 +2064,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       settings.laneIdle,
       flags.verifyCommand,
       flags.goVerifyRetries,
+      workerId,
     ),
     // Session-scoped lifecycle hooks (PRD #207): the castle drain owns the
     // session state machine, while dev supplies the existing hook dispatcher so
@@ -2118,6 +2152,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           number: candidate.number,
           started_at: startedAt,
         });
+        void castleBridge.snapshot().catch(() => {});
       } catch {
         // Best-effort — a failed seed must never block the worker's actual work.
       }
