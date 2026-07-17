@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
+import { type JsonObject } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import type { RspLossLevel } from "./elision-store.js";
 import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
@@ -104,20 +106,72 @@ async function handle(request: JsonRpcRequest, config: RspRuntimeConfig): Promis
     }
     const store = residentStore(config);
     if (params?.name === "rsp_stats") {
-      return { content: [{ type: "text", text: JSON.stringify(await store.accountingStats(config.telemetryByteBudget)) }] };
+      return {
+        content: [{
+          type: "text",
+          text: renderToolPayload({ tool: "rsp_stats", ...await store.accountingStats(config.telemetryByteBudget) } as JsonObject),
+        }],
+      };
     }
     if (params?.name === "rsp_show") {
       const handle = String(params.arguments?.handle ?? "");
       const record = await store.get(handle);
-      if (!record) return { content: [{ type: "text", text: "not found" }], isError: true };
-      if ("status" in record) return { content: [{ type: "text", text: JSON.stringify(record) }], isError: true };
-      return { content: [{ type: "text", text: record.original.toString("utf8") }] };
+      if (!record) {
+        return {
+          content: [{ type: "text", text: renderToolPayload(showErrorPayload(handle, "not found")) }],
+          isError: true,
+        };
+      }
+      if ("status" in record) {
+        return {
+          content: [{
+            type: "text",
+            text: renderToolPayload({
+              tool: "rsp_show",
+              handle,
+              found: false,
+              category: "real-error",
+              error: record.status,
+              expired_at: record.expired_at,
+              help: [record.command],
+            } as JsonObject),
+          }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{
+          type: "text",
+          text: renderToolPayload({
+            tool: "rsp_show",
+            handle,
+            found: true,
+            bytes: record.original.length,
+            text: record.original.toString("utf8"),
+          } as JsonObject),
+        }],
+      };
     }
     if (params?.name === "rsp_compress") {
       return { content: [{ type: "text", text: await compressPayloadForMcp(params.arguments, store) }] };
     }
   }
   return {};
+}
+
+function renderToolPayload(payload: JsonObject): string {
+  return `${encodeSnapshotToon(payload)}\n`;
+}
+
+function showErrorPayload(handle: string, error: string): JsonObject {
+  return {
+    tool: "rsp_show",
+    handle,
+    found: false,
+    category: "real-error",
+    error,
+    help: ["rsp show el:<id>"],
+  };
 }
 
 async function compressPayloadForMcp(
@@ -135,7 +189,13 @@ async function compressPayloadForMcp(
 
   const normalized = normalizeOutput(input);
   if (level === "brief" && Buffer.byteLength(normalized) <= 2 * 1024) {
-    return ensureTrailingNewline(normalized);
+    return renderToolPayload({
+      tool: "rsp_compress",
+      level,
+      detected: "text",
+      bytes: Buffer.byteLength(input),
+      text: normalized,
+    } as JsonObject);
   }
 
   const bytes = Buffer.from(input);
@@ -162,16 +222,17 @@ function renderTextSummary(text: string, rawBytes: number, handle: string, level
   const half = Math.max(1, Math.floor(inlineBytes / 2));
   const head = truncateUtf8(bytes.subarray(0, half));
   const tail = truncateUtf8(bytes.subarray(Math.max(0, bytes.length - half)));
-  const parts = [
-    "payload summary",
-    `bytes: ${rawBytes}`,
-    `lines: ${countLines(bytes)}`,
-    "head:",
+  return renderToolPayload({
+    tool: "rsp_compress",
+    level,
+    detected: "text",
+    bytes: rawBytes,
+    lines: countLines(bytes),
     head,
-  ];
-  if (tail && tail !== head) parts.push("tail:", tail);
-  parts.push(`… elided payload (+${rawBytes}) — rsp show ${handle}`);
-  return `${parts.join("\n")}\n`;
+    tail: tail && tail !== head ? tail : null,
+    handle,
+    help: [`rsp show ${handle}`],
+  } as JsonObject);
 }
 
 function ensureTrailingNewline(text: string): string {
@@ -206,8 +267,13 @@ function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
 }
 
 function renderStatus(config: RspRuntimeConfig): string {
-  if (!config.enabled) return "rsp is not enabled in this directory; run /red-setup";
-  return "rsp is enabled in this directory";
+  return renderToolPayload({
+    tool: "rsp_status",
+    enabled: config.enabled,
+    status: config.enabled ? "enabled" : "disabled",
+    message: config.enabled ? "rsp is enabled in this directory" : "rsp is not enabled in this directory",
+    help: config.enabled ? [] : ["/red-setup"],
+  } as JsonObject);
 }
 
 function write(value: unknown): void {
