@@ -12,6 +12,35 @@
     "status": 0,
     "signal": null
   },
-  "expected": "0 open PRs — try: rsp gh issue list\n",
-  "assertions": []
+  "expected": {
+    "command": "gh pr list",
+    "empty": true,
+    "scope": "open PRs",
+    "prs": [],
+    "aggregate": {
+      "returned": 0
+    },
+    "summary": "0 open PRs",
+    "help": [
+      "rsp gh issue list",
+      "rsp gh pr list --query <title-or-label>"
+    ]
+  },
+  "assertions": [
+    {
+      "question": "empty state is definitive",
+      "path": "empty",
+      "expected": true
+    },
+    {
+      "question": "empty state names the searched scope",
+      "path": "scope",
+      "expected": "open PRs"
+    },
+    {
+      "question": "empty state exposes returned aggregate",
+      "path": "aggregate.returned",
+      "expected": 0
+    }
+  ]
 }
