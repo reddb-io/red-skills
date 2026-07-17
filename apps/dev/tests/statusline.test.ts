@@ -87,6 +87,16 @@ describe("statusline — fleet block", () => {
       latestBundleVersion: "2.64.0",
     })).toBe("flt=codex 0/2 @2.63.0!<2.64.0 q=4");
   });
+
+  it("marks busy slots as degraded when local liveness disagrees", () => {
+    expect(renderFleetBlock({
+      runner: "codex",
+      busy: 2,
+      total: 2,
+      queue: 4,
+      degraded: true,
+    })).toBe("flt=codex 2/2† q=4");
+  });
 });
 
 describe("statusline — humanizeAlive", () => {
