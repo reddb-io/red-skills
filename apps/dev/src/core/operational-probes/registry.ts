@@ -4,6 +4,7 @@ import { configNamespacingProbe } from "./config-namespacing.js";
 import { fleetTruthProbe } from "./fleet-truth.js";
 import { focalBranchProbe } from "./focal-branch.js";
 import { httpsRemoteProbe } from "./https-remote.js";
+import { labelBodyCoherenceProbe } from "./label-body-coherence.js";
 import { queueVisibilityProbe } from "./queue-visibility.js";
 import type {
   OperationalProbe,
@@ -19,6 +20,7 @@ export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   focalBranchProbe,
   fleetTruthProbe,
   claimHygieneProbe,
+  labelBodyCoherenceProbe,
   configNamespacingProbe,
 ];
 
