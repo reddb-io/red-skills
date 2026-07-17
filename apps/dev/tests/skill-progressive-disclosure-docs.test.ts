@@ -74,6 +74,9 @@ describe("skill progressive-disclosure docs", () => {
     expect(hostNotes).toContain("Claude Code's `statusLine` renders multiple rows");
     expect(hostNotes).toContain("red-skills-dev codex-statusline --fix");
     expect(hostNotes).toContain("Every `k=v` key on this line is **exactly 3 letters**");
+    expect(hostNotes).toContain('"refreshInterval": 60');
+    expect(hostNotes).not.toContain('"refreshInterval": 5');
+    expect(hostNotes).toContain("60s matches the real rate of change of fleet/PR state");
     expect(hostNotes).toContain("OpenCode is an AFK API-auth runner lane");
   });
 
