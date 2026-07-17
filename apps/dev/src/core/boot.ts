@@ -63,8 +63,10 @@ import {
   type SpecSubIssueCandidate,
 } from "./spec-subissue-reconciler.js";
 import {
+  BASE_FRESHNESS_PROBE_ID,
   formatOperationalProbeFinding,
   runOperationalProbes,
+  type BaseFreshnessProbeData,
   type OperationalProbeContext,
   type OperationalProbeReport,
 } from "./operational-probes.js";
@@ -309,6 +311,16 @@ export interface BootDeps {
   gh: BootGh;
   git: BootGit;
   lookups: BootLookups;
+  /** Optional boot log sink; fleet supervisor passes its supervisor log writer. */
+  log?: (line: string) => void;
+  /** Guarded local trunk fast-forward used only for boot-auto-applied base freshness. */
+  fastForwardLocalBase?: (request: {
+    readonly remote: string;
+    readonly target: string;
+  }) => Promise<{
+    readonly action: "fast-forward" | "noop";
+    readonly evidence: string;
+  }>;
   /** Current epoch seconds (date +%s), injected so the run is deterministic. */
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
@@ -320,6 +332,35 @@ export interface BootDeps {
   reconcileRunner?: ReconcileBootRunner;
   /** Landing lane for the Docs Sweep. Absent is valid only when the plan is clean. */
   docsSweepLander?: DocsSweepLander;
+}
+
+function shortSha(sha: string | undefined): string {
+  return sha ? sha.slice(0, 12) : "unknown";
+}
+
+async function tryBootAutoApplyBaseFreshness(
+  deps: BootDeps,
+  finding: OperationalProbeReport["findings"][number],
+): Promise<boolean> {
+  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return false;
+  const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
+  if (
+    data?.finding !== "local-trunk-behind-origin" ||
+    data.guard?.guard !== "passed" ||
+    !data.remote ||
+    !data.trunk ||
+    !deps.fastForwardLocalBase
+  ) {
+    return false;
+  }
+
+  const result = await deps.fastForwardLocalBase({ remote: data.remote, target: data.trunk });
+  if (result.action !== "fast-forward") return false;
+
+  deps.log?.(
+    `boot operational probe auto-fix applied: ${finding.id} before=${shortSha(data.localSha)} after=${shortSha(data.remoteSha)}; ${result.evidence}`,
+  );
+  return true;
 }
 
 // ---------- step inputs ----------
@@ -564,7 +605,12 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 1a. operational probes ----
   const operationalProbes = await runOperationalProbes(options.operationalProbes ?? options.precheck);
   const redProbe = operationalProbes.findings[0];
-  if (redProbe) throw new BootHaltError("operational-probe", redProbe);
+  if (redProbe) {
+    const applied = await tryBootAutoApplyBaseFreshness(deps, redProbe);
+    if (!applied) throw new BootHaltError("operational-probe", redProbe);
+    const nextRedProbe = operationalProbes.findings[1];
+    if (nextRedProbe) throw new BootHaltError("operational-probe", nextRedProbe);
+  }
 
   // ---- 2. bootstrap ----
   const b = options.bootstrap;
