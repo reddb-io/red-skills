@@ -739,8 +739,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
   // attach from boot rather than waiting for the first worker to create it.
   await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
-  // Reap dead supervisor artifacts across the state home and the legacy tmp home.
-  await reapStaleSupervisorState([stateAfk, tmp], isAlive);
+  await reapStaleSupervisorState(stateAfk, isAlive);
   // single-supervisor lock
   if (existsSync(pidFile)) {
     try {
