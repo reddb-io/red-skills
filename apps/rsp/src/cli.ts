@@ -94,6 +94,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, await fastTelemetryRoot(process.cwd()));
   }
   const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("./resident-client.js");
+  const residentPaths = resolveResidentPaths(process.cwd());
+  if (wrapperCommand && shouldUseControlHoldout(config.measurementHoldoutShare)) {
+    return await runControlHoldout(args, residentPaths.rootDir, config.measurementHoldoutShare);
+  }
   if (args.command === "server") {
     const { runResidentServer } = await import("./resident-server.js");
     const serverPaths = resolveResidentPaths(process.cwd());
@@ -150,8 +154,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     return 0;
   }
-
-  const residentPaths = resolveResidentPaths(process.cwd());
   if (args.command === "proxy") {
     const { runProxy } = await import("./proxy.js");
     return await runProxy(args.positional, { telemetryRoot: residentPaths.rootDir, level: args.level });
@@ -368,6 +370,88 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   } finally {
     await closeStore?.();
   }
+}
+
+async function runControlHoldout(args: ParsedArgs, telemetryRoot: string, holdoutShare: number): Promise<number> {
+  const started = process.hrtime.bigint();
+  const result = await passthroughCaptured(args.positional);
+  const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  appendControlHoldoutTelemetry(telemetryRoot, args, result, wrapperMs, holdoutShare);
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+    return 128;
+  }
+  return result.status ?? 0;
+}
+
+async function passthroughCaptured(argv: readonly string[]): Promise<{ stdoutBytes: number; stderrBytes: number; status: number | null; signal: NodeJS.Signals | null }> {
+  const command = argv[0];
+  if (!command) return { stdoutBytes: 0, stderrBytes: 0, status: 2, signal: null };
+  let child;
+  if (command === "exec" || command === "proxy") {
+    const commandLine = command === "proxy"
+      ? await import("./proxy.js").then((module) => module.parseProxyCommandLine(argv))
+      : await import("./exec-wrapper.js").then((module) => module.parseExecCommandLine(argv));
+    child = spawn(commandLine, { shell: true, stdio: ["inherit", "pipe", "pipe"] });
+  } else {
+    child = spawn(command, argv.slice(1), { stdio: ["inherit", "pipe", "pipe"] });
+  }
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutBytes += chunk.length;
+    process.stdout.write(chunk);
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBytes += chunk.length;
+    process.stderr.write(chunk);
+  });
+  return await new Promise((resolve) => {
+    child.on("error", (err) => {
+      const text = `${err instanceof Error ? err.message : String(err)}\n`;
+      stderrBytes += Buffer.byteLength(text);
+      process.stderr.write(text);
+      resolve({ stdoutBytes, stderrBytes, status: 127, signal: null });
+    });
+    child.on("close", (status, signal) => resolve({ stdoutBytes, stderrBytes, status, signal }));
+  });
+}
+
+function shouldUseControlHoldout(share: number): boolean {
+  return share > 0 && Math.random() < share;
+}
+
+function appendControlHoldoutTelemetry(
+  telemetryRoot: string,
+  args: ParsedArgs,
+  result: { stdoutBytes: number; stderrBytes: number },
+  wrapperMs: number,
+  holdoutShare: number,
+): void {
+  const bytes = result.stdoutBytes + result.stderrBytes;
+  const event = {
+    event_type: "control_holdout",
+    control_holdout: true,
+    holdout_share: holdoutShare,
+    ts: new Date().toISOString(),
+    command: telemetryCommand(args),
+    command_class: args.command ?? "unknown",
+    wrapper: args.command,
+    loss: "lossless",
+    elided: false,
+    raw_bytes: bytes,
+    emitted_bytes: bytes,
+    wrapper_ms: wrapperMs,
+  };
+  appendTelemetryEventSync(telemetryRoot, {
+    collection: "rsp_accounting_events_v1",
+    ...event,
+  });
+  appendTelemetryEventSync(telemetryRoot, {
+    collection: "rsp_telemetry_invocations_v1",
+    ...event,
+    accounting_recorded: true,
+  });
 }
 
 function valueAfter(args: readonly string[], flag: string): string | undefined {
