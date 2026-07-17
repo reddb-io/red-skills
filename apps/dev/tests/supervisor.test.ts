@@ -126,6 +126,8 @@ interface FakeIo {
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
   attemptBranchHead: ReturnType<typeof vi.fn>;
+  emitSupervisorEvent: ReturnType<typeof vi.fn>;
+  bootSweeps: ReturnType<typeof vi.fn>;
   logLines: string[];
   now: ReturnType<typeof vi.fn>;
 }
@@ -173,6 +175,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     fleetCostUsd: vi.fn(() => 0),
     resizeRequest: vi.fn(async () => null),
     attemptBranchHead: vi.fn(async () => undefined as string | undefined),
+    emitSupervisorEvent: vi.fn(async () => {}),
+    bootSweeps: vi.fn(async () => {}),
     logLines: [],
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
@@ -214,6 +218,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     unblockSweep: io.unblockSweep,
     attemptBranchHead: io.attemptBranchHead,
     resizeRequest: io.resizeRequest,
+    emitSupervisorEvent: io.emitSupervisorEvent,
+    bootSweeps: io.bootSweeps,
   };
   return { deps, io };
 }
@@ -1484,6 +1490,52 @@ describe("superviseTick — crash reconcile on respawn (#815)", () => {
 // ---------- runSupervisor end-to-end shape ----------
 
 describe("runSupervisor", () => {
+  it("emits structured supervisor lane records for boot, tick, reconcile, wake, and scale", async () => {
+    let clock = NOW;
+    let probes = 0;
+    const stop = () => {
+      probes += 1;
+      if (probes >= 2) clock = NOW + 15;
+      return probes >= 2;
+    };
+    const { deps, io } = makeDeps({
+      bootSweeps: vi.fn(async () => {}),
+      now: vi.fn(() => clock),
+      isAlive: vi.fn((pid: number) => pid !== 7000),
+      resizeRequest: vi.fn()
+        .mockResolvedValueOnce({ target: 2, shrinkMode: "drain-then-retire" })
+        .mockResolvedValueOnce(null),
+      spawnSlot: vi.fn(async (slot: number) => ({
+        pid: slot === 0 ? 7000 : 8000 + slot,
+        spawnEpoch: clock,
+      })),
+      readyQueueDepth: vi.fn(async () => 1),
+    });
+    const waitForEvent = vi.fn(async () => undefined);
+    const state = initSupervisorState(1);
+
+    await runSupervisor(
+      state,
+      { ...deps, wake: { waitForEvent } },
+      config({ target: 1, pollIntervalS: 15, eventFallbackS: 60 }),
+      stop,
+    );
+
+    const kinds = io.emitSupervisorEvent.mock.calls.map((call) => call[0].kind);
+    expect(kinds).toContain("supervisor.boot-sweep");
+    expect(kinds).toContain("supervisor.scale");
+    expect(kinds).toContain("supervisor.dead-slot-reconcile");
+    expect(kinds).toContain("supervisor.tick");
+    expect(kinds).toContain("supervisor.wake");
+    expect(io.emitSupervisorEvent.mock.calls.every((call) => call[0].kind.startsWith("supervisor."))).toBe(true);
+    expect(io.emitSupervisorEvent.mock.calls.find((call) => call[0].kind === "supervisor.scale")?.[0]).toMatchObject({
+      payload: { from: 1, to: 2, mode: "drain-then-retire" },
+    });
+    expect(io.emitSupervisorEvent.mock.calls.find((call) => call[0].kind === "supervisor.tick")?.[0]).toMatchObject({
+      payload: expect.objectContaining({ ready_for_agent: 1, slots_busy: 1 }),
+    });
+  });
+
   it("spawns the initial fleet then exits on the stop-file", async () => {
     const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
     const state = initSupervisorState(2);
