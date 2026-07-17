@@ -13,6 +13,7 @@ import {
   type OperationalProbeFixResult,
   type OperationalProbeReport,
 } from "../core/operational-probes.js";
+import { auditCastleStateLane, type CastleStateDoctorReport } from "../core/castle-state-doctor.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
 import * as gitx from "../runtime/git.js";
 import { launchFleet } from "./fleet.js";
@@ -73,6 +74,7 @@ function flattenExpired(report: TmpJanitorReport): string[] {
 function renderHuman(
   root: string,
   probeReport: OperationalProbeReport,
+  castleReport: CastleStateDoctorReport,
   report: TmpJanitorReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
@@ -88,6 +90,13 @@ function renderHuman(
     ...probeReport.findings.map((finding) => `  ${finding.name}: ${finding.evidence}`),
     ...probeReport.findings.map((finding) => `  fix: ${finding.canonicalFix}`),
     ...probeFixes.map((fix) => `  fix ${fix.probeId}: ${fix.status} (${fix.evidence})`),
+    "",
+    "red-doctor castle state lane",
+    `castle lane: ${castleReport.checked.castleLanePresent ? "present" : "absent"}`,
+    `legacy afk lane: ${castleReport.checked.legacyLanePresent ? "present" : "absent"}`,
+    `castle findings: ${castleReport.findings.length}`,
+    ...castleReport.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.path} — ${finding.reason}`),
+    ...castleReport.findings.map((finding) => `  fix: ${finding.canonicalFix}`),
     "",
     "red-doctor tmp janitor",
     `expired lanes: ${expired.length}`,
@@ -111,6 +120,7 @@ function renderHuman(
 function renderToon(
   root: string,
   probeReport: OperationalProbeReport,
+  castleReport: CastleStateDoctorReport,
   report: TmpJanitorReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
@@ -137,6 +147,17 @@ function renderToon(
       status: fix.status,
       evidence: fix.evidence,
     })),
+    castleState: {
+      status: castleReport.status,
+      castleLanePresent: castleReport.checked.castleLanePresent,
+      legacyLanePresent: castleReport.checked.legacyLanePresent,
+      findings: castleReport.findings.map((finding) => ({
+        path: finding.path,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        fix: finding.canonicalFix,
+      })),
+    },
     appliedTmpJanitor: applied
       ? {
           expiredLanes: applied.expiredLanes.map((path) => rel(root, path)),
@@ -157,6 +178,7 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const paths = afkPaths(ctx.root);
     const precheckFacts = await collectPrecheckFacts(ctx, { includeNpmBundleCoherence: true });
     const probeReport = await runOperationalProbes(precheckFacts);
+    const castleReport = await auditCastleStateLane(ctx.root);
     const issueStates = ctx.repo
       ? await listIssueStates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext)
       : new Map();
@@ -209,8 +231,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, report, applied, probeFixes)
-        : renderHuman(ctx.root, probeReport, report, applied, probeFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, report, applied, probeFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, report, applied, probeFixes),
     );
     return 0;
   } catch (error) {
