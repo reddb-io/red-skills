@@ -506,7 +506,10 @@ export async function listStaleClaimDirs(tmpDir: string): Promise<StaleClaimDir[
       continue;
     }
     const raw = await readText(join(dir, "pid"));
-    if (!pidAlive(raw)) out.push({ path: dir });
+    if (!pidAlive(raw)) {
+      const issue = /^[1-9][0-9]*$/.test(entry) ? Number(entry) : undefined;
+      out.push(issue === undefined ? { path: dir } : { path: dir, issue });
+    }
   }
   return out;
 }
