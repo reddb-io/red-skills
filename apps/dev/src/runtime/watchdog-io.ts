@@ -113,17 +113,19 @@ export function buildWatchdogIO(
       await killTreeAndWait(pid);
     },
 
-    killWorkers: async () => {
+    killWorkers: async (): Promise<number> => {
       // Workers are spawned detached (nohup'd) so they are NOT children of the
       // supervisor — killTree misses them. Enumerate every worker dir and kill
       // any still-alive PID recorded in worker.pid. Best-effort per worker: a
-      // failed read or kill on one worker must not block the rest.
+      // failed read or kill on one worker must not block the rest. Returns the
+      // number of live workers actually killed so callers can report it (#2056).
       let workerDirs: string[];
       try {
         workerDirs = await readdir(paths.workersRoot);
       } catch {
-        return;
+        return 0;
       }
+      let killed = 0;
       for (const workerDir of workerDirs) {
         const pidPath = join(paths.workersRoot, workerDir, "worker.pid");
         try {
@@ -132,11 +134,13 @@ export function buildWatchdogIO(
           const workerPid = Number(raw);
           if (isLivePid(workerPid)) {
             await killTreeAndWait(workerPid);
+            killed += 1;
           }
         } catch {
           // best-effort: missing/bad pid file is not an error.
         }
       }
+      return killed;
     },
 
     clearControlFiles: async () => {

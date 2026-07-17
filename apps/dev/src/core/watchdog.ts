@@ -32,8 +32,9 @@ export interface WatchdogIO {
    * (#579). Workers are spawned `detached: true` (nohup'd) so they are NOT
    * children of the supervisor and killTree misses them. Best-effort: a failed
    * kill on one worker must not block the rest of the recovery sequence.
+   * Returns the number of live workers actually killed (#2056).
    */
-  killWorkers(): Promise<void>;
+  killWorkers(): Promise<number>;
   /** Remove the supervisor pid + stop control files so a relaunch is unblocked. */
   clearControlFiles(): Promise<void>;
   /** Reconcile claims/labels the wedged supervisor left so no issue is stranded

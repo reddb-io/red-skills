@@ -90,6 +90,32 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("stopFleet kills orphaned detached workers when the supervisor pid is stale (#2056)", async () => {
+    const root = scratch();
+    try {
+      writeSupervisorArtifacts(root, 999_999_999); // dead supervisor pid
+      // Two orphaned workers with live pids. They are spawned detached, so they
+      // are NOT in the supervisor's process tree and survive its death.
+      const workersRoot = join(root, ".red", "tmp", "workers");
+      mkdirSync(join(workersRoot, "wAAAA"), { recursive: true });
+      mkdirSync(join(workersRoot, "wBBBB"), { recursive: true });
+      writeFileSync(join(workersRoot, "wAAAA", "worker.pid"), "111111", "utf8");
+      writeFileSync(join(workersRoot, "wBBBB", "worker.pid"), "222222", "utf8");
+      // Supervisor pid dead; both worker pids alive.
+      vi.mocked(isLivePid).mockImplementation((pid: number) => pid === 111111 || pid === 222222);
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
+
+      const result = await stopFleet(root, stream());
+
+      expect(result.status).toBe("stale");
+      // Every live orphan was killed — "stopped" is never a lie while workers merge.
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(111111);
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(222222);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("stopFleet leaves live supervisor files untouched", async () => {
     const root = scratch();
     try {
