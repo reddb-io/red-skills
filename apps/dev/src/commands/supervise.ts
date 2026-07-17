@@ -17,6 +17,7 @@ import {
   initSupervisorState,
   resolveSupervisorConfig,
   runSupervisor,
+  terminateAll,
   type SpawnPolicy,
   type SupervisorDeps,
 } from "../core/supervisor.js";
@@ -786,6 +787,30 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const deps = buildSupervisorDeps(root, tmp, slotLogsDir, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs, hookEnvBase);
 
   const stopRequested = (): boolean => existsSync(stopFile);
+
+  // A bare `kill <supervisor-pid>` (SIGTERM/SIGINT) must not orphan the detached
+  // slot workers or leave the pid/stop control files behind (#2056). Without a
+  // handler the signal skips the `finally` below, stranding both. Translate the
+  // signal into the same clean shutdown the stop-file path performs: terminate
+  // every live slot (SIGTERM→grace→SIGKILL→confirm via terminateAll), clean the
+  // control files, then exit with the conventional 128+signal code.
+  let shuttingDown = false;
+  const onSignal = (signal: "SIGTERM" | "SIGINT"): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void (async () => {
+      try {
+        await terminateAll(state, deps);
+      } catch {
+        // best-effort — still clean control files and exit.
+      }
+      rmSync(pidFile, { force: true });
+      rmSync(stopFile, { force: true });
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    })();
+  };
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+  process.once("SIGINT", () => onSignal("SIGINT"));
 
   try {
     await runSupervisor(state, deps, config, stopRequested);

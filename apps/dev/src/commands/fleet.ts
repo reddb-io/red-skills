@@ -125,13 +125,28 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
   const stateAfk = dirname(paths.supervisorPidPath);
   const pidFile = paths.supervisorPidPath;
   const stopFile = join(dirname(pidFile), "afk-supervisor.stop");
+  // Detached workers survive the supervisor's death (#2056): they are spawned
+  // `detached: true` so they are NOT in the supervisor's process tree. Every stop
+  // path must sweep them — otherwise a "stopped" report is a lie while orphaned
+  // workers keep claiming, committing, and merging. Reuse the watchdog's
+  // detached-worker killer + claim reconcile so no issue is stranded in `running`.
+  const io = buildWatchdogIO(root, stdout);
+  const sweepOrphans = async (): Promise<void> => {
+    const killed = await io.killWorkers();
+    if (killed > 0) {
+      await io.reconcile();
+      stdout.write(`terminated ${killed} orphaned worker${killed === 1 ? "" : "s"} and reconciled their claims.\n`);
+    }
+  };
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
   if (supervisor.status === "stale") {
+    await sweepOrphans();
     stdout.write(`no fleet running (stale supervisor files — cleaned).\n`);
     return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
   }
   const pid = supervisor.pid;
   if (!pid) {
+    await sweepOrphans();
     stdout.write("no fleet running.\n");
     return { status: "none" };
   }
@@ -139,6 +154,10 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (!(await fileExists(pidFile)) || !isLivePid(pid)) {
+      // The supervisor's own terminateAll should have killed its slots on clean
+      // exit, but sweep detached survivors anyway — a slot the loop lost track of
+      // (moved-pid, mid-spawn) would otherwise outlive the "stopped" report.
+      await sweepOrphans();
       stdout.write(`🛑 fleet stopped (supervisor pid=${pid} exited).\n`);
       return { status: "stopped", pid };
     }
@@ -157,6 +176,8 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     // SIGKILL skips the supervisor's own `finally`, so clean its control files.
     await rm(pidFile, { force: true });
     await rm(stopFile, { force: true });
+    // killTree of the supervisor pid misses the detached workers — sweep them.
+    await sweepOrphans();
     stdout.write(`🛑 fleet stopped (supervisor pid=${pid} killed after graceful-stop timeout).\n`);
     return { status: "stopped", pid };
   }
