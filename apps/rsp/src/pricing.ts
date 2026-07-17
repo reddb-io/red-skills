@@ -24,6 +24,12 @@ export const RSP_INPUT_TOKEN_PRICE_USD_PER_MILLION: Record<string, number> = {
   "gpt-4.1-mini": 0.4,
   "gpt-4o": 2.5,
   "gpt-4o-mini": 0.15,
+  "claude-opus-4.1": 15,
+  "claude-opus-4": 15,
+  "claude-sonnet-4.5": 3,
+  "claude-sonnet-4": 3,
+  "claude-haiku-4.5": 1,
+  "claude-haiku-3.5": 0.8,
 };
 
 const PRICING_NOTE = "estimate derived from byte-based token estimate when token counts are estimated";
