@@ -56,36 +56,45 @@
     </g>
 
     <!-- right: the loop, issue in / PR out -->
+    <!-- Pill geometry: font-size=15, ~9px/char advance, 18px side padding (36px total).
+         All pills centered on x=870; arrows all at x=870; annotations at x=973.
+         Pill 1: "ready-for-agent issue" 21ch × 9 + 36 = 225 → 226px wide, x=757–983, text 775–964.
+         Pill 2: "isolated worktree" 17ch × 9 + 36 = 189 → 190px wide, x=775–965, text 793–946.
+         Pill 3: "validation gate - review" 24ch × 9 + 36 = 252px, x=744–996, text 762–978.
+         Pill 4: "merged PR" 9ch × 9 + 36 = 117 → 118px wide, x=811–929, text 829–910.
+         Panel inner-right = 1120. All pill rights < 996 ≤ 1120. Annotations at x=973 clear
+         pill-2 right (965) at y=196 and pill-4 right (929) at y=324. -->
     <g font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
       <rect x="720" y="56" width="424" height="308" rx="12" fill="#0b0f15" stroke="#ffffff" stroke-opacity="0.09"/>
       <text x="744" y="90" font-size="12" fill="#6e7681" letter-spacing="1">THE LOOP</text>
 
       <g font-size="15">
-        <rect x="744" y="106" width="180" height="30" rx="15" fill="#ff2056" fill-opacity="0.14" stroke="#ff2056" stroke-opacity="0.5"/>
-        <text x="762" y="126" fill="#ff2056">ready-for-agent issue</text>
+        <rect x="757" y="106" width="226" height="30" rx="15" fill="#ff2056" fill-opacity="0.14" stroke="#ff2056" stroke-opacity="0.5"/>
+        <text x="775" y="126" fill="#ff2056">ready-for-agent issue</text>
 
-        <line x1="834" y1="140" x2="834" y2="158" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
-        <path d="M828 158 L834 170 L840 158 Z" fill="#ff2056"/>
+        <line x1="870" y1="140" x2="870" y2="158" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
+        <path d="M864 158 L870 170 L876 158 Z" fill="#ff2056"/>
 
-        <rect x="744" y="172" width="220" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
-        <text x="762" y="192" fill="#c9d1d9">isolated worktree &#183; claude / codex</text>
+        <rect x="775" y="172" width="190" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
+        <text x="793" y="192" fill="#c9d1d9">isolated worktree</text>
 
-        <line x1="854" y1="206" x2="854" y2="224" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
-        <path d="M848 224 L854 236 L860 224 Z" fill="#ff2056"/>
+        <line x1="870" y1="206" x2="870" y2="224" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
+        <path d="M864 224 L870 236 L876 224 Z" fill="#ff2056"/>
 
         <rect x="744" y="238" width="252" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
-        <text x="762" y="258" fill="#c9d1d9">validation gate &#183; code review &#183; verify</text>
+        <text x="762" y="258" fill="#c9d1d9">validation gate - review</text>
 
         <line x1="870" y1="272" x2="870" y2="290" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
         <path d="M864 290 L870 302 L876 290 Z" fill="#ff2056"/>
 
-        <rect x="744" y="304" width="150" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#3fb950" stroke-opacity="0.4"/>
-        <text x="762" y="324" fill="#3fb950">merged PR</text>
+        <rect x="811" y="304" width="118" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#3fb950" stroke-opacity="0.4"/>
+        <text x="829" y="324" fill="#3fb950">merged PR</text>
       </g>
 
       <line x1="744" y1="346" x2="1120" y2="346" stroke="#ffffff" stroke-opacity="0.08"/>
-      <text x="948" y="324" font-size="13" fill="#6e7681">autonomous /afk</text>
-      <text x="948" y="196" font-size="13" fill="#6e7681">or ad-hoc /go</text>
+      <text x="973" y="324" font-size="13" fill="#6e7681">autonomous /afk</text>
+      <text x="973" y="196" font-size="13" fill="#6e7681">or ad-hoc /go</text>
+      <text x="973" y="214" font-size="11" fill="#6e7681">claude &#183; codex</text>
     </g>
 
     <rect x="0" y="416" width="1200" height="4" fill="#ff2056"/>
