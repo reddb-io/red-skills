@@ -14,8 +14,8 @@ import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta, RspRecoveryHandle, RspStorageClassStats } from "./elision-store.js";
 import { withNextSteps } from "./output-levers.js";
 import { formatUsd } from "./pricing.js";
-import type { ResidentResponseMetrics } from "./resident-client.js";
-import { renderStructuredError, renderUnknownFlag } from "./structured-error.js";
+import type { ResidentResponseMetrics, RspResidentPaths } from "./resident-client.js";
+import { renderStructuredError, renderUnknownFlag, structuredErrorPayload } from "./structured-error.js";
 import {
   appendTelemetryEventSync,
   telemetrySpoolPath,
@@ -88,6 +88,13 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   const { resolveRspConfig } = await import("./config.js");
   const config = resolveRspConfig(process.cwd(), process.env, args.storeUri);
+  if (args.command === "doctor") {
+    const { resolveResidentPaths } = await import("./resident-client.js");
+    const residentPaths = resolveResidentPaths(process.cwd());
+    const status = await runDoctor(config, residentPaths, sinceDays(args.positional, 1));
+    process.stdout.write(renderDoctor(status));
+    return status.exitCode;
+  }
   const wrapperCommand = isWrapperCommand(args.command);
   if (!config.enabled) {
     if (wrapperCommand) return await passthroughDisabledDirectory(args.positional);
@@ -779,6 +786,179 @@ interface DashboardSnapshot {
   waits: JsonObject[];
 }
 
+type DoctorProbeName =
+  | "config_gate_resolution"
+  | "hook_wiring"
+  | "proxy_mode"
+  | "resident_liveness"
+  | "store_provisioning"
+  | "recent_degradation_rate";
+
+type DoctorError = JsonObject;
+
+interface DoctorProbe {
+  name: DoctorProbeName;
+  pass: boolean;
+  finding: string;
+  fix_command?: string;
+  error?: DoctorError;
+}
+
+interface DoctorStatus {
+  schema_version: "red.rsp.doctor.v1";
+  status: "pass" | "fail" | "disabled";
+  exitCode: 0 | 1;
+  window_days: number;
+  probes: DoctorProbe[];
+  errors: DoctorError[];
+}
+
+interface ResidentRegistryStateLike {
+  state: string;
+}
+
+async function runDoctor(
+  config: RspRuntimeConfig,
+  residentPaths: RspResidentPaths,
+  windowDays: number,
+): Promise<DoctorStatus> {
+  const probes: DoctorProbe[] = [];
+  const disabled = !config.enabled;
+  probes.push(disabled
+    ? passProbe("config_gate_resolution", "rsp disabled in this directory; run /red-setup to opt in")
+    : passProbe("config_gate_resolution", "rsp.enabled resolved true for this directory"));
+
+  if (disabled) {
+    probes.push(
+      passProbe("hook_wiring", "skipped because rsp is disabled"),
+      passProbe("proxy_mode", "skipped because rsp is disabled"),
+      passProbe("resident_liveness", "skipped because rsp is disabled"),
+      passProbe("store_provisioning", "skipped because rsp is disabled"),
+      passProbe("recent_degradation_rate", "skipped because rsp is disabled"),
+    );
+    return doctorStatus("disabled", probes, windowDays);
+  }
+
+  probes.push(await doctorHookProbe(config));
+  probes.push(config.proxyEnabled
+    ? passProbe("proxy_mode", "proxy routing enabled for pre-exec rewrites")
+    : failProbe(
+      "proxy_mode",
+      "proxy routing is explicitly disabled; hook falls back to fixed wrapper capabilities",
+      "rsp setup",
+    ));
+
+  const { residentRegistryStatus } = await import("./resident-client.js");
+  probes.push(residentProbe(await residentRegistryStatus(residentPaths)));
+  probes.push(storeProbe(config));
+
+  if (storeExists(config)) {
+    const { telemetry } = await readStatsSnapshot(config, windowDays);
+    probes.push(degradationProbe(telemetry, windowDays));
+  } else {
+    probes.push(passProbe("recent_degradation_rate", "no telemetry store available yet; no recent degradation spike detected"));
+  }
+
+  return doctorStatus(probes.some((probe) => !probe.pass) ? "fail" : "pass", probes, windowDays);
+}
+
+async function doctorHookProbe(config: RspRuntimeConfig): Promise<DoctorProbe> {
+  try {
+    if (config.proxyEnabled) return passProbe("hook_wiring", "pre-exec hook would rewrite git status through rsp proxy");
+    const { rewriteCommand } = await import("./intercept.js");
+    const decision = rewriteCommand("git status");
+    if (decision.kind === "rewrite") return passProbe("hook_wiring", `pre-exec hook would rewrite git status through ${decision.capabilityId}`);
+    return failProbe("hook_wiring", `pre-exec hook passed git status through: ${decision.reason ?? "unsupported-command"}`, "rsp setup");
+  } catch (err) {
+    return failProbe("hook_wiring", `pre-exec hook probe failed: ${err instanceof Error ? firstLine(err.message) : "unknown error"}`, "rsp setup");
+  }
+}
+
+function residentProbe(status: ResidentRegistryStateLike): DoctorProbe {
+  if (status.state === "registered-alive-socket-healthy") {
+    return passProbe("resident_liveness", "resident registry points at a healthy socket");
+  }
+  return failProbe("resident_liveness", `resident registry state is ${status.state}`, "rsp warm-resident");
+}
+
+function storeProbe(config: RspRuntimeConfig): DoctorProbe {
+  if (!config.storeUri.startsWith("file://")) {
+    return passProbe("store_provisioning", "non-file store URI configured; provisioning is delegated to that backend");
+  }
+  if (storeExists(config)) return passProbe("store_provisioning", "rsp store exists for this directory");
+  return failProbe("store_provisioning", "rsp store is not provisioned", "rsp setup");
+}
+
+function degradationProbe(telemetry: RspTelemetryStats, windowDays: number): DoctorProbe {
+  const dominant = telemetry.health.by_reason[0];
+  if (telemetry.health.degradations === 0) {
+    return passProbe("recent_degradation_rate", `0 degradations in the recent ${windowDays}d window`);
+  }
+  const count = telemetry.health.degradations;
+  const reason = dominant?.reason ?? telemetry.health.most_recent?.reason ?? "unknown";
+  const reasonCount = dominant?.count ?? count;
+  return failProbe(
+    "recent_degradation_rate",
+    `${count} degradation(s) in the recent ${windowDays}d window; dominant reason ${reason} (${reasonCount})`,
+    degradationFixCommand(reason, windowDays),
+  );
+}
+
+function degradationFixCommand(reason: string, windowDays: number): string {
+  if (/unavailable|not provisioned|missing/i.test(reason)) return "rsp setup";
+  if (/resident|socket|registry/i.test(reason)) return "rsp warm-resident";
+  return `rsp stats --since ${windowDays}d --full`;
+}
+
+function storeExists(config: RspRuntimeConfig): boolean {
+  if (!config.storeUri.startsWith("file://")) return true;
+  try {
+    return existsSync(fileURLToPath(config.storeUri));
+  } catch {
+    return false;
+  }
+}
+
+function passProbe(name: DoctorProbeName, finding: string): DoctorProbe {
+  return { name, pass: true, finding };
+}
+
+function failProbe(name: DoctorProbeName, finding: string, fixCommand: string): DoctorProbe {
+  return {
+    name,
+    pass: false,
+    finding,
+    fix_command: fixCommand,
+    error: structuredErrorPayload({
+      command: `rsp doctor:${name}`,
+      category: "real-error",
+      error: finding,
+      help: fixCommand,
+    }),
+  };
+}
+
+function doctorStatus(status: DoctorStatus["status"], probes: DoctorProbe[], windowDays: number): DoctorStatus {
+  return {
+    schema_version: "red.rsp.doctor.v1",
+    status,
+    exitCode: status === "fail" ? 1 : 0,
+    window_days: windowDays,
+    probes,
+    errors: probes.map((probe) => probe.error).filter((error): error is DoctorError => Boolean(error)),
+  };
+}
+
+function renderDoctor(status: DoctorStatus): string {
+  const { exitCode: _exitCode, ...payload } = status;
+  return `${encodeSnapshotToon({
+    ...payload,
+    exit_code: status.exitCode,
+    probes: status.probes as unknown as JsonObject[],
+    errors: status.errors,
+  })}\n`;
+}
+
 async function readDashboardSnapshot(config: RspRuntimeConfig): Promise<DashboardSnapshot> {
   const { stats, telemetry } = await readStatsSnapshot(config, 30);
   const [recoveryHandles, waits] = await Promise.all([
@@ -1361,6 +1541,10 @@ function commandHelpLines(command: string | undefined): string[] {
         "",
         "Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.",
       ];
+    case "doctor":
+      return scopedHelp("rsp doctor [--since <days>d]", [
+        "--since <days>d  recent degradation window, default 1d",
+      ], ["rsp doctor", "rsp doctor --since 7d"]);
     case "status":
       return scopedHelp("rsp status", [
         "No flags. Prints resident registry status as TOON.",
@@ -1417,7 +1601,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "",
         "Subcommands:",
         "  stats, gains, show, git, gh, vitest, cargo, cat, exec, proxy, wait",
-        "  status, sweep, setup, mcp, shell-init, server, warm-resident, gh-api-json, hook",
+        "  doctor, status, sweep, setup, mcp, shell-init, server, warm-resident, gh-api-json, hook",
         "",
         "Global flags:",
         "  --store-uri <uri>  default repo store",
