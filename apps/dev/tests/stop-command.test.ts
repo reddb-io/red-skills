@@ -36,17 +36,30 @@ function fakeIO(opts: {
   fleetStatus?: FleetStatus;
   fleetPid?: number;
   staleClaims?: string[];
+  claimLabels?: Record<number, string[]>;
   workerPid?: number | null;
   workerLive?: boolean;
   workerKillResult?: boolean;
-} = {}): StopIO & { stopFleetCalled: boolean; removedDirs: string[]; workerKillCalled: boolean } {
+} = {}): StopIO & {
+  stopFleetCalled: boolean;
+  removedDirs: string[];
+  labelRestores: Array<{ issue: number; labels: string[] }>;
+  workerKillCalled: boolean;
+} {
   let stopFleetCalled = false;
   const removedDirs: string[] = [];
+  const labelRestores: Array<{ issue: number; labels: string[] }> = [];
   let workerKillCalled = false;
 
-  const io: StopIO & { stopFleetCalled: boolean; removedDirs: string[]; workerKillCalled: boolean } = {
+  const io: StopIO & {
+    stopFleetCalled: boolean;
+    removedDirs: string[];
+    labelRestores: Array<{ issue: number; labels: string[] }>;
+    workerKillCalled: boolean;
+  } = {
     get stopFleetCalled() { return stopFleetCalled; },
     get removedDirs() { return removedDirs; },
+    get labelRestores() { return labelRestores; },
     get workerKillCalled() { return workerKillCalled; },
 
     async stopFleet(_root, _out) {
@@ -54,7 +67,18 @@ function fakeIO(opts: {
       return { status: opts.fleetStatus ?? "none", pid: opts.fleetPid };
     },
     async listStaleClaimDirs(_tmpDir) {
-      return (opts.staleClaims ?? []).map((p) => ({ path: p }));
+      return (opts.staleClaims ?? []).map((p) => {
+        const name = p.split("/").filter(Boolean).at(-1) ?? "";
+        const issue = /^[1-9][0-9]*$/.test(name) ? Number(name) : undefined;
+        return issue === undefined ? { path: p } : { path: p, issue };
+      });
+    },
+    async restoreClaimLabels(_root, issue) {
+      const labels = opts.claimLabels?.[issue] ?? [];
+      if (!labels.includes("running")) return false;
+      if (labels.includes("ready-for-human") || labels.some((l) => l.startsWith("blocked:"))) return false;
+      labelRestores.push({ issue, labels: ["ready-for-agent"] });
+      return true;
     },
     async removeDir(path) {
       removedDirs.push(path);
@@ -148,13 +172,20 @@ describe("stopCommand — fleet stop", () => {
 
   it("reconciles stale claim dirs after stop and reports the count", async () => {
     const staleDirs = ["/repo/.red/tmp/claims/42", "/repo/.red/tmp/claims/77"];
-    const io = fakeIO({ fleetStatus: "stopped", fleetPid: 5678, staleClaims: staleDirs });
+    const io = fakeIO({
+      fleetStatus: "stopped",
+      fleetPid: 5678,
+      staleClaims: staleDirs,
+      claimLabels: { 42: ["running"], 77: ["running", "blocked:validation"] },
+    });
     const { stream, text } = capture();
     await stopCommand([], "/repo", stream, io);
 
     // All stale dirs removed.
     expect(io.removedDirs).toEqual(staleDirs);
+    expect(io.labelRestores).toEqual([{ issue: 42, labels: ["ready-for-agent"] }]);
     expect(text()).toContain("claims_released: 2");
+    expect(text()).toContain("labels_restored: 1");
   });
 
   it("reconciles zero claims when none are stale", async () => {
