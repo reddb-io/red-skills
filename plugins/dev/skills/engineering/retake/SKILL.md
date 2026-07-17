@@ -17,6 +17,13 @@ the label claims `ready-for-human`, but the truth is in the worktree.
 
 ## 1. Diagnose — Reconstruct The State
 
+Resolve the `red-skills-dev` runtime through the shared contract in
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
+installed shim on `PATH` first, otherwise use the ADR 0091 npm direct-run form
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake ...`. If the
+shim is missing, name that fallback instead of surfacing a bare
+command-not-found.
+
 ```bash
 red-skills-dev retake 123
 ```
