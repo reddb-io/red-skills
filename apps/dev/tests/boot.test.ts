@@ -657,6 +657,27 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(result.bootstrap).toBeUndefined();
     expect(calls).toEqual([]);
   });
+
+  it("does NOT halt on a red operational probe — the worker inherits the supervisor's validation (#2054/#2037)", async () => {
+    const { deps } = makeDeps();
+    // The https remote trips the SSH-only probe red; on a standalone/supervisor
+    // boot this halts. Under skipSweeps a base-freshness red (local trunk behind
+    // origin after a release, #2054) or a mis-read fleet-truth (#2037) would too.
+    // A supervised worker must NOT die on any of them — that red-per-spawn is the
+    // spawn/die fleet churn. It boots bootstrap+claim only and skips the probes.
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        precheck: facts({
+          remoteUrls: [{ name: "origin", url: "https://github.com/reddb-io/red-skills.git" }],
+        }),
+      }),
+    );
+    expect(result.precheck.ok).toBe(true);
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.operationalProbes).toBeUndefined();
+  });
 });
 
 describe("runBoot tmp janitor", () => {

@@ -605,9 +605,19 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   if (!pre.ok) return { precheck: pre };
 
   // ---- 1a. operational probes ----
-  const operationalProbes = await runOperationalProbes(options.operationalProbes ?? options.precheck);
-  const redProbe = operationalProbes.findings[0];
-  if (redProbe) {
+  // Supervised workers (RED_AFK_SWEEPS_DONE → options.skipSweeps) inherit the
+  // supervisor's boot validation and boot bootstrap+claim only (#623). Running
+  // the shared boot self-diagnosis on every worker spawn is redundant, and a
+  // transient red kills the WORKER instead of the supervisor — e.g. the local
+  // trunk 1 commit behind origin after a release version bump (#2054), or a
+  // mis-read fleet-truth (#2037) — surfacing as spawn/die fleet churn. Workers
+  // branch from origin, so local trunk freshness is irrelevant to their work.
+  // Only the supervisor's own boot and a standalone run evaluate the probes.
+  const operationalProbes = options.skipSweeps
+    ? undefined
+    : await runOperationalProbes(options.operationalProbes ?? options.precheck);
+  const redProbe = operationalProbes?.findings[0];
+  if (operationalProbes && redProbe) {
     const applied = await tryBootAutoApplyBaseFreshness(deps, redProbe);
     if (!applied) throw new BootHaltError("operational-probe", redProbe);
     const nextRedProbe = operationalProbes.findings[1];
