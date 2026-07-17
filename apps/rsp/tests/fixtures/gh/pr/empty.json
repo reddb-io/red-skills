@@ -24,6 +24,10 @@
     "help": [
       "rsp gh issue list",
       "rsp gh pr list --query <title-or-label>"
+    ],
+    "next_steps": [
+      "rsp gh issue list",
+      "rsp gh pr list --query <title-or-label>"
     ]
   },
   "assertions": [
