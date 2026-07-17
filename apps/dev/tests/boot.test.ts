@@ -657,6 +657,154 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(result.bootstrap).toBeUndefined();
     expect(calls).toEqual([]);
   });
+
+  // Regression test for #2054: base-freshness probe kills worker sessions when local
+  // main is behind origin after a release. Workers branch from origin/main, so a
+  // behind local main does not affect their work — downgrade to non-fatal when guard passes.
+  it("does NOT halt on base-freshness guard=passed — worker branches from origin/main anyway", async () => {
+    // No fastForwardLocalBase dep (matches buildMinimalBootDeps for worker sessions).
+    const { deps, fsCalls } = makeDeps();
+
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        operationalProbes: {
+          remoteUrls: [],
+          baseFreshness: {
+            trunk: "main",
+            remote: "origin",
+            localSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+            remoteSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ahead: 0,
+            behind: 1,
+            remoteReachable: true,
+            guard: {
+              guard: "passed",
+              target: "main",
+              remote: "origin",
+              currentBranch: "main",
+              evidence: "guard passed: on-trunk clean-tree ancestor (main -> origin/main)",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    // The finding is still recorded in the probe report (visible in logs) but non-fatal.
+    expect(result.operationalProbes?.findings).toHaveLength(1);
+    expect(result.operationalProbes?.findings[0]?.id).toBe("afk.base-freshness");
+    // Bootstrap ran normally.
+    expect(fsCalls.ensureDir).toContain("/p/.red/tmp");
+  });
+
+  it.each([
+    [
+      "off-trunk",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "feature/work",
+        failed: "not-on-trunk" as const,
+        failedCondition: "on-trunk" as const,
+        evidence: "condition failed: on-trunk (current=feature/work expected=main)",
+      },
+    ],
+    [
+      "dirty tree",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "main",
+        failed: "dirty-tree" as const,
+        failedCondition: "clean-tree" as const,
+        evidence: "condition failed: clean-tree (1 dirty path(s))",
+      },
+    ],
+    [
+      "diverged",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "main",
+        failed: "not-ancestor" as const,
+        failedCondition: "ancestor" as const,
+        evidence: "condition failed: ancestor (main is not an ancestor of origin/main)",
+      },
+    ],
+  ])("still halts on base-freshness guard=refused in worker session: %s", async (_name, guard) => {
+    const { deps } = makeDeps();
+
+    await expect(
+      runBoot(
+        deps,
+        options({
+          skipSweeps: true,
+          operationalProbes: {
+            remoteUrls: [],
+            baseFreshness: {
+              trunk: "main",
+              remote: "origin",
+              localSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+              remoteSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              ahead: 0,
+              behind: 1,
+              remoteReachable: true,
+              guard,
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Operational probe red: AFK local trunk freshness/);
+  });
+
+  it("still halts on a second red probe even when base-freshness guard=passed is exempt", async () => {
+    const { deps } = makeDeps();
+
+    await expect(
+      runBoot(
+        deps,
+        options({
+          skipSweeps: true,
+          operationalProbes: {
+            remoteUrls: [],
+            baseFreshness: {
+              trunk: "main",
+              remote: "origin",
+              localSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+              remoteSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              ahead: 0,
+              behind: 1,
+              remoteReachable: true,
+              guard: {
+                guard: "passed",
+                target: "main",
+                remote: "origin",
+                currentBranch: "main",
+                evidence: "guard passed: on-trunk clean-tree ancestor (main -> origin/main)",
+              },
+            },
+            configCoherence: {
+              path: "/repo/.red/config.yaml",
+              displayPath: ".red/config.yaml",
+              fileLoaded: true,
+              discarded: true,
+              parseFailure: { message: "malformed YAML at line 3", line: 3 },
+              rootAccessorCollisions: [],
+              resolved: { trunk: "main", gate: "", lock: "" },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "operational-probe",
+      probe: { id: "config.coherence" },
+    });
+  });
 });
 
 describe("runBoot tmp janitor", () => {

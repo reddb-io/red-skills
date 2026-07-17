@@ -365,6 +365,17 @@ async function tryBootAutoApplyBaseFreshness(
   return true;
 }
 
+/** True when this base-freshness finding has guard=passed and finding=local-trunk-behind-origin.
+ * Worker sessions (skipSweeps) can skip the fatal halt for this case because they branch from
+ * origin/main directly — a behind local main does not affect their work. */
+function isGuardPassedBaseFreshnessFinding(
+  finding: OperationalProbeReport["findings"][number],
+): boolean {
+  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return false;
+  const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
+  return data?.finding === "local-trunk-behind-origin" && data.guard?.guard === "passed";
+}
+
 // ---------- step inputs ----------
 
 /** Bootstrap paths, pre-resolved by the caller from worker-paths.ts so this
@@ -609,7 +620,14 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const redProbe = operationalProbes.findings[0];
   if (redProbe) {
     const applied = await tryBootAutoApplyBaseFreshness(deps, redProbe);
-    if (!applied) throw new BootHaltError("operational-probe", redProbe);
+    if (!applied) {
+      // Worker sessions (skipSweeps) branch from origin/main, so local-main-behind-origin
+      // does not affect their branch base. The guarded FF dep is absent on this path; when
+      // the guard passes, downgrade to a non-fatal finding instead of halting the session.
+      // Guard-refused cases (dirty, off-trunk, diverged) still refuse regardless.
+      const workerSessionExempt = options.skipSweeps === true && isGuardPassedBaseFreshnessFinding(redProbe);
+      if (!workerSessionExempt) throw new BootHaltError("operational-probe", redProbe);
+    }
     const nextRedProbe = operationalProbes.findings[1];
     if (nextRedProbe) throw new BootHaltError("operational-probe", nextRedProbe);
   }
