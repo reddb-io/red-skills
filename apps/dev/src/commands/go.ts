@@ -147,8 +147,8 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
 
   if (parsed.scout) {
     // Scout mode: read-only investigation, no commits / branch / PR / merge.
-    // Namespace under scout-workers/ so it never collides with go-workers/ or
-    // the fleet's workers/.
+    // The current engine stamps this as kind=scout; the legacy namespace env is
+    // kept only for compatibility with older readers.
     process.env.RED_AFK_WORKERS_NAMESPACE = SCOUT_WORKERS_SEGMENT;
     try {
       const result = await dispatchScout(
@@ -161,8 +161,8 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         { runner: parsed.runner },
       );
       process.stdout.write(
-        `🔍 /go --scout dispatched disposable issue #${result.issue} (origin=scout, lane:scout, scout-workers/). ` +
-          `engine exit ${result.engineExit}.\n`,
+        `🔍 /go --scout dispatched disposable issue #${result.issue} ` +
+          `(origin=scout, kind=scout, lane:scout). engine exit ${result.engineExit}.\n`,
       );
       return result.engineExit;
     } catch (error) {
