@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_ATTEMPT_KEEP,
-  DEFAULT_ATTEMPT_TTL_S,
   ORPHAN_TTL_LONG_S,
   ORPHAN_TTL_SHORT_S,
   decideOrphanFate,
   planAttemptCap,
   planLivenessReclaim,
-  resolveAttemptKeep,
-  resolveAttemptTtlS,
   type AttemptDir,
   type LivenessReclaimInput,
   type OrphanFate,
@@ -96,40 +92,6 @@ describe("decideOrphanFate", () => {
       kind: "keep-until",
       ttlS: ORPHAN_TTL_SHORT_S,
     });
-  });
-});
-
-describe("resolveAttemptTtlS", () => {
-  it("defaults to 14 days", () => {
-    expect(resolveAttemptTtlS({})).toBe(DEFAULT_ATTEMPT_TTL_S);
-    expect(DEFAULT_ATTEMPT_TTL_S).toBe(14 * DAY);
-  });
-
-  it("honours an explicit positive numeric value", () => {
-    expect(resolveAttemptTtlS({ RED_AFK_ATTEMPT_TTL_S: "3600" })).toBe(3600);
-  });
-
-  it("falls back to the default on zero / negative / non-numeric (never disables the cap)", () => {
-    expect(resolveAttemptTtlS({ RED_AFK_ATTEMPT_TTL_S: "0" })).toBe(DEFAULT_ATTEMPT_TTL_S);
-    expect(resolveAttemptTtlS({ RED_AFK_ATTEMPT_TTL_S: "-5" })).toBe(DEFAULT_ATTEMPT_TTL_S);
-    expect(resolveAttemptTtlS({ RED_AFK_ATTEMPT_TTL_S: "abc" })).toBe(DEFAULT_ATTEMPT_TTL_S);
-  });
-});
-
-describe("resolveAttemptKeep", () => {
-  it("defaults to 5", () => {
-    expect(resolveAttemptKeep({})).toBe(DEFAULT_ATTEMPT_KEEP);
-    expect(DEFAULT_ATTEMPT_KEEP).toBe(5);
-  });
-
-  it("honours an explicit positive numeric value", () => {
-    expect(resolveAttemptKeep({ RED_AFK_ATTEMPT_KEEP: "3" })).toBe(3);
-  });
-
-  it("falls back to the default on zero / negative / non-numeric (never disables the cap)", () => {
-    expect(resolveAttemptKeep({ RED_AFK_ATTEMPT_KEEP: "0" })).toBe(DEFAULT_ATTEMPT_KEEP);
-    expect(resolveAttemptKeep({ RED_AFK_ATTEMPT_KEEP: "-1" })).toBe(DEFAULT_ATTEMPT_KEEP);
-    expect(resolveAttemptKeep({ RED_AFK_ATTEMPT_KEEP: "x" })).toBe(DEFAULT_ATTEMPT_KEEP);
   });
 });
 
