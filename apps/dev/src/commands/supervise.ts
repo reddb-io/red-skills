@@ -7,10 +7,11 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, closeSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
+import { existsSync, openSync, closeSync, readFileSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type FleetHeartbeat,
+  type ElasticResizeRequest,
   initSupervisorState,
   resolveSupervisorConfig,
   runSupervisor,
@@ -127,6 +128,8 @@ export const PASSTHROUGH_DENYLIST: readonly string[] = [
   "RED_AFK_EXIT_CODE",
   "RED_AFK_DURATION_S",
   "RED_AFK_TASK_TIER_DOWNGRADE",
+  "RED_AFK_SHRINK_MODE",
+  "RED_AFK_RETIRE_FILE",
 ];
 
 /**
@@ -182,11 +185,40 @@ export function buildSlotEnv(
   workerEnv: Record<string, string>,
   slot: number,
   policy: SpawnPolicy = {},
+  retireFile?: string,
 ): Record<string, string> {
   const out: Record<string, string> = { ...workerEnv, RED_AFK_SLOT: String(slot) };
   if (policy.taskTierDowngrade) out.RED_AFK_TASK_TIER_DOWNGRADE = "1";
   else delete out.RED_AFK_TASK_TIER_DOWNGRADE;
+  if (retireFile !== undefined) out.RED_AFK_RETIRE_FILE = retireFile;
+  else delete out.RED_AFK_RETIRE_FILE;
   return out;
+}
+
+function slotRetirePath(statePath: string, slot: number): string {
+  return join(dirname(statePath), `afk-supervisor-slot-${slot}.retire`);
+}
+
+function readResizeRequest(path: string): ElasticResizeRequest | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+      target?: unknown;
+      shrink_mode?: unknown;
+      shrinkMode?: unknown;
+    };
+    if (!Number.isInteger(parsed.target) || (parsed.target as number) < 0) return null;
+    const rawMode = parsed.shrink_mode ?? parsed.shrinkMode;
+    const shrinkMode =
+      rawMode === "hard-kill" || rawMode === "drain-then-retire"
+        ? rawMode
+        : undefined;
+    return {
+      target: parsed.target as number,
+      ...(shrinkMode !== undefined ? { shrinkMode } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -365,9 +397,11 @@ function buildSupervisorDeps(
         // (mirrors spawn_slot's per-slot slot_log in supervisor.sh).
         const slotLogFile = join(tmpDir, `afk-supervisor-slot-${slot}.log`);
         const slotFd = openSync(slotLogFile, "a");
+        const retireFile = slotRetirePath(statePath, slot);
+        rmSync(retireFile, { force: true });
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: buildSlotEnv(workerEnv, slot, policy),
+          env: buildSlotEnv(workerEnv, slot, policy, retireFile),
           detached: true,
           stdio: ["ignore", slotFd, slotFd],
         });
@@ -390,7 +424,7 @@ function buildSupervisorDeps(
         ];
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: buildSlotEnv(workerEnv, slot),
+          env: buildSlotEnv(workerEnv, slot, undefined, slotRetirePath(statePath, slot)),
           detached: true,
           stdio: ["ignore", logFd, logFd],
         });
@@ -405,6 +439,9 @@ function buildSupervisorDeps(
       },
       lastExitCode: (slot) => slotExitCodes.get(slot) ?? null,
       isAlive,
+      requestSlotRetire: async (slot) => {
+        writeFileSync(slotRetirePath(statePath, slot), "", "utf8");
+      },
       // Wait-and-escalate killer (#580): SIGTERM → grace → SIGKILL → CONFIRM the
       // tree is gone, then return whether it actually died. The reaper gates its
       // `rm -rf` worktree teardown on this, so a SIGTERM-ignoring worker can
@@ -538,6 +575,7 @@ function buildSupervisorDeps(
       }
     },
     attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
+    resizeRequest: async () => readResizeRequest(afkPaths(root).supervisorResizePath),
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
     // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
     // a dispatch failure is returned to the caller; the caller catches and logs.
@@ -622,6 +660,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   writeFileSync(pidFile, String(process.pid), "utf8");
   // clear any stale stop file
   if (existsSync(stopFile)) rmSync(stopFile, { force: true });
+  rmSync(paths.supervisorResizePath, { force: true });
 
   const logFd = openSync(logFile, "a");
   const values = loadConfig(paths.configPath, { warn: () => undefined });
