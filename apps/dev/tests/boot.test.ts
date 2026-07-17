@@ -87,11 +87,11 @@ describe("precheck", () => {
     });
   });
 
-  it("fails not-on-main, naming the expected default branch", () => {
+  it("fails not-on-trunk, naming the current branch, expected default branch, and trunk source", () => {
     expect(precheck(facts({ currentBranch: "feature/x" }))).toEqual({
       ok: false,
-      failed: "not-on-main",
-      detail: "main",
+      failed: "not-on-trunk",
+      detail: { current: "feature/x", expected: "main", source: "trunk" },
     });
   });
 
@@ -102,11 +102,21 @@ describe("precheck", () => {
     });
   });
 
-  it("fails not-on-main, naming the configured trunk when the checkout is on main", () => {
+  it("fails not-on-trunk, naming the configured trunk when the checkout is on main", () => {
     expect(precheck(facts({ currentBranch: "main", configuredTrunk: "develop" }))).toEqual({
       ok: false,
-      failed: "not-on-main",
-      detail: "develop",
+      failed: "not-on-trunk",
+      detail: { current: "main", expected: "develop", source: "trunk" },
+    });
+  });
+
+  it("fails not-on-trunk, naming the configured branch pin as the expectation source", () => {
+    expect(
+      precheck(facts({ currentBranch: "main", configuredTrunk: "release/x", configuredTrunkSource: "pin" })),
+    ).toEqual({
+      ok: false,
+      failed: "not-on-trunk",
+      detail: { current: "main", expected: "release/x", source: "pin" },
     });
   });
 
@@ -132,19 +142,19 @@ describe("precheck", () => {
     });
   });
 
-  it("locked: fails not-on-main when currentBranch is main instead of the lock value", () => {
+  it("locked: fails not-on-trunk when currentBranch is main instead of the lock value", () => {
     expect(precheck(facts({ currentBranch: "main", lockedBranch: "feature-locked" }))).toEqual({
       ok: false,
-      failed: "not-on-main",
-      detail: "feature-locked",
+      failed: "not-on-trunk",
+      detail: { current: "main", expected: "feature-locked", source: "lock" },
     });
   });
 
-  it("locked: fails not-on-main when currentBranch is a different branch than the lock value", () => {
+  it("locked: fails not-on-trunk when currentBranch is a different branch than the lock value", () => {
     expect(precheck(facts({ currentBranch: "other-branch", lockedBranch: "feature-locked" }))).toEqual({
       ok: false,
-      failed: "not-on-main",
-      detail: "feature-locked",
+      failed: "not-on-trunk",
+      detail: { current: "other-branch", expected: "feature-locked", source: "lock" },
     });
   });
 

@@ -166,9 +166,15 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
   });
 
   it("reports a precheck failure (workers fall back to their own precheck)", () => {
-    const result: BootResult = { precheck: { ok: false, failed: "not-on-main", detail: "feat/x" } };
+    const result: BootResult = {
+      precheck: {
+        ok: false,
+        failed: "not-on-trunk",
+        detail: { current: "main", expected: "feat/x", source: "pin" },
+      },
+    };
     expect(formatBootSweepResult(result)).toBe(
-      "boot sweeps: precheck FAILED (not-on-main) — workers will run their own precheck",
+      "boot sweeps: precheck FAILED (not-on-trunk: current=main expected=feat/x source=pin) — workers will run their own precheck",
     );
   });
 });

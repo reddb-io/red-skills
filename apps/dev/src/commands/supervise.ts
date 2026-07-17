@@ -27,7 +27,7 @@ import {
   buildBootDeps,
   type RepoContext,
 } from "../runtime/wire.js";
-import { runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
+import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
 import {
   workerLivenessFor,
@@ -276,7 +276,7 @@ export function slotFilterArgs(args: readonly string[]): string[] {
  */
 export function formatBootSweepResult(result: BootResult): string {
   if (!result.precheck.ok) {
-    return `boot sweeps: precheck FAILED (${result.precheck.failed}) — workers will run their own precheck`;
+    return `boot sweeps: precheck FAILED (${formatPreconditionFailure(result.precheck)}) — workers will run their own precheck`;
   }
   const oc = result.orphanCleanup;
   const ac = result.attemptCap;
