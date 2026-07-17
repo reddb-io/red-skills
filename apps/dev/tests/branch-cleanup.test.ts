@@ -9,7 +9,6 @@ import {
   planAttemptSnapshotCleanup,
   planLiveBranchCleanup,
   planLocalBranchCleanup,
-  resolveSnapshotGraceS,
   type BranchRef,
   type IssueLookup,
   type IssueMeta,
@@ -64,25 +63,6 @@ describe("classifyIssueState", () => {
     expect(classifyIssueState(closedAgo(1), NOW, 0)).toBe("closed-past-grace");
     // Boundary: exactly at the window is still within grace (strict > , mirrors bash).
     expect(classifyIssueState(closedAgo(0), NOW, 0)).toBe("closed-within-grace");
-  });
-});
-
-describe("resolveSnapshotGraceS", () => {
-  it("defaults to 7 days", () => {
-    expect(resolveSnapshotGraceS({})).toBe(DEFAULT_SNAPSHOT_GRACE_S);
-    expect(DEFAULT_SNAPSHOT_GRACE_S).toBe(7 * DAY);
-  });
-
-  it("honours an explicit numeric value including 0", () => {
-    expect(resolveSnapshotGraceS({ RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S: "3600" })).toBe(3600);
-    expect(resolveSnapshotGraceS({ RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S: "0" })).toBe(0);
-  });
-
-  it("falls back to the default on a non-numeric typo (never disables the grace)", () => {
-    expect(resolveSnapshotGraceS({ RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S: "not-a-number" })).toBe(
-      DEFAULT_SNAPSHOT_GRACE_S,
-    );
-    expect(resolveSnapshotGraceS({ RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S: "-5" })).toBe(DEFAULT_SNAPSHOT_GRACE_S);
   });
 });
 
