@@ -391,7 +391,7 @@ export function buildSupervisorBootSweeps(
       workerPid: process.pid,
     };
     const options = await collectBootOptions(ctx, facts, bootstrap, nowS);
-    const bootDeps = await buildBootDeps(ctx, options, nowS);
+    const bootDeps = await buildBootDeps(ctx, options, nowS, log);
     const result = await runBoot(bootDeps, options);
     log(formatBootSweepResult(result));
   };

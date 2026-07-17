@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   precheck,
   runBoot,
@@ -178,6 +178,8 @@ function makeDeps(over: Partial<{
   config: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
   docsSweepLander: BootDeps["docsSweepLander"];
+  fastForwardLocalBase: BootDeps["fastForwardLocalBase"];
+  log: BootDeps["log"];
 }> = {}) {
   const calls: string[] = [];
   const fsCalls = {
@@ -253,6 +255,8 @@ function makeDeps(over: Partial<{
         gitCalls.deleteLocal.push(branch);
       },
     },
+    ...(over.log ? { log: over.log } : {}),
+    ...(over.fastForwardLocalBase ? { fastForwardLocalBase: over.fastForwardLocalBase } : {}),
     lookups: {
       orphanState:
         over.orphanState ??
@@ -368,6 +372,123 @@ describe("runBoot precheck short-circuit", () => {
         canonicalFix: expect.stringContaining("gh auth refresh"),
       },
     });
+    expect(calls).toEqual([]);
+  });
+
+  it("auto-applies guarded base-freshness before bootstrap and logs the before/after SHAs", async () => {
+    const fastForwardLocalBase = vi.fn(async () => ({
+      action: "fast-forward" as const,
+      guard: "passed" as const,
+      target: "main",
+      remote: "origin",
+      currentBranch: "main",
+      evidence: "fast-forwarded main to origin/main",
+    }));
+    const log = vi.fn();
+    const { deps, calls } = makeDeps({ fastForwardLocalBase, log });
+
+    const result = await runBoot(
+      deps,
+      options({
+        operationalProbes: {
+          remoteUrls: [],
+          baseFreshness: {
+            trunk: "main",
+            remote: "origin",
+            localSha: "1111111111111111111111111111111111111111",
+            remoteSha: "2222222222222222222222222222222222222222",
+            ahead: 0,
+            behind: 1,
+            remoteReachable: true,
+            guard: {
+              guard: "passed",
+              target: "main",
+              remote: "origin",
+              currentBranch: "main",
+              evidence: "guard passed: on-trunk clean-tree ancestor (main -> origin/main)",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(fastForwardLocalBase).toHaveBeenCalledWith({ remote: "origin", target: "main" });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "boot operational probe auto-fix applied: afk.base-freshness before=111111111111 after=222222222222",
+      ),
+    );
+    expect(calls.slice(0, 3)).toEqual([
+      "fs.ensureDir:/p/.red/tmp",
+      "fs.ensureDir:/p/.red/state",
+      "fs.gitignore:.red/tmp/",
+    ]);
+  });
+
+  it.each([
+    [
+      "off-trunk",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "feature/work",
+        failed: "not-on-trunk" as const,
+        failedCondition: "on-trunk" as const,
+        evidence: "condition failed: on-trunk (current=feature/work expected=main)",
+      },
+    ],
+    [
+      "dirty tree",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "main",
+        failed: "dirty-tree" as const,
+        failedCondition: "clean-tree" as const,
+        evidence: "condition failed: clean-tree (1 dirty path(s))",
+      },
+    ],
+    [
+      "diverged",
+      {
+        guard: "refused" as const,
+        target: "main",
+        remote: "origin",
+        currentBranch: "main",
+        failed: "not-ancestor" as const,
+        failedCondition: "ancestor" as const,
+        evidence: "condition failed: ancestor (main is not an ancestor of origin/main)",
+      },
+    ],
+  ])("keeps halting on base-freshness when the guard refuses: %s", async (_name, guard) => {
+    const fastForwardLocalBase = vi.fn();
+    const { deps, calls } = makeDeps({ fastForwardLocalBase });
+
+    await expect(
+      runBoot(
+        deps,
+        options({
+          operationalProbes: {
+            remoteUrls: [],
+            baseFreshness: {
+              trunk: "main",
+              remote: "origin",
+              localSha: "1111111111111111111111111111111111111111",
+              remoteSha: "2222222222222222222222222222222222222222",
+              ahead: 0,
+              behind: 1,
+              remoteReachable: true,
+              guard,
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Operational probe red: AFK local trunk freshness/);
+
+    expect(fastForwardLocalBase).not.toHaveBeenCalled();
     expect(calls).toEqual([]);
   });
 
