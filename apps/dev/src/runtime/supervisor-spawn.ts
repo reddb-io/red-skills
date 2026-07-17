@@ -9,6 +9,7 @@ import { mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afkStateDir } from "@reddb-io/shared/red-paths.js";
+import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode } from "../core/supervisor.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -106,21 +107,19 @@ export function stampFreshFleetHeartbeat(
   runner: string,
   target: number,
 ): void {
-  const body = JSON.stringify(
-    {
-      ts: new Date(epoch * 1000).toISOString(),
-      epoch,
-      // A fresh relaunch stamp counts as progress: the new supervisor is
-      // healthy until proven otherwise, so seed both epochs to `epoch`.
-      last_progress_epoch: epoch,
-      runner,
-      ready_for_agent: 0,
-      slots: { busy: 0, free: target, total: target, parked: 0 },
-      spawns_this_tick: 0,
-    },
-    null,
-    2,
-  );
+  // TOON, never raw JSON — this is the fleet supervisor state snapshot surface
+  // (ADR 0097); `readFleetState` sniffs so a stamp from an older bundle still reads.
+  const body = encodeDevSnapshotToon({
+    ts: new Date(epoch * 1000).toISOString(),
+    epoch,
+    // A fresh relaunch stamp counts as progress: the new supervisor is
+    // healthy until proven otherwise, so seed both epochs to `epoch`.
+    last_progress_epoch: epoch,
+    runner,
+    ready_for_agent: 0,
+    slots: { busy: 0, free: target, total: target, parked: 0 },
+    spawns_this_tick: 0,
+  });
   const tmp = `${statePath}.tmp`;
   writeFileSync(tmp, body, "utf8");
   renameSync(tmp, statePath);
