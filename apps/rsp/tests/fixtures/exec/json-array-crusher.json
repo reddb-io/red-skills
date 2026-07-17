@@ -1,0 +1,43 @@
+{
+  "name": "exec-json-array-crusher",
+  "command": [
+    "exec",
+    "--",
+    "node emit-json-array.js"
+  ],
+  "large_output": true,
+  "recorded": {
+    "stdout": "[{\"seq\":0,\"metric\":50,\"class\":\"normal\"},{\"seq\":1,\"metric\":50,\"class\":\"normal\"},{\"seq\":2,\"metric\":50,\"class\":\"normal\"},{\"seq\":3,\"metric\":50,\"class\":\"normal\"},{\"seq\":4,\"metric\":50,\"class\":\"normal\"},{\"seq\":5,\"metric\":50,\"class\":\"normal\"},{\"seq\":6,\"metric\":50,\"class\":\"normal\"},{\"seq\":7,\"metric\":9000,\"class\":\"normal\"},{\"seq\":8,\"metric\":50,\"class\":\"normal\"},{\"seq\":9,\"metric\":50,\"class\":\"normal\"},{\"seq\":10,\"metric\":50,\"class\":\"normal\"},{\"seq\":11,\"metric\":50,\"class\":\"normal\"},{\"seq\":12,\"metric\":50,\"class\":\"normal\",\"variant\":\"shape-break\"},{\"seq\":13,\"metric\":50,\"class\":\"normal\"},{\"seq\":14,\"metric\":50,\"class\":\"normal\"},{\"seq\":15,\"metric\":50,\"class\":\"normal\"},{\"seq\":16,\"metric\":50,\"class\":\"normal\"},{\"seq\":17,\"metric\":50,\"class\":\"normal\"},{\"seq\":18,\"metric\":50,\"class\":\"rare\"},{\"seq\":19,\"metric\":50,\"class\":\"normal\"},{\"seq\":20,\"metric\":50,\"class\":\"normal\"},{\"seq\":21,\"metric\":50,\"class\":\"normal\"},{\"seq\":22,\"metric\":50,\"class\":\"normal\"},{\"seq\":23,\"metric\":50,\"class\":\"normal\"}]",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {},
+  "assertions": [
+    {
+      "question": "crusher keeps first row",
+      "path": "summary.items.0.seq",
+      "expected": 0
+    },
+    {
+      "question": "crusher keeps numeric value outlier",
+      "path": "summary.items.1.seq",
+      "expected": 7
+    },
+    {
+      "question": "crusher keeps shape outlier",
+      "path": "summary.items.2.variant",
+      "expected": "shape-break"
+    },
+    {
+      "question": "crusher keeps rare scalar value outlier",
+      "path": "summary.items.3.class",
+      "expected": "rare"
+    },
+    {
+      "question": "crusher reports dropped count",
+      "path": "summary.dropped",
+      "expected": 19
+    }
+  ]
+}
