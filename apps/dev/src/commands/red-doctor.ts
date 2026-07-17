@@ -147,7 +147,7 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const ctx = await resolveRepoContext(flags.root);
     const paths = afkPaths(ctx.root);
     const precheckFacts = await collectPrecheckFacts(ctx);
-    const probeReport = runOperationalProbes(precheckFacts);
+    const probeReport = await runOperationalProbes(precheckFacts);
     const issueStates = ctx.repo
       ? await listIssueStates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext)
       : new Map();

@@ -1,0 +1,1 @@
+GraphQL: Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization.

@@ -1750,6 +1750,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
     allowHttpsRemote:
       process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
+    queueVisibility: ghx.queueVisibilityProbeInput(ghCtx),
   };
 }
 
