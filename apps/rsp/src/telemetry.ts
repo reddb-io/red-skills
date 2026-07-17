@@ -146,6 +146,15 @@ export interface RspTelemetryGainsReport {
   };
   savings: {
     tokens: TokenSavingsEstimate;
+    measured_control_holdout: {
+      enabled: boolean;
+      holdout_share: number;
+      holdout_invocations: number;
+      compressed_invocations: number;
+      savings_rate: number | null;
+      confidence_interval_95: { low: number; high: number } | null;
+      note: string;
+    };
     weekly_tokens_saved: Array<{ week_start: string; tokens_saved: number; wow_delta_pct: number | null }>;
     elision_rate: number;
     top_commands_by_tokens_saved: Array<{ command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }>;
@@ -162,6 +171,11 @@ export interface RspTelemetryGainsReport {
     degradations_by_reason: Array<{ reason: string; count: number }>;
     cold_boots: number | null;
     warm_hits: number | null;
+  };
+  mining: {
+    recovery_usage_by_family: Array<{ command_family: string; show_total: number; show_hits: number; show_misses: number; show_hit_rate: number }>;
+    degradation_clusters: Array<{ command_family: string; reason: string; count: number; suggestion: string }>;
+    threshold_tuning_suggestions: Array<{ command_family: string; signal: string; suggestion: string }>;
   };
 }
 
@@ -772,8 +786,13 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
   const sinceMs = Date.parse(since);
   const accounting = await readAccountingRecords(db, sinceMs);
   const invocations = accounting.filter((record) =>
-    stringField(record.event_type) !== "show" && stringField(record.degradation_reason) === ""
+    stringField(record.event_type) !== "show" &&
+    stringField(record.event_type) !== "control_holdout" &&
+    record.control_holdout !== true &&
+    stringField(record.degradation_reason) === ""
   );
+  const holdouts = accounting.filter((record) => stringField(record.event_type) === "control_holdout" || record.control_holdout === true);
+  const showEvents = accounting.filter((record) => stringField(record.event_type) === "show");
   const degradations = accounting.filter((record) => stringField(record.degradation_reason) !== "");
   const allTimestamps = [...invocations, ...degradations]
     .map(timestampMs)
@@ -846,6 +865,9 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
   for (const entry of degradationTimeline) {
     byReason.set(entry.reason, (byReason.get(entry.reason) ?? 0) + 1);
   }
+  const degradationClusters = degradationClusterRows(degradationTimeline);
+  const recoveryUsage = recoveryUsageRows(showEvents);
+  const thresholdSuggestions = thresholdTuningSuggestions([...commandTotals.values()], recoveryUsage, degradationClusters);
   const peakMinute = [...requestsByMinute.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
 
@@ -879,6 +901,7 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
     },
     savings: {
       tokens: tokenSavingsEstimate(totalTokensSaved, tokensEstimated),
+      measured_control_holdout: measuredControlHoldout(invocations, holdouts),
       weekly_tokens_saved: weeklySeries(weeklyTokens),
       elision_rate: invocations.length === 0 ? 0 : round(elided / invocations.length),
       top_commands_by_tokens_saved: [...commandTotals.values()]
@@ -897,25 +920,33 @@ export async function readTelemetryGainsReport(db: RedDB, sinceDays: number, now
       cold_boots: recordsWithStoreMetric === 0 ? null : coldBoots,
       warm_hits: recordsWithStoreMetric === 0 ? null : Math.max(0, recordsWithStoreMetric - coldBoots),
     },
+    mining: {
+      recovery_usage_by_family: recoveryUsage,
+      degradation_clusters: degradationClusters,
+      threshold_tuning_suggestions: thresholdSuggestions,
+    },
   };
 }
 
 async function readAccountingRecords(db: RedDB, sinceMs: number): Promise<Array<Record<string, unknown>>> {
   const accounting = (await readCollection(db, RSP_ACCOUNTING_EVENTS_COLLECTION))
     .filter((record) => timestampMs(record) >= sinceMs);
-  if (accounting.length > 0) return accounting;
-
+  const accountingHasInvocationLike = accounting.some((record) =>
+    stringField(record.event_type) !== "show" || stringField(record.degradation_reason) !== ""
+  );
   const legacyInvocations = (await readCollection(db, RSP_TELEMETRY_INVOCATIONS_COLLECTION))
     .filter((record) => timestampMs(record) >= sinceMs)
-    .map((record) => ({ ...record, event_type: "invocation" }));
+    .filter((record) => !accountingHasInvocationLike && record.accounting_recorded !== true)
+    .map((record) => ({ ...record, event_type: stringField(record.event_type) || "invocation" }));
   const legacyDegradations = (await readCollection(db, RSP_TELEMETRY_DEGRADATIONS_COLLECTION))
     .filter((record) => timestampMs(record) >= sinceMs)
+    .filter((record) => !accountingHasInvocationLike && record.accounting_recorded !== true)
     .map((record) => ({
       ...record,
       event_type: "invocation",
       degradation_reason: stringField(record.reason) || "unknown",
     }));
-  return [...legacyInvocations, ...legacyDegradations];
+  return [...accounting, ...legacyInvocations, ...legacyDegradations];
 }
 
 function tokenCountFromCounters(record: Record<string, unknown>, field: "raw" | "emitted"): { tokens: number; estimated: boolean } {
@@ -923,6 +954,135 @@ function tokenCountFromCounters(record: Record<string, unknown>, field: "raw" | 
   if (exact != null) return { tokens: exact, estimated: false };
   const bytes = numeric(record[field === "raw" ? "raw_bytes" : "emitted_bytes"]);
   return { tokens: Math.ceil(bytes / 4), estimated: bytes > 0 };
+}
+
+function measuredControlHoldout(
+  invocations: readonly Record<string, unknown>[],
+  holdouts: readonly Record<string, unknown>[],
+): RspTelemetryGainsReport["savings"]["measured_control_holdout"] {
+  const holdoutShare = maxNumeric(holdouts.map((record) => optionalNumeric(record.holdout_share))) ?? 0;
+  if (holdouts.length === 0) {
+    return {
+      enabled: false,
+      holdout_share: holdoutShare,
+      holdout_invocations: 0,
+      compressed_invocations: invocations.length,
+      savings_rate: null,
+      confidence_interval_95: null,
+      note: "control holdout disabled or no holdout samples in window",
+    };
+  }
+  const compressedRates = invocations.map(tokenSavingsRate).filter((value): value is number => value != null);
+  const holdoutRates = holdouts.map(tokenSavingsRate).filter((value): value is number => value != null);
+  const rates = compressedRates.length > 0 ? compressedRates : holdoutRates;
+  const mean = rates.length === 0 ? null : round(meanOf(rates));
+  return {
+    enabled: true,
+    holdout_share: round(holdoutShare),
+    holdout_invocations: holdouts.length,
+    compressed_invocations: invocations.length,
+    savings_rate: mean,
+    confidence_interval_95: mean == null ? null : confidenceInterval95(rates, mean),
+    note: "measured from opt-in uncompressed control holdout; report proposes, it does not tune automatically",
+  };
+}
+
+function tokenSavingsRate(record: Record<string, unknown>): number | null {
+  const raw = tokenCountFromCounters(record, "raw").tokens;
+  if (raw <= 0) return null;
+  const emitted = tokenCountFromCounters(record, "emitted").tokens;
+  return Math.max(0, raw - emitted) / raw;
+}
+
+function confidenceInterval95(values: readonly number[], mean: number): { low: number; high: number } {
+  if (values.length <= 1) return { low: round(Math.max(0, mean)), high: round(Math.min(1, mean)) };
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  const margin = 1.96 * Math.sqrt(variance / values.length);
+  return {
+    low: round(Math.max(0, mean - margin)),
+    high: round(Math.min(1, mean + margin)),
+  };
+}
+
+function recoveryUsageRows(records: readonly Record<string, unknown>[]): RspTelemetryGainsReport["mining"]["recovery_usage_by_family"] {
+  const byFamily = new Map<string, { command_family: string; show_total: number; show_hits: number; show_misses: number }>();
+  for (const record of records) {
+    const family = commandFamily(stringField(record.recovered_command) || stringField(record.command));
+    const row = byFamily.get(family) ?? { command_family: family, show_total: 0, show_hits: 0, show_misses: 0 };
+    row.show_total++;
+    if (record.hit === true) row.show_hits++;
+    else row.show_misses++;
+    byFamily.set(family, row);
+  }
+  return [...byFamily.values()]
+    .sort((a, b) => b.show_total - a.show_total || a.command_family.localeCompare(b.command_family))
+    .map((row) => ({ ...row, show_hit_rate: row.show_total === 0 ? 0 : round(row.show_hits / row.show_total) }));
+}
+
+function degradationClusterRows(
+  timeline: readonly { timestamp: string; command_family: string; reason: string }[],
+): RspTelemetryGainsReport["mining"]["degradation_clusters"] {
+  const counts = new Map<string, { command_family: string; reason: string; count: number }>();
+  for (const entry of timeline) {
+    const key = `${entry.command_family}\0${entry.reason}`;
+    const row = counts.get(key) ?? { command_family: entry.command_family, reason: entry.reason, count: 0 };
+    row.count++;
+    counts.set(key, row);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.command_family.localeCompare(b.command_family) || a.reason.localeCompare(b.reason))
+    .map((row) => ({ ...row, suggestion: degradationSuggestion(row) }));
+}
+
+function degradationSuggestion(row: { command_family: string; reason: string; count: number }): string {
+  if (/unavailable|not provisioned|missing/i.test(row.reason)) {
+    return `Investigate ${row.command_family} wrapper availability before changing thresholds`;
+  }
+  if (/timeout|large|limit/i.test(row.reason)) {
+    return `Review ${row.command_family} byte thresholds and timeout caps for ${row.count} matching degradations`;
+  }
+  return `Investigate ${row.command_family} ${row.reason} cluster before tuning compression thresholds`;
+}
+
+function thresholdTuningSuggestions(
+  commandTotals: readonly { command_family: string; invocations: number; tokens_saved: number; bytes_saved: number }[],
+  recoveryUsage: readonly { command_family: string; show_total: number; show_hits: number; show_misses: number; show_hit_rate: number }[],
+  degradationClusters: readonly { command_family: string; reason: string; count: number }[],
+): RspTelemetryGainsReport["mining"]["threshold_tuning_suggestions"] {
+  const suggestions: RspTelemetryGainsReport["mining"]["threshold_tuning_suggestions"] = [];
+  for (const row of recoveryUsage.filter((entry) => entry.show_total > 0)) {
+    suggestions.push({
+      command_family: row.command_family,
+      signal: `recovery_show_rate=${row.show_total}`,
+      suggestion: row.show_hit_rate >= 0.5
+        ? "Consider preserving more context or raising terse thresholds for frequently recovered outputs"
+        : "Recovery misses dominate; inspect handle lifetime before threshold changes",
+    });
+  }
+  for (const row of degradationClusters.filter((entry) => entry.count > 1)) {
+    suggestions.push({
+      command_family: row.command_family,
+      signal: `degradation_cluster=${row.reason}:${row.count}`,
+      suggestion: "Fix the repeated degradation before tightening compression",
+    });
+  }
+  for (const row of commandTotals.filter((entry) => entry.invocations > 0 && entry.tokens_saved === 0)) {
+    suggestions.push({
+      command_family: row.command_family,
+      signal: "zero_token_savings",
+      suggestion: "Consider bypassing or raising admission thresholds for this family",
+    });
+  }
+  return suggestions.slice(0, 10);
+}
+
+function meanOf(values: readonly number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function maxNumeric(values: readonly (number | null)[]): number | null {
+  const present = values.filter((value): value is number => value != null);
+  return present.length === 0 ? null : Math.max(...present);
 }
 
 function accountingStorageClassStats(records: readonly Record<string, unknown>[]): RspStorageClassStats {
