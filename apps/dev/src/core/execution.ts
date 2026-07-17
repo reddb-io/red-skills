@@ -124,19 +124,9 @@ export const DEFAULT_IDLE_TIMEOUT_S = 600;
  * re-running tests — without ever committing or signalling slips past both and
  * burns cycle indefinitely (the 1h41m #834 hang). The clock resets on every new
  * commit, so a steadily-committing agent is never killed; only one that spins
- * without producing work is. Env-tunable via `RED_AFK_ATTEMPT_TIMEOUT_S`.
+ * without producing work is.
  */
 export const DEFAULT_ATTEMPT_TIMEOUT_S = 2700;
-
-/** Parse `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout`: a positive integer,
- * else undefined (caller falls back to {@link DEFAULT_ATTEMPT_TIMEOUT_S}). `0`
- * is rejected (use a large value to effectively disable; never silently off). */
-export function parseAttemptTimeout(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const parsed = Number(raw);
-  if (Number.isInteger(parsed) && parsed > 0) return parsed;
-  return undefined;
-}
 
 /**
  * Commit-anchored HARD cap on the attempt guard (issue #637): the edit-signal
@@ -147,19 +137,9 @@ export function parseAttemptTimeout(raw: string | undefined): number | undefined
  * commit, the guard aborts even if worktree/activity signals keep extending the
  * soft deadline, which routes the attempt to the `timeout` terminal where the
  * ADR 0055 reconcile can land an already-committed green branch without
- * re-running the agent. Env-tunable via `RED_AFK_ATTEMPT_HARD_CAP_S`.
+ * re-running the agent.
  */
 export const DEFAULT_ATTEMPT_HARD_CAP_S = 5400;
-
-/** Parse `RED_AFK_ATTEMPT_HARD_CAP_S`: a positive integer, else undefined
- * (caller falls back to {@link DEFAULT_ATTEMPT_HARD_CAP_S}). Same typo-safe
- * contract as {@link parseAttemptTimeout} — `0` cannot disable the cap. */
-export function parseAttemptHardCap(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const parsed = Number(raw);
-  if (Number.isInteger(parsed) && parsed > 0) return parsed;
-  return undefined;
-}
 
 /**
  * The re-invocation ceiling handed to sandcastle's Orchestrator (issue #322).
@@ -341,8 +321,7 @@ export interface RunAgentInput {
    * Attempt wall-clock guard cap in seconds (proof-of-progress). When set,
    * `runAgent` aborts the sandcastle run if no NEW commit appears on the worker
    * branch within this window, resetting on each commit. Omitted → no guard
-   * (back-compat for callers/tests that don't opt in). `makeRunAgent` threads
-   * `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout` here. See
+   * (back-compat for callers/tests that don't opt in). See
    * {@link DEFAULT_ATTEMPT_TIMEOUT_S}.
    */
   attemptTimeoutSeconds?: number;
@@ -350,8 +329,7 @@ export interface RunAgentInput {
    * Commit-anchored HARD cap in seconds (issue #637): bounds how long the
    * edit-signal (`progressProbe`) may keep extending the soft deadline past the
    * last commit. Only meaningful when the guard is armed. Omitted → soft cap
-   * only (back-compat). `makeRunAgent` threads `RED_AFK_ATTEMPT_HARD_CAP_S`
-   * here. See {@link DEFAULT_ATTEMPT_HARD_CAP_S}.
+   * only (back-compat). See {@link DEFAULT_ATTEMPT_HARD_CAP_S}.
    */
   attemptHardCapSeconds?: number;
   /**
