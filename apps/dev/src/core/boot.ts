@@ -136,6 +136,8 @@ export interface PrecheckFacts {
   configNamespacing?: OperationalProbeContext["configNamespacing"];
   /** Optional fleet truth probe facts for red-doctor and boot visibility. */
   fleetTruth?: OperationalProbeContext["fleetTruth"];
+  /** Optional claim hygiene probe facts for red-doctor and boot visibility. */
+  claimHygiene?: OperationalProbeContext["claimHygiene"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
