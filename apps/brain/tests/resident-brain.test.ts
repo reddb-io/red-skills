@@ -17,8 +17,10 @@ describe("shouldUseResidentBrain", () => {
     expect(shouldUseResidentBrain(config("file:///repo/.red/state/red-skills.rdb"))).toBe(true);
   });
 
-  it("still uses the resident for the legacy tmp-tier store during the transition", () => {
-    expect(shouldUseResidentBrain(config("file:///repo/.red/tmp/red-skills.rdb"))).toBe(true);
+  it("rejects the legacy tmp-tier store with a migration path", () => {
+    expect(() => shouldUseResidentBrain(config("file:///repo/.red/tmp/red-skills.rdb"))).toThrow(
+      "Run `rsp setup` to migrate it to .red/state/red-skills.rdb",
+    );
   });
 
   it("does not use the resident for a private brain store", () => {
