@@ -387,7 +387,10 @@ describe("rsp telemetry spool", () => {
       id: "degraded",
       created_at: new Date().toISOString(),
       command: "git --version",
-      reason: "wrapper failed",
+      reason: "wrapper-crash",
+      wrapper_family: "git",
+      wrapper_exit_code: 1,
+      stderr_head: "unsupported git subcommand:",
       bytes: 100,
     });
 
@@ -428,8 +431,18 @@ describe("rsp telemetry spool", () => {
       health: {
         degradations: 1,
         degradation_rate: 0.5,
-        by_reason: [{ reason: "wrapper failed", count: 1 }],
-        most_recent: expect.objectContaining({ reason: "wrapper failed", command: "git --version" }),
+        by_reason: [{ reason: "wrapper-crash", count: 1 }],
+        by_family: [{ family: "git", count: 1 }],
+        recent_failures: [
+          expect.objectContaining({
+            family: "git",
+            command: "git --version",
+            reason: "wrapper-crash",
+            exit_code: 1,
+            stderr_head: "unsupported git subcommand:",
+          }),
+        ],
+        most_recent: expect.objectContaining({ reason: "wrapper-crash", command: "git --version" }),
       },
       latency: {
         wrapper_ms_p50: 12,
