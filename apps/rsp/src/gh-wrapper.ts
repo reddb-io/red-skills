@@ -3,7 +3,8 @@ import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { readGhConditionalJson } from "./gh-conditional.js";
 import { recoveryInstruction, type RecordedGitContract } from "./git-wrapper.js";
-import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
+import { extractQueryArg, filterRows, withHelp } from "./output-levers.js";
+import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
 
 export type GhKind = "pr" | "issue" | "run";
 export type GhAction = "list" | "view" | "combined";
@@ -73,12 +74,12 @@ export async function renderGhContract(
   contract: RecordedGitContract,
   options: GhRenderOptions,
 ): Promise<GhRenderResult> {
-  const parsedCommand = extractQueryArg(commandArgv);
   if ((contract.status ?? 0) !== 0 || contract.signal) {
+    const error = classifyWrappedFailure(commandArgv.join(" "), contract.stdout, contract.stderr);
     return {
-      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
+      stdout: renderStructuredError(error),
       stderr: Buffer.from(contract.stderr),
-      status: contract.status,
+      status: error.exitCode ?? 1,
       signal: contract.signal,
     };
   }
