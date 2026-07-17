@@ -13,6 +13,7 @@ export interface OperationalProbeContext {
   readonly queueVisibility?: QueueVisibilityProbeInput;
   readonly focalBranch?: FocalBranchProbeInput;
   readonly configNamespacing?: ConfigNamespacingProbeInput;
+  readonly configCoherence?: ConfigCoherenceProbeInput;
   readonly fleetTruth?: FleetTruthProbeInput;
   readonly claimHygiene?: ClaimHygieneProbeInput;
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
@@ -21,6 +22,28 @@ export interface OperationalProbeContext {
 
 export interface ConfigNamespacingProbeInput {
   readonly rootDevKeys: readonly string[];
+}
+
+export interface ConfigCoherenceProbeInput {
+  readonly path: string;
+  readonly displayPath: string;
+  readonly fileLoaded: boolean;
+  readonly discarded: boolean;
+  readonly parseFailure?: {
+    readonly message: string;
+    readonly line?: number;
+    readonly construct?: string;
+  };
+  readonly rootAccessorCollisions: readonly {
+    readonly key: string;
+    readonly canonicalKey: string;
+  }[];
+  readonly resolved: {
+    readonly trunk: string;
+    readonly gate: string;
+    readonly lock: string;
+  };
+  readonly sourceText?: string;
 }
 
 export type FocalBranchSource = "lock" | "pin" | "trunk";
@@ -141,6 +164,9 @@ export interface OperationalProbeFixDeps {
   }): Promise<FastForwardLocalTargetResult>;
   concedeClaim?(issue: number, body: string): Promise<void>;
   updateIssueBody?(issue: number, body: string): Promise<void>;
+  readText?(path: string): Promise<string | null>;
+  writeText?(path: string, text: string): Promise<void>;
+  showDiffPreview?(finding: OperationalProbeResult, diff: string): Promise<void>;
   relaunchFleet?(request: {
     readonly target?: number;
     readonly runner?: string;

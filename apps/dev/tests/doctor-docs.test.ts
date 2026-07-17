@@ -233,7 +233,7 @@ describe("doctor docs contract", () => {
       "afk.fleet-truth",
       "afk.claim-hygiene",
       "afk.label-body-coherence",
-      "config.dev-root-spelling",
+      "config.coherence",
     ]) {
       expect(skill).toContain(probe);
     }

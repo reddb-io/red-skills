@@ -370,6 +370,41 @@ describe("runBoot precheck short-circuit", () => {
     });
     expect(calls).toEqual([]);
   });
+
+  it("refuses boot on discarded config fallback, naming the config coherence probe", async () => {
+    const { deps, calls } = makeDeps();
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            remoteUrls: [],
+            configCoherence: {
+              path: "/repo/.red/config.yaml",
+              displayPath: ".red/config.yaml",
+              fileLoaded: true,
+              discarded: true,
+              parseFailure: {
+                message: "malformed YAML at line 4: expected a mapping key",
+                line: 4,
+                construct: "expected a mapping key",
+              },
+              rootAccessorCollisions: [],
+              resolved: { trunk: "main", gate: "", lock: "" },
+            },
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "operational-probe",
+      probe: {
+        id: "config.coherence",
+        name: "Config coherence",
+        evidence: expect.stringContaining("line 4: expected a mapping key"),
+      },
+    });
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("runBoot Docs Sweep", () => {

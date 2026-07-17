@@ -507,6 +507,26 @@ export interface RootDevConfigCollision {
   readonly canonicalKey: string;
 }
 
+export interface RootAccessorConfigCollision {
+  readonly key: string;
+  readonly canonicalKey: string;
+}
+
+export interface ConfigParseFailure {
+  readonly message: string;
+  readonly line?: number;
+  readonly construct?: string;
+}
+
+export interface ConfigLoadAudit {
+  readonly path: string;
+  readonly fileLoaded: boolean;
+  readonly discarded: boolean;
+  readonly values: ConfigValues;
+  readonly parseFailure?: ConfigParseFailure;
+  readonly rootAccessorCollisions: readonly RootAccessorConfigCollision[];
+}
+
 const defaultReader: ConfigReader = (path) => {
   try {
     return readFileSync(path, "utf8");
@@ -533,6 +553,89 @@ export function rootDevConfigCollisionsFromText(text: string): RootDevConfigColl
   return rootDevConfigCollisions(parseConfigYaml(text));
 }
 
+function configParseFailure(err: unknown): ConfigParseFailure {
+  const message = err instanceof Error ? err.message : String(err);
+  const match = /^malformed YAML at line (\d+): (.+)$/.exec(message);
+  return match
+    ? { message, line: Number(match[1]), construct: match[2] }
+    : { message };
+}
+
+export function rootAccessorConfigCollisions(values: ConfigValues): RootAccessorConfigCollision[] {
+  return Object.keys(values)
+    .filter((key) => key.startsWith("dev.") || key.startsWith("afk."))
+    .sort()
+    .map((key) => ({
+      key,
+      canonicalKey: key.startsWith("afk.") ? `plugins.dev.${key}` : `plugins.${key}`,
+    }));
+}
+
+export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): ConfigLoadAudit {
+  const read = options.read ?? defaultReader;
+  const warn = options.warn ?? defaultWarn;
+
+  const text = read(path);
+  if (text === undefined) {
+    return {
+      path,
+      fileLoaded: false,
+      discarded: false,
+      values: configDefaults(),
+      rootAccessorCollisions: [],
+    };
+  }
+
+  let parsed: ConfigValues;
+  try {
+    parsed = parseConfigYaml(text);
+  } catch (err) {
+    const failure = configParseFailure(err);
+    warn(`[afk:config] warn: malformed YAML in ${path} (${failure.message}) — using defaults`);
+    return {
+      path,
+      fileLoaded: true,
+      discarded: true,
+      values: configDefaults(),
+      parseFailure: failure,
+      rootAccessorCollisions: [],
+    };
+  }
+
+  const values = configDefaults();
+  const explicitAccessorKeys = new Set<string>();
+  for (const [key, value] of Object.entries(parsed)) {
+    values[key] = value;
+    explicitAccessorKeys.add(key);
+  }
+  const rootAccessorCollisions = rootAccessorConfigCollisions(parsed);
+  for (const collision of rootAccessorCollisions) {
+    if (!collision.key.startsWith("dev.")) continue;
+    warn(
+      `[afk:config] warn: root-level \`${collision.key}\` is off-contract; ` +
+        `use \`${collision.canonicalKey}\` in .red/config.yaml`,
+    );
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    const m = /^plugins\.dev\.(.+)$/.exec(key);
+    if (!m) continue;
+    const rest = m[1]!;
+    const accessorKey = rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`;
+    values[accessorKey] = value;
+    explicitAccessorKeys.add(accessorKey);
+  }
+  if (explicitAccessorKeys.size > 0) {
+    values["\0explicit"] = Array.from(explicitAccessorKeys).join("\x01");
+  }
+  return {
+    path,
+    fileLoaded: true,
+    discarded: false,
+    values,
+    rootAccessorCollisions,
+  };
+}
+
 /**
  * Load config from `path`, merging file overrides onto the v1 defaults.
  *
@@ -543,58 +646,7 @@ export function rootDevConfigCollisionsFromText(text: string): RootDevConfigColl
  *     unknown ones, for forward compatibility).
  */
 export function loadConfig(path: string, options: LoadConfigOptions = {}): ConfigValues {
-  const read = options.read ?? defaultReader;
-  const warn = options.warn ?? defaultWarn;
-
-  const values = configDefaults();
-  const text = read(path);
-  if (text === undefined) return values;
-
-  let parsed: ConfigValues;
-  try {
-    parsed = parseConfigYaml(text);
-  } catch (err) {
-    const detail = err instanceof MalformedConfigError ? ` (${err.message})` : "";
-    warn(`[afk:config] warn: malformed YAML in ${path}${detail} — using defaults`);
-    return configDefaults();
-  }
-
-  // Copy raw parsed keys (forward compatibility), then fold the namespaced
-  // `plugins.dev.*` block down to the accessor keys so the new location wins over
-  // the legacy top-level one (ADR 0042).
-  // Track which accessor keys the user explicitly set — needed by resolveTier to
-  // distinguish "user pinned a tier to the same value as the default" (should win
-  // over legacy scalars) from "tier is just the CONFIG_DEFAULTS value" (should fall
-  // through to base/scalar fallbacks). Stored as a null-byte-keyed side-channel
-  // that can never originate from YAML (null bytes are invalid YAML key chars).
-  const explicitAccessorKeys = new Set<string>();
-  for (const [key, value] of Object.entries(parsed)) {
-    values[key] = value;
-    explicitAccessorKeys.add(key);
-  }
-  for (const collision of rootDevConfigCollisions(parsed)) {
-    warn(
-      `[afk:config] warn: root-level \`${collision.key}\` is off-contract; ` +
-        `use \`${collision.canonicalKey}\` in .red/config.yaml`,
-    );
-  }
-  for (const [key, value] of Object.entries(parsed)) {
-    const m = /^plugins\.dev\.(.+)$/.exec(key);
-    if (!m) continue;
-    const rest = m[1]!;
-    // The dev plugin's AFK settings flatten to the bare `afk.*` accessor
-    // (historical, shared with the legacy top-level `afk:` block); every other
-    // dev-plugin key keeps the `dev.*` accessor — so
-    // `plugins.dev.lock.primary-branch` folds to `dev.lock.primary-branch`, not a
-    // bare `lock.primary-branch` the loader never reads.
-    const accessorKey = rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`;
-    values[accessorKey] = value;
-    explicitAccessorKeys.add(accessorKey);
-  }
-  if (explicitAccessorKeys.size > 0) {
-    values["\0explicit"] = Array.from(explicitAccessorKeys).join("\x01");
-  }
-  return values;
+  return auditConfigLoad(path, options).values;
 }
 
 /** Read a dotted key. Empty string when unset — same contract as `config_get`. */

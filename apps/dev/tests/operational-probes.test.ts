@@ -54,29 +54,132 @@ describe("operational probe registry", () => {
       { id: "afk.fleet-truth", name: "AFK fleet truth", verdict: "ok" },
       { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
       { id: "afk.label-body-coherence", name: "AFK label/body coherence", verdict: "ok" },
-      { id: "config.dev-root-spelling", name: "Config dev-plugin namespacing", verdict: "ok" },
+      { id: "config.coherence", name: "Config coherence", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
     expect(toon).not.toContain("{\n");
     expect(toon).not.toContain('": "');
   });
 
-  it("surfaces root-level dev.* config spellings with the canonical plugins.dev.* fix", async () => {
+  it("surfaces malformed config fallback with the offending line and construct", async () => {
     const report = await runOperationalProbes({
       remoteUrls: [],
-      configNamespacing: { rootDevKeys: ["dev.trunk"] },
+      configCoherence: {
+        path: "/repo/.red/config.yaml",
+        displayPath: ".red/config.yaml",
+        fileLoaded: true,
+        discarded: true,
+        parseFailure: {
+          message: "malformed YAML at line 3: unsupported folded block scalar",
+          line: 3,
+          construct: "unsupported folded block scalar",
+        },
+        rootAccessorCollisions: [],
+        resolved: { trunk: "main", gate: "", lock: "" },
+      },
     });
 
     expect(report.findings).toEqual([
       expect.objectContaining({
-        id: "config.dev-root-spelling",
-        name: "Config dev-plugin namespacing",
+        id: "config.coherence",
+        name: "Config coherence",
         verdict: "red",
-        evidence: expect.stringContaining("dev.trunk"),
-        canonicalFix: expect.stringContaining("plugins.dev.trunk"),
+        evidence: expect.stringContaining("line 3: unsupported folded block scalar"),
+        canonicalFix: expect.stringContaining("boot must not continue on default trunk"),
       }),
     ]);
-    expect(report.findings[0]?.canonicalFix).toContain("plugins.dev.*");
+  });
+
+  it("surfaces root-level accessor spellings with canonical relocation and diff preview fix", async () => {
+    const sourceText = "dev:\n  trunk: develop\nafk:\n  default_runner: codex\n";
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      configCoherence: {
+        path: "/repo/.red/config.yaml",
+        displayPath: ".red/config.yaml",
+        fileLoaded: true,
+        discarded: false,
+        rootAccessorCollisions: [
+          { key: "afk.default_runner", canonicalKey: "plugins.dev.afk.default_runner" },
+          { key: "dev.trunk", canonicalKey: "plugins.dev.trunk" },
+        ],
+        resolved: { trunk: "develop", gate: "", lock: "" },
+        sourceText,
+      },
+    });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        id: "config.coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("canonical relocation plugins.dev.afk.default_runner, plugins.dev.trunk"),
+        canonicalFix: expect.stringContaining("Relocate afk.default_runner, dev.trunk"),
+        fix: { gate: "confirm", description: "Preview and apply canonical config relocation." },
+      }),
+    ]);
+
+    const preview = vi.fn(async () => {});
+    const writeText = vi.fn(async () => {});
+    const fixes = await applyOperationalProbeFixes(report, {
+      readText: async () => sourceText,
+      showDiffPreview: preview,
+      confirm: async () => false,
+      writeText,
+    });
+
+    expect(preview).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("+plugins:"));
+    expect(fixes).toEqual([{ probeId: "config.coherence", status: "declined", evidence: "operator declined fix" }]);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("applies the confirmed config relocation without changing unrelated lines", async () => {
+    const sourceText = "# keep\n\ndev:\n  trunk: develop\nnotes:\n  owner: team\n";
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      configCoherence: {
+        path: "/repo/.red/config.yaml",
+        displayPath: ".red/config.yaml",
+        fileLoaded: true,
+        discarded: false,
+        rootAccessorCollisions: [{ key: "dev.trunk", canonicalKey: "plugins.dev.trunk" }],
+        resolved: { trunk: "develop", gate: "", lock: "" },
+        sourceText,
+      },
+    });
+    const writes: string[] = [];
+
+    const fixes = await applyOperationalProbeFixes(report, {
+      readText: async () => sourceText,
+      showDiffPreview: async () => {},
+      confirm: async () => true,
+      writeText: async (_path, text) => {
+        writes.push(text);
+      },
+    });
+
+    expect(fixes).toEqual([
+      { probeId: "config.coherence", status: "applied", evidence: "relocated root-level config under plugins.dev" },
+    ]);
+    expect(writes[0]).toBe("# keep\n\nnotes:\n  owner: team\n\nplugins:\n  dev:\n    trunk: develop\n");
+  });
+
+  it("reports healthy canonical config values as green", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      configCoherence: {
+        path: "/repo/.red/config.yaml",
+        displayPath: ".red/config.yaml",
+        fileLoaded: true,
+        discarded: false,
+        rootAccessorCollisions: [],
+        resolved: { trunk: "develop", gate: "true", lock: "release" },
+      },
+    });
+
+    expect(report.findings).toEqual([]);
+    expect(report.probes.find((probe) => probe.id === "config.coherence")?.evidence).toContain(
+      "resolved trunk=develop gate=true lock=release; every canonical key resolved",
+    );
   });
 
   it("refuses a gated fix without applying any remote changes", async () => {
