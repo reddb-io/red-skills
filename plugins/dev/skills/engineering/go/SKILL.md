@@ -68,8 +68,8 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 **What standard `/go` does, in order (all reused from the AFK engine — not a parallel path):**
 
 1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it. The issue is minted only after Task+DoD approval; its body carries the approved Task, the approved semantic Definition of Done, and the machine gate reference.
-2. **Spins a dedicated namespaced worker** under `.red/tmp/go-workers/` (separate from `/afk`'s `.red/tmp/workers/`) via `RED_AFK_WORKERS_NAMESPACE=go-workers` — no collision with the fleet.
-3. **Processes the issue in an isolated worktree**, stamping `origin=go` on the worker so the monitor/statusline show it as a distinct source.
+2. **Spins a castle worker** under the shared `.red/tmp/workers/` root. It does not create a separate worker namespace; the worker state carries `origin=go` and `current.kind=go`, and observability surfaces use those stamps to keep `/go` distinct from the `/afk` fleet.
+3. **Processes the issue in an isolated worktree** created by the castle engine, using the stamped kind as provenance for monitor/statusline display.
 4. **Runs the shared validation gate** with the **interactive** (pause/ask) escalation sink: mechanical findings auto-apply + commit; an intent finding pauses and asks you to approve / fix / skip.
 5. **Runs bounded post-DONE machine-gate correction** for `/go`: if feedback/backpressure fails after the inner agent emits DONE, the engine re-seeds the agent with the failing validation tail under a small `RED_GO_VERIFY_RETRIES` cap, then deterministically parks to `ready-for-human` / `blocked:validation` when the cap is exhausted.
 6. **Brings back a PR**; the disposable issue **auto-closes on merge** (the engine's PR body carries `Closes #N`).
@@ -77,7 +77,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 **What `--scout` does differently:**
 
 1. **Mints a disposable issue** in the isolated `lane:scout` lane (never `ready-for-agent` or `lane:go`).
-2. **Spins a dedicated scout worker** under `.red/tmp/scout-workers/` (`origin=scout`, `run_mode=scout`).
+2. **Spins a castle worker** under the shared `.red/tmp/workers/` root with `origin=scout`, `current.kind=scout`, and `run_mode=scout`.
 3. **Runs the agent in read-only mode** — the SCOUT_EXIT_PROTOCOL explicitly forbids commits. `continuousPush` is disabled so no branch is pushed during the run.
 4. **Skips push / feedback gate / PR / landing entirely** — the engine enforces this at the `run_mode=scout` check in `process-issue.ts`.
 5. **Posts the agent's markdown report** as a comment on the disposable issue, then closes it. Nothing lands on main.
@@ -87,7 +87,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 - ✅ **Do** pass the demand/question as ONE quoted argument.
 - ✅ **Do** get Task+DoD approval before standard `/go`, then pass the approved DoD with `--dod`.
 - ✅ **Do** use `--scout` when you want an audit, investigation, or read-only analysis — not a code change.
-- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same worker / monitor / heartbeat / envelope path, only namespaced and mode-gated.
+- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, distinguished by worker kind and mode gates.
 - ✅ **Do** run it whether or not a fleet is up — `/go` is a self-sufficient front door.
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.
@@ -105,22 +105,22 @@ For failure-state playbooks, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 | Tier | Input | Artifact | Worker | Gate sink | When to use |
 | --- | --- | --- | --- | --- | --- |
 | `/goal` | unstructured directive | none | none | n/a | Conversational steering; no artifact |
-| **`/go`** | **one concrete, untracked demand** | **disposable `lane:go` issue + PR** | **dedicated, `go-workers/`** | **interactive (pause/ask)** | **Ad-hoc only — never for tracked issues** |
-| **`/go --scout`** | **read-only question** | **report comment** | **dedicated, `scout-workers/`** | **none (read-only path)** | Investigation without code changes |
-| **`/afk` (default)** | **triaged backlog (tracked issues)** | **Spec → issues** | **fleet, `workers/`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
+| **`/go`** | **one concrete, untracked demand** | **disposable `lane:go` issue + PR** | **castle worker, `current.kind=go`** | **interactive (pause/ask)** | **Ad-hoc only — never for tracked issues** |
+| **`/go --scout`** | **read-only question** | **report comment** | **castle worker, `current.kind=scout`** | **none (read-only path)** | Investigation without code changes |
+| **`/afk` (default)** | **triaged backlog (tracked issues)** | **Spec → issues** | **castle fleet, `current.kind=afk`** | **headless (park to `ready-for-human`)** | **Modus operandi — all tracked work** |
 
 ## Scout isolation, concretely
 
-- **Lane:** the issue carries `lane:scout`, not `ready-for-agent` or `lane:go`. Only the scout worker lists it; the fleet and `/go` workers never see it.
-- **Worker root:** `RED_AFK_WORKERS_NAMESPACE=scout-workers` redirects to `.red/tmp/scout-workers/…`.
-- **Provenance:** `--origin scout --run-mode scout` stamp the worker state. The `run_mode=scout` is the enforcement point — `process-issue.ts` short-circuits to the report path as soon as the agent emits DONE, before any push/PR/merge code is reached.
+- **Lane:** the issue carries `lane:scout`, not `ready-for-agent` or `lane:go`. Only a scout-kind worker lists it; the fleet and `/go` workers never see it.
+- **Worker root:** the castle engine writes the worker under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/scout-workers/…` entries may still appear in observability until they age out, but new scout runs do not use that root.
+- **Provenance:** `--origin scout --run-mode scout` stamp the worker state with `origin=scout` and `current.kind=scout`. The `run_mode=scout` is the enforcement point — `process-issue.ts` short-circuits to the report path as soon as the agent emits DONE, before any push/PR/merge code is reached.
 - **No-mutation guarantee:** `continuousPush: false` + skip `pushAttempt` + skip `doLanding` + skip `openReviewPr`. Enforced at the code level, not by convention.
 
 ## Standard /go isolation
 
 - **Lane:** the issue carries `lane:go`, not `ready-for-agent`. The fleet lists `ready-for-agent`; the `/go` worker lists `lane:go` (`--lane lane:go`). The two pools never overlap.
-- **Worker root:** `RED_AFK_WORKERS_NAMESPACE=go-workers` redirects the worker dir + worktree to `.red/tmp/go-workers/…`.
-- **Provenance:** `--origin go` is stamped once on the worker state and never mutated.
+- **Worker root:** the castle engine writes the worker and worktree under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/go-workers/…` entries may still appear in observability until they age out, but new `/go` runs do not use that root.
+- **Provenance:** `--origin go` is stamped once on the worker state as `origin=go` and `current.kind=go`, then never mutated.
 
 ## Gate behaviour (standard /go — shared with `/afk`, ADR 0081)
 
