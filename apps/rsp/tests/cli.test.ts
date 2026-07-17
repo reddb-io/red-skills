@@ -1921,7 +1921,10 @@ describe("rsp cli", () => {
     const degradations = await readTelemetryRecords(storeUri, RSP_TELEMETRY_DEGRADATIONS_COLLECTION);
     expect(degradations).toContainEqual(expect.objectContaining({
       command: "git",
-      reason: "wrapper failed",
+      reason: "wrapper-crash",
+      wrapper_family: "git",
+      wrapper_exit_code: 1,
+      stderr_head: "unsupported git subcommand:",
     }));
 
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], { RED_SKILLS_CACHE_DIR: cacheDir });
@@ -1942,7 +1945,11 @@ describe("rsp cli", () => {
     expect(statsText).toContain("health:\n");
     expect(statsText).toContain("  degradations: 1\n");
     expect(statsText).toContain("  degradation_rate: 0.3333\n");
-    expect(statsText).toContain("  most_recent_degradation_reason: wrapper failed\n");
+    expect(statsText).toContain("  most_recent_degradation_reason: wrapper-crash\n");
+    expect(statsText).toContain("  degradations_by_reason:\n    wrapper-crash: 1\n");
+    expect(statsText).toContain("  wrapper_failures_by_family:\n    git: 1\n");
+    expect(statsText).toContain("  recent_wrapper_failures:\n");
+    expect(statsText).toContain("family: git command: git reason: wrapper-crash exit_code: 1 stderr_head: unsupported git subcommand:");
     expect(statsText).toContain("latency:\n");
     expect(statsText).toMatch(/  wrapper_ms_p50: [0-9.]+\n/);
     expect(statsText).toMatch(/  wrapper_ms_p95: [0-9.]+\n/);
