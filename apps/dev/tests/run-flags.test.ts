@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunFlags, RunFlagError, deriveActivity } from "../src/commands/run.js";
+import { parseRunFlags, RunFlagError, deriveActivity, resolveRunDispatchIdentity } from "../src/commands/run.js";
 import type { AgentStreamEvent } from "../src/core/execution.js";
 
 describe("deriveActivity (native-path monitor stage detection)", () => {
@@ -207,5 +207,30 @@ describe("parseRunFlags", () => {
   it("parses --force as a boolean, defaulting to false (#1027)", () => {
     expect(parseRunFlags(["--force"]).force).toBe(true);
     expect(parseRunFlags([]).force).toBe(false);
+  });
+});
+
+describe("resolveRunDispatchIdentity", () => {
+  it("stamps bare /afk run as the castle afk worker kind and origin", () => {
+    expect(resolveRunDispatchIdentity(parseRunFlags([]))).toEqual({
+      origin: "afk",
+      kind: "afk",
+      lane: undefined,
+    });
+  });
+
+  it("preserves namespaced dispatch identity for /go and scout", () => {
+    expect(
+      resolveRunDispatchIdentity(parseRunFlags(["--origin", "go", "--kind", "go", "--lane", "lane:go"])),
+    ).toEqual({
+      origin: "go",
+      kind: "go",
+      lane: "lane:go",
+    });
+    expect(resolveRunDispatchIdentity(parseRunFlags(["--origin", "scout", "--lane", "lane:scout"]))).toEqual({
+      origin: "scout",
+      kind: "scout",
+      lane: "lane:scout",
+    });
   });
 });
