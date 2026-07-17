@@ -158,6 +158,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(`${encodeSnapshotToon(status as unknown as JsonObject)}\n`);
     return 0;
   }
+  if (args.command === "gh-api-json") {
+    const { readGhConditionalJson } = await import("./gh-conditional.js");
+    const request = parseGhApiJsonArgs(args.positional);
+    if (!request) {
+      process.stderr.write("usage: rsp gh-api-json <path> [-f name=value ...]\n");
+      return 2;
+    }
+    const response = await readGhConditionalJson({
+      path: request.path,
+      params: request.params,
+      cwd: process.cwd(),
+      telemetryRoot: residentPaths.rootDir,
+      command: `rsp ${args.positional.join(" ")}`,
+    });
+    process.stdout.write(response.stdout);
+    if (response.stderr) process.stderr.write(`${response.stderr}\n`);
+    return response.status;
+  }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await runColdWrappedCommand(args, config, residentPaths.rootDir);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
@@ -872,7 +890,7 @@ function rspDisabledReason(): string {
 
 function isWrapperCommand(command: string | undefined): boolean {
   return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" ||
-    command === "exec" || command === "proxy";
+    command === "exec" || command === "proxy" || command === "gh-api-json";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
@@ -965,6 +983,21 @@ function parseArgs(argv: string[]): ParsedArgs {
   return out;
 }
 
+function parseGhApiJsonArgs(argv: readonly string[]): { path: string; params: Record<string, string> } | null {
+  const path = argv[1];
+  if (!path) return null;
+  const params: Record<string, string> = {};
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg !== "-f" && arg !== "-F") continue;
+    const assignment = argv[++i] ?? "";
+    const separator = assignment.indexOf("=");
+    if (separator <= 0) continue;
+    params[assignment.slice(0, separator)] = assignment.slice(separator + 1);
+  }
+  return { path, params };
+}
+
 function sinceDays(args: readonly string[], fallback: number): number {
   const raw = valueAfter(args, "--since") ?? args.find((arg) => arg.startsWith("--since="))?.slice("--since=".length);
   if (!raw) return fallback;
@@ -1029,6 +1062,7 @@ function renderStats(
     `  contributed: ${telemetry.decisions.contributed}`,
     `  passed: ${telemetry.decisions.passed}`,
     `  failed_open: ${telemetry.decisions.failed_open}`,
+    `  quota_free_saved_units: ${telemetry.decisions.quota_free_saved_units}`,
     `  contribution_rate: ${formatRate(telemetry.decisions.contribution_rate)}`,
     "  top_pass_reasons:",
     ...renderReasons(telemetry.decisions.top_pass_reasons.slice(0, full ? 10 : 3)),
@@ -1135,6 +1169,7 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       contributed: 0,
       passed: 0,
       failed_open: 0,
+      quota_free_saved_units: 0,
       contribution_rate: 0,
       top_pass_reasons: [],
     },
