@@ -83,7 +83,7 @@ async function seedFreshCache(root: string, queue: number, human: number): Promi
   const dir = join(root, ".red", "state", "statusline");
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
-  await writeFile(join(dir, "statusline-cache.json"), JSON.stringify({ queue, human, ts }), "utf8");
+  await writeFile(join(dir, "statusline-cache.toon"), encode({ queue, human, ts }), "utf8");
 }
 
 /** Pre-seed a FRESH repo-stats cache so collectStatuslineRepo never calls gh. */
@@ -97,8 +97,8 @@ async function seedFreshRepoCache(
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
   await writeFile(
-    join(dir, "statusline-repo-cache.json"),
-    JSON.stringify({ openPrs, todayPrs, openIssues, ts }),
+    join(dir, "statusline-repo-cache.toon"),
+    encode({ openPrs, todayPrs, openIssues, ts }),
     "utf8",
   );
 }
@@ -624,7 +624,7 @@ describe("statusline command — rendered line", () => {
     expect(text).toContain("loc=+1");
     expect(text).not.toContain("loc=+2");
     const cache = decode(
-      await readFile(join(root, ".red", "state", "statusline", "statusline-repo-cache.json"), "utf8"),
+      await readFile(join(root, ".red", "state", "statusline", "statusline-repo-cache.toon"), "utf8"),
     ) as {
       baseRef: string;
       localAdded: number;
@@ -922,12 +922,12 @@ describe("statusline command — rendered line", () => {
     // non-zero values.  The command must attempt a refresh and return exit 0
     // even when no workers are live (regression: the old workers<=0 guard fired
     // BEFORE the cache block and prevented any refresh).
-    const dir = join(root, ".red", "tmp");
+    const dir = join(root, ".red", "state", "statusline");
     await mkdir(dir, { recursive: true });
     const staleTs = Math.floor(Date.now() / 1000) - 600;
     await writeFile(
-      join(dir, "statusline-cache.json"),
-      JSON.stringify({ queue: 5, human: 2, ts: staleTs }),
+      join(dir, "statusline-cache.toon"),
+      encode({ queue: 5, human: 2, ts: staleTs }),
       "utf8",
     );
     await seedFreshRepoCache(root, 0, 0);
@@ -943,8 +943,8 @@ describe("statusline command — rendered line", () => {
 
     // The cache file must still exist (not deleted by refresh failure) —
     // refresh is fire-and-attempt, fail-open.
-    const cacheRaw = await readFile(join(dir, "statusline-cache.json"), "utf8");
-    const cache = JSON.parse(cacheRaw) as { ts: number };
+    const cacheRaw = await readFile(join(dir, "statusline-cache.toon"), "utf8");
+    const cache = decode(cacheRaw) as { ts: number };
     // Either a fresh ts (refresh succeeded) or the old stale ts (gh failed —
     // fail-open). Either way the command ran past the stale check without
     // crashing, proving the workers<=0 gate does not short-circuit the refresh.

@@ -42,13 +42,26 @@ describe("migrateLegacyDevPaths", () => {
     const { moved } = await migrateLegacyDevPaths(root);
 
     expect(await readFile(join(afkStateDir(root), "afk-supervisor.pid"), "utf8")).toBe("123");
-    expect(await readFile(join(statuslineStateDir(root), "statusline-cache.json"), "utf8")).toBe("{}");
-    expect(await readFile(join(afkStateDir(root), "afk-supervisor.log.jsonl"), "utf8")).toBe("{}");
+    expect(await readFile(join(statuslineStateDir(root), "statusline-cache.toon"), "utf8")).toBe("{}");
+    expect(await readFile(join(afkStateDir(root), "afk-supervisor.log.toonl"), "utf8")).toBe("{}");
     expect(await readFile(join(afkStateDir(root), "runner-circuit", "claude.json"), "utf8")).toBe("{}");
     // Legacy copies are gone (moved, not copied).
     expect(await exists(join(tmp, "afk-supervisor.pid"))).toBe(false);
     expect(moved).toContain("afk-supervisor.pid");
     expect(moved).toContain("afk-supervisor.log.jsonl");
+  });
+
+  it("renames legacy statusline state cache files to .toon", async () => {
+    const root = await freshRoot();
+    const statusline = statuslineStateDir(root);
+    await mkdir(statusline, { recursive: true });
+    await writeFile(join(statusline, "statusline-cache.json"), "cache", "utf8");
+
+    const { moved } = await migrateLegacyDevPaths(root);
+
+    expect(await readFile(join(statusline, "statusline-cache.toon"), "utf8")).toBe("cache");
+    expect(await exists(join(statusline, "statusline-cache.json"))).toBe(false);
+    expect(moved).toContain("state/statusline-cache.json");
   });
 
   it("is a no-op on a second boot (idempotent)", async () => {

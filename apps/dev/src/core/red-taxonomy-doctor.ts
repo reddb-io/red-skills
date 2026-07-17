@@ -72,8 +72,8 @@ const DURABLE_TMP_TARGETS = new Map<string, { target: string; owner: string }>([
   ["afk-supervisor.restarts.json", { target: ".red/state/afk/afk-supervisor.restarts.json", owner: "dev/AFK" }],
   ["monitor-log-cursors.json", { target: ".red/state/afk/monitor-log-cursors.json", owner: "dev/AFK" }],
   ["runner-circuit", { target: ".red/state/afk/runner-circuit", owner: "dev/AFK" }],
-  ["statusline-cache.json", { target: ".red/state/statusline/statusline-cache.json", owner: "dev/statusline" }],
-  ["statusline-repo-cache.json", { target: ".red/state/statusline/statusline-repo-cache.json", owner: "dev/statusline" }],
+  ["statusline-cache.json", { target: ".red/state/statusline/statusline-cache.toon", owner: "dev/statusline" }],
+  ["statusline-repo-cache.json", { target: ".red/state/statusline/statusline-repo-cache.toon", owner: "dev/statusline" }],
   ["branch-lock.yaml", { target: ".red/state/branch-lock.yaml", owner: "branch lock" }],
   ["red-skills.rdb", { target: ".red/state/red-skills.rdb", owner: "shared Repo store" }],
 ]);

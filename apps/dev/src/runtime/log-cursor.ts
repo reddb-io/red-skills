@@ -103,7 +103,7 @@ export async function countLogLinesSinceCursor(
   } catch {
     return null;
   }
-  if (path.endsWith(".jsonl")) {
+  if (path.endsWith(".toonl") || path.endsWith(".jsonl")) {
     const text = await readFile(path, "utf8");
     let parsed: ReturnType<typeof parseLaneSinceCursor>;
     let reset = previous === undefined || size < previous.size || previous.toonl === undefined;

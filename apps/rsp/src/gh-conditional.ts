@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION } from "./telemetry.js";
 
 export interface GhConditionalRequest {
@@ -35,7 +36,8 @@ interface GhEtagCacheEntry {
   updated_at: string;
 }
 
-const CACHE_FILE = "gh-etag-cache.json";
+const CACHE_FILE = "gh-etag-cache.toon";
+const LEGACY_CACHE_FILE = "gh-etag-cache.json";
 
 export async function readGhConditionalJson(request: GhConditionalRequest): Promise<GhConditionalResult> {
   const cwd = request.cwd ?? process.cwd();
@@ -154,10 +156,12 @@ function parseIncludedResponse(raw: string): { statusCode: number; headers: Map<
 }
 
 async function readCache(root: string): Promise<GhEtagCacheDocument> {
-  try {
-    const parsed = JSON.parse(await readFile(cachePath(root), "utf8")) as unknown;
-    if (isCacheDocument(parsed)) return parsed;
-  } catch {}
+  for (const path of [cachePath(root), legacyCachePath(root)]) {
+    try {
+      const parsed = decodeCacheDocument(await readFile(path, "utf8"));
+      if (isCacheDocument(parsed)) return parsed;
+    } catch {}
+  }
   return { version: 1, entries: {} };
 }
 
@@ -165,12 +169,24 @@ async function writeCache(root: string, cache: GhEtagCacheDocument): Promise<voi
   const path = cachePath(root);
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(cache)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(tmp, `${encode(cache as unknown as JsonValue)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
 
 function cachePath(root: string): string {
   return join(rspStateDir(root), CACHE_FILE);
+}
+
+function legacyCachePath(root: string): string {
+  return join(rspStateDir(root), LEGACY_CACHE_FILE);
+}
+
+function decodeCacheDocument(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return decode(raw);
+  }
 }
 
 async function recordConditionalTelemetry(root: string, command: string, quotaFree: boolean): Promise<void> {

@@ -34,19 +34,27 @@ describe("planDevDurablePathMigration", () => {
   });
 
   it("relocates statusline caches into the statusline state lane", () => {
-    expect(byId.get("statusline-cache.json")?.current).toBe("/repo/.red/state/statusline/statusline-cache.json");
+    expect(byId.get("statusline-cache.json")?.current).toBe("/repo/.red/state/statusline/statusline-cache.toon");
     expect(byId.get("statusline-repo-cache.json")?.current).toBe(
-      "/repo/.red/state/statusline/statusline-repo-cache.json",
+      "/repo/.red/state/statusline/statusline-repo-cache.toon",
     );
+    expect(byId.get("state/statusline-cache.json")).toMatchObject({
+      legacy: "/repo/.red/state/statusline/statusline-cache.json",
+      current: "/repo/.red/state/statusline/statusline-cache.toon",
+    });
+    expect(byId.get("state/statusline-repo-cache.json")).toMatchObject({
+      legacy: "/repo/.red/state/statusline/statusline-repo-cache.json",
+      current: "/repo/.red/state/statusline/statusline-repo-cache.toon",
+    });
   });
 
   it("does not migrate the branch lock (its shell writer still owns tmp)", () => {
     expect(byId.has("branch-lock.yaml")).toBe(false);
   });
 
-  it("never sources from outside .red/tmp nor targets outside .red/state", () => {
+  it("never sources from outside .red/tmp or .red/state nor targets outside .red/state", () => {
     for (const entry of plan) {
-      expect(entry.legacy.startsWith("/repo/.red/tmp/")).toBe(true);
+      expect(entry.legacy.startsWith("/repo/.red/tmp/") || entry.legacy.startsWith("/repo/.red/state/")).toBe(true);
       expect(entry.current.startsWith("/repo/.red/state")).toBe(true);
     }
   });

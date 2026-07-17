@@ -143,7 +143,7 @@ export function afkPaths(root: string): AfkPaths {
     workersRoot: rp.workersDir(root),
     historyPath: join(state, "afk-history.toonl"),
     fleetStatePath: join(afkState, "afk-supervisor.state.json"),
-    fleetFirehosePath: join(afkState, "afk-supervisor.log.jsonl"),
+    fleetFirehosePath: join(afkState, "afk-supervisor.log.toonl"),
     monitorLogCursorPath: join(afkState, "monitor-log-cursors.json"),
     supervisorPidPath: join(afkState, "afk-supervisor.pid"),
     supervisorStopPath: join(afkState, "afk-supervisor.stop"),
@@ -151,8 +151,8 @@ export function afkPaths(root: string): AfkPaths {
     supervisorResizePath: join(afkState, "afk-supervisor.resize.json"),
     supervisorRestartsPath: join(afkState, "afk-supervisor.restarts.json"),
     runnerCircuitDir: join(afkState, "runner-circuit"),
-    statuslineCachePath: join(statusline, "statusline-cache.json"),
-    statuslineRepoCachePath: join(statusline, "statusline-repo-cache.json"),
+    statuslineCachePath: join(statusline, "statusline-cache.toon"),
+    statuslineRepoCachePath: join(statusline, "statusline-repo-cache.toon"),
     branchLockPath: rp.branchLockFile(root),
     landLockPath: join(tmp, "afk-land.lock"),
     claimsDir: rp.claimsDir(root),
@@ -1039,7 +1039,7 @@ export function startDetachedStatuslineCountRefresh(
  *
  * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
  * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
- * `.red/state/statusline/statusline-cache.json`. The cache refreshes on every stale or cold
+ * `.red/state/statusline/statusline-cache.toon`. The cache refreshes on every stale or cold
  * render — awaited with a bounded deadline so a hanging gh CLI cannot block the
  * statusline process indefinitely. The refresh runs even when there are no live
  * workers so the queue/human badges stay current while the fleet is idle.
@@ -1350,7 +1350,7 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
  * resolved base ref)
  * measured at the project root. All three are EXPENSIVE FETCHED numbers (gh/git
  * subprocesses), so all three are cached together for {@link
- * STATUSLINE_CACHE_TTL_S} seconds in `.red/state/statusline/statusline-repo-cache.json`: a
+ * STATUSLINE_CACHE_TTL_S} seconds in `.red/state/statusline/statusline-repo-cache.toon`: a
  * fresh render serves them WITHOUT any gh/git subprocess; a cold/stale render
  * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
  * field is fail-open: any gh/git error leaves it 0.

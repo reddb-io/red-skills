@@ -33,6 +33,11 @@ import type { FleetHeartbeat } from "../src/core/supervisor.js";
 
 /** The single sanctioned non-TOON file the stack writes (ADR 0097). */
 const SOLE_NON_TOON_FILE = ".red/config.yaml";
+const LEGACY_STATE_TOON_NAME_EXEMPTIONS = new Set([
+  // Deleted by the #1920/#1921 castle boot-migration chain; issue #2039
+  // explicitly excludes renaming this dual-write mirror in this slice.
+  "afk-supervisor.state.json",
+]);
 
 /** Assert a snapshot document's bytes are TOON, never raw JSON. Raw JSON of an
  * object/non-empty array starts with `{`/`[` and round-trips through
@@ -136,6 +141,24 @@ describe("castle-engine write-surface TOON uniformity", () => {
       expect(name.endsWith(".toon") || name.endsWith(".toonl")).toBe(true);
       expect(name.endsWith(".json") || name.endsWith(".jsonl")).toBe(false);
     }
+  });
+
+  it("state-tier TOON/TOONL surfaces use honest extensions", () => {
+    const paths = afkPaths(join(tmpdir(), "repo"));
+    const surfaces = [
+      paths.historyPath,
+      paths.fleetFirehosePath,
+      paths.statuslineCachePath,
+      paths.statuslineRepoCachePath,
+    ];
+    for (const path of surfaces) {
+      expect(path.endsWith(".toon") || path.endsWith(".toonl")).toBe(true);
+      expect(path.endsWith(".json") || path.endsWith(".jsonl")).toBe(false);
+    }
+  });
+
+  it("documents the only legacy state-tier TOON snapshot name exemption", () => {
+    expect(LEGACY_STATE_TOON_NAME_EXEMPTIONS).toEqual(new Set(["afk-supervisor.state.json"]));
   });
 
   it("documents .red/config.yaml as the single sanctioned non-TOON file", () => {

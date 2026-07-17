@@ -79,7 +79,7 @@ describe("shared TOON migration registry", () => {
           id: "dev.supervisor-firehose",
           plugin: "dev",
           legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
-          toonPath: ".red/tmp/afk-supervisor.log.jsonl",
+          toonPath: ".red/state/afk/afk-supervisor.log.toonl",
           kind: "toonl",
           migration: "sniff-read",
         }),
@@ -101,14 +101,14 @@ describe("shared TOON migration registry", () => {
           id: "dev.statusline-count-cache",
           plugin: "dev",
           legacyPath: ".red/tmp/statusline-cache.json",
-          toonPath: ".red/tmp/statusline-cache.json",
+          toonPath: ".red/state/statusline/statusline-cache.toon",
           kind: "toon",
         }),
         expect.objectContaining({
           id: "dev.statusline-repo-cache",
           plugin: "dev",
           legacyPath: ".red/tmp/statusline-repo-cache.json",
-          toonPath: ".red/tmp/statusline-repo-cache.json",
+          toonPath: ".red/state/statusline/statusline-repo-cache.toon",
           kind: "toon",
         }),
         expect.objectContaining({
@@ -220,6 +220,7 @@ describe("shared TOON migration registry", () => {
     expect(first.status).toBe("converted");
     expect(first.converted).toEqual(["dev.afk-history"]);
     expect(afterFirst.split("\n")[0]).toBe("[2]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:");
+    await expect(access(join(root, ".red/state/afk-history.jsonl"))).rejects.toThrow();
     expect(second.status).toBe("noop");
     expect(second.skipped).toEqual(["dev.afk-history"]);
     expect(await readFile(toonPath, "utf8")).toBe(afterFirst);
@@ -383,8 +384,8 @@ describe("shared TOON migration registry", () => {
       ]),
     );
     const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.json"), "utf8");
-    const countRaw = await readFile(join(root, ".red/tmp/statusline-cache.json"), "utf8");
-    const repoRaw = await readFile(join(root, ".red/tmp/statusline-repo-cache.json"), "utf8");
+    const countRaw = await readFile(join(root, ".red/state/statusline/statusline-cache.toon"), "utf8");
+    const repoRaw = await readFile(join(root, ".red/state/statusline/statusline-repo-cache.toon"), "utf8");
     const residentRaw = await readFile(join(root, ".red/state/rsp/rsp-resident.pid.json"), "utf8");
     const summaryRaw = await readFile(join(root, ".red/state/rsp/rsp-status-summary.json"), "utf8");
     const waitRaw = await readFile(join(root, ".red/tmp/waits/wait-a.json"), "utf8");

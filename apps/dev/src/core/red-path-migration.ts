@@ -1,5 +1,5 @@
 // core/red-path-migration.ts — the one-time, idempotent boot migration that
-// relocates dev-owned DURABLE artifacts from their legacy `.red/tmp/*` homes to
+// relocates dev-owned DURABLE artifacts from their legacy homes to
 // the ADR 0098 state-tier lanes (`.red/state/afk`, `.red/state/statusline`, the
 // state-root branch lock). Pure: the planner only BUILDS paths from the shared
 // path authority (`@reddb-io/shared/red-paths`); the runtime executor
@@ -52,6 +52,18 @@ export function planDevDurablePathMigration(root: string): DevPathMigrationEntry
     current: join(dest, name),
     kind: "file",
   });
+  const renamedFile = (legacyName: string, dest: string, currentName: string): DevPathMigrationEntry => ({
+    id: legacyName,
+    legacy: join(tmp, legacyName),
+    current: join(dest, currentName),
+    kind: "file",
+  });
+  const fileFrom = (id: string, legacy: string, current: string): DevPathMigrationEntry => ({
+    id,
+    legacy,
+    current,
+    kind: "file",
+  });
   return [
     file("afk-supervisor.state.json", afkState),
     file("afk-supervisor.pid", afkState),
@@ -59,8 +71,14 @@ export function planDevDurablePathMigration(root: string): DevPathMigrationEntry
     file("afk-supervisor.restarts.json", afkState),
     file("monitor-log-cursors.json", afkState),
     { id: "runner-circuit", legacy: join(tmp, "runner-circuit"), current: join(afkState, "runner-circuit"), kind: "dir" },
-    file("statusline-cache.json", statusline),
-    file("statusline-repo-cache.json", statusline),
+    renamedFile("statusline-cache.json", statusline, "statusline-cache.toon"),
+    renamedFile("statusline-repo-cache.json", statusline, "statusline-repo-cache.toon"),
+    fileFrom("state/statusline-cache.json", join(statusline, "statusline-cache.json"), join(statusline, "statusline-cache.toon")),
+    fileFrom(
+      "state/statusline-repo-cache.json",
+      join(statusline, "statusline-repo-cache.json"),
+      join(statusline, "statusline-repo-cache.toon"),
+    ),
     // NOTE: the branch lock is intentionally NOT migrated here. The branch-lock
     // skill's shell writer still owns `.red/tmp/branch-lock.yaml`; moving it out
     // from under that writer would silently break `/branch-lock`. The dev reader

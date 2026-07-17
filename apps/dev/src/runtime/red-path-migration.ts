@@ -52,7 +52,8 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   for (const entry of planDevDurablePathMigration(root)) {
     if (await moveIfSafe(entry.legacy, entry.current)) moved.push(entry.id);
   }
-  // Rotated supervisor launch logs (afk-supervisor.log, .log.jsonl, .log.N).
+  // Rotated supervisor launch logs (afk-supervisor.log, .log.N) plus the old
+  // TOONL firehose name (afk-supervisor.log.jsonl -> afk-supervisor.log.toonl).
   const { legacyDir, currentDir, logPrefix } = supervisorLogMigration(root);
   let entries: string[] = [];
   try {
@@ -62,7 +63,8 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   }
   for (const name of entries) {
     if (!name.startsWith(logPrefix)) continue;
-    if (await moveIfSafe(join(legacyDir, name), join(currentDir, name))) moved.push(name);
+    const currentName = name === "afk-supervisor.log.jsonl" ? "afk-supervisor.log.toonl" : name;
+    if (await moveIfSafe(join(legacyDir, name), join(currentDir, currentName))) moved.push(name);
   }
   return { moved };
 }
