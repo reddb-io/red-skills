@@ -1,2 +1,10 @@
 # oracle: preserves decision-relevant rows and columns from pr-list-empty; keep as compact TOON, not a scalar verdict.
-value: "0 open PRs — try: rsp gh issue list\n"
+command: gh pr list
+empty: true
+scope: open PRs
+prs[0]:
+aggregate: returned=0
+summary: 0 open PRs
+help[2]:
+  - rsp gh issue list
+  - rsp gh pr list --query <title-or-label>
