@@ -41,6 +41,9 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("`rsp cat <file>`, large `rsp git diff`, and large `rsp git log` output may");
     expect(markdown).toContain("call `rsp exec -- \"<command line>\"` directly");
     expect(markdown).toContain("Bytes inside pipes remain untouched");
+    expect(markdown).toContain("Bare `rsp` renders a live TOON dashboard");
+    expect(markdown).toContain("Use `--help` after any subcommand for scoped flags, defaults, and examples.");
+    expect(markdown).toContain("Outputs may include `next_steps` templates with placeholders");
     expect(markdown).toContain("If an rsp wrapper is disabled, lacks its store, or fails, it passes through to the raw command");
     expect(markdown).toContain("`rsp show el:<id>` writes the original bytes verbatim to stdout");
   });
