@@ -2,7 +2,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   SHARED_STORE_REL,
-  legacySharedStorePath,
+  isLegacySharedStorePath,
+  legacySharedStoreError,
   resolveSharedStorePath,
   sharedStorePath as sharedStorePathForRoot,
 } from "@reddb-io/shared/red-paths.js";
@@ -33,9 +34,8 @@ const DEFAULT_RSP_BYTE_BUDGET = 64 * 1024 * 1024;
 export function shouldUseResidentBrain(config: ResolvedBrainConfig): boolean {
   if (!config.connectionString.startsWith("file://")) return false;
   const path = config.connectionString.slice("file://".length);
-  // Accept both the canonical state-tier path and the legacy tmp-tier path so a
-  // connection string pointed at either shares the resident during the transition.
-  return path === sharedStorePathForRoot(config.rootDir) || path === legacySharedStorePath(config.rootDir);
+  if (isLegacySharedStorePath(config.rootDir, path)) throw legacySharedStoreError();
+  return path === sharedStorePathForRoot(config.rootDir);
 }
 
 export async function openResidentBrainStore(config: ResolvedBrainConfig): Promise<BrainStoreLike> {
@@ -46,8 +46,6 @@ export async function openResidentBrainStore(config: ResolvedBrainConfig): Promi
 }
 
 export function sharedStoreUri(rootDir: string): string {
-  // Honor the transition window: open the legacy tmp-tier store if it still
-  // exists and setup has not yet migrated it to the state tier.
   return `file://${resolveSharedStorePath(resolve(rootDir), existsSync)}`;
 }
 

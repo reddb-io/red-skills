@@ -14,9 +14,8 @@
  * resolution takes an explicit `exists` probe. Nothing reads `process` or the
  * filesystem on its own, so the whole surface is unit-testable without mocks.
  *
- * This is the EXPAND half of an expand-contract chain: it adds the authority
- * with ZERO behavior change and ZERO consumers. Migrating the runtimes onto it
- * is the contract half, tracked separately.
+ * This module started as the EXPAND half of an expand-contract chain. The
+ * contract phase now makes the state-tier paths authoritative at runtime.
  */
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -130,9 +129,7 @@ export function sharedStorePath(root: string): string {
 
 /**
  * The pre-ADR-0098 shared store location under the disposable tmp tier. Kept as
- * a named constant so the one-time setup migration and the transition-window
- * fallback read ({@link resolveSharedStorePath}) point at the SAME legacy path
- * instead of each re-spelling `.red/tmp/red-skills.rdb`.
+ * a named constant for the setup migration and explicit legacy-layout checks.
  */
 export const LEGACY_SHARED_STORE_REL = ".red/tmp/red-skills.rdb";
 
@@ -142,10 +139,9 @@ export function legacySharedStorePath(root: string): string {
 }
 
 /**
- * Resolve the shared store path a consumer should OPEN, honoring the migration
- * transition window: prefer the canonical state-tier location, fall back to the
- * legacy tmp-tier file when only that exists, and default to the state-tier path
- * when neither is present (so a fresh store is created in the new home).
+ * Resolve the shared store path a consumer should OPEN. The contract phase
+ * removed legacy tmp-tier fallback reads: if only the legacy store exists, fail
+ * clearly instead of silently continuing to write disposable state.
  *
  * `exists` is injected so this stays pure and unit-testable without mocks.
  */
@@ -153,8 +149,20 @@ export function resolveSharedStorePath(root: string, exists: (path: string) => b
   const primary = sharedStorePath(root);
   if (exists(primary)) return primary;
   const legacy = legacySharedStorePath(root);
-  if (exists(legacy)) return legacy;
+  if (exists(legacy)) throw legacySharedStoreError();
   return primary;
+}
+
+/** True when a path names the pre-ADR-0098 tmp-tier shared store for `root`. */
+export function isLegacySharedStorePath(root: string, path: string): boolean {
+  return path === LEGACY_SHARED_STORE_REL || resolve(root, path) === legacySharedStorePath(root);
+}
+
+/** Error used by contract-phase readers that encounter an unmigrated shared store. */
+export function legacySharedStoreError(): Error {
+  return new Error(
+    "Legacy shared store found at .red/tmp/red-skills.rdb. Run `rsp setup` to migrate it to .red/state/red-skills.rdb before using rsp, memory, or brain.",
+  );
 }
 
 // ── Tmp-tier worker lanes (ADR 0098 §2) ─────────────────────────────────────

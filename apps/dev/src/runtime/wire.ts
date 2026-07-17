@@ -169,25 +169,6 @@ export function afkPaths(root: string): AfkPaths {
   };
 }
 
-/**
- * Prefer the canonical (state-tier) path; fall back to the legacy `.red/tmp`
- * location when only the legacy copy is present. This keeps a durable artifact
- * READABLE across the one-release window before the boot migration
- * (runtime/red-path-migration.ts) relocates it — the back-compat read the
- * migration's "nothing deleted on ambiguity" rule pairs with (issue #1685).
- */
-export function preferExistingPath(current: string, legacy: string): string {
-  if (existsSync(current)) return current;
-  if (existsSync(legacy)) return legacy;
-  return current;
-}
-
-/** Legacy `.red/tmp` companion of a relocated supervisor/statusline artifact,
- * for {@link preferExistingPath} fallback reads. */
-function legacyTmpPath(root: string, name: string): string {
-  return join(rp.tmpDir(root), name);
-}
-
 // ---------- config-derived run settings ----------
 
 export interface RunSettings {
@@ -835,9 +816,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     : (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
   const fleet =
     (await readCastleMonitorFleetState(castlePaths)) ??
-    (await readFleetState(
-      preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
-    ));
+    (await readFleetState(paths.fleetStatePath));
   if (fleet?.bundleVersion) {
     fleet.latestBundleVersion = readDevBundleCacheState(fleet.bundleVersion).laneNewestVersion ?? undefined;
   }
@@ -845,8 +824,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
   // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
   // and the cache age so the render can show a stale marker when the data is old.
-  const cachePath = preferExistingPath(paths.statuslineCachePath, legacyTmpPath(root, "statusline-cache.json"));
-  const cached = readStatuslineCache(cachePath);
+  const cached = readStatuslineCache(paths.statuslineCachePath);
   const nowS = Math.floor(Date.now() / 1000);
   const remoteExtra = cached !== null
     ? { remoteQueue: cached.queue, remoteHuman: cached.human, remoteCacheAgeS: nowS - cached.ts }
@@ -1124,7 +1102,7 @@ export function startDetachedStatuslineCountRefresh(
  *
  * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
  * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
- * `.red/tmp/statusline-cache.json`. The cache refreshes on every stale or cold
+ * `.red/state/statusline/statusline-cache.json`. The cache refreshes on every stale or cold
  * render — awaited with a bounded deadline so a hanging gh CLI cannot block the
  * statusline process indefinitely. The refresh runs even when there are no live
  * workers so the queue/human badges stay current while the fleet is idle.
@@ -1225,9 +1203,7 @@ export async function collectStatuslineAfk(
   // fleet is idle (workers == 0).
   const cachePath = statuslineCountCachePath(ctx.root);
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readStatuslineCache(
-    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-cache.json")),
-  );
+  const cached = readStatuslineCache(cachePath);
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
 
@@ -1303,14 +1279,10 @@ export async function collectStatuslineFleet(
   nowS: number = Math.floor(Date.now() / 1000),
 ): Promise<FleetInput | undefined> {
   const paths = afkPaths(ctx.root);
-  const pid = readSupervisorPid(
-    preferExistingPath(paths.supervisorPidPath, legacyTmpPath(ctx.root, "afk-supervisor.pid")),
-  );
+  const pid = readSupervisorPid(paths.supervisorPidPath);
   if (pid === null || !isLivePid(pid)) return undefined;
 
-  const state = await readFleetState(
-    preferExistingPath(paths.fleetStatePath, legacyTmpPath(ctx.root, "afk-supervisor.state.json")),
-  );
+  const state = await readFleetState(paths.fleetStatePath);
   if (!state) return undefined;
   if (nowS - state.epoch > maxAgeS) return undefined;
 
@@ -1441,7 +1413,7 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
  * resolved base ref)
  * measured at the project root. All three are EXPENSIVE FETCHED numbers (gh/git
  * subprocesses), so all three are cached together for {@link
- * STATUSLINE_CACHE_TTL_S} seconds in `.red/tmp/statusline-repo-cache.json`: a
+ * STATUSLINE_CACHE_TTL_S} seconds in `.red/state/statusline/statusline-repo-cache.json`: a
  * fresh render serves them WITHOUT any gh/git subprocess; a cold/stale render
  * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
  * field is fail-open: any gh/git error leaves it 0.
@@ -1454,9 +1426,7 @@ export async function collectStatuslineRepo(
   const paths = afkPaths(ctx.root);
   const cachePath = paths.statuslineRepoCachePath;
   const nowS = Math.floor(Date.now() / 1000);
-  const cached = readRepoStatsCache(
-    preferExistingPath(cachePath, legacyTmpPath(ctx.root, "statusline-repo-cache.json")),
-  );
+  const cached = readRepoStatsCache(cachePath);
   const cacheMatchesBase = cached?.baseRef === baseRef;
   let openPrs = cached?.openPrs ?? 0;
   let todayPrs = cached?.todayPrs ?? 0;
@@ -1782,8 +1752,8 @@ export async function collectPrecheckFacts(
   const supervisorCfg = resolveSupervisorConfig();
   const fleetTruth = await collectFleetTruthProbeInput(
     {
-      supervisorPidPath: preferExistingPath(paths.supervisorPidPath, legacyTmpPath(ctx.root, "afk-supervisor.pid")),
-      fleetStatePath: preferExistingPath(paths.fleetStatePath, legacyTmpPath(ctx.root, "afk-supervisor.state.json")),
+      supervisorPidPath: paths.supervisorPidPath,
+      fleetStatePath: paths.fleetStatePath,
     },
     {
       heartbeatStaleMs: supervisorCfg.supervisorStaleS * 1000,

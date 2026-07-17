@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  LEGACY_SHARED_STORE_REL,
   SHARED_STORE_REL,
+  isLegacySharedStorePath,
+  legacySharedStoreError,
   resolveSharedStorePath,
 } from "@reddb-io/shared/red-paths.js";
 import {
@@ -31,13 +32,9 @@ export interface ResidentIngestPayload {
 export function shouldUseResidentMemory(rootDir: string, config: MemoryConfig): boolean {
   if (config.mode !== "graph") return false;
   const storePath = config.storePath ?? "";
-  // Accept both the canonical state-tier path and the legacy tmp-tier path so a
-  // config pointed at either resolves to the resident during the transition.
-  for (const rel of [SHARED_STORE_REL, LEGACY_SHARED_STORE_REL]) {
-    if (storePath === rel) return true;
-    if (resolve(rootDir, storePath).endsWith(`/${rel}`)) return true;
-  }
-  return false;
+  if (isLegacySharedStorePath(rootDir, storePath)) throw legacySharedStoreError();
+  if (storePath === SHARED_STORE_REL) return true;
+  return resolve(rootDir, storePath) === resolve(rootDir, SHARED_STORE_REL);
 }
 
 export async function residentMemoryRequest(

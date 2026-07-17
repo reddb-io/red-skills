@@ -78,8 +78,6 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE,
   );
   const storeRoot = resolveResidentPaths(cwd).rootDir;
-  // Honor the transition window: open the legacy tmp-tier store if it still
-  // exists and setup has not yet migrated it to the state tier.
   const storeUri =
     explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${resolveSharedStorePath(resolve(storeRoot), existsSync)}`;
 
