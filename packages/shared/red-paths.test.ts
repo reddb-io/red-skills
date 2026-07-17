@@ -16,6 +16,7 @@ import {
   brainDir,
   branchLockFile,
   cascadeWorktreesDir,
+  castleStateDir,
   claimsDir,
   classifyLegacyWorktreeName,
   configFile,
@@ -25,6 +26,7 @@ import {
   feedbackWorktreesDir,
   goWorkersDir,
   landingWorktreesDir,
+  legacyAfkStateDir,
   logsDir,
   manualWorktreesDir,
   memoryDir,
@@ -73,7 +75,9 @@ describe("tier directories", () => {
 
 describe("state tier lanes", () => {
   it("derives every durable state lane from the registry", () => {
-    expect(afkStateDir(ROOT)).toBe("/repo/.red/state/afk");
+    expect(castleStateDir(ROOT)).toBe("/repo/.red/state/castle");
+    expect(afkStateDir(ROOT)).toBe("/repo/.red/state/castle");
+    expect(legacyAfkStateDir(ROOT)).toBe("/repo/.red/state/afk");
     expect(rspStateDir(ROOT)).toBe("/repo/.red/state/rsp");
     expect(statuslineStateDir(ROOT)).toBe("/repo/.red/state/statusline");
     expect(branchLockFile(ROOT)).toBe("/repo/.red/state/branch-lock.yaml");
