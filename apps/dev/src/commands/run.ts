@@ -93,7 +93,7 @@ import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
-import type { AgentStreamEvent, AttemptBudget } from "../core/execution.js";
+import type { AgentStreamEvent } from "../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
 import { renderClaimComment } from "../core/claim.js";
 
@@ -761,9 +761,7 @@ export function buildProcessDeps(
   runner: Runner,
   exec?: ExecFn,
   maxIterations?: number,
-  attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
-  attemptBudget?: AttemptBudget,
   inlineVerifyCommand?: string,
   goVerifyRetries?: number,
 ): ProcessIssueDeps {
@@ -1042,17 +1040,13 @@ export function buildProcessDeps(
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
     postAttemptFormatCommands: readPostAttemptFormat(config),
-    // #908: thread the resolved budget + a LIVE usage probe off this attempt's
-    // activity meter (late-bound — `activityMeter` is reassigned per attempt dir,
-    // and `peek()` returns a superset of AttemptBudgetUsage). makeRunAgent only
-    // wires it when the progress guard is armed.
+    // Thread a live activity probe off this attempt's activity meter. The
+    // progress guard uses it as a soft progress signal when armed.
     runAgent: makeRunAgent(
       sandbox,
       process.env,
       maxIterations,
-      attemptTimeoutSeconds,
       laneIdle,
-      attemptBudget,
       () => activityMeter.peek(),
     ),
     sandboxMode: sandbox,
@@ -1837,11 +1831,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
   // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
-  // spawned by the running supervisor; RED_AFK_SWEEPS_DONE=1 workers are
+  // spawned by the running supervisor; RED_AFK_BOOT_SWEEPS_COMPLETE=1 workers are
   // fleet-owned and the supervisor already holds the pid. A `/go`/`--scout`
   // dispatch (#1087) is exempt too: its isolated namespace/lane/origin can
   // never collide with the fleet, so it must boot whether or not a fleet is up.
-  if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
+  if (flags.reconcileIssue === undefined && process.env.RED_AFK_BOOT_SWEEPS_COMPLETE !== "1") {
     const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
     const exempt = isNamespacedDispatch({
       origin: dispatchIdentity.origin,
@@ -1888,11 +1882,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const nowS = Math.floor(Date.now() / 1000);
 
   // Fleet supervisor owns the boot (#623): a worker spawned by the supervisor
-  // carries RED_AFK_SWEEPS_DONE, signalling the shared sweeps already ran once
+  // carries RED_AFK_BOOT_SWEEPS_COMPLETE, signalling the shared sweeps already ran once
   // pre-spawn. Such a worker boots bootstrap+claim only — it skips every sweep
   // (cheap respawns; no race over `.red/tmp`). A solo `run` has no marker and
   // runs the full sweep suite exactly as before.
-  const sweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
+  const sweepsDone = process.env.RED_AFK_BOOT_SWEEPS_COMPLETE === "1";
 
   const sessionCtx: SessionContext = {
     runner,
@@ -2035,9 +2029,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       runner,
       undefined,
       settings.maxIterations,
-      settings.attemptTimeoutSeconds,
       settings.laneIdle,
-      settings.attemptBudget,
       flags.verifyCommand,
       flags.goVerifyRetries,
     ),
