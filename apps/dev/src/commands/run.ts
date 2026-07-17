@@ -27,7 +27,6 @@ import {
 import { isRunner, type Runner } from "../types/runner.js";
 import {
   afkPaths,
-  preferExistingPath,
   collectPrecheckFacts,
   collectBootOptions,
   collectMonitorInputs,
@@ -1842,7 +1841,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // dispatch (#1087) is exempt too: its isolated namespace/lane/origin can
   // never collide with the fleet, so it must boot whether or not a fleet is up.
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
-    const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
+    const pidFile = paths.supervisorPidPath;
     const exempt = isNamespacedDispatch({
       origin: dispatchIdentity.origin,
       kind: dispatchIdentity.kind,
