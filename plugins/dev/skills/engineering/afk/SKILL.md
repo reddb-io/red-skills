@@ -12,17 +12,27 @@ letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
 The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host
-runner (`codex` from Codex, `claude` from Claude Code). Run the bundle, not the
-source:
+runner (`codex` from Codex, `claude` from Claude Code). Resolve the
+`red-skills-dev` runtime through the shared contract in
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
+installed `red-skills-dev` shim on `PATH` first, otherwise use the ADR 0091 npm
+direct-run fallback
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev ...`. If the shim is
+missing, name that fallback instead of surfacing a bare command-not-found.
+
+Run the bundle, not the source:
 
 ```bash
 RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev <command> [params]
 ```
 
 `afk.mjs` is a dedicated forwarder to the `dev` bundle. Every argument reaches
-the orchestrator unchanged, so `run`, `monitor`, `fleet`, and a bare
-`--issues 42` all use the same command surface. Runtime details and the full
-operations contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
+the orchestrator unchanged. The AFK queue-drain subcommand is `run`; valid
+top-level dev CLI subcommands include `run`, `monitor`, `fleet`, `dashboard`,
+`daily-review`, `weekly-review`, `retake`, `requeue`, and `reap`. A bare
+`--issues 42` is forwarded to the same run surface. There is no
+`red-skills-dev afk` subcommand. Runtime details and the full operations
+contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
 
