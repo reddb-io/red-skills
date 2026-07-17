@@ -1,4 +1,5 @@
 import { encode as encodeToon } from "@reddb-io/toon";
+import { focalBranchProbe } from "./focal-branch.js";
 import { httpsRemoteProbe } from "./https-remote.js";
 import { queueVisibilityProbe } from "./queue-visibility.js";
 import type {
@@ -12,6 +13,7 @@ import type {
 export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   httpsRemoteProbe,
   queueVisibilityProbe,
+  focalBranchProbe,
 ];
 
 export async function runOperationalProbes(
