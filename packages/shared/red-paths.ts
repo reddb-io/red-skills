@@ -95,9 +95,19 @@ export function wikiDir(root: string): string {
 
 // ── State-tier lanes (ADR 0098 §2) ──────────────────────────────────────────
 
-/** AFK supervisor state, restart counters, circuit-breakers: `.red/state/afk`. */
-export function afkStateDir(root: string): string {
+/** Castle engine state lane: `.red/state/castle`. */
+export function castleStateDir(root: string): string {
+  return join(stateDir(root), "castle");
+}
+
+/** Legacy AFK supervisor state lane, kept only as a migration input. */
+export function legacyAfkStateDir(root: string): string {
   return join(stateDir(root), "afk");
+}
+
+/** AFK supervisor state, restart counters, circuit-breakers: `.red/state/castle`. */
+export function afkStateDir(root: string): string {
+  return castleStateDir(root);
 }
 
 /** rsp telemetry spool / status summaries / resident metadata: `.red/state/rsp`. */
