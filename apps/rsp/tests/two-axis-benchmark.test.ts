@@ -26,7 +26,7 @@ describe("rsp two-axis benchmark report", () => {
 
     expect(report.corpus).toMatchObject({
       label: "home",
-      fixture_count: 33,
+      fixture_count: 34,
       large_output_filters: ["cat:file", "exec:--", "git:diff", "git:log", "vitest:run"],
     });
     expect(report.corpus.provenance[0]).toContain("Repo-authored");
@@ -59,7 +59,7 @@ describe("rsp two-axis benchmark report", () => {
 
     const exec = report.filters.find((row) => row.filter === "exec:--");
     expect(exec).toMatchObject({
-      fixture_count: 2,
+      fixture_count: 3,
       mode: "active",
       brief: { fidelity_pass_rate_pct: 100 },
       terse: { fidelity_pass_rate_pct: 100 },
