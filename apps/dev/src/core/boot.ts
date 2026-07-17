@@ -639,6 +639,7 @@ async function runTmpJanitorSweep(
     ...sweep.plan.scratch.reclaim,
     ...sweep.plan.diagnostics.reclaim,
     ...sweep.plan.feedbackWorktrees.reclaim,
+    ...sweep.plan.legacySlotLogs.reclaim,
   ];
   for (const entry of expired) {
     await deps.fs.removeDir(entry.path);
