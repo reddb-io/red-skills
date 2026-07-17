@@ -33,6 +33,12 @@ Scout mode is read-only and report-producing, so this Task+DoD gate does not app
 
 **Run the bundle — do not read its source.** This SKILL.md is the contract; the `dev` bundle's `go` command is a build artifact.
 
+Resolve the `red-skills-dev` runtime through the shared contract in
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
+installed shim on `PATH` first, otherwise use the ADR 0091 npm direct-run form
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev go ...`. If the shim
+is missing, name that fallback instead of surfacing a bare command-not-found.
+
 Invoke the dev CLI's `go` command with the demand as a single quoted argument:
 
 ```
