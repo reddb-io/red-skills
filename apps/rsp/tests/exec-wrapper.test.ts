@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "@reddb-io/toon";
 import { renderExecContract } from "../src/exec-wrapper.js";
 
 class MemoryStore {
@@ -11,6 +12,124 @@ class MemoryStore {
 }
 
 describe("rsp exec anomaly-preserving elision", () => {
+  it("routes structured stdout into deterministic TOON summaries by content shape", async () => {
+    const cases = [
+      {
+        name: "json",
+        stdout: JSON.stringify({ ok: true, services: [{ name: "api", status: "green" }, { name: "worker", status: "yellow" }] }, null, 2),
+        expectedKind: "json",
+        expectedPath: ["summary", "root_type"],
+        expectedValue: "object",
+      },
+      {
+        name: "jsonl",
+        stdout: [
+          JSON.stringify({ service: "api", level: "info", latency_ms: 41 }),
+          JSON.stringify({ service: "api", level: "error", latency_ms: 942 }),
+          JSON.stringify({ service: "worker", level: "info", latency_ms: 38 }),
+        ].join("\n") + "\n",
+        expectedKind: "jsonl",
+        expectedPath: ["summary", "records"],
+        expectedValue: 3,
+      },
+      {
+        name: "diff",
+        stdout: [
+          "diff --git a/src/app.ts b/src/app.ts",
+          "index 1111111..2222222 100644",
+          "--- a/src/app.ts",
+          "+++ b/src/app.ts",
+          "@@ -1,3 +1,4 @@",
+          " const port = 3000;",
+          "-console.log('old');",
+          "+console.log('new');",
+          "+console.log('ready');",
+        ].join("\n") + "\n",
+        expectedKind: "unified-diff",
+        expectedPath: ["summary", "added_lines"],
+        expectedValue: 2,
+      },
+      {
+        name: "tabular",
+        stdout: [
+          "NAME       READY   STATUS      RESTARTS",
+          "api-0      1/1     Running     0",
+          "worker-0   0/1     CrashLoop   7",
+          "db-0       1/1     Running     0",
+        ].join("\n") + "\n",
+        expectedKind: "tabular",
+        expectedPath: ["summary", "columns", 2],
+        expectedValue: "STATUS",
+      },
+      {
+        name: "log",
+        stdout: largeLog(),
+        expectedKind: "log-like",
+        expectedPath: ["summary", "levels", "fatal"],
+        expectedValue: 1,
+      },
+      {
+        name: "prose",
+        stdout: proseOutput(),
+        expectedKind: "prose",
+        expectedPath: ["summary", "paragraphs"],
+        expectedValue: 2,
+      },
+    ] as const;
+
+    for (const fixture of cases) {
+      const result = await renderExecContract(`fixture ${fixture.name}`, {
+        stdout: fixture.stdout,
+        stderr: "",
+        status: 0,
+        signal: null,
+      }, { level: "terse", store: new MemoryStore(), heavyByteThreshold: 1 });
+
+      const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+      expect(decoded["family"]).toBe("exec");
+      expect(decoded["content"]).toBe(fixture.expectedKind);
+      expect(valueAt(decoded, fixture.expectedPath)).toBe(fixture.expectedValue);
+      expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:123456789abc");
+    }
+  });
+
+  it("falls back to TOON head/tail plus anomaly preservation for ambiguous stdout", async () => {
+    const stdout = [
+      "alpha",
+      "beta",
+      "gamma",
+      "delta",
+      "epsilon",
+      "FATAL panic=InvariantViolation trace=ambiguous-9d2f shard=8",
+      "zeta",
+      "eta",
+      "theta",
+      "iota",
+    ].join("\n") + "\n";
+
+    const result = await renderExecContract("printf ambiguous", {
+      stdout,
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, {
+      level: "terse",
+      store: new MemoryStore(),
+      heavyByteThreshold: 1,
+      anomalyScorer: () => [{
+        lineNumber: 6,
+        score: 9.5,
+        text: "FATAL panic=InvariantViolation trace=ambiguous-9d2f shard=8",
+      }],
+    });
+
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("untyped");
+    expect(valueAt(decoded, ["summary", "head"])).toContain("alpha");
+    expect(valueAt(decoded, ["summary", "tail"])).toContain("iota");
+    expect(valueAt(decoded, ["summary", "outliers", 0, "text"])).toBe("FATAL panic=InvariantViolation trace=ambiguous-9d2f shard=8");
+  });
+
   it("preserves deterministic structural outliers from the elided middle", async () => {
     const stdout = largeLog();
     const store = new MemoryStore();
@@ -29,12 +148,11 @@ describe("rsp exec anomaly-preserving elision", () => {
     }, { level: "terse", store });
 
     expect(first.stdout).toEqual(second.stdout);
-    const text = first.stdout.toString("utf8");
-    expect(text).toContain("preserved outliers:\n");
-    expect(text).toContain("[outlier line 321 ");
-    expect(text).toContain("service=checkout level=FATAL panic=NullPointerException shard=17 trace=abc123xyz");
-    expect(text).toContain("… elided stdout (+");
-    expect(text).toContain("; preserved_outliers: 1) — rsp show el:123456789abc");
+    const decoded = decode(first.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("log-like");
+    expect(valueAt(decoded, ["summary", "outliers", 0, "line"])).toBe(321);
+    expect(valueAt(decoded, ["summary", "outliers", 0, "text"])).toContain("service=checkout level=FATAL panic=NullPointerException shard=17 trace=abc123xyz");
+    expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:123456789abc");
     expect(store.originals.get("el:123456789abc")?.toString("utf8")).toBe(stdout);
   });
 
@@ -53,10 +171,10 @@ describe("rsp exec anomaly-preserving elision", () => {
       },
     });
 
-    const text = result.stdout.toString("utf8");
-    expect(text).toContain("stdout summary\n");
-    expect(text).not.toContain("preserved outliers:");
-    expect(text).toContain("… elided stdout (+");
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("log-like");
+    expect(valueAt(decoded, ["summary", "outliers"])).toEqual([]);
+    expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:123456789abc");
     expect(result.degradation).toEqual({
       reason: "exec-anomaly-scorer-failed",
       family: "exec",
@@ -64,6 +182,28 @@ describe("rsp exec anomaly-preserving elision", () => {
     });
   });
 });
+
+function valueAt(value: unknown, path: readonly (string | number)[]): unknown {
+  let cursor = value;
+  for (const segment of path) {
+    if (typeof segment === "number" && Array.isArray(cursor)) {
+      cursor = cursor[segment];
+    } else if (typeof segment === "string" && typeof cursor === "object" && cursor !== null && !Array.isArray(cursor)) {
+      cursor = (cursor as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return cursor;
+}
+
+function proseOutput(): string {
+  return [
+    "The deployment completed after the cache warmed. Operators reviewed the rollout notes, confirmed the database migration had no pending backfill, and left the service in watch mode for the next maintenance window.",
+    "",
+    "A follow-up check should compare request latency before and after the router change. The current sample suggests the critical path is stable, but the queue worker still deserves a separate measurement.",
+  ].join("\n") + "\n";
+}
 
 function largeLog(): string {
   const lines: string[] = [];
