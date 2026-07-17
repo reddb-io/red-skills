@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import {
   type FleetHeartbeat,
+  type FleetHeartbeatEmitResult,
   type ElasticResizeRequest,
   initSupervisorState,
   resolveSupervisorConfig,
@@ -98,6 +99,10 @@ function writeFleetStateAtomic(path: string, hb: FleetHeartbeat): void {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, fleetHeartbeatState(hb), "utf8");
   renameSync(tmp, path);
+}
+
+function heartbeatWriteError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -589,12 +594,17 @@ function buildSupervisorDeps(
         log: logLine,
       });
     },
-    emitFleetHeartbeat: async (hb) => {
+    emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
       const stamped = { ...hb, bundleVersion };
+      let stateWritten = false;
+      let firehoseWritten = false;
+      let stateError: string | undefined;
+      let firehoseError: string | undefined;
       try {
         writeFleetStateAtomic(statePath, stamped);
-      } catch {
-        // best-effort: state-file failure must not affect the supervisor.
+        stateWritten = true;
+      } catch (err) {
+        stateError = heartbeatWriteError(err);
       }
       try {
         await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(stamped), {
@@ -618,8 +628,24 @@ function buildSupervisorDeps(
             },
           },
         });
-      } catch {
-        // best-effort: firehose failure must not affect the supervisor.
+        firehoseWritten = true;
+      } catch (err) {
+        firehoseError = heartbeatWriteError(err);
+      }
+      return {
+        stateWritten,
+        firehoseWritten,
+        ...(stateError !== undefined ? { stateError } : {}),
+        ...(firehoseError !== undefined ? { firehoseError } : {}),
+      };
+    },
+    repairFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
+      const stamped = { ...hb, bundleVersion };
+      try {
+        writeFleetStateAtomic(statePath, stamped);
+        return { stateWritten: true };
+      } catch (err) {
+        return { stateWritten: false, stateError: heartbeatWriteError(err) };
       }
     },
   };
