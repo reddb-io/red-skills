@@ -15,6 +15,7 @@ import {
   resolveRunSettings,
   collectMonitorInputs,
   collectStatuslineWorkers,
+  collectStatuslineFleet,
   readFleetState,
   resolveAttemptGuardArming,
   resolveAttemptBudget,
@@ -545,6 +546,7 @@ describe("collectMonitorInputs", () => {
           ready_for_agent: 9,
           slots: { busy: 1, free: 2, total: 3, parked: 0 },
           spawns_this_tick: 1,
+          churn: { window_s: 90, deaths: 2, respawns: 2 },
         }),
       );
 
@@ -555,9 +557,42 @@ describe("collectMonitorInputs", () => {
         slotsFree: 2,
         slotsTotal: 3,
         spawnsThisTick: 1,
+        churn: { windowS: 90, deaths: 2, respawns: 2 },
       });
       const { fleet } = await collectMonitorInputs(root);
       expect(fleet?.readyForAgent).toBe(9);
+      expect(fleet?.churn?.deaths).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks the statusline fleet segment degraded when busy slots have no fresh local workers", async () => {
+    const root = scratch();
+    try {
+      const paths = afkPaths(root);
+      mkdirSync(dirname(paths.fleetStatePath), { recursive: true });
+      writeFileSync(paths.supervisorPidPath, `${process.pid}\n`);
+      writeFileSync(
+        paths.fleetStatePath,
+        JSON.stringify({
+          ts: "2026-05-30T11:00:00Z",
+          epoch: Math.floor(Date.now() / 1000),
+          runner: "codex",
+          ready_for_agent: 9,
+          slots: { busy: 2, free: 0, total: 2, parked: 0 },
+          spawns_this_tick: 2,
+          churn: { window_s: 90, deaths: 2, respawns: 2 },
+        }),
+      );
+
+      await expect(collectStatuslineFleet({ root, repo: "reddb-io/red-skills", remote: "origin" })).resolves.toMatchObject({
+        runner: "codex",
+        busy: 2,
+        total: 2,
+        degraded: true,
+        churn: { windowS: 90, deaths: 2, respawns: 2 },
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
