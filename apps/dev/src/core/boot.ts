@@ -130,6 +130,8 @@ export interface PrecheckFacts {
   allowHttpsRemote?: boolean;
   /** Optional boot-time queue probe; injected by runtime facts so boot refuses on an unlistable AFK queue. */
   queueVisibility?: OperationalProbeContext["queueVisibility"];
+  /** Optional boot-time focal-branch probe, sharing the same lock/pin/trunk resolver as the precheck. */
+  focalBranch?: OperationalProbeContext["focalBranch"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
