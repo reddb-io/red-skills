@@ -4,8 +4,10 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import { isValidWorkerId, workerPidFile } from "../core/worker-paths.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import { listStaleClaimDirs, removeDir } from "../runtime/fs.js";
-import { afkPaths } from "../runtime/wire.js";
+import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
+import * as ghx from "../runtime/gh.js";
 import { stopFleet, type FleetStopResult } from "./fleet.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 
 async function readWorkerPid(pidFile: string): Promise<number | null> {
   try {
@@ -20,7 +22,8 @@ async function readWorkerPid(pidFile: string): Promise<number | null> {
 /** Injectable IO for deterministic testing. */
 export interface StopIO {
   stopFleet(root: string, out: NodeJS.WritableStream): Promise<FleetStopResult>;
-  listStaleClaimDirs(tmpDir: string): Promise<Array<{ path: string }>>;
+  listStaleClaimDirs(tmpDir: string): Promise<Array<{ path: string; issue?: number }>>;
+  restoreClaimLabels(root: string, issue: number): Promise<boolean>;
   removeDir(path: string): Promise<void>;
   readWorkerPid(pidFile: string): Promise<number | null>;
   isLivePid(pid: number): boolean;
@@ -30,6 +33,7 @@ export interface StopIO {
 const defaultIO: StopIO = {
   stopFleet,
   listStaleClaimDirs,
+  restoreClaimLabels,
   removeDir,
   readWorkerPid,
   isLivePid,
@@ -101,7 +105,12 @@ async function stopFleetWithReconcile(
 
   const stale = await io.listStaleClaimDirs(tmpDir).catch(() => []);
   let claimsReleased = 0;
+  let labelsRestored = 0;
   for (const dir of stale) {
+    const issue = dir.issue ?? issueFromClaimDirPath(dir.path);
+    if (issue !== null && await io.restoreClaimLabels(cwd, issue).catch(() => false)) {
+      labelsRestored += 1;
+    }
     await io.removeDir(dir.path).catch(() => {});
     claimsReleased += 1;
   }
@@ -112,10 +121,26 @@ async function stopFleetWithReconcile(
       supervisor_pid: fleetResult.pid ?? null,
       supervisor_status: fleetResult.status,
       claims_released: claimsReleased,
+      labels_restored: labelsRestored,
     }) + "\n",
   );
 
   return fleetResult.status === "timeout" ? 1 : 0;
+}
+
+function issueFromClaimDirPath(path: string): number | null {
+  const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  return /^[1-9][0-9]*$/.test(name) ? Number(name) : null;
+}
+
+async function restoreClaimLabels(root: string, issue: number): Promise<boolean> {
+  const ctx = await resolveRepoContext(root);
+  const ghCtx = { cwd: root, repo: ctx.repo };
+  const labels = await ghx.viewLabels(ghCtx, issue);
+  const parked = labels.includes(LABEL_HUMAN) || labels.some((l) => l.startsWith("blocked:"));
+  if (!labels.includes(LABEL_RUNNING) || parked) return false;
+  await ghx.editLabels(ghCtx, issue, [LABEL_RUNNING], [LABEL_READY]);
+  return true;
 }
 
 async function stopWorker(
