@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { compareSemver } from "../bundle-version.js";
+import { decodeDevSnapshotSniff } from "../toon-snapshot.js";
 import type {
   FleetTruthProbeInput,
   OperationalProbe,
@@ -91,7 +92,8 @@ export async function collectFleetTruthProbeInput(
   try {
     const [raw, info] = await Promise.all([readFile(paths.fleetStatePath, "utf8"), stat(paths.fleetStatePath)]);
     stateMtimeMs = info.mtimeMs;
-    const rec = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = decodeDevSnapshotSniff(raw);
+    const rec = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
     const epoch = readNumberField(rec.epoch);
     heartbeatEpochMs = epoch === undefined ? undefined : epoch * 1000;
     bundleVersion = typeof rec.bundle_version === "string" && rec.bundle_version.trim() ? rec.bundle_version : undefined;
