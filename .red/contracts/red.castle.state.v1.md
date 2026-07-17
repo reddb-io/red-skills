@@ -17,6 +17,7 @@ Fields:
 - `worker_id`
 - `supervisor_id`
 - `runner`
+- `bundle_version`
 - `pid`
 - `started_at`
 - `current`
