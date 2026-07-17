@@ -61,6 +61,7 @@ function flattenExpired(report: TmpJanitorReport): string[] {
     ...report.plan.scratch.reclaim,
     ...report.plan.diagnostics.reclaim,
     ...report.plan.feedbackWorktrees.reclaim,
+    ...report.plan.legacySlotLogs.reclaim,
   ].map((entry) => entry.path);
 }
 
