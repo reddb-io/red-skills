@@ -341,7 +341,10 @@ describe("monitor — compact dashboard", () => {
         added: 10,
         removed: 3,
       });
-      expect(decoded.summary).toBe("1 workers · 1 active · 2 closed · +10 -3");
+      // The proving-drain counter is part of the agent-facing monitor summary,
+      // not only the structured TOON payload, so operators can see Wave 3
+      // readiness progress from the compact castle lane surface.
+      expect(decoded.summary).toBe("1 workers · 1 active · 2 closed · proving 2/20 · +10 -3");
     });
 
     it("preserves the per-source origin counts from #930 as a sources table", () => {
@@ -359,7 +362,9 @@ describe("monitor — compact dashboard", () => {
       const decoded = decode(out) as { workers: unknown[]; sources: unknown[]; summary: string };
       expect(decoded.workers).toEqual([]);
       expect(decoded.sources).toEqual([]);
-      expect(decoded.summary).toBe("0 workers · 0 active · 2 closed · +0 -0");
+      // Keep the empty-fleet summary on the same visible proving-drain contract
+      // as the populated board.
+      expect(decoded.summary).toBe("0 workers · 0 active · 2 closed · proving 2/20 · +0 -0");
     });
 
     it("includes the fleet status block when a fleet state is present", () => {
