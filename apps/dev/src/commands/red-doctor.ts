@@ -1,4 +1,5 @@
 import { relative } from "node:path";
+import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
 import { listIssueStates, type GhContext } from "../runtime/gh.js";
@@ -7,10 +8,12 @@ import { branchLockPath, clearBranchLock, writeBranchLock } from "../runtime/loc
 import {
   applyOperationalProbeFixes,
   runOperationalProbes,
+  terminateSupervisorPid,
   type OperationalProbeFixResult,
   type OperationalProbeReport,
 } from "../core/operational-probes.js";
 import * as gitx from "../runtime/git.js";
+import { launchFleet } from "./fleet.js";
 
 interface RedDoctorFlags {
   fix: boolean;
@@ -143,6 +146,8 @@ function renderToon(
   });
 }
 
+const discardStream = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+
 export async function redDoctorCommand(args: readonly string[], cwd = process.cwd()): Promise<number> {
   try {
     const flags = parseFlags(args, cwd);
@@ -165,6 +170,17 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           setRemoteUrl: async (name, url) => gitx.setRemoteUrl(gitCtx, name, url),
           removeBranchLock: async () => clearBranchLock(lockPath),
           writeBranchLock: async (branch) => writeBranchLock(lockPath, branch),
+          terminateSupervisor: terminateSupervisorPid,
+          confirmRelaunch: async () => flags.yes,
+          relaunchFleet: async (request) => {
+            const args = [
+              String(request.target ?? 2),
+              ...(request.runner ? ["--runner", request.runner] : []),
+              ...(request.args ?? []),
+            ];
+            const launched = await launchFleet(args, ctx.root, discardStream);
+            return { status: launched.status, pid: launched.pid };
+          },
         })
       : [];
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
