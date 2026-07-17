@@ -54,7 +54,9 @@ describe("development workflow rules block", () => {
 
   it("routes one-off work through /go and never suggests the retired /ship (ADR 0081)", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain('One-off concrete work goes through `/go "<demand>"`');
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/go-workers/`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("shared `.red/tmp/workers/` root");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`current.kind=go`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).not.toContain("`.red/tmp/go-workers/`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("Route the structured backlog through `/afk`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/retake`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).not.toContain("/ship");
