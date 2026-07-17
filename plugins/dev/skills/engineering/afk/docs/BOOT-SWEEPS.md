@@ -31,10 +31,10 @@ This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs
 
 The *Completion sweep* (close step 11) only fires when an issue completes. Issues that **never** complete — blocked-forever work that accumulates retries — would otherwise leak attempt dirs indefinitely. Right after *Orphan Cleanup*, `cap_issue_attempts` walks every attempt dir across all workers, groups them by issue, and per issue prunes (newest attempt kept first) anything over either cap:
 
-- **Age cap** — `RED_AFK_ATTEMPT_TTL_S` (default 14 days). An attempt dir whose mtime is older than this is reclaimed.
-- **Count cap** — `RED_AFK_ATTEMPT_KEEP` (default 5). Only the newest `KEEP` attempts (by attempt number) for one issue are retained; older ones are reclaimed.
+- **Age cap** — fixed at 14 days. An attempt dir whose mtime is older than this is reclaimed.
+- **Count cap** — fixed at 5. Only the newest five attempts (by attempt number) for one issue are retained; older ones are reclaimed.
 
-Both caps share the completion sweep's invariant: a **live** worker's active attempt (state file carrying a live `pid`) is never counted toward the cap nor removed. A non-numeric or zero env value falls back to the default so an operator typo can never disable a cap.
+Both caps share the completion sweep's invariant: a **live** worker's active attempt (state file carrying a live `pid`) is never counted toward the cap nor removed.
 
 ## Snapshot Branch Grace Cleanup (boot-time, issue #258)
 
@@ -44,7 +44,7 @@ The *Completion sweep* and *Attempt Cap* reclaim **local** attempt dirs; the fai
 - **closed within the grace window** — kept, so a reopened issue can still recover its prior attempts from origin;
 - **closed longer than the grace window ago** — every snapshot branch for that issue is deleted from origin (cross-worker).
 
-The grace window is `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S` (default 7 days), measured from the issue's GitHub `closedAt`. A non-numeric value falls back to the default so an operator typo can never disable the grace; `0` is honoured as "delete immediately on completion". The pass is best-effort and runs at boot, **never** on the close path — a slow or failing `gh`/`git` can never block a completion, and an issue it cannot classify is left strictly in place.
+The grace window is fixed at 7 days, measured from the issue's GitHub `closedAt`. The pass is best-effort and runs at boot, **never** on the close path — a slow or failing `gh`/`git` can never block a completion, and an issue it cannot classify is left strictly in place.
 
 ## On-Demand Branch Reaper (issue #275)
 
@@ -54,7 +54,7 @@ Run `/afk reap` (the bundle's `reap` command) to perform branch hygiene without 
 afk branch counts: remote-afk=N remote-afk-attempts=N local-afk=N
 ```
 
-It then applies the same three namespace reapers used during `/afk` boot: remote `afk-attempts/*`, remote `afk/*`, and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone. Snapshot grace still comes from `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S`; live `afk/*` cleanup keeps the existing closed-vs-open policy.
+It then applies the same three namespace reapers used during `/afk` boot: remote `afk-attempts/*`, remote `afk/*`, and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone. Snapshot grace uses the fixed 7-day window; live `afk/*` cleanup keeps the existing closed-vs-open policy.
 
 ## Docs Sweep (boot-time)
 
