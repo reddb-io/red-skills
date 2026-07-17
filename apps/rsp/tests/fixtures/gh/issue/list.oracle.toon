@@ -9,4 +9,5 @@ issues[2]:
     title: rsp git wrapper
     state: closed
     labels[1]: "type:ticket"
+aggregate: returned=2
 summary: 2 returned issues
