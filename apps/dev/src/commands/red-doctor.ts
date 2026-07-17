@@ -12,6 +12,7 @@ import {
   type OperationalProbeFixResult,
   type OperationalProbeReport,
 } from "../core/operational-probes.js";
+import { fastForwardLocalTarget } from "../core/merge.js";
 import * as gitx from "../runtime/git.js";
 import { launchFleet } from "./fleet.js";
 
@@ -170,6 +171,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           setRemoteUrl: async (name, url) => gitx.setRemoteUrl(gitCtx, name, url),
           removeBranchLock: async () => clearBranchLock(lockPath),
           writeBranchLock: async (branch) => writeBranchLock(lockPath, branch),
+          fastForwardLocalBase: async ({ remote, target }) =>
+            fastForwardLocalTarget(gitx.mergeExec(gitCtx), { gitRepo: ctx.root, remote, target }),
           terminateSupervisor: terminateSupervisorPid,
           concedeClaim: async (issue, body) => {
             await postClaimComment({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext, issue, body);
