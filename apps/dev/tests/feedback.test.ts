@@ -5,6 +5,7 @@ import {
   decideBaselineDiffGate,
   isInfraFeedbackFailure,
   nearestPackageScope,
+  namedFailures,
   outputSummary,
   relevantScopes,
   runFeedback,
@@ -365,6 +366,47 @@ describe("pure shaping helpers", () => {
     expect(outputSummary("failed", "line a\nline b\n")).toBe("line a line b");
     const long = `${"x".repeat(2000)}\n`;
     expect(outputSummary("failed", long).length).toBe(1000);
+  });
+
+  it("names the failing test instead of only reporting how many failed", () => {
+    // Verbatim shape of the vitest output that parked #1919: the identities sit
+    // far above the counters, so the pre-#1929 tail-only summary reported
+    // "2 failed" and dropped both names. The gate had this in hand all along.
+    const vitest = [
+      " FAIL  tests/monitor.test.ts > monitor — compact dashboard > renders one worker",
+      "AssertionError: expected '1 workers · proving…' to be '1 workers · +10…'",
+      ...Array.from({ length: 30 }, (_, i) => `noise line ${i}`),
+      " Test Files  1 failed | 215 passed (216)",
+      "      Tests  2 failed | 3750 passed (3752)",
+    ].join("\n");
+    const summary = outputSummary("failed", vitest);
+    expect(summary).toContain("tests/monitor.test.ts");
+    expect(summary).toContain("renders one worker");
+    expect(summary.startsWith("failing: ")).toBe(true);
+  });
+
+  it("matches failure identities through ANSI colour codes", () => {
+    const coloured = "[31m FAIL [39m tests/a.test.ts > boom\nTests 1 failed";
+    expect(namedFailures(coloured)).toEqual(["FAIL tests/a.test.ts > boom"]);
+  });
+
+  it("names cargo failures too, deduped and capped", () => {
+    const cargo = [
+      "test net::sends ... FAILED",
+      "test net::sends ... FAILED",
+      ...Array.from({ length: 8 }, (_, i) => `test x::case_${i} ... FAILED`),
+      "test result: FAILED. 9 passed; 9 failed",
+    ].join("\n");
+    const named = namedFailures(cargo);
+    expect(named[0]).toBe("test net::sends ... FAILED");
+    expect(named.length).toBe(5);
+    expect(new Set(named).size).toBe(named.length);
+  });
+
+  it("falls back to the tail when the runner names nothing recognisable", () => {
+    // No invented identity: an unrecognised runner keeps the old honest behaviour.
+    expect(outputSummary("failed", "segfault\ncore dumped")).toBe("segfault core dumped");
+    expect(namedFailures("segfault\ncore dumped")).toEqual([]);
   });
 });
 

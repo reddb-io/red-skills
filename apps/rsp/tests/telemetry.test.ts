@@ -387,7 +387,10 @@ describe("rsp telemetry spool", () => {
       id: "degraded",
       created_at: new Date().toISOString(),
       command: "git --version",
-      reason: "wrapper failed",
+      reason: "wrapper-crash",
+      wrapper_family: "git",
+      wrapper_exit_code: 1,
+      stderr_head: "unsupported git subcommand:",
       bytes: 100,
     });
 
@@ -428,8 +431,18 @@ describe("rsp telemetry spool", () => {
       health: {
         degradations: 1,
         degradation_rate: 0.5,
-        by_reason: [{ reason: "wrapper failed", count: 1 }],
-        most_recent: expect.objectContaining({ reason: "wrapper failed", command: "git --version" }),
+        by_reason: [{ reason: "wrapper-crash", count: 1 }],
+        by_family: [{ family: "git", count: 1 }],
+        recent_failures: [
+          expect.objectContaining({
+            family: "git",
+            command: "git --version",
+            reason: "wrapper-crash",
+            exit_code: 1,
+            stderr_head: "unsupported git subcommand:",
+          }),
+        ],
+        most_recent: expect.objectContaining({ reason: "wrapper-crash", command: "git --version" }),
       },
       latency: {
         wrapper_ms_p50: 12,
@@ -601,15 +614,25 @@ describe("rsp telemetry spool", () => {
         decision: "failed-open",
         reason: "hook-exception",
       });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("quota-free", {
+        created_at: "2026-07-10T10:03:00.000Z",
+        command: "gh api repos/o/r/issues/1",
+        command_family: "gh api",
+        decision: "contributed",
+        reason: "gh-conditional-304",
+        quota_free: true,
+        saved_units: 1,
+      });
 
       const stats = await readTelemetryStats(db, 7, new Date("2026-07-11T00:00:00.000Z"));
 
       expect(stats.decisions).toEqual({
-        seen: 4,
-        contributed: 0,
+        seen: 5,
+        contributed: 1,
         passed: 3,
         failed_open: 1,
-        contribution_rate: 0,
+        quota_free_saved_units: 1,
+        contribution_rate: 0.2,
         top_pass_reasons: [
           { reason: "disabled", count: 1 },
           { reason: "hook-exception", count: 1 },

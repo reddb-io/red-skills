@@ -121,6 +121,7 @@ interface FakeIo {
   findReconcileCandidate: ReturnType<typeof vi.fn>;
   crashedClaimState: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
+  repairFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
@@ -167,6 +168,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     // Default: no stranded claim → reconcile is a no-op (existing tests unaffected).
     crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: false, envelopePosted: false })),
     emitFleetHeartbeat: vi.fn(async () => {}),
+    repairFleetHeartbeat: vi.fn(async () => ({ stateWritten: true })),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
     fleetCostUsd: vi.fn(() => 0),
     resizeRequest: vi.fn(async () => null),
@@ -208,6 +210,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       io.logLines.push(line);
     },
     emitFleetHeartbeat: io.emitFleetHeartbeat,
+    repairFleetHeartbeat: io.repairFleetHeartbeat,
     unblockSweep: io.unblockSweep,
     attemptBranchHead: io.attemptBranchHead,
     resizeRequest: io.resizeRequest,
@@ -1612,6 +1615,36 @@ describe("runSupervisor", () => {
       readyForAgent: 0,
       spawnsThisTick: 0,
     });
+  });
+
+  it("repairs a stale state heartbeat writer from the current tick snapshot", async () => {
+    let clock = NOW;
+    let probes = 0;
+    const stop = () => {
+      probes += 1;
+      clock = NOW + probes * 15;
+      return probes >= 3;
+    };
+    const { deps, io } = makeDeps({
+      now: vi.fn(() => clock),
+      emitFleetHeartbeat: vi.fn(async () => ({
+        stateWritten: false,
+        firehoseWritten: true,
+        stateError: "simulated state write failure",
+      })),
+      repairFleetHeartbeat: vi.fn(async () => ({ stateWritten: true })),
+    });
+    const state = initSupervisorState(1);
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
+
+    expect(io.repairFleetHeartbeat).toHaveBeenCalledTimes(1);
+    expect(io.repairFleetHeartbeat.mock.calls[0]![0]).toMatchObject({
+      epoch: NOW + 30,
+      readyForAgent: 0,
+      slotsBusy: 1,
+    });
+    expect(io.logLines.some((line) => line.includes("heartbeat state writer stale"))).toBe(true);
   });
 
   it("does not report a cleanly exited worker pid as busy in the heartbeat", async () => {

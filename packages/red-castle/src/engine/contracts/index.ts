@@ -56,6 +56,7 @@ export interface CastleStateSnapshot {
   worker_id?: string;
   supervisor_id?: string;
   runner?: string;
+  bundle_version?: string;
   pid?: number;
   started_at?: string;
   current?: Record<string, unknown>;
@@ -159,6 +160,7 @@ export const CASTLE_PUBLISHED_CONTRACTS = [
       worker_id: true,
       supervisor_id: true,
       runner: true,
+      bundle_version: true,
       pid: true,
       started_at: true,
       current: true,

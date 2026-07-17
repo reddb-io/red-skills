@@ -381,6 +381,9 @@ class ResidentTelemetryDrain {
         raw_bytes: 0,
         emitted_bytes: 0,
         degradation_reason: stringField(event.reason) || "unknown",
+        wrapper_family: stringField(event.wrapper_family),
+        wrapper_exit_code: event.wrapper_exit_code,
+        stderr_head: stringField(event.stderr_head),
       });
     }
     return null;

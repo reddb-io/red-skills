@@ -651,7 +651,7 @@ describe("statusline command — rendered line", () => {
 
     const rows = stripAnsi(out.text()).trimEnd().split("\n");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain("flt=codex 1/1 busy");
+    expect(rows[0]).toContain("flt=codex 1/1");
     expect(rows[0]).toContain("q=2");
     expect(rows[0]).not.toContain("wrk=");
   });
@@ -690,7 +690,7 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("park=1");
+    expect(stripAnsi(out.text())).toContain("prk=1");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
@@ -788,7 +788,7 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M int=0/12");
+    expect(stripAnsi(out.text())).toContain("rsp=↓1.32M");
   });
 
   it("reads a TOON rsp resident summary for statusline rendering", async () => {

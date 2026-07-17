@@ -158,6 +158,24 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stdout.write(`${encodeSnapshotToon(status as unknown as JsonObject)}\n`);
     return 0;
   }
+  if (args.command === "gh-api-json") {
+    const { readGhConditionalJson } = await import("./gh-conditional.js");
+    const request = parseGhApiJsonArgs(args.positional);
+    if (!request) {
+      process.stderr.write("usage: rsp gh-api-json <path> [-f name=value ...]\n");
+      return 2;
+    }
+    const response = await readGhConditionalJson({
+      path: request.path,
+      params: request.params,
+      cwd: process.cwd(),
+      telemetryRoot: residentPaths.rootDir,
+      command: `rsp ${args.positional.join(" ")}`,
+    });
+    process.stdout.write(response.stdout);
+    if (response.stderr) process.stderr.write(`${response.stderr}\n`);
+    return response.status;
+  }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await runColdWrappedCommand(args, config, residentPaths.rootDir);
     process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
@@ -807,6 +825,7 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   process.stderr.write(`rsp: ${reason}, passing through\n`);
   const status = await passthrough(argv);
   if (telemetryRoot) {
+    const failure = wrapperFailureIdentity(reason, argv, err);
     const {
       appendTelemetryEvent,
       RSP_ACCOUNTING_EVENTS_COLLECTION,
@@ -821,17 +840,71 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
       loss: "lossless",
       raw_bytes: 0,
       emitted_bytes: 0,
-      degradation_reason: reason,
+      degradation_reason: failure.reason,
+      wrapper_family: failure.family,
+      wrapper_exit_code: failure.exitCode,
+      stderr_head: failure.stderrHead,
     }));
     fireAndForget(appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
       command: passthroughTelemetryCommand(argv),
-      reason,
+      reason: failure.reason,
+      wrapper_family: failure.family,
+      wrapper_exit_code: failure.exitCode,
+      stderr_head: failure.stderrHead,
       accounting_recorded: true,
     }));
   }
   return status;
+}
+
+function wrapperFailureIdentity(
+  fallbackReason: string,
+  argv: readonly string[],
+  err: unknown,
+): { reason: string; family: string; exitCode: number; stderrHead: string } {
+  const family = argv[0] ?? "unknown";
+  const stderrHead = firstDiagnosticLine(err) || fallbackReason;
+  const unavailable = errorCode(err) === "ENOENT" ||
+    errorCode(err) === "MODULE_NOT_FOUND" ||
+    /(?:command not found|cannot find package|cannot find module|module not found|not provisioned)/i.test(stderrHead);
+  return {
+    reason: unavailable ? "wrapper-unavailable" : "wrapper-crash",
+    family,
+    exitCode: numericErrorStatus(err) ?? 1,
+    stderrHead: truncateOneLine(stderrHead, 240),
+  };
+}
+
+function firstDiagnosticLine(err: unknown): string {
+  if (err instanceof Error) return firstLine(err.message);
+  return firstLine(String(err ?? ""));
+}
+
+function firstLine(text: string): string {
+  return text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+}
+
+function truncateOneLine(text: string, maxChars: number): string {
+  const line = firstLine(text).replace(/\s+/g, " ").trim();
+  if (line.length <= maxChars) return line;
+  return `${line.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function errorCode(err: unknown): string {
+  if (typeof err !== "object" || err === null || !("code" in err)) return "";
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : "";
+}
+
+function numericErrorStatus(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  for (const key of ["status", "exitCode", "exit_code"]) {
+    const value = (err as Record<string, unknown>)[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
 }
 
 function fireAndForget(promise: Promise<unknown>): void {
@@ -872,7 +945,7 @@ function rspDisabledReason(): string {
 
 function isWrapperCommand(command: string | undefined): boolean {
   return command === "git" || command === "gh" || command === "vitest" || command === "cargo" || command === "cat" ||
-    command === "exec" || command === "proxy";
+    command === "exec" || command === "proxy" || command === "gh-api-json";
 }
 
 async function passthrough(argv: readonly string[]): Promise<number> {
@@ -965,6 +1038,21 @@ function parseArgs(argv: string[]): ParsedArgs {
   return out;
 }
 
+function parseGhApiJsonArgs(argv: readonly string[]): { path: string; params: Record<string, string> } | null {
+  const path = argv[1];
+  if (!path) return null;
+  const params: Record<string, string> = {};
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg !== "-f" && arg !== "-F") continue;
+    const assignment = argv[++i] ?? "";
+    const separator = assignment.indexOf("=");
+    if (separator <= 0) continue;
+    params[assignment.slice(0, separator)] = assignment.slice(separator + 1);
+  }
+  return { path, params };
+}
+
 function sinceDays(args: readonly string[], fallback: number): number {
   const raw = valueAfter(args, "--since") ?? args.find((arg) => arg.startsWith("--since="))?.slice("--since=".length);
   if (!raw) return fallback;
@@ -1024,11 +1112,19 @@ function renderStats(
     `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
     "  degradations_by_reason:",
     ...renderReasons(telemetry.health.by_reason),
+    "  wrapper_failures_by_family:",
+    ...renderFamilyCounts(telemetry.health.by_family),
+    "  recent_wrapper_failures:",
+    ...renderRecentFailures(telemetry.health.recent_failures.slice(0, full ? 20 : 5)),
+    ...(!full && telemetry.health.recent_failures.length > 5
+      ? [`    elided_failures: ${telemetry.health.recent_failures.length - 5}`, "    hint: --full"]
+      : []),
     "decisions:",
     `  seen: ${telemetry.decisions.seen}`,
     `  contributed: ${telemetry.decisions.contributed}`,
     `  passed: ${telemetry.decisions.passed}`,
     `  failed_open: ${telemetry.decisions.failed_open}`,
+    `  quota_free_saved_units: ${telemetry.decisions.quota_free_saved_units}`,
     `  contribution_rate: ${formatRate(telemetry.decisions.contribution_rate)}`,
     "  top_pass_reasons:",
     ...renderReasons(telemetry.decisions.top_pass_reasons.slice(0, full ? 10 : 3)),
@@ -1073,6 +1169,20 @@ function renderTopCommands(commands: Array<{ command: string; invocations: numbe
 function renderReasons(reasons: Array<{ reason: string; count: number }>): string[] {
   if (reasons.length === 0) return ["    empty: true"];
   return reasons.map((entry) => `    ${entry.reason}: ${entry.count}`);
+}
+
+function renderFamilyCounts(families: Array<{ family: string; count: number }>): string[] {
+  if (families.length === 0) return ["    empty: true"];
+  return families.map((entry) => `    ${entry.family}: ${entry.count}`);
+}
+
+function renderRecentFailures(failures: RspTelemetryStats["health"]["recent_failures"]): string[] {
+  if (failures.length === 0) return ["    empty: true"];
+  return failures.map((entry) =>
+    `    - at: ${entry.timestamp || "unknown"} family: ${entry.family} command: ${entry.command} reason: ${entry.reason} exit_code: ${
+      entry.exit_code ?? "none"
+    } stderr_head: ${entry.stderr_head ?? "none"}`
+  );
 }
 
 function renderStorageClasses(stats: RspStorageClassStats): string[] {
@@ -1121,6 +1231,8 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       show_misses: 0,
       show_hit_rate: 0,
       by_reason: [],
+      by_family: [],
+      recent_failures: [],
       most_recent: null,
     },
     latency: {
@@ -1135,6 +1247,7 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       contributed: 0,
       passed: 0,
       failed_open: 0,
+      quota_free_saved_units: 0,
       contribution_rate: 0,
       top_pass_reasons: [],
     },

@@ -105,7 +105,7 @@ through `/memory:view`, `memory docs reference-graph`, and
 ## Standalone And Maintenance Routes
 
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
-  covers the registered skill set.
+  covers the registered skill set, and reports/fixes ADR 0098 tmp janitor hygiene.
 - `/red-gains` reports whether rsp is paying for itself: latency, throughput,
   token savings, command-family winners, and degradation health from telemetry;
   use `apps/rsp/docs/TROUBLESHOOTING.md` for rsp hook silence, resident/store,

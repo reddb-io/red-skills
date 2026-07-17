@@ -50,7 +50,8 @@ describe("listCandidates lane", () => {
     const rec = recording("[]");
     const ctx: GhContext = { cwd: "/r", repo: "acme/widgets", exec: rec.exec };
     await listCandidates(ctx);
-    expect(rec.calls[0]!.args).toContain("ready-for-agent");
+    expect(rec.calls[0]!.cmd).toBe("rsp");
+    expect(rec.calls[0]!.args).toContain("labels=ready-for-agent");
   });
 
   it("lists the given lane label when /go passes one", async () => {
@@ -58,7 +59,8 @@ describe("listCandidates lane", () => {
     const ctx: GhContext = { cwd: "/r", repo: "acme/widgets", exec: rec.exec };
     await listCandidates(ctx, "lane:go");
     const args = rec.calls[0]!.args;
-    expect(args).toContain("lane:go");
-    expect(args).not.toContain("ready-for-agent");
+    expect(rec.calls[0]!.cmd).toBe("rsp");
+    expect(args).toContain("labels=lane:go");
+    expect(args).not.toContain("labels=ready-for-agent");
   });
 });

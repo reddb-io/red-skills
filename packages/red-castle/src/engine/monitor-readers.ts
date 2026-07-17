@@ -245,6 +245,7 @@ function fleetFromSupervisorSnapshot(
     epoch,
     lastProgressEpoch: numberField(current, "last_progress_epoch") || undefined,
     runner: snapshot.runner ?? stringField(current, "runner"),
+    bundleVersion: snapshot.bundle_version ?? stringField(current, "bundle_version"),
     readyForAgent: numberField(
       current,
       "ready_for_agent",

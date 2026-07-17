@@ -3,6 +3,28 @@ import { countStatuslineQueueCounts, countPrsCreatedToday } from "../src/runtime
 import type { ExecFn } from "../src/runtime/exec.js";
 
 describe("gh statusline counts", () => {
+  it("prefers rsp conditional REST search counts when available", async () => {
+    const calls: Array<{ tool: string; args: readonly string[] }> = [];
+    const exec: ExecFn = async (tool, args) => {
+      calls.push({ tool, args });
+      const query = args.find((arg) => String(arg).startsWith("q="));
+      return {
+        code: 0,
+        stdout: JSON.stringify({ total_count: String(query).includes("ready-for-human") ? 2 : 7 }),
+        stderr: "",
+      };
+    };
+
+    const counts = await countStatuslineQueueCounts({ cwd: "/repo", repo: "o/r", exec });
+
+    expect(counts).toEqual({ queue: 7, human: 2 });
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.tool === "rsp")).toBe(true);
+    expect(calls[0]!.args.slice(0, 2)).toEqual(["gh-api-json", "search/issues"]);
+    expect(calls[0]!.args).toContain('q=repo:o/r is:issue is:open label:"ready-for-agent"');
+    expect(calls[1]!.args).toContain('q=repo:o/r is:issue is:open label:"ready-for-human"');
+  });
+
   it("fetches ready and human counts with one GraphQL request", async () => {
     const calls: Array<{ tool: string; args: readonly string[] }> = [];
     const exec: ExecFn = async (tool, args) => {
@@ -17,13 +39,15 @@ describe("gh statusline counts", () => {
     const counts = await countStatuslineQueueCounts({ cwd: "/repo", repo: "o/r", exec });
 
     expect(counts).toEqual({ queue: 7, human: 2 });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.tool).toBe("gh");
-    expect(calls[0]!.args.slice(0, 2)).toEqual(["api", "graphql"]);
-    expect(calls[0]!.args.join(" ")).toContain("ready: search");
-    expect(calls[0]!.args.join(" ")).toContain("human: search");
-    expect(calls[0]!.args).toContain('ready=repo:o/r is:issue is:open label:"ready-for-agent"');
-    expect(calls[0]!.args).toContain('human=repo:o/r is:issue is:open label:"ready-for-human"');
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.tool).toBe("rsp");
+    expect(calls[1]!.tool).toBe("rsp");
+    expect(calls[2]!.tool).toBe("gh");
+    expect(calls[2]!.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(calls[2]!.args.join(" ")).toContain("ready: search");
+    expect(calls[2]!.args.join(" ")).toContain("human: search");
+    expect(calls[2]!.args).toContain('ready=repo:o/r is:issue is:open label:"ready-for-agent"');
+    expect(calls[2]!.args).toContain('human=repo:o/r is:issue is:open label:"ready-for-human"');
   });
 });
 

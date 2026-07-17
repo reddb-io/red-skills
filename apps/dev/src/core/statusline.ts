@@ -25,6 +25,8 @@
 // out of scope — the test asserts the plain/structural content exactly as
 // statusline.test.sh does after stripping escapes.
 
+import { compareSemver } from "./bundle-version.js";
+
 /** The block-1 project inputs: basename plus optional git ref. */
 export interface ProjectInput {
   /** `basename "$cwd"` — always present. */
@@ -170,6 +172,10 @@ export interface FleetInput {
   queue: number;
   /** Parked slots from the supervisor snapshot. */
   parked?: number;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
+  /** Newest compatible dev bundle seen in the local cache. */
+  latestBundleVersion?: string;
 }
 
 export type RspStatusInput =
@@ -300,18 +306,6 @@ export function formatCacheAge(ageS: number): string {
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return rm > 0 ? `${h}h${rm}m` : `${h}h`;
-}
-
-function semverParts(version: string | undefined): [number, number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-function compareSemver(a: string | undefined, b: string | undefined): number {
-  const pa = semverParts(a);
-  const pb = semverParts(b);
-  if (!pa || !pb) return 0;
-  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
 }
 
 function hasCachedUpdate(project: ProjectInput): boolean {
@@ -489,11 +483,16 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
-  const parts = [`flt=${runner} ${busy}/${total} busy`, `q=${queue}`];
-  if (fleet.parked !== undefined && fleet.parked > 0) {
-    parts.push(`park=${Math.floor(fleet.parked)}`);
+  const parts = [`flt=${runner} ${busy}/${total}`];
+  if (fleet.bundleVersion) {
+    const skew = compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0;
+    parts.push(`@${fleet.bundleVersion}${skew ? `<${fleet.latestBundleVersion}` : ""}`);
   }
-  return parts.join(" · ");
+  parts.push(`q=${queue}`);
+  if (fleet.parked !== undefined && fleet.parked > 0) {
+    parts.push(`prk=${Math.floor(fleet.parked)}`);
+  }
+  return parts.join(" ");
 }
 
 export function renderUnlandedDocsBlock(docs: DocsInput | undefined): string | null {
@@ -504,12 +503,7 @@ export function renderUnlandedDocsBlock(docs: DocsInput | undefined): string | n
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
   if (rsp.state === "ready") {
-    const decisions =
-      rsp.decisions && Number.isFinite(rsp.decisions.seen) && rsp.decisions.seen > 0
-        ? ` int=${Math.max(0, Math.floor(rsp.decisions.contributed))}/${Math.floor(rsp.decisions.seen)}`
-        : "";
-    const hitRate = typeof rsp.showHitRate === "number" ? ` hit=${Math.round(rsp.showHitRate * 100)}%` : "";
-    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}${decisions}${hitRate}`;
+    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}`;
   }
   if (rsp.state === "warming") return "rsp=…";
   return "rsp=!";

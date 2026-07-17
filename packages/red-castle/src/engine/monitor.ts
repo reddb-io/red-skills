@@ -15,6 +15,18 @@
 import { appendSummaryField, type JsonObject, type JsonValue as ToonValue } from "@reddb-io/toon";
 import type { LivenessVerdict } from "../LivenessEvaluator.js";
 
+function semverParts(version: string | undefined): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function compareSemver(a: string | undefined, b: string | undefined): number {
+  const pa = semverParts(a);
+  const pb = semverParts(b);
+  if (!pa || !pb) return 0;
+  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+}
+
 export type HistoryEvent = "done" | "blocked" | "exhausted" | (string & {});
 
 export interface HistoryRecord {
@@ -227,6 +239,10 @@ export interface FleetState {
   lastProgressEpoch?: number;
   /** Runner the fleet was launched with (default "" for pre-#407 state files). */
   runner: string;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
+  /** Newest compatible dev bundle seen in the local cache. */
+  latestBundleVersion?: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
@@ -269,11 +285,15 @@ export function renderFleetLine(fleet: FleetState, now: number): string {
     : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
       ? "idle"
       : "draining";
+  const bundle = fleet.bundleVersion
+    ? `  bundle:${fleet.bundleVersion}${compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? `<${fleet.latestBundleVersion}` : ""}`
+    : "";
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
     `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
-    `  spawns:${fleet.spawnsThisTick}`
+    `  spawns:${fleet.spawnsThisTick}` +
+    bundle
   );
 }
 
@@ -643,6 +663,9 @@ export function renderCompactDashboardToon(
       slots_free: fleet.slotsFree,
       slots_parked: fleet.slotsParked,
       spawns: fleet.spawnsThisTick,
+      bundle_version: fleet.bundleVersion ?? "",
+      latest_bundle_version: fleet.latestBundleVersion ?? "",
+      version_skew: compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? 1 : 0,
       slot_details: (fleet.slotDetails ?? []).map((d) => ({
         index: d.index,
         status: d.status,

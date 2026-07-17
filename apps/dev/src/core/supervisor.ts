@@ -71,6 +71,8 @@ export interface SupervisorConfig {
   /** Runner name carried in the discard / no-sentinel envelopes
    * (RED_AFK_RUNNER, default "claude"). */
   runner: string;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
   /** RED_AFK_POLL_S — seconds the health-check loop sleeps between ticks
    * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning.
    * This is the interval used when NO event lane is wired (`deps.wake` absent) —
@@ -699,6 +701,8 @@ export interface FleetHeartbeat {
   /** Runner this fleet was launched with — lets the watchdog relaunch a recovered
    * supervisor with the same runner instead of re-detecting from its own tree. */
   runner: string;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
@@ -709,6 +713,17 @@ export interface FleetHeartbeat {
   drainBudget?: DrainBudgetStatus;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
   slotDetails: HeartbeatSlotDetail[];
+}
+
+export interface FleetHeartbeatEmitResult {
+  /** The freshness-critical state file was written successfully. */
+  stateWritten: boolean;
+  /** The human/debug firehose record was appended successfully. */
+  firehoseWritten?: boolean;
+  /** Short diagnostic for the most recent state write failure. */
+  stateError?: string;
+  /** Short diagnostic for the most recent firehose write failure. */
+  firehoseError?: string;
 }
 
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
@@ -782,7 +797,15 @@ export interface SupervisorDeps {
    * writes it to the supervisor firehose and state file. Best-effort; never
    * throws out of the loop.
    */
-  emitFleetHeartbeat?(heartbeat: FleetHeartbeat): void | Promise<void>;
+  emitFleetHeartbeat?(heartbeat: FleetHeartbeat): FleetHeartbeatEmitResult | void | Promise<FleetHeartbeatEmitResult | void>;
+  /**
+   * Synchronous-with-the-tick repair path for a stale supervisor state writer.
+   * Called only after multiple consecutive state-write failures have made the
+   * last successful state snapshot older than the live tick loop. The CLI writes
+   * the current tick snapshot directly to the state file again and reports
+   * whether that repair landed.
+   */
+  repairFleetHeartbeat?(heartbeat: FleetHeartbeat): FleetHeartbeatEmitResult | void | Promise<FleetHeartbeatEmitResult | void>;
   /**
    * Run the shared boot sweeps ONCE before the initial fleet spawn (#623). The
    * fleet supervisor owns the boot: it runs orphan cleanup / attempt cap /
@@ -922,6 +945,10 @@ export interface SupervisorState {
   drainBudgetHardStopped: boolean;
   /** Last budget tier logged, to avoid repeating unchanged OK/WARNING/CRITICAL. */
   lastDrainBudgetTier?: DrainBudgetTier;
+  /** Epoch seconds of the last successful supervisor state heartbeat write. */
+  lastHeartbeatStateWriteEpoch: number;
+  /** Consecutive ticks whose state heartbeat write did not land. */
+  heartbeatStateWriteMisses: number;
 }
 
 /** Build the initial runtime for `target` slots. */
@@ -932,6 +959,8 @@ export function initSupervisorState(target: number): SupervisorState {
     lastUnblockSweepEpoch: 0,
     wakeStats: freshWakeStats(),
     drainBudgetHardStopped: false,
+    lastHeartbeatStateWriteEpoch: 0,
+    heartbeatStateWriteMisses: 0,
   };
 }
 
@@ -1148,6 +1177,8 @@ function isoFromEpoch(epoch: number): string {
   return new Date(epoch * 1000).toISOString();
 }
 
+export const HEARTBEAT_STATE_REPAIR_AFTER_TICKS = 2;
+
 function buildSlotDetails(
   state: SupervisorState,
   config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS">,
@@ -1176,7 +1207,7 @@ async function emitFleetHeartbeat(
   result: TickResult,
   runner: string,
   config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS">,
-): Promise<FleetHeartbeat> {
+): Promise<{ heartbeat: FleetHeartbeat; write: FleetHeartbeatEmitResult }> {
   // Queue depth was fetched once by superviseTick at the start of this tick
   // and stored in result.queueDepth — reuse it here so there is exactly one
   // readyQueueDepth call per tick (0 on a stop tick or abandoned tick).
@@ -1193,12 +1224,64 @@ async function emitFleetHeartbeat(
     ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
     slotDetails: buildSlotDetails(state, config),
   };
+  let rawWrite: FleetHeartbeatEmitResult | void = undefined;
   try {
-    await deps.emitFleetHeartbeat?.(heartbeat);
+    rawWrite = await deps.emitFleetHeartbeat?.(heartbeat);
   } catch {
     // best-effort: heartbeat IO must never affect supervisor scheduling.
   }
-  return heartbeat;
+  return {
+    heartbeat,
+    write: rawWrite ?? { stateWritten: true, firehoseWritten: true },
+  };
+}
+
+function shortError(message: string | undefined): string {
+  return message && message.length > 0 ? ` error=${message}` : "";
+}
+
+async function superviseHeartbeatStateWrite(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  heartbeat: FleetHeartbeat,
+  write: FleetHeartbeatEmitResult,
+): Promise<void> {
+  if (write.stateWritten) {
+    state.lastHeartbeatStateWriteEpoch = heartbeat.epoch;
+    state.heartbeatStateWriteMisses = 0;
+    return;
+  }
+
+  state.heartbeatStateWriteMisses += 1;
+  if (state.heartbeatStateWriteMisses < HEARTBEAT_STATE_REPAIR_AFTER_TICKS) return;
+
+  const staleForS =
+    state.lastHeartbeatStateWriteEpoch > 0
+      ? heartbeat.epoch - state.lastHeartbeatStateWriteEpoch
+      : heartbeat.epoch;
+  deps.log?.(
+    `heartbeat state writer stale: misses=${state.heartbeatStateWriteMisses} ` +
+      `stale_for_s=${staleForS}${shortError(write.stateError)}; rewriting current tick snapshot`,
+  );
+
+  let repair: FleetHeartbeatEmitResult | void;
+  try {
+    repair = await deps.repairFleetHeartbeat?.(heartbeat);
+  } catch (err) {
+    deps.log?.(`heartbeat state repair threw: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  if (repair?.stateWritten) {
+    state.lastHeartbeatStateWriteEpoch = heartbeat.epoch;
+    state.heartbeatStateWriteMisses = 0;
+    deps.log?.(`heartbeat state repair wrote epoch=${heartbeat.epoch}`);
+  } else {
+    deps.log?.(
+      `heartbeat state repair failed: misses=${state.heartbeatStateWriteMisses}` +
+        shortError(repair?.stateError),
+    );
+  }
 }
 
 /**
@@ -2355,7 +2438,8 @@ export async function runSupervisor(
     if (!result.abandoned) {
       state.lastProgressEpoch = deps.now();
     }
-    const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner, config);
+    const { heartbeat, write } = await emitFleetHeartbeat(state, deps, result, config.runner, config);
+    await superviseHeartbeatStateWrite(state, deps, heartbeat, write);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +

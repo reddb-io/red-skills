@@ -9,8 +9,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync, readFileSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readBuildInfo } from "@reddb-io/build-info";
 import {
   type FleetHeartbeat,
+  type FleetHeartbeatEmitResult,
   type ElasticResizeRequest,
   initSupervisorState,
   resolveSupervisorConfig,
@@ -73,6 +75,7 @@ function fleetHeartbeatState(hb: FleetHeartbeat): string {
       epoch: hb.epoch,
       last_progress_epoch: hb.lastProgressEpoch > 0 ? hb.lastProgressEpoch : undefined,
       runner: hb.runner,
+      bundle_version: hb.bundleVersion,
       ready_for_agent: hb.readyForAgent,
       slots: {
         busy: hb.slotsBusy,
@@ -145,6 +148,10 @@ async function writeCastleSupervisorSnapshot(
       completed: [],
     },
   );
+}
+
+function heartbeatWriteError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -330,6 +337,7 @@ export function formatBootSweepResult(result: BootResult): string {
   const oc = result.orphanCleanup;
   const ac = result.attemptCap;
   const bc = result.branchCleanup;
+  const tj = result.tmpJanitor;
   const ds = result.docsSweep?.plan;
   const us = result.unblockSweep;
   const st = result.straggler;
@@ -338,6 +346,7 @@ export function formatBootSweepResult(result: BootResult): string {
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
     ` | branches snapshot=${bc?.snapshotReaped.length ?? 0} remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
+    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${tj?.protectedLiveWorkers.length ?? 0}` +
     ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +
     ` | stragglers unlabeled=${st?.counts.unlabeled ?? 0} triage=${st?.counts.needsTriage ?? 0} info=${st?.counts.needsInfo ?? 0}`
@@ -405,6 +414,7 @@ function buildSupervisorDeps(
   hookEnvBase: Record<string, string>,
 ): SupervisorDeps {
   const bundle = process.argv[1];
+  const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
   // Per-tick / boot liveness line into afk-supervisor.log (best-effort). Shared
   // by `log` and the pre-spawn boot sweeps so both land in the supervisor log.
@@ -635,40 +645,63 @@ function buildSupervisorDeps(
         log: logLine,
       });
     },
-    emitFleetHeartbeat: async (hb) => {
+    emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
+      const stamped = { ...hb, bundleVersion };
+      let stateWritten = false;
+      let firehoseWritten = false;
+      let stateError: string | undefined;
+      let firehoseError: string | undefined;
       try {
-        writeFleetStateAtomic(statePath, hb);
-      } catch {
-        // best-effort: state-file failure must not affect the supervisor.
+        writeFleetStateAtomic(statePath, stamped);
+        stateWritten = true;
+      } catch (err) {
+        stateError = heartbeatWriteError(err);
       }
       try {
-        await writeCastleSupervisorSnapshot(root, `s${process.pid}`, hb);
+        await writeCastleSupervisorSnapshot(root, `s${process.pid}`, stamped);
       } catch {
         // best-effort: castle state mirroring must not affect the supervisor.
       }
       try {
-        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
-          ts: hb.ts,
+        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(stamped), {
+          ts: stamped.ts,
           fields: {
             worker: "fleet",
             extra: {
               scope: "fleet",
-              runner: hb.runner,
-              ready_for_agent: String(hb.readyForAgent),
-              slots_busy: String(hb.slotsBusy),
-              slots_free: String(hb.slotsFree),
-              slots_total: String(hb.slotsTotal),
-              slots_parked: String(hb.slotsParked),
-              spawns_this_tick: String(hb.spawnsThisTick),
-              drain_budget_tier: hb.drainBudget?.tier ?? null,
-              drain_budget_spent_usd: hb.drainBudget?.spentUsd.toFixed(4) ?? null,
-              drain_budget_limit_usd: hb.drainBudget?.limitUsd.toFixed(4) ?? null,
-              drain_budget_percent: hb.drainBudget ? (hb.drainBudget.percent * 100).toFixed(2) : null,
+              runner: stamped.runner,
+              bundle_version: stamped.bundleVersion ?? null,
+              ready_for_agent: String(stamped.readyForAgent),
+              slots_busy: String(stamped.slotsBusy),
+              slots_free: String(stamped.slotsFree),
+              slots_total: String(stamped.slotsTotal),
+              slots_parked: String(stamped.slotsParked),
+              spawns_this_tick: String(stamped.spawnsThisTick),
+              drain_budget_tier: stamped.drainBudget?.tier ?? null,
+              drain_budget_spent_usd: stamped.drainBudget?.spentUsd.toFixed(4) ?? null,
+              drain_budget_limit_usd: stamped.drainBudget?.limitUsd.toFixed(4) ?? null,
+              drain_budget_percent: stamped.drainBudget ? (stamped.drainBudget.percent * 100).toFixed(2) : null,
             },
           },
         });
-      } catch {
-        // best-effort: firehose failure must not affect the supervisor.
+        firehoseWritten = true;
+      } catch (err) {
+        firehoseError = heartbeatWriteError(err);
+      }
+      return {
+        stateWritten,
+        firehoseWritten,
+        ...(stateError !== undefined ? { stateError } : {}),
+        ...(firehoseError !== undefined ? { firehoseError } : {}),
+      };
+    },
+    repairFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
+      const stamped = { ...hb, bundleVersion };
+      try {
+        writeFleetStateAtomic(statePath, stamped);
+        return { stateWritten: true };
+      } catch (err) {
+        return { stateWritten: false, stateError: heartbeatWriteError(err) };
       }
     },
   };
