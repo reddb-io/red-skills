@@ -57,6 +57,7 @@ export interface QueueVisibilityProbeInput {
 
 export interface FleetTruthProbeInput {
   readonly supervisorPid?: number | null;
+  readonly ownSupervisorPid?: number;
   readonly supervisorPidLive: boolean;
   readonly supervisorPidMtimeMs?: number;
   readonly stateMtimeMs?: number;

@@ -33,6 +33,7 @@ export interface CollectFleetTruthProbeOptions {
   readonly nowMs?: number;
   readonly heartbeatStaleMs: number;
   readonly latestBundleVersion?: string;
+  readonly ownSupervisorPid?: number;
   readonly pidLive?: (pid: number) => boolean;
 }
 
@@ -103,6 +104,7 @@ export async function collectFleetTruthProbeInput(
 
   return {
     supervisorPid,
+    ownSupervisorPid: options.ownSupervisorPid ?? process.pid,
     supervisorPidLive: supervisorPid !== null ? pidLive(supervisorPid) : false,
     supervisorPidMtimeMs,
     stateMtimeMs,
@@ -116,8 +118,13 @@ export async function collectFleetTruthProbeInput(
   };
 }
 
+function isOwnSupervisorPid(input: FleetTruthProbeInput): boolean {
+  return Boolean(input.supervisorPid && input.ownSupervisorPid && input.supervisorPid === input.ownSupervisorPid);
+}
+
 function fleetTruthFindings(input: FleetTruthProbeInput): FleetTruthFindingKind[] {
   const findings: FleetTruthFindingKind[] = [];
+  if (isOwnSupervisorPid(input)) return findings;
   const heartbeatAge = ageMs(input.nowMs, input.heartbeatEpochMs ?? input.stateMtimeMs);
   if (input.supervisorPidLive && heartbeatAge !== undefined && heartbeatAge > input.heartbeatStaleMs) {
     findings.push("zombie");
