@@ -93,6 +93,11 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
       parked: hb.slotsParked,
     },
     spawns_this_tick: hb.spawnsThisTick,
+    churn: {
+      deaths: hb.churn.deaths,
+      respawns: hb.churn.respawns,
+      window_s: hb.churn.windowS,
+    },
     ...(hb.drainBudget
       ? {
           drain_budget: {
@@ -139,6 +144,11 @@ async function writeCastleSupervisorSnapshot(
           parked: hb.slotsParked,
         },
         spawns_this_tick: hb.spawnsThisTick,
+        churn: {
+          deaths: hb.churn.deaths,
+          respawns: hb.churn.respawns,
+          window_s: hb.churn.windowS,
+        },
         ...(hb.drainBudget
           ? {
               drain_budget: {
