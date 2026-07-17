@@ -12,6 +12,7 @@ export interface OperationalProbeContext {
   readonly focalBranch?: FocalBranchProbeInput;
   readonly configNamespacing?: ConfigNamespacingProbeInput;
   readonly fleetTruth?: FleetTruthProbeInput;
+  readonly claimHygiene?: ClaimHygieneProbeInput;
 }
 
 export interface ConfigNamespacingProbeInput {
@@ -65,6 +66,26 @@ export interface FleetTruthProbeInput {
   readonly relaunchArgs?: readonly string[];
 }
 
+export type ClaimHygieneWorkerPidState = "live" | "dead" | "foreign" | "unknown";
+
+export interface ClaimHygieneCommentInput {
+  readonly id: number;
+  readonly body: string;
+  readonly createdAt?: string;
+}
+
+export interface ClaimHygieneIssueInput {
+  readonly number: number;
+  readonly comments: readonly ClaimHygieneCommentInput[];
+}
+
+export interface ClaimHygieneProbeInput {
+  readonly ownNamespace?: string;
+  readonly ownWorkerPrefix: string;
+  readonly listOpenQueueIssues: () => Promise<readonly ClaimHygieneIssueInput[]>;
+  readonly workerPidState: (worker: string) => ClaimHygieneWorkerPidState;
+}
+
 export interface OperationalProbeFix {
   readonly gate: "confirm";
   readonly description: string;
@@ -87,6 +108,7 @@ export interface OperationalProbeFixDeps {
   removeBranchLock?(): Promise<void>;
   writeBranchLock?(branch: string): Promise<void>;
   terminateSupervisor?(pid: number): Promise<boolean>;
+  concedeClaim?(issue: number, body: string): Promise<void>;
   relaunchFleet?(request: {
     readonly target?: number;
     readonly runner?: string;
