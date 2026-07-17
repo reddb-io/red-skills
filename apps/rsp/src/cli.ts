@@ -14,6 +14,7 @@ import type { RspRuntimeConfig } from "./config.js";
 import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
+import { renderStructuredError, renderUnknownFlag } from "./structured-error.js";
 import {
   appendTelemetryEventSync,
   telemetrySpoolPath,
@@ -68,7 +69,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   if (args.command === "shell-init") {
     const shell = args.positional[1];
     if (shell !== "fish" && shell !== "bash" && shell !== "zsh") {
-      process.stdout.write("error: usage rsp shell-init fish|bash|zsh\n");
+      process.stdout.write(renderStructuredError({
+        command: args.positional.join(" ") || "shell-init",
+        category: "usage",
+        error: "usage rsp shell-init fish|bash|zsh",
+        help: "rsp shell-init bash",
+      }));
       return 2;
     }
     const { renderShellInit } = await import("./shell-init.js");
@@ -162,7 +168,13 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     const { readGhConditionalJson } = await import("./gh-conditional.js");
     const request = parseGhApiJsonArgs(args.positional);
     if (!request) {
-      process.stderr.write("usage: rsp gh-api-json <path> [-f name=value ...]\n");
+      process.stdout.write(renderStructuredError({
+        command: args.positional.join(" "),
+        category: "usage",
+        error: "usage rsp gh-api-json <path> [-f name=value ...]",
+        help: "rsp gh-api-json repos/{owner}/{repo}",
+        validFlags: ["-f", "-F"],
+      }));
       return 2;
     }
     const response = await readGhConditionalJson({
@@ -178,7 +190,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await runColdWrappedCommand(args, config, residentPaths.rootDir);
-    process.stdout.write("error: rsp repo store is not provisioned - run /red-setup\n");
+    process.stdout.write(renderStructuredError({
+      command: telemetryCommand(args) || "rsp",
+      category: "real-error",
+      error: "rsp repo store is not provisioned",
+      help: "/red-setup",
+    }));
     return 1;
   }
   const openResidentStore = (ensureResident = true) => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
@@ -313,20 +330,39 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         return 0;
       }
       if (record?.status === "expired") {
-        const text = `expired ${record.expired_at} — re-run: ${record.command}\n`;
+        const text = renderStructuredError({
+          command: `rsp show ${args.handle}`,
+          category: "real-error",
+          error: `expired ${record.expired_at}`,
+          help: record.command,
+        });
         process.stdout.write(text);
-        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
+        await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, text.length);
         return 1;
       }
-      const text = `expired unknown — re-run: ${args.handle}\n`;
+      const text = renderStructuredError({
+        command: `rsp show ${args.handle}`,
+        category: "real-error",
+        error: "expired unknown",
+        help: args.handle,
+      });
       process.stdout.write(text);
-      await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, Buffer.byteLength(text, "utf8"));
+      await appendShowAccountingEvent(residentPaths.rootDir, args.handle, false, text.length);
       return 1;
     }
 
-    process.stdout.write("error: usage rsp show el:<id>\n");
+    process.stdout.write(renderStructuredError({
+      command: args.positional.join(" ") || "rsp",
+      category: "usage",
+      error: "usage rsp show el:<id>",
+      help: "rsp show el:<id>",
+    }));
     return 2;
   } catch (err) {
+    if (isStructuredUsageRenderable(err)) {
+      process.stdout.write(err.render());
+      return 2;
+    }
     if (wrapperCommand) return await degradeToPassthrough("wrapper failed", args.positional, err, residentPaths.rootDir);
     throw err;
   } finally {
@@ -573,6 +609,10 @@ async function runColdWrappedCommand(
       return await emitWrappedResult(args, result, started, store);
     }
   } catch (coldErr) {
+    if (isStructuredUsageRenderable(coldErr)) {
+      process.stdout.write(coldErr.render());
+      return 2;
+    }
     return await degradeToPassthrough("wrapper failed", args.positional, coldErr, telemetryRoot);
   } finally {
     await store.close();
@@ -1058,6 +1098,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === "--terse") out.level = "terse";
     else if (arg === "--query") out.query = argv[++i];
     else if (arg.startsWith("--query=")) out.query = arg.slice("--query=".length);
+    else if (positional.length === 0 && arg.startsWith("--")) throw new CliUsageError(arg);
     else positional.push(arg);
   }
   if (out.query && positional[0] !== "show" && !positional.some((arg) => arg === "--query" || arg.startsWith("--query="))) {
@@ -1067,6 +1108,21 @@ function parseArgs(argv: string[]): ParsedArgs {
   out.handle = positional[1];
   out.positional = positional;
   return out;
+}
+
+class CliUsageError extends Error {
+  constructor(readonly flag: string) {
+    super(`unknown flag: ${flag}`);
+  }
+
+  render(): Buffer {
+    return renderUnknownFlag("rsp", this.flag, ["--store-uri", "--brief", "--terse", "--query"], "rsp --help");
+  }
+}
+
+function isStructuredUsageRenderable(err: unknown): err is { render: () => Buffer } {
+  return typeof err === "object" && err !== null && "render" in err &&
+    typeof (err as { render?: unknown }).render === "function";
 }
 
 function parseGhApiJsonArgs(argv: readonly string[]): { path: string; params: Record<string, string> } | null {
@@ -1318,7 +1374,16 @@ function renderSetupResult(result: {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().then((code) => process.exit(code), (err) => {
-    process.stdout.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    if (isStructuredUsageRenderable(err)) {
+      process.stdout.write(err.render());
+      process.exit(2);
+    }
+    process.stdout.write(renderStructuredError({
+      command: "rsp",
+      category: "real-error",
+      error: err instanceof Error ? err.message : String(err),
+      help: "rsp --help",
+    }));
     process.exit(1);
   });
 }
