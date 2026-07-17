@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunFlags, RunFlagError, deriveActivity } from "../src/commands/run.js";
+import { parseRunFlags, RunFlagError, deriveActivity, resolveRunDispatchIdentity } from "../src/commands/run.js";
 import type { AgentStreamEvent } from "../src/core/execution.js";
 
 describe("deriveActivity (native-path monitor stage detection)", () => {
@@ -172,6 +172,15 @@ describe("parseRunFlags", () => {
     expect(f.origin).toBe("go");
     expect(f.kind).toBe("go");
     expect(f.lane).toBe("lane:go");
+  });
+
+  it("resolves plain afk run as explicit castle afk identity", () => {
+    expect(resolveRunDispatchIdentity(parseRunFlags([]))).toEqual({ origin: "afk", kind: "afk" });
+    expect(resolveRunDispatchIdentity(parseRunFlags(["--origin", "go", "--kind", "go", "--lane", "lane:go"]))).toEqual({
+      origin: "go",
+      kind: "go",
+      lane: "lane:go",
+    });
   });
 
   it("parses --run-mode (the scout read-only enforcement flag), undefined by default", () => {
