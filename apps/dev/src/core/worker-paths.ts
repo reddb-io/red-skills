@@ -19,12 +19,11 @@ function normalizeRoot(root: string): string {
 }
 
 /**
- * The canonical worker-lane namespaces under `.red/tmp/`. The `/afk` fleet lives
- * in `workers`, a `/go` dispatch in `go-workers`, a `--scout` run in
- * `scout-workers`. Each RUN-TIME write path stays scoped to its single
- * {@link workersSegment} lane (via `RED_AFK_WORKERS_NAMESPACE`), but the
- * read-only observability surfaces (statusline/monitor/dashboard) must UNION
- * over all of these — a live `/go` or `--scout` worker is one more live worker.
+ * Worker-lane namespaces readers still understand under `.red/tmp/`. New castle
+ * workers write to the shared `workers` root with `current.kind` carrying
+ * `afk`/`go`/`scout`; the `go-workers` and `scout-workers` lanes remain here so
+ * read-only observability surfaces can UNION legacy live workers until their
+ * lanes age out.
  */
 export const WORKER_NAMESPACES = ["workers", "go-workers", "scout-workers"] as const;
 
@@ -42,13 +41,11 @@ export function allWorkersRoots(tmpDir: string): string[] {
 }
 
 /**
- * The worker-tree segment under the tmp root. Defaults to `workers` (the `/afk`
- * fleet). A `/go` dispatch sets `RED_AFK_WORKERS_NAMESPACE=go-workers` in its
- * own process so its worker dir + worktree land under `.red/tmp/go-workers/`,
- * never colliding with the fleet's `.red/tmp/workers/`. The override is read
- * per-call so it is process-scoped: the fleet supervisor (no env) keeps seeing
- * `workers/` and never manages a `/go` worker, preserving lane isolation. Only
- * a `[A-Za-z0-9_-]+` value is honoured; anything else falls back to `workers`.
+ * The worker-tree segment under the tmp root. Defaults to `workers` (the castle
+ * worker root). `RED_AFK_WORKERS_NAMESPACE` remains as a legacy compatibility
+ * override for still-migrating lanes such as scout; `/go` no longer sets it.
+ * Only a `[A-Za-z0-9_-]+` value is honoured; anything else falls back to
+ * `workers`.
  */
 export function workersSegment(): string {
   const ns = process.env.RED_AFK_WORKERS_NAMESPACE;

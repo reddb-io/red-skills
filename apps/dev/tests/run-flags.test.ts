@@ -164,11 +164,13 @@ describe("parseRunFlags", () => {
     expect(parseRunFlags(["--spec=7"]).filter).toEqual({ kind: "spec", spec: 7 });
   });
 
-  it("parses --origin and --lane (the /go provenance + isolated lane), undefined by default", () => {
+  it("parses --origin, --kind, and --lane (the /go provenance + castle kind + isolated lane), undefined by default", () => {
     expect(parseRunFlags([]).origin).toBeUndefined();
+    expect(parseRunFlags([]).kind).toBeUndefined();
     expect(parseRunFlags([]).lane).toBeUndefined();
-    const f = parseRunFlags(["--origin", "go", "--lane", "lane:go"]);
+    const f = parseRunFlags(["--origin", "go", "--kind", "go", "--lane", "lane:go"]);
     expect(f.origin).toBe("go");
+    expect(f.kind).toBe("go");
     expect(f.lane).toBe("lane:go");
   });
 

@@ -64,7 +64,7 @@ import {
   type IssueClassificationMetadata,
 } from "../core/issue-classifier.js";
 import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../core/triage-labels.js";
-import { GO_ORIGIN, GO_WORKERS_SEGMENT } from "../core/go.js";
+import { GO_KIND, GO_ORIGIN } from "../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../core/scout.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
@@ -127,6 +127,9 @@ interface ParsedRunFlags {
    * (`"afk"` | `"go"` | …). Set by each entry point so the
    * monitor/statusline can render per-source counts. */
   origin?: string;
+  /** --kind <kind>: castle worker kind recorded in state.toon (`afk`, `go`, or
+   * `scout`). */
+  kind?: string;
   /** --lane <label>: the candidate-listing label the session drains. Defaults
    * to `ready-for-agent` (the fleet). `/go` passes its isolated `lane:go` so
    * its dedicated worker sees only the minted disposable issue and the running
@@ -185,24 +188,24 @@ export async function probeFleetSupervisor(
 }
 
 /**
- * Detect a `/go` or `--scout` dispatch (#1087). These runs live in their OWN
- * worker namespace (`go-workers/` / `scout-workers/`), their own lane
- * (`lane:go` / `lane:scout`, never `ready-for-agent`), and carry `--origin
- * go`/`--origin scout` — so they can NEVER collide with a fleet's `workers/`
- * namespace, claims, or lane. The fleet-supervisor boot guard exists ONLY to
- * stop a second fleet from stomping the first on the shared `workers/`
- * namespace; it must not apply to these isolated dispatches, which the SKILL.md
- * contract requires to boot "whether or not a fleet is up". Detected via any of
- * the three redundant signals threaded through the boot context.
+ * Detect a `/go` or `--scout` dispatch (#1087). These runs carry their own
+ * castle worker kind and lane (`lane:go` / `lane:scout`, never
+ * `ready-for-agent`) so they do not collide with a fleet drain. The
+ * fleet-supervisor boot guard exists ONLY to stop a second fleet from stomping
+ * the first; it must not apply to these isolated dispatches, which the SKILL.md
+ * contract requires to boot "whether or not a fleet is up". Detected via the
+ * flags threaded through the boot context, plus the legacy namespace env while
+ * scout still migrates.
  */
 export function isNamespacedDispatch(
-  args: { origin?: string; lane?: string },
+  args: { origin?: string; kind?: string; lane?: string },
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (args.kind === GO_KIND || args.kind === SCOUT_ORIGIN) return true;
   if (args.origin === GO_ORIGIN || args.origin === SCOUT_ORIGIN) return true;
   if (args.lane === LABEL_GO_LANE || args.lane === LABEL_SCOUT_LANE) return true;
   const ns = env.RED_AFK_WORKERS_NAMESPACE;
-  if (ns === GO_WORKERS_SEGMENT || ns === SCOUT_WORKERS_SEGMENT) return true;
+  if (ns === SCOUT_WORKERS_SEGMENT) return true;
   return false;
 }
 
@@ -281,6 +284,7 @@ const RUN_FLAG_SCHEMA = {
   "boot-only": { kind: "boolean" },
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
   origin: { kind: "value", coerce: (raw: string): string => raw },
+  kind: { kind: "value", coerce: (raw: string): string => raw },
   lane: { kind: "value", coerce: (raw: string): string => raw },
   "pre-pr": { kind: "boolean" },
   "local-merge": { kind: "boolean" },
@@ -338,6 +342,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     bootOnly: values["boot-only"] === true,
     reconcileIssue,
     origin: values.origin as string | undefined,
+    kind: values.kind as string | undefined,
     lane: values.lane as string | undefined,
     prePr: values["pre-pr"] === true,
     localMerge: values["local-merge"] === true,
@@ -1824,7 +1829,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // never collide with the fleet, so it must boot whether or not a fleet is up.
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
     const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
-    const exempt = isNamespacedDispatch({ origin: flags.origin, lane: flags.lane });
+    const exempt = isNamespacedDispatch({
+      origin: flags.origin,
+      kind: flags.kind,
+      lane: flags.lane,
+    });
     const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
   }
@@ -2054,6 +2063,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           origin: flags.origin ?? "",
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,
+          "current.kind": flags.kind ?? flags.origin ?? "afk",
           "current.number": candidate.number,
           "current.title": candidate.title,
           "current.worktree": join(attemptDir, "worktree"),

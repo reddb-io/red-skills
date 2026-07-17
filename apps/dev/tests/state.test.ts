@@ -96,6 +96,30 @@ describe("state", () => {
     expect(after.current.activity).toBe("tests");
   });
 
+  it("records and preserves the castle worker kind under current.kind", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    initStateSync(path, {
+      worker_id: "wGO12",
+      pid: 4242,
+      origin: "go",
+      "current.kind": "go",
+      "current.number": 1916,
+      "current.activity": "setup",
+    });
+
+    const seeded = await readState(path);
+    expect(seeded.current.kind).toBe("go");
+    const after = await updateState(path, {
+      origin: "",
+      current: { kind: "", activity: "tests" },
+    });
+    expect(after.origin).toBe("go");
+    expect(after.current.kind).toBe("go");
+    expect(after.current.activity).toBe("tests");
+  });
+
   it("preserves stamped identity, vitals, and loc when a stage writer carries default identity fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const path = join(dir, "afk.state.json");

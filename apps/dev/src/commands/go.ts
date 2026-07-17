@@ -3,21 +3,18 @@
 // `/go "<demand>"` is the semi-structured front door between `/goal` and
 // `/afk`. It mints a DISPOSABLE tracking issue in the isolated `lane:go` lane
 // (out of `ready-for-agent`, so the running fleet can never claim it), spins a
-// DEDICATED namespaced worker under `.red/tmp/go-workers/` (separate from the
-// fleet's `.red/tmp/workers/`), and reuses the ENTIRE AFK engine end-to-end
-// with `origin=go` and the interactive gate sink. The disposable issue
+// DEDICATED castle worker with `--kind go`, and reuses the ENTIRE AFK engine
+// end-to-end with `origin=go` and the interactive gate sink. The disposable issue
 // auto-closes on merge (the engine's PR body carries `Closes #N`). Works with
 // or without a fleet running — it is a self-sufficient front door.
 //
 // The classification + escalation logic lives in core/go.ts (pure, injected
-// IO); this command supplies the real gh + engine effects and the namespaced
-// worker root.
+// IO); this command supplies the real gh + engine effects.
 
 import {
   dispatchGo,
   parseGoMode,
   DEFAULT_GO_MODE,
-  GO_WORKERS_SEGMENT,
   type GoDodSpec,
   type DisposableIssueSpec,
   type GoMode,
@@ -28,6 +25,8 @@ import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { runCommand } from "./run.js";
 import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
+import { execTool } from "../runtime/exec.js";
+import { createGitHubTrackerAdapter } from "@reddb-io/red-castle/engine";
 
 interface ParsedGoArgs {
   demand: string;
@@ -172,16 +171,21 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
     }
   }
 
-  // Standard /go: namespace under go-workers/ so the single-shot worker never
-  // collides with the fleet's workers/. Read per-call by
-  // worker-paths.workersSegment(); scoped to this process.
-  process.env.RED_AFK_WORKERS_NAMESPACE = GO_WORKERS_SEGMENT;
-
   try {
+    const tracker = createGitHubTrackerAdapter({
+      repo: ctx.repo,
+      gh: async (args: readonly string[]) => {
+        const result = await execTool("gh", args, { cwd: ctx.root });
+        if (result.code !== 0) {
+          throw new Error((result.stderr || result.stdout || `gh exited ${result.code}`).trim());
+        }
+        return result.stdout;
+      },
+    });
     const result = await dispatchGo(
       {
         ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
-        createIssue: (spec: DisposableIssueSpec) => ghx.createIssue(ghCtx, spec),
+        createIssue: (spec: DisposableIssueSpec) => tracker.createIssue!(spec),
         // Reuse the full AFK engine in-process for exactly the minted issue.
         runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
       },
@@ -199,7 +203,7 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
     );
     process.stdout.write(
       `🚀 /go dispatched disposable issue #${result.issue} ` +
-        `(origin=go, lane:go, go-workers/, mode=${parsed.mode}${parsed.yolo ? ", +yolo" : ""}). ` +
+        `(origin=go, kind=go, lane:go, mode=${parsed.mode}${parsed.yolo ? ", +yolo" : ""}). ` +
         `engine exit ${result.engineExit}.\n`,
     );
     return result.engineExit;

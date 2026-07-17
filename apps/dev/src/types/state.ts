@@ -6,6 +6,10 @@ export const AfkFilterSchema = z.object({
 });
 
 export const AfkCurrentSchema = z.object({
+  /** Castle worker kind for this dispatch (`afk`, `go`, or `scout`). Kept under
+   * `current` so it does not collide with castle's top-level state entity kind
+   * (`worker` / `supervisor`). */
+  kind: z.string().default(""),
   number: z.union([z.number(), z.string()]).optional().default(""),
   title: z.string().default(""),
   slug: z.string().default(""),

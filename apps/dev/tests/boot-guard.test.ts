@@ -134,7 +134,8 @@ describe("checkBootGuard (#1027)", () => {
 });
 
 describe("isNamespacedDispatch (#1087)", () => {
-  it("is true for a /go dispatch (origin=go)", () => {
+  it("is true for a /go dispatch (kind=go or origin=go)", () => {
+    expect(isNamespacedDispatch({ kind: "go" }, {})).toBe(true);
     expect(isNamespacedDispatch({ origin: "go" }, {})).toBe(true);
   });
 
@@ -147,8 +148,8 @@ describe("isNamespacedDispatch (#1087)", () => {
     expect(isNamespacedDispatch({ lane: "lane:scout" }, {})).toBe(true);
   });
 
-  it("is true when RED_AFK_WORKERS_NAMESPACE is go-workers or scout-workers", () => {
-    expect(isNamespacedDispatch({}, { RED_AFK_WORKERS_NAMESPACE: "go-workers" })).toBe(true);
+  it("keeps only scout on the legacy RED_AFK_WORKERS_NAMESPACE dispatch signal", () => {
+    expect(isNamespacedDispatch({}, { RED_AFK_WORKERS_NAMESPACE: "go-workers" })).toBe(false);
     expect(isNamespacedDispatch({}, { RED_AFK_WORKERS_NAMESPACE: "scout-workers" })).toBe(true);
   });
 

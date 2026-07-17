@@ -4,14 +4,13 @@ import {
   DEFAULT_GO_VERIFY_RETRIES,
   GO_NO_HARNESS_ITER_CAP,
   GO_GATE_CONTEXT,
+  GO_KIND,
   GO_MODES,
   GO_ORIGIN,
-  GO_WORKERS_SEGMENT,
   LABEL_GO_LANE,
   buildDisposableIssue,
   buildGoEngineArgs,
   dispatchGo,
-  goWorkersRoot,
   parseGoMode,
   type DisposableIssueSpec,
 } from "../src/core/go.js";
@@ -56,26 +55,21 @@ describe("buildDisposableIssue", () => {
   });
 });
 
-describe("goWorkersRoot", () => {
-  it("namespaces under go-workers, separate from the fleet's workers", () => {
-    expect(goWorkersRoot("/repo/.red/tmp")).toBe("/repo/.red/tmp/go-workers");
-    expect(goWorkersRoot("/repo/.red/tmp/")).toBe("/repo/.red/tmp/go-workers");
-    expect(GO_WORKERS_SEGMENT).toBe("go-workers");
-  });
-});
-
 describe("buildGoEngineArgs", () => {
-  it("reuses the engine single-shot, single-issue, origin=go, lane:go", () => {
+  it("reuses the castle engine single-shot, single-issue, origin=go, kind=go, lane:go", () => {
     expect(buildGoEngineArgs({ issue: 938 })).toEqual([
       "--once",
       "--issues",
       "938",
       "--origin",
       "go",
+      "--kind",
+      "go",
       "--lane",
       "lane:go",
     ]);
     expect(GO_ORIGIN).toBe("go");
+    expect(GO_KIND).toBe("go");
     expect(GO_GATE_CONTEXT).toBe("interactive");
   });
 
