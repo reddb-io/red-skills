@@ -272,6 +272,10 @@ function malformedConfigLine(line: number, reason: string): MalformedConfigError
   return new MalformedConfigError(`malformed YAML at line ${line}: ${reason}`);
 }
 
+function indentOf(raw: string): number {
+  return raw.match(/^\s*/)?.[0].length ?? 0;
+}
+
 function stripYamlComment(raw: string): string {
   const content = raw.trimStart();
   if (content === "" || content.startsWith("#")) return "";
@@ -290,6 +294,55 @@ function stripYamlComment(raw: string): string {
     if (ch === "#") return raw.slice(0, i);
   }
   return raw;
+}
+
+function isLiteralBlockScalar(value: string): value is "|" | "|-" {
+  return value === "|" || value === "|-";
+}
+
+function assertSupportedBlockScalar(line: number, value: string): void {
+  if (value === ">" || value === ">-") {
+    throw malformedConfigLine(line, "unsupported folded block scalar");
+  }
+  if (value.startsWith("|") && !isLiteralBlockScalar(value)) {
+    throw malformedConfigLine(line, `unsupported literal block scalar indicator ${value}`);
+  }
+}
+
+function readLiteralBlockScalar(
+  lines: readonly string[],
+  startIndex: number,
+  headerIndent: number,
+  indicator: "|" | "|-",
+): { value: string; nextIndex: number } {
+  const contentIndent = headerIndent + 2;
+  const blockLines: string[] = [];
+  let i = startIndex;
+
+  for (; i < lines.length; i++) {
+    const raw = lines[i]!.replace(/\r$/, "");
+    const isFinalSplitBlank = raw === "" && i === lines.length - 1;
+    if (isFinalSplitBlank) break;
+
+    const blank = raw.replace(/\s/g, "") === "";
+    if (blank) {
+      blockLines.push("");
+      continue;
+    }
+
+    const indent = indentOf(raw);
+    if (indent <= headerIndent) break;
+    if (indent < contentIndent) {
+      throw malformedConfigLine(i + 1, "literal block scalar continuation is under-indented");
+    }
+    blockLines.push(raw.slice(contentIndent));
+  }
+
+  const value = blockLines.join("\n");
+  return {
+    value: indicator === "|-" ? value : `${value}\n`,
+    nextIndex: i,
+  };
 }
 
 function configDefaults(): ConfigValues {
@@ -313,9 +366,12 @@ export function parseConfigYaml(text: string): ConfigValues {
   // flat config map keeps its `dotted.key -> value` shape (see readBackpressure).
   const seqCounters: Record<string, number> = {};
 
-  let lineNumber = 0;
-  for (let raw of text.split("\n")) {
-    lineNumber += 1;
+  const lines = text.split("\n");
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const lineNumber = lineIndex + 1;
+    let raw = lines[lineIndex]!;
+    lineIndex += 1;
     // strip a trailing CR (CRLF tolerance)
     raw = raw.replace(/\r$/, "");
 
@@ -346,6 +402,7 @@ export function parseConfigYaml(text: string): ConfigValues {
 
       let item = rest.slice(1).replace(/^\s+/, "");
       if (item === "") throw malformedConfigLine(lineNumber, "empty sequence item");
+      assertSupportedBlockScalar(lineNumber, item);
       // Strip an inline comment that follows the closing quote (e.g. `- "cmd" # note`).
       if (item[0] === '"' || item[0] === "'") {
         const q = item[0];
@@ -370,7 +427,13 @@ export function parseConfigYaml(text: string): ConfigValues {
       const parent = stack.join(".");
       const idx = seqCounters[parent] ?? 0;
       seqCounters[parent] = idx + 1;
-      out[`${parent}.${idx}`] = item;
+      if (isLiteralBlockScalar(item)) {
+        const block = readLiteralBlockScalar(lines, lineIndex, indent, item);
+        lineIndex = block.nextIndex;
+        out[`${parent}.${idx}`] = block.value;
+      } else {
+        out[`${parent}.${idx}`] = item;
+      }
       continue;
     }
 
@@ -381,6 +444,7 @@ export function parseConfigYaml(text: string): ConfigValues {
     const colon = rest.indexOf(":");
     const key = rest.slice(0, colon);
     let value = rest.slice(colon + 1).replace(/^\s+/, "");
+    assertSupportedBlockScalar(lineNumber, value);
 
     // Strip an inline comment that follows the closing quote (e.g. `key: "v" # note`).
     if (value[0] === '"' || value[0] === "'") {
@@ -412,7 +476,11 @@ export function parseConfigYaml(text: string): ConfigValues {
 
     const full = stack.length > 0 ? `${stack.join(".")}.${key}` : key;
 
-    if (value === "") {
+    if (isLiteralBlockScalar(value)) {
+      const block = readLiteralBlockScalar(lines, lineIndex, indent, value);
+      lineIndex = block.nextIndex;
+      out[full] = block.value;
+    } else if (value === "") {
       stack.push(key);
       indents.push(indent);
     } else {
