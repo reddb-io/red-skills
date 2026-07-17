@@ -357,6 +357,25 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
   };
 }
 
+export interface RunDispatchIdentity {
+  origin: string;
+  kind: string;
+  lane?: string;
+}
+
+/**
+ * Resolve the castle dispatch identity stamped onto every run. `/go` and scout
+ * pass explicit provenance; bare `/afk run` is the default castle `afk` worker.
+ */
+export function resolveRunDispatchIdentity(flags: Pick<ParsedRunFlags, "origin" | "kind" | "lane">): RunDispatchIdentity {
+  const origin = flags.origin ?? "afk";
+  return {
+    origin,
+    kind: flags.kind ?? origin,
+    lane: flags.lane,
+  };
+}
+
 /**
  * Real mechanical-conflict resolver for the #1095 merge-conflict reland. Bound
  * to `gitCtx`, returns the port `preMergeRebase` invokes when a rebase onto
@@ -1799,6 +1818,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
 
   const flags = parseRunFlags(options.args);
+  const dispatchIdentity = resolveRunDispatchIdentity(flags);
   // --model / --effort pre-set the env override (flag > env). Setting them on the
   // process env makes the override flow through both the in-process `--once` path
   // (resolveTier reads process.env) and the fleet path (buildWorkerEnv passes
@@ -1830,9 +1850,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
     const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
     const exempt = isNamespacedDispatch({
-      origin: flags.origin,
-      kind: flags.kind,
-      lane: flags.lane,
+      origin: dispatchIdentity.origin,
+      kind: dispatchIdentity.kind,
+      lane: dispatchIdentity.lane,
     });
     const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
@@ -2060,10 +2080,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
           runner: c.runner,
           // Spawn-time provenance (issue #930): stamped once here, never mutated.
           // The entry point (`/afk`, `/go`) passes `--origin <label>`.
-          origin: flags.origin ?? "",
+          origin: dispatchIdentity.origin,
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,
-          "current.kind": flags.kind ?? flags.origin ?? "afk",
+          "current.kind": dispatchIdentity.kind,
           "current.number": candidate.number,
           "current.title": candidate.title,
           "current.worktree": join(attemptDir, "worktree"),
@@ -2087,7 +2107,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         writeIdentitySync(attemptDir, {
           worker_id: c.workerId,
           runner: c.runner,
-          origin: flags.origin ?? "",
+          origin: dispatchIdentity.origin,
           number: candidate.number,
           started_at: startedAt,
         });
