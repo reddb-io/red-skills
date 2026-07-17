@@ -7,7 +7,7 @@
   ],
   "catalog_prior_art": "official catalog GitHub wrapper field choice mined for run list: databaseId,name,status,conclusion.",
   "recorded": {
-    "stdout": "[{\"databaseId\":9001,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"success\"},{\"databaseId\":9002,\"name\":\"Release\",\"status\":\"in_progress\",\"conclusion\":\"\"}]",
+    "stdout": "{\"total_count\":7,\"workflow_runs\":[{\"databaseId\":9001,\"name\":\"CI\",\"status\":\"completed\",\"conclusion\":\"success\"},{\"databaseId\":9002,\"name\":\"Release\",\"status\":\"in_progress\",\"conclusion\":\"\"}]}",
     "stderr": "",
     "status": 0,
     "signal": null
@@ -28,6 +28,10 @@
         "conclusion": ""
       }
     ],
+    "aggregate": {
+      "returned": 2,
+      "total": 7
+    },
     "summary": "2 runs"
   },
   "assertions": [
@@ -35,6 +39,16 @@
       "question": "oracle preserves runs.length",
       "path": "runs.length",
       "expected": 2
+    },
+    {
+      "question": "oracle preserves returned aggregate",
+      "path": "aggregate.returned",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves total aggregate",
+      "path": "aggregate.total",
+      "expected": 7
     },
     {
       "question": "oracle preserves runs.0.length",

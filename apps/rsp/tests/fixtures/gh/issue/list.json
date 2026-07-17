@@ -32,12 +32,20 @@
         ]
       }
     ],
+    "aggregate": {
+      "returned": 2
+    },
     "summary": "2 returned issues"
   },
   "assertions": [
     {
       "question": "oracle preserves issues.length",
       "path": "issues.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves returned aggregate",
+      "path": "aggregate.returned",
       "expected": 2
     },
     {

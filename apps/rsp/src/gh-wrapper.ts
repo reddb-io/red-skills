@@ -36,6 +36,7 @@ interface GhCommand {
   target?: string;
   full: boolean;
   wide: boolean;
+  fields: Set<string>;
   passthrough: string[];
   query?: string;
 }
@@ -62,6 +63,12 @@ const WIDE_FIELDS: Record<`${GhKind}:${MachineGhAction}`, string[]> = {
 
 const BODY_LIMIT = 160;
 const LOG_LIMIT = 160;
+
+const SELECTABLE_LIST_FIELDS: Record<`${GhKind}:list`, readonly string[]> = {
+  "pr:list": ["number", "title", "state", "draft", "author", "labels", "url", "updated"],
+  "issue:list": ["number", "title", "state", "labels", "author", "url", "updated"],
+  "run:list": ["id", "name", "status", "conclusion", "event", "branch", "workflow", "created"],
+};
 
 export async function runGhWrapper(argv: readonly string[], options: GhRenderOptions): Promise<GhRenderResult> {
   const command = parseGhCommand(argv);
@@ -162,24 +169,46 @@ function parseGhCommand(argv: readonly string[]): GhCommand {
   if (!(kind === "pr" || kind === "issue" || kind === "run")) throw new Error(`unsupported gh surface: ${kind ?? ""}`);
   const combined = kind === "pr" && action && action !== "list" && action !== "view";
   if (!(action === "list" || action === "view" || combined)) throw new Error(`unsupported gh subcommand: ${action ?? ""}`);
+  const parsedKind: GhKind = kind;
 
   const passthrough: string[] = [];
   let full = false;
   let wide = false;
-  for (const arg of parsed.argv.slice(3)) {
+  let fields = new Set<string>();
+  const tail = parsed.argv.slice(3);
+  for (let i = 0; i < tail.length; i += 1) {
+    const arg = tail[i] ?? "";
     if (arg === "--full") full = true;
     else if (arg === "--wide") wide = true;
+    else if (arg === "--fields") fields = parseFieldsValue(tail[++i] ?? "");
+    else if (arg.startsWith("--fields=")) fields = parseFieldsValue(arg.slice("--fields=".length));
     else passthrough.push(arg);
   }
   const parsedAction: GhAction = combined ? "combined" : action === "list" ? "list" : "view";
-  return { kind, action: parsedAction, target: combined ? action : undefined, full, wide, passthrough, query: parsed.query };
+  const command: GhCommand = { kind: parsedKind, action: parsedAction, target: combined ? action : undefined, full, wide, fields, passthrough, query: parsed.query };
+  validateSelectedFields(command);
+  return command;
 }
 
 function machineArgs(command: GhCommand): string[] {
   if (command.action === "combined") throw new Error("combined gh command uses multiple machine calls");
   const key = `${command.kind}:${command.action}` as const;
-  const fields = command.wide ? WIDE_FIELDS[key] : DEFAULT_FIELDS[key];
+  const fields = command.wide || command.fields.size > 0 ? WIDE_FIELDS[key] : DEFAULT_FIELDS[key];
   return [command.kind, command.action, ...command.passthrough, "--json", fields.join(",")];
+}
+
+function parseFieldsValue(value: string): Set<string> {
+  return new Set(value.split(",").map((field) => field.trim()).filter(Boolean));
+}
+
+function validateSelectedFields(command: GhCommand): void {
+  if (command.fields.size === 0) return;
+  if (command.action !== "list") throw new GhUsageError(command, `--fields is supported for list outputs`);
+  const key = `${command.kind}:list` as const;
+  const allowed = SELECTABLE_LIST_FIELDS[key];
+  for (const field of command.fields) {
+    if (!allowed.includes(field)) throw new GhUsageError(command, `unknown field: ${field}`, allowed);
+  }
 }
 
 async function collectGhContract(command: GhCommand): Promise<RecordedGitContract> {
@@ -260,7 +289,10 @@ async function normalizeGhApiPayload(command: GhCommand, raw: string): Promise<u
     case "issue:view":
       return normalizeIssue(parsed);
     case "run:list":
-      return arrayOfRecords(recordOf(parsed).workflow_runs).map(normalizeRun);
+      return {
+        items: arrayOfRecords(recordOf(parsed).workflow_runs).map(normalizeRun),
+        total: numberField(recordOf(parsed), "total_count"),
+      };
     case "run:view": {
       const run = normalizeRun(parsed);
       const target = firstPositional(command.passthrough);
@@ -390,32 +422,37 @@ async function collectRawGh(args: readonly string[]): Promise<RecordedGitContrac
 }
 
 function renderGhPayload(command: GhCommand, commandArgv: readonly string[], parsed: unknown): JsonObject | string {
-  if (command.action === "list" && Array.isArray(parsed) && parsed.length === 0) {
-    return emptyState(command.kind);
-  }
-
   const base = { command: commandArgv.join(" ") };
   switch (`${command.kind}:${command.action}`) {
     case "pr:list": {
-      const rows = arrayOfRecords(parsed).map((row) => projectPr(row, command.wide));
+      const list = listRecords(parsed, "prs");
+      const rows = list.rows.map((row) => projectPr(row, command));
       const filteredRows = filterRows(rows, command.query);
-      return helpIfQueried({ ...base, prs: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} PRs` }, command, ["rsp gh pr <number>", "rsp gh pr list --query <title-or-label>"]);
+      const aggregate = listAggregate(filteredRows.length, rows.length, list.total, command.query);
+      if (filteredRows.length === 0) return emptyListPayload(base, command, "prs", aggregate, ["rsp gh issue list", "rsp gh pr list --query <title-or-label>"]);
+      return helpIfQueried({ ...base, prs: filteredRows as JsonValue, aggregate, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} PRs` }, command, ["rsp gh pr <number>", "rsp gh pr list --query <title-or-label>"]);
     }
     case "pr:view":
       return helpIfQueried({ ...base, pr: projectPrView(recordOf(parsed), command), summary: `PR #${numberField(recordOf(parsed), "number")}` }, command, ["rsp gh pr <number>", "rsp gh pr view <number> --full"]);
     case "pr:combined":
       return renderCombinedPrPayload(command, commandArgv, recordOf(parsed));
     case "issue:list": {
-      const rows = arrayOfRecords(parsed).map((row) => projectIssue(row, command.wide));
+      const list = listRecords(parsed, "issues");
+      const rows = list.rows.map((row) => projectIssue(row, command));
       const filteredRows = filterRows(rows, command.query);
-      return helpIfQueried({ ...base, issues: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} issues` }, command, ["rsp gh issue view <number>", "rsp gh issue list --query <label-or-title>"]);
+      const aggregate = listAggregate(filteredRows.length, rows.length, list.total, command.query);
+      if (filteredRows.length === 0) return emptyListPayload(base, command, "issues", aggregate, ["rsp gh issue list --state all", "rsp gh issue list --query <label-or-title>"]);
+      return helpIfQueried({ ...base, issues: filteredRows as JsonValue, aggregate, summary: `${countLabel(filteredRows.length, rows.length, command.query)} ${stateWord(filteredRows, "open")} issues` }, command, ["rsp gh issue view <number>", "rsp gh issue list --query <label-or-title>"]);
     }
     case "issue:view":
       return helpIfQueried({ ...base, issue: projectIssueView(recordOf(parsed), command), summary: `issue #${numberField(recordOf(parsed), "number")}` }, command, ["rsp gh issue view <number> --full"]);
     case "run:list": {
-      const rows = arrayOfRecords(parsed).map((row) => projectRun(row, command.wide));
+      const list = listRecords(parsed, "runs");
+      const rows = list.rows.map((row) => projectRun(row, command));
       const filteredRows = filterRows(rows, command.query);
-      return helpIfQueried({ ...base, runs: filteredRows as JsonValue, summary: `${countLabel(filteredRows.length, rows.length, command.query)} runs` }, command, ["rsp gh run view <id>", "rsp gh run list --query <workflow-or-status>"]);
+      const aggregate = listAggregate(filteredRows.length, rows.length, list.total, command.query);
+      if (filteredRows.length === 0) return emptyListPayload(base, command, "runs", aggregate, ["rsp gh run list --limit 20", "rsp gh run list --query <workflow-or-status>"]);
+      return helpIfQueried({ ...base, runs: filteredRows as JsonValue, aggregate, summary: `${countLabel(filteredRows.length, rows.length, command.query)} runs` }, command, ["rsp gh run view <id>", "rsp gh run list --query <workflow-or-status>"]);
     }
     case "run:view":
       return helpIfQueried({ ...base, run: projectRunView(recordOf(parsed), command), summary: `run ${numberField(recordOf(parsed), "databaseId")}` }, command, ["rsp gh run view <id> --full"]);
@@ -456,25 +493,72 @@ function projectComment(row: Record<string, unknown>): JsonObject {
   };
 }
 
-function emptyState(kind: GhKind): string {
-  if (kind === "pr") return "0 open PRs — try: rsp gh issue list\n";
-  if (kind === "issue") return "0 open issues — try: rsp gh issue list --state all\n";
-  return "0 runs — try: rsp gh run list --limit 20\n";
+function listRecords(parsed: unknown, key: "prs" | "issues" | "runs"): { rows: Record<string, unknown>[]; total?: number } {
+  if (Array.isArray(parsed)) return { rows: arrayOfRecords(parsed) };
+  const record = recordOf(parsed);
+  const total = numberField(record, "total") || numberField(record, "total_count") || undefined;
+  if (Array.isArray(record.items)) return { rows: arrayOfRecords(record.items), total };
+  if (key === "runs" && Array.isArray(record.workflow_runs)) return { rows: arrayOfRecords(record.workflow_runs), total };
+  return { rows: [] };
 }
 
-function projectPr(row: Record<string, unknown>, wide: boolean): JsonObject {
+function listAggregate(returned: number, unfiltered: number, total: number | undefined, query?: string): JsonObject {
+  const aggregate: JsonObject = { returned };
+  if (typeof total === "number" && total > 0) aggregate.total = total;
+  if (query) aggregate.unfiltered = unfiltered;
+  return aggregate;
+}
+
+function emptyListPayload(
+  base: JsonObject,
+  command: GhCommand,
+  key: "prs" | "issues" | "runs",
+  aggregate: JsonObject,
+  help: readonly string[],
+): JsonObject {
+  return withHelp({
+    ...base,
+    empty: true,
+    scope: listScope(command),
+    [key]: [],
+    aggregate,
+    summary: `0 ${listNoun(command)}`,
+  }, help);
+}
+
+function listScope(command: GhCommand): string {
+  const state = stringOption(command.passthrough, "--state") ?? "open";
+  const query = command.query ? ` query=${command.query}` : "";
+  if (command.kind === "pr") return `${state} PRs${query}`;
+  if (command.kind === "issue") {
+    const label = stringOption(command.passthrough, "--label");
+    return `${state} issues${label ? ` label=${label}` : ""}${query}`;
+  }
+  const branch = stringOption(command.passthrough, "--branch") ?? stringOption(command.passthrough, "-b");
+  const workflow = stringOption(command.passthrough, "--workflow") ?? stringOption(command.passthrough, "-w");
+  return `workflow runs${branch ? ` branch=${branch}` : ""}${workflow ? ` workflow=${workflow}` : ""}${query}`;
+}
+
+function listNoun(command: GhCommand): string {
+  const state = stringOption(command.passthrough, "--state") ?? "open";
+  if (command.kind === "pr") return `${state} PRs`;
+  if (command.kind === "issue") return `${state} issues`;
+  return "runs";
+}
+
+function projectPr(row: Record<string, unknown>, command: GhCommand): JsonObject {
   const out: JsonObject = {
     number: numberField(row, "number"),
     title: stringField(row, "title"),
     state: stateClass(row),
     draft: Boolean(row.isDraft),
   };
-  if (wide) Object.assign(out, wideCommon(row));
+  addSelected(out, row, command, ["author", "labels", "url", "updated"]);
   return out;
 }
 
 function projectPrView(row: Record<string, unknown>, command: GhCommand): JsonObject {
-  const out: JsonObject = projectPr(row, command.wide);
+  const out: JsonObject = projectPr(row, command);
   out.body = textField(row, "body", BODY_LIMIT, command.full);
   if (command.wide) {
     out.base = stringField(row, "baseRefName");
@@ -483,41 +567,36 @@ function projectPrView(row: Record<string, unknown>, command: GhCommand): JsonOb
   return out;
 }
 
-function projectIssue(row: Record<string, unknown>, wide: boolean): JsonObject {
+function projectIssue(row: Record<string, unknown>, command: GhCommand): JsonObject {
   const out: JsonObject = {
     number: numberField(row, "number"),
     title: stringField(row, "title"),
     state: stateClass(row),
     labels: labels(row.labels),
   };
-  if (wide) Object.assign(out, wideCommon(row));
+  addSelected(out, row, command, ["author", "url", "updated"]);
   return out;
 }
 
 function projectIssueView(row: Record<string, unknown>, command: GhCommand): JsonObject {
-  const out: JsonObject = projectIssue(row, command.wide);
+  const out: JsonObject = projectIssue(row, command);
   out.body = textField(row, "body", BODY_LIMIT, command.full);
   return out;
 }
 
-function projectRun(row: Record<string, unknown>, wide: boolean): JsonObject {
+function projectRun(row: Record<string, unknown>, command: GhCommand): JsonObject {
   const out: JsonObject = {
     id: numberField(row, "databaseId"),
     name: stringField(row, "name"),
     status: stateClass(row),
     conclusion: stringField(row, "conclusion"),
   };
-  if (wide) {
-    out.event = stringField(row, "event");
-    out.branch = stringField(row, "headBranch");
-    out.workflow = stringField(row, "workflowName");
-    out.created = stringField(row, "createdAt");
-  }
+  addSelected(out, row, command, ["event", "branch", "workflow", "created"]);
   return out;
 }
 
 function projectRunView(row: Record<string, unknown>, command: GhCommand): JsonObject {
-  const out: JsonObject = projectRun(row, command.wide);
+  const out: JsonObject = projectRun(row, command);
   const jobs = arrayOfRecords(row.jobs).map((job) => ({
     name: stringField(job, "name"),
     status: stateClass(job),
@@ -597,6 +676,41 @@ function wideCommon(row: Record<string, unknown>): JsonObject {
     url: stringField(row, "url"),
     updated: stringField(row, "updatedAt"),
   };
+}
+
+function addSelected(out: JsonObject, row: Record<string, unknown>, command: GhCommand, fields: readonly string[]): void {
+  if (!command.wide && command.fields.size === 0) return;
+  for (const field of fields) {
+    if (!command.wide && !command.fields.has(field)) continue;
+    if (field === "author") out.author = authorLogin(row.author);
+    else if (field === "labels") out.labels = labels(row.labels);
+    else if (field === "url") out.url = stringField(row, "url");
+    else if (field === "updated") out.updated = stringField(row, "updatedAt");
+    else if (field === "event") out.event = stringField(row, "event");
+    else if (field === "branch") out.branch = stringField(row, "headBranch");
+    else if (field === "workflow") out.workflow = stringField(row, "workflowName");
+    else if (field === "created") out.created = stringField(row, "createdAt");
+  }
+}
+
+class GhUsageError extends Error {
+  constructor(
+    readonly command: GhCommand,
+    message: string,
+    readonly validFields: readonly string[] = [],
+  ) {
+    super(message);
+  }
+
+  render(): Buffer {
+    return renderStructuredError({
+      command: `gh ${this.command.kind} ${this.command.action}`,
+      category: "usage",
+      error: this.message,
+      help: `gh ${this.command.kind} ${this.command.action} --help`,
+      validFlags: this.validFields,
+    });
+  }
 }
 
 function labels(value: unknown): string[] {
