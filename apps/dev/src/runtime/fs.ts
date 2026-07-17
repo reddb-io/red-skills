@@ -18,7 +18,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
 import { readState, updateState } from "../core/state.js";
@@ -126,7 +126,80 @@ export async function claimPathHeldByLivePid(dir: string): Promise<boolean> {
 }
 
 export async function removeDir(path: string): Promise<void> {
+  await assertSweepRemovalSafe(path);
   await rm(path, { recursive: true, force: true });
+}
+
+function normalizedParts(path: string): string[] {
+  return normalize(path).split(sep).filter(Boolean);
+}
+
+function isLivePid(raw: string | null): boolean {
+  if (raw === null) return false;
+  const trimmed = raw.trim();
+  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
+  try {
+    process.kill(Number(trimmed), 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function pidFileNamesLiveProcess(path: string): Promise<boolean> {
+  try {
+    return isLivePid(await readFile(path, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+function isRedTmpRoot(path: string): boolean {
+  const parts = normalizedParts(path);
+  return parts.length >= 2 && parts.at(-2) === ".red" && parts.at(-1) === "tmp";
+}
+
+function supervisorArtifactDir(path: string): string | null {
+  const parts = normalizedParts(path);
+  const name = parts.at(-1) ?? "";
+  const parent = parts.at(-2) ?? "";
+  const grandparent = parts.at(-3) ?? "";
+  if (name.startsWith("afk-supervisor.") && parent === "afk" && grandparent === "state") return dirname(path);
+  if (name.startsWith("afk-supervisor.") && parent === "tmp" && grandparent === ".red") return dirname(path);
+  if (name === "afk" && parent === "state") return path;
+  return null;
+}
+
+function liveWorkerDirFor(path: string): string | null {
+  const parts = normalizedParts(path);
+  const tmpIndex = parts.findIndex((part, idx) => part === "tmp" && parts[idx - 1] === ".red");
+  if (tmpIndex < 0) return null;
+  const namespace = parts[tmpIndex + 1];
+  if (!["workers", "go-workers", "scout-workers"].includes(namespace ?? "")) return null;
+  const worker = parts[tmpIndex + 2];
+  if (!worker) return null;
+  const prefixParts = parts.slice(0, tmpIndex + 3);
+  return `${path.startsWith(sep) ? sep : ""}${prefixParts.join(sep)}`;
+}
+
+async function assertSweepRemovalSafe(path: string): Promise<void> {
+  if (isRedTmpRoot(path)) {
+    throw new Error(`refusing to remove .red/tmp root: ${path}`);
+  }
+
+  const supervisorDir = supervisorArtifactDir(path);
+  if (supervisorDir && await pidFileNamesLiveProcess(join(supervisorDir, "afk-supervisor.pid"))) {
+    throw new Error(`refusing to remove live supervisor artifact: ${path}`);
+  }
+
+  const workerDir = liveWorkerDirFor(path);
+  if (workerDir && await pidFileNamesLiveProcess(join(workerDir, "worker.pid"))) {
+    const target = normalize(path);
+    const workerRoot = normalize(workerDir);
+    if (target === workerRoot || target === join(workerRoot, "worker.pid")) {
+      throw new Error(`refusing to remove live worker artifact: ${path}`);
+    }
+  }
 }
 
 export async function writeHandoff(path: string, content: string): Promise<void> {
