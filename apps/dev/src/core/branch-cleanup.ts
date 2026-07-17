@@ -83,15 +83,8 @@ function isFiniteEpoch(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/** Resolve RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S. Mirrors _attempt_snapshot_grace_s:
- * a non-numeric value falls back to the 7-day default so an operator typo can
- * never silently disable the grace; 0 is honoured (delete immediately on close).
- * Defaults to process.env when no override is supplied. */
-export function resolveSnapshotGraceS(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  const raw = env.RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S;
-  if (raw !== undefined && NUMERIC_RE.test(raw)) return Number(raw);
+/** Fixed legacy snapshot cleanup grace. */
+export function resolveSnapshotGraceS(): number {
   return DEFAULT_SNAPSHOT_GRACE_S;
 }
 
