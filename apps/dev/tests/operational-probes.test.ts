@@ -48,10 +48,29 @@ describe("operational probe registry", () => {
       { id: "git.remote.https-forbidden", name: "SSH-only git remotes", verdict: "red" },
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
+      { id: "config.dev-root-spelling", name: "Config dev-plugin namespacing", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
     expect(toon).not.toContain("{\n");
     expect(toon).not.toContain('": "');
+  });
+
+  it("surfaces root-level dev.* config spellings with the canonical plugins.dev.* fix", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      configNamespacing: { rootDevKeys: ["dev.trunk"] },
+    });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        id: "config.dev-root-spelling",
+        name: "Config dev-plugin namespacing",
+        verdict: "red",
+        evidence: expect.stringContaining("dev.trunk"),
+        canonicalFix: expect.stringContaining("plugins.dev.trunk"),
+      }),
+    ]);
+    expect(report.findings[0]?.canonicalFix).toContain("plugins.dev.*");
   });
 
   it("refuses a gated fix without applying any remote changes", async () => {
@@ -179,7 +198,7 @@ describe("operational probe registry", () => {
     });
 
     expect(report.findings).toEqual([]);
-    expect(report.probes.at(-1)).toMatchObject({
+    expect(report.probes.find((probe) => probe.id === "afk.focal-branch-resolution")).toMatchObject({
       id: "afk.focal-branch-resolution",
       verdict: "ok",
       evidence: "resolved develop from trunk; configuredTrunk=develop",
@@ -244,7 +263,9 @@ describe("operational probe registry", () => {
     });
 
     expect(report.findings).toEqual([]);
-    expect(report.probes.at(-1)?.evidence).toContain("resolved release/held from lock");
+    expect(report.probes.find((probe) => probe.id === "afk.focal-branch-resolution")?.evidence).toContain(
+      "resolved release/held from lock",
+    );
   });
 
   it("leaves a real stale branch-lock file byte-identical when the gated repair is refused", async () => {
