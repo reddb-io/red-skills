@@ -9,6 +9,7 @@ import { mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afkStateDir } from "@reddb-io/shared/red-paths.js";
+import type { ElasticShrinkMode } from "../core/supervisor.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,6 +53,8 @@ export interface SpawnSupervisorOptions {
   request?: string;
   /** Optional per-drain USD budget, forwarded as RED_AFK_DRAIN_MAX_COST_USD. */
   drainBudgetUsd?: number;
+  /** Initial shrink mode for runtime target decreases. */
+  shrinkMode?: ElasticShrinkMode;
 }
 
 /**
@@ -76,6 +79,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
   };
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
   if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
+  if (opts.shrinkMode !== undefined) env.RED_AFK_SHRINK_MODE = opts.shrinkMode;
 
   const out = openSync(logFile, "a");
   const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
