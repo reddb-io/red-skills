@@ -1,10 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { dirname, join, parse } from "node:path";
-
-const require = createRequire(import.meta.url);
-const yaml = require("js-yaml") as { load(input: string): unknown };
+import yaml from "js-yaml";
 
 const TOON_PACKAGE_NAME = "@reddb-io/toon";
 const SEMVER = /^\d+\.\d+\.\d+$/;
