@@ -1,5 +1,6 @@
 import { encode as encodeToon } from "@reddb-io/toon";
 import { httpsRemoteProbe } from "./https-remote.js";
+import { queueVisibilityProbe } from "./queue-visibility.js";
 import type {
   OperationalProbe,
   OperationalProbeContext,
@@ -10,13 +11,14 @@ import type {
 
 export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   httpsRemoteProbe,
+  queueVisibilityProbe,
 ];
 
-export function runOperationalProbes(
+export async function runOperationalProbes(
   context: OperationalProbeContext,
   probes: readonly OperationalProbe[] = OPERATIONAL_PROBES,
-): OperationalProbeReport {
-  const rows = probes.map((probe) => probe.run(context));
+): Promise<OperationalProbeReport> {
+  const rows = await Promise.all(probes.map((probe) => probe.run(context)));
   return {
     probes: rows,
     findings: rows.filter((row) => row.verdict === "red"),
