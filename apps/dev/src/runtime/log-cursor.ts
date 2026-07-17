@@ -6,6 +6,7 @@ import {
   ToonlCursorInvalidationError,
   type ToonlLaneCursor,
 } from "../core/jsonl-log.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 
 export interface LogLineCursor {
   size: number;
@@ -52,7 +53,8 @@ function validCursor(value: unknown): LogLineCursor | null {
 
 export async function readLogLineCursors(path: string): Promise<LogLineCursorStore> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    // Sniff JSON-then-TOON so a cursor cache written by an older bundle still reads.
+    const parsed = decodeDevSnapshotSniff(await readFile(path, "utf8")) as Record<string, unknown>;
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const out: LogLineCursorStore = {};
     for (const [logPath, value] of Object.entries(parsed)) {
@@ -68,7 +70,8 @@ export async function readLogLineCursors(path: string): Promise<LogLineCursorSto
 export async function writeLogLineCursors(path: string, cursors: LogLineCursorStore): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-  await writeFile(tmp, `${JSON.stringify(cursors)}\n`, "utf8");
+  // TOON, never raw JSON — the monitor log-cursor snapshot surface (ADR 0097).
+  await writeFile(tmp, encodeDevSnapshotToon(cursors as unknown as Parameters<typeof encodeDevSnapshotToon>[0]), "utf8");
   await rename(tmp, path);
 }
 
