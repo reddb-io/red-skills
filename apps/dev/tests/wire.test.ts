@@ -766,9 +766,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
   it("stale cache: serves stale values immediately and starts one detached refresh", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ queue: 5, human: 3, ts: staleTs }), "utf8");
@@ -796,9 +795,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
   it("stale cache: concurrent renders share one detached refresh lock", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
       writeFileSync(
         cachePath,
         JSON.stringify({ queue: 8, human: 1, ts: nowS() - STATUSLINE_CACHE_TTL_S - 10 }),
@@ -827,9 +825,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
   it("fresh cache: read without a gh refresh (ts and values unchanged)", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const freshTs = nowS();
       writeFileSync(cachePath, JSON.stringify({ queue: 7, human: 2, ts: freshTs }), "utf8");
@@ -858,9 +855,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
   it("fresh TOON cache: reads queue/human without a gh refresh", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
       const freshTs = nowS();
       writeFileSync(cachePath, encode({ queue: 11, human: 4, ts: freshTs }), "utf8");
       writeRenderableAttempt(root, "w1", 55, new Date().toISOString());
@@ -878,9 +874,8 @@ describe("collectStatuslineAfk — cache discipline", () => {
   it("0 live workers: still starts detached stale refresh before returning null", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ queue: 9, human: 1, ts: staleTs }), "utf8");
@@ -907,7 +902,9 @@ describe("collectStatuslineAfk — cache discipline", () => {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
       // Fresh gh cache → collectStatuslineAfk makes no gh call.
-      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
 
       // A worker whose orchestrator process is ALIVE (pid resolves) but whose
       // agent-stream activity froze long ago — exactly a long feedback-gate /
@@ -949,7 +946,9 @@ describe("collectStatuslineAfk — cache discipline", () => {
       mkdirSync(tmpDir, { recursive: true });
       // Fresh gh cache → no gh subprocess either; this render must be fully
       // subprocess-free.
-      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
 
       // A live worker whose writer-stamped LOC is 0/0 but which points at a REAL
       // git worktree (the project root) with a non-empty diff vs origin/main. The
@@ -1097,9 +1096,8 @@ describe("collectStatuslineRepo — cache discipline", () => {
   it("fresh cache: read without a gh refresh (ts unchanged)", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       const freshTs = nowS();
       writeFileSync(cachePath, JSON.stringify({ openPrs: 4, openIssues: 10, ts: freshTs }), "utf8");
@@ -1117,9 +1115,8 @@ describe("collectStatuslineRepo — cache discipline", () => {
   it("fresh cache: serves the local diffstat from cache without a git subprocess (#1178)", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
 
       // root is NOT a git repo, so any live `git diff` would return 0/0. A
       // non-zero localAdded/localRemoved in the result can therefore only come
@@ -1145,9 +1142,8 @@ describe("collectStatuslineRepo — cache discipline", () => {
   it("fresh TOON repo cache: serves the local diffstat without a refresh", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-repo-cache.json");
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
       const freshTs = nowS();
       writeFileSync(
         cachePath,
@@ -1394,10 +1390,10 @@ describe("collectMonitorInputs — remote facts (TTL cache) (#1029)", () => {
   it("exposes queue/human from a fresh statusline cache with low age", async () => {
     const root = scratch();
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
       const freshTs = nowS();
-      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 4, human: 2, ts: freshTs }));
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: freshTs }));
       const result = await collectMonitorInputs(root);
       expect(result.remoteQueue).toBe(4);
       expect(result.remoteHuman).toBe(2);
@@ -1412,10 +1408,10 @@ describe("collectMonitorInputs — remote facts (TTL cache) (#1029)", () => {
   it("reports a stale age when the cache is older than the TTL", async () => {
     const root = scratch();
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 30;
-      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 7, human: 1, ts: staleTs }));
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
+      writeFileSync(cachePath, JSON.stringify({ queue: 7, human: 1, ts: staleTs }));
       const result = await collectMonitorInputs(root);
       expect(result.remoteQueue).toBe(7);
       expect(result.remoteHuman).toBe(1);
@@ -1429,10 +1425,9 @@ describe("collectMonitorInputs — remote facts (TTL cache) (#1029)", () => {
   it("does NOT refresh the cache (monitor is read-only; statusline owns cache lifecycle)", async () => {
     const root = scratch();
     try {
-      const tmpDir = join(root, ".red", "tmp");
-      mkdirSync(tmpDir, { recursive: true });
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 30;
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = afkPaths(root).statuslineCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
       writeFileSync(cachePath, JSON.stringify({ queue: 9, human: 3, ts: staleTs }));
       await collectMonitorInputs(root);
       // The cache timestamp must NOT have changed — the monitor never refreshes it.
