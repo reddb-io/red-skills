@@ -767,7 +767,14 @@ export interface ProcessIssueInput {
   tmpDir: string;
   /** Attempt number from the attempt-ledger (1-based). */
   attempt: number;
-  /** Resolved attempt dir `<tmp>/workers/{id}/{N}-a{n}`. */
+  /**
+   * Retry-budget ordinal for recovery routing. Unlike {@link attempt}, this is
+   * policy data, not path grammar: long-running workers keep the stable
+   * workerId/issueId directory while the caller may still count prior failures
+   * from retained markers/comments to enforce per-class caps.
+   */
+  recoveryOrdinal?: number;
+  /** Resolved worker issue dir `<tmp>/workers/{workerId}/{issueId}`. */
   attemptDir: string;
   /** Primary checkout (`owner/repo` for gh, dir for git -C). */
   repo: string;
@@ -863,6 +870,12 @@ function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown> {
     };
   }
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
+}
+
+function recoveryOrdinalFor(input: ProcessIssueInput): number {
+  return input.recoveryOrdinal && Number.isInteger(input.recoveryOrdinal) && input.recoveryOrdinal > 0
+    ? input.recoveryOrdinal
+    : input.attempt;
 }
 
 function timeoutReasonForEnvelope(reason: RunAgentResult["timeoutReason"] | undefined): string {
@@ -3109,7 +3122,7 @@ async function terminalFailure(
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   markTerminalState(deps, outcome);
-  const decision = await routeRecovery(deps, input.issue, outcome, input.attempt);
+  const decision = await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input));
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
   }
@@ -3190,7 +3203,7 @@ async function emitDone(
  * ready-for-human, preserve the attempt dir. Mirrors the do_merge-false branch. */
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
-  const decision = await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", recoveryOrdinalFor(input));
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(
       deps,
@@ -3246,7 +3259,7 @@ async function ciBlocked(
       : `required status checks were still pending on ${prRef} past the CI-wait timeout`;
   // routeRecovery escalates (ci-* map to no recovery policy → ready-for-human +
   // blocked:ci). The branch is intact, so the open PR is the durable artifact.
-  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: reason }));
   const posted = await emitFailure(c, envelopeStatusFor(outcome), "ci", {
     log:
@@ -3289,7 +3302,7 @@ async function prLandingBlocked(
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
-  await routeRecovery(deps, input.issue, outcome, input.attempt, { forceDecision: "escalate" });
+  await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input), { forceDecision: "escalate" });
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: `${prRef}: ${reason}` }));
   const section = outcome === "merge-conflict" ? "merge-conflict" : "ci";
   const posted = await emitFailure(c, envelopeStatusFor(outcome), section, {
@@ -3346,7 +3359,7 @@ async function trunkDivergedBlocked(
     `requeue the issue. The attempt branch is intact — no work was lost.`;
   // routeRecovery escalates (trunk-diverged is non-recoverable): drop running,
   // ensure + add ready-for-human + blocked:trunk-diverged.
-  await routeRecovery(deps, input.issue, "trunk-diverged", input.attempt);
+  await routeRecovery(deps, input.issue, "trunk-diverged", recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("trunk-diverged", { log: detail }));
   const posted = await emitFailure(c, envelopeStatusFor("trunk-diverged"), "trunk-diverged", { log: detail });
   await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
@@ -3388,7 +3401,7 @@ async function sensitivePathGuarded(
   const detail =
     `Landing blocked: the diff touches sensitive path(s) that require human review before auto-landing — ` +
     `${hitList}. The attempt branch is intact. Requeue after reviewing the change.`;
-  await routeRecovery(deps, input.issue, "sensitive-path", input.attempt);
+  await routeRecovery(deps, input.issue, "sensitive-path", recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("sensitive-path", { log: detail }));
   const posted = await emitFailure(c, envelopeStatusFor("sensitive-path"), "sensitive-path", { log: detail });
   await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
@@ -3429,7 +3442,7 @@ async function mainRedUntrackedBlocked(
   const detail =
     `${message} The attempt branch \`${c.branch}\` is intact and validated, but landing is held until the tracked-red ` +
     `repair issue exists.${syncFailureDetail} Requeue after the auto-file path recreates it.`;
-  await routeRecovery(deps, input.issue, "main-red-untracked", input.attempt);
+  await routeRecovery(deps, input.issue, "main-red-untracked", recoveryOrdinalFor(input));
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("main-red-untracked", { log: detail }));
   const posted = await emitFailure(c, envelopeStatusFor("main-red-untracked"), "main-red-untracked", { log: detail });
   await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
@@ -3788,7 +3801,7 @@ async function abortAfterClaim(
   // A policy-hook abort is BOUNDED-recoverable (recovery.ts, reason "policy"):
   // retry under the cap (restore ready-for-agent) else escalate (ready-for-human
   // + the budget-exhausted comment routeRecovery posts).
-  const decision = await routeRecovery(deps, input.issue, "hook-aborted", input.attempt);
+  const decision = await routeRecovery(deps, input.issue, "hook-aborted", recoveryOrdinalFor(input));
   if (decision === "retry") {
     await deps.gh.comment(
       input.issue,
@@ -3831,7 +3844,7 @@ async function exhausted(
   // Quota exhaustion is BOUNDED-recoverable (recovery.ts, reason "quota"):
   // restore ready-for-agent while under the cap, else escalate to
   // ready-for-human (routeRecovery posts the budget-exhausted comment).
-  await routeRecovery(deps, input.issue, "exhausted", input.attempt);
+  await routeRecovery(deps, input.issue, "exhausted", recoveryOrdinalFor(input));
   await deps.gh.comment(
     input.issue,
     both
@@ -3884,7 +3897,7 @@ async function runnerRecoverable(
   if (outcome === "exhausted") {
     return exhausted(deps, input, branch, base, hooksFired, runner, both);
   }
-  await routeRecovery(deps, input.issue, "runner-transient", input.attempt);
+  await routeRecovery(deps, input.issue, "runner-transient", recoveryOrdinalFor(input));
   await deps.gh.comment(
     input.issue,
     both

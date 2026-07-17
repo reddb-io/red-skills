@@ -2016,7 +2016,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
       isOpen: (r) => runnerCircuitOpen(paths.runnerCircuitDir, r, Math.floor(Date.now() / 1000)),
     },
     buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
-      const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
+      const recoveryOrdinal = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
+      // Long-running workers key workspaces by workerId+issueId. The retry
+      // ordinal remains separate policy data for per-class recovery caps and
+      // prior-failure prompt context; it no longer shapes the directory name.
+      const attempt = 1;
       const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
       // Point the session-scoped envelope/iter-log closures at this attempt.
       current.attemptDir = attemptDir;
@@ -2096,6 +2100,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         claimant: workerIdentity(c.workerId),
         tmpDir: c.issueTemplate.tmpDir,
         attempt,
+        recoveryOrdinal,
         attemptDir,
         repo: c.issueTemplate.repo,
         repoDir: c.issueTemplate.repoDir,

@@ -233,6 +233,11 @@ interface RunHarnessOptions {
   sweepsSkipped?: boolean;
   /** Runners whose shared circuit is already open before the next claim. */
   circuitOpenFor?: Runner[];
+  maxIssues?: number;
+  maxRuntimeMs?: number;
+  budget?: { used: number; cap: number };
+  supervisorKilled?: boolean;
+  shouldRetire?: boolean;
 }
 
 function makeSession(opts: RunHarnessOptions = {}): {
@@ -354,6 +359,14 @@ function makeSession(opts: RunHarnessOptions = {}): {
       repoDir: "/repo",
       remote: "origin",
     },
+    policy: {
+      nowMs: () => 1_000,
+      ...(opts.maxIssues !== undefined ? { maxIssues: opts.maxIssues } : {}),
+      ...(opts.maxRuntimeMs !== undefined ? { maxRuntimeMs: opts.maxRuntimeMs } : {}),
+      ...(opts.budget ? { budget: () => opts.budget! } : {}),
+      ...(opts.supervisorKilled !== undefined ? { supervisorKilled: () => opts.supervisorKilled! } : {}),
+      ...(opts.shouldRetire !== undefined ? { shouldRetire: () => opts.shouldRetire! } : {}),
+    },
   };
 
   return { deps, ctx, trace };
@@ -419,12 +432,47 @@ describe("runSession", () => {
     expect(trace.emitted).toEqual([
       "progress: 1/4 (25%) — 3 remaining",
       "progress: 2/4 (50%) — 2 remaining",
+      "worker stop: iter-cap",
     ]);
   });
 
   it("--once stops after the first processed issue", async () => {
     const { deps, ctx, trace } = makeSession({ candidates: [cand(1), cand(2), cand(3)], once: true });
     await runSession(deps, ctx);
+    expect(trace.processedOrder).toEqual([1]);
+  });
+
+  it("stops on the config-tunable long-running worker lifetime cap", async () => {
+    const { deps, ctx, trace } = makeSession({ maxIssues: 2 });
+    const summary = await runSession(deps, ctx);
+
+    expect(summary.stopReason).toBe("lifetime-cap");
+    expect(trace.processedOrder).toEqual([1, 2]);
+    expect(trace.emitted.at(-1)).toBe("worker stop: lifetime-cap");
+  });
+
+  it("stops before claiming when the session budget cap is already spent", async () => {
+    const { deps, ctx, trace } = makeSession({ budget: { used: 11, cap: 10 } });
+    const summary = await runSession(deps, ctx);
+
+    expect(summary.stopReason).toBe("budget-cap");
+    expect(trace.processedOrder).toEqual([]);
+    expect(trace.emitted).toContain("worker stop: budget-cap");
+  });
+
+  it("stops before claiming when the supervisor kill flag is set", async () => {
+    const { deps, ctx, trace } = makeSession({ supervisorKilled: true });
+    const summary = await runSession(deps, ctx);
+
+    expect(summary.stopReason).toBe("supervisor-kill");
+    expect(trace.processedOrder).toEqual([]);
+  });
+
+  it("supports graceful retirement after the current issue completes", async () => {
+    const { deps, ctx, trace } = makeSession({ shouldRetire: true });
+    const summary = await runSession(deps, ctx);
+
+    expect(summary.stopReason).toBe("graceful-retirement");
     expect(trace.processedOrder).toEqual([1]);
   });
 
@@ -581,6 +629,7 @@ describe("runSession — exhaustion stops the drain (exit-75 signal)", () => {
     expect(summary.blocked).toBe(0);
     expect(trace.emitted).toEqual([
       "runner claude circuit open — stopping before claiming more issues",
+      "worker stop: runner-unavailable",
     ]);
   });
 

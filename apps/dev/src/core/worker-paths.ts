@@ -64,13 +64,13 @@ export function buildWorkerAttemptPath(
   root: string,
   worker: string,
   issueValue: string | number,
-  attemptValue: string | number,
+  _attemptValue: string | number,
 ): string {
   if (!root) throw new Error("root is required");
   if (!isValidWorkerId(worker)) throw new Error(`invalid worker id: ${worker}`);
   const issue = asPositiveInteger(issueValue, "issue");
-  const attempt = asPositiveInteger(attemptValue, "attempt");
-  return `${normalizeRoot(root)}/${workersSegment()}/${worker}/${issue}-a${attempt}`;
+  asPositiveInteger(_attemptValue, "attempt");
+  return `${normalizeRoot(root)}/${workersSegment()}/${worker}/${issue}`;
 }
 
 export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | null {
@@ -78,17 +78,17 @@ export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | nu
   const normalized = path.replace(/\/$/, "");
   // Accept every worker-lane segment so a parked-attempt path reverses
   // regardless of which lane minted it.
-  const match = normalized.match(/(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)-a([1-9][0-9]*)$/);
+  const match = normalized.match(/(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)(?:-a([1-9][0-9]*))?$/);
   if (!match) return null;
   const [, worker, issue, attempt] = match;
   if (!isValidWorkerId(worker)) return null;
-  return { worker, issue: Number(issue), attempt: Number(attempt) };
+  return { worker, issue: Number(issue), attempt: attempt ? Number(attempt) : 1 };
 }
 
 export function issueAttemptsGlob(root: string, issueValue: string | number): string {
   if (!root) throw new Error("root is required");
   const issue = asPositiveInteger(issueValue, "issue");
-  return `${normalizeRoot(root)}/${workersSegment()}/*/${issue}-a*`;
+  return `${normalizeRoot(root)}/${workersSegment()}/*/${issue}*`;
 }
 
 export function workersGlob(root: string): string {

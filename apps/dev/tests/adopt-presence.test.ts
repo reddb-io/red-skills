@@ -58,9 +58,9 @@ describe("withAdoptPresence — seed", () => {
     expect(seed.title).toBe("Fix the thing");
     expect(seed.runner).toBe("claude");
     expect(seed.stage).toBe("validating");
-    // Canonical `workers/` root (never go-workers/scout-workers) + a1 attempt.
-    expect(seed.attemptDir).toBe("/tmp/.red/tmp/workers/requeue-adopt/42-a1");
-    expect(seed.statePath).toBe("/tmp/.red/tmp/workers/requeue-adopt/42-a1/afk.state.json");
+    // Canonical `workers/` root (never go-workers/scout-workers) + stable issue id.
+    expect(seed.attemptDir).toBe("/tmp/.red/tmp/workers/requeue-adopt/42");
+    expect(seed.statePath).toBe("/tmp/.red/tmp/workers/requeue-adopt/42/afk.state.json");
   });
 
   it("uses a distinct requeue provenance constant", () => {
@@ -77,7 +77,7 @@ describe("withAdoptPresence — teardown on every exit path", () => {
 
     expect(outcome).toBe("landed");
     expect(r.teardowns).toHaveLength(1);
-    expect(r.teardowns[0]!.attemptDir).toBe("/tmp/.red/tmp/workers/requeue-adopt/42-a1");
+    expect(r.teardowns[0]!.attemptDir).toBe("/tmp/.red/tmp/workers/requeue-adopt/42");
     // Seed happens before teardown.
     expect(r.events).toEqual(["seed", "teardown"]);
   });
@@ -120,7 +120,7 @@ describe("withAdoptPresence — stage progression", () => {
     expect(r.stages.map((s) => s.stage)).toEqual(["validating", "landing"]);
     // Stage updates target the seeded presence state file.
     for (const s of r.stages) {
-      expect(s.statePath).toBe("/tmp/.red/tmp/workers/requeue-adopt/42-a1/afk.state.json");
+      expect(s.statePath).toBe("/tmp/.red/tmp/workers/requeue-adopt/42/afk.state.json");
     }
     // Order: seed → stages → teardown last.
     expect(r.events).toEqual(["seed", "stage:validating", "stage:landing", "teardown"]);

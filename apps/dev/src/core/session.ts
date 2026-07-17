@@ -224,6 +224,39 @@ export interface SessionContext {
    * skip is driven by `BootOptions.skipSweeps` in `runBoot`, not here.
    */
   sweepsSkipped?: boolean;
+  /** Long-running worker stop policy. Omitted fields leave that exit disabled. */
+  policy?: SessionStopPolicy;
+}
+
+export type SessionStopReason =
+  | "drain-empty"
+  | "lifetime-cap"
+  | "budget-cap"
+  | "supervisor-kill"
+  | "graceful-retirement"
+  | "iter-cap"
+  | "once"
+  | "runner-unavailable"
+  | "exhausted";
+
+export interface SessionBudgetSnapshot {
+  used: number;
+  cap: number;
+}
+
+export interface SessionStopPolicy {
+  /** Stop after this many successfully claimed/processed issue slots. */
+  maxIssues?: number;
+  /** Stop once wall-clock runtime reaches this many milliseconds. */
+  maxRuntimeMs?: number;
+  /** Optional runtime clock for deterministic tests. Defaults to Date.now. */
+  nowMs?: () => number;
+  /** Stop before claiming when the session budget is spent. */
+  budget?: () => SessionBudgetSnapshot;
+  /** Supervisor-requested hard stop before the next claim. */
+  supervisorKilled?: () => boolean;
+  /** Finish the current issue, then retire without claiming another. */
+  shouldRetire?: () => boolean;
 }
 
 /**
@@ -356,6 +389,8 @@ export interface SessionSummary {
   runnerTransient: boolean;
   /** Session-scoped lifecycle points that fired, in order — the parity target. */
   sessionHooksFired: HookName[];
+  /** Why this long-running worker stopped, when a named stop condition fired. */
+  stopReason?: SessionStopReason;
 }
 
 /** `done` is the only success; blocked/no-sentinel/merge-conflict/feedback flip
@@ -371,6 +406,14 @@ function classify(outcome: ProcessIssueResult["outcome"]): "done" | "blocked" | 
     default:
       return "blocked";
   }
+}
+
+function budgetSpent(snapshot: SessionBudgetSnapshot | undefined): boolean {
+  return snapshot !== undefined && snapshot.cap > 0 && snapshot.used >= snapshot.cap;
+}
+
+function emitStop(deps: SessionDeps, reason: SessionStopReason): void {
+  deps.emit(`worker stop: ${reason}`);
 }
 
 /**
@@ -431,6 +474,8 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     runnerTransient: false,
     sessionHooksFired,
   };
+  const nowMs = ctx.policy?.nowMs ?? (() => Date.now());
+  const startedMs = nowMs();
 
   // ---- 1. boot (precheck failure aborts the drain) ----
   const boot = await deps.runBoot(deps.bootDeps, deps.bootOptions);
@@ -468,7 +513,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       await fireSessionHook("on_idle", statsContext(0, 0, 0));
       deps.emit(NO_MORE_TASKS);
       await fireSessionHook("post_session", statsContext(0, 0, 0));
-      return { ...empty, boot, total: 0, drained: true };
+      return { ...empty, boot, total: 0, drained: true, stopReason: "drain-empty" };
     }
 
     // ---- 5. drain under the -n cap ----
@@ -479,15 +524,36 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     let failed = 0;
     let exhaustedStop = false;
     let runnerTransientStop = false;
+    let stopReason: SessionStopReason | undefined;
     // --alternate: the runner rotates per issue. The first issue uses ctx.runner.
     let activeRunner: Runner = ctx.runner;
 
     for (let i = 0; i < queue.length; i++) {
-      if (i >= cap) break; // -n N reached → stop the drain (Stop Conditions).
+      if (ctx.policy?.supervisorKilled?.()) {
+        stopReason = "supervisor-kill";
+        break;
+      }
+      if (budgetSpent(ctx.policy?.budget?.())) {
+        stopReason = "budget-cap";
+        break;
+      }
+      if (ctx.policy?.maxRuntimeMs !== undefined && nowMs() - startedMs >= ctx.policy.maxRuntimeMs) {
+        stopReason = "lifetime-cap";
+        break;
+      }
+      if (ctx.policy?.maxIssues !== undefined && processed.length >= ctx.policy.maxIssues) {
+        stopReason = "lifetime-cap";
+        break;
+      }
+      if (i >= cap) {
+        stopReason = "iter-cap";
+        break; // -n N reached → stop the drain (Stop Conditions).
+      }
       const candidate = queue[i]!;
       const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
       if (deps.runnerCircuit && (await deps.runnerCircuit.isOpen(issueRunner))) {
         runnerTransientStop = true;
+        stopReason = "runner-unavailable";
         deps.emit(`runner ${issueRunner} circuit open — stopping before claiming more issues`);
         break;
       }
@@ -514,10 +580,12 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       // claiming more issues just spreads blocked:runner-transient labels.
       if (result.outcome === "exhausted") {
         exhaustedStop = true;
+        stopReason = "exhausted";
         break;
       }
       if (result.outcome === "runner-transient") {
         runnerTransientStop = true;
+        stopReason = "runner-unavailable";
         break;
       }
 
@@ -527,12 +595,20 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       // iteration: under the fleet supervisor every worker IS --once, so
       // exiting here respawns a fresh worker that re-races the same head issue
       // forever — the #644 churn that starved 2 of 3 slots.
-      if (ctx.once && result.outcome !== "claim-lost") break;
+      if (ctx.once && result.outcome !== "claim-lost") {
+        stopReason = "once";
+        break;
+      }
+      if (ctx.policy?.shouldRetire?.()) {
+        stopReason = "graceful-retirement";
+        break;
+      }
       if (ctx.alternate) activeRunner = otherRunner(activeRunner, ctx.runner);
     }
 
     // ---- 6. post_session (normal end) ----
     await fireSessionHook("post_session", statsContext(done, blocked, total));
+    if (stopReason) emitStop(deps, stopReason);
 
     return {
       runner: ctx.runner,
@@ -547,6 +623,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       exhausted: exhaustedStop,
       runnerTransient: runnerTransientStop,
       sessionHooksFired,
+      stopReason,
     };
   } catch (error) {
     // on_session_error death-notification path: fire the crash hook (log-and-
