@@ -16,6 +16,7 @@ import { countReadyForAgent } from "./gh.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 // The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
 // with the fleet reaper and `fleet stop` (#580). It matters for recovery
 // correctness here too: the supervisor's own `finally` removes the pid/stop
@@ -194,7 +195,8 @@ export function buildWatchdogIO(
     readRestartLedger: async (): Promise<number[]> => {
       try {
         const raw = await readFile(restartLedgerFile, "utf8");
-        const parsed = JSON.parse(raw) as unknown;
+        // Sniff JSON-then-TOON so a ledger written by an older bundle still reads.
+        const parsed = decodeDevSnapshotSniff(raw) as unknown;
         if (!Array.isArray(parsed)) return [];
         return parsed.filter((n): n is number => typeof n === "number" && Number.isFinite(n));
       } catch {
@@ -204,7 +206,8 @@ export function buildWatchdogIO(
 
     writeRestartLedger: async (epochs: number[]): Promise<void> => {
       try {
-        await writeFile(restartLedgerFile, JSON.stringify(epochs), "utf8");
+        // TOON, never raw JSON — the supervisor restart-ledger snapshot (ADR 0097).
+        await writeFile(restartLedgerFile, encodeDevSnapshotToon(epochs), "utf8");
       } catch {
         // best-effort: a failed ledger write only weakens the crash-loop bound.
       }
