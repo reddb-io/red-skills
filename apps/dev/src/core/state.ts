@@ -179,6 +179,7 @@ const IMMUTABLE_STATE_FIELDS = [
   "started_at",
   "origin",
   "runner",
+  "current.kind",
   "current.number",
   "current.started_at",
   "current.runner",
