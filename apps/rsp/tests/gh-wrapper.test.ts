@@ -43,7 +43,7 @@ describe("rsp gh fidelity fixtures", () => {
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
       for (const fixture of await discoverFidelityFixtures(fixtureRoot)) {
-        if (fixture.expected === "" || fixture.expected === "0 open PRs — try: rsp gh issue list\n" || fixture.name.endsWith("-body") || fixture.name.endsWith("-log")) {
+        if (fixture.expected === "" || fixture.name.endsWith("-body") || fixture.name.endsWith("-log")) {
           continue;
         }
         const result = await runFidelityFixture(fixture, { level: "lossless", store });
@@ -58,15 +58,21 @@ describe("rsp gh fidelity fixtures", () => {
     }
   });
 
-  it("returns a definitive empty PR state without minting a handle", async () => {
+  it("returns a definitive TOON empty PR state without minting a handle", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "pr-list-empty")!;
       const result = await runFidelityFixture(fixture, { level: "brief", store });
+      const decoded = decode(result.stdout.toString("utf8")) as { empty: boolean; scope: string; prs: unknown[]; aggregate: { returned: number } };
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toEqual(Buffer.from("0 open PRs — try: rsp gh issue list\n"));
+      expect(decoded).toMatchObject({
+        empty: true,
+        scope: "open PRs",
+        prs: [],
+        aggregate: { returned: 0 },
+      });
       expect(result.mintedHandle).toBeUndefined();
       await expect(store.stats()).resolves.toMatchObject({ records: 0 });
     } finally {
@@ -177,6 +183,71 @@ describe("rsp gh token levers", () => {
     expect(decoded.prs).toEqual([expect.objectContaining({ title: "Draft docs" })]);
     expect(decoded.summary).toBe("1/2 open PRs");
     expect(decoded.help).toContain("rsp gh pr <number>");
+  });
+
+  it("keeps default list schemas minimal while exposing list aggregates", async () => {
+    const fixtures = await discoverFidelityFixtures(fixtureRoot);
+    const pr = await renderGhContract(["gh", "pr", "list"], fixtures.find((candidate) => candidate.name === "pr-list-default")!.recorded, { level: "lossless" });
+    const issue = await renderGhContract(["gh", "issue", "list"], fixtures.find((candidate) => candidate.name === "issue-list-default")!.recorded, { level: "lossless" });
+    const run = await renderGhContract(["gh", "run", "list"], fixtures.find((candidate) => candidate.name === "run-list-default")!.recorded, { level: "lossless" });
+
+    const decodedPr = decode(pr.stdout.toString("utf8")) as { prs: Array<Record<string, unknown>>; aggregate: { returned: number } };
+    const decodedIssue = decode(issue.stdout.toString("utf8")) as { issues: Array<Record<string, unknown>>; aggregate: { returned: number } };
+    const decodedRun = decode(run.stdout.toString("utf8")) as { runs: Array<Record<string, unknown>>; aggregate: { returned: number; total: number } };
+
+    expect(Object.keys(decodedPr.prs[0]!)).toEqual(["number", "title", "state", "draft"]);
+    expect(Object.keys(decodedIssue.issues[0]!)).toEqual(["number", "title", "state", "labels"]);
+    expect(Object.keys(decodedRun.runs[0]!)).toEqual(["id", "name", "status", "conclusion"]);
+    expect(decodedPr.aggregate).toEqual({ returned: 2 });
+    expect(decodedIssue.aggregate).toEqual({ returned: 2 });
+    expect(decodedRun.aggregate).toEqual({ returned: 2, total: 7 });
+  });
+
+  it("returns a scoped TOON empty state for query-filtered zero-result lists", async () => {
+    const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "issue-list-default")!;
+    const result = await renderGhContract(["gh", "issue", "list", "--label", "ready-for-agent", "--query", "no-match"], fixture.recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { empty: boolean; scope: string; issues: unknown[]; aggregate: { returned: number; unfiltered: number }; help: string[] };
+
+    expect(decoded).toMatchObject({
+      empty: true,
+      scope: "open issues label=ready-for-agent query=no-match",
+      issues: [],
+      aggregate: { returned: 0, unfiltered: 2 },
+    });
+    expect(decoded.help).toContain("rsp gh issue list --query <label-or-title>");
+  });
+
+  it("adds selected fields to list defaults and rejects unknown field names", async () => {
+    const recorded = {
+      stdout: JSON.stringify([
+        {
+          number: 42,
+          title: "Add rsp gh wrapper",
+          state: "OPEN",
+          isDraft: false,
+          author: { login: "octocat" },
+          labels: [{ name: "ready-for-agent" }],
+          url: "https://example.invalid/pr/42",
+          updatedAt: "2026-07-17T00:00:00Z",
+        },
+      ]),
+      stderr: "",
+      status: 0,
+      signal: null,
+    };
+
+    const result = await renderGhContract(["gh", "pr", "list", "--fields", "author,url"], recorded, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { prs: Array<Record<string, unknown>> };
+
+    expect(decoded.prs[0]).toEqual({
+      number: 42,
+      title: "Add rsp gh wrapper",
+      state: "open",
+      draft: false,
+      author: "octocat",
+      url: "https://example.invalid/pr/42",
+    });
+    await expect(renderGhContract(["gh", "pr", "list", "--fields", "notAField"], recorded, { level: "lossless" })).rejects.toThrow(/unknown field: notAField/);
   });
 
   it("combines PR view, checks, and latest comments in one output", async () => {
