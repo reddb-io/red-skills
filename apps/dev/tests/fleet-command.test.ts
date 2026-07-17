@@ -20,13 +20,14 @@ vi.mock("../src/runtime/supervisor-spawn.js", () => ({
 import { launchFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
+import { afkPaths } from "../src/runtime/wire.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-fleet-command-"));
 }
 
 function writeSupervisorArtifacts(root: string, pid: number | string): Record<string, string> {
-  const stateAfk = join(root, ".red", "state", "afk");
+  const stateAfk = join(root, ".red", "state", "castle");
   mkdirSync(stateAfk, { recursive: true });
   const paths = {
     pid: join(stateAfk, "afk-supervisor.pid"),
@@ -108,9 +109,9 @@ describe("fleet command stale supervisor state", () => {
   });
 
   it("launchFleet writes a resize request when a healthy supervisor is already running", async () => {
-    const root = scratch();
+      const root = scratch();
     try {
-      const stateAfk = join(root, ".red", "state", "afk");
+      const stateAfk = join(root, ".red", "state", "castle");
       mkdirSync(stateAfk, { recursive: true });
       writeFileSync(join(stateAfk, "afk-supervisor.pid"), "12345", "utf8");
       const epoch = Math.floor(Date.now() / 1000);
@@ -131,7 +132,7 @@ describe("fleet command stale supervisor state", () => {
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
-      expect(JSON.parse(readFileSync(join(stateAfk, "afk-supervisor.resize.json"), "utf8"))).toEqual({
+      expect(JSON.parse(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         shrink_mode: "hard-kill",
       });
