@@ -110,7 +110,7 @@ describe("renderRedTaxonomyReportToon", () => {
         path: ".red/tmp/statusline-cache.json",
         kind: "durable-state-in-tmp",
         verdict: "error",
-        target: ".red/state/statusline/statusline-cache.json",
+        target: ".red/state/statusline/statusline-cache.toon",
       },
     ]);
     expect(toon).not.toContain("{\n");
