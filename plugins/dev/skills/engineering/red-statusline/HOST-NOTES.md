@@ -46,12 +46,14 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
   "statusLine": {
     "type": "command",
     "command": "sh -c 'b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
-    "refreshInterval": 5
+    "refreshInterval": 60
   }
 }
 ```
 
 **Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
+
+Use a 60s refresh interval because the producer reads cached state: 5s ticks burn CPU and repeat calls without new information at that cadence, while 60s matches the real rate of change of fleet/PR state.
 
 Use `jq` to merge when `.claude/settings.json` already exists; create `.claude/`
 and a fresh file when it is missing. Keep unrelated settings intact.
