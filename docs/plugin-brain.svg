@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" role="img" aria-labelledby="brain-title brain-desc">
+  <title id="brain-title">brain plugin</title>
+  <desc id="brain-desc">The brain plugin is a project-local knowledge repository: typed artifacts and graph connections for later search and cited synthesis.</desc>
+  <defs>
+    <linearGradient id="brain-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#07090d"/>
+    </linearGradient>
+    <radialGradient id="brain-glow" cx="0.2" cy="0.1" r="0.8">
+      <stop offset="0" stop-color="#ff2056" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="brain-rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2056"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="brain-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+    </pattern>
+    <clipPath id="brain-frame">
+      <rect x="0" y="0" width="1200" height="220" rx="18"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#brain-frame)">
+    <rect width="1200" height="220" fill="url(#brain-bg)"/>
+    <rect width="1200" height="220" fill="url(#brain-grid)"/>
+    <ellipse cx="160" cy="20" rx="400" ry="210" fill="url(#brain-glow)"/>
+    <g font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
+      <text x="72" y="92" font-size="26" fill="#ff2056" letter-spacing="2">BRAIN PLUGIN</text>
+      <text x="72" y="142" font-size="56" font-weight="700" fill="#f0f6fc">brain</text>
+      <rect x="72" y="164" width="180" height="3" fill="url(#brain-rule)"/>
+      <text x="72" y="194" font-size="18" fill="#8b949e">project-local knowledge, cited synthesis, and a local dashboard</text>
+      <rect x="780" y="54" width="360" height="112" rx="12" fill="#0b0f15" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="804" y="90" font-size="15" fill="#6e7681">ask the repo</text>
+      <text x="804" y="126" font-size="24" fill="#c9d1d9">brain think &#183; dashboard</text>
+      <text x="804" y="152" font-size="14" fill="#3fb950">cited answers with confidence</text>
+    </g>
+    <rect x="0" y="216" width="1200" height="4" fill="#ff2056"/>
+  </g>
+</svg>
