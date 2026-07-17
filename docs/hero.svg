@@ -1,45 +1,93 @@
-<svg width="1200" height="520" viewBox="0 0 1200 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">RedSkills</title>
-  <desc id="desc">Agent workflow, governed Memory, and Brain knowledge for serious engineering agents.</desc>
-  <rect width="1200" height="520" rx="28" fill="#0B0B0D"/>
-  <path d="M0 342C112 292 205 296 312 330C439 370 529 362 638 304C766 236 900 230 1200 292V520H0V342Z" fill="#16181F"/>
-  <path d="M0 384C123 334 246 347 356 382C490 424 602 394 705 348C836 290 949 286 1200 341V520H0V384Z" fill="#20232D"/>
-  <circle cx="1008" cy="132" r="92" fill="#FF2056" opacity=".18"/>
-  <circle cx="214" cy="420" r="132" fill="#24B47E" opacity=".13"/>
-  <circle cx="1012" cy="406" r="168" fill="#3B82F6" opacity=".12"/>
-  <rect x="55" y="54" width="1090" height="412" rx="22" fill="#101116" stroke="#2A2D38"/>
-  <g filter="url(#shadow)">
-    <rect x="90" y="88" width="318" height="344" rx="18" fill="#15171E" stroke="#313542"/>
-    <rect x="442" y="88" width="318" height="344" rx="18" fill="#15171E" stroke="#313542"/>
-    <rect x="794" y="88" width="316" height="344" rx="18" fill="#15171E" stroke="#313542"/>
-  </g>
-  <text x="120" y="145" fill="#FFFFFF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="46" font-weight="800" letter-spacing="0">Dev</text>
-  <text x="472" y="145" fill="#FFFFFF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="46" font-weight="800" letter-spacing="0">Memory</text>
-  <text x="824" y="145" fill="#FFFFFF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="46" font-weight="800" letter-spacing="0">Brain</text>
-  <text x="120" y="190" fill="#A7AFBF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="500" letter-spacing="0">issues to reviewed PRs</text>
-  <text x="472" y="190" fill="#A7AFBF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="500" letter-spacing="0">evidence agents can verify</text>
-  <text x="824" y="190" fill="#A7AFBF" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="500" letter-spacing="0">knowledge humans can recall</text>
-  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="700" letter-spacing="0">
-    <rect x="120" y="238" width="238" height="48" rx="10" fill="#FF2056"/><text x="145" y="269" fill="#FFFFFF">ready-for-agent</text>
-    <rect x="120" y="306" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="145" y="337" fill="#FFFFFF">isolated worktree</text>
-    <rect x="120" y="374" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="145" y="405" fill="#FFFFFF">/ship or /afk</text>
-    <rect x="472" y="238" width="238" height="48" rx="10" fill="#24B47E"/><text x="497" y="269" fill="#06150F">validation evidence</text>
-    <rect x="472" y="306" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="497" y="337" fill="#FFFFFF">claim checks</text>
-    <rect x="472" y="374" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="497" y="405" fill="#FFFFFF">context packs</text>
-    <rect x="824" y="238" width="238" height="48" rx="10" fill="#3B82F6"/><text x="849" y="269" fill="#FFFFFF">project facts</text>
-    <rect x="824" y="306" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="849" y="337" fill="#FFFFFF">cited thinking</text>
-    <rect x="824" y="374" width="238" height="48" rx="10" fill="#232734" stroke="#454B5C"/><text x="849" y="405" fill="#FFFFFF">local dashboard</text>
-  </g>
-  <path d="M407 260H442" stroke="#747B8B" stroke-width="3" stroke-linecap="round"/>
-  <path d="M759 260H794" stroke="#747B8B" stroke-width="3" stroke-linecap="round"/>
-  <path d="M429 247L442 260L429 273" stroke="#747B8B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M781 247L794 260L781 273" stroke="#747B8B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="90" y="40" fill="#FF2056" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="800" letter-spacing=".14em">REDSKILLS</text>
-  <text x="90" y="486" fill="#D9DDE7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="600" letter-spacing="0">Claude Code + Codex + OpenCode + GitHub Actions</text>
-  <text x="797" y="486" fill="#D9DDE7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="600" letter-spacing="0">agent workflow / governed memory / project brain</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img" aria-labelledby="rs-hero-title rs-hero-desc">
+  <title id="rs-hero-title">RedSkills — engineering skills and plugins for coding agents</title>
+  <desc id="rs-hero-desc">RedSkills ships the dev, memory, and brain plugins: agent workflow that turns GitHub issues into reviewed PRs, governed memory, and a local knowledge brain for Claude Code, Codex, OpenCode, and Gemini CLI.</desc>
+
   <defs>
-    <filter id="shadow" x="70" y="74" width="1060" height="384" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity=".28"/>
-    </filter>
+    <linearGradient id="rs-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#07090d"/>
+    </linearGradient>
+    <radialGradient id="rs-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff2056" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rs-rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2056"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="rs-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+    </pattern>
+    <clipPath id="rs-frame">
+      <rect x="0" y="0" width="1200" height="420" rx="18"/>
+    </clipPath>
   </defs>
+
+  <g clip-path="url(#rs-frame)">
+    <rect width="1200" height="420" fill="url(#rs-bg)"/>
+    <rect width="1200" height="420" fill="url(#rs-grid)"/>
+    <ellipse cx="120" cy="60" rx="420" ry="300" fill="url(#rs-glow)"/>
+    <ellipse cx="1120" cy="410" rx="360" ry="240" fill="url(#rs-glow)" opacity="0.5"/>
+
+    <!-- left: the suite + what ships -->
+    <g font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
+      <text x="72" y="150" font-size="88" font-weight="700" fill="#f0f6fc" letter-spacing="-3">RedSkills</text>
+      <rect x="528" y="102" width="18" height="50" fill="#ff2056"/>
+
+      <text x="72" y="204" font-size="34" font-weight="600" fill="#ff2056" letter-spacing="-1">skills for coding agents</text>
+
+      <rect x="74" y="230" width="148" height="3" fill="url(#rs-rule)"/>
+
+      <text x="72" y="272" font-size="19" fill="#8b949e">Issues become reviewed PRs, memory stays</text>
+      <text x="72" y="298" font-size="19" fill="#8b949e">governed, and every repo gets a local brain.</text>
+
+      <text x="72" y="322" font-size="11" fill="#6e7681" letter-spacing="2.5">SHIPS THREE PLUGINS</text>
+      <g font-size="14">
+        <rect x="72" y="332" width="88" height="28" rx="14" fill="#ffffff" fill-opacity="0.04" stroke="#ff2056" stroke-opacity="0.35"/>
+        <text x="88" y="351" fill="#c9d1d9">dev</text>
+        <rect x="172" y="332" width="112" height="28" rx="14" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+        <text x="188" y="351" fill="#c9d1d9">memory</text>
+        <rect x="296" y="332" width="96" height="28" rx="14" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+        <text x="312" y="351" fill="#c9d1d9">brain</text>
+      </g>
+
+      <text x="72" y="388" font-size="11" fill="#6e7681" letter-spacing="2">RUNS ON</text>
+      <text x="150" y="388" font-size="14" fill="#8b949e">Claude Code &#183; Codex &#183; OpenCode &#183; Gemini CLI &#183; GitHub Actions</text>
+    </g>
+
+    <!-- right: the loop, issue in / PR out -->
+    <g font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
+      <rect x="720" y="56" width="424" height="308" rx="12" fill="#0b0f15" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="744" y="90" font-size="12" fill="#6e7681" letter-spacing="1">THE LOOP</text>
+
+      <g font-size="15">
+        <rect x="744" y="106" width="180" height="30" rx="15" fill="#ff2056" fill-opacity="0.14" stroke="#ff2056" stroke-opacity="0.5"/>
+        <text x="762" y="126" fill="#ff2056">ready-for-agent issue</text>
+
+        <line x1="834" y1="140" x2="834" y2="158" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
+        <path d="M828 158 L834 170 L840 158 Z" fill="#ff2056"/>
+
+        <rect x="744" y="172" width="220" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
+        <text x="762" y="192" fill="#c9d1d9">isolated worktree &#183; claude / codex</text>
+
+        <line x1="854" y1="206" x2="854" y2="224" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
+        <path d="M848 224 L854 236 L860 224 Z" fill="#ff2056"/>
+
+        <rect x="744" y="238" width="252" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
+        <text x="762" y="258" fill="#c9d1d9">validation gate &#183; code review &#183; verify</text>
+
+        <line x1="870" y1="272" x2="870" y2="290" stroke="#ff2056" stroke-width="2" stroke-opacity="0.55"/>
+        <path d="M864 290 L870 302 L876 290 Z" fill="#ff2056"/>
+
+        <rect x="744" y="304" width="150" height="30" rx="15" fill="#ffffff" fill-opacity="0.04" stroke="#3fb950" stroke-opacity="0.4"/>
+        <text x="762" y="324" fill="#3fb950">merged PR</text>
+      </g>
+
+      <line x1="744" y1="346" x2="1120" y2="346" stroke="#ffffff" stroke-opacity="0.08"/>
+      <text x="948" y="324" font-size="13" fill="#6e7681">autonomous /afk</text>
+      <text x="948" y="196" font-size="13" fill="#6e7681">or ad-hoc /go</text>
+    </g>
+
+    <rect x="0" y="416" width="1200" height="4" fill="#ff2056"/>
+  </g>
 </svg>
