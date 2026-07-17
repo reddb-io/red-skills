@@ -924,8 +924,8 @@ describe("runBoot stale claim-lock sweep", () => {
 });
 
 describe("runBoot attempt cap reclaims the right dirs", () => {
-  it("reaps age- and count-capped dirs, keeps live and newest", async () => {
-    const { deps, fsCalls } = makeDeps({ env: { RED_AFK_ATTEMPT_KEEP: "2" } });
+  it("reaps age- and count-capped dirs with fixed legacy cleanup defaults", async () => {
+    const { deps, fsCalls } = makeDeps({ env: { RED_AFK_ATTEMPT_KEEP: "2", RED_AFK_ATTEMPT_TTL_S: "999999" } });
     const byIssue = new Map<number, AttemptDir[]>([
       [
         42,
@@ -934,12 +934,16 @@ describe("runBoot attempt cap reclaims the right dirs", () => {
           attempt(42, 2, 1 * DAY),
           attempt(42, 3, 1 * DAY),
           attempt(42, 4, 1 * DAY),
-          attempt(42, 5, 1 * DAY, true), // live → spared, not counted
+          attempt(42, 5, 1 * DAY),
+          attempt(42, 6, 1 * DAY),
+          attempt(42, 7, 1 * DAY),
+          attempt(42, 8, 1 * DAY, true), // live -> spared, not counted
         ],
       ],
     ]);
     const r = await runBoot(deps, options({ attemptCap: { byIssue } }));
-    // a1 age-capped; survivors a2,a3,a4 with keep=2 → drop a2 (oldest by number).
+    // Deleted RED_AFK_ATTEMPT_* env is ignored: fixed defaults are ttl=14d, keep=5.
+    // a1 age-capped; survivors a2..a7 with keep=5 -> drop a2 (oldest by number).
     expect(fsCalls.removeDir).toEqual([
       "/p/.red/tmp/workers/wAAA/42-a1",
       "/p/.red/tmp/workers/wAAA/42-a2",
