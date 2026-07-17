@@ -17,7 +17,7 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
-import { loadConfig, getConfig, resolveTier, rootDevConfigCollisionsFromText } from "../core/config.js";
+import { auditConfigLoad, loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { compareSemver, newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../core/pin-reader.js";
@@ -1718,15 +1718,8 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const paths = afkPaths(ctx.root);
   const configPath = paths.configPath;
   const configText = await fsx.readText(configPath);
-  const config = loadConfig(configPath);
-  let rootDevKeys: string[] = [];
-  if (configText !== null) {
-    try {
-      rootDevKeys = rootDevConfigCollisionsFromText(configText).map((collision) => collision.key);
-    } catch {
-      rootDevKeys = [];
-    }
-  }
+  const configAudit = auditConfigLoad(configPath);
+  const config = configAudit.values;
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
@@ -1849,7 +1842,25 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       ...baseFreshnessDivergence,
       guard: baseFreshnessGuard,
     },
-    configNamespacing: { rootDevKeys },
+    configNamespacing: {
+      rootDevKeys: configAudit.rootAccessorCollisions
+        .filter((collision) => collision.key.startsWith("dev."))
+        .map((collision) => collision.key),
+    },
+    configCoherence: {
+      path: configPath,
+      displayPath: ".red/config.yaml",
+      fileLoaded: configAudit.fileLoaded,
+      discarded: configAudit.discarded,
+      parseFailure: configAudit.parseFailure,
+      rootAccessorCollisions: configAudit.rootAccessorCollisions,
+      resolved: {
+        trunk: normalizeConfiguredTrunk(configTrunk),
+        gate: getConfig(config, "dev.lock.primary-branch"),
+        lock: getConfig(config, "dev.lock.branch"),
+      },
+      sourceText: configText ?? undefined,
+    },
     fleetTruth,
   };
 }
