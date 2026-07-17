@@ -134,6 +134,8 @@ export interface PrecheckFacts {
   focalBranch?: OperationalProbeContext["focalBranch"];
   /** Optional config namespacing probe facts for red-doctor and boot visibility. */
   configNamespacing?: OperationalProbeContext["configNamespacing"];
+  /** Optional fleet truth probe facts for red-doctor and boot visibility. */
+  fleetTruth?: OperationalProbeContext["fleetTruth"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
