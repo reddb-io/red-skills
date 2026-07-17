@@ -22,6 +22,15 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
 - Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
 - Bare terminal / unknown runner: launch fleet and print the manual-monitor guidance.
 
+**Release recycle rule.** A fleet supervisor keeps running the exact dev bundle
+version it was launched from. After any RedSkills release that changes AFK or
+castle engine behavior, stop and relaunch the fleet before starting or counting
+a proving drain; otherwise the drain may still be executing on the pre-release
+engine. `monitor` and the statusline fleet cell show the running bundle version
+and mark skew against a newer locally cached bundle so stale supervisors are
+visible. Automatic drain-and-respawn on version change is a future enhancement,
+not part of the current fleet contract.
+
 ### `/dev:afk fleet [N]` — launch
 
 `N` is optional and defaults to `2`. Parse it as a non-negative integer; reject anything else (including `stop`, which is the other subcommand and routes below). Steps the agent must perform, in order:

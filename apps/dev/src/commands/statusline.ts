@@ -16,13 +16,13 @@
 // `.workspace.project_dir` (the fixed session root — survives `cd` into subdirs),
 // else `.workspace.current_dir // .cwd`, else `process.cwd()`.
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
 import { resolveBase } from "../core/base-resolver.js";
+import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
@@ -209,48 +209,6 @@ function dollarsSavedForCurrentDay(summary: RspSummaryFile, nowMs: number): numb
   return Math.max(0, summary.dollars_saved_today_usd);
 }
 
-function semverParts(version: string): [number, number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-function compareSemver(a: string, b: string): number {
-  const pa = semverParts(a);
-  const pb = semverParts(b);
-  if (!pa || !pb) return 0;
-  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
-}
-
-function redSkillsCacheDir(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.RED_SKILLS_CACHE_DIR) return env.RED_SKILLS_CACHE_DIR;
-  if (env.XDG_CACHE_HOME) return join(env.XDG_CACHE_HOME, "red-skills", "bundles");
-  return join(homedir(), ".cache", "red-skills", "bundles");
-}
-
-function newestCachedDevBundleVersion(
-  installedVersion: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const current = semverParts(installedVersion);
-  if (!current) return undefined;
-  const cacheDir = redSkillsCacheDir(env);
-  let best: string | undefined;
-  try {
-    for (const entry of readdirSync(cacheDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const m = /^dev-(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)\.bundle\.min\.mjs$/.exec(entry.name);
-      if (!m) continue;
-      const version = m[1];
-      if (semverParts(version) === null) continue;
-      if (compareSemver(version, installedVersion) <= 0) continue;
-      if (best === undefined || compareSemver(version, best) > 0) best = version;
-    }
-  } catch {
-    return undefined;
-  }
-  return best;
-}
-
 function decisionsFromSummary(summary: RspSummaryFile): Extract<RspStatusInput, { state: "ready" }>["decisions"] {
   const seen = summary.decisions?.seen;
   const contributed = summary.decisions?.contributed;
@@ -380,7 +338,7 @@ export async function statuslineCommand(
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
-  const [repo, docs, afk, fleet, workers, rsp] = await Promise.all([
+  const [repo, docs, afk, rawFleet, workers, rsp] = await Promise.all([
     collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
     collectStatuslineDocs(repoCtx, base),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
@@ -388,6 +346,10 @@ export async function statuslineCommand(
     collectStatuslineWorkers(repoCtx),
     resolveStatuslineRsp(root),
   ]);
+  const fleet =
+    rawFleet && project.latestCachedVersion !== undefined && rawFleet.bundleVersion !== undefined
+      ? { ...rawFleet, latestBundleVersion: project.latestCachedVersion }
+      : rawFleet;
 
   // Theme on by default (the multi-line wine layout: a repo-global header line
   // then one line per live worker); honour NO_COLOR for plain consumers (the

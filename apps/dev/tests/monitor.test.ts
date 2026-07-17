@@ -369,6 +369,20 @@ describe("monitor — compact dashboard", () => {
       expect(decoded.fleet.ready).toBe(0);
     });
 
+    it("includes fleet bundle version and skew in the fleet status block", () => {
+      const out = renderCompactDashboardToon([], fixtureEvents, 1780138815, {
+        ...baseFleet(),
+        bundleVersion: "2.60.2",
+        latestBundleVersion: "2.61.0",
+      });
+      const decoded = decode(out) as {
+        fleet: { bundle_version: string; latest_bundle_version: string; version_skew: number };
+      };
+      expect(decoded.fleet.bundle_version).toBe("2.60.2");
+      expect(decoded.fleet.latest_bundle_version).toBe("2.61.0");
+      expect(decoded.fleet.version_skew).toBe(1);
+    });
+
     it("is materially cheaper than JSON for a typical multi-worker board (#995)", () => {
       // The token win is the whole point of TOON as the default agent-facing
       // render (#995): the worker table names its 20 columns ONCE, where JSON
@@ -387,6 +401,17 @@ describe("monitor — compact dashboard", () => {
     const out = renderCompactDashboard([], fixtureEvents, 1780138815, baseFleet());
     expect(out.split("\n")[1]).toBe(
       "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2 parked:0  spawns:0",
+    );
+  });
+
+  it("surfaces fleet bundle version skew on the plain fleet line", () => {
+    const out = renderCompactDashboard([], fixtureEvents, 1780138815, {
+      ...baseFleet(),
+      bundleVersion: "2.60.2",
+      latestBundleVersion: "2.61.0",
+    });
+    expect(out.split("\n")[1]).toBe(
+      "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2 parked:0  spawns:0  bundle:2.60.2<2.61.0",
     );
   });
 

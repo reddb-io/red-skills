@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync, readFileSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readBuildInfo } from "@reddb-io/build-info";
 import {
   type FleetHeartbeat,
   type ElasticResizeRequest,
@@ -68,6 +69,7 @@ function fleetHeartbeatState(hb: FleetHeartbeat): string {
       epoch: hb.epoch,
       last_progress_epoch: hb.lastProgressEpoch > 0 ? hb.lastProgressEpoch : undefined,
       runner: hb.runner,
+      bundle_version: hb.bundleVersion,
       ready_for_agent: hb.readyForAgent,
       slots: {
         busy: hb.slotsBusy,
@@ -356,6 +358,7 @@ function buildSupervisorDeps(
   hookEnvBase: Record<string, string>,
 ): SupervisorDeps {
   const bundle = process.argv[1];
+  const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
   // Per-tick / boot liveness line into afk-supervisor.log (best-effort). Shared
   // by `log` and the pre-spawn boot sweeps so both land in the supervisor log.
@@ -587,29 +590,31 @@ function buildSupervisorDeps(
       });
     },
     emitFleetHeartbeat: async (hb) => {
+      const stamped = { ...hb, bundleVersion };
       try {
-        writeFleetStateAtomic(statePath, hb);
+        writeFleetStateAtomic(statePath, stamped);
       } catch {
         // best-effort: state-file failure must not affect the supervisor.
       }
       try {
-        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
-          ts: hb.ts,
+        await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(stamped), {
+          ts: stamped.ts,
           fields: {
             worker: "fleet",
             extra: {
               scope: "fleet",
-              runner: hb.runner,
-              ready_for_agent: String(hb.readyForAgent),
-              slots_busy: String(hb.slotsBusy),
-              slots_free: String(hb.slotsFree),
-              slots_total: String(hb.slotsTotal),
-              slots_parked: String(hb.slotsParked),
-              spawns_this_tick: String(hb.spawnsThisTick),
-              drain_budget_tier: hb.drainBudget?.tier ?? null,
-              drain_budget_spent_usd: hb.drainBudget?.spentUsd.toFixed(4) ?? null,
-              drain_budget_limit_usd: hb.drainBudget?.limitUsd.toFixed(4) ?? null,
-              drain_budget_percent: hb.drainBudget ? (hb.drainBudget.percent * 100).toFixed(2) : null,
+              runner: stamped.runner,
+              bundle_version: stamped.bundleVersion ?? null,
+              ready_for_agent: String(stamped.readyForAgent),
+              slots_busy: String(stamped.slotsBusy),
+              slots_free: String(stamped.slotsFree),
+              slots_total: String(stamped.slotsTotal),
+              slots_parked: String(stamped.slotsParked),
+              spawns_this_tick: String(stamped.spawnsThisTick),
+              drain_budget_tier: stamped.drainBudget?.tier ?? null,
+              drain_budget_spent_usd: stamped.drainBudget?.spentUsd.toFixed(4) ?? null,
+              drain_budget_limit_usd: stamped.drainBudget?.limitUsd.toFixed(4) ?? null,
+              drain_budget_percent: stamped.drainBudget ? (stamped.drainBudget.percent * 100).toFixed(2) : null,
             },
           },
         });
