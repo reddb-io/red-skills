@@ -44,6 +44,7 @@ import {
 import type { FleetHookContext, FleetHookDispatchResult } from "./fleet-hook-dispatcher.js";
 import type { FleetHookName } from "./fleet-hook-config.js";
 import { encode as encodeToon } from "@reddb-io/toon";
+import type { CastleLaneRecord } from "@reddb-io/red-castle/engine";
 
 // ---------- tunables ----------
 
@@ -734,6 +735,18 @@ export interface FleetHeartbeatEmitResult {
   firehoseError?: string;
 }
 
+export type SupervisorEventKind =
+  | "supervisor.boot-sweep"
+  | "supervisor.tick"
+  | "supervisor.dead-slot-reconcile"
+  | "supervisor.wake"
+  | "supervisor.scale"
+  | "supervisor.message";
+
+export type SupervisorEventRecord = Omit<CastleLaneRecord, "at" | "kind"> & {
+  kind: SupervisorEventKind;
+};
+
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
  * fields reap_stalled_slot pulls out of afk.state.json. */
 export interface IterDirInfo {
@@ -814,6 +827,12 @@ export interface SupervisorDeps {
    * whether that repair landed.
    */
   repairFleetHeartbeat?(heartbeat: FleetHeartbeat): FleetHeartbeatEmitResult | void | Promise<FleetHeartbeatEmitResult | void>;
+  /**
+   * Structured supervisor event sink. The native CLI binds this to the castle
+   * supervisor lane writer (`supervisor.log.toonl`). Best-effort; never throws
+   * out of the loop.
+   */
+  emitSupervisorEvent?(record: SupervisorEventRecord): void | Promise<void>;
   /**
    * Run the shared boot sweeps ONCE before the initial fleet spawn (#623). The
    * fleet supervisor owns the boot: it runs orphan cleanup / attempt cap /
@@ -975,6 +994,17 @@ export function initSupervisorState(target: number): SupervisorState {
     churnDeathEpochs: [],
     churnRespawnEpochs: [],
   };
+}
+
+async function emitSupervisorEvent(
+  deps: SupervisorDeps,
+  record: SupervisorEventRecord,
+): Promise<void> {
+  try {
+    await deps.emitSupervisorEvent?.(record);
+  } catch {
+    // best-effort: telemetry IO must not affect supervisor scheduling.
+  }
 }
 
 // ---------- discard / no-sentinel envelopes (compose envelope.ts) ----------
@@ -2159,6 +2189,17 @@ export async function superviseTick(
   const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
 
   const resize = await resolveElasticResize(deps, config);
+  const slotsBeforeResize = state.slots.length;
+  if (resize.target !== slotsBeforeResize) {
+    await emitSupervisorEvent(deps, {
+      kind: "supervisor.scale",
+      payload: {
+        from: slotsBeforeResize,
+        to: resize.target,
+        mode: resize.shrinkMode,
+      },
+    });
+  }
   if (resize.target >= state.slots.length) {
     for (const slot of state.slots) slot.retiring = false;
   }
@@ -2264,6 +2305,10 @@ export async function superviseTick(
     if (pid === null || !deps.proc.isAlive(pid)) {
       if (pid !== null) {
         deps.log?.(`dead slot reconciled: slot ${i} pid=${pid}`);
+        await emitSupervisorEvent(deps, {
+          kind: "supervisor.dead-slot-reconcile",
+          payload: { slot: i, pid },
+        });
       }
       // Dispatch on_slot_death before the slot is recycled. Best-effort.
       if (deps.dispatchFleetHook) {
@@ -2405,14 +2450,29 @@ export async function runSupervisor(
   if (deps.bootSweeps) {
     try {
       await deps.bootSweeps();
+      await emitSupervisorEvent(deps, {
+        kind: "supervisor.boot-sweep",
+        payload: { status: "passed" },
+      });
     } catch (err) {
       if (err instanceof BootHaltError) {
         deps.log?.(`boot sweeps halted: ${err.message}`);
+        await emitSupervisorEvent(deps, {
+          kind: "supervisor.boot-sweep",
+          payload: { status: "halted", reason: err.message },
+        });
         return;
       }
       deps.log?.(
         `boot sweeps failed: ${err instanceof Error ? err.message : String(err)} — spawning workers anyway`,
       );
+      await emitSupervisorEvent(deps, {
+        kind: "supervisor.boot-sweep",
+        payload: {
+          status: "failed",
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
     }
   }
 
@@ -2488,6 +2548,23 @@ export async function runSupervisor(
         `crash-reconciled=${result.crashReconciled.length} ` +
         `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
+    await emitSupervisorEvent(deps, {
+      kind: "supervisor.tick",
+      payload: {
+        slots: state.slots.length,
+        respawned: result.respawned.length,
+        deaths: result.deaths.length,
+        parked: result.parked.length,
+        idle_parked: result.idleParked.length,
+        half_opened: result.halfOpened.length,
+        reaped: result.reaped.length,
+        unblocked: result.unblocked.length,
+        crash_reconciled: result.crashReconciled.length,
+        ready_for_agent: heartbeat.readyForAgent,
+        slots_busy: heartbeat.slotsBusy,
+        slots_free: heartbeat.slotsFree,
+      },
+    });
     if (result.stopped) {
       // post_fleet: informational — fires after all workers are terminated.
       // Best-effort: hook failure is logged but never prevents clean exit.
@@ -2518,6 +2595,15 @@ export async function runSupervisor(
       wake: deps.wake,
     });
     recordWake(state.wakeStats, reason);
+    await emitSupervisorEvent(deps, {
+      kind: "supervisor.wake",
+      payload: {
+        source: reason,
+        event_wakes: state.wakeStats.event,
+        timer_wakes: state.wakeStats.timer,
+        total_wakes: state.wakeStats.total,
+      },
+    });
     if (reason === "event") {
       deps.log?.(
         `wake: event-driven (idle wakes reduced — ${state.wakeStats.event}/${state.wakeStats.total} wakes event-driven)`,
