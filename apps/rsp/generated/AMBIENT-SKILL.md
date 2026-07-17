@@ -15,8 +15,9 @@ Troubleshooting recipes for hook silence, resident/store splits, and store growt
 
 ## Permanent Proxy Model
 
-When `.red/config.yaml` sets `rsp.enabled: true` and `rsp.proxy.enabled: true`,
-the pre-exec hook routes eligible shell commands through `rsp proxy -- <command>`
+When `.red/config.yaml` sets `rsp.enabled: true`, proxy routing is on by
+default (an explicit `rsp.proxy.enabled: false` is the opt-out) and the
+pre-exec hook routes eligible shell commands through `rsp proxy -- <command>`
 instead of matching only a top-level allowlist. The hook still passes through
 missing commands, background jobs, recursive `rsp` calls, known interactive
 commands, and commands opted out with `RSP_NO_PROXY=1` or

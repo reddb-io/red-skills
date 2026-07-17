@@ -53,14 +53,15 @@ describe("resolveRspConfig", () => {
     });
   });
 
-  it("exposes the explicit enablement flag and defaults absent retention keys", async () => {
+  it("defaults proxy routing ON when rsp is enabled and no proxy key is set", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
 
+    // One opt-in, not two: rsp.enabled carries proxy routing with it.
     expect(resolveRspConfig(root, {}, undefined)).toEqual({
       enabled: true,
-      proxyEnabled: false,
+      proxyEnabled: true,
       storeUri: `file://${join(root, ".red", "state", "red-skills.rdb")}`,
       ttlDays: DEFAULT_RSP_TTL_DAYS,
       ephemeralTtlHours: DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
@@ -83,6 +84,17 @@ describe("resolveRspConfig", () => {
 
     expect(config.enabled).toBe(true);
     expect(config.proxyEnabled).toBe(true);
+  });
+
+  it("honours an explicit rsp.proxy.enabled: false as the proxy opt-out", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: false\n", "utf8");
+
+    const config = resolveRspConfig(root, {}, undefined);
+
+    expect(config.enabled).toBe(true);
+    expect(config.proxyEnabled).toBe(false);
   });
 
   it("lets env override the heavy git truncation threshold", async () => {

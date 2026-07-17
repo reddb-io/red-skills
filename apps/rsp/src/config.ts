@@ -36,7 +36,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
   const configPath = findUp(resolve(cwd), join(".red", "config.yaml"));
   const yaml = configPath ? readFileSync(configPath, "utf8") : "";
   const enabled = flatConfigValue(yaml, "rsp.enabled") === "true";
-  const proxyEnabled = flatConfigValue(yaml, "rsp.proxy.enabled") === "true";
+  // One opt-in, not two: enabling rsp enables proxy routing with it. The key
+  // remains only as the opt-out — an explicit `rsp.proxy.enabled: false`.
+  const proxyRaw = flatConfigValue(yaml, "rsp.proxy.enabled");
+  const proxyEnabled = proxyRaw === undefined ? enabled : proxyRaw === "true";
   const ttlDays = positiveNumber(readNumericYamlPath(yaml, "rsp.ttlDays"), DEFAULT_RSP_TTL_DAYS);
   const ephemeralTtlHours = positiveNumber(
     numericEnv(env.RSP_EPHEMERAL_TTL_HOURS) ?? readNumericYamlPath(yaml, "rsp.ephemeralTtlHours"),
