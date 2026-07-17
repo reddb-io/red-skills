@@ -12,6 +12,7 @@ import {
   renderOperationalProbeReportToon,
   runOperationalProbes,
 } from "../src/core/operational-probes.js";
+import { fastForwardLocalTarget, type Exec, type ExecResult } from "../src/core/merge.js";
 import { collectPrecheckFacts } from "../src/runtime/wire.js";
 
 describe("operational probe registry", () => {
@@ -49,6 +50,7 @@ describe("operational probe registry", () => {
       { id: "git.remote.https-forbidden", name: "SSH-only git remotes", verdict: "red" },
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
+      { id: "afk.base-freshness", name: "AFK local trunk freshness", verdict: "ok" },
       { id: "afk.fleet-truth", name: "AFK fleet truth", verdict: "ok" },
       { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
       { id: "afk.label-body-coherence", name: "AFK label/body coherence", verdict: "ok" },
@@ -411,6 +413,116 @@ describe("operational probe registry", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("reports a behind-origin local trunk with distance and the shared guard verdict", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      const facts = await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" });
+      const report = await runOperationalProbes(facts);
+
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+      expect(finding).toMatchObject({
+        id: "afk.base-freshness",
+        verdict: "red",
+        fix: { gate: "confirm" },
+      });
+      expect(finding?.evidence).toContain("local main is 2 commit(s) behind origin/main");
+      expect(finding?.evidence).toContain("guard=passed");
+      expect(finding?.canonicalFix).toContain("on-trunk, clean tree, and local ancestor");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("gated-fixes a real behind-origin local trunk by reusing the finalizer fast-forward guard", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes).toContainEqual({
+        probeId: "afk.base-freshness",
+        status: "applied",
+        evidence: "fast-forwarded main to origin/main",
+      });
+      expect(git(repo, "rev-parse", "main").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses the gated base-freshness fix when the primary is not on trunk", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      git(repo, "checkout", "-b", "feature/work");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes).toContainEqual({
+        probeId: "afk.base-freshness",
+        status: "noop",
+        evidence: "guard refused: condition failed: on-trunk (current=feature/work expected=main)",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses the gated base-freshness fix when the primary trunk is dirty", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      await writeFile(join(repo, "scratch.txt"), "dirty\n", "utf8");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes).toContainEqual({
+        probeId: "afk.base-freshness",
+        status: "noop",
+        evidence: "guard refused: condition failed: clean-tree (1 dirty path(s))",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses the gated base-freshness fix when local trunk is not an ancestor of origin", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      await writeFile(join(repo, "local.txt"), "local\n", "utf8");
+      git(repo, "add", "local.txt");
+      git(repo, "commit", "-m", "local only");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes).toContainEqual({
+        probeId: "afk.base-freshness",
+        status: "noop",
+        evidence: "guard refused: condition failed: ancestor (main is not an ancestor of origin/main)",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function readFixture(name: string): Promise<string> {
@@ -430,6 +542,59 @@ async function makeGitRepo(): Promise<{ root: string; lockPath: string }> {
   await mkdir(join(root, ".red"), { recursive: true });
   await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: develop\n", "utf8");
   return { root, lockPath: join(root, ".red", "state", "branch-lock.yaml") };
+}
+
+async function makeBaseFreshnessRepo(): Promise<{ root: string; repo: string; origin: string }> {
+  const root = await mkdtemp(join(tmpdir(), "red-skills-base-freshness-"));
+  const repo = join(root, "repo");
+  const origin = join(root, "origin.git");
+  const peer = join(root, "peer");
+  await mkdir(repo, { recursive: true });
+  git(root, "init", "--bare", "-b", "main", "origin.git");
+  git(repo, "init", "-b", "main");
+  configureGit(repo);
+  await mkdir(join(repo, ".red"), { recursive: true });
+  await writeFile(join(repo, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: main\n", "utf8");
+  await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
+  git(repo, "add", ".red/config.yaml", "README.md");
+  git(repo, "commit", "-m", "initial");
+  git(repo, "remote", "add", "origin", origin);
+  git(repo, "push", "-u", "origin", "main");
+
+  git(root, "clone", origin, peer);
+  configureGit(peer);
+  await writeFile(join(peer, "remote-one.txt"), "one\n", "utf8");
+  git(peer, "add", "remote-one.txt");
+  git(peer, "commit", "-m", "remote one");
+  await writeFile(join(peer, "remote-two.txt"), "two\n", "utf8");
+  git(peer, "add", "remote-two.txt");
+  git(peer, "commit", "-m", "remote two");
+  git(peer, "push", "origin", "main");
+  return { root, repo, origin };
+}
+
+function configureGit(cwd: string): void {
+  git(cwd, "config", "user.email", "red@example.invalid");
+  git(cwd, "config", "user.name", "Red Test");
+}
+
+function realExec(): Exec {
+  return async (argv: string[]): Promise<ExecResult> => {
+    try {
+      const stdout = execFileSync(argv[0] ?? "git", argv.slice(1), {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return { code: 0, stdout, stderr: "" };
+    } catch (error) {
+      const err = error as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string };
+      return {
+        code: err.status ?? 1,
+        stdout: String(err.stdout ?? ""),
+        stderr: String(err.stderr ?? ""),
+      };
+    }
+  };
 }
 
 function git(cwd: string, ...args: string[]): string {
