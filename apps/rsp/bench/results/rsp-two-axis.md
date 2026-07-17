@@ -26,12 +26,28 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 
 Aggregate oracle ceiling: raw 99323 tokens (0% capture), rsp 14760 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14219 tokens.
 
+| Corpus | Fixtures | Filters | raw tokens | rsp tokens | Headroom tokens | oracle tokens | rsp capture | Headroom capture |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| pre-existing-quality | 31 | cargo:test, cat:file, gh:issue, gh:pr, gh:run, git:blame, git:branch, git:commit, git:diff, git:log, git:push, git:show, git:status, vitest:run | 66174 | 13909 | 64367 | 13874 | 99.9% | 0.6% |
+| anomaly | 1 | exec:-- | 32686 | 235 | headroom: not-covered | 96 | 99.6% | headroom: not-covered |
+| mixed-content | 1 | exec:-- | 166 | 413 | headroom: not-covered | 79 | 0% | headroom: not-covered |
+| json-outlier | 1 | exec:-- | 297 | 203 | headroom: not-covered | 170 | 74% | headroom: not-covered |
+
 Large-output filters: cat:file, exec:--, git:diff, git:log, vitest:run.
 
 | Parity domain | Filter | Gate | rsp fidelity | RTK fidelity |
 | --- | --- | --- | ---: | ---: |
 | cargo-test | cargo:test | fail | 100% | 100% |
 | git-commit | git:commit | pass | 100% | 100% |
+
+| End-task parity probe | Fixture | Raw answer | rsp summary answer | Same answer |
+| --- | --- | --- | --- | --- |
+| crusher keeps numeric value outlier | exec-json-array-crusher | 7 | 7 | yes |
+| crusher keeps shape outlier | exec-json-array-crusher | shape-break | shape-break | yes |
+| oracle preserves planted mid-stream structural outlier | exec-midstream-anomaly | 2026-07-17T12:00:00Z service=payments level=FATAL panic=InvariantViolation shard=42 trace=midstream-anomaly-7f3a stack=/srv/app/payments.ts:1442 | 2026-07-17T12:00:00Z service=payments level=FATAL panic=InvariantViolation shard=42 trace=midstream-anomaly-7f3a stack=/srv/app/payments.ts:1442 | yes |
+| router degrades mixed ambiguous content to untyped fallback | exec-router-mixed-content | untyped | untyped | yes |
+| which PR is first? | pr-list-default | 42 | 42 | yes |
+| how many failed? | vitest-many-failures | 5/8 failed · 2 suites · 3.2s | 5/8 failed · 2 suites · 3.2s | yes |
 
 | Anti-suppression audit | Level | Verdict | Note |
 | --- | --- | --- | --- |
