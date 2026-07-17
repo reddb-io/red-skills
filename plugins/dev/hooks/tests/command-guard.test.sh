@@ -344,6 +344,27 @@ expect_eq "tmp-root guard: allows write inside workers lane" "0" "$(sed -n '1p' 
 result="$(run_hook "$repo" "$(payload "$repo" "tee -a .red/tmp/scratch/trace.log")")"
 expect_eq "tmp-root guard: allows tee inside scratch lane" "0" "$(sed -n '1p' <<<"$result")"
 
+result="$(run_hook "$repo" "$(payload "$repo" "rm -rf .red/tmp")")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "tmp delete guard: blocks tmp root removal" "0" "$(sed -n '1p' <<<"$result")"
+expect_contains "tmp delete guard: explains named lanes" "delete a named lane under .red/tmp/" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "rm -rf .red/tmp/*")")"
+expect_eq "tmp delete guard: blocks tmp root wildcard removal" "0" "$(sed -n '1p' <<<"$result")"
+
+mkdir -p "$repo/.red/tmp" "$repo/.red/state/afk"
+printf '%s\n' "$$" >"$repo/.red/tmp/afk-supervisor.pid"
+printf 'log\n' >"$repo/.red/tmp/afk-supervisor.log"
+result="$(run_hook "$repo" "$(payload "$repo" "rm -f .red/tmp/afk-supervisor.log")")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "tmp delete guard: blocks live legacy supervisor log removal" "0" "$(sed -n '1p' <<<"$result")"
+expect_contains "tmp delete guard: names live supervisor" "live supervisor" "$stderr"
+
+printf '%s\n' "$$" >"$repo/.red/state/afk/afk-supervisor.pid"
+printf 'state log\n' >"$repo/.red/state/afk/afk-supervisor.log"
+result="$(run_hook "$repo" "$(payload "$repo" "rm -f .red/state/afk/afk-supervisor.log")")"
+expect_eq "tmp delete guard: blocks live state supervisor log removal" "0" "$(sed -n '1p' <<<"$result")"
+
 cat >"$repo/.red/config.yaml" <<'YAML'
 plugins:
   dev:
