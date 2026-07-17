@@ -175,6 +175,10 @@ describe("auditTmpRoot", () => {
     expect(auditTmpRoot(["debug.log"]).unknown).toEqual(["debug.log"]);
   });
 
+  it("does not flag legacy supervisor slot logs while they age out", () => {
+    expect(auditTmpRoot(["afk-supervisor-slot-0.log", "debug.log"]).unknown).toEqual(["debug.log"]);
+  });
+
   it("passes known lanes through without flagging them", () => {
     const names = ["workers", "claims"];
     expect(auditTmpRoot(names).unknown).toEqual([]);
@@ -204,6 +208,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [],
       diagnosticsEntries: [],
       feedbackEntries: [],
+      legacySlotLogEntries: [],
       tmpRootNames: [...KNOWN_TMP_LANES],
     });
     expect(plan.logs).toEqual({ reclaim: [], spare: [] });
@@ -227,6 +232,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [oldScratch],
       diagnosticsEntries: [freshDiag],
       feedbackEntries: [oldFeedback, freshFeedback],
+      legacySlotLogEntries: [],
       tmpRootNames: ["workers", "logs", "rogue-dir", "scratch"],
     });
 
@@ -241,6 +247,25 @@ describe("planTmpJanitor", () => {
     expect(plan.unknownTmpRoots).toEqual(["rogue-dir"]);
   });
 
+  it("reclaims legacy tmp-root supervisor slot logs on the logs TTL", () => {
+    const oldSlotLog = entry("/red/tmp/afk-supervisor-slot-0.log", LOGS_TTL_S + 1);
+    const freshSlotLog = entry("/red/tmp/afk-supervisor-slot-1.log", LOGS_TTL_S - 1);
+
+    const plan = planTmpJanitor({
+      nowS: NOW,
+      logEntries: [],
+      scratchEntries: [],
+      diagnosticsEntries: [],
+      feedbackEntries: [],
+      legacySlotLogEntries: [oldSlotLog, freshSlotLog],
+      tmpRootNames: ["afk-supervisor-slot-0.log", "afk-supervisor-slot-1.log", "debug.log"],
+    });
+
+    expect(plan.legacySlotLogs.reclaim).toEqual([oldSlotLog]);
+    expect(plan.legacySlotLogs.spare).toEqual([freshSlotLog]);
+    expect(plan.unknownTmpRoots).toEqual(["debug.log"]);
+  });
+
   it("does not reclaim entries in unmanaged lanes (workers, claims, waits, worktrees)", () => {
     // The janitor only acts on its four lanes. Known lanes at the tmp root
     // do not produce unknownTmpRoots entries even though their contents
@@ -251,6 +276,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [],
       diagnosticsEntries: [],
       feedbackEntries: [],
+      legacySlotLogEntries: [],
       tmpRootNames: ["workers", "go-workers", "claims", "waits", "worktrees"],
     });
     expect(plan.unknownTmpRoots).toEqual([]);

@@ -33,6 +33,8 @@ import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInpu
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
 import {
   workerLivenessFor,
+  slotLogDir,
+  slotLogPath,
   parkedSlotWorkFor,
   resolveIterDirInfo,
   sumWorkerCostUsd,
@@ -405,6 +407,7 @@ export function buildSupervisorBootSweeps(
 function buildSupervisorDeps(
   root: string,
   tmpDir: string,
+  slotLogsDir: string,
   logFd: number,
   firehosePath: string,
   statePath: string,
@@ -454,7 +457,7 @@ function buildSupervisorDeps(
         // Each slot gets its own log file so the circuit-trip sweep can
         // resolve which worker IDs ran in the slot via parseWorkerIdsFromLog
         // (mirrors spawn_slot's per-slot slot_log in supervisor.sh).
-        const slotLogFile = join(tmpDir, `afk-supervisor-slot-${slot}.log`);
+        const slotLogFile = slotLogPath(tmpDir, slot, slotLogsDir);
         const slotFd = openSync(slotLogFile, "a");
         const retireFile = slotRetirePath(statePath, slot);
         rmSync(retireFile, { force: true });
@@ -519,7 +522,7 @@ function buildSupervisorDeps(
         await teardownIterDirNative(info, root);
       },
       parkedSlotWork: (slot, lastPid) =>
-        parkedSlotWorkFor(tmpDir, slot, lastPid, afkPaths(root).supervisorLogPath),
+        parkedSlotWorkFor(tmpDir, slot, lastPid, afkPaths(root).supervisorLogPath, slotLogsDir),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
@@ -721,12 +724,14 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const logFile = paths.supervisorLogPath;
   const firehoseFile = paths.fleetFirehosePath;
   const stateFile = paths.fleetStatePath;
+  const slotLogsDir = slotLogDir(tmp);
 
   // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
   // the state tier before the supervisor reads/writes them (issue #1685).
   await import("../runtime/red-path-migration.js").then((m) => m.migrateLegacyDevPaths(root)).catch(() => undefined);
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
   await import("../runtime/fs.js").then((m) => m.ensureDir(stateAfk));
+  await import("../runtime/fs.js").then((m) => m.ensureDir(slotLogsDir));
   // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
   // attach from boot rather than waiting for the first worker to create it.
   await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
@@ -765,7 +770,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     RED_AFK_RUNNER: config.runner,
     ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
   };
-  const deps = buildSupervisorDeps(root, tmp, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs, hookEnvBase);
+  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs, hookEnvBase);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 

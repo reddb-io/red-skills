@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   parseWorkerIdsFromLog,
   parkedSlotWorkFor,
+  slotLogDir,
   slotLogPath,
 } from "../src/runtime/supervisor-fs.js";
 
@@ -68,6 +69,19 @@ describe("parseWorkerIdsFromLog", () => {
   });
 });
 
+describe("slotLogPath", () => {
+  it("places slot spawn logs in the dated tmp logs lane", () => {
+    const tmp = scratch();
+    try {
+      const dir = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      expect(dir).toBe(join(tmp, "logs", "2026-07-17"));
+      expect(slotLogPath(tmp, 2, dir)).toBe(join(tmp, "logs", "2026-07-17", "afk-supervisor-slot-2.log"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 // ---------- parkedSlotWorkFor — the REAL path exercised end-to-end ----------
 
 describe("parkedSlotWorkFor (real fs — not a fake)", () => {
@@ -86,7 +100,9 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
   it("resolves worker ID + claimed issue from slot log + afk.state.json", () => {
     const tmp = scratch();
     try {
-      writeFileSync(slotLogPath(tmp, 0), "[afk] worker: wAAAA\n", "utf8");
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wAAAA\n", "utf8");
 
       const iterDir = join(tmp, "workers", "wAAAA", "42-a1");
       mkdirSync(iterDir, { recursive: true });
@@ -96,7 +112,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
         "utf8",
       );
 
-      const work = parkedSlotWorkFor(tmp, 0);
+      const work = parkedSlotWorkFor(tmp, 0, null, undefined, logs);
       expect(work.workers).toHaveLength(1);
       expect(work.workers[0]!.workerId).toBe("wAAAA");
       expect(work.workers[0]!.pairs).toHaveLength(1);
@@ -111,12 +127,14 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
   it("handles a pre-claim worker (no afk.state.json → issue null)", () => {
     const tmp = scratch();
     try {
-      writeFileSync(slotLogPath(tmp, 1), "[afk] worker: wBBBB\n", "utf8");
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(slotLogPath(tmp, 1, logs), "[afk] worker: wBBBB\n", "utf8");
       const iterDir = join(tmp, "workers", "wBBBB", "7-a1");
       mkdirSync(iterDir, { recursive: true });
       // No afk.state.json — worker died before claiming.
 
-      const work = parkedSlotWorkFor(tmp, 1);
+      const work = parkedSlotWorkFor(tmp, 1, null, undefined, logs);
       expect(work.workers).toHaveLength(1);
       expect(work.workers[0]!.pairs[0]!.issue).toBeNull();
     } finally {
@@ -127,9 +145,11 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
   it("collects multiple workers that ran in the same slot over successive fast deaths", () => {
     const tmp = scratch();
     try {
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
       // Two distinct workers ran in slot 0 (K fast deaths → K workers logged).
       writeFileSync(
-        slotLogPath(tmp, 0),
+        slotLogPath(tmp, 0, logs),
         "[afk] worker: wCCCC\n[afk] worker: wDDDD\n",
         "utf8",
       );
@@ -150,7 +170,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
         "utf8",
       );
 
-      const work = parkedSlotWorkFor(tmp, 0);
+      const work = parkedSlotWorkFor(tmp, 0, null, undefined, logs);
       expect(work.workers).toHaveLength(2);
       const wids = work.workers.map((w) => w.workerId);
       expect(wids).toContain("wCCCC");
@@ -163,11 +183,13 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
   it("slot index is independent — slot 0 and slot 1 read from separate log files", () => {
     const tmp = scratch();
     try {
-      writeFileSync(slotLogPath(tmp, 0), "[afk] worker: wEEEE\n", "utf8");
-      writeFileSync(slotLogPath(tmp, 1), "[afk] worker: wFFFF\n", "utf8");
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wEEEE\n", "utf8");
+      writeFileSync(slotLogPath(tmp, 1, logs), "[afk] worker: wFFFF\n", "utf8");
 
-      const work0 = parkedSlotWorkFor(tmp, 0);
-      const work1 = parkedSlotWorkFor(tmp, 1);
+      const work0 = parkedSlotWorkFor(tmp, 0, null, undefined, logs);
+      const work1 = parkedSlotWorkFor(tmp, 1, null, undefined, logs);
       expect(work0.workers.map((w) => w.workerId)).toEqual(["wEEEE"]);
       expect(work1.workers.map((w) => w.workerId)).toEqual(["wFFFF"]);
     } finally {
@@ -264,12 +286,14 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
     // When the slot log has boot-stamps, use those rather than the PID path.
     const tmp = scratch();
     try {
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
       const logWid = "wLOGG";
       const pidWid = "wPIDD";
       const pid = 33333;
 
       // Slot log lists logWid.
-      writeFileSync(slotLogPath(tmp, 0), `[afk] worker: ${logWid}\n`, "utf8");
+      writeFileSync(slotLogPath(tmp, 0, logs), `[afk] worker: ${logWid}\n`, "utf8");
       const logIterDir = join(tmp, "workers", logWid, "20-a1");
       mkdirSync(logIterDir, { recursive: true });
       writeFileSync(
@@ -290,11 +314,31 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
         "utf8",
       );
 
-      const work = parkedSlotWorkFor(tmp, 0, pid);
+      const work = parkedSlotWorkFor(tmp, 0, pid, undefined, logs);
       // Only the log-path worker is returned.
       expect(work.workers).toHaveLength(1);
       expect(work.workers[0]!.workerId).toBe(logWid);
       expect(work.workers[0]!.pairs[0]!.issue).toBe(20);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the legacy tmp-root slot log during the logs TTL aging window", () => {
+    const tmp = scratch();
+    try {
+      writeFileSync(join(tmp, "afk-supervisor-slot-0.log"), "[afk] worker: wOLD1\n", "utf8");
+
+      const iterDir = join(tmp, "workers", "wOLD1", "88-a1");
+      mkdirSync(iterDir, { recursive: true });
+      writeFileSync(
+        join(iterDir, "afk.state.json"),
+        JSON.stringify({ current: { number: 88 } }),
+        "utf8",
+      );
+
+      const work = parkedSlotWorkFor(tmp, 0, null, undefined, slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z")));
+      expect(work.workers.map((w) => w.workerId)).toEqual(["wOLD1"]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

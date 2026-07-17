@@ -34,7 +34,7 @@ import {
   type SupervisorLiveness,
   type SweepWork,
 } from "../src/core/supervisor.js";
-import { parkedSlotWorkFor, slotLogPath } from "../src/runtime/supervisor-fs.js";
+import { parkedSlotWorkFor, slotLogDir, slotLogPath } from "../src/runtime/supervisor-fs.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
 import type { LivenessVerdict } from "@reddb-io/red-castle";
 
@@ -765,9 +765,11 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
   it("restores the claimed issue and posts a discard envelope with the correct fast-death count", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "afk-sup-int-"));
     try {
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
       // Two workers ran in slot 0 across successive fast deaths; both emit the
       // boot-stamp so the slot log records them. Only the second claimed an issue.
-      writeFileSync(slotLogPath(tmp, 0), "[afk] worker: wAAA1\n[afk] worker: wBBB2\n", "utf8");
+      writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wAAA1\n[afk] worker: wBBB2\n", "utf8");
 
       // wAAA1 — died before claiming (no afk.state.json → issue null).
       const dir1 = join(tmp, "workers", "wAAA1", "9-a1");
@@ -785,7 +787,7 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
       // Build deps with real parkedSlotWorkFor (not mocked) and mocked gh.
       const { deps, io } = makeDeps({
         parkedSlotWork: (slot: number, lastPid: number | null) =>
-          parkedSlotWorkFor(tmp, slot, lastPid),
+          parkedSlotWorkFor(tmp, slot, lastPid, undefined, logs),
       });
 
       // Slot state at trip: 5 fast deaths (circuitK=5), last pid irrelevant
@@ -831,13 +833,15 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
   it("no-ops cleanly when the slot log is empty (no stamp yet) and lastPid yields nothing", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "afk-sup-int-"));
     try {
+      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
+      mkdirSync(logs, { recursive: true });
       // Slot log exists but has no boot-stamp lines (pre-fix scenario or very
       // early crash before the stamp was emitted). No worker.pid file either.
-      writeFileSync(slotLogPath(tmp, 0), "some unrelated output\n", "utf8");
+      writeFileSync(slotLogPath(tmp, 0, logs), "some unrelated output\n", "utf8");
 
       const { deps, io } = makeDeps({
         parkedSlotWork: (slot: number, lastPid: number | null) =>
-          parkedSlotWorkFor(tmp, slot, lastPid),
+          parkedSlotWorkFor(tmp, slot, lastPid, undefined, logs),
       });
 
       const state = initSupervisorState(1);

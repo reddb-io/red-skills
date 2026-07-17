@@ -515,6 +515,7 @@ describe("runBoot tmp janitor", () => {
             scratch: { reclaim: [{ path: "/p/.red/tmp/scratch/old", mtimeS: NOW - 99 }], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [], spare: [] },
+            legacySlotLogs: { reclaim: [], spare: [] },
             unknownTmpRoots: ["work-old"],
           },
           staleWorkers: {
@@ -556,6 +557,7 @@ describe("runBoot tmp janitor", () => {
             scratch: { reclaim: [], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [], spare: [] },
+            legacySlotLogs: { reclaim: [], spare: [] },
             unknownTmpRoots: [],
           },
           staleWorkers: {

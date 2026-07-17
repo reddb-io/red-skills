@@ -51,6 +51,12 @@ export const KNOWN_TMP_LANES = new Set([
   "diagnostics",
 ]);
 
+const LEGACY_SLOT_LOG_RE = /^afk-supervisor-slot-\d+\.log$/;
+
+export function isLegacySlotLogName(name: string): boolean {
+  return LEGACY_SLOT_LOG_RE.test(name);
+}
+
 // ---------- types ----------
 
 /** One stat'd entry under a janitor-managed lane. */
@@ -136,6 +142,7 @@ export interface TmpRootAudit {
 export function auditTmpRoot(names: readonly string[]): TmpRootAudit {
   const unknown: string[] = [];
   for (const name of names) {
+    if (isLegacySlotLogName(name)) continue;
     if (!KNOWN_TMP_LANES.has(name)) unknown.push(name);
   }
   return { unknown };
@@ -154,6 +161,8 @@ export interface TmpJanitorInput {
   diagnosticsEntries: readonly JanitorEntry[];
   /** Stat'd entries under tmp/worktrees/feedback/. */
   feedbackEntries: readonly JanitorEntry[];
+  /** Legacy supervisor slot logs once written as loose tmp-root files. */
+  legacySlotLogEntries: readonly JanitorEntry[];
   /** Names (not full paths) present directly under the tmp root. */
   tmpRootNames: readonly string[];
 }
@@ -163,6 +172,7 @@ export interface TmpJanitorPlan {
   scratch: JanitorLanePlan;
   diagnostics: JanitorLanePlan;
   feedbackWorktrees: JanitorLanePlan;
+  legacySlotLogs: JanitorLanePlan;
   /** Names at the tmp root not in KNOWN_TMP_LANES: reported, never deleted. */
   unknownTmpRoots: string[];
 }
@@ -175,6 +185,7 @@ export function planTmpJanitor(input: TmpJanitorInput): TmpJanitorPlan {
     scratch: planScratchJanitor(input.scratchEntries, nowS),
     diagnostics: planDiagnosticsJanitor(input.diagnosticsEntries, nowS),
     feedbackWorktrees: planFeedbackWorktreeJanitor(input.feedbackEntries, nowS),
+    legacySlotLogs: planLogsJanitor(input.legacySlotLogEntries, nowS),
     unknownTmpRoots: auditTmpRoot(input.tmpRootNames).unknown,
   };
 }
