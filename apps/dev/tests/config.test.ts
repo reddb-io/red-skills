@@ -460,6 +460,89 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
   });
 });
 
+describe("config — literal block scalars (#1998)", () => {
+  it("honors `|` and `|-` newline semantics on mapping values", () => {
+    const text = [
+      "afk:",
+      "  keep: |",
+      "    first",
+      "    second",
+      "  strip: |-",
+      "    third",
+      "    fourth",
+      "",
+    ].join("\n");
+    expect(parseConfigYaml(text)).toEqual({
+      "afk.keep": "first\nsecond\n",
+      "afk.strip": "third\nfourth",
+    });
+  });
+
+  it("parses literal block sequence items without dropping siblings or following keys", () => {
+    const text = [
+      "dev:",
+      "  trunk: develop",
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      backpressure:",
+      "        - |",
+      "          set -euo pipefail",
+      "          pnpm --filter @reddb-io/dev test -- config.test.ts",
+      "",
+      "          if [ -f package.json ]; then",
+      "            pnpm --filter @reddb-io/dev typecheck",
+      "          fi",
+      "        - |-",
+      "          pnpm --filter @reddb-io/dev build",
+      "      merge:",
+      "        wait_for_review: true",
+      "rsp:",
+      "  enabled: true",
+      "",
+    ].join("\n");
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+    expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
+    expect(readBackpressure(values)).toEqual([
+      [
+        "set -euo pipefail",
+        "pnpm --filter @reddb-io/dev test -- config.test.ts",
+        "",
+        "if [ -f package.json ]; then",
+        "  pnpm --filter @reddb-io/dev typecheck",
+        "fi",
+        "",
+      ].join("\n"),
+      "pnpm --filter @reddb-io/dev build",
+    ]);
+    expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
+    expect(getConfig(values, "rsp.enabled")).toBe("true");
+  });
+
+  it("fails loudly on unsupported folded block scalars", () => {
+    expect(() => parseConfigYaml("afk:\n  script: >\n    echo nope\n")).toThrow(
+      /line 2: unsupported folded block scalar/,
+    );
+    expect(() => parseConfigYaml("afk:\n  backpressure:\n    - >\n      echo nope\n")).toThrow(
+      /line 3: unsupported folded block scalar/,
+    );
+  });
+
+  it("loader warning names the unsupported folded block scalar construct", () => {
+    const warnings: string[] = [];
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "afk:\n  script: >\n    echo nope\n",
+      warn: (m) => warnings.push(m),
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("line 2");
+    expect(warnings[0]).toContain("unsupported folded block scalar");
+    expect(getConfig(values, "afk.default_runner")).toBe("claude");
+  });
+});
+
 describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
   it("defaults to false (merge-without-advice) with CodeRabbit as the review check", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
