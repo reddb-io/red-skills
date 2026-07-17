@@ -80,7 +80,7 @@ async function writeFreshLivenessLane(
 
 /** Pre-seed a FRESH gh count cache so collectStatuslineAfk never calls gh. */
 async function seedFreshCache(root: string, queue: number, human: number): Promise<void> {
-  const dir = join(root, ".red", "tmp");
+  const dir = join(root, ".red", "state", "statusline");
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
   await writeFile(join(dir, "statusline-cache.json"), JSON.stringify({ queue, human, ts }), "utf8");
@@ -93,7 +93,7 @@ async function seedFreshRepoCache(
   openIssues: number,
   todayPrs = 0,
 ): Promise<void> {
-  const dir = join(root, ".red", "tmp");
+  const dir = join(root, ".red", "state", "statusline");
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
   await writeFile(
@@ -107,7 +107,7 @@ async function writeFleetSnapshot(
   root: string,
   over: Record<string, unknown> = {},
 ): Promise<void> {
-  const dir = join(root, ".red", "tmp");
+  const dir = join(root, ".red", "state", "afk");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
   await writeFile(
@@ -660,7 +660,7 @@ describe("statusline command — rendered line", () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 2, 0);
     await writeFleetSnapshot(root);
-    await writeFile(join(root, ".red", "tmp", "afk-supervisor.pid"), "999999999\n", "utf8");
+    await writeFile(join(root, ".red", "state", "afk", "afk-supervisor.pid"), "999999999\n", "utf8");
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
