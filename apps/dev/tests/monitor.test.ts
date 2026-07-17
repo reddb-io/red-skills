@@ -435,6 +435,20 @@ describe("monitor — compact dashboard", () => {
     );
   });
 
+  it("surfaces recent supervisor churn on the fleet line", () => {
+    const line = renderFleetLine(
+      baseFleet({
+        readyForAgent: 7,
+        slotsBusy: 2,
+        slotsFree: 0,
+        spawnsThisTick: 2,
+        churn: { windowS: 90, deaths: 2, respawns: 2 },
+      }),
+      1780138815,
+    );
+    expect(line).toContain("churn:2 deaths/2 respawns/90s");
+  });
+
   it("carries parked:N unconditionally — zero when all slots closed", () => {
     const line = renderFleetLine(baseFleet(), 1780138815);
     expect(line).toContain("parked:0");
