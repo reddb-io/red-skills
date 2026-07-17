@@ -124,7 +124,7 @@ When a Codex session launches `/dev:afk fleet N`:
   validation, merge, push, or repair state.
 
 If the sub-agent primitive is unavailable, launch the supervisor anyway and
-tell the user to run `/dev:afk monitor` or tail `.red/state/castle/afk-supervisor.log`.
+tell the user to run `/dev:afk monitor` or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
 
 ## Notes On The Bypass Flags
 

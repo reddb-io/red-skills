@@ -113,7 +113,7 @@ async function writeFleetSnapshot(
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
   await writeFile(
-    join(dir, "afk-supervisor.state.json"),
+    join(dir, "state.toon"),
     JSON.stringify({
       ts: new Date().toISOString(),
       epoch: Math.floor(Date.now() / 1000),

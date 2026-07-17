@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { decode } from "@reddb-io/toon";
 
 const killTreeMocks = vi.hoisted(() => ({
   isLivePid: vi.fn((_pid: number) => false),
@@ -27,13 +28,14 @@ function scratch(): string {
 }
 
 function writeSupervisorArtifacts(root: string, pid: number | string): Record<string, string> {
-  const stateAfk = join(root, ".red", "state", "castle");
+  const paths0 = afkPaths(root);
+  const stateAfk = dirname(paths0.supervisorPidPath);
   mkdirSync(stateAfk, { recursive: true });
   const paths = {
-    pid: join(stateAfk, "afk-supervisor.pid"),
-    state: join(stateAfk, "afk-supervisor.state.json"),
+    pid: paths0.supervisorPidPath,
+    state: paths0.fleetStatePath,
     log: join(stateAfk, "afk-supervisor.log"),
-    firehose: join(stateAfk, "afk-supervisor.log.toonl"),
+    firehose: paths0.fleetFirehosePath,
   };
   writeFileSync(paths.pid, String(pid), "utf8");
   writeFileSync(paths.state, "{not json", "utf8");
@@ -161,12 +163,12 @@ describe("fleet command stale supervisor state", () => {
   it("launchFleet writes a resize request when a healthy supervisor is already running", async () => {
       const root = scratch();
     try {
-      const stateAfk = join(root, ".red", "state", "castle");
+      const stateAfk = dirname(afkPaths(root).supervisorPidPath);
       mkdirSync(stateAfk, { recursive: true });
       writeFileSync(join(stateAfk, "afk-supervisor.pid"), "12345", "utf8");
       const epoch = Math.floor(Date.now() / 1000);
       writeFileSync(
-        join(stateAfk, "afk-supervisor.state.json"),
+        join(stateAfk, "state.toon"),
         JSON.stringify({
           epoch,
           last_progress_epoch: epoch,
@@ -182,7 +184,7 @@ describe("fleet command stale supervisor state", () => {
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
-      expect(JSON.parse(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
+      expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         shrink_mode: "hard-kill",
       });

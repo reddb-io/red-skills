@@ -14,7 +14,8 @@ export type CastleStateFindingKind =
   | "castle-history-invalid"
   | "castle-validation-invalid"
   | "castle-snapshot-invalid"
-  | "legacy-afk-residue";
+  | "legacy-afk-residue"
+  | "castle-live-artifact";
 
 export type CastleStateVerdict = "warn" | "error";
 
@@ -68,6 +69,17 @@ async function childDirs(path: string): Promise<string[]> {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+async function childEntries(path: string): Promise<Array<{ name: string; isDirectory: boolean; isFile: boolean }>> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory(), isFile: entry.isFile() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -198,6 +210,26 @@ async function auditSnapshots(
   return findings;
 }
 
+async function auditCastleRootSplit(root: string, paths: ReturnType<typeof createEnginePaths>): Promise<CastleStateFinding[]> {
+  const allowedRootFiles = new Set(["history.toonl", "validation.toonl"]);
+  const allowedRootDirs = new Set(["workers", "supervisors"]);
+  const findings: CastleStateFinding[] = [];
+  for (const entry of await childEntries(paths.castleStateRoot)) {
+    if (entry.isFile && allowedRootFiles.has(entry.name)) continue;
+    if (entry.isDirectory && allowedRootDirs.has(entry.name)) continue;
+    findings.push(
+      finding(
+        root,
+        join(paths.castleStateRoot, entry.name),
+        "castle-live-artifact",
+        "error",
+        "live supervisor artifact belongs under .red/tmp/supervisors/default, not the durable castle state lane",
+      ),
+    );
+  }
+  return findings;
+}
+
 export async function auditCastleStateLane(root: string): Promise<CastleStateDoctorReport> {
   const paths = createEnginePaths(join(root, ".red"));
   const legacyAfkState = join(root, ".red", "state", "afk");
@@ -206,6 +238,7 @@ export async function auditCastleStateLane(root: string): Promise<CastleStateDoc
   const findings: CastleStateFinding[] = [];
 
   if (castleLanePresent) {
+    findings.push(...await auditCastleRootSplit(root, paths));
     findings.push(...await auditToonlLanes(root, paths));
     findings.push(...await auditSnapshots(root, paths, "worker"));
     findings.push(...await auditSnapshots(root, paths, "supervisor"));

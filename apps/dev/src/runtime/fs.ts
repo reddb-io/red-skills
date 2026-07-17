@@ -164,6 +164,11 @@ function supervisorArtifactDir(path: string): string | null {
   const name = parts.at(-1) ?? "";
   const parent = parts.at(-2) ?? "";
   const grandparent = parts.at(-3) ?? "";
+  const tmpIndex = parts.findIndex((part, idx) => part === "tmp" && parts[idx - 1] === ".red");
+  if (tmpIndex >= 0 && parts[tmpIndex + 1] === "supervisors" && parts[tmpIndex + 2]) {
+    const prefixParts = parts.slice(0, tmpIndex + 3);
+    return `${path.startsWith(sep) ? sep : ""}${prefixParts.join(sep)}`;
+  }
   if (name.startsWith("afk-supervisor.") && (parent === "castle" || parent === "afk") && grandparent === "state") {
     return dirname(path);
   }

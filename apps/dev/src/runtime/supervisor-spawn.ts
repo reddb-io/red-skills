@@ -5,12 +5,12 @@
 // here — callers resolve target/runner/passthrough and inject them.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { afkStateDir } from "@reddb-io/shared/red-paths.js";
+import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode } from "../core/supervisor.js";
+import { afkPaths } from "./wire.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -65,10 +65,9 @@ export interface SpawnSupervisorOptions {
  * inline spawn so launch + watchdog-relaunch stay byte-identical.
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
-  const stateAfk = afkStateDir(opts.root);
-  mkdirSync(stateAfk, { recursive: true });
-  const pidFile = join(stateAfk, "afk-supervisor.pid");
-  const logFile = join(stateAfk, "afk-supervisor.log");
+  const paths = afkPaths(opts.root);
+  mkdirSync(dirname(paths.supervisorPidPath), { recursive: true });
+  const pidFile = paths.supervisorPidPath;
 
   const childArgs = [...(opts.passthrough ?? [])];
   if (opts.request) childArgs.unshift("--request", opts.request);
@@ -82,12 +81,11 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
   if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
   if (opts.shrinkMode !== undefined) env.RED_AFK_SHRINK_MODE = opts.shrinkMode;
 
-  const out = openSync(logFile, "a");
   const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
     cwd: opts.root,
     env,
     detached: true,
-    stdio: ["ignore", out, out],
+    stdio: ["ignore", "ignore", "ignore"],
   });
   child.unref();
 

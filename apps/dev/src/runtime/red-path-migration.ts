@@ -65,8 +65,8 @@ async function convertLegacyJsonlHistoryIfSafe(root: string): Promise<boolean> {
 }
 
 /**
- * Relocate every dev-owned durable artifact from its legacy `.red/tmp` home to
- * the state tier, once and idempotently. A second boot (legacy already gone) is a
+ * Relocate every dev-owned artifact from its legacy home to the canonical state
+ * or tmp lane, once and idempotently. A second boot (legacy already gone) is a
  * pure no-op. Safe to call on every boot.
  */
 export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrationResult> {
@@ -75,8 +75,9 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
     if (await moveIfSafe(entry.legacy, entry.current)) moved.push(entry.id);
   }
   if (await convertLegacyJsonlHistoryIfSafe(root)) moved.push("afk-history.jsonl");
-  // Rotated supervisor launch logs (afk-supervisor.log, .log.N) plus the old
-  // TOONL firehose name (afk-supervisor.log.jsonl -> afk-supervisor.log.toonl).
+  // Retire the old tmp-root structured supervisor firehose
+  // (afk-supervisor.log.jsonl -> supervisor.log.toonl). Human prose
+  // afk-supervisor.log is not moved or dual-written into a new lane.
   const { legacyDir, currentDir, logPrefix } = supervisorLogMigration(root);
   let entries: string[] = [];
   try {
@@ -86,7 +87,8 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   }
   for (const name of entries) {
     if (!name.startsWith(logPrefix)) continue;
-    const currentName = name === "afk-supervisor.log.jsonl" ? "afk-supervisor.log.toonl" : name;
+    if (name !== "afk-supervisor.log.jsonl" && name !== "afk-supervisor.log.toonl") continue;
+    const currentName = "supervisor.log.toonl";
     if (await moveIfSafe(join(legacyDir, name), join(currentDir, currentName))) moved.push(name);
   }
   return { moved };

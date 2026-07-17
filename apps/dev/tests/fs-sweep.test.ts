@@ -92,10 +92,10 @@ describe("removeDir sweep guard (#1928)", () => {
   it("refuses to remove a live supervisor anchor", async () => {
     const root = scratch();
     try {
-      const stateAfk = join(root, ".red", "state", "afk");
-      mkdirSync(stateAfk, { recursive: true });
-      writeFileSync(join(stateAfk, "afk-supervisor.pid"), ALIVE_PID);
-      const log = join(stateAfk, "afk-supervisor.log");
+      const supervisorDir = join(root, ".red", "tmp", "supervisors", "default");
+      mkdirSync(supervisorDir, { recursive: true });
+      writeFileSync(join(supervisorDir, "afk-supervisor.pid"), ALIVE_PID);
+      const log = join(supervisorDir, "supervisor.log.toonl");
       writeFileSync(log, "live\n");
 
       await expect(removeDir(log)).rejects.toThrow("refusing to remove live supervisor artifact");
