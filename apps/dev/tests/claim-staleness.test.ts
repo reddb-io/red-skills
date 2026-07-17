@@ -166,12 +166,12 @@ describe("classifyIssueClaims", () => {
 
   it("a single fresh claim is the live owner, no stale owners", () => {
     const st = classifyIssueClaims([claimAt(10, "live:host", 60)], isStale);
-    expect(st).toEqual({ liveOwner: "live:host", staleOwners: [] });
+    expect(st).toEqual({ liveOwner: "live:host", staleOwners: [], concededOwners: [] });
   });
 
   it("a single aged-out claim has no live owner and one stale owner", () => {
     const st = classifyIssueClaims([claimAt(10, "dead:host", 9999)], isStale);
-    expect(st).toEqual({ liveOwner: null, staleOwners: ["dead:host"] });
+    expect(st).toEqual({ liveOwner: null, staleOwners: ["dead:host"], concededOwners: [] });
   });
 
   it("a live contender holds the issue even when an older claim went stale", () => {
@@ -197,7 +197,7 @@ describe("classifyIssueClaims", () => {
       { commentId: 40, worker: "gone:host", kind: "concede" },
     ];
     const st = classifyIssueClaims(records, isStale);
-    expect(st).toEqual({ liveOwner: null, staleOwners: [] });
+    expect(st).toEqual({ liveOwner: null, staleOwners: [], concededOwners: ["gone:host"] });
   });
 });
 
@@ -315,5 +315,23 @@ describe("planStaleClaimSweep", () => {
       cfg,
     );
     expect(releases).toEqual([{ issue: 7, staleOwners: ["dead:host"] }]);
+  });
+
+  it("repairs a running-label contradiction when every latest claim marker conceded", () => {
+    const releases = planStaleClaimSweep(
+      [
+        {
+          issue: 9,
+          records: [
+            claimAt(10, "gone:host", 30),
+            { commentId: 20, worker: "gone:host", kind: "concede" },
+          ],
+          attemptBranchCommitS: T0 - 10,
+        },
+      ],
+      T0,
+      cfg,
+    );
+    expect(releases).toEqual([{ issue: 9, staleOwners: [], concededOwners: ["gone:host"] }]);
   });
 });
