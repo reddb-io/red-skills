@@ -91,6 +91,7 @@ export interface GenericJsonLaneOptions {
   maxItems?: number;
   command?: string;
   store?: Pick<RspElisionStore, "mint">;
+  crusher?: JsonArrayCrusher;
 }
 
 export interface GenericJsonLaneResult {
@@ -100,10 +101,26 @@ export interface GenericJsonLaneResult {
   totalItems?: number;
   keptItems?: number;
   handle?: `el:${string}`;
+  degradation?: {
+    reason: string;
+    family: string;
+    stderrHead: string;
+  };
 }
 
 const DEFAULT_JSON_MIN_TOKENS = 200;
 const DEFAULT_JSON_MAX_ITEMS = 15;
+
+export interface JsonArrayCrushResult {
+  items: JsonValue[];
+  total: number;
+  kept: number;
+  dropped: number;
+  shapeOutliers: number;
+  valueOutliers: number;
+}
+
+export type JsonArrayCrusher = (items: readonly JsonValue[], maxItems: number) => JsonArrayCrushResult;
 
 export async function renderGenericJsonLane(
   input: string,
@@ -125,11 +142,28 @@ export async function renderGenericJsonLane(
     return { output: encode(value as JsonValue).trimEnd(), detected: true, lossy: false, totalItems: total, keptItems: total };
   }
 
-  const kept = selectJsonItems(value, maxItems);
+  let crushed: JsonArrayCrushResult;
+  try {
+    crushed = (options.crusher ?? crushJsonArrayItems)(value, maxItems);
+  } catch (error) {
+    return {
+      output: encode(value as JsonValue).trimEnd(),
+      detected: true,
+      lossy: false,
+      totalItems: total,
+      keptItems: total,
+      degradation: {
+        reason: "json-array-crusher-failed",
+        family: "json",
+        stderrHead: truncateDiagnostic(error),
+      },
+    };
+  }
+  const kept = crushed.items;
   const payload = {
     items: kept as JsonValue,
   } satisfies JsonObject;
-  const marker = `items: ${kept.length} of ${total} kept`;
+  const marker = `items: ${crushed.kept} kept, ${crushed.dropped} dropped (shape outliers: ${crushed.shapeOutliers}, value outliers: ${crushed.valueOutliers})`;
   let handle: `el:${string}` | undefined;
   if (options.level && options.level !== "lossless") {
     handle = await options.store?.mint(Buffer.from(input), {
@@ -148,6 +182,42 @@ export async function renderGenericJsonLane(
     totalItems: total,
     keptItems: kept.length,
     handle,
+  };
+}
+
+export function crushJsonArrayItems(items: readonly JsonValue[], maxItems: number): JsonArrayCrushResult {
+  if (items.length <= maxItems) {
+    return {
+      items: [...items],
+      total: items.length,
+      kept: items.length,
+      dropped: 0,
+      shapeOutliers: 0,
+      valueOutliers: 0,
+    };
+  }
+
+  const keep = new Set<number>([0, items.length - 1]);
+  const commonShape = majorityShape(items);
+  const shapeIndexes = new Set<number>();
+  if (commonShape) {
+    items.forEach((item, index) => {
+      if (shapeSignature(item) !== commonShape) shapeIndexes.add(index);
+    });
+  }
+
+  const valueIndexes = valueOutlierIndexes(items, commonShape);
+  for (const index of shapeIndexes) keep.add(index);
+  for (const index of valueIndexes) keep.add(index);
+
+  const sorted = [...keep].sort((a, b) => a - b).slice(0, Math.max(2, maxItems));
+  return {
+    items: sorted.map((index) => items[index] as JsonValue),
+    total: items.length,
+    kept: sorted.length,
+    dropped: items.length - sorted.length,
+    shapeOutliers: [...shapeIndexes].filter((index) => sorted.includes(index)).length,
+    valueOutliers: [...valueIndexes].filter((index) => sorted.includes(index)).length,
   };
 }
 
@@ -322,79 +392,89 @@ function parseJsonOrNdjson(input: string): { value: JsonObject | JsonValue[] } |
   return rows.length > 0 ? { value: rows } : null;
 }
 
-function selectJsonItems(items: readonly JsonValue[], maxItems: number): JsonValue[] {
-  if (items.length <= maxItems) return [...items];
-  const keep = new Set<number>();
-  const edge = Math.max(1, Math.floor(maxItems * 0.2));
-  for (let i = 0; i < edge; i++) {
-    keep.add(i);
-    keep.add(items.length - 1 - i);
+function majorityShape(items: readonly JsonValue[]): string | null {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const signature = shapeSignature(item);
+    counts.set(signature, (counts.get(signature) ?? 0) + 1);
   }
-
-  for (let i = 0; i < items.length; i++) {
-    if (isErrorShaped(items[i])) keep.add(i);
-  }
-
-  for (const i of numericAnomalyIndexes(items)) keep.add(i);
-  for (const i of changePointIndexes(items)) keep.add(i);
-
-  const stride = Math.max(1, Math.floor(items.length / Math.max(1, maxItems - keep.size)));
-  for (let offset = 0; keep.size < maxItems && offset < stride; offset++) {
-    for (let i = offset; keep.size < maxItems && i < items.length; i += stride) keep.add(i);
-  }
-
-  return [...keep].sort((a, b) => a - b).slice(0, maxItems).map((i) => items[i] as JsonValue);
+  const [shape, count] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] ?? [];
+  return typeof shape === "string" && typeof count === "number" && count > items.length / 2 ? shape : null;
 }
 
-function isErrorShaped(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const level = value.level;
-  if (typeof level === "string" && level.toLowerCase() === "error") return true;
-  if (Object.prototype.hasOwnProperty.call(value, "error") && value.error) return true;
-  const status = value.status;
-  return typeof status === "number" && status >= 400;
+function shapeSignature(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (!isRecord(value)) return scalarKind(value);
+  return Object.keys(value).sort().map((key) => `${key}:${scalarKind(value[key])}`).join("|");
 }
 
-function numericAnomalyIndexes(items: readonly JsonValue[]): number[] {
-  const numbersByField = new Map<string, Array<{ index: number; value: number }>>();
+function valueOutlierIndexes(items: readonly JsonValue[], commonShape: string | null): Set<number> {
+  const indexes = new Set<number>();
+  const scalars = new Map<string, Array<{ index: number; value: string | number | boolean | null }>>();
   items.forEach((item, index) => {
-    if (!isRecord(item)) return;
-    for (const [key, value] of Object.entries(item)) {
-      if (typeof value !== "number" || !Number.isFinite(value)) continue;
-      const rows = numbersByField.get(key) ?? [];
+    if (commonShape && shapeSignature(item) !== commonShape) return;
+    for (const [path, value] of scalarEntries(item)) {
+      const rows = scalars.get(path) ?? [];
       rows.push({ index, value });
-      numbersByField.set(key, rows);
+      scalars.set(path, rows);
     }
   });
 
-  const indexes = new Set<number>();
-  for (const rows of numbersByField.values()) {
-    if (rows.length < 3) continue;
-    const mean = rows.reduce((sum, row) => sum + row.value, 0) / rows.length;
-    const variance = rows.reduce((sum, row) => sum + Math.pow(row.value - mean, 2), 0) / rows.length;
-    const stddev = Math.sqrt(variance);
-    if (stddev === 0) continue;
-    for (const row of rows) {
-      if (Math.abs(row.value - mean) > stddev * 2) indexes.add(row.index);
-    }
+  for (const rows of scalars.values()) {
+    for (const index of numericValueOutliers(rows)) indexes.add(index);
+    for (const index of categoricalValueOutliers(rows)) indexes.add(index);
   }
-  return [...indexes];
+  return indexes;
 }
 
-function changePointIndexes(items: readonly JsonValue[]): number[] {
-  const indexes = new Set<number>();
-  for (let i = 1; i < items.length; i++) {
-    const before = items[i - 1];
-    const after = items[i];
-    if (!isRecord(before) || !isRecord(after)) continue;
-    for (const [key, value] of Object.entries(after)) {
-      if (typeof value !== "number" || !Number.isFinite(value)) continue;
-      const previous = before[key];
-      if (typeof previous !== "number" || !Number.isFinite(previous)) continue;
-      if (previous === 0 ? Math.abs(value) > 10 : Math.abs((value - previous) / previous) >= 2) indexes.add(i);
-    }
+function numericValueOutliers(rows: readonly { index: number; value: string | number | boolean | null }[]): number[] {
+  const numeric = rows.filter((row): row is { index: number; value: number } =>
+    typeof row.value === "number" && Number.isFinite(row.value)
+  );
+  if (numeric.length < 5 || numeric.length !== rows.length) return [];
+  const values = numeric.map((row) => row.value).sort((a, b) => a - b);
+  const medianValue = median(values);
+  const deviations = values.map((value) => Math.abs(value - medianValue)).sort((a, b) => a - b);
+  const mad = median(deviations);
+  if (mad === 0) {
+    const commonCount = numeric.filter((row) => row.value === medianValue).length;
+    if (commonCount / numeric.length < 0.8) return [];
+    return numeric.filter((row) => row.value !== medianValue).map((row) => row.index);
   }
-  return [...indexes];
+  const cutoff = mad * 8;
+  return numeric.filter((row) => Math.abs(row.value - medianValue) > cutoff).map((row) => row.index);
+}
+
+function categoricalValueOutliers(rows: readonly { index: number; value: string | number | boolean | null }[]): number[] {
+  if (rows.length < 5) return [];
+  if (!rows.every((row) => typeof row.value === "string" || typeof row.value === "boolean" || row.value === null)) return [];
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(String(row.value), (counts.get(String(row.value)) ?? 0) + 1);
+  const majority = Math.max(...counts.values());
+  if (majority / rows.length < 0.8) return [];
+  const rareLimit = Math.max(2, Math.floor(rows.length * 0.05));
+  return rows.filter((row) => (counts.get(String(row.value)) ?? 0) <= rareLimit).map((row) => row.index);
+}
+
+function scalarEntries(value: unknown, prefix = ""): Array<[string, string | number | boolean | null]> {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [[prefix || "$", value]];
+  }
+  if (Array.isArray(value)) return [];
+  if (!isRecord(value)) return [];
+  return Object.entries(value).flatMap(([key, child]) => scalarEntries(child, prefix ? `${prefix}.${key}` : key));
+}
+
+function scalarKind(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function median(values: readonly number[]): number {
+  const mid = Math.floor(values.length / 2);
+  if (values.length % 2 === 1) return values[mid] ?? 0;
+  return ((values[mid - 1] ?? 0) + (values[mid] ?? 0)) / 2;
 }
 
 function estimateTokens(input: string): number {
@@ -404,6 +484,12 @@ function estimateTokens(input: string): number {
 function positiveInteger(value: number | undefined, fallback: number): number {
   if (value == null) return fallback;
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function truncateDiagnostic(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error ?? "unknown crusher failure");
+  const line = text.split(/\r?\n/, 1)[0]?.replace(/\s+/g, " ").trim() || "unknown crusher failure";
+  return line.length <= 240 ? line : `${line.slice(0, 239)}…`;
 }
 
 function stringAt(record: Record<string, unknown>, path: readonly string[]): string {
