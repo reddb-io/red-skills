@@ -190,6 +190,9 @@ function matchProxyCapability(words: readonly ShellWord[]): { capabilityId: stri
   if (values[0] === "git" && ["status", "log", "diff", "show", "blame"].includes(values[1] ?? "")) {
     return { capabilityId: `git:${values[1]}`, wrapperWords: raw };
   }
+  if (values[0] === "git" && values[1] === "branch" && values[2] === "-av") {
+    return { capabilityId: "git:branch:av", wrapperWords: raw };
+  }
   if (values[0] === "gh" && ["pr", "issue", "run"].includes(values[1] ?? "") && ["list", "view"].includes(values[2] ?? "")) {
     return { capabilityId: `gh:${values[1]}:${values[2]}`, wrapperWords: raw };
   }

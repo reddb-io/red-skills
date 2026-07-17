@@ -76,6 +76,15 @@ export interface RspTelemetryStats {
     show_misses: number;
     show_hit_rate: number;
     by_reason: Array<{ reason: string; count: number }>;
+    by_family: Array<{ family: string; count: number }>;
+    recent_failures: Array<{
+      timestamp: string;
+      family: string;
+      command: string;
+      reason: string;
+      exit_code: number | null;
+      stderr_head: string | null;
+    }>;
     most_recent: { timestamp: string; reason: string; command: string } | null;
   };
   latency: {
@@ -620,11 +629,23 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
   }
 
   const byReason = new Map<string, number>();
+  const byFamily = new Map<string, number>();
+  const recentFailures: RspTelemetryStats["health"]["recent_failures"] = [];
   let mostRecent: RspTelemetryStats["health"]["most_recent"] = null;
   for (const record of degradations) {
     const reason = stringField(record.degradation_reason) || stringField(record.reason) || "unknown";
+    const family = stringField(record.wrapper_family) || commandFamily(stringField(record.command));
     byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+    byFamily.set(family, (byFamily.get(family) ?? 0) + 1);
     const timestamp = timestampString(record);
+    recentFailures.push({
+      timestamp,
+      family,
+      command: stringField(record.command) || "unknown",
+      reason,
+      exit_code: optionalNumeric(record.wrapper_exit_code),
+      stderr_head: stringField(record.stderr_head) || null,
+    });
     if (!mostRecent || timestamp > mostRecent.timestamp) {
       mostRecent = {
         timestamp,
@@ -674,6 +695,12 @@ export async function readTelemetryStats(db: RedDB, sinceDays: number, now = new
       by_reason: [...byReason.entries()]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .map(([reason, count]) => ({ reason, count })),
+      by_family: [...byFamily.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([family, count]) => ({ family, count })),
+      recent_failures: recentFailures
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        .slice(0, 20),
       most_recent: mostRecent,
     },
     latency: {
