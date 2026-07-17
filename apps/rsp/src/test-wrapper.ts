@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
-import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
+import { extractQueryArg, filterRows, withHelp } from "./output-levers.js";
+import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
 
 export interface TestRenderOptions {
   level: RspLossLevel;
@@ -62,10 +63,11 @@ export async function renderTestContract(
   const status = contract.status;
 
   if (!parsed || ((status ?? 0) !== 0 && parsed.failed === 0)) {
+    const error = classifyWrappedFailure(command.join(" "), contract.stdout, contract.stderr);
     return {
-      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
+      stdout: renderStructuredError(error),
       stderr: Buffer.from(contract.stderr),
-      status: contract.status,
+      status: error.exitCode ?? 1,
       signal: contract.signal,
     };
   }
@@ -100,7 +102,7 @@ export async function renderTestContract(
   return {
     stdout: Buffer.from(encode(renderedPayload as unknown as JsonObject)),
     stderr: Buffer.from(contract.stderr),
-    status: contract.status,
+    status: normalizeWrapperStatus(contract.status),
     signal: contract.signal,
     payload: renderedPayload as unknown as JsonObject,
     mintedHandle,
@@ -135,7 +137,7 @@ async function renderTerse(
     return {
       stdout: Buffer.from(terseToon),
       stderr: Buffer.from(contract.stderr),
-      status: contract.status,
+      status: normalizeWrapperStatus(contract.status),
       signal: contract.signal,
       payload: renderedTersePayload as unknown as JsonObject,
     };
@@ -163,7 +165,7 @@ async function renderTerse(
   return {
     stdout: Buffer.from(`${terseToon}\n${marker}`),
     stderr: Buffer.from(contract.stderr),
-    status: contract.status,
+    status: normalizeWrapperStatus(contract.status),
     signal: contract.signal,
     payload: renderedTersePayload as unknown as JsonObject,
     mintedHandle: handle,
@@ -171,6 +173,10 @@ async function renderTerse(
     rowsElided: elidedFailures,
     rawOutput: Buffer.from(fullToon),
   };
+}
+
+function normalizeWrapperStatus(status: number | null): number {
+  return status === 0 || status === null ? 0 : 1;
 }
 
 function renderTerseInlineFailures(failures: readonly TestFailureSource[]): TestFailure[] {
