@@ -234,6 +234,7 @@ function fleetFromSupervisorSnapshot(
   if (snapshot.kind !== "supervisor") return null;
   const current = asRecord(snapshot.current);
   const slots = asRecord(current.slots);
+  const churn = asRecord(current.churn);
   const epoch = numberField(
     current,
     "epoch",
@@ -256,6 +257,9 @@ function fleetFromSupervisorSnapshot(
     slotsTotal: numberField(slots, "total"),
     slotsParked: numberField(slots, "parked"),
     spawnsThisTick: numberField(current, "spawns_this_tick"),
+    churnDeaths: numberField(churn, "deaths"),
+    churnRespawns: numberField(churn, "respawns"),
+    churnWindowS: numberField(churn, "window_s"),
   };
 }
 

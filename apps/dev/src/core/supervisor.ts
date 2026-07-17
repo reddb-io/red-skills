@@ -709,6 +709,14 @@ export interface FleetHeartbeat {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Recent supervisor churn over a bounded window. Lets read-only surfaces
+   * distinguish useful busy slots from fast death/respawn thrash without
+   * parsing logs. */
+  churn: {
+    deaths: number;
+    respawns: number;
+    windowS: number;
+  };
   /** Optional per-drain budget status; absent when no budget is configured. */
   drainBudget?: DrainBudgetStatus;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
@@ -949,6 +957,9 @@ export interface SupervisorState {
   lastHeartbeatStateWriteEpoch: number;
   /** Consecutive ticks whose state heartbeat write did not land. */
   heartbeatStateWriteMisses: number;
+  /** Rolling death/respawn event epochs for the fleet heartbeat churn stat. */
+  churnDeathEpochs: number[];
+  churnRespawnEpochs: number[];
 }
 
 /** Build the initial runtime for `target` slots. */
@@ -961,6 +972,8 @@ export function initSupervisorState(target: number): SupervisorState {
     drainBudgetHardStopped: false,
     lastHeartbeatStateWriteEpoch: 0,
     heartbeatStateWriteMisses: 0,
+    churnDeathEpochs: [],
+    churnRespawnEpochs: [],
   };
 }
 
@@ -1201,18 +1214,44 @@ function buildSlotDetails(
   return details;
 }
 
+function pruneEpochsInWindow(epochs: readonly number[], now: number, windowS: number): number[] {
+  const floor = now - Math.max(1, windowS);
+  return epochs.filter((epoch) => epoch >= floor);
+}
+
+function updateChurnStats(
+  state: SupervisorState,
+  result: Pick<TickResult, "deaths" | "respawned">,
+  now: number,
+  windowS: number,
+): FleetHeartbeat["churn"] {
+  const resolvedWindowS = Math.max(1, windowS);
+  state.churnDeathEpochs = pruneEpochsInWindow(state.churnDeathEpochs, now, resolvedWindowS);
+  state.churnRespawnEpochs = pruneEpochsInWindow(state.churnRespawnEpochs, now, resolvedWindowS);
+  for (const _ of result.deaths) state.churnDeathEpochs.push(now);
+  for (const _ of result.respawned) state.churnRespawnEpochs.push(now);
+  state.churnDeathEpochs = pruneEpochsInWindow(state.churnDeathEpochs, now, resolvedWindowS);
+  state.churnRespawnEpochs = pruneEpochsInWindow(state.churnRespawnEpochs, now, resolvedWindowS);
+  return {
+    deaths: state.churnDeathEpochs.length,
+    respawns: state.churnRespawnEpochs.length,
+    windowS: resolvedWindowS,
+  };
+}
+
 async function emitFleetHeartbeat(
   state: SupervisorState,
   deps: SupervisorDeps,
   result: TickResult,
   runner: string,
-  config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS">,
+  config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS" | "circuitWindowS">,
 ): Promise<{ heartbeat: FleetHeartbeat; write: FleetHeartbeatEmitResult }> {
   // Queue depth was fetched once by superviseTick at the start of this tick
   // and stored in result.queueDepth — reuse it here so there is exactly one
   // readyQueueDepth call per tick (0 on a stop tick or abandoned tick).
   const readyForAgent = result.queueDepth;
   const epoch = deps.now();
+  const churn = updateChurnStats(state, result, epoch, config.circuitWindowS);
   const heartbeat: FleetHeartbeat = {
     ts: isoFromEpoch(epoch),
     epoch,
@@ -1221,6 +1260,7 @@ async function emitFleetHeartbeat(
     readyForAgent,
     ...fleetSlotCounts(state, deps),
     spawnsThisTick: result.respawned.length,
+    churn,
     ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
     slotDetails: buildSlotDetails(state, config),
   };

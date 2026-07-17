@@ -435,6 +435,31 @@ describe("monitor — compact dashboard", () => {
     );
   });
 
+  it("marks busy fleet state degraded when no active worker corroborates it", () => {
+    const out = renderCompactDashboard(
+      [],
+      fixtureEvents,
+      1780138815,
+      baseFleet({ readyForAgent: 7, slotsBusy: 2, slotsFree: 0 }),
+    );
+    expect(out.split("\n")[1]).toContain("fleet [degraded]");
+  });
+
+  it("surfaces recent supervisor churn on the fleet line", () => {
+    const line = renderFleetLine(
+      baseFleet({
+        readyForAgent: 7,
+        slotsBusy: 1,
+        slotsFree: 1,
+        churnDeaths: 2,
+        churnRespawns: 2,
+        churnWindowS: 300,
+      }),
+      1780138815,
+    );
+    expect(line).toContain("churn deaths:2 respawns:2/300s");
+  });
+
   it("carries parked:N unconditionally — zero when all slots closed", () => {
     const line = renderFleetLine(baseFleet(), 1780138815);
     expect(line).toContain("parked:0");

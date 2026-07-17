@@ -6,6 +6,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { decode, encode } from "@reddb-io/toon";
+import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import {
   statuslineCommand,
   resolveRoot,
@@ -76,7 +77,7 @@ async function writeFreshLivenessLane(
   const dir = join(root, ".red", "tmp", namespace, worker, attempt);
   await mkdir(dir, { recursive: true });
   const record = JSON.stringify({ at: Date.now(), kind: "iteration" }) + "\n";
-  await writeFile(join(dir, "liveness.lane.jsonl"), record, "utf8");
+  await writeFile(join(dir, LIVENESS_LANE_FILENAME), record, "utf8");
 }
 
 /** Pre-seed a FRESH gh count cache so collectStatuslineAfk never calls gh. */
@@ -663,9 +664,28 @@ describe("statusline command — rendered line", () => {
 
     const rows = stripAnsi(out.text()).trimEnd().split("\n");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain("flt=codex 1/1");
+    expect(rows[0]).toContain("flt=codex 1/1†");
     expect(rows[0]).toContain("q=2");
     expect(rows[0]).not.toContain("wrk=");
+  });
+
+  it("leaves a healthy fleet segment unmarked when a busy slot has fresh worker liveness", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 2, 0);
+    await writeFleetSnapshot(root);
+    await writeWorkerState(root, "wLIVE", "2038-a1", {
+      worker_id: "wLIVE",
+      runner: "codex",
+      started_at: new Date().toISOString(),
+      current: { number: 2038, started_at: new Date().toISOString() },
+    });
+    await writeFreshLivenessLane(root, "wLIVE", "2038-a1");
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("flt=codex 1/1 q=2");
+    expect(stripAnsi(out.text())).not.toContain("flt=codex 1/1†");
   });
 
   it("suppresses the fleet segment when the supervisor pid is dead", async () => {
@@ -691,6 +711,19 @@ describe("statusline command — rendered line", () => {
     expect(stripAnsi(out.text())).not.toContain("flt=");
   });
 
+  it("suppresses a dead supervisor with stale state instead of rendering degraded", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 2, 0);
+    await writeFleetSnapshot(root, { epoch: Math.floor(Date.now() / 1000) - 3600 });
+    await writeFile(afkPaths(root).supervisorPidPath, "999999999\n", "utf8");
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).not.toContain("flt=");
+    expect(stripAnsi(out.text())).not.toContain("†");
+  });
+
   it("surfaces parked slots in the fleet segment", async () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 4, 0);
@@ -703,6 +736,19 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
     expect(stripAnsi(out.text())).toContain("prk=1");
+  });
+
+  it("surfaces supervisor churn stats from the local fleet snapshot", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 4, 0);
+    await writeFleetSnapshot(root, {
+      churn: { deaths: 2, respawns: 2, window_s: 300 },
+    });
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+    expect(stripAnsi(out.text())).toContain("churn=2d/2r/300s");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {

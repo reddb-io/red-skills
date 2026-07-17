@@ -510,6 +510,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
     spawns_this_tick?: unknown;
+    churn?: { deaths?: unknown; respawns?: unknown; window_s?: unknown };
     slot_details?: unknown;
   };
   const epoch = Number(rec.epoch ?? 0);
@@ -544,6 +545,9 @@ function parseFleetState(raw: unknown): FleetState | null {
     slotsTotal: Number(rec.slots?.total ?? 0) || 0,
     slotsParked: Number(rec.slots?.parked ?? 0) || 0,
     spawnsThisTick: Number(rec.spawns_this_tick ?? 0) || 0,
+    churnDeaths: Number(rec.churn?.deaths ?? 0) || 0,
+    churnRespawns: Number(rec.churn?.respawns ?? 0) || 0,
+    churnWindowS: Number(rec.churn?.window_s ?? 0) || 0,
     ...(slotDetails !== undefined ? { slotDetails } : {}),
   };
 }
@@ -1222,6 +1226,10 @@ export async function collectStatuslineFleet(
   const state = await readFleetState(paths.fleetStatePath);
   if (!state) return undefined;
   if (nowS - state.epoch > maxAgeS) return undefined;
+  const workers = currentRenderableWorkerRecords(
+    await readAllWorkerStates(paths.tmpDir, { nowMs: nowS * 1000 }),
+  );
+  const freshWorkers = workers.filter((worker) => worker.active).length;
 
   return {
     runner: state.runner,
@@ -1229,6 +1237,10 @@ export async function collectStatuslineFleet(
     total: state.slotsTotal,
     queue: state.readyForAgent,
     parked: state.slotsParked,
+    degraded: state.slotsBusy > 0 && freshWorkers === 0,
+    churnDeaths: state.churnDeaths,
+    churnRespawns: state.churnRespawns,
+    churnWindowS: state.churnWindowS,
     bundleVersion: state.bundleVersion,
   };
 }

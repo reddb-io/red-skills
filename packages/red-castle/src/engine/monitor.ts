@@ -249,6 +249,9 @@ export interface FleetState {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  churnDeaths?: number;
+  churnRespawns?: number;
+  churnWindowS?: number;
   /** Per-slot details for non-closed slots. Absent/empty = all slots closed.
    * Absent on state files written before this field was added (#630). */
   slotDetails?: SlotDetail[];
@@ -277,22 +280,30 @@ export function formatElapsed(seconds: number): string {
   return `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
 }
 
-export function renderFleetLine(fleet: FleetState, now: number): string {
+export function renderFleetLine(fleet: FleetState, now: number, degraded = false): string {
   const age = now - fleet.epoch;
   const stale = age >= FLEET_STALE_AFTER_S;
   const status = stale
     ? "wedged"
-    : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
-      ? "idle"
-      : "draining";
+    : degraded
+      ? "degraded"
+      : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
+        ? "idle"
+        : "draining";
   const bundle = fleet.bundleVersion
     ? `  bundle:${fleet.bundleVersion}${compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? `<${fleet.latestBundleVersion}` : ""}`
+    : "";
+  const churnDeaths = Math.max(0, Math.floor(fleet.churnDeaths ?? 0));
+  const churnRespawns = Math.max(0, Math.floor(fleet.churnRespawns ?? 0));
+  const churn = churnDeaths > 0 || churnRespawns > 0
+    ? `  churn deaths:${churnDeaths} respawns:${churnRespawns}/${Math.max(1, Math.floor(fleet.churnWindowS ?? 1))}s`
     : "";
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
     `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
     `  spawns:${fleet.spawnsThisTick}` +
+    churn +
     bundle
   );
 }
@@ -540,7 +551,8 @@ export function renderCompactDashboard(
   const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}${sourceFrag}`;
   let prefix: string;
   if (fleet) {
-    const fleetLine = renderFleetLine(fleet, now);
+    const degraded = fleet.slotsBusy > 0 && !workers.some((w) => compactWorkerTag(w) === "live");
+    const fleetLine = renderFleetLine(fleet, now, degraded);
     const details = renderSlotDetails(fleet, now);
     prefix = details.length > 0
       ? `${header}\n${fleetLine}\n${details.join("\n")}`
@@ -650,19 +662,26 @@ export function renderCompactDashboardToon(
   if (fleet) {
     const age = now - fleet.epoch;
     const stale = age >= FLEET_STALE_AFTER_S;
+    const degraded = fleet.slotsBusy > 0 && active === 0;
     const status = stale
       ? "wedged"
-      : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
-        ? "idle"
-        : "draining";
+      : degraded
+        ? "degraded"
+        : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
+          ? "idle"
+          : "draining";
     root.fleet = {
       status,
+      degraded: degraded ? 1 : 0,
       ticked_ago: formatElapsed(age),
       ready: fleet.readyForAgent,
       slots_busy: fleet.slotsBusy,
       slots_free: fleet.slotsFree,
       slots_parked: fleet.slotsParked,
       spawns: fleet.spawnsThisTick,
+      churn_deaths: fleet.churnDeaths ?? 0,
+      churn_respawns: fleet.churnRespawns ?? 0,
+      churn_window_s: fleet.churnWindowS ?? 0,
       bundle_version: fleet.bundleVersion ?? "",
       latest_bundle_version: fleet.latestBundleVersion ?? "",
       version_skew: compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? 1 : 0,
