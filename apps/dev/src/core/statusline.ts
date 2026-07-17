@@ -174,6 +174,14 @@ export interface FleetInput {
   queue: number;
   /** Parked slots from the supervisor snapshot. */
   parked?: number;
+  /** True when local worker liveness/heartbeat evidence does not corroborate busy slots. */
+  degraded?: boolean;
+  /** Recent supervisor death/respawn churn, read from the supervisor snapshot. */
+  churn?: {
+    windowS: number;
+    deaths: number;
+    respawns: number;
+  };
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   /** Stable pointer version the shim would serve from the local cache. */
@@ -487,7 +495,7 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
-  const parts = [`flt=${runner} ${busy}/${total}`];
+  const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
   if (fleet.bundleVersion) {
     const versions = [fleet.bundleVersion, fleet.pointerVersion, fleet.latestBundleVersion]
       .filter((v): v is string => Boolean(v));
