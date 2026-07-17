@@ -21,7 +21,9 @@ operandi. `/afk` boot owns the Docs Sweep, so stranded `.red/` glossary/ADR docs
 auto-land or halt before worker dispatch rather than becoming a separate route.
 
 **Ad-hoc work goes to `/go`.** Use `/go` only for a concrete one-off demand that
-does not already belong on the tracker. If the work is already tracked, keep it
+does not already belong on the tracker. It still runs on the castle engine under
+the shared worker root, with `current.kind=go`; read-only investigations use
+`/go --scout` with `current.kind=scout`. If the work is already tracked, keep it
 in `/afk`; if it is parked, use `/retake` or `/hitl`.
 
 **Ideas become Specs before execution.** For a fuzzy idea that fits in one
