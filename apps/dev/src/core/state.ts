@@ -1,15 +1,21 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
-import { encodeDevSnapshotToon } from "./toon-snapshot.js";
+import { type JsonValue as ToonValue } from "@reddb-io/toon";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "./toon-snapshot.js";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
 
 export function defaultState(): AfkState {
   return AfkStateSchema.parse({});
 }
 
-/** The write-once identity sidecar filename in an attempt dir (issue #1219). */
+/**
+ * The write-once identity sidecar filename in an attempt dir (issue #1219). The
+ * filename is retained across the TOON migration (wave-1 in-place convention):
+ * the content flips from raw JSON to TOON but the `.json` name stays, and the
+ * reader sniffs JSON-then-TOON so a sidecar written by an older bundle still
+ * reads.
+ */
 export const IDENTITY_FILENAME = "identity.json";
 
 /**
@@ -40,17 +46,18 @@ export function writeIdentitySync(attemptDir: string, identity: WorkerIdentity):
   if (existsSync(path)) return;
   mkdirSync(attemptDir, { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.sync`;
-  writeFileSync(tmp, `${JSON.stringify(identity)}\n`, "utf8");
+  writeFileSync(tmp, encodeDevSnapshotToon(identity as unknown as ToonValue), "utf8");
   renameSync(tmp, path);
 }
 
-/** Parse a {@link WorkerIdentity} from raw JSON text, or `null` when absent /
- * malformed. Only string/number fields are honoured; anything else is dropped to
- * the empty default so a partial file never throws. */
+/** Parse a {@link WorkerIdentity} from a sidecar's text (TOON, with a raw-JSON
+ * sniff fallback for pre-migration sidecars), or `null` when absent / malformed.
+ * Only string/number fields are honoured; anything else is dropped to the empty
+ * default so a partial file never throws. */
 export function parseIdentity(raw: string | null | undefined): WorkerIdentity | null {
   if (!raw) return null;
   try {
-    const p = JSON.parse(raw) as Partial<WorkerIdentity>;
+    const p = decodeDevSnapshotSniff(raw) as Partial<WorkerIdentity>;
     if (typeof p !== "object" || p === null) return null;
     return {
       worker_id: typeof p.worker_id === "string" ? p.worker_id : "",
@@ -103,11 +110,7 @@ export function parseState(data: unknown): AfkState {
 }
 
 export function parseStateDocument(text: string): AfkState {
-  try {
-    return parseState(JSON.parse(text));
-  } catch {
-    return parseState(decodeToon(text));
-  }
+  return parseState(decodeDevSnapshotSniff(text));
 }
 
 export async function readState(path: string): Promise<AfkState> {
