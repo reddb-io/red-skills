@@ -382,6 +382,29 @@ describe("statusline — fleet block", () => {
     );
   });
 
+  it("marks a fleet degraded when local worker liveness does not corroborate busy slots", () => {
+    expect(renderFleetBlock({ runner: "codex", busy: 2, total: 2, queue: 7, degraded: true })).toBe(
+      "flt=codex 2/2† q=7",
+    );
+  });
+
+  it("shows churn only when recent deaths or respawns are present", () => {
+    expect(
+      renderFleetBlock({
+        runner: "codex",
+        busy: 2,
+        total: 2,
+        queue: 7,
+        churnDeaths: 2,
+        churnRespawns: 2,
+        churnWindowS: 300,
+      }),
+    ).toBe("flt=codex 2/2 q=7 churn=2d/2r/300s");
+    expect(renderFleetBlock({ runner: "codex", busy: 2, total: 2, queue: 7 })).toBe(
+      "flt=codex 2/2 q=7",
+    );
+  });
+
   it("omits the parked part when fleet.parked is zero", () => {
     expect(renderFleetBlock({ runner: "codex", busy: 0, total: 3, queue: 0 })).toBe(
       "flt=codex 0/3 q=0",
