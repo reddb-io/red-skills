@@ -79,6 +79,45 @@ describe("fleet truth operational probe", () => {
     expect(unknown.evidence).toContain("version_unknown");
   });
 
+  it("does not flag the booting supervisor's own fresh pid before state is stamped", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "red-skills-fleet-truth-"));
+    const pidPath = join(dir, "afk-supervisor.pid");
+    const statePath = join(dir, "afk-supervisor.state.json");
+
+    await writeFile(pidPath, `${process.pid}\n`, "utf8");
+    const pidStat = await stat(pidPath);
+    const facts = await collectFleetTruthProbeInput(
+      { supervisorPidPath: pidPath, fleetStatePath: statePath },
+      {
+        nowMs: pidStat.mtimeMs + 5_000,
+        heartbeatStaleMs: 300_000,
+        latestBundleVersion: "2.64.0",
+      },
+    );
+    const result = runFleetTruthProbe({ remoteUrls: [], fleetTruth: facts });
+
+    expect(result.verdict).toBe("ok");
+    expect(result.evidence).not.toContain("version_unknown");
+  });
+
+  it("still flags stale foreign supervisors with unknown versions", () => {
+    const result = runFleetTruthProbe({
+      remoteUrls: [],
+      fleetTruth: {
+        supervisorPid: 4242,
+        ownSupervisorPid: process.pid,
+        supervisorPidLive: true,
+        supervisorPidMtimeMs: 1_000,
+        nowMs: 601_000,
+        heartbeatStaleMs: 300_000,
+        latestBundleVersion: "2.64.0",
+      },
+    });
+
+    expect(result.verdict).toBe("red");
+    expect(result.evidence).toContain("version_unknown");
+  });
+
   it("gates SIGTERM, verifies live process exit, and leaves refusal untouched", async () => {
     const dir = await mkdtemp(join(tmpdir(), "red-skills-fleet-truth-"));
     const pidPath = join(dir, "afk-supervisor.pid");
