@@ -844,9 +844,18 @@ describe("rsp cli", () => {
       result: { content: Array<{ text: string }>; isError?: boolean };
     };
     expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status"]);
-    expect(status.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    expect(decode(status.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_status",
+      enabled: false,
+      status: "disabled",
+      help: ["/red-setup"],
+    });
     expect(compress.result.isError).toBe(true);
-    expect(compress.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    expect(decode(compress.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_status",
+      enabled: false,
+      status: "disabled",
+    });
     await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -870,17 +879,34 @@ describe("rsp cli", () => {
     }
   });
 
-  it("mcp exposes resident tools when rsp is enabled", async () => {
+  it("mcp exposes resident tools and returns TOON tool responses when rsp is enabled", async () => {
     const root = await tempRoot();
     await enableRsp(root);
 
     const responses = await runMcpRequests(root, [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "rsp_status", arguments: {} } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "rsp_stats", arguments: {} } },
+      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "rsp_show", arguments: { handle: "el:missing" } } },
     ]);
 
     const list = responses.find((response) => response.id === 2) as { result: { tools: Array<{ name: string }> } };
     expect(list.result.tools.map((tool) => tool.name)).toEqual(["rsp_status", "rsp_stats", "rsp_show", "rsp_compress"]);
+    const status = responses.find((response) => response.id === 3) as { result: { content: Array<{ text: string }> } };
+    expect(decode(status.result.content[0]!.text)).toMatchObject({ tool: "rsp_status", enabled: true, status: "enabled" });
+    const stats = responses.find((response) => response.id === 4) as { result: { content: Array<{ text: string }> } };
+    expect(decode(stats.result.content[0]!.text)).toMatchObject({ tool: "rsp_stats", records: 0, bytes: 0 });
+    const missing = responses.find((response) => response.id === 5) as {
+      result: { content: Array<{ text: string }>; isError?: boolean };
+    };
+    expect(missing.result.isError).toBe(true);
+    expect(decode(missing.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_show",
+      handle: "el:missing",
+      found: false,
+      error: "not found",
+    });
   });
 
   it("mcp compresses large JSON and rsp_show round-trips the elided original", async () => {
@@ -908,8 +934,9 @@ describe("rsp cli", () => {
       result: { content: Array<{ text: string }> };
     };
     const text = compressed.result.content[0]!.text;
-    expect(text).toContain("items: 15 of 60 kept");
-    expect(text).toContain("items[15]{id,status,latency,label}");
+    expect(text).toContain("items:");
+    expect(text).toContain("items[");
+    expect(text).toContain("{id,status,latency,label}");
     const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
     expect(handle).toBeTruthy();
 
@@ -926,7 +953,11 @@ describe("rsp cli", () => {
     const shown = shownResponses.find((response) => response.id === 2) as {
       result: { content: Array<{ text: string }> };
     };
-    expect(shown.result.content[0]!.text).toBe(original);
+    expect(decode(shown.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_show",
+      found: true,
+      text: original,
+    });
   });
 
   it("built bundle mcp compress honors disabled gates and round-trips large JSON", async () => {
@@ -944,7 +975,11 @@ describe("rsp cli", () => {
       result: { content: Array<{ text: string }>; isError?: boolean };
     };
     expect(disabled.result.isError).toBe(true);
-    expect(disabled.result.content[0]!.text).toBe("rsp is not enabled in this directory; run /red-setup");
+    expect(decode(disabled.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_status",
+      enabled: false,
+      status: "disabled",
+    });
     await expect(stat(join(disabledRoot, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const root = await tempRoot();
@@ -978,7 +1013,11 @@ describe("rsp cli", () => {
     const shown = shownResponses.find((response) => response.id === 2) as {
       result: { content: Array<{ text: string }> };
     };
-    expect(shown.result.content[0]!.text).toBe(original);
+    expect(decode(shown.result.content[0]!.text)).toMatchObject({
+      tool: "rsp_show",
+      found: true,
+      text: original,
+    });
   }, 120_000);
 
   it("built bundle keeps cold small git status off the resident", async () => {
@@ -996,7 +1035,15 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(direct.stdout.length === 0 ? Buffer.from("git empty\n") : direct.stdout);
+    if (direct.stdout.length === 0) {
+      expect(decode(res.stdout.toString("utf8"))).toMatchObject({
+        category: "no-op",
+        scope: "git status",
+        empty: true,
+      });
+    } else {
+      expect(res.stdout).toEqual(direct.stdout);
+    }
     expect(res.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
     const status = runBundleFromCwd(root, ["status"], { RED_SKILLS_CACHE_DIR: cacheDir });
@@ -1038,7 +1085,12 @@ describe("rsp cli", () => {
     const paths = trackedResidentPaths(root);
 
     expect(wrapped.status, `${wrapped.stdout.toString("utf8")}${wrapped.stderr.toString("utf8")}`).toBe(0);
-    expect(wrapped.stdout).toEqual(raw.stdout.length === 0 ? Buffer.from("git empty\n") : raw.stdout);
+    expect(raw.stdout.length).toBe(0);
+    expect(decode(wrapped.stdout.toString("utf8"))).toMatchObject({
+      category: "no-op",
+      scope: "git status",
+      empty: true,
+    });
     expect(wrapped.stderr).toEqual(Buffer.alloc(0));
     await expect(stat(paths.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(wrapped.elapsedMs - node.elapsedMs).toBeLessThan(normalizedDurationMs(150) + raw.elapsedMs);
@@ -1519,8 +1571,9 @@ describe("rsp cli", () => {
     const invocations = await waitForTelemetryInvocations(storeUri, "git status", 3);
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d"], env);
     const statsText = stats.stdout.toString("utf8");
+    const statsPayload = decode(statsText) as { savings: { top_commands: Array<{ command: string; invocations: number }> } };
     expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
-    expect(statsText).toContain("command: git log invocations:");
+    expect(statsPayload.savings.top_commands).toContainEqual(expect.objectContaining({ command: "git log", invocations: expect.any(Number) }));
 
     expect(invocations.filter((entry) => isRecord(entry) && entry.command === "git status").length)
       .toBeGreaterThanOrEqual(3);
@@ -1618,7 +1671,11 @@ describe("rsp cli", () => {
 
     for (const res of results) {
       expect(res.status).toBe(0);
-      expect(res.stdout.toString("utf8")).toBe("git empty\n");
+      expect(decode(res.stdout.toString("utf8"))).toMatchObject({
+        category: "no-op",
+        scope: "git status",
+        empty: true,
+      });
       expect(res.stderr).toEqual(Buffer.alloc(0));
     }
     const paths = trackedResidentPaths(root);
@@ -1749,7 +1806,9 @@ describe("rsp cli", () => {
 
     const stats = runBundleFromCwd(root, [], { RED_SKILLS_CACHE_DIR: cacheDir });
     expect(stats.status).toBe(0);
-    expect(stats.stdout.toString("utf8")).toContain("savings:\n");
+    expect(decode(stats.stdout.toString("utf8"))).toMatchObject({
+      savings: expect.objectContaining({ invocations: expect.any(Number) }),
+    });
 
     const shown = runBundleFromCwd(root, ["show", handle!], { RED_SKILLS_CACHE_DIR: cacheDir });
 
@@ -1944,30 +2003,55 @@ describe("rsp cli", () => {
 
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], { RED_SKILLS_CACHE_DIR: cacheDir });
     const statsText = stats.stdout.toString("utf8");
+    const statsPayload = decode(statsText) as {
+      records: number;
+      savings: {
+        window_days: number;
+        invocations: number;
+        elided: number;
+        raw_bytes: number;
+        emitted_bytes: number;
+        tokens_saved: number;
+        tokens_saved_display: string;
+        dollars_saved_estimate_usd_display: string;
+        pricing_model_family: string;
+        top_commands: Array<{ command: string }>;
+      };
+      health: {
+        degradations: number;
+        degradation_rate_display: string;
+        most_recent_degradation_reason: string;
+        by_reason: Array<{ reason: string; count: number }>;
+        by_family: Array<{ family: string; count: number }>;
+        recent_failures: Array<{ family: string; command: string; reason: string; exit_code: number; stderr_head: string }>;
+      };
+      latency: { wrapper_ms_p50: number; wrapper_ms_p95: number };
+    };
     expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
-    expect(statsText).toContain("records: 3\n");
-    expect(statsText).toContain("savings:\n");
-    expect(statsText).toContain("  window_days: 7\n");
-    expect(statsText).toMatch(/  invocations: [1-9]\d*\n/);
-    expect(statsText).toContain("  elided: 1\n");
-    expect(statsText).toMatch(/  raw_bytes: [1-9]\d*\n/);
-    expect(statsText).toMatch(/  emitted_bytes: [1-9]\d*\n/);
-    expect(statsText).toMatch(/  tokens_saved: (?:[1-9]\d*|[1-9]\d*-[1-9]\d* .*)\n/);
-    expect(statsText).toContain("  dollars_saved_estimate_usd: $");
-    expect(statsText).toContain("  pricing_model_family: gpt-5\n");
-    expect(statsText).toContain("  top_commands:\n");
-    expect(statsText).toContain("command: git log");
-    expect(statsText).toContain("health:\n");
-    expect(statsText).toContain("  degradations: 1\n");
-    expect(statsText).toContain("  degradation_rate: 0.3333\n");
-    expect(statsText).toContain("  most_recent_degradation_reason: wrapper-crash\n");
-    expect(statsText).toContain("  degradations_by_reason:\n    wrapper-crash: 1\n");
-    expect(statsText).toContain("  wrapper_failures_by_family:\n    git: 1\n");
-    expect(statsText).toContain("  recent_wrapper_failures:\n");
-    expect(statsText).toContain("family: git command: git reason: wrapper-crash exit_code: 1 stderr_head: unsupported git subcommand:");
-    expect(statsText).toContain("latency:\n");
-    expect(statsText).toMatch(/  wrapper_ms_p50: [0-9.]+\n/);
-    expect(statsText).toMatch(/  wrapper_ms_p95: [0-9.]+\n/);
+    expect(statsPayload.records).toBe(3);
+    expect(statsPayload.savings.window_days).toBe(7);
+    expect(statsPayload.savings.invocations).toBeGreaterThan(0);
+    expect(statsPayload.savings.elided).toBe(1);
+    expect(statsPayload.savings.raw_bytes).toBeGreaterThan(0);
+    expect(statsPayload.savings.emitted_bytes).toBeGreaterThan(0);
+    expect(statsPayload.savings.tokens_saved_display).toMatch(/(?:[1-9]\d*|[1-9]\d*-[1-9]\d* .*)/);
+    expect(statsPayload.savings.dollars_saved_estimate_usd_display).toContain("$");
+    expect(statsPayload.savings.pricing_model_family).toBe("gpt-5");
+    expect(statsPayload.savings.top_commands).toContainEqual(expect.objectContaining({ command: "git log" }));
+    expect(statsPayload.health.degradations).toBe(1);
+    expect(statsPayload.health.degradation_rate_display).toBe("0.3333");
+    expect(statsPayload.health.most_recent_degradation_reason).toBe("wrapper-crash");
+    expect(statsPayload.health.by_reason).toContainEqual({ reason: "wrapper-crash", count: 1 });
+    expect(statsPayload.health.by_family).toContainEqual({ family: "git", count: 1 });
+    expect(statsPayload.health.recent_failures).toContainEqual(expect.objectContaining({
+      family: "git",
+      command: "git",
+      reason: "wrapper-crash",
+      exit_code: 1,
+      stderr_head: "unsupported git subcommand:",
+    }));
+    expect(statsPayload.latency.wrapper_ms_p50).toEqual(expect.any(Number));
+    expect(statsPayload.latency.wrapper_ms_p95).toEqual(expect.any(Number));
   }, 120_000);
 
   it("built bundle renders rsp gains TOON from synthetic telemetry", async () => {
@@ -2120,12 +2204,20 @@ describe("rsp cli", () => {
 
     const stats = runBundleFromCwd(root, ["stats", "--since", "7d", "--full"], env);
     const statsText = stats.stdout.toString("utf8");
+    const statsPayload = decode(statsText) as {
+      savings: {
+        invocations: number;
+        tokens_saved: number;
+        top_commands: Array<{ command: string; invocations: number }>;
+      };
+      health: { degradations: number };
+    };
     expect(stats.status, `${statsText}${stats.stderr.toString("utf8")}`).toBe(0);
-    expect(statsText).toContain("invocations: 3\n");
-    expect(statsText).toMatch(/tokens_saved: [1-9]\d*\n/);
-    expect(statsText).toContain("command: git log --terse invocations: 1");
-    expect(statsText).toContain("command: gh pr list invocations: 1");
-    expect(statsText).toContain("degradations: 1\n");
+    expect(statsPayload.savings.invocations).toBe(3);
+    expect(statsPayload.savings.tokens_saved).toBeGreaterThan(0);
+    expect(statsPayload.savings.top_commands).toContainEqual(expect.objectContaining({ command: "git log --terse", invocations: 1 }));
+    expect(statsPayload.savings.top_commands).toContainEqual(expect.objectContaining({ command: "gh pr list", invocations: 1 }));
+    expect(statsPayload.health.degradations).toBe(1);
     const summaryRaw = await readFile(resolveResidentPaths(root).summaryPath, "utf8");
     const summary = parseStructured(summaryRaw) as {
       version: number;
@@ -2483,14 +2575,26 @@ describe("rsp cli", () => {
     const res = runRsp(root, [], { RSP_STORE_URI: storeUri, RSP_EPHEMERAL_TTL_HOURS: "720" });
 
     expect(res.status).toBe(0);
-    const text = res.stdout.toString("utf8");
-    expect(text).toContain("records: 1\n");
-    expect(text).toContain("oldest: 2026-07-10T12:00:00.000Z\nbudget: 67108864\n");
-    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0 raw_bytes: 0\n  re-executable: records: 0 bytes: 0 raw_bytes: 0\n");
-    expect(text).toMatch(/  ephemeral: records: 1 bytes: [1-9]\d* raw_bytes: 3\n/);
-    expect(text).toContain("savings:\n  window_days: 30\n  empty: true\n  invocations: 0\n");
-    expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
-    expect(text).toContain("latency:\n  wrapper_ms_p50: none\n");
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      records: number;
+      oldest: string;
+      budget: number;
+      storage_classes: Record<string, { records: number; bytes: number; raw_bytes: number }>;
+      savings: { window_days: number; empty: boolean; invocations: number };
+      health: { degradations: number; degradation_rate_display: string };
+      latency: { wrapper_ms_p50: null; wrapper_ms_p50_display: string };
+    };
+    expect(decoded.records).toBe(1);
+    expect(decoded.oldest).toBe("2026-07-10T12:00:00.000Z");
+    expect(decoded.budget).toBe(67108864);
+    expect(decoded.storage_classes.derivable).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.storage_classes["re-executable"]).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.storage_classes.ephemeral.records).toBe(1);
+    expect(decoded.storage_classes.ephemeral.bytes).toBeGreaterThan(0);
+    expect(decoded.storage_classes.ephemeral.raw_bytes).toBe(3);
+    expect(decoded.savings).toMatchObject({ window_days: 30, empty: true, invocations: 0 });
+    expect(decoded.health).toMatchObject({ degradations: 0, degradation_rate_display: "0.0" });
+    expect(decoded.latency).toMatchObject({ wrapper_ms_p50: null, wrapper_ms_p50_display: "none" });
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 
@@ -2502,16 +2606,24 @@ describe("rsp cli", () => {
     await store.close();
 
     const res = runRsp(root, ["stats", "--since=7d"], { RSP_STORE_URI: storeUri });
-    const text = res.stdout.toString("utf8");
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      records: number;
+      bytes: number;
+      oldest: null;
+      storage_classes: Record<string, { records: number; bytes: number; raw_bytes: number }>;
+      savings: { window_days: number; empty: boolean; invocations: number; top_commands: unknown[] };
+      health: { degradations: number; degradation_rate_display: string; most_recent_degradation_at: null };
+      latency: { wrapper_ms_p50: null; wrapper_ms_p95: null };
+    };
 
     expect(res.status).toBe(0);
-    expect(text).toContain("records: 0\nbytes: 0\noldest: none\n");
-    expect(text).toContain("storage_classes:\n  derivable: records: 0 bytes: 0 raw_bytes: 0\n  re-executable: records: 0 bytes: 0 raw_bytes: 0\n  ephemeral: records: 0 bytes: 0 raw_bytes: 0\n");
-    expect(text).toContain("savings:\n  window_days: 7\n  empty: true\n  invocations: 0\n");
-    expect(text).toContain("  top_commands:\n    empty: true\n");
-    expect(text).toContain("health:\n  degradations: 0\n  degradation_rate: 0.0\n");
-    expect(text).toContain("  most_recent_degradation_at: none\n");
-    expect(text).toContain("latency:\n  wrapper_ms_p50: none\n  wrapper_ms_p95: none\n");
+    expect(decoded).toMatchObject({ records: 0, bytes: 0, oldest: null });
+    expect(decoded.storage_classes.derivable).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.storage_classes["re-executable"]).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.storage_classes.ephemeral).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.savings).toMatchObject({ window_days: 7, empty: true, invocations: 0, top_commands: [] });
+    expect(decoded.health).toMatchObject({ degradations: 0, degradation_rate_display: "0.0", most_recent_degradation_at: null });
+    expect(decoded.latency).toMatchObject({ wrapper_ms_p50: null, wrapper_ms_p95: null });
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 
