@@ -9,6 +9,7 @@ import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "./exec
 import type { GitExec, GitExecResult } from "../core/remote-branch.js";
 import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/merge.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
+import type { RemoteUrlFact } from "../core/operational-probes.js";
 
 export interface GitContext {
   /** The primary checkout dir. */
@@ -50,6 +51,30 @@ export async function remoteUrls(ctx: GitContext): Promise<string[]> {
     if (parts.length >= 2 && parts[1]) urls.add(parts[1]);
   }
   return [...urls];
+}
+
+/** Named remote URLs from `git remote -v`, deduped by name+URL. */
+export async function remoteUrlFacts(ctx: GitContext): Promise<RemoteUrlFact[]> {
+  const r = await runGit(ctx, ["remote", "-v"]);
+  if (r.code !== 0) return [];
+  const seen = new Set<string>();
+  const remotes: RemoteUrlFact[] = [];
+  for (const line of r.stdout.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    const name = parts[0];
+    const url = parts[1];
+    if (!name || !url) continue;
+    const key = `${name}\0${url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    remotes.push({ name, url });
+  }
+  return remotes;
+}
+
+export async function setRemoteUrl(ctx: GitContext, name: string, url: string): Promise<void> {
+  const r = await runGit(ctx, ["remote", "set-url", name, url]);
+  if (r.code !== 0) throw new Error(`git remote set-url failed for ${name}`);
 }
 
 export async function hasMainBranch(ctx: GitContext): Promise<boolean> {

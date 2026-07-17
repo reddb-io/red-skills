@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
@@ -649,6 +649,48 @@ describe("buildMinimalBootDeps — supervisor-owned-sweeps worker boot (#623)", 
     await expect(deps.lookups.blockerState(1)).rejects.toThrow(/skip-sweeps/);
     await expect(deps.lookups.straggler.unlabeled()).rejects.toThrow(/skip-sweeps/);
     expect(() => deps.lookups.branchIssue(1)).toThrow(/skip-sweeps/);
+  });
+
+  it("drives a real boot invocation that refuses a red operational probe before writing bootstrap state", async () => {
+    const dir = scratch();
+    try {
+      const tmpDir = join(dir, ".red", "tmp");
+      const workerPid = join(tmpDir, "workers", "wAAAA", "worker.pid");
+      const deps = buildMinimalBootDeps({ root: dir, repo: "o/r", remote: "origin" }, 1_700_000_000);
+
+      await expect(
+        runBoot(deps, {
+          precheck: {
+            ghInstalled: true,
+            ghAuthenticated: true,
+            isGitRepo: true,
+            remoteUrls: [{ name: "origin", url: "https://example.invalid/o/r.git" }],
+            hasMainBranch: true,
+            currentBranch: "main",
+            pnpmInstalled: true,
+          },
+          bootstrap: {
+            tmpDir,
+            stateDir: join(dir, ".red", "state"),
+            gitignorePath: join(dir, ".gitignore"),
+            workerDir: join(tmpDir, "workers", "wAAAA"),
+            workerPidFile: workerPid,
+            workerPid: 4242,
+          },
+          orphans: [],
+          attemptCap: { byIssue: new Map() },
+          branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
+          unblockCandidates: [],
+          skipSweeps: true,
+        }),
+      ).rejects.toMatchObject({
+        phase: "operational-probe",
+        probe: { name: "SSH-only git remotes" },
+      });
+      expect(existsSync(workerPid)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

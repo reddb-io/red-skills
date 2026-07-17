@@ -57,14 +57,10 @@ describe("precheck", () => {
     });
   });
 
-  it("rejects an https remote, naming the offending url", () => {
+  it("leaves https remotes to the operational probe registry", () => {
     expect(
       precheck(facts({ remoteUrls: ["https://github.com/reddb-io/red-skills.git"] })),
-    ).toEqual({
-      ok: false,
-      failed: "https-remote-forbidden",
-      detail: "https://github.com/reddb-io/red-skills.git",
-    });
+    ).toEqual({ ok: true, warnings: [] });
   });
 
   it("allows an https remote in a CI lane (allowHttpsRemote) — GHA checkout is token-https", () => {
@@ -312,6 +308,37 @@ describe("runBoot precheck short-circuit", () => {
     expect(result.precheck).toEqual({ ok: false, failed: "gh-missing" });
     expect(result.bootstrap).toBeUndefined();
     expect(result.orphanCleanup).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses on a red operational probe before bootstrap, naming the probe and fix", async () => {
+    const { deps, calls } = makeDeps();
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            remoteUrls: [{ name: "origin", url: "https://github.com/reddb-io/red-skills.git" }],
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "operational-probe",
+      probe: {
+        name: "SSH-only git remotes",
+        canonicalFix: expect.stringContaining("Use SSH git remotes"),
+      },
+    });
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            remoteUrls: [{ name: "origin", url: "https://github.com/reddb-io/red-skills.git" }],
+          }),
+        }),
+      ),
+    ).rejects.toThrow(/SSH-only git remotes.*Use SSH git remotes/);
     expect(calls).toEqual([]);
   });
 });
