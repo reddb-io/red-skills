@@ -3,8 +3,8 @@
 // `/go` is the semi-structured front door between `/goal` and `/afk`. It mints a
 // DISPOSABLE tracking issue in an ISOLATED LANE (`lane:go`, out of
 // `ready-for-agent` so the running fleet can never claim it), spins a DEDICATED
-// namespaced worker (`go-workers/`, separate from `/afk`'s `workers/`), and
-// reuses the ENTIRE AFK engine end-to-end with `origin=go` and the INTERACTIVE
+// castle worker of kind `go`, and reuses the ENTIRE AFK engine end-to-end with
+// `origin=go`, `--kind go`, and the INTERACTIVE
 // (pause/ask) gate sink. The disposable issue auto-closes on merge because the
 // engine's PR body already carries `Closes #N` (core/merge.ts).
 //
@@ -21,10 +21,8 @@ export { LABEL_GO_LANE };
  * `/afk` (issue #930). */
 export const GO_ORIGIN = "go";
 
-/** The worker/worktree root segment for `/go`, kept separate from `/afk`'s
- * `workers/` so the two never collide under `.red/tmp`. Honoured by
- * `worker-paths.workersSegment()` via `RED_AFK_WORKERS_NAMESPACE`. */
-export const GO_WORKERS_SEGMENT = "go-workers";
+/** Castle worker kind for `/go`, recorded in the castle worker `state.toon`. */
+export const GO_KIND = "go";
 
 /** `/go` runs with a human present → the interactive (pause/ask) gate sink,
  * never the headless park-to-`ready-for-human` sink `/afk` uses. */
@@ -163,17 +161,11 @@ export function buildDisposableIssue(demand: string, dodSpec: GoDodSpec = {}): D
   return { title, body, labels: [LABEL_GO_LANE] };
 }
 
-/** The `/go` worker/worktree root: `<tmpDir>/go-workers`, separate from
- * `/afk`'s `<tmpDir>/workers`. */
-export function goWorkersRoot(tmpDir: string): string {
-  return `${tmpDir.replace(/\/+$/, "")}/${GO_WORKERS_SEGMENT}`;
-}
-
 /**
  * Build the run-engine argv that reuses the FULL AFK engine for exactly ONE
  * minted disposable issue: single-issue (`--issues N`), single-shot (`--once`),
- * `origin=go`, and listing the isolated `lane:go` pool (`--lane`) instead of
- * `ready-for-agent`. The dispatch `mode` (default `direct-PR`) appends its
+ * `origin=go`, `kind=go`, and listing the isolated `lane:go` pool (`--lane`)
+ * instead of `ready-for-agent`. The dispatch `mode` (default `direct-PR`) appends its
  * routing flag and the opt-in `yolo` autonomy bump appends `--yolo`. An optional
  * runner pins the backend. Throws on a non-positive issue so a failed mint can
  * never spawn a worker at issue 0.
@@ -197,6 +189,8 @@ export function buildGoEngineArgs(opts: {
     String(opts.issue),
     "--origin",
     GO_ORIGIN,
+    "--kind",
+    GO_KIND,
     "--lane",
     LABEL_GO_LANE,
   ];
