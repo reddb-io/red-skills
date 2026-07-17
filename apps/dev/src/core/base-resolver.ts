@@ -23,7 +23,7 @@
 // filesystem directly. All real IO (the lock file read, the gh body fetch) is
 // injected, so the precedence stays unit-testable against fixed inputs.
 
-import { DEFAULT_BRANCH, resolvePin, type ResolvePinInput } from "./pin-reader.js";
+import { DEFAULT_BRANCH, resolvePinWithSource, type ResolvePinInput } from "./pin-reader.js";
 
 /** True when `value` has at least one non-whitespace char (mirrors `_base_is_set`). */
 function isSet(value: string | undefined): value is string {
@@ -55,6 +55,12 @@ export interface ResolveBaseDeps {
 }
 
 export type ResolveBaseInput = ResolvePinInput;
+export type ResolveBaseSource = "lock" | "pin" | "trunk";
+
+export interface ResolvedBase {
+  branch: string;
+  source: ResolveBaseSource;
+}
 
 /**
  * Resolve the effective base branch by the fixed precedence
@@ -68,17 +74,21 @@ export type ResolveBaseInput = ResolvePinInput;
  * `resolvePin` (whose pinless collapse also lands on the Trunk). A
  * whitespace-only value counts as "not set".
  */
-export async function resolveBase(input: ResolveBaseInput, deps: ResolveBaseDeps): Promise<string> {
+export async function resolveBaseWithSource(input: ResolveBaseInput, deps: ResolveBaseDeps): Promise<ResolvedBase> {
   const locked = await deps.readLockedBranch();
-  if (isSet(locked)) return locked.trim();
+  if (isSet(locked)) return { branch: locked.trim(), source: "lock" };
 
-  if (isSet(deps.configLockedBranch)) return deps.configLockedBranch.trim();
+  if (isSet(deps.configLockedBranch)) return { branch: deps.configLockedBranch.trim(), source: "pin" };
 
-  const pinned = await resolvePin(input, {
+  const pinned = await resolvePinWithSource(input, {
     fetchIssueBody: deps.fetchIssueBody,
     defaultBranch: deps.configTrunk,
   });
-  if (isSet(pinned)) return pinned;
+  if (isSet(pinned.branch)) return pinned;
 
-  return isSet(deps.configTrunk) ? deps.configTrunk.trim() : DEFAULT_BRANCH;
+  return { branch: isSet(deps.configTrunk) ? deps.configTrunk.trim() : DEFAULT_BRANCH, source: "trunk" };
+}
+
+export async function resolveBase(input: ResolveBaseInput, deps: ResolveBaseDeps): Promise<string> {
+  return (await resolveBaseWithSource(input, deps)).branch;
 }
