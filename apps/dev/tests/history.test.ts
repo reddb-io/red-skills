@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import { readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
 import {
   buildSparkline,
   historyAppend,
@@ -138,6 +139,31 @@ describe("history append", () => {
     const records = parseHistoryLines(await readFile(path, "utf8"));
     const { total } = buildSparkline(records, nowEpoch, 48);
     expect(total).toBe(1);
+  });
+
+  it("mirrors the default AFK history ledger into castle history", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, ".red", "state", "afk-history.toonl");
+
+    await historyAppend(
+      path,
+      { ts: "2026-07-17T03:30:00.000Z", epoch: 1784259000 },
+      "done",
+      { worker: "wCASTLE", issue: 1919, runner: "codex", duration_s: 180, merge_sha: "abc1234" },
+    );
+
+    const castle = await readCastleHistoryRecords(
+      join(dir, ".red", "state", "castle", "history.toonl"),
+    );
+    expect(castle).toEqual([
+      expect.objectContaining({
+        event: "done",
+        issue: 1919,
+        worker: "wCASTLE",
+        runner: "codex",
+        merge_sha: "abc1234",
+      }),
+    ]);
   });
 
   it("skips malformed legacy JSONL lines while keeping valid monitor history", () => {

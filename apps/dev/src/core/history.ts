@@ -1,8 +1,9 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { appendCastleHistoryRecord } from "@reddb-io/red-castle/engine";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
 // JSONL record shape, the 48h `done`-event bucketing, and the sparkline glyph
@@ -280,6 +281,21 @@ export const defaultHistoryIO: HistoryIO = {
   },
 };
 
+function castleHistoryMirrorPath(path: string, io: HistoryIO): string | null {
+  if (io !== defaultHistoryIO) return null;
+  const file = basename(path);
+  if (file !== "afk-history.toonl" && file !== "afk-history.jsonl") return null;
+  const stateDir = dirname(path);
+  if (basename(stateDir) !== "state") return null;
+  return join(stateDir, "castle", "history.toonl");
+}
+
+async function mirrorCastleHistory(path: string, record: HistoryRecord, io: HistoryIO): Promise<void> {
+  const castlePath = castleHistoryMirrorPath(path, io);
+  if (castlePath === null) return;
+  await appendCastleHistoryRecord(castlePath, record).catch(() => undefined);
+}
+
 export interface HistoryTrimTool {
   trimKeepLast(path: string, keepLast: number): Promise<boolean>;
 }
@@ -315,9 +331,11 @@ export async function historyAppend(
   if (path.endsWith(".toonl")) {
     const existing = parseHistoryLines((await io.read(path)) ?? "");
     await io.write(path, renderHistoryToonl([...existing, record]));
+    await mirrorCastleHistory(path, record, io);
     return record;
   }
   await io.append(path, `${serializeHistoryRecord(record)}\n`);
+  await mirrorCastleHistory(path, record, io);
   return record;
 }
 

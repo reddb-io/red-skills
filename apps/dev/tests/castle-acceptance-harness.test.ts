@@ -239,6 +239,7 @@ describe("castle acceptance harness", () => {
     ) as {
       workers: Array<{ id: string; issue: number }>;
       fleet: { slots_busy: number; slots_free: number };
+      proving_drain: { drained: number; required: number; remaining: number; passed: number };
       summary: string;
     };
     expect(monitor.workers.map((worker) => worker.issue).sort()).toEqual([
@@ -246,8 +247,15 @@ describe("castle acceptance harness", () => {
       1918,
     ]);
     expect(monitor.fleet).toMatchObject({ slots_busy: 2, slots_free: 0 });
+    expect(monitor.proving_drain).toMatchObject({
+      drained: 1,
+      required: 20,
+      remaining: 19,
+      passed: 0,
+    });
     expect(monitor.summary).toContain("2 workers");
     expect(monitor.summary).toContain("1 closed");
+    expect(monitor.summary).toContain("proving 1/20");
 
     const statusline = renderStatusline({
       project: { basename: "red-skills", branch: "main" },
