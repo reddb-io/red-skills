@@ -1,0 +1,7 @@
+# oracle: mixed structured-looking exec output intentionally degrades to the untyped fallback.
+command: rsp exec -- node emit-mixed-router-output.js
+summary: mixed JSON-looking lines, diff, table, and status text are ambiguous as one stdout stream
+content: untyped
+outliers[1]{line,text}:
+  21,FATAL panic=MixedRouterFixture trace=mixed-router-42 shard=3
+recovery: full original stdout behind elision handle

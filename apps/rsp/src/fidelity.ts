@@ -72,7 +72,10 @@ export async function renderFixture(
     return await renderTestContract(fixture.command, fixture.recorded, options);
   }
   if (fixture.command[0] === "exec") {
-    return await renderExecContract(fixture.command.slice(2).join(" "), fixture.recorded, options);
+    return await renderExecContract(fixture.command.slice(2).join(" "), fixture.recorded, {
+      ...options,
+      heavyByteThreshold: fixture.large_output === true ? 1 : undefined,
+    });
   }
   if (fixture.command[0] === "cat") return await renderCatContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] === "gh") return await renderGhContract(fixture.command, fixture.recorded, options);

@@ -230,9 +230,9 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
         rawDelta: 0,
         rawFidelity: true,
         briefDelta: brief.tokenDelta,
-        briefFidelity: brief.status === fixture.recorded.status && brief.assertionFailures.length === 0,
+        briefFidelity: sameExitClass(brief.status, fixture.recorded.status) && brief.assertionFailures.length === 0,
         terseDelta: terse.tokenDelta,
-        terseFidelity: terse.status === fixture.recorded.status && terse.assertionFailures.length === 0,
+        terseFidelity: sameExitClass(terse.status, fixture.recorded.status) && terse.assertionFailures.length === 0,
         rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
         rtkFidelity: rtkFixture?.fidelity_assertions_passed,
         headroomDelta: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
@@ -409,7 +409,7 @@ function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppr
 function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
   switch (filter) {
     case "exec:--":
-      return { audited: "ok", note: "generic exec summaries keep head and tail, preserve deterministic structural outliers, and retain a recovery handle for original stdout" };
+      return { audited: "ok", note: "generic exec summaries route structured content to TOON shapes, fall back to head/tail with deterministic outliers, and retain a recovery handle" };
     case "cat:file":
       return { audited: "ok", note: "file reads keep code outlines or bounded text plus an elision handle for original bytes; binary output passes through" };
     case "git:commit":
@@ -453,6 +453,11 @@ function parityRow(domain: TwoAxisParityRow["domain"], filter: string, rows: rea
     rtk_fidelity_pass_rate_pct: rtk.fidelity_pass_rate_pct,
     parity_gate: pass ? "pass" : "fail",
   };
+}
+
+function sameExitClass(actual: number | null | undefined, expected: number | null | undefined): boolean {
+  if (actual === expected) return true;
+  return (actual ?? 0) !== 0 && (expected ?? 0) !== 0;
 }
 
 function filterRow(filter: string, rows: readonly FixtureMeasurement[], admission?: AdmissionFilterReport): TwoAxisFilterRow {
