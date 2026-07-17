@@ -135,6 +135,8 @@ export interface PrecheckFacts {
   focalBranch?: OperationalProbeContext["focalBranch"];
   /** Optional config namespacing probe facts for red-doctor and boot visibility. */
   configNamespacing?: OperationalProbeContext["configNamespacing"];
+  /** Optional config coherence probe facts for red-doctor and boot visibility. */
+  configCoherence?: OperationalProbeContext["configCoherence"];
   /** Optional fleet truth probe facts for red-doctor and boot visibility. */
   fleetTruth?: OperationalProbeContext["fleetTruth"];
   /** Optional claim hygiene probe facts for red-doctor and boot visibility. */
