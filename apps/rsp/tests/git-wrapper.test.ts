@@ -71,9 +71,11 @@ describe("rsp git fidelity fixtures", () => {
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "status-clean")!;
       const result = await runFidelityFixture(fixture, { level: "brief", store });
+      const decoded = decode(result.stdout.toString("utf8")) as { category: string; empty: boolean; scope: string; rows: unknown[] };
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toEqual(Buffer.from("git empty\n"));
+      expect(decoded).toMatchObject({ category: "no-op", empty: true, scope: "git status" });
+      expect(decoded.rows).toEqual([]);
       expect(result.mintedHandle).toBeUndefined();
       await expect(store.stats()).resolves.toMatchObject({ records: 0 });
     } finally {
@@ -278,7 +280,7 @@ describe("rsp git admission harness", () => {
     const commitRow = report.filters.find((row) => row.filter === "git:commit")!;
     const pushRow = report.filters.find((row) => row.filter === "git:push")!;
 
-    expect(report.summary).toBe("1/8 filters active at threshold 60%");
+    expect(report.summary).toBe("0/8 filters active at threshold 60%");
     // git:commit's compact TOON rendering stays below the admission threshold.
     expect(commitRow).toMatchObject({ median_delta_pct: expect.any(Number), active: false, mode: "passthrough" });
     // git:push also stays passthrough when preserving pushed-ref rows would be a token regression.
@@ -353,7 +355,17 @@ describe("fixture convention guard", () => {
       name: "nested-clean",
       command: ["git", "status"],
       recorded: { stdout: "# branch.oid abc\0# branch.head main\0", stderr: "", status: 0, signal: null },
-      expected: "git empty\n",
+      expected: {
+        command: "git status",
+        category: "no-op",
+        exit_code: 0,
+        noop: true,
+        scope: "git status",
+        empty: true,
+        branch: "main",
+        rows: [],
+        summary: "git status clean: 0 changes",
+      },
       assertions: [],
     }));
 

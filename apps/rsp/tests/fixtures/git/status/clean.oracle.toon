@@ -1,2 +1,10 @@
-# oracle: preserves decision-relevant rows and columns from status-clean; keep as compact TOON, not a scalar verdict.
-value: "git empty\n"
+# oracle: preserves the definitive clean-tree empty state with explicit scope; keep as compact TOON, not a scalar literal.
+command: git status
+category: no-op
+exit_code: 0
+noop: true
+scope: git status
+empty: true
+branch: main
+rows:
+summary: "git status clean: 0 changes"

@@ -71,14 +71,6 @@ export async function renderGitContract(
 
   const subcommand = parseGitSubcommand(parsedCommand.argv);
   const payload = parseGitPayload(subcommand, parsedCommand.argv, contract.stdout, parsedCommand.query);
-  if (payload === "git empty\n") {
-    return {
-      stdout: Buffer.from(payload),
-      stderr: Buffer.from(contract.stderr),
-      status: contract.status,
-      signal: contract.signal,
-    };
-  }
 
   const fullToon = encode(payload);
   if (shouldEmitFull(subcommand, fullToon, parsedCommand.full, options)) {
@@ -231,7 +223,7 @@ async function collectGitContract(subcommand: GitSubcommand, rest: readonly stri
   });
 }
 
-function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], stdout: string, query?: string): JsonObject | "git empty\n" {
+function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], stdout: string, query?: string): JsonObject {
   switch (subcommand) {
     case "status":
       return parseStatus(command, stdout, query);
@@ -252,7 +244,7 @@ function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], 
   }
 }
 
-function parseStatus(command: readonly string[], stdout: string, query?: string): JsonObject | "git empty\n" {
+function parseStatus(command: readonly string[], stdout: string, query?: string): JsonObject {
   let branch = "";
   const rows: JsonObject[] = [];
   for (const raw of stdout.split("\0")) {
@@ -272,7 +264,7 @@ function parseStatus(command: readonly string[], stdout: string, query?: string)
       state: statusState(xy),
     });
   }
-  if (rows.length === 0) return "git empty\n";
+  if (rows.length === 0) return cleanStatusPayload(command.join(" "), branch);
   const filteredRows = filterRows(rows, query);
   const counts = countBy(filteredRows, "state");
   return helpIfQueried({
@@ -281,6 +273,20 @@ function parseStatus(command: readonly string[], stdout: string, query?: string)
     rows: filteredRows as JsonValue,
     summary: `${query ? `${filteredRows.length}/${rows.length}` : filteredRows.length} changes: ${counts.added ?? 0} added, ${counts.modified ?? 0} modified, ${counts.deleted ?? 0} deleted`,
   }, query, ["rsp git diff --query <path>", "rsp git log --query <subject>"]);
+}
+
+export function cleanStatusPayload(command = "git status", branch = ""): JsonObject {
+  return {
+    command,
+    category: "no-op",
+    exit_code: 0,
+    noop: true,
+    scope: "git status",
+    empty: true,
+    branch,
+    rows: [],
+    summary: "git status clean: 0 changes",
+  };
 }
 
 function parseLog(command: readonly string[], stdout: string, query?: string): JsonObject {

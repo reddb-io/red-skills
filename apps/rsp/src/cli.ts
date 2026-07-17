@@ -389,7 +389,7 @@ function isFastGitStatus(argv: readonly string[]): boolean {
 async function runFastGitStatus(): Promise<WrappedCommandResult> {
   if (isEmptyUnbornGitRepo(process.cwd())) {
     return {
-      stdout: Buffer.from("git empty\n"),
+      stdout: renderCleanGitStatus(),
       stderr: Buffer.alloc(0),
       status: 0,
       signal: null,
@@ -400,7 +400,7 @@ async function runFastGitStatus(): Promise<WrappedCommandResult> {
   const clean = spawnSync("git", ["diff-index", "--quiet", "HEAD", "--"], { stdio: "ignore" });
   if (clean.status === 0) {
     return {
-      stdout: Buffer.from("git empty\n"),
+      stdout: renderCleanGitStatus(),
       stderr: Buffer.alloc(0),
       status: 0,
       signal: null,
@@ -416,7 +416,7 @@ async function runFastGitStatus(): Promise<WrappedCommandResult> {
       signal: status.signal,
     };
   }
-  const stdout = status.stdout.length === 0 ? Buffer.from("git empty\n") : status.stdout;
+  const stdout = status.stdout.length === 0 ? renderCleanGitStatus() : status.stdout;
   return {
     stdout,
     stderr: status.stderr,
@@ -424,6 +424,20 @@ async function runFastGitStatus(): Promise<WrappedCommandResult> {
     signal: status.signal,
     rawOutput: stdout,
   };
+}
+
+function renderCleanGitStatus(): Buffer {
+  return Buffer.from(`${encodeSnapshotToon({
+    command: "git status",
+    category: "no-op",
+    exit_code: 0,
+    noop: true,
+    scope: "git status",
+    empty: true,
+    branch: "",
+    rows: [],
+    summary: "git status clean: 0 changes",
+  })}\n`);
 }
 
 async function fastTelemetryRoot(cwd: string): Promise<string> {
@@ -1158,71 +1172,60 @@ function renderStats(
   telemetry = emptyTelemetryStats(30),
   full = false,
 ): string {
+  return `${encodeSnapshotToon(statsPayload(stats, telemetry, full))}\n`;
+}
+
+function statsPayload(
+  stats: { records: number; bytes: number; oldest: string | null; budget: number; storage_classes?: RspStorageClassStats },
+  telemetry: RspTelemetryStats,
+  full: boolean,
+): JsonObject {
   const topCommands = telemetry.savings.top_commands.slice(0, full ? 10 : 3);
   const daily = full ? telemetry.savings.daily_tokens_saved : telemetry.savings.daily_tokens_saved.slice(-7);
   const storageClasses = stats.storage_classes ?? emptyStorageClassStats();
-  return [
-    `records: ${stats.records}`,
-    `bytes: ${stats.bytes}`,
-    `oldest: ${stats.oldest ?? "none"}`,
-    `budget: ${stats.budget}`,
-    "storage_classes:",
-    ...renderStorageClasses(storageClasses),
-    "savings:",
-    `  window_days: ${telemetry.window_days}`,
-    `  empty: ${telemetry.empty}`,
-    `  invocations: ${telemetry.savings.invocations}`,
-    `  elided: ${telemetry.savings.elided}`,
-    `  raw_bytes: ${telemetry.savings.raw_bytes}`,
-    `  emitted_bytes: ${telemetry.savings.emitted_bytes}`,
-    `  bytes_saved: ${telemetry.savings.bytes_saved}`,
-    `  tokens_saved: ${formatTokensSaved(telemetry.savings)}`,
-    `  dollars_saved_estimate_usd: ${formatDollarsSaved(telemetry.savings)}`,
-    `  pricing_model_family: ${telemetry.savings.pricing_model_family}`,
-    `  pricing_input_usd_per_million_tokens: ${telemetry.savings.pricing_input_usd_per_million_tokens}`,
-    `  pricing_note: ${telemetry.savings.pricing_note}`,
-    "  daily_tokens_saved:",
-    ...renderDaily(daily),
-    ...(!full && telemetry.savings.daily_tokens_saved.length > daily.length
-      ? [`    elided_days: ${telemetry.savings.daily_tokens_saved.length - daily.length}`, "    hint: --full"]
-      : []),
-    "  top_commands:",
-    ...renderTopCommands(topCommands),
-    "health:",
-    `  degradations: ${telemetry.health.degradations}`,
-    `  degradation_rate: ${formatRate(telemetry.health.degradation_rate)}`,
-    `  show_total: ${telemetry.health.show_total}`,
-    `  show_hits: ${telemetry.health.show_hits}`,
-    `  show_misses: ${telemetry.health.show_misses}`,
-    `  show_hit_rate: ${formatRate(telemetry.health.show_hit_rate)}`,
-    `  most_recent_degradation_at: ${telemetry.health.most_recent?.timestamp ?? "none"}`,
-    `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
-    "  degradations_by_reason:",
-    ...renderReasons(telemetry.health.by_reason),
-    "  wrapper_failures_by_family:",
-    ...renderFamilyCounts(telemetry.health.by_family),
-    "  recent_wrapper_failures:",
-    ...renderRecentFailures(telemetry.health.recent_failures.slice(0, full ? 20 : 5)),
-    ...(!full && telemetry.health.recent_failures.length > 5
-      ? [`    elided_failures: ${telemetry.health.recent_failures.length - 5}`, "    hint: --full"]
-      : []),
-    "decisions:",
-    `  seen: ${telemetry.decisions.seen}`,
-    `  contributed: ${telemetry.decisions.contributed}`,
-    `  passed: ${telemetry.decisions.passed}`,
-    `  failed_open: ${telemetry.decisions.failed_open}`,
-    `  quota_free_saved_units: ${telemetry.decisions.quota_free_saved_units}`,
-    `  contribution_rate: ${formatRate(telemetry.decisions.contribution_rate)}`,
-    "  top_pass_reasons:",
-    ...renderReasons(telemetry.decisions.top_pass_reasons.slice(0, full ? 10 : 3)),
-    "latency:",
-    `  wrapper_ms_p50: ${formatNullable(telemetry.latency.wrapper_ms_p50)}`,
-    `  wrapper_ms_p95: ${formatNullable(telemetry.latency.wrapper_ms_p95)}`,
-    `  store_open_count_sum: ${telemetry.latency.store_open_count_sum}`,
-    `  store_elapsed_ms_sum: ${telemetry.latency.store_elapsed_ms_sum}`,
-    `  store_elapsed_ms_avg: ${formatNullable(telemetry.latency.store_elapsed_ms_avg)}`,
-    "",
-  ].join("\n");
+  const recentFailures = telemetry.health.recent_failures.slice(0, full ? 20 : 5);
+  const topPassReasons = telemetry.decisions.top_pass_reasons.slice(0, full ? 10 : 3);
+  return {
+    records: stats.records,
+    bytes: stats.bytes,
+    oldest: stats.oldest,
+    budget: stats.budget,
+    storage_classes: storageClasses as unknown as JsonObject,
+    savings: {
+      window_days: telemetry.window_days,
+      empty: telemetry.empty,
+      ...telemetry.savings,
+      tokens_saved_display: formatTokensSaved(telemetry.savings),
+      dollars_saved_estimate_usd_display: formatDollarsSaved(telemetry.savings),
+      daily_tokens_saved: daily,
+      daily_tokens_saved_elided: full ? 0 : Math.max(0, telemetry.savings.daily_tokens_saved.length - daily.length),
+      top_commands: topCommands,
+      top_commands_elided: full ? 0 : Math.max(0, telemetry.savings.top_commands.length - topCommands.length),
+    } as unknown as JsonObject,
+    health: {
+      ...telemetry.health,
+      degradation_rate_display: formatRate(telemetry.health.degradation_rate),
+      show_hit_rate_display: formatRate(telemetry.health.show_hit_rate),
+      by_reason: telemetry.health.by_reason,
+      by_family: telemetry.health.by_family,
+      recent_failures: recentFailures,
+      recent_failures_elided: full ? 0 : Math.max(0, telemetry.health.recent_failures.length - recentFailures.length),
+      most_recent_degradation_at: telemetry.health.most_recent?.timestamp ?? null,
+      most_recent_degradation_reason: telemetry.health.most_recent?.reason ?? null,
+    } as unknown as JsonObject,
+    decisions: {
+      ...telemetry.decisions,
+      contribution_rate_display: formatRate(telemetry.decisions.contribution_rate),
+      top_pass_reasons: topPassReasons,
+      top_pass_reasons_elided: full ? 0 : Math.max(0, telemetry.decisions.top_pass_reasons.length - topPassReasons.length),
+    } as unknown as JsonObject,
+    latency: {
+      ...telemetry.latency,
+      wrapper_ms_p50_display: formatNullable(telemetry.latency.wrapper_ms_p50),
+      wrapper_ms_p95_display: formatNullable(telemetry.latency.wrapper_ms_p95),
+      store_elapsed_ms_avg_display: formatNullable(telemetry.latency.store_elapsed_ms_avg),
+    } as unknown as JsonObject,
+  };
 }
 
 function renderGainsReportToon(report: RspTelemetryGainsReport): string {

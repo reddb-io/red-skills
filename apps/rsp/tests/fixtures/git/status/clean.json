@@ -10,6 +10,27 @@
     "status": 0,
     "signal": null
   },
-  "expected": "git empty\n",
-  "assertions": []
+  "expected": {
+    "command": "git status",
+    "category": "no-op",
+    "exit_code": 0,
+    "noop": true,
+    "scope": "git status",
+    "empty": true,
+    "branch": "main",
+    "rows": [],
+    "summary": "git status clean: 0 changes"
+  },
+  "assertions": [
+    {
+      "question": "which scope is empty?",
+      "path": "scope",
+      "expected": "git status"
+    },
+    {
+      "question": "is the clean state definitive?",
+      "path": "empty",
+      "expected": true
+    }
+  ]
 }
