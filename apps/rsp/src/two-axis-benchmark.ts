@@ -2,7 +2,7 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
+import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
 import { discoverFidelityFixtures, runFidelityFixture, type FidelityFixture } from "./fidelity.js";
 import { RspElisionStore } from "./elision-store.js";
@@ -87,6 +87,21 @@ export interface TwoAxisParityRow {
   parity_gate: "pass" | "fail";
 }
 
+export interface QualityCorpusRow {
+  corpus: "pre-existing-quality" | "anomaly" | "mixed-content" | "json-outlier";
+  fixture_count: number;
+  filters: string[];
+  oracle_capture: OracleCaptureRow;
+}
+
+export interface EndTaskParityRow {
+  task: string;
+  fixture: string;
+  raw_answer: JsonValue;
+  rsp_answer: JsonValue;
+  same_answer: boolean;
+}
+
 export interface AntiSuppressionAuditRow {
   filter: string;
   level: "brief" | "terse";
@@ -122,7 +137,9 @@ export interface TwoAxisBenchmarkReport {
   };
   filters: TwoAxisFilterRow[];
   aggregate: OracleCaptureRow & { fixture_count: number };
+  quality_corpora: QualityCorpusRow[];
   parity: TwoAxisParityRow[];
+  end_task_parity: EndTaskParityRow[];
   anti_suppression_audit: AntiSuppressionAuditRow[];
   summary: string;
   toon: string;
@@ -186,6 +203,14 @@ interface FixtureMeasurement {
   oracleTokens: number;
 }
 
+interface EndTaskCandidate {
+  fixture: string;
+  task: string;
+  rawAnswer: JsonValue;
+  rspAnswer: JsonValue;
+  sameAnswer: boolean;
+}
+
 const tokenizer = encodingForModel("gpt-4o");
 const ADMISSION_THRESHOLD_PCT = 60;
 const DEFAULT_FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");
@@ -212,6 +237,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
   const headroom = await readHeadroomBaselines(join(fixtureRoot, "headroom", "baselines.json"));
   const headroomByName = new Map(headroom.fixtures.map((fixture) => [fixture.name, fixture]));
   const measurements: FixtureMeasurement[] = [];
+  const endTaskCandidates: EndTaskCandidate[] = [];
   const tempRoot = await mkdtemp(join(tmpdir(), "rsp-two-axis-store-"));
   const store = await RspElisionStore.open({ uri: `file://${join(tempRoot, "red.rdb")}` });
   try {
@@ -220,6 +246,7 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
       const headroomFixture = headroomByName.get(fixture.name);
       const brief = await runFidelityFixture(fixture, { level: "lossless", store });
       const terse = await runFidelityFixture(fixture, { level: "terse", store });
+      endTaskCandidates.push(...buildEndTaskCandidates(fixture, brief.stdout.toString("utf8"), brief.oneLine === true));
       const active = admissionByFilter.get(filterName(fixture))?.mode === "active";
       const rawTokens = tokenCount(fixture.recorded.stdout);
       const briefTokens = tokenCount(brief.stdout.toString("utf8"));
@@ -259,6 +286,8 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     filterRow(filter, rows, admissionByFilter.get(filter))
   );
   const parity = buildParity(rows);
+  const qualityCorpora = buildQualityCorpora(measurements);
+  const endTaskParity = selectEndTaskParity(endTaskCandidates);
   const antiSuppressionAudit = buildAntiSuppressionAudit(rows);
   const payload = {
     benchmark: "rsp-two-axis",
@@ -288,7 +317,9 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
     },
     filters: rows,
     aggregate: aggregateOracleCapture(measurements),
+    quality_corpora: qualityCorpora,
     parity,
+    end_task_parity: endTaskParity,
     anti_suppression_audit: antiSuppressionAudit,
     summary: `${measurements.length} fixtures, ${rows.length} filters; shipped modes apply admission threshold ${ADMISSION_THRESHOLD_PCT}%`,
   } satisfies Omit<TwoAxisBenchmarkReport, "toon">;
@@ -325,12 +356,24 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
     "",
     `Aggregate oracle ceiling: raw ${report.aggregate.raw.token_count} tokens (${fmt(report.aggregate.raw.capture_pct)}% capture), rsp ${report.aggregate.rsp.token_count} tokens (${fmt(report.aggregate.rsp.capture_pct)}% capture), RTK ${fmtComparatorTokenCount(report.aggregate.rtk)} tokens (${fmtComparatorCapture(report.aggregate.rtk)} capture), Headroom ${fmtComparatorTokenCount(report.aggregate.headroom)} tokens (${fmtComparatorCapture(report.aggregate.headroom)} capture), oracle ${report.aggregate.oracle_ceiling.token_count} tokens.`,
     "",
+    "| Corpus | Fixtures | Filters | raw tokens | rsp tokens | Headroom tokens | oracle tokens | rsp capture | Headroom capture |",
+    "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...report.quality_corpora.map((row) =>
+      `| ${row.corpus} | ${row.fixture_count} | ${row.filters.join(", ")} | ${row.oracle_capture.raw.token_count} | ${row.oracle_capture.rsp.token_count} | ${fmtComparatorTokenCount(row.oracle_capture.headroom)} | ${row.oracle_capture.oracle_ceiling.token_count} | ${fmt(row.oracle_capture.rsp.capture_pct)}% | ${fmtComparatorCapture(row.oracle_capture.headroom)} |`
+    ),
+    "",
     `Large-output filters: ${report.corpus.large_output_filters.join(", ") || "none"}.`,
     "",
     "| Parity domain | Filter | Gate | rsp fidelity | RTK fidelity |",
     "| --- | --- | --- | ---: | ---: |",
     ...report.parity.map((row) =>
       `| ${row.domain} | ${row.filter} | ${row.parity_gate} | ${fmt(row.rsp_fidelity_pass_rate_pct)}% | ${fmt(row.rtk_fidelity_pass_rate_pct)}% |`
+    ),
+    "",
+    "| End-task parity probe | Fixture | Raw answer | rsp summary answer | Same answer |",
+    "| --- | --- | --- | --- | --- |",
+    ...report.end_task_parity.map((row) =>
+      `| ${row.task} | ${row.fixture} | ${fmtJsonValue(row.raw_answer)} | ${fmtJsonValue(row.rsp_answer)} | ${row.same_answer ? "yes" : "no"} |`
     ),
     "",
     "| Anti-suppression audit | Level | Verdict | Note |",
@@ -392,6 +435,102 @@ function buildParity(rows: readonly TwoAxisFilterRow[]): TwoAxisParityRow[] {
     parityRow("cargo-test", "cargo:test", rows),
     parityRow("git-commit", "git:commit", rows),
   ];
+}
+
+function buildQualityCorpora(measurements: readonly FixtureMeasurement[]): QualityCorpusRow[] {
+  return [...groupByCorpus(measurements).entries()]
+    .sort(([a], [b]) => corpusSortKey(a) - corpusSortKey(b))
+    .map(([corpus, rows]) => ({
+      corpus,
+      fixture_count: rows.length,
+      filters: [...new Set(rows.map((row) => row.filter))].sort((a, b) => a.localeCompare(b)),
+      oracle_capture: oracleCapture(rows),
+    }));
+}
+
+function groupByCorpus(measurements: readonly FixtureMeasurement[]): Map<QualityCorpusRow["corpus"], FixtureMeasurement[]> {
+  const out = new Map<QualityCorpusRow["corpus"], FixtureMeasurement[]>();
+  for (const measurement of measurements) {
+    const corpus = qualityCorpus(measurement.fixture);
+    out.set(corpus, [...(out.get(corpus) ?? []), measurement]);
+  }
+  return out;
+}
+
+function qualityCorpus(fixture: FidelityFixture): QualityCorpusRow["corpus"] {
+  if (fixture.name === "exec-midstream-anomaly") return "anomaly";
+  if (fixture.name === "exec-router-mixed-content") return "mixed-content";
+  if (fixture.name === "exec-json-array-crusher") return "json-outlier";
+  return "pre-existing-quality";
+}
+
+function corpusSortKey(corpus: QualityCorpusRow["corpus"]): number {
+  return ["pre-existing-quality", "anomaly", "mixed-content", "json-outlier"].indexOf(corpus);
+}
+
+function buildEndTaskCandidates(fixture: FidelityFixture, rspStdout: string, oneLine: boolean): EndTaskCandidate[] {
+  const probes = fixture.assertions.filter((assertion) => isEndTaskProbe(fixture.name, assertion.question));
+  if (probes.length === 0) return [];
+  const decoded = decodeBenchmarkRenderOutput(rspStdout, oneLine);
+  return probes.map((assertion) => {
+    const rspAnswer = toJsonValue(getPath(decoded, assertion.path));
+    const rawAnswer = toJsonValue(assertion.expected);
+    return {
+      fixture: fixture.name,
+      task: assertion.question,
+      rawAnswer,
+      rspAnswer,
+      sameAnswer: Object.is(rspAnswer, rawAnswer),
+    };
+  });
+}
+
+function isEndTaskProbe(fixtureName: string, question: string): boolean {
+  return new Set([
+    "exec-midstream-anomaly::oracle preserves planted mid-stream structural outlier",
+    "exec-json-array-crusher::crusher keeps numeric value outlier",
+    "exec-json-array-crusher::crusher keeps shape outlier",
+    "exec-router-mixed-content::router degrades mixed ambiguous content to untyped fallback",
+    "pr-list-default::which PR is first?",
+    "vitest-many-failures::how many failed?",
+  ]).has(`${fixtureName}::${question}`);
+}
+
+function selectEndTaskParity(candidates: readonly EndTaskCandidate[]): EndTaskParityRow[] {
+  return candidates.map((candidate) => ({
+    task: candidate.task,
+    fixture: candidate.fixture,
+    raw_answer: candidate.rawAnswer,
+    rsp_answer: candidate.rspAnswer,
+    same_answer: candidate.sameAnswer,
+  }));
+}
+
+function decodeBenchmarkRenderOutput(stdout: string, oneLine: boolean): unknown {
+  if (oneLine) return stdout.replace(/\n$/, "");
+  if (stdout === "git empty\n") return "git empty\n";
+  if (stdout.startsWith("stdout summary\n")) return stdout;
+  if (stdout.startsWith("0 ")) return stdout;
+  const toon = stdout.split("\n").filter((line) => !line.startsWith("… elided ")).join("\n");
+  return decode(toon);
+}
+
+function getPath(value: unknown, path: string): unknown {
+  let cursor = value;
+  for (const segment of path.split(".")) {
+    if (segment === "length" && Array.isArray(cursor)) {
+      cursor = cursor.length;
+    } else if (segment === "length" && isRecord(cursor)) {
+      cursor = Object.keys(cursor).length;
+    } else if (/^\d+$/.test(segment) && Array.isArray(cursor)) {
+      cursor = cursor[Number(segment)];
+    } else if (isRecord(cursor)) {
+      cursor = cursor[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return cursor;
 }
 
 function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppressionAuditRow[] {
@@ -672,6 +811,25 @@ function fmtComparatorTokenCount(value: ComparatorTokenCaptureAxis): string {
 function fmtComparatorCapture(value: ComparatorTokenCaptureAxis): string {
   if (value.source === "not-covered") return value.label;
   return `${fmt(value.capture_pct)}%`;
+}
+
+function fmtJsonValue(value: JsonValue): string {
+  if (typeof value === "string") return value.replace(/\|/g, "\\|");
+  return JSON.stringify(value);
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    Array.isArray(value) ||
+    isRecord(value)
+  ) {
+    return value as JsonValue;
+  }
+  return null;
 }
 
 function externalClaims(): ExternalClaim[] {
