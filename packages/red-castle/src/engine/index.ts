@@ -50,3 +50,4 @@ export type {
   AcquireIssueLeaseOptions,
 } from "./tracker/claim.js";
 export * from "./tracker/port.js";
+export * from "./tracker/github/adapter.js";
