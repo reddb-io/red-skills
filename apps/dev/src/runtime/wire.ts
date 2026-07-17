@@ -57,6 +57,7 @@ import { execTool } from "./exec.js";
 import { collectTmpJanitorReport } from "./tmp-janitor.js";
 import { collectFleetTruthProbeInput } from "../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
+import { evaluateFastForwardLocalTarget } from "../core/merge.js";
 
 // ---------- repo resolution ----------
 
@@ -1751,6 +1752,15 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     },
   );
   const configuredTrunk = resolvedFocalBranch.branch;
+  const baseFreshnessDivergence = await gitx.localRemoteDivergence(gitCtx, {
+    remote: ctx.remote,
+    branch: configuredTrunk,
+  });
+  const baseFreshnessGuard = await evaluateFastForwardLocalTarget(gitx.mergeExec(gitCtx), {
+    gitRepo: ctx.root,
+    remote: ctx.remote,
+    target: configuredTrunk,
+  });
   const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
@@ -1832,6 +1842,12 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
             targetExists: lockTargetExists,
             heldByLiveSession: lockedBranch ? currentBranch === lockedBranch : false,
           },
+    },
+    baseFreshness: {
+      trunk: configuredTrunk,
+      remote: ctx.remote,
+      ...baseFreshnessDivergence,
+      guard: baseFreshnessGuard,
     },
     configNamespacing: { rootDevKeys },
     fleetTruth,
