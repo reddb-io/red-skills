@@ -21,7 +21,7 @@ import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../core/pin-reader.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
-import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
@@ -630,7 +630,7 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
   const text = await fsx.readText(path);
   if (text === null) return null;
   try {
-    return parseFleetState(JSON.parse(text));
+    return parseFleetState(decodeDevSnapshotSniff(text));
   } catch {
     return null;
   }
