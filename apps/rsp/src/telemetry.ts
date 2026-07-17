@@ -90,6 +90,7 @@ export interface RspTelemetryStats {
     contributed: number;
     passed: number;
     failed_open: number;
+    quota_free_saved_units: number;
     contribution_rate: number;
     top_pass_reasons: Array<{ reason: string; count: number }>;
   };
@@ -690,12 +691,14 @@ function countDecisions(records: Array<Record<string, unknown>>): RspTelemetrySt
   let contributed = 0;
   let passed = 0;
   let failedOpen = 0;
+  let quotaFreeSavedUnits = 0;
   const passReasons = new Map<string, number>();
   for (const record of records) {
     const decision = stringField(record.decision);
     if (decision === "contributed") contributed++;
     else if (decision === "failed-open") failedOpen++;
     else passed++;
+    if (record.quota_free === true) quotaFreeSavedUnits += Math.max(1, numeric(record.saved_units));
     if (decision !== "contributed") {
       const reason = stringField(record.reason) || "unknown";
       passReasons.set(reason, (passReasons.get(reason) ?? 0) + 1);
@@ -706,6 +709,7 @@ function countDecisions(records: Array<Record<string, unknown>>): RspTelemetrySt
     contributed,
     passed,
     failed_open: failedOpen,
+    quota_free_saved_units: quotaFreeSavedUnits,
     contribution_rate: records.length === 0 ? 0 : round(contributed / records.length),
     top_pass_reasons: [...passReasons.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
