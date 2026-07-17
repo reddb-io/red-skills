@@ -22,7 +22,7 @@ import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
 import { resolveBase } from "../core/base-resolver.js";
-import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
+import { readDevBundleCacheState } from "../core/bundle-version.js";
 import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
@@ -248,15 +248,17 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
 async function resolveProject(root: string): Promise<ProjectInput> {
   const ctx: gitx.GitContext = { cwd: root };
   const version = readBuildInfo("dev").version;
-  const latestCachedVersion = newestCachedDevBundleVersion(version);
+  const bundleCache = readDevBundleCacheState(version);
+  const latestCachedVersion = bundleCache.laneNewestVersion;
   const base: ProjectInput = latestCachedVersion === undefined
     ? { basename: basename(root), version }
     : { basename: basename(root), version, latestCachedVersion };
+  const withPointer = bundleCache.pointerVersion ? { ...base, pointerVersion: bundleCache.pointerVersion } : base;
   const branch = await gitx.currentBranch(ctx);
-  if (branch) return { ...base, branch };
+  if (branch) return { ...withPointer, branch };
   const sha = await gitx.headShortSha(ctx);
-  if (sha) return { ...base, detachedSha: sha };
-  return base;
+  if (sha) return { ...withPointer, detachedSha: sha };
+  return withPointer;
 }
 
 /** Project the Claude Code payload into the renderer's block-2/3 input. */
@@ -347,8 +349,8 @@ export async function statuslineCommand(
     resolveStatuslineRsp(root),
   ]);
   const fleet =
-    rawFleet && project.latestCachedVersion !== undefined && rawFleet.bundleVersion !== undefined
-      ? { ...rawFleet, latestBundleVersion: project.latestCachedVersion }
+    rawFleet && rawFleet.bundleVersion !== undefined
+      ? { ...rawFleet, latestBundleVersion: project.latestCachedVersion ?? project.version, pointerVersion: project.pointerVersion }
       : rawFleet;
 
   // Theme on by default (the multi-line wine layout: a repo-global header line

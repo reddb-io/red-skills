@@ -44,6 +44,7 @@ import type { ReleaseChannel } from "./channel.js";
  * plus an atomic {@link rename} (write-temp-then-rename) for the pointer swap.
  */
 export interface SelfUpdateIO extends BundleIO {
+  readdir(path: string): Promise<readonly string[]>;
   rename(from: string, to: string): Promise<void>;
 }
 
@@ -113,13 +114,23 @@ export function pointerPath(cacheDir: string, plugin: string): string {
   return joinPath(cacheDir, pointerFileName(plugin));
 }
 
+/** Cache filename of the stable-channel self-update status record for a plugin. */
+export function statusFileName(plugin: string): string {
+  return `${plugin}-stable.self-update.json`;
+}
+
+/** Absolute self-update status path inside the bundle cache. */
+export function statusPath(cacheDir: string, plugin: string): string {
+  return joinPath(cacheDir, statusFileName(plugin));
+}
+
 /** Serialise a pointer payload. */
 function pointerContent(version: string): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({ version }));
 }
 
 /** Read a version out of a pointer body: `{ "version": "x" }` or a bare `x.y.z`. */
-function readPointer(text: string): string {
+export function readPointer(text: string): string {
   const trimmed = text.trim();
   try {
     const parsed = JSON.parse(trimmed) as { version?: unknown };
@@ -130,12 +141,101 @@ function readPointer(text: string): string {
   return /^\d+\.\d+\.\d+/.test(trimmed) ? trimmed : "";
 }
 
+export interface SelfUpdateStateRecord {
+  lastCheckAtMs?: number;
+  lastSuccessAtMs?: number;
+  lastFailureAtMs?: number;
+  lastError?: string;
+  lastStatus?: SelfUpdateStatus;
+}
+
+function readState(text: string): SelfUpdateStateRecord {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const out: SelfUpdateStateRecord = {};
+    if (Number.isFinite(parsed.lastCheckAtMs)) out.lastCheckAtMs = Number(parsed.lastCheckAtMs);
+    if (Number.isFinite(parsed.lastSuccessAtMs)) out.lastSuccessAtMs = Number(parsed.lastSuccessAtMs);
+    if (Number.isFinite(parsed.lastFailureAtMs)) out.lastFailureAtMs = Number(parsed.lastFailureAtMs);
+    if (typeof parsed.lastError === "string") out.lastError = parsed.lastError;
+    if (
+      parsed.lastStatus === "updated" ||
+      parsed.lastStatus === "up-to-date" ||
+      parsed.lastStatus === "skipped-channel" ||
+      parsed.lastStatus === "error"
+    ) {
+      out.lastStatus = parsed.lastStatus;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function readStateFile(
+  io: Pick<SelfUpdateIO, "exists" | "readFile">,
+  cacheDir: string,
+  plugin: string,
+): Promise<SelfUpdateStateRecord> {
+  const path = statusPath(cacheDir, plugin);
+  try {
+    if (!(await io.exists(path))) return {};
+    return readState(new TextDecoder().decode(await io.readFile(path)));
+  } catch {
+    return {};
+  }
+}
+
+async function writeStateFile(
+  io: Pick<SelfUpdateIO, "exists" | "readFile" | "writeFile">,
+  cacheDir: string,
+  plugin: string,
+  patch: SelfUpdateStateRecord,
+): Promise<void> {
+  const prior = await readStateFile(io, cacheDir, plugin);
+  await io.writeFile(statusPath(cacheDir, plugin), new TextEncoder().encode(JSON.stringify({ ...prior, ...patch })));
+}
+
+async function tryWriteStateFile(
+  io: Pick<SelfUpdateIO, "exists" | "readFile" | "writeFile">,
+  cacheDir: string,
+  plugin: string,
+  patch: SelfUpdateStateRecord,
+): Promise<void> {
+  try {
+    await writeStateFile(io, cacheDir, plugin, patch);
+  } catch {
+    /* self-update status is diagnostic; it must never break serving */
+  }
+}
+
 export interface ResolveActiveVersionInput {
   plugin: string;
   installedVersion: string;
   cacheDir: string;
   channel: ReleaseChannel;
 }
+
+export interface ResolveActiveVersionOptions {
+  nowMs?: number;
+  staleAfterMs?: number;
+}
+
+export interface ActiveVersionResolution {
+  version: string;
+  pointerVersion?: string;
+  laneNewestVersion?: string;
+  reconciled?: {
+    from?: string;
+    to: string;
+  };
+  staleFailure?: {
+    ageMs: number;
+    lastError?: string;
+  };
+  logNotes: string[];
+}
+
+export const DEFAULT_SELF_UPDATE_STALE_AFTER_MS = 4 * 60 * 60 * 1000;
 
 /**
  * The version the launcher should serve **right now**, using only local reads.
@@ -148,30 +248,76 @@ export interface ResolveActiveVersionInput {
  * blank-statusline class of bug.
  */
 export async function resolveActiveVersion(
-  io: Pick<SelfUpdateIO, "exists" | "readFile">,
+  io: Pick<SelfUpdateIO, "exists" | "readFile" | "writeFile" | "readdir" | "rename">,
   input: ResolveActiveVersionInput,
 ): Promise<string> {
+  return (await resolveActiveVersionDetailed(io, input)).version;
+}
+
+export async function resolveActiveVersionDetailed(
+  io: Pick<SelfUpdateIO, "exists" | "readFile" | "writeFile" | "readdir" | "rename">,
+  input: ResolveActiveVersionInput,
+  options: ResolveActiveVersionOptions = {},
+): Promise<ActiveVersionResolution> {
   const { plugin, installedVersion, cacheDir, channel } = input;
   // Canary keys by the floating dist-tag, not a version; only stable has a pointer.
-  if (channel !== "stable" || !installedVersion) return installedVersion;
+  if (channel !== "stable" || !installedVersion) {
+    return { version: installedVersion, logNotes: [] };
+  }
 
   const ptr = pointerPath(cacheDir, plugin);
-  if (!(await io.exists(ptr))) return installedVersion;
-
-  let pointed: string;
+  let pointed = "";
   try {
-    pointed = readPointer(new TextDecoder().decode(await io.readFile(ptr)));
+    if (await io.exists(ptr)) {
+      pointed = readPointer(new TextDecoder().decode(await io.readFile(ptr)));
+    }
   } catch {
-    return installedVersion;
+    pointed = "";
   }
-  if (!pointed) return installedVersion;
-  if (!isInRange(installedVersion, pointed)) return installedVersion;
-  if (compareSemver(pointed, installedVersion) < 0) return installedVersion;
+  let version = installedVersion;
+  let pointerVersion: string | undefined;
+  if (pointed && isInRange(installedVersion, pointed) && compareSemver(pointed, installedVersion) >= 0) {
+    const bundle = resolveBundle({ plugin, version: pointed, cacheDir, channel });
+    if (await io.exists(bundle)) {
+      version = pointed;
+      pointerVersion = pointed;
+    }
+  }
 
-  // Only trust the pointer if the bundle it names is actually cached.
-  const bundle = resolveBundle({ plugin, version: pointed, cacheDir, channel });
-  if (!(await io.exists(bundle))) return installedVersion;
-  return pointed;
+  const logNotes: string[] = [];
+  const laneNewestVersion = await newestCachedLaneVersion(io, { plugin, installedVersion, cacheDir });
+  let reconciled: ActiveVersionResolution["reconciled"];
+  if (laneNewestVersion && compareSemver(laneNewestVersion, version) > 0) {
+    await swapPointer(io, cacheDir, plugin, laneNewestVersion);
+    reconciled = { from: pointerVersion, to: laneNewestVersion };
+    logNotes.push(
+      `self-update reconciled pointer ${pointerVersion ?? "none"} -> ${laneNewestVersion} from cached lane`,
+    );
+    version = laneNewestVersion;
+    pointerVersion = laneNewestVersion;
+  }
+
+  const state = await readStateFile(io, cacheDir, plugin);
+  const nowMs = options.nowMs ?? Date.now();
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_SELF_UPDATE_STALE_AFTER_MS;
+  let staleFailure: ActiveVersionResolution["staleFailure"];
+  if (
+    state.lastFailureAtMs !== undefined &&
+    state.lastFailureAtMs > (state.lastSuccessAtMs ?? 0) &&
+    nowMs - state.lastFailureAtMs > staleAfterMs
+  ) {
+    staleFailure = { ageMs: nowMs - state.lastFailureAtMs, lastError: state.lastError };
+    logNotes.push(`self-update stale: last check failed ${formatAgeMs(staleFailure.ageMs)} ago`);
+  }
+
+  return {
+    version,
+    ...(pointerVersion ? { pointerVersion } : {}),
+    ...(laneNewestVersion ? { laneNewestVersion } : {}),
+    ...(reconciled ? { reconciled } : {}),
+    ...(staleFailure ? { staleFailure } : {}),
+    logNotes,
+  };
 }
 
 // ── Background self-update (the only place a fetch happens) ───────────────────
@@ -188,6 +334,7 @@ export interface SelfUpdateResult {
   version?: string;
   /** Present only on `status: "error"`. */
   error?: string;
+  attempts?: number;
 }
 
 export interface SelfUpdateInput {
@@ -196,6 +343,18 @@ export interface SelfUpdateInput {
   repo: string;
   cacheDir: string;
   channel: ReleaseChannel;
+}
+
+export interface SelfUpdateRunOptions {
+  nowMs?: () => number;
+}
+
+export interface SelfUpdateRetryOptions extends SelfUpdateRunOptions {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+  onRetry?: (event: { attempt: number; nextAttempt: number; delayMs: number; error?: string }) => void | Promise<void>;
 }
 
 /**
@@ -215,8 +374,10 @@ export interface SelfUpdateInput {
 export async function backgroundSelfUpdate(
   io: SelfUpdateIO,
   input: SelfUpdateInput,
+  options: SelfUpdateRunOptions = {},
 ): Promise<SelfUpdateResult> {
   const { plugin, installedVersion, repo, cacheDir, channel } = input;
+  const nowMs = options.nowMs ?? Date.now;
   if (channel !== "stable" || !parseSemver(installedVersion)) {
     return { status: "skipped-channel" };
   }
@@ -238,21 +399,115 @@ export async function backgroundSelfUpdate(
           channel,
         })
       : null;
-    if (!target) return { status: "up-to-date", version: current };
+    if (!target) {
+      await tryWriteStateFile(io, cacheDir, plugin, {
+        lastCheckAtMs: nowMs(),
+        lastSuccessAtMs: nowMs(),
+        lastStatus: "up-to-date",
+        lastError: undefined,
+      });
+      return { status: "up-to-date", version: current };
+    }
 
     // Materialise the pinned target bundle from npm before touching anything the
     // launcher will serve. ensureBundle never caches a partial payload.
     await ensureBundle(io, { plugin, version: target, repo, cacheDir, channel });
 
     // Atomic pointer swap: write temp, then rename over the live pointer.
-    const ptr = pointerPath(cacheDir, plugin);
-    const tmp = `${ptr}.${target}.tmp`;
-    await io.writeFile(tmp, pointerContent(target));
-    await io.rename(tmp, ptr);
+    await swapPointer(io, cacheDir, plugin, target);
+    await tryWriteStateFile(io, cacheDir, plugin, {
+      lastCheckAtMs: nowMs(),
+      lastSuccessAtMs: nowMs(),
+      lastStatus: "updated",
+      lastError: undefined,
+    });
     return { status: "updated", version: target };
   } catch (err) {
-    return { status: "error", error: err instanceof Error ? err.message : String(err) };
+    const error = err instanceof Error ? err.message : String(err);
+    await tryWriteStateFile(io, cacheDir, plugin, {
+      lastCheckAtMs: nowMs(),
+      lastFailureAtMs: nowMs(),
+      lastError: error,
+      lastStatus: "error",
+    });
+    return { status: "error", error };
   }
+}
+
+export async function backgroundSelfUpdateWithRetry(
+  io: SelfUpdateIO,
+  input: SelfUpdateInput,
+  options: SelfUpdateRetryOptions = {},
+): Promise<SelfUpdateResult> {
+  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 4));
+  const initialDelayMs = Math.max(0, Math.floor(options.initialDelayMs ?? 30_000));
+  const maxDelayMs = Math.max(initialDelayMs, Math.floor(options.maxDelayMs ?? 15 * 60_000));
+  const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  let attempt = 1;
+  let delayMs = initialDelayMs;
+  for (;;) {
+    const result = await backgroundSelfUpdate(io, input, options);
+    if (result.status !== "error" || attempt >= maxAttempts) {
+      return { ...result, attempts: attempt };
+    }
+    await options.onRetry?.({
+      attempt,
+      nextAttempt: attempt + 1,
+      delayMs,
+      error: result.error,
+    });
+    await sleep(delayMs);
+    delayMs = Math.min(maxDelayMs, Math.max(delayMs * 2, initialDelayMs));
+    attempt += 1;
+  }
+}
+
+async function swapPointer(
+  io: Pick<SelfUpdateIO, "writeFile" | "rename">,
+  cacheDir: string,
+  plugin: string,
+  version: string,
+): Promise<void> {
+  const ptr = pointerPath(cacheDir, plugin);
+  const tmp = `${ptr}.${version}.tmp`;
+  await io.writeFile(tmp, pointerContent(version));
+  await io.rename(tmp, ptr);
+}
+
+async function newestCachedLaneVersion(
+  io: Pick<SelfUpdateIO, "readdir">,
+  input: { plugin: string; installedVersion: string; cacheDir: string },
+): Promise<string | undefined> {
+  let best: string | undefined;
+  let entries: readonly string[];
+  try {
+    entries = await io.readdir(input.cacheDir);
+  } catch {
+    return undefined;
+  }
+  const pattern = new RegExp(`^${escapeRegExp(input.plugin)}-(\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?)\\.bundle\\.min\\.mjs$`);
+  for (const name of entries) {
+    const m = pattern.exec(name);
+    if (!m) continue;
+    const version = m[1]!;
+    if (!isInRange(input.installedVersion, version)) continue;
+    if (compareSemver(version, input.installedVersion) <= 0) continue;
+    if (best === undefined || compareSemver(version, best) > 0) best = version;
+  }
+  return best;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatAgeMs(ms: number): string {
+  const s = Math.floor(Math.max(0, ms) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h`;
 }
 
 /** Minimal POSIX-style join (cache paths only), matching bundle-fetch.ts. */

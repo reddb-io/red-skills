@@ -15,6 +15,7 @@ export interface OperationalProbeContext {
   readonly configNamespacing?: ConfigNamespacingProbeInput;
   readonly configCoherence?: ConfigCoherenceProbeInput;
   readonly fleetTruth?: FleetTruthProbeInput;
+  readonly bundleCoherence?: BundleCoherenceProbeInput;
   readonly claimHygiene?: ClaimHygieneProbeInput;
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
   readonly baseFreshness?: BaseFreshnessProbeInput;
@@ -92,6 +93,16 @@ export interface FleetTruthProbeInput {
   readonly runner?: string;
   readonly target?: number;
   readonly relaunchArgs?: readonly string[];
+}
+
+export interface BundleCoherenceProbeInput {
+  readonly installedVersion?: string;
+  readonly pointerVersion?: string;
+  readonly laneNewestVersion?: string;
+  readonly npmNewestVersion?: string;
+  readonly npmError?: string;
+  readonly lastFailureAgeMs?: number;
+  readonly lastError?: string;
 }
 
 export type ClaimHygieneWorkerPidState = "live" | "dead" | "foreign" | "unknown";

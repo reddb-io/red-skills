@@ -1,5 +1,6 @@
 export * from "./operational-probes/types.js";
 export * from "./operational-probes/base-freshness.js";
+export * from "./operational-probes/bundle-coherence.js";
 export * from "./operational-probes/claim-hygiene.js";
 export * from "./operational-probes/config-coherence.js";
 export * from "./operational-probes/fleet-truth.js";

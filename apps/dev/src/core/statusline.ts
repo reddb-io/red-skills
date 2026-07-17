@@ -42,6 +42,8 @@ export interface ProjectInput {
   /** Newest locally cached `dev` bundle version. The render path uses this
    * cache-only fact to mark a stale session without doing network discovery. */
   latestCachedVersion?: string;
+  /** Stable pointer version from the local bundle cache, when present. */
+  pointerVersion?: string;
 }
 
 /** The block-2/3 Claude Code payload inputs. */
@@ -174,6 +176,8 @@ export interface FleetInput {
   parked?: number;
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
+  /** Stable pointer version the shim would serve from the local cache. */
+  pointerVersion?: string;
   /** Newest compatible dev bundle seen in the local cache. */
   latestBundleVersion?: string;
 }
@@ -485,8 +489,14 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}`];
   if (fleet.bundleVersion) {
-    const skew = compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0;
-    parts.push(`@${fleet.bundleVersion}${skew ? `<${fleet.latestBundleVersion}` : ""}`);
+    const versions = [fleet.bundleVersion, fleet.pointerVersion, fleet.latestBundleVersion]
+      .filter((v): v is string => Boolean(v));
+    const skew = new Set(versions).size > 1;
+    const latest =
+      fleet.latestBundleVersion && fleet.latestBundleVersion !== fleet.bundleVersion
+        ? `<${fleet.latestBundleVersion}`
+        : "";
+    parts.push(`@${fleet.bundleVersion}${skew ? "!" : ""}${latest}`);
   }
   parts.push(`q=${queue}`);
   if (fleet.parked !== undefined && fleet.parked > 0) {

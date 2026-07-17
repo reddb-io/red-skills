@@ -141,6 +141,8 @@ export interface PrecheckFacts {
   configCoherence?: OperationalProbeContext["configCoherence"];
   /** Optional fleet truth probe facts for red-doctor and boot visibility. */
   fleetTruth?: OperationalProbeContext["fleetTruth"];
+  /** Optional bundle pointer/cache/npm coherence facts for red-doctor. */
+  bundleCoherence?: OperationalProbeContext["bundleCoherence"];
   /** Optional claim hygiene probe facts for red-doctor and boot visibility. */
   claimHygiene?: OperationalProbeContext["claimHygiene"];
   /** Optional ready-label/body-blocker coherence probe facts for red-doctor and boot visibility. */

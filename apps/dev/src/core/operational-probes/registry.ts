@@ -1,5 +1,6 @@
 import { encode as encodeToon } from "@reddb-io/toon";
 import { baseFreshnessProbe } from "./base-freshness.js";
+import { bundleCoherenceProbe } from "./bundle-coherence.js";
 import { claimHygieneProbe } from "./claim-hygiene.js";
 import { configCoherenceProbe } from "./config-coherence.js";
 import { fleetTruthProbe } from "./fleet-truth.js";
@@ -21,6 +22,7 @@ export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   focalBranchProbe,
   baseFreshnessProbe,
   fleetTruthProbe,
+  bundleCoherenceProbe,
   claimHygieneProbe,
   labelBodyCoherenceProbe,
   configCoherenceProbe,

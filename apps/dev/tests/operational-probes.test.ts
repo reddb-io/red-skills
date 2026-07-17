@@ -52,6 +52,7 @@ describe("operational probe registry", () => {
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
       { id: "afk.base-freshness", name: "AFK local trunk freshness", verdict: "ok" },
       { id: "afk.fleet-truth", name: "AFK fleet truth", verdict: "ok" },
+      { id: "afk.bundle-coherence", name: "AFK bundle coherence", verdict: "ok" },
       { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
       { id: "afk.label-body-coherence", name: "AFK label/body coherence", verdict: "ok" },
       { id: "config.coherence", name: "Config coherence", verdict: "ok" },
@@ -59,6 +60,50 @@ describe("operational probe registry", () => {
     expect(decoded.findings).toHaveLength(1);
     expect(toon).not.toContain("{\n");
     expect(toon).not.toContain('": "');
+  });
+
+  it("reports pointer/lane/npm bundle skew with canonical fix guidance", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.63.0",
+        pointerVersion: "2.63.0",
+        laneNewestVersion: "2.64.0",
+        npmNewestVersion: "2.64.1",
+      },
+    });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        id: "afk.bundle-coherence",
+        name: "AFK bundle coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("findings=pointer-behind-lane,pointer-behind-npm,lane-behind-npm"),
+        canonicalFix: expect.stringContaining("reconcile the stable pointer"),
+      }),
+    ]);
+  });
+
+  it("reports stale failed bundle checks even without npm truth", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.63.0",
+        pointerVersion: "2.63.0",
+        laneNewestVersion: "2.63.0",
+        npmError: "fetch failed",
+        lastFailureAgeMs: 5 * 60 * 60 * 1000,
+        lastError: "fetch failed",
+      },
+    });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        id: "afk.bundle-coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("stale-failed-check"),
+      }),
+    ]);
   });
 
   it("surfaces malformed config fallback with the offending line and construct", async () => {
