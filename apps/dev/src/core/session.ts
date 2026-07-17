@@ -218,7 +218,7 @@ export interface SessionContext {
   bootOnly?: boolean;
   /**
    * The fleet supervisor already ran the shared boot sweeps before spawning this
-   * worker (#623, `RED_AFK_SWEEPS_DONE`): the worker booted bootstrap+claim only.
+   * worker (#623, `RED_AFK_BOOT_SWEEPS_COMPLETE`): the worker booted bootstrap+claim only.
    * Purely informational — it only shapes the `--boot-only` line so the dry-run
    * reports the sweeps as supervisor-owned rather than worker-run. The actual
    * skip is driven by `BootOptions.skipSweeps` in `runBoot`, not here.
