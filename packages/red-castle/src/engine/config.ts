@@ -16,7 +16,6 @@ export const ENGINE_CONFIG_DEFAULTS = {
   "afk.default_runner": "claude",
   "afk.sandbox": "none",
   "afk.max_iterations": "12",
-  "afk.attempt_timeout": "2700",
   "afk.statusline_cache_ttl": "180",
   "afk.worktree_launches_pull_request": "true",
   "afk.claim_reaper.refresh_s": "300",
@@ -37,13 +36,17 @@ const RED_AFK_ENV_ACCESSORS = {
   RED_AFK_RUNNER: "afk.default_runner",
   RED_AFK_SANDBOX: "afk.sandbox",
   RED_AFK_MAX_ITERATIONS: "afk.max_iterations",
-  RED_AFK_ATTEMPT_TIMEOUT_S: "afk.attempt_timeout",
   RED_AFK_STATUSLINE_CACHE_TTL_S: "afk.statusline_cache_ttl",
   RED_AFK_CLAIM_REFRESH_S: "afk.claim_reaper.refresh_s",
   RED_AFK_CLAIM_STALE_TOLERANCE: "afk.claim_reaper.stale_tolerance",
   RED_AFK_CLAIM_REAPER_GRACE_S: "afk.claim_reaper.grace_s",
   RED_AFK_CLAIM_REAPER_RECENT_COMMIT_S: "afk.claim_reaper.recent_commit_s",
 } as const;
+
+const DELETED_CONFIG_KEYS = new Set([
+  "afk.attempt_timeout",
+  "plugins.dev.afk.attempt_timeout",
+]);
 
 export interface LoadEngineConfigOptions {
   readonly read?: EngineConfigReader;
@@ -167,9 +170,11 @@ function foldDevNamespace(
   parsed: EngineConfigValues,
 ): void {
   for (const [key, value] of Object.entries(parsed)) {
+    if (DELETED_CONFIG_KEYS.has(key)) continue;
     values[key] = value;
   }
   for (const [key, value] of Object.entries(parsed)) {
+    if (DELETED_CONFIG_KEYS.has(key)) continue;
     const match = /^plugins\.dev\.(.+)$/.exec(key);
     if (!match) continue;
     const rest = match[1]!;
