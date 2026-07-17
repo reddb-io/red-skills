@@ -18,7 +18,7 @@ import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { auditConfigLoad, loadConfig, getConfig, resolveTier } from "../core/config.js";
-import { compareSemver, newestCachedDevBundleVersion } from "../core/bundle-version.js";
+import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../core/bundle-version.js";
 import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../core/pin-reader.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
@@ -839,7 +839,7 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
       preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
     ));
   if (fleet?.bundleVersion) {
-    fleet.latestBundleVersion = newestCachedDevBundleVersion(fleet.bundleVersion) ?? undefined;
+    fleet.latestBundleVersion = readDevBundleCacheState(fleet.bundleVersion).laneNewestVersion ?? undefined;
   }
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
@@ -1710,7 +1710,14 @@ export async function collectBootOptions(
   };
 }
 
-export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFacts> {
+export interface CollectPrecheckFactsOptions {
+  readonly includeNpmBundleCoherence?: boolean;
+}
+
+export async function collectPrecheckFacts(
+  ctx: RepoContext,
+  options: CollectPrecheckFactsOptions = {},
+): Promise<PrecheckFacts> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const { branchLockPath, readLockedBranch } = await import("./lock.js");
@@ -1757,11 +1764,21 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
-  const cachedBundleVersion = newestCachedDevBundleVersion(installedBundleVersion);
+  const bundleCache = readDevBundleCacheState(installedBundleVersion);
+  const cachedBundleVersion = bundleCache.laneNewestVersion;
   const latestBundleVersion =
     cachedBundleVersion && compareSemver(cachedBundleVersion, installedBundleVersion) > 0
       ? cachedBundleVersion
       : installedBundleVersion;
+  let npmNewestVersion: string | undefined;
+  let npmError: string | undefined;
+  if (options.includeNpmBundleCoherence) {
+    try {
+      npmNewestVersion = await fetchNpmNewestDevBundleVersion(installedBundleVersion);
+    } catch (error) {
+      npmError = error instanceof Error ? error.message : String(error);
+    }
+  }
   const supervisorCfg = resolveSupervisorConfig();
   const fleetTruth = await collectFleetTruthProbeInput(
     {
@@ -1862,6 +1879,15 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       sourceText: configText ?? undefined,
     },
     fleetTruth,
+    bundleCoherence: {
+      installedVersion: installedBundleVersion,
+      pointerVersion: bundleCache.pointerVersion,
+      laneNewestVersion: bundleCache.laneNewestVersion,
+      npmNewestVersion,
+      npmError,
+      lastFailureAgeMs: bundleCache.lastFailureAgeMs,
+      lastError: bundleCache.lastError,
+    },
   };
 }
 
