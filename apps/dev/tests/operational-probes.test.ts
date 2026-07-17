@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { decode } from "@reddb-io/toon";
@@ -8,6 +11,7 @@ import {
   renderOperationalProbeReportToon,
   runOperationalProbes,
 } from "../src/core/operational-probes.js";
+import { collectPrecheckFacts } from "../src/runtime/wire.js";
 
 describe("operational probe registry", () => {
   it("reports the HTTPS remote proof probe as red with a canonical fix", async () => {
@@ -43,6 +47,7 @@ describe("operational probe registry", () => {
     expect(decoded.probes).toEqual([
       { id: "git.remote.https-forbidden", name: "SSH-only git remotes", verdict: "red" },
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
+      { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
     expect(toon).not.toContain("{\n");
@@ -163,8 +168,167 @@ describe("operational probe registry", () => {
       canonicalFix: expect.stringContaining("gh auth status"),
     });
   });
+
+  it("reports resolved focal branch provenance when the runtime supplies the boot resolver triple", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      focalBranch: {
+        resolved: { branch: "develop", source: "trunk" },
+        configuredTrunk: "develop",
+      },
+    });
+
+    expect(report.findings).toEqual([]);
+    expect(report.probes.at(-1)).toMatchObject({
+      id: "afk.focal-branch-resolution",
+      verdict: "ok",
+      evidence: "resolved develop from trunk; configuredTrunk=develop",
+    });
+  });
+
+  it("flags stale and contradictory branch locks as distinct focal-branch findings", async () => {
+    const stale = await runOperationalProbes({
+      remoteUrls: [],
+      focalBranch: {
+        resolved: { branch: "missing/branch", source: "lock" },
+        configuredTrunk: "develop",
+        lock: {
+          raw: "missing/branch\n",
+          branch: "missing/branch",
+          targetExists: false,
+          heldByLiveSession: false,
+        },
+      },
+    });
+    const contradictory = await runOperationalProbes({
+      remoteUrls: [],
+      focalBranch: {
+        resolved: { branch: "release/old", source: "lock" },
+        configuredTrunk: "develop",
+        lock: {
+          raw: "release/old\n",
+          branch: "release/old",
+          targetExists: true,
+          heldByLiveSession: false,
+        },
+      },
+    });
+
+    expect(stale.findings[0]).toMatchObject({
+      id: "afk.focal-branch-resolution",
+      verdict: "red",
+      data: expect.objectContaining({ finding: "stale-lock-target-missing" }),
+    });
+    expect(stale.findings[0]?.evidence).toContain("stale lock target is missing");
+    expect(contradictory.findings[0]).toMatchObject({
+      id: "afk.focal-branch-resolution",
+      verdict: "red",
+      data: expect.objectContaining({ finding: "contradictory-lock-without-live-session" }),
+    });
+    expect(contradictory.findings[0]?.evidence).toContain("without a live holder");
+  });
+
+  it("keeps a divergent lock green when the current live session holds it", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      focalBranch: {
+        resolved: { branch: "release/held", source: "lock" },
+        configuredTrunk: "develop",
+        lock: {
+          raw: "release/held\n",
+          branch: "release/held",
+          targetExists: true,
+          heldByLiveSession: true,
+        },
+      },
+    });
+
+    expect(report.findings).toEqual([]);
+    expect(report.probes.at(-1)?.evidence).toContain("resolved release/held from lock");
+  });
+
+  it("leaves a real stale branch-lock file byte-identical when the gated repair is refused", async () => {
+    const { root, lockPath } = await makeGitRepo();
+    try {
+      await writeFile(lockPath, "missing/branch\n", "utf8");
+      const before = await readFile(lockPath, "utf8");
+      const facts = await collectPrecheckFacts({ root, repo: "", remote: "origin" });
+      const report = await runOperationalProbes(facts);
+      const removeBranchLock = vi.fn(async () => {
+        await rm(lockPath, { force: true });
+      });
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => false,
+        removeBranchLock,
+      });
+
+      expect(report.findings[0]).toMatchObject({
+        id: "afk.focal-branch-resolution",
+        data: expect.objectContaining({ finding: "stale-lock-target-missing" }),
+      });
+      expect(fixes).toContainEqual({
+        probeId: "afk.focal-branch-resolution",
+        status: "declined",
+        evidence: "operator declined fix",
+      });
+      expect(removeBranchLock).not.toHaveBeenCalled();
+      expect(await readFile(lockPath, "utf8")).toBe(before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the confirmed gated repair to a real contradictory branch-lock file", async () => {
+    const { root, lockPath } = await makeGitRepo();
+    try {
+      git(root, "checkout", "develop");
+      await writeFile(lockPath, "main\n", "utf8");
+      const facts = await collectPrecheckFacts({ root, repo: "", remote: "origin" });
+      const report = await runOperationalProbes(facts);
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        removeBranchLock: async () => {
+          await rm(lockPath, { force: true });
+        },
+      });
+
+      expect(report.findings[0]).toMatchObject({
+        id: "afk.focal-branch-resolution",
+        data: expect.objectContaining({ finding: "contradictory-lock-without-live-session" }),
+      });
+      expect(fixes).toContainEqual({
+        probeId: "afk.focal-branch-resolution",
+        status: "applied",
+        evidence: "cleared branch-lock",
+      });
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function readFixture(name: string): Promise<string> {
   return readFile(join(process.cwd(), "tests", "fixtures", "github-transport", name), "utf8");
+}
+
+async function makeGitRepo(): Promise<{ root: string; lockPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "red-skills-focal-"));
+  git(root, "init", "-b", "main");
+  git(root, "config", "user.email", "red@example.invalid");
+  git(root, "config", "user.name", "Red Test");
+  await writeFile(join(root, "README.md"), "fixture\n", "utf8");
+  git(root, "add", "README.md");
+  git(root, "commit", "-m", "initial");
+  git(root, "branch", "develop");
+  await mkdir(join(root, ".red", "state"), { recursive: true });
+  await mkdir(join(root, ".red"), { recursive: true });
+  await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: develop\n", "utf8");
+  return { root, lockPath: join(root, ".red", "state", "branch-lock.yaml") };
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" });
 }

@@ -18,7 +18,8 @@ import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
-import { resolveBase } from "../core/base-resolver.js";
+import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
+import { DEFAULT_BRANCH } from "../core/pin-reader.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -1714,7 +1715,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch] =
+  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch, lockRaw] =
     await Promise.all([
       ghx.ghInstalled(ghCtx),
       ghx.ghAuthenticated(ghCtx),
@@ -1724,8 +1725,9 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       gitx.currentBranch(gitCtx),
       import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
       readLockedBranch(lockPath),
+      fsx.readText(lockPath),
     ]);
-  const configuredTrunk = await resolveBase(
+  const resolvedFocalBranch = await resolveBaseWithSource(
     { issueBody: "" },
     {
       readLockedBranch: async () => lockedBranch,
@@ -1734,6 +1736,8 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       fetchIssueBody: async () => undefined,
     },
   );
+  const configuredTrunk = resolvedFocalBranch.branch;
+  const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
   const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled,
@@ -1750,8 +1754,25 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
     allowHttpsRemote:
       process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
-    queueVisibility: ghx.queueVisibilityProbeInput(ghCtx),
+    queueVisibility: ctx.repo ? ghx.queueVisibilityProbeInput(ghCtx) : undefined,
+    focalBranch: {
+      resolved: resolvedFocalBranch,
+      configuredTrunk: normalizeConfiguredTrunk(configTrunk),
+      lock: lockRaw === null
+        ? undefined
+        : {
+            raw: lockRaw,
+            branch: lockedBranch,
+            targetExists: lockTargetExists,
+            heldByLiveSession: lockedBranch ? currentBranch === lockedBranch : false,
+          },
+    },
   };
+}
+
+function normalizeConfiguredTrunk(value: string | undefined): string {
+  const trunk = value?.trim();
+  return trunk && trunk.length > 0 ? trunk : DEFAULT_BRANCH;
 }
 
 const DOC_SWEEP_PATHS = [".red/CONTEXT.md", ".red/CONTEXT-MAP.md", ".red/contexts", ".red/adr"] as const;

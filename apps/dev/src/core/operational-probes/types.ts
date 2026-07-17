@@ -9,6 +9,23 @@ export interface OperationalProbeContext {
   readonly remoteUrls: readonly (string | RemoteUrlFact)[];
   readonly allowHttpsRemote?: boolean;
   readonly queueVisibility?: QueueVisibilityProbeInput;
+  readonly focalBranch?: FocalBranchProbeInput;
+}
+
+export type FocalBranchSource = "lock" | "pin" | "trunk";
+
+export interface FocalBranchProbeInput {
+  readonly resolved: {
+    readonly branch: string;
+    readonly source: FocalBranchSource;
+  };
+  readonly configuredTrunk: string;
+  readonly lock?: {
+    readonly raw: string;
+    readonly branch?: string;
+    readonly targetExists?: boolean;
+    readonly heldByLiveSession?: boolean;
+  };
 }
 
 export type QueueVisibilityTransportSurface = "graphql" | "rest" | "rest-cache" | "unknown";
@@ -45,6 +62,8 @@ export interface OperationalProbeResult {
 export interface OperationalProbeFixDeps {
   confirm(finding: OperationalProbeResult): Promise<boolean>;
   setRemoteUrl?(name: string, url: string): Promise<void>;
+  removeBranchLock?(): Promise<void>;
+  writeBranchLock?(branch: string): Promise<void>;
 }
 
 export type OperationalProbeFixStatus = "applied" | "declined" | "noop";

@@ -3,6 +3,7 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
 import { listIssueStates, type GhContext } from "../runtime/gh.js";
 import { applyTmpJanitorReport, collectTmpJanitorReport, type TmpJanitorApplyResult, type TmpJanitorReport } from "../runtime/tmp-janitor.js";
+import { branchLockPath, clearBranchLock, writeBranchLock } from "../runtime/lock.js";
 import {
   applyOperationalProbeFixes,
   runOperationalProbes,
@@ -156,10 +157,13 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
       return state === "CLOSED" ? "CLOSED" : state === "OPEN" ? "OPEN" : "UNKNOWN";
     });
     const gitCtx: gitx.GitContext = { cwd: ctx.root };
+    const lockPath = branchLockPath(ctx.root);
     const probeFixes = flags.fix
       ? await applyOperationalProbeFixes(probeReport, {
           confirm: async () => flags.yes,
           setRemoteUrl: async (name, url) => gitx.setRemoteUrl(gitCtx, name, url),
+          removeBranchLock: async () => clearBranchLock(lockPath),
+          writeBranchLock: async (branch) => writeBranchLock(lockPath, branch),
         })
       : [];
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;

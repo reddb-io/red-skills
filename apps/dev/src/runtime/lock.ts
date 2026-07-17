@@ -9,7 +9,9 @@
 // toggles landMerge vs landPr).
 
 import { existsSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { dirname } from "node:path";
 import { branchLockFile, tmpDir } from "@reddb-io/shared/red-paths.js";
 import { readText } from "./fs.js";
 
@@ -46,4 +48,13 @@ export async function readLockedBranch(lockPath: string): Promise<string | undef
 /** True when a non-empty lock file is present. Mirrors `lock_store_is_locked`. */
 export async function isLocked(lockPath: string): Promise<boolean> {
   return (await readLockedBranch(lockPath)) !== undefined;
+}
+
+export async function clearBranchLock(lockPath: string): Promise<void> {
+  await rm(lockPath, { force: true });
+}
+
+export async function writeBranchLock(lockPath: string, branch: string): Promise<void> {
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, `${branch}\n`, "utf8");
 }

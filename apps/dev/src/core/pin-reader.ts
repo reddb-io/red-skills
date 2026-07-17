@@ -76,6 +76,13 @@ export interface ResolvePinInput {
   issueBody: string;
 }
 
+export type ResolvePinSource = "pin" | "trunk";
+
+export interface ResolvedPin {
+  branch: string;
+  source: ResolvePinSource;
+}
+
 /**
  * Apply the inheritance chain and always resolve to a branch:
  *   the Ticket's own pin, else its parent Spec's pin, else the Trunk
@@ -84,19 +91,23 @@ export interface ResolvePinInput {
  * The parent Spec body is fetched lazily via the injected `fetchIssueBody`,
  * keyed off the Ticket body's `Spec #<n>` reference.
  */
-export async function resolvePin(input: ResolvePinInput, deps: ResolvePinDeps): Promise<string> {
+export async function resolvePinWithSource(input: ResolvePinInput, deps: ResolvePinDeps): Promise<ResolvedPin> {
   const own = parseBranchPin(input.issueBody);
-  if (own) return own;
+  if (own) return { branch: own, source: "pin" };
 
   const parent = parseParentSpec(input.issueBody);
   if (parent !== undefined) {
     const specBody = await deps.fetchIssueBody(parent);
     if (specBody !== undefined) {
       const inherited = parseBranchPin(specBody);
-      if (inherited) return inherited;
+      if (inherited) return { branch: inherited, source: "pin" };
     }
   }
 
   const trunk = deps.defaultBranch?.trim();
-  return trunk !== undefined && trunk.length > 0 ? trunk : DEFAULT_BRANCH;
+  return { branch: trunk !== undefined && trunk.length > 0 ? trunk : DEFAULT_BRANCH, source: "trunk" };
+}
+
+export async function resolvePin(input: ResolvePinInput, deps: ResolvePinDeps): Promise<string> {
+  return (await resolvePinWithSource(input, deps)).branch;
 }
