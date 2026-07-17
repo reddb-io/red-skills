@@ -825,6 +825,7 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
   process.stderr.write(`rsp: ${reason}, passing through\n`);
   const status = await passthrough(argv);
   if (telemetryRoot) {
+    const failure = wrapperFailureIdentity(reason, argv, err);
     const {
       appendTelemetryEvent,
       RSP_ACCOUNTING_EVENTS_COLLECTION,
@@ -839,17 +840,71 @@ async function degradeToPassthrough(reason: string, argv: readonly string[], err
       loss: "lossless",
       raw_bytes: 0,
       emitted_bytes: 0,
-      degradation_reason: reason,
+      degradation_reason: failure.reason,
+      wrapper_family: failure.family,
+      wrapper_exit_code: failure.exitCode,
+      stderr_head: failure.stderrHead,
     }));
     fireAndForget(appendTelemetryEvent(telemetryRoot, {
       collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
       ts: new Date().toISOString(),
       command: passthroughTelemetryCommand(argv),
-      reason,
+      reason: failure.reason,
+      wrapper_family: failure.family,
+      wrapper_exit_code: failure.exitCode,
+      stderr_head: failure.stderrHead,
       accounting_recorded: true,
     }));
   }
   return status;
+}
+
+function wrapperFailureIdentity(
+  fallbackReason: string,
+  argv: readonly string[],
+  err: unknown,
+): { reason: string; family: string; exitCode: number; stderrHead: string } {
+  const family = argv[0] ?? "unknown";
+  const stderrHead = firstDiagnosticLine(err) || fallbackReason;
+  const unavailable = errorCode(err) === "ENOENT" ||
+    errorCode(err) === "MODULE_NOT_FOUND" ||
+    /(?:command not found|cannot find package|cannot find module|module not found|not provisioned)/i.test(stderrHead);
+  return {
+    reason: unavailable ? "wrapper-unavailable" : "wrapper-crash",
+    family,
+    exitCode: numericErrorStatus(err) ?? 1,
+    stderrHead: truncateOneLine(stderrHead, 240),
+  };
+}
+
+function firstDiagnosticLine(err: unknown): string {
+  if (err instanceof Error) return firstLine(err.message);
+  return firstLine(String(err ?? ""));
+}
+
+function firstLine(text: string): string {
+  return text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+}
+
+function truncateOneLine(text: string, maxChars: number): string {
+  const line = firstLine(text).replace(/\s+/g, " ").trim();
+  if (line.length <= maxChars) return line;
+  return `${line.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function errorCode(err: unknown): string {
+  if (typeof err !== "object" || err === null || !("code" in err)) return "";
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : "";
+}
+
+function numericErrorStatus(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  for (const key of ["status", "exitCode", "exit_code"]) {
+    const value = (err as Record<string, unknown>)[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
 }
 
 function fireAndForget(promise: Promise<unknown>): void {
@@ -1057,6 +1112,13 @@ function renderStats(
     `  most_recent_degradation_reason: ${telemetry.health.most_recent?.reason ?? "none"}`,
     "  degradations_by_reason:",
     ...renderReasons(telemetry.health.by_reason),
+    "  wrapper_failures_by_family:",
+    ...renderFamilyCounts(telemetry.health.by_family),
+    "  recent_wrapper_failures:",
+    ...renderRecentFailures(telemetry.health.recent_failures.slice(0, full ? 20 : 5)),
+    ...(!full && telemetry.health.recent_failures.length > 5
+      ? [`    elided_failures: ${telemetry.health.recent_failures.length - 5}`, "    hint: --full"]
+      : []),
     "decisions:",
     `  seen: ${telemetry.decisions.seen}`,
     `  contributed: ${telemetry.decisions.contributed}`,
@@ -1109,6 +1171,20 @@ function renderReasons(reasons: Array<{ reason: string; count: number }>): strin
   return reasons.map((entry) => `    ${entry.reason}: ${entry.count}`);
 }
 
+function renderFamilyCounts(families: Array<{ family: string; count: number }>): string[] {
+  if (families.length === 0) return ["    empty: true"];
+  return families.map((entry) => `    ${entry.family}: ${entry.count}`);
+}
+
+function renderRecentFailures(failures: RspTelemetryStats["health"]["recent_failures"]): string[] {
+  if (failures.length === 0) return ["    empty: true"];
+  return failures.map((entry) =>
+    `    - at: ${entry.timestamp || "unknown"} family: ${entry.family} command: ${entry.command} reason: ${entry.reason} exit_code: ${
+      entry.exit_code ?? "none"
+    } stderr_head: ${entry.stderr_head ?? "none"}`
+  );
+}
+
 function renderStorageClasses(stats: RspStorageClassStats): string[] {
   return (["derivable", "re-executable", "ephemeral"] as const).map((storageClass) =>
     `  ${storageClass}: records: ${stats[storageClass].records} bytes: ${stats[storageClass].bytes} raw_bytes: ${stats[storageClass].raw_bytes}`
@@ -1155,6 +1231,8 @@ function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       show_misses: 0,
       show_hit_rate: 0,
       by_reason: [],
+      by_family: [],
+      recent_failures: [],
       most_recent: null,
     },
     latency: {
