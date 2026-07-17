@@ -26,13 +26,13 @@ function scratch(): string {
 }
 
 function writeSupervisorArtifacts(root: string, pid: number | string): Record<string, string> {
-  const tmp = join(root, ".red", "tmp");
-  mkdirSync(tmp, { recursive: true });
+  const stateAfk = join(root, ".red", "state", "afk");
+  mkdirSync(stateAfk, { recursive: true });
   const paths = {
-    pid: join(tmp, "afk-supervisor.pid"),
-    state: join(tmp, "afk-supervisor.state.json"),
-    log: join(tmp, "afk-supervisor.log"),
-    firehose: join(tmp, "afk-supervisor.log.jsonl"),
+    pid: join(stateAfk, "afk-supervisor.pid"),
+    state: join(stateAfk, "afk-supervisor.state.json"),
+    log: join(stateAfk, "afk-supervisor.log"),
+    firehose: join(stateAfk, "afk-supervisor.log.jsonl"),
   };
   writeFileSync(paths.pid, String(pid), "utf8");
   writeFileSync(paths.state, "{not json", "utf8");
