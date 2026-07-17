@@ -7,7 +7,7 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, closeSync, readFileSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
+import { existsSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import {
@@ -55,6 +55,7 @@ import { reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 import {
   castleStateSnapshotPath,
   createEnginePaths,
+  createCastleLaneWriters,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
@@ -423,9 +424,9 @@ function buildSupervisorDeps(
   root: string,
   tmpDir: string,
   slotLogsDir: string,
-  logFd: number,
   firehosePath: string,
   statePath: string,
+  supervisorId: string,
   runner: string,
   ghCtx: ghx.GhContext,
   slotArgs: readonly string[],
@@ -434,14 +435,25 @@ function buildSupervisorDeps(
   const bundle = process.argv[1];
   const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
-  // Per-tick / boot liveness line into afk-supervisor.log (best-effort). Shared
-  // by `log` and the pre-spawn boot sweeps so both land in the supervisor log.
+  const supervisorWriter = createCastleLaneWriters(
+    createEnginePaths(join(root, ".red")),
+  ).supervisor(supervisorId);
+  const emitSupervisorEvent: NonNullable<SupervisorDeps["emitSupervisorEvent"]> = async (record) => {
+    await supervisorWriter.append({
+      supervisor_id: supervisorId,
+      ...record,
+    });
+  };
+  // Legacy prose strings are retained only as a derived structured event. The
+  // human view reads the supervisor lane; no supervisor-owned prose log is
+  // dual-written.
   const logLine = (line: string): void => {
-    try {
-      writeSync(logFd, `[${new Date().toISOString()}] ${line}\n`);
-    } catch {
-      // best-effort: a log-write failure must never affect the loop.
-    }
+    void Promise.resolve(
+      emitSupervisorEvent({
+        kind: "supervisor.message",
+        payload: { message: line },
+      }),
+    ).catch(() => undefined);
   };
   // Fleet hook resolution: library defaults-dir + project .red/hooks/ layering,
   // same convention as worker hooks (ADR 0026, #830, #833).
@@ -499,12 +511,15 @@ function buildSupervisorDeps(
           "--reconcile-issue", String(candidate.issue),
           ...slotArgs,
         ];
+        const slotLogFile = slotLogPath(tmpDir, slot, slotLogsDir);
+        const slotFd = openSync(slotLogFile, "a");
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
           env: buildSlotEnv(workerEnv, slot, undefined, slotRetirePath(statePath, slot)),
           detached: true,
-          stdio: ["ignore", logFd, logFd],
+          stdio: ["ignore", slotFd, slotFd],
         });
+        closeSync(slotFd);
         child.on("exit", (code) => {
           // null means the process was killed by a signal; treat as non-clean (1).
           slotExitCodes.set(slot, code ?? 1);
@@ -537,7 +552,7 @@ function buildSupervisorDeps(
         await teardownIterDirNative(info, root);
       },
       parkedSlotWork: (slot, lastPid) =>
-        parkedSlotWorkFor(tmpDir, slot, lastPid, afkPaths(root).supervisorLogPath, slotLogsDir),
+        parkedSlotWorkFor(tmpDir, slot, lastPid, supervisorWriter.path, slotLogsDir),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
@@ -617,8 +632,8 @@ function buildSupervisorDeps(
     wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
-    // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
-    // healthy fleet's heartbeat — and a wedged one's silence — observable.
+    // Derived human-readable messages are stored in the structured supervisor
+    // lane, not dual-written to a prose supervisor log.
     log: logLine,
     // Fleet supervisor owns the boot (#623): runSupervisor calls this ONCE before
     // the initial spawn. Runs the full shared sweep suite over real IO and logs
@@ -722,6 +737,7 @@ function buildSupervisorDeps(
         return { stateWritten: false, stateError: heartbeatWriteError(err) };
       }
     },
+    emitSupervisorEvent,
   };
 }
 
@@ -736,7 +752,6 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const stateAfk = dirname(paths.supervisorPidPath);
   const pidFile = paths.supervisorPidPath;
   const stopFile = paths.supervisorStopPath;
-  const logFile = paths.supervisorLogPath;
   const firehoseFile = paths.fleetFirehosePath;
   const stateFile = paths.fleetStatePath;
   const slotLogsDir = slotLogDir(tmp);
@@ -768,12 +783,12 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   if (existsSync(stopFile)) rmSync(stopFile, { force: true });
   rmSync(paths.supervisorResizePath, { force: true });
 
-  const logFd = openSync(logFile, "a");
   const values = loadConfig(paths.configPath, { warn: () => undefined });
   const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
   const state = initSupervisorState(config.target);
   const repo = await resolveRepoSlug(root).catch(() => "");
   const ghCtx = { cwd: root, repo };
+  const supervisorId = `s${process.pid}`;
   // The filter/policy flags fleet.ts forwarded (--spec/--issues/--alternate/
   // --fallback-runner/--request), threaded into every slot's `run --once`.
   const slotArgs = slotFilterArgs(args);
@@ -784,7 +799,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     RED_AFK_RUNNER: config.runner,
     ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
   };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs, hookEnvBase);
+  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, slotArgs, hookEnvBase);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 
