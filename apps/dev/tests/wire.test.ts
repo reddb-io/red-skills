@@ -597,6 +597,31 @@ describe("collectMonitorInputs", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("drops stale supervisor self-report when the supervisor pid is dead", async () => {
+    const root = scratch();
+    try {
+      const paths = afkPaths(root);
+      mkdirSync(dirname(paths.fleetStatePath), { recursive: true });
+      writeFileSync(paths.supervisorPidPath, "999999999\n");
+      writeFileSync(
+        paths.fleetStatePath,
+        JSON.stringify({
+          ts: "2026-05-30T11:00:00Z",
+          epoch: Math.floor(Date.now() / 1000) - 10_000,
+          runner: "codex",
+          ready_for_agent: 9,
+          slots: { busy: 2, free: 0, total: 2, parked: 0 },
+          spawns_this_tick: 2,
+          churn: { window_s: 90, deaths: 2, respawns: 2 },
+        }),
+      );
+
+      await expect(collectStatuslineFleet({ root, repo: "reddb-io/red-skills", remote: "origin" })).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("withTimeout — bounded cold-cache refresh", () => {
