@@ -93,6 +93,11 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
       parked: hb.slotsParked,
     },
     spawns_this_tick: hb.spawnsThisTick,
+    churn: {
+      window_s: hb.churn.windowS,
+      deaths: hb.churn.deaths,
+      respawns: hb.churn.respawns,
+    },
     ...(hb.drainBudget
       ? {
           drain_budget: {
@@ -139,6 +144,11 @@ async function writeCastleSupervisorSnapshot(
           parked: hb.slotsParked,
         },
         spawns_this_tick: hb.spawnsThisTick,
+        churn: {
+          window_s: hb.churn.windowS,
+          deaths: hb.churn.deaths,
+          respawns: hb.churn.respawns,
+        },
         ...(hb.drainBudget
           ? {
               drain_budget: {
@@ -684,6 +694,9 @@ function buildSupervisorDeps(
               slots_total: String(stamped.slotsTotal),
               slots_parked: String(stamped.slotsParked),
               spawns_this_tick: String(stamped.spawnsThisTick),
+              churn_window_s: String(stamped.churn.windowS),
+              churn_deaths: String(stamped.churn.deaths),
+              churn_respawns: String(stamped.churn.respawns),
               drain_budget_tier: stamped.drainBudget?.tier ?? null,
               drain_budget_spent_usd: stamped.drainBudget?.spentUsd.toFixed(4) ?? null,
               drain_budget_limit_usd: stamped.drainBudget?.limitUsd.toFixed(4) ?? null,
