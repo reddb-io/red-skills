@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { decode } from "@reddb-io/toon";
+import { parseCurrentBlocker } from "../src/core/blocker-state.js";
 import {
   applyOperationalProbeFixes,
   classifyQueueVisibilityTransportFailure,
@@ -50,6 +51,7 @@ describe("operational probe registry", () => {
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
       { id: "afk.fleet-truth", name: "AFK fleet truth", verdict: "ok" },
       { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
+      { id: "afk.label-body-coherence", name: "AFK label/body coherence", verdict: "ok" },
       { id: "config.dev-root-spelling", name: "Config dev-plugin namespacing", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
@@ -188,6 +190,84 @@ describe("operational probe registry", () => {
       evidence: "queue listing failed (generic-transport, surface=unknown)",
       canonicalFix: expect.stringContaining("gh auth status"),
     });
+  });
+
+  it("flags ready-labelled issues with an active body blocker and archives the blocker on confirmed repair", async () => {
+    const fixture = JSON.parse(await readFixture("ready-body-blocker.json")) as Array<{
+      number: number;
+      title: string;
+      labels: string[];
+      body: string;
+    }>;
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      labelBodyCoherence: {
+        listOpenReadyIssues: async () => fixture,
+      },
+    });
+
+    const finding = report.findings.find((row) => row.id === "afk.label-body-coherence");
+    expect(finding).toMatchObject({
+      id: "afk.label-body-coherence",
+      verdict: "red",
+      fix: { gate: "confirm" },
+    });
+    expect(finding?.evidence).toContain("issue=#1971");
+    expect(finding?.evidence).toContain("labels=[ready-for-agent,priority:normal]");
+    expect(finding?.evidence).toContain("blocker={status=blocked kind=validation ref=#1965");
+    expect(finding?.evidence).toContain("summary=\"Gate failed before the manual requeue.\"");
+    expect(finding?.evidence).toContain("next=\"Confirm the issue is safe to delegate again.\"");
+
+    const updateIssueBody = vi.fn(async (_issue: number, _body: string) => {});
+    const fixes = await applyOperationalProbeFixes(report, {
+      confirm: async () => true,
+      updateIssueBody,
+    });
+
+    expect(fixes).toContainEqual({
+      probeId: "afk.label-body-coherence",
+      status: "applied",
+      evidence: "archived 1 active blocker",
+    });
+    expect(updateIssueBody).toHaveBeenCalledOnce();
+    expect(updateIssueBody.mock.calls[0]?.[0]).toBe(1971);
+    const nextBody = String(updateIssueBody.mock.calls[0]?.[1] ?? "");
+    expect(parseCurrentBlocker(nextBody)).toBeNull();
+    expect(nextBody).toContain("## Current blocker\n\nNone");
+    expect(nextBody).toContain("## Resolved blockers");
+    expect(nextBody).toContain(
+      "- [x] Gate failed before the manual requeue. - ready-for-agent label confirmed; active blocker archived by gated repair.",
+    );
+  });
+
+  it("leaves the ready issue body byte-identical when the coherence repair is refused", async () => {
+    const fixture = JSON.parse(await readFixture("ready-body-blocker.json")) as Array<{
+      number: number;
+      title: string;
+      labels: string[];
+      body: string;
+    }>;
+    const before = fixture[0]!.body;
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      labelBodyCoherence: {
+        listOpenReadyIssues: async () => fixture,
+      },
+    });
+    const updateIssueBody = vi.fn(async (_issue: number, _body: string) => {});
+
+    const fixes = await applyOperationalProbeFixes(report, {
+      confirm: async () => false,
+      updateIssueBody,
+    });
+
+    expect(fixes).toContainEqual({
+      probeId: "afk.label-body-coherence",
+      status: "declined",
+      evidence: "operator declined 1 issue repair",
+    });
+    expect(updateIssueBody).not.toHaveBeenCalled();
+    expect(fixture[0]!.body).toBe(before);
   });
 
   it("reports resolved focal branch provenance when the runtime supplies the boot resolver triple", async () => {
