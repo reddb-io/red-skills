@@ -149,6 +149,10 @@ export interface IssueClaimState {
   liveOwner: string | null;
   /** Active (non-conceded) claimants whose LATEST marker classified stale. */
   staleOwners: string[];
+  /** Workers whose latest marker withdrew from the issue. If every claim has
+   * ended in concede while the issue still carries `running`, the label
+   * projection is stranded and the boot sweep must repair it. */
+  concededOwners: string[];
 }
 
 /**
@@ -194,8 +198,12 @@ export function classifyIssueClaims(
   let liveOwner: string | null = null;
   let liveOwnerId = Infinity;
   const staleOwners: string[] = [];
+  const concededOwners: string[] = [];
   for (const [worker, f] of folds) {
-    if (f.latestKind === "concede") continue; // withdrew
+    if (f.latestKind === "concede") {
+      concededOwners.push(worker);
+      continue; // withdrew
+    }
     if (f.earliestClaimId === null) continue; // only ever conceded — not a claim
     if (isStale(f.latestRecord)) {
       staleOwners.push(worker);
@@ -207,7 +215,8 @@ export function classifyIssueClaims(
     }
   }
   staleOwners.sort();
-  return { liveOwner, staleOwners };
+  concededOwners.sort();
+  return { liveOwner, staleOwners, concededOwners };
 }
 
 /** One claimed issue handed to the sweep: the issue number + its parsed claim
@@ -227,6 +236,7 @@ export interface ClaimedIssue {
 export interface StaleClaimRelease {
   issue: number;
   staleOwners: string[];
+  concededOwners?: string[];
 }
 
 /** Render the single audit comment the boot sweep posts when it releases an
@@ -247,6 +257,18 @@ export function renderDeadClaimSweepAudit(staleOwners: readonly string[]): strin
   return (
     `🤖 AFK same-host ghost-claim sweep: released this issue back to \`ready-for-agent\` — ` +
     `${staleOwners.length === 1 ? "the claim" : "the claims"} held by ${who} had a dead \`worker.pid\`.`
+  );
+}
+
+/** Render the audit comment for a stranded label projection: all claim markers
+ * ended in concede but the issue still carried `running`, so the sweep returned
+ * it to the executable pool. */
+export function renderConcededClaimSweepAudit(concededOwners: readonly string[]): string {
+  const who = concededOwners.map((w) => `\`${w}\``).join(", ");
+  return (
+    `🤖 AFK claim-label sweep: released this issue back to \`ready-for-agent\` — ` +
+    `${concededOwners.length === 1 ? "the latest claim marker" : "the latest claim markers"} for ${who} ` +
+    `ended in concede while the issue was still labeled \`running\`.`
   );
 }
 
@@ -272,6 +294,10 @@ export function planStaleClaimSweep(
       const hasDeadOwner = state.staleOwners.some((owner) => deadOwners.has(owner));
       if (!hasDeadOwner && isRecentAttemptCommit(c.attemptBranchCommitS, nowS, config.recentCommitProtectionS)) continue;
       releases.push({ issue: c.issue, staleOwners: state.staleOwners });
+      continue;
+    }
+    if (state.liveOwner === null && state.staleOwners.length === 0 && state.concededOwners.length > 0) {
+      releases.push({ issue: c.issue, staleOwners: [], concededOwners: state.concededOwners });
     }
   }
   return releases;
