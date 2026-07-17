@@ -1,4 +1,5 @@
 import { relative } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
@@ -179,6 +180,19 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           },
           updateIssueBody: async (issue, body) => {
             await editBody({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext, issue, body);
+          },
+          readText: async (path) => {
+            try {
+              return await readFile(path, "utf8");
+            } catch {
+              return null;
+            }
+          },
+          writeText: async (path, text) => {
+            await writeFile(path, text, "utf8");
+          },
+          showDiffPreview: async (_finding, diff) => {
+            process.stdout.write(`diff preview:\n${diff}`);
           },
           confirmRelaunch: async () => flags.yes,
           relaunchFleet: async (request) => {
