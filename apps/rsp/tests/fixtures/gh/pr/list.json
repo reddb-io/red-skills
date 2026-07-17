@@ -28,12 +28,20 @@
         "draft": true
       }
     ],
+    "aggregate": {
+      "returned": 2
+    },
     "summary": "2 open PRs"
   },
   "assertions": [
     {
       "question": "oracle preserves prs.length",
       "path": "prs.length",
+      "expected": 2
+    },
+    {
+      "question": "oracle preserves returned aggregate",
+      "path": "aggregate.returned",
       "expected": 2
     },
     {
