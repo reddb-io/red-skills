@@ -175,9 +175,9 @@ export const PASSTHROUGH_DENYLIST: readonly string[] = [
   "RED_AFK_RUNNER",
   // #623: the supervisor sets this explicitly on every spawned worker (below) so
   // the worker boots bootstrap+claim only. Deny it from the inherited passthrough
-  // so an operator's stray `export RED_AFK_SWEEPS_DONE=1` can never reach a worker
+  // so an operator's stray `export RED_AFK_BOOT_SWEEPS_COMPLETE=1` can never reach a worker
   // by accident — only the supervisor's own re-pin grants it.
-  "RED_AFK_SWEEPS_DONE",
+  "RED_AFK_BOOT_SWEEPS_COMPLETE",
   "RED_AFK_POLL_S",
   "RED_AFK_STALL_POLL_S",
   "RED_AFK_STALL_THRESHOLD_S",
@@ -233,7 +233,7 @@ export function buildWorkerEnv(
   // pre-spawn). Read by `run`'s runCommand → BootOptions.skipSweeps. The marker
   // is the sole grant — it is in PASSTHROUGH_DENYLIST so it can't leak in from
   // the operator env, exactly mirroring how RED_AFK_RUNNER is re-pinned above.
-  out.RED_AFK_SWEEPS_DONE = "1";
+  out.RED_AFK_BOOT_SWEEPS_COMPLETE = "1";
   return out;
 }
 
