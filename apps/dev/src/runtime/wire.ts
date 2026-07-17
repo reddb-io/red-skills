@@ -1816,6 +1816,11 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
           workerPidState,
         }
       : undefined,
+    labelBodyCoherence: ctx.repo
+      ? {
+          listOpenReadyIssues: async () => ghx.listCandidates(ghCtx, LABEL_READY),
+        }
+      : undefined,
     focalBranch: {
       resolved: resolvedFocalBranch,
       configuredTrunk: normalizeConfiguredTrunk(configTrunk),
