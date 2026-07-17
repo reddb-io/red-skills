@@ -318,7 +318,7 @@ async function recoverDeadSupervisor(
         `issue(s) stranded and ${signals.liveWorkers}/${signals.target} live worker(s), but ` +
         `${decision.countInWindow} restart(s) within ${bound.windowS}s hit the max-restarts cap ` +
         `(${bound.maxRestarts}) — NOT respawning. Investigate the crash loop; delete ` +
-        `.red/state/afk/afk-supervisor.restarts.json to reset the bound.`,
+        `.red/state/castle/afk-supervisor.restarts.json to reset the bound.`,
     );
     return { ...base, crashLoopSuppressed: true };
   }
