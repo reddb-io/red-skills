@@ -515,6 +515,7 @@ describe("collectMonitorInputs", () => {
           ready_for_agent: 9,
           slots: { busy: 1, free: 2, total: 3, parked: 0 },
           spawns_this_tick: 1,
+          churn: { deaths: 2, respawns: 1, window_s: 300 },
         }),
       );
 
@@ -525,6 +526,9 @@ describe("collectMonitorInputs", () => {
         slotsFree: 2,
         slotsTotal: 3,
         spawnsThisTick: 1,
+        churnDeaths: 2,
+        churnRespawns: 1,
+        churnWindowS: 300,
       });
       const { fleet } = await collectMonitorInputs(root);
       expect(fleet?.readyForAgent).toBe(9);
