@@ -178,19 +178,41 @@ describe("rsp git fidelity fixtures", () => {
     }
   });
 
-  it("forwards non-zero git status and stderr byte-intact from fault fixtures", async () => {
+  it("renders non-zero git status as a structured error with diagnostic stderr", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "push-rejected")!;
       const result = await runFidelityFixture(fixture, { level: "lossless", store });
+      const decoded = decode(result.stdout.toString("utf8")) as { category: string; error: string; help: string[] };
 
       expect(result.status).toBe(1);
       expect(result.stderr).toEqual(Buffer.from("fatal: unable to access 'https://example.invalid/repo.git/': denied\n"));
-      expect(result.stdout).toEqual(Buffer.from(""));
+      expect(decoded.category).toBe("real-error");
+      expect(decoded.error).toContain("fatal: unable to access");
+      expect(decoded.help).toEqual(["git push --help"]);
     } finally {
       await store.close();
     }
+  });
+
+  it("reports already-satisfied git push as an explicit no-op", async () => {
+    const result = await renderGitContract(["git", "push"], {
+      stdout: [
+        "To github.com:reddb-io/red-skills.git",
+        "=\trefs/heads/main:refs/heads/main\t[up to date]",
+        "Done",
+        "",
+      ].join("\n"),
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { category: string; noop: boolean; summary: string };
+
+    expect(result.status).toBe(0);
+    expect(decoded).toMatchObject({ category: "no-op", noop: true });
+    expect(decoded.summary).toContain("already satisfied");
   });
 
   it("keeps commit-created and push-ref-update fixtures as compact TOON instead of scalar verdicts", async () => {
@@ -211,15 +233,17 @@ describe("rsp git fidelity fixtures", () => {
     }
   });
 
-  it("keeps rejected push fixtures at full fidelity while bypassing the scalar fast-path", async () => {
+  it("keeps rejected push fixtures structured while bypassing the scalar fast-path", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "push-rejected")!;
       const result = await runFidelityFixture(fixture, { level: "lossless", store });
+      const decoded = decode(result.stdout.toString("utf8")) as { category: string; error: string };
 
       expect(result.oneLine).toBeUndefined();
-      expect(result.stdout.toString("utf8")).toBe(fixture.expected);
+      expect(decoded.category).toBe("real-error");
+      expect(decoded.error).toContain("fatal: unable to access");
       expect(result.assertionFailures).toEqual([]);
     } finally {
       await store.close();

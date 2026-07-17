@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
-import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
+import { extractQueryArg, filterRows, withHelp } from "./output-levers.js";
+import { classifyWrappedFailure, renderStructuredError, renderUnknownFlag } from "./structured-error.js";
 
 export { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 
@@ -59,10 +60,11 @@ export async function renderGitContract(
 ): Promise<GitRenderResult> {
   const parsedCommand = parseGitRenderCommand(command);
   if ((contract.status ?? 0) !== 0 || contract.signal) {
+    const error = classifyWrappedFailure(command.join(" "), contract.stdout, contract.stderr);
     return {
-      stdout: Buffer.from(filterTextLines(contract.stdout, parsedCommand.query)),
+      stdout: renderStructuredError(error),
       stderr: Buffer.from(contract.stderr),
-      status: contract.status,
+      status: error.exitCode ?? 1,
       signal: contract.signal,
     };
   }
@@ -142,6 +144,8 @@ function parseGitRenderCommand(command: readonly string[]): ParsedGitRenderComma
     }
     argv.push(arg);
   }
+  const unknown = argv.slice(2).find((arg) => arg.startsWith("--rsp-"));
+  if (unknown) throw new StructuredUsageError(command.join(" "), unknown, ["--full", "--brief", "--terse", "--query"]);
   return { argv, query: parsed.query, full };
 }
 
@@ -354,12 +358,38 @@ function parsePush(command: readonly string[], stdout: string): JsonObject {
   const pushed = refs.find((ref) => ref.flag !== "=") ?? refs[0];
   const branch = pushed?.to.startsWith("refs/heads/") ? pushed.to.slice("refs/heads/".length) : (pushed?.to ?? "");
   const commitCount = pushed?.summary.includes("..") ? 1 : 0;
+  if (refs.length > 0 && refs.every((ref) => ref.flag === "=")) {
+    return {
+      command: command.join(" "),
+      category: "no-op",
+      exit_code: 0,
+      noop: true,
+      remote,
+      refs,
+      summary: `push already satisfied for ${branch} -> ${remote}`,
+      help: ["rsp gh pr list --query <branch>"] as JsonValue,
+    };
+  }
   return {
     command: command.join(" "),
     remote,
     refs,
     summary: `pushed ${branch} -> ${remote} +${commitCount} commits`,
   };
+}
+
+export class StructuredUsageError extends Error {
+  constructor(
+    readonly command: string,
+    readonly flag: string,
+    readonly validFlags: readonly string[],
+  ) {
+    super(`unknown flag: ${flag}`);
+  }
+
+  render(): Buffer {
+    return renderUnknownFlag(this.command, this.flag, this.validFlags, `${this.command} --help`);
+  }
 }
 
 function parseBlame(command: readonly string[], stdout: string, query?: string): JsonObject {

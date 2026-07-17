@@ -63,7 +63,7 @@ describe("rsp test runner fidelity fixtures", () => {
         const result = await runFidelityFixture(fixture, { level: "lossless", store });
         const decoded = decode(result.stdout.toString("utf8"));
 
-        expect(result.status).toBe(fixture.recorded.status);
+        expect(result.status).toBe(fixture.recorded.status === 0 ? 0 : 1);
         expect(result.assertionFailures).toEqual([]);
         expect(decoded).toEqual(fixture.expected);
       }
@@ -78,9 +78,11 @@ describe("rsp test runner fidelity fixtures", () => {
     try {
       const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "vitest-fault-green-nonzero")!;
       const result = await runFidelityFixture(fixture, { level: "lossless", store });
+      const decoded = decode(result.stdout.toString("utf8")) as { category: string; error: string };
 
       expect(result.status).toBe(1);
-      expect(result.stdout).toEqual(Buffer.from(fixture.recorded.stdout, "utf8"));
+      expect(decoded.category).toBe("real-error");
+      expect(decoded.error).toBe("worker crashed after reporting JSON");
       expect(result.stdout.toString("utf8")).not.toContain("0/2 failed");
     } finally {
       await store.close();

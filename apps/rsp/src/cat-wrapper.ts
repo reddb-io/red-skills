@@ -4,6 +4,7 @@ import { extname } from "node:path";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { type RspLossLevel, type RspMintMeta } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
+import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
 
 export interface CatRenderOptions {
   level: RspLossLevel;
@@ -51,7 +52,19 @@ const CODE_EXTENSIONS = new Set([
 
 export async function runCatWrapper(argv: readonly string[], options: CatRenderOptions): Promise<GitRenderResult> {
   const parsed = parseCatCommand(argv);
-  const bytes = await readFile(parsed.file);
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(parsed.file);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const error = classifyWrappedFailure(argv.join(" "), "", message);
+    return {
+      stdout: renderStructuredError({ ...error, help: `ls ${parsed.file}` }),
+      stderr: Buffer.from(`${message}\n`),
+      status: 1,
+      signal: null,
+    };
+  }
   if (isBinary(bytes)) {
     return {
       stdout: bytes,
@@ -70,10 +83,11 @@ export async function renderCatContract(
   options: CatRenderOptions,
 ): Promise<GitRenderResult> {
   if ((contract.status ?? 0) !== 0 || contract.signal) {
+    const error = classifyWrappedFailure(command.join(" "), contract.stdout, contract.stderr);
     return {
-      stdout: Buffer.from(contract.stdout),
+      stdout: renderStructuredError(error),
       stderr: Buffer.from(contract.stderr),
-      status: contract.status,
+      status: error.exitCode ?? 1,
       signal: contract.signal,
     };
   }

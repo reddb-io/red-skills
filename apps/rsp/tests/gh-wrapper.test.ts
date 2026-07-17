@@ -117,7 +117,7 @@ describe("rsp gh fidelity fixtures", () => {
     }
   });
 
-  it("forwards gh auth failures and rate limits byte-intact", async () => {
+  it("renders gh auth failures and rate limits as structured errors", async () => {
     const root = await tempRoot();
     const store = await RspElisionStore.open({ uri: `file://${join(root, "red.rdb")}` });
     try {
@@ -125,16 +125,20 @@ describe("rsp gh fidelity fixtures", () => {
       const auth = fixtures.find((candidate) => candidate.name === "issue-list-auth-failure")!;
       const rate = fixtures.find((candidate) => candidate.name === "run-list-rate-limit")!;
 
-      await expect(runFidelityFixture(auth, { level: "lossless", store })).resolves.toMatchObject({
-        status: 4,
-        stdout: Buffer.from(""),
-        stderr: Buffer.from("gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.\n"),
-      });
-      await expect(runFidelityFixture(rate, { level: "lossless", store })).resolves.toMatchObject({
+      const authResult = await runFidelityFixture(auth, { level: "lossless", store });
+      const authError = decode(authResult.stdout.toString("utf8")) as { category: string; help: string[]; error: string };
+      expect(authResult.status).toBe(1);
+      expect(authResult.stderr).toEqual(Buffer.from("gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.\n"));
+      expect(authError).toMatchObject({ category: "real-error", help: ["gh auth login"] });
+      expect(authError.error).toContain("GH_TOKEN");
+
+      const rateResult = await runFidelityFixture(rate, { level: "lossless", store });
+      const rateError = decode(rateResult.stdout.toString("utf8")) as { category: string; help: string[]; error: string };
+      expect(rateResult).toMatchObject({
         status: 1,
-        stdout: Buffer.from(""),
         stderr: Buffer.from("API rate limit exceeded for installation ID 12345.\n"),
       });
+      expect(rateError).toMatchObject({ category: "real-error", help: ["gh auth status"] });
     } finally {
       await store.close();
     }
