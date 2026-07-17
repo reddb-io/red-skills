@@ -155,4 +155,14 @@ describe("resolveRspConfig", () => {
     expect(config.enabled).toBe(false);
     await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("fails clearly instead of opening a legacy tmp-tier shared store", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red", "tmp"), { recursive: true });
+    await writeFile(join(root, ".red", "tmp", "red-skills.rdb"), "legacy", "utf8");
+
+    expect(() => resolveRspConfig(root, {}, undefined)).toThrow(
+      "Run `rsp setup` to migrate it to .red/state/red-skills.rdb",
+    );
+  });
 });
