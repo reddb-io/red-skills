@@ -1,7 +1,8 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afkPaths } from "../runtime/wire.js";
+import { encode as encodeToon } from "@reddb-io/toon";
+import { afkPaths, collectMonitorInputs, resolveRepoSlug } from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
@@ -48,9 +49,10 @@ function parseShrinkMode(raw: string | undefined, flag: string): ElasticShrinkMo
   throw new Error(`${flag} must be hard-kill or drain-then-retire`);
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
+function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boolean; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
   const passthrough: string[] = [];
   let stop = false;
+  let status = false;
   let target: number | undefined;
   let request: string | undefined;
   let runnerFlag: string | undefined;
@@ -61,6 +63,10 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; target: numbe
     const arg = args[i]!;
     if (arg === "stop") {
       stop = true;
+      continue;
+    }
+    if (arg === "status") {
+      status = true;
       continue;
     }
     if (arg === "--request" || arg === "-r") {
@@ -107,7 +113,7 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; target: numbe
     }
     passthrough.push(arg);
   }
-  return { stop, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
+  return { stop, status, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
 }
 
 async function writeResizeRequest(path: string, target: number, shrinkMode: ElasticShrinkMode): Promise<void> {
@@ -185,6 +191,73 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/state/castle/afk-supervisor.log.\n`,
   );
   return { status: "timeout", pid };
+}
+
+export interface FleetStatusResult {
+  status: "reported";
+}
+
+/**
+ * Read-only fleet ground truth in one place (#2060). Answers "what is actually
+ * running right now?" — the question that today requires cross-referencing the
+ * supervisor pid, N worker pids, the in-process slot map, and two snapshot files.
+ * Local reads only (ADR 0084); never mutates. Renders TOON (the agent-facing
+ * output mandate). Surfaces the classifySupervisor health verdict and whether a
+ * watchdog respawn would fire, so "why is nothing running?" is answerable.
+ */
+export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStatusResult> {
+  const io = buildWatchdogIO(root, stdout);
+  const liveness = await io.liveness();
+  const cfg = resolveSupervisorConfig();
+  const now = Math.floor(Date.now() / 1000);
+  const health = classifySupervisor(liveness, now, cfg.supervisorStaleS, cfg.progressStaleS);
+  const repo = await resolveRepoSlug(root).catch(() => "");
+  const inputs = await collectMonitorInputs(root, repo);
+  const fleet = inputs.fleet;
+  const liveWorkers = inputs.workers.filter((w) => w.pidLive === true || w.live);
+  const heartbeatAgeS = liveness.lastHeartbeatEpoch !== null ? now - liveness.lastHeartbeatEpoch : -1;
+
+  // A dead supervisor with ready-for-agent work and fewer live workers than the
+  // target is what the watchdog would respawn — surface it so an operator who
+  // sees "no workers" knows the recovery will (or won't) fire on the next tick.
+  const wouldRespawn =
+    health === "absent" &&
+    (fleet?.readyForAgent ?? 0) > 0 &&
+    liveWorkers.length < (fleet?.slotsTotal ?? cfg.target);
+
+  const report = {
+    supervisor: {
+      pid: liveness.pid ?? 0,
+      alive: liveness.pidAlive,
+      health,
+      runner: fleet?.runner ?? "",
+      target: fleet?.slotsTotal ?? 0,
+      bundle_version: fleet?.bundleVersion ?? "",
+      bundle_latest: fleet?.latestBundleVersion ?? "",
+      heartbeat_age_s: heartbeatAgeS,
+      would_respawn: wouldRespawn,
+    },
+    slots: {
+      busy: fleet?.slotsBusy ?? 0,
+      free: fleet?.slotsFree ?? 0,
+      parked: fleet?.slotsParked ?? 0,
+      total: fleet?.slotsTotal ?? 0,
+    },
+    churn: {
+      deaths: fleet?.churnDeaths ?? 0,
+      respawns: fleet?.churnRespawns ?? 0,
+      window_s: fleet?.churnWindowS ?? 0,
+    },
+    live_workers: liveWorkers.map((w) => ({
+      id: w.state.worker_id,
+      pid: w.state.pid,
+      issue: String(w.state.current.number),
+      activity: w.state.current.activity,
+      origin: w.state.origin ?? "afk",
+    })),
+  };
+  stdout.write(`${encodeToon(report)}\n`);
+  return { status: "reported" };
 }
 
 export async function launchFleet(args: readonly string[], root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetLaunchResult> {
@@ -267,7 +340,9 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
   const parsed = parseFleetArgs(args);
   try {
-    if (parsed.stop) {
+    if (parsed.status) {
+      await statusFleet(cwd);
+    } else if (parsed.stop) {
       await stopFleet(cwd);
     } else {
       await launchFleet(args, cwd);

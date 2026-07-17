@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a Spec, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--spec N | --issues N,N,N] [--runner claude|codex|opencode] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop | monitor | dashboard | daily-review | weekly-review | retake N | reap"
+argument-hint: "[--spec N | --issues N,N,N] [--runner claude|codex|opencode] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop | fleet status | monitor | dashboard | daily-review | weekly-review | retake N | reap"
 ---
 
 # /afk
@@ -63,6 +63,10 @@ contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `/afk fleet [N]` - supervise `N` concurrent workers; read
   [`fleet.md`](./fleet.md) before launch or stop operations.
 - `/afk fleet stop` - gracefully stop the fleet supervisor and auto-monitor.
+- `/afk fleet status` - read-only fleet ground truth: supervisor pid, health
+  verdict, runner, slot occupancy, bundle version/skew, churn, live workers, and
+  whether a watchdog respawn would fire. Answers "what is actually running?"
+  without cross-referencing pid files and snapshots by hand.
 - `/afk reap` - run branch hygiene without starting a worker.
 
 For GitHub Actions adoption, use [`actions-lane.md`](./actions-lane.md). The
