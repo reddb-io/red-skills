@@ -343,7 +343,13 @@ describe("statusline — repo block", () => {
 describe("statusline — fleet block", () => {
   it("renders runner, busy/total occupancy, queue depth, and parked slots", () => {
     expect(renderFleetBlock({ runner: "codex", busy: 1, total: 2, queue: 7, parked: 1 })).toBe(
-      "flt=codex 1/2 busy · q=7 · park=1",
+      "flt=codex 1/2 q=7 prk=1",
+    );
+  });
+
+  it("omits the parked part when fleet.parked is zero", () => {
+    expect(renderFleetBlock({ runner: "codex", busy: 0, total: 3, queue: 0 })).toBe(
+      "flt=codex 0/3 q=0",
     );
   });
 });
@@ -561,7 +567,7 @@ describe("statusline — full assembly", () => {
     })).toBe("red-skills (main) · rsp=↓2.0k");
   });
 
-  it("renders rsp decisions contribution as contributed/seen when cached lane data exists", () => {
+  it("omits the decisions suffix regardless of cached lane data", () => {
     const input: StatuslineInput = {
       project: { basename: "red-skills", branch: "main" },
       rsp: {
@@ -570,19 +576,8 @@ describe("statusline — full assembly", () => {
         decisions: { contributed: 8, seen: 10 },
       },
     };
-    expect(renderStatusline(input)).toBe("red-skills (main) · rsp=↓1.2k int=8/10");
-    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp=↓1.2k int=8/10");
-  });
-
-  it("renders zero rsp decisions contribution as a visible zero-over-seen signal", () => {
-    expect(renderStatusline({
-      project: { basename: "red-skills", branch: "main" },
-      rsp: {
-        state: "ready",
-        tokensSavedToday: 1200,
-        decisions: { contributed: 0, seen: 12 },
-      },
-    })).toBe("red-skills (main) · rsp=↓1.2k int=0/12");
+    expect(renderStatusline(input)).toBe("red-skills (main) · rsp=↓1.2k");
+    expect(renderStatuslineWithPreset(input, "short")).toBe("red-skills (main) · rsp=↓1.2k");
   });
 
   it("omits rsp decisions contribution when the cached decisions lane is missing", () => {

@@ -268,7 +268,7 @@ describe("castle acceptance harness", () => {
         sourceCounts: [{ origin: "afk", count: 2 }],
       },
     });
-    expect(statusline).toContain("flt=codex 2/2 busy");
+    expect(statusline).toContain("flt=codex 2/2");
     expect(statusline).toContain("wrk=2");
     expect(statusline).toContain("#1917·validating");
 
