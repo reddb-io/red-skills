@@ -58,6 +58,10 @@ function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
   return (ctx.exec ?? execTool)("gh", args, opts(ctx));
 }
 
+function runRsp(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
+  return (ctx.exec ?? execTool)("rsp", args, opts(ctx));
+}
+
 function repoArgs(ctx: GhContext): string[] {
   return ctx.repo ? ["--repo", ctx.repo] : [];
 }
@@ -119,6 +123,13 @@ export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
  * `lane:go` label so its dedicated worker sees only the minted disposable issue
  * and the fleet never does. */
 export async function listCandidates(ctx: GhContext, label: string = LABEL_READY): Promise<IssueCandidate[]> {
+  const cached = await listIssuesViaRsp(ctx, label, "200");
+  if (cached) return cached.map((item): IssueCandidate => ({
+    number: item.number,
+    title: item.title,
+    body: item.body,
+    labels: item.labels,
+  }));
   const r = await runGh(ctx,
     [
       "issue",
@@ -975,9 +986,68 @@ function statuslineSearchQuery(repo: string, label: string): string {
   return `repo:${repo} is:issue is:open label:"${label}"`;
 }
 
+interface RspIssueListItem {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+async function listIssuesViaRsp(ctx: GhContext, label: string, limit: string): Promise<RspIssueListItem[] | null> {
+  const r = await runRsp(ctx, [
+    "gh-api-json",
+    "repos/{owner}/{repo}/issues",
+    "-f",
+    "state=open",
+    "-f",
+    `labels=${label}`,
+    "-f",
+    `per_page=${limit}`,
+  ]);
+  if (r.code !== 0) return null;
+  try {
+    const raw = JSON.parse(r.stdout || "[]") as unknown;
+    if (!Array.isArray(raw)) return null;
+    return raw.filter((row) => isRecord(row) && !isRecord(row.pull_request)).map((row) => ({
+      number: Number(row.number ?? 0),
+      title: String(row.title ?? ""),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels)
+        ? row.labels.map((item: unknown) => isRecord(item) ? String(item.name ?? "") : "").filter(Boolean)
+        : [],
+    }));
+  } catch {
+    return null;
+  }
+}
+
+async function countSearchViaRsp(ctx: GhContext, query: string): Promise<number | null> {
+  const r = await runRsp(ctx, [
+    "gh-api-json",
+    "search/issues",
+    "-f",
+    `q=${query}`,
+    "-f",
+    "per_page=1",
+  ]);
+  if (r.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(r.stdout || "{}") as unknown;
+    if (!isRecord(parsed)) return null;
+    return typeof parsed.total_count === "number" ? parsed.total_count : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Count both statusline queue buckets with one GraphQL search request. */
 export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
   if (!ctx.repo) return { queue: 0, human: 0 };
+  const [queue, human] = await Promise.all([
+    countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_READY)),
+    countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_HUMAN)),
+  ]);
+  if (queue != null && human != null) return { queue, human };
   const query = `
     query($ready: String!, $human: String!) {
       ready: search(type: ISSUE, query: $ready) { issueCount }
@@ -1250,6 +1320,10 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
   } catch {
     return [];
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

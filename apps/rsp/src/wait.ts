@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { decode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
+import { readGhConditionalJson } from "./gh-conditional.js";
 
 type WaitKind = "cmd" | "pr" | "run" | "release";
 type WaitStatus = "running" | "success" | "failure" | "timeout" | "indeterminate";
@@ -329,6 +330,8 @@ async function probeRelease(tagGlob: string | undefined, startedAt: Date, cwd: s
 }
 
 async function ghJson(args: readonly string[], cwd: string): Promise<{ status: number; stdout: string; stderr: string }> {
+  const conditional = await conditionalGhJson(args, cwd);
+  if (conditional) return conditional;
   return await new Promise((resolveResult) => {
     const child = spawn("gh", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
@@ -344,6 +347,118 @@ async function ghJson(args: readonly string[], cwd: string): Promise<{ status: n
       });
     });
   });
+}
+
+async function conditionalGhJson(args: readonly string[], cwd: string): Promise<{ status: number; stdout: string; stderr: string } | null> {
+  if (args[0] === "pr" && args[1] === "view" && args[2]) {
+    return await conditionalPrView(args[2], cwd);
+  }
+  if (args[0] === "run" && args[1] === "view" && args[2]) {
+    const response = await readGhConditionalJson({
+      path: `repos/{owner}/{repo}/actions/runs/${args[2]}`,
+      cwd,
+      command: `gh ${args.join(" ")}`,
+    });
+    if (response.status !== 0) return response;
+    const row = recordOf(JSON.parse(response.stdout));
+    return {
+      status: 0,
+      stderr: response.stderr,
+      stdout: JSON.stringify({
+        databaseId: numberField(row, "database_id") || numberField(row, "id"),
+        status: stringField(row, "status").toUpperCase(),
+        conclusion: stringField(row, "conclusion").toUpperCase(),
+        workflowName: stringField(row, "workflow_name") || stringField(row, "name"),
+        headBranch: stringField(row, "head_branch"),
+        url: stringField(row, "html_url"),
+      }),
+    };
+  }
+  if (args[0] === "run" && args[1] === "list") {
+    const branch = optionAfter(args, "--branch");
+    const limit = optionAfter(args, "--limit") ?? "20";
+    const response = await readGhConditionalJson({
+      path: "repos/{owner}/{repo}/actions/runs",
+      params: { branch, per_page: limit },
+      cwd,
+      command: `gh ${args.join(" ")}`,
+    });
+    if (response.status !== 0) return response;
+    const rows = arrayOfRecords(recordOf(JSON.parse(response.stdout)).workflow_runs).map((row) => ({
+      databaseId: numberField(row, "database_id") || numberField(row, "id"),
+    }));
+    return { status: 0, stdout: JSON.stringify(rows), stderr: response.stderr };
+  }
+  if (args[0] === "release" && args[1] === "list") {
+    const limit = optionAfter(args, "--limit") ?? "20";
+    const response = await readGhConditionalJson({
+      path: "repos/{owner}/{repo}/releases",
+      params: { per_page: limit },
+      cwd,
+      command: `gh ${args.join(" ")}`,
+    });
+    if (response.status !== 0) return response;
+    const rows = arrayOfRecords(JSON.parse(response.stdout)).map((row) => ({
+      tagName: stringField(row, "tag_name"),
+      publishedAt: stringField(row, "published_at"),
+      isDraft: row.draft === true,
+    }));
+    return { status: 0, stdout: JSON.stringify(rows), stderr: response.stderr };
+  }
+  return null;
+}
+
+async function conditionalPrView(number: string, cwd: string): Promise<{ status: number; stdout: string; stderr: string }> {
+  const pr = await readGhConditionalJson({
+    path: `repos/{owner}/{repo}/pulls/${number}`,
+    cwd,
+    command: `gh pr view ${number}`,
+  });
+  if (pr.status !== 0) return pr;
+  const row = recordOf(JSON.parse(pr.stdout));
+  if (Array.isArray(row.statusCheckRollup)) return { status: 0, stdout: pr.stdout, stderr: pr.stderr };
+  const sha = stringField(recordOf(row.head), "sha");
+  const [combinedStatus, checkRuns] = sha
+    ? await Promise.all([
+      readGhConditionalJson({
+        path: `repos/{owner}/{repo}/commits/${sha}/status`,
+        cwd,
+        command: `gh pr view ${number} status`,
+      }),
+      readGhConditionalJson({
+        path: `repos/{owner}/{repo}/commits/${sha}/check-runs`,
+        cwd,
+        command: `gh pr view ${number} check-runs`,
+      }),
+    ])
+    : [{ status: 0, stdout: "{}", stderr: "", quotaFree: false }, { status: 0, stdout: "{}", stderr: "", quotaFree: false }];
+  const statuses = combinedStatus.status === 0 ? arrayOfRecords(recordOf(JSON.parse(combinedStatus.stdout)).statuses) : [];
+  const runs = checkRuns.status === 0 ? arrayOfRecords(recordOf(JSON.parse(checkRuns.stdout)).check_runs) : [];
+  return {
+    status: 0,
+    stderr: [pr.stderr, combinedStatus.stderr, checkRuns.stderr].filter(Boolean).join("\n"),
+    stdout: JSON.stringify({
+      number: numberField(row, "number"),
+      state: stringField(row, "state").toUpperCase(),
+      mergeable: mergeableState(row),
+      statusCheckRollup: [
+        ...statuses.map((status) => ({ conclusion: stringField(status, "state").toUpperCase() })),
+        ...runs.map((run) => ({
+          status: stringField(run, "status").toUpperCase(),
+          conclusion: stringField(run, "conclusion").toUpperCase(),
+        })),
+      ],
+      url: stringField(row, "html_url"),
+    }),
+  };
+}
+
+function mergeableState(row: Record<string, unknown>): string {
+  const state = stringField(row, "mergeable_state").toUpperCase();
+  if (state && state !== "UNKNOWN") return state === "CLEAN" ? "MERGEABLE" : state;
+  if (row.mergeable === true) return "MERGEABLE";
+  if (row.mergeable === false) return "CONFLICTING";
+  return "UNKNOWN";
 }
 
 async function listWaits(cwd: string): Promise<JsonObject[]> {
@@ -470,6 +585,29 @@ function parseStructuredRecord(raw: string): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function arrayOfRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function stringField(row: Record<string, unknown>, field: string): string {
+  const value = row[field];
+  return typeof value === "string" ? value : "";
+}
+
+function numberField(row: Record<string, unknown>, field: string): number {
+  const value = row[field];
+  return typeof value === "number" ? value : 0;
+}
+
+function optionAfter(args: readonly string[], option: string): string | undefined {
+  const index = args.indexOf(option);
+  return index >= 0 ? args[index + 1] : undefined;
 }
 
 function parseDuration(value: string): number {

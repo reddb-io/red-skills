@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
+import { readGhConditionalJson } from "./gh-conditional.js";
 import { recoveryInstruction, type RecordedGitContract } from "./git-wrapper.js";
 import { extractQueryArg, filterRows, filterTextLines, withHelp } from "./output-levers.js";
 
@@ -182,41 +183,190 @@ function machineArgs(command: GhCommand): string[] {
 
 async function collectGhContract(command: GhCommand): Promise<RecordedGitContract> {
   if (command.action === "combined") return await collectCombinedPrContract(command);
-  const child = spawn("gh", machineArgs(command), { stdio: ["ignore", "pipe", "pipe"] });
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-  return await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (status, signal) => {
-      resolve({
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        status,
-        signal,
-      });
-    });
+  const request = ghApiRequest(command);
+  if (!request) return await collectRawGh(machineArgs(command));
+  const response = await readGhConditionalJson({
+    ...request,
+    command: ["gh", ...machineArgs(command)].join(" "),
   });
+  if (response.status !== 0) {
+    return { stdout: response.stdout, stderr: response.stderr, status: response.status, signal: null };
+  }
+  return {
+    stdout: JSON.stringify(await normalizeGhApiPayload(command, response.stdout)),
+    stderr: response.stderr,
+    status: 0,
+    signal: null,
+  };
 }
 
 async function collectCombinedPrContract(command: GhCommand): Promise<RecordedGitContract> {
   const target = command.target ?? "";
-  const viewFields = ["number", "title", "state", "body", "author", "labels", "url", "baseRefName", "headRefName"];
-  const commentsFields = ["comments"];
   const [view, checks, comments] = await Promise.all([
-    collectRawGh(["pr", "view", target, "--json", viewFields.join(",")]),
-    collectRawGh(["pr", "checks", target, "--json", "name,state,bucket,conclusion,link,startedAt,completedAt,workflow"]),
-    collectRawGh(["pr", "view", target, "--comments", "--json", commentsFields.join(",")]),
+    readGhConditionalJson({ path: `repos/{owner}/{repo}/pulls/${target}`, command: `gh pr view ${target}` }),
+    readGhConditionalJson({ path: `repos/{owner}/{repo}/pulls/${target}/commits`, command: `gh pr checks ${target}` }),
+    readGhConditionalJson({ path: `repos/{owner}/{repo}/issues/${target}/comments`, command: `gh pr view ${target} --comments` }),
   ]);
-  const failed = [view, checks, comments].find((result) => (result.status ?? 0) !== 0 || result.signal);
-  if (failed) return failed;
+  const failed = [view, checks, comments].find((result) => (result.status ?? 0) !== 0);
+  if (failed) return { stdout: failed.stdout, stderr: failed.stderr, status: failed.status, signal: null };
+  const viewRow = normalizePrView(parseJson(view.stdout));
   return {
-    stdout: JSON.stringify({ view: parseJson(view.stdout), checks: parseJson(checks.stdout), comments: parseJson(comments.stdout) }),
+    stdout: JSON.stringify({
+      view: viewRow,
+      checks: [],
+      comments: { comments: arrayOfRecords(parseJson(comments.stdout)).map(normalizeComment) },
+    }),
     stderr: [view.stderr, checks.stderr, comments.stderr].filter(Boolean).join(""),
     status: 0,
     signal: null,
   };
+}
+
+function ghApiRequest(command: GhCommand): { path: string; params?: Record<string, string | number | boolean | undefined> } | null {
+  const target = firstPositional(command.passthrough);
+  const limit = numberOption(command.passthrough, "--limit") ?? 30;
+  const state = stringOption(command.passthrough, "--state") ?? "open";
+  switch (`${command.kind}:${command.action}`) {
+    case "pr:list":
+      return { path: "repos/{owner}/{repo}/pulls", params: { state, per_page: limit } };
+    case "pr:view":
+      return target ? { path: `repos/{owner}/{repo}/pulls/${target}` } : null;
+    case "issue:list":
+      return {
+        path: "repos/{owner}/{repo}/issues",
+        params: { state, labels: stringOption(command.passthrough, "--label"), per_page: limit },
+      };
+    case "issue:view":
+      return target ? { path: `repos/{owner}/{repo}/issues/${target}` } : null;
+    case "run:list":
+      return { path: "repos/{owner}/{repo}/actions/runs", params: { per_page: limit } };
+    case "run:view":
+      return target ? { path: `repos/{owner}/{repo}/actions/runs/${target}` } : null;
+    default:
+      return null;
+  }
+}
+
+async function normalizeGhApiPayload(command: GhCommand, raw: string): Promise<unknown> {
+  const parsed = parseJson(raw);
+  switch (`${command.kind}:${command.action}`) {
+    case "pr:list":
+      return arrayOfRecords(parsed).map(normalizePrListItem);
+    case "pr:view":
+      return normalizePrView(parsed);
+    case "issue:list":
+      return arrayOfRecords(parsed).filter((row) => !isRecord(row.pull_request)).map(normalizeIssue);
+    case "issue:view":
+      return normalizeIssue(parsed);
+    case "run:list":
+      return arrayOfRecords(recordOf(parsed).workflow_runs).map(normalizeRun);
+    case "run:view": {
+      const run = normalizeRun(parsed);
+      const target = firstPositional(command.passthrough);
+      if (!target) return run;
+      const jobs = await readGhConditionalJson({
+        path: `repos/{owner}/{repo}/actions/runs/${target}/jobs`,
+        command: `gh run view ${target} jobs`,
+      });
+      return {
+        ...run,
+        jobs: jobs.status === 0 ? arrayOfRecords(recordOf(parseJson(jobs.stdout)).jobs).map(normalizeJob) : [],
+      };
+    }
+    default:
+      return parsed;
+  }
+}
+
+function normalizePrListItem(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return {
+    number: numberField(row, "number"),
+    title: stringField(row, "title"),
+    state: stringField(row, "state").toUpperCase(),
+    isDraft: Boolean(row.draft),
+    author: normalizeUser(row.user),
+    labels: arrayOfRecords(row.labels).map((label) => ({ name: stringField(label, "name") })),
+    url: stringField(row, "html_url"),
+    updatedAt: stringField(row, "updated_at"),
+    body: stringField(row, "body"),
+    baseRefName: stringField(recordOf(row.base), "ref"),
+    headRefName: stringField(recordOf(row.head), "ref"),
+  };
+}
+
+function normalizePrView(value: unknown): JsonObject {
+  return normalizePrListItem(value);
+}
+
+function normalizeIssue(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return {
+    number: numberField(row, "number"),
+    title: stringField(row, "title"),
+    state: stringField(row, "state").toUpperCase(),
+    labels: arrayOfRecords(row.labels).map((label) => ({ name: stringField(label, "name") })),
+    author: normalizeUser(row.user),
+    url: stringField(row, "html_url"),
+    updatedAt: stringField(row, "updated_at"),
+    body: stringField(row, "body"),
+  };
+}
+
+function normalizeRun(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return {
+    databaseId: numberField(row, "database_id") || numberField(row, "id"),
+    name: stringField(row, "name") || stringField(row, "display_title"),
+    status: stringField(row, "status").toUpperCase(),
+    conclusion: stringField(row, "conclusion").toUpperCase(),
+    event: stringField(row, "event"),
+    headBranch: stringField(row, "head_branch"),
+    workflowName: stringField(row, "workflow_name"),
+    createdAt: stringField(row, "created_at"),
+    url: stringField(row, "html_url"),
+    jobs: [],
+  };
+}
+
+function normalizeJob(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return {
+    name: stringField(row, "name"),
+    status: stringField(row, "status").toUpperCase(),
+    conclusion: stringField(row, "conclusion").toUpperCase(),
+    log: "",
+  };
+}
+
+function normalizeComment(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return {
+    author: normalizeUser(row.user),
+    body: stringField(row, "body"),
+    createdAt: stringField(row, "created_at"),
+  };
+}
+
+function normalizeUser(value: unknown): JsonObject {
+  const row = recordOf(value);
+  return { login: stringField(row, "login") };
+}
+
+function firstPositional(args: readonly string[]): string | undefined {
+  return args.find((arg) => !arg.startsWith("-"));
+}
+
+function stringOption(args: readonly string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function numberOption(args: readonly string[], name: string): number | undefined {
+  const value = stringOption(args, name);
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function collectRawGh(args: readonly string[]): Promise<RecordedGitContract> {
