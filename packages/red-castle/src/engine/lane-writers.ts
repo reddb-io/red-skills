@@ -199,6 +199,17 @@ function normalizeCastleLaneRecord(record: unknown): CastleLaneRecord {
   return validateCastleLaneRecord(raw as unknown as CastleLaneRecord);
 }
 
+function normalizeCastleHistoryRecord(record: unknown): CastleHistoryRecord {
+  if (record === null || typeof record !== "object") {
+    throw new CastleLaneValidationError("castle history record must be an object");
+  }
+  const raw = { ...(record as Record<string, unknown>) };
+  for (const field of ["merge_sha", "reason"]) {
+    if (raw[field] === null) delete raw[field];
+  }
+  return validateCastleHistoryRecord(raw as unknown as CastleHistoryRecord);
+}
+
 export async function appendCastleLaneRecord(
   path: string,
   record: CastleLaneRecord,
@@ -245,6 +256,19 @@ export async function readCastleLaneRecords(
   try {
     return parseRecords(await readFile(path, "utf8")).map(
       normalizeCastleLaneRecord,
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+export async function readCastleHistoryRecords(
+  path: string,
+): Promise<CastleHistoryRecord[]> {
+  try {
+    return parseRecords(await readFile(path, "utf8")).map(
+      normalizeCastleHistoryRecord,
     );
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];

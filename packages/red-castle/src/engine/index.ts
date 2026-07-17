@@ -1,5 +1,7 @@
 export type { AgentStreamEvent } from "../AgentStreamEmitter.js";
 export type { LivenessVerdict } from "../LivenessEvaluator.js";
+export * from "./monitor.js";
+export * from "./monitor-readers.js";
 export type {
   IterationResult,
   IterationUsage,

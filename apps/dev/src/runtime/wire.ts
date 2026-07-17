@@ -37,6 +37,12 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
 } from "@reddb-io/red-castle";
+import {
+  createEnginePaths,
+  readCastleMonitorFleetState,
+  readCastleMonitorHistoryEvents,
+  readCastleMonitorWorkers,
+} from "@reddb-io/red-castle/engine";
 import { liveIssueFromBranch, type BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
@@ -754,91 +760,75 @@ export async function reclaimDeadWorkers(
   return reclaimed;
 }
 
-/** Read every worker state file + the history ledger into the pure renderer's
- * inputs, plus one `git diff --shortstat` per live worktree for the diff column
- * (small fleet → a handful of cheap git calls, like the statusline does). */
+/** Read castle monitor lanes into the pure renderer's inputs. During the
+ * migration window, fall back to legacy worker/history files only when the
+ * castle lanes are absent so current fleets keep rendering with parity. */
 export async function collectMonitorInputs(root = process.cwd(), repo = ""): Promise<MonitorInputs> {
   const paths = afkPaths(root);
-  // The ONE owner reads + normalizes + liveness-tags every worker state file
-  // (core/worker-state-reader). The single source of liveness truth for all
-  // surfaces is WorkerStateRecord.livenessVerdict (evaluator verdict, ADR 0083 §3).
-  // Namespace-blind union: aggregate live workers across the fleet, `/go`, and
-  // `--scout` lanes so a `/go`/`--scout` worker appears in the monitor/dashboard,
-  // tagged distinctly by state.origin. (Not the single-lane paths.workersRoot,
-  // which would render only the `.red/tmp/workers` fleet lane.)
-  const records = await readAllWorkerStates(paths.tmpDir);
-  // Read-time liveness-gated teardown (issue #1219): reclaim dead-worker
-  // worktrees/dirs immediately, not on the boot TTL. Best-effort — a failure
-  // here never blocks the render. Live-worker dirs and blocked/ready-for-human
-  // post-mortem artifacts are preserved (planLivenessReclaim).
-  await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
-  await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
-  const currentRecords = currentRenderableWorkerRecords(records);
-  const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
-  const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
-  const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of currentRecords) {
-    // The shared current-worker selector applies the `renderableLive` gate and
-    // collapses retained sibling attempt dirs to one row per worker.
-    // Diff volume: committed + uncommitted work for the attempt, measured from
-    // the branch's merge-base with origin/main. #1210 Part B: read it from the
-    // state file's writer-stamped counts only — the monitor render performs NO
-    // git subprocess. The per-attempt heartbeat owns the diffstat for every
-    // runner (via the commit-anchored memo), so the old live `git diff
-    // --shortstat` fallback is gone. Always populated — the dashboard renders the
-    // +A -R volume unconditionally (idle / zero included) and sums it into the
-    // fleet header, so it is never suppressed.
-    const added = state.current.loc_added;
-    const removed = state.current.loc_removed;
-
-    const logPath = state.log || join(dirname(path), "afk.log");
-    const counts = logCounts.get(logPath);
-    workers.push({
-      state: {
-        worker_id: state.worker_id,
-        pid: state.pid,
-        runner: state.runner,
-        started_at: state.started_at,
-        // Spawn-time provenance — passed through from the single state.origin
-        // field so the dashboard derives per-source counts from the same source
-        // as the statusline (issue #930, no independent derivation).
-        origin: state.origin || undefined,
-        total: state.total,
-        done: state.done,
-        blocked: state.blocked,
-        failed: state.failed,
-        current: {
-          number: state.current.number,
-          title: state.current.title,
-          activity: state.current.activity,
-          phase: state.current.phase,
-          started_at: state.current.started_at,
-          input_tokens: state.current.input_tokens,
-          output_tokens: state.current.output_tokens,
-          cost_usd: state.current.cost_usd,
-          tools_called_count: state.current.tools_called_count,
-          text_chunk_count: state.current.text_chunk_count,
-          reasoning_events: state.current.reasoning_events,
-          waiting_count: state.current.waiting_count,
+  const castlePaths = createEnginePaths(join(root, ".red"));
+  let workers = await readCastleMonitorWorkers(castlePaths);
+  if (workers.length === 0) {
+    const records = await readAllWorkerStates(paths.tmpDir);
+    // Read-time liveness-gated teardown (issue #1219): reclaim dead-worker
+    // worktrees/dirs immediately, not on the boot TTL. Best-effort — a failure
+    // here never blocks the render. Live-worker dirs and blocked/ready-for-human
+    // post-mortem artifacts are preserved (planLivenessReclaim).
+    await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
+    await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
+    const currentRecords = currentRenderableWorkerRecords(records);
+    const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+    const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
+    workers = currentRecords.map(({ path, state, active, live: pidLive, liveness, livenessVerdict }) => {
+      // The shared current-worker selector applies the `renderableLive` gate and
+      // collapses retained sibling attempt dirs to one row per worker.
+      const logPath = state.log || join(dirname(path), "afk.log");
+      const counts = logCounts.get(logPath);
+      return {
+        state: {
+          worker_id: state.worker_id,
+          pid: state.pid,
+          runner: state.runner,
+          started_at: state.started_at,
+          origin: state.origin || undefined,
+          total: state.total,
+          done: state.done,
+          blocked: state.blocked,
+          failed: state.failed,
+          current: {
+            number: state.current.number,
+            title: state.current.title,
+            activity: state.current.activity,
+            phase: state.current.phase,
+            started_at: state.current.started_at,
+            input_tokens: state.current.input_tokens,
+            output_tokens: state.current.output_tokens,
+            cost_usd: state.current.cost_usd,
+            tools_called_count: state.current.tools_called_count,
+            text_chunk_count: state.current.text_chunk_count,
+            reasoning_events: state.current.reasoning_events,
+            waiting_count: state.current.waiting_count,
+          },
         },
-      },
-      liveness,
-      livenessVerdict,
-      // active = evaluator says "alive" → [live] badge.
-      // pidLive kept for backward compat with older test stubs (ignored when
-      // livenessVerdict is present).
-      live: active,
-      pidLive,
-      diffAdded: added,
-      diffRemoved: removed,
-      ...(counts !== undefined ? { logLines: counts.lines, logNewLines: counts.newLines } : {}),
+        liveness,
+        livenessVerdict,
+        live: active,
+        pidLive,
+        diffAdded: state.current.loc_added,
+        diffRemoved: state.current.loc_removed,
+        ...(counts !== undefined ? { logLines: counts.lines, logNewLines: counts.newLines } : {}),
+      };
     });
   }
 
-  const events = (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
-  const fleet = await readFleetState(
-    preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
-  );
+  const castleEvents = await readCastleMonitorHistoryEvents(castlePaths);
+  const events = castleEvents.length > 0
+    ? castleEvents
+    : (await readHistoryRecords(paths.historyPath, { read: fsx.readText })).map((r) => ({ event: r.event, epoch: r.epoch }));
+  const fleet =
+    (await readCastleMonitorFleetState(castlePaths)) ??
+    (await readFleetState(
+      preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
+    ));
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
   // is read-only; the statusline owns the cache lifecycle). Include queue/human counts

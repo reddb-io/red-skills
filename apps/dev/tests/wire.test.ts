@@ -5,6 +5,12 @@ import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import { decode, encode } from "@reddb-io/toon";
 import {
+  appendCastleHistoryRecord,
+  castleStateSnapshotPath,
+  createEnginePaths,
+  writeCastleStateSnapshot,
+} from "@reddb-io/red-castle/engine";
+import {
   afkPaths,
   resolveRunSettings,
   collectMonitorInputs,
@@ -436,6 +442,59 @@ describe("collectMonitorInputs", () => {
       const again = await collectMonitorInputs(root);
       expect(again.workers[0]!.logLines).toBe(3);
       expect(again.workers[0]!.logNewLines).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers castle snapshots and history for monitor inputs", async () => {
+    const root = scratch();
+    try {
+      const paths = createEnginePaths(join(root, ".red"));
+      await writeCastleStateSnapshot(
+        castleStateSnapshotPath(paths, "worker", "wCA12"),
+        {
+          kind: "worker",
+          id: "wCA12",
+          version: 1,
+          updated_at: "2026-07-16T20:02:00.000Z",
+          worker_id: "wCA12",
+          runner: "codex",
+          pid: process.pid,
+          started_at: "2026-07-16T20:00:00.000Z",
+          current: {
+            number: 1915,
+            title: "flip monitor",
+            activity: "impl",
+            started_at: "2026-07-16T20:01:00.000Z",
+            origin: "afk",
+            total: 2,
+            done: 1,
+            loc_added: 7,
+            loc_removed: 3,
+          },
+          queue: [1915],
+          completed: [1902],
+        },
+      );
+      await appendCastleHistoryRecord(paths.castleHistory, {
+        ts: "2026-07-16T20:03:00.000Z",
+        epoch: 1784232180,
+        worker: "wCA12",
+        issue: 1902,
+        event: "done",
+        duration_s: 12,
+        runner: "codex",
+      });
+
+      const { workers, events } = await collectMonitorInputs(root);
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.state.worker_id).toBe("wCA12");
+      expect(workers[0]!.state.current.number).toBe(1915);
+      expect(workers[0]!.state.done).toBe(1);
+      expect(workers[0]!.diffAdded).toBe(7);
+      expect(workers[0]!.diffRemoved).toBe(3);
+      expect(events).toEqual([{ event: "done", epoch: 1784232180 }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
