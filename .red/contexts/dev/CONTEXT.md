@@ -106,6 +106,10 @@ _Avoid_: main repo, root checkout
 A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
 _Avoid_: agent, slot, runner
 
+**Worker kind**:
+The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for queue-draining fleet work, `current.kind=go` for approved one-off `/go` dispatch, and `current.kind=scout` for read-only `/go --scout` investigations. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
+_Avoid_: worker namespace, go-workers root, scout-workers root
+
 **Worker state reader**:
 The single owner of "read a **Worker**'s `afk.state.json`" — `readWorkerState(path)` wraps `parseState` (with the legacy shim), liveness (`isStateActive`), and stage extraction for one file, and `readWorkerStates(root)` globs every worker and maps to normalized, liveness-tagged records. The monitor, statusline, dashboard, **Task mirror**, boot facts, and the **Fleet supervisor** stall-reaper all read through it instead of each re-globbing, re-parsing, and re-deriving liveness — closing the divergent hand-rolled parse path that skipped the schema/shim.
 _Avoid_: state glob, status reader (these are the per-consumer loops the Worker state reader replaces)
@@ -279,6 +283,7 @@ _Avoid_: compact mode (names the flag, not the contract), lossy output
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
 - A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
 - A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
+- A **Worker kind** distinguishes `/afk`, `/go`, and `/go --scout` inside the shared castle worker root without creating separate live worker namespaces.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
 - **Ship (interactive landing)** is retired (ADR 0081); hand-done work reaches the shared validation gate via requeue, and dispatch happens through `/go` or `/afk`.
