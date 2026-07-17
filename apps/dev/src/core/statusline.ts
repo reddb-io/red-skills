@@ -489,11 +489,11 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
-  const parts = [`flt=${runner} ${busy}/${total} busy`, `q=${queue}`];
+  const parts = [`flt=${runner} ${busy}/${total}`, `q=${queue}`];
   if (fleet.parked !== undefined && fleet.parked > 0) {
-    parts.push(`park=${Math.floor(fleet.parked)}`);
+    parts.push(`prk=${Math.floor(fleet.parked)}`);
   }
-  return parts.join(" · ");
+  return parts.join(" ");
 }
 
 export function renderUnlandedDocsBlock(docs: DocsInput | undefined): string | null {
@@ -504,12 +504,7 @@ export function renderUnlandedDocsBlock(docs: DocsInput | undefined): string | n
 export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   if (!rsp) return null;
   if (rsp.state === "ready") {
-    const decisions =
-      rsp.decisions && Number.isFinite(rsp.decisions.seen) && rsp.decisions.seen > 0
-        ? ` int=${Math.max(0, Math.floor(rsp.decisions.contributed))}/${Math.floor(rsp.decisions.seen)}`
-        : "";
-    const hitRate = typeof rsp.showHitRate === "number" ? ` hit=${Math.round(rsp.showHitRate * 100)}%` : "";
-    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}${decisions}${hitRate}`;
+    return `rsp=↓${formatRspTickerValue(rsp.tokensSavedToday)}`;
   }
   if (rsp.state === "warming") return "rsp=…";
   return "rsp=!";
