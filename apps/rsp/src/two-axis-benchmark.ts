@@ -193,6 +193,7 @@ const DEFAULT_ARTIFACT_PATH = join(dirname(fileURLToPath(import.meta.url)), ".."
 const DEFAULT_SUMMARY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "bench", "results", "rsp-two-axis.md");
 const REQUIRED_LARGE_OUTPUT_FIXTURES = [
   "diff-large-numstat",
+  "exec-midstream-anomaly",
   "log-large-history",
   "vitest-large-green",
   "vitest-many-failures",
@@ -347,7 +348,7 @@ export function renderTwoAxisSummary(report: TwoAxisBenchmarkReport): string {
 }
 
 async function discoverBenchmarkFixtures(fixtureRoot: string): Promise<FidelityFixture[]> {
-  const roots = [join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
+  const roots = [join(fixtureRoot, "exec"), join(fixtureRoot, "file-read"), join(fixtureRoot, "gh"), join(fixtureRoot, "git"), join(fixtureRoot, "test-runners")];
   const existingRoots = [];
   for (const root of roots) {
     if (await pathExists(root)) existingRoots.push(root);
@@ -407,6 +408,8 @@ function buildAntiSuppressionAudit(rows: readonly TwoAxisFilterRow[]): AntiSuppr
 
 function antiSuppressionVerdict(filter: string): Pick<AntiSuppressionAuditRow, "audited" | "note"> {
   switch (filter) {
+    case "exec:--":
+      return { audited: "ok", note: "generic exec summaries keep head and tail, preserve deterministic structural outliers, and retain a recovery handle for original stdout" };
     case "cat:file":
       return { audited: "ok", note: "file reads keep code outlines or bounded text plus an elision handle for original bytes; binary output passes through" };
     case "git:commit":
