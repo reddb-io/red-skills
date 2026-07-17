@@ -1,15 +1,14 @@
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
 import {
-  runSession,
   runModeForCandidate,
   type SessionContext,
-  type SessionDeps,
+  type SessionIssueTemplate,
   type SelectionFilter,
   type IssueCandidate,
 } from "../core/session.js";
 import { genWorkerId } from "../core/session.js";
-import { runBoot, type BootDeps, type BootOptions, type BootstrapInput, type ReconcileBootRunner } from "../core/boot.js";
+import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput, type ReconcileBootRunner } from "../core/boot.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import { resolveBase } from "../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
@@ -18,7 +17,7 @@ import {
   partitionConflicts,
   type ConflictFinding,
 } from "../core/merge-conflict-reconcile.js";
-import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
+import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../core/process-issue.js";
 import { passExitBarrier, passTerminalBarrier } from "../core/exit-barrier.js";
 import {
   toMemoryPayload,
@@ -66,7 +65,9 @@ import {
 import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../core/triage-labels.js";
 import { GO_KIND, GO_ORIGIN } from "../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../core/scout.js";
-import { resolveHooks } from "../core/hook-config.js";
+import { resolveHooks, type HookName } from "../core/hook-config.js";
+import { dispatchHooks } from "../core/hook-dispatcher.js";
+import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -156,6 +157,12 @@ interface ParsedRunFlags {
   /** --force: bypass the live-supervisor boot guard (#1027). Operator accepts
    * the collision risk; a warning is printed but the run proceeds. */
   force: boolean;
+}
+
+export interface RunDispatchIdentity {
+  origin: string;
+  kind: string;
+  lane?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -355,6 +362,12 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     runMode: values["run-mode"] as string | undefined,
     force: values.force === true,
   };
+}
+
+export function resolveRunDispatchIdentity(flags: Pick<ParsedRunFlags, "origin" | "kind" | "lane">): RunDispatchIdentity {
+  const origin = flags.origin?.trim() || "afk";
+  const kind = flags.kind?.trim() || origin;
+  return flags.lane === undefined ? { origin, kind } : { origin, kind, lane: flags.lane };
 }
 
 /**
@@ -1799,6 +1812,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
 
   const flags = parseRunFlags(options.args);
+  const dispatchIdentity = resolveRunDispatchIdentity(flags);
   // --model / --effort pre-set the env override (flag > env). Setting them on the
   // process env makes the override flow through both the in-process `--once` path
   // (resolveTier reads process.env) and the fleet path (buildWorkerEnv passes
@@ -1830,9 +1844,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
     const pidFile = preferExistingPath(paths.supervisorPidPath, join(paths.tmpDir, "afk-supervisor.pid"));
     const exempt = isNamespacedDispatch({
-      origin: flags.origin,
-      kind: flags.kind,
-      lane: flags.lane,
+      origin: dispatchIdentity.origin,
+      kind: dispatchIdentity.kind,
+      lane: dispatchIdentity.lane,
     });
     const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
@@ -1966,9 +1980,24 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
+  const sessionHooks = {
+    config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
+    resolveOptions: makeHookResolveOptions(ctx.root),
+    exec: makeHookExec(ctx.root),
+    env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
+  };
+  const resolvedSessionHooks = resolveHooks(sessionHooks.config, sessionHooks.resolveOptions);
 
-  const deps: SessionDeps = {
-    gh: { listCandidates: () => ghx.listCandidates(ghCtx, flags.lane) },
+  const deps: CastleWorkerDrainDeps<
+    BootDeps,
+    BootOptions,
+    BootResult,
+    ProcessIssueDeps,
+    ProcessIssueInput,
+    ProcessIssueResult,
+    SessionIssueTemplate
+  > = {
+    gh: { listCandidates: () => ghx.listCandidates(ghCtx, dispatchIdentity.lane) },
     runBoot,
     bootDeps,
     bootOptions,
@@ -2012,14 +2041,21 @@ export async function runCommand(options: RunOptions): Promise<number> {
       flags.verifyCommand,
       flags.goVerifyRetries,
     ),
-    // Session-scoped lifecycle hooks (PRD #207): compose the same config /
-    // resolver / exec / env the process deps use, so session + per-issue points
-    // share one dispatcher rather than duplicating the wiring.
-    hooks: {
-      config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
-      resolveOptions: makeHookResolveOptions(ctx.root),
-      exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
+    // Session-scoped lifecycle hooks (PRD #207): the castle drain owns the
+    // session state machine, while dev supplies the existing hook dispatcher so
+    // the configured hook surface and output stay unchanged.
+    dispatchSessionHook: async (name: CastleSessionHookName, context: string) => {
+      const result = await dispatchHooks(
+        name as HookName,
+        resolvedSessionHooks[name as HookName],
+        context,
+        sessionHooks.exec,
+        {
+          env: sessionHooks.env,
+          log: (line) => process.stdout.write(`${line}\n`),
+        },
+      );
+      return { aborted: result.aborted };
     },
     runnerCircuit: {
       isOpen: (r) => runnerCircuitOpen(paths.runnerCircuitDir, r, Math.floor(Date.now() / 1000)),
@@ -2060,10 +2096,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
           runner: c.runner,
           // Spawn-time provenance (issue #930): stamped once here, never mutated.
           // The entry point (`/afk`, `/go`) passes `--origin <label>`.
-          origin: flags.origin ?? "",
+          origin: dispatchIdentity.origin,
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,
-          "current.kind": flags.kind ?? flags.origin ?? "afk",
+          "current.kind": dispatchIdentity.kind,
           "current.number": candidate.number,
           "current.title": candidate.title,
           "current.worktree": join(attemptDir, "worktree"),
@@ -2087,7 +2123,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         writeIdentitySync(attemptDir, {
           worker_id: c.workerId,
           runner: c.runner,
-          origin: flags.origin ?? "",
+          origin: dispatchIdentity.origin,
           number: candidate.number,
           started_at: startedAt,
         });
@@ -2122,7 +2158,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         // `--lane` value), not a hardcoded `ready-for-agent`. `flags.lane` is
         // undefined for `/afk` (→ defaults to `ready-for-agent` in processIssue)
         // and `lane:go`/`lane:scout` for the isolated `/go`/scout lanes.
-        laneLabel: flags.lane,
+        laneLabel: dispatchIdentity.lane,
       };
     },
     emit: (line: string) => process.stdout.write(`${line}\n`),
@@ -2130,7 +2166,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   let summary;
   try {
-    summary = await runSession(deps, sessionCtx);
+    summary = await runCastleWorkerDrain(deps, sessionCtx);
   } catch (err) {
     await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
       process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
