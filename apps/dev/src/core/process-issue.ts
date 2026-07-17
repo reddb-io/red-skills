@@ -632,6 +632,13 @@ export interface ProcessIssueDeps {
    */
   markState?(patch: Record<string, unknown>): void;
   /**
+   * Append a structured castle worker lifecycle record. The CLI binds this to
+   * `.red/tmp/workers/<id>/worker.log.toonl`, `liveness.toonl`, and the durable
+   * `.red/state/castle/workers/<id>/state.toon` snapshot. Optional so tests and
+   * older callers keep their existing behavior.
+   */
+  recordWorkerEvent?(kind: `worker.${string}`, payload?: Record<string, unknown>): void;
+  /**
    * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
    * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
    * lifecycle points the inner-agent stream cannot see: `validating` at the start
@@ -895,6 +902,9 @@ function timeoutNotes(reason: RunAgentResult["timeoutReason"] | undefined): stri
 
 function markTerminalState(deps: ProcessIssueDeps, outcome: ProcessOutcome): void {
   deps.markState?.(stateExitPatch(outcome));
+  if (outcome !== "done") {
+    deps.recordWorkerEvent?.("worker.blocked", { outcome });
+  }
 }
 
 // ---------- the orchestration ----------
@@ -1525,6 +1535,7 @@ export async function processIssue(
     await releaseClaim();
     return claimLost(issue, hooksFired);
   }
+  deps.recordWorkerEvent?.("worker.claimed", { title: input.title });
 
   // ---- branch ref + base ----
   const slug = slugifyRef(input.title);
@@ -1586,6 +1597,10 @@ export async function processIssue(
   const handoffPath = `${input.attemptDir}/handoff.md`;
   await deps.fs.writeHandoff(handoffPath, handoff);
   deps.appendIterLog(formatStartedMarker(issue, startedAt));
+  deps.recordWorkerEvent?.("worker.steered", {
+    handoff: handoffPath,
+    output_shaping: outputShaping.variant,
+  });
 
   const taskClass =
     (await deps
@@ -2467,6 +2482,11 @@ export async function processIssue(
     // Both gates passed — the close path's sidecar/envelope carries their union.
     validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
     lastValidationScope = feedback.validationScope;
+    deps.recordWorkerEvent?.("worker.validated", {
+      feedback_records: feedback.sidecar.length,
+      backpressure_records: backpressureSidecar.length,
+      scope: feedback.validationScope?.type ?? "",
+    });
     break;
   }
 
@@ -2659,6 +2679,7 @@ export async function processIssue(
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
   markLandingPhase("cascade");
+  deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
@@ -3203,6 +3224,7 @@ async function emitDone(
  * ready-for-human, preserve the attempt dir. Mirrors the do_merge-false branch. */
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
+  deps.recordWorkerEvent?.("worker.blocked", { outcome: "merge-conflict", reason: _reason });
   const decision = await routeRecovery(deps, input.issue, "merge-conflict", recoveryOrdinalFor(input));
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(
