@@ -161,7 +161,7 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     return { status: "stopped", pid };
   }
   stdout.write(
-    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/state/afk/afk-supervisor.log.\n`,
+    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/state/castle/afk-supervisor.log.\n`,
   );
   return { status: "timeout", pid };
 }
@@ -233,13 +233,13 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     } catch {
       // ignore
     }
-    throw new Error(`fleet launch failed: supervisor pid file did not appear. log: .red/tmp/afk-supervisor.log\n${tail}`);
+    throw new Error(`fleet launch failed: supervisor pid file did not appear. log: .red/state/castle/afk-supervisor.log\n${tail}`);
   }
 
   stdout.write(`🚀 fleet launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);
-  stdout.write(`   log:   .red/tmp/afk-supervisor.log\n`);
+  stdout.write(`   log:   .red/state/castle/afk-supervisor.log\n`);
   stdout.write(`   stop:  /dev:afk fleet stop\n`);
-  stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.\n`);
+  stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/state/castle/afk-supervisor.log manually.\n`);
   return { status: "launched", pid: supervisorPid, target: parsed.target, log: logFile };
 }
 
