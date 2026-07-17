@@ -83,6 +83,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
     reapContestWindowS: 30,
+    shrinkMode: "drain-then-retire",
     ...over,
   };
 }
@@ -103,6 +104,7 @@ interface FakeIo {
   spawnReconcileWorker: ReturnType<typeof vi.fn>;
   isAlive: ReturnType<typeof vi.fn>;
   killTree: ReturnType<typeof vi.fn>;
+  requestSlotRetire: ReturnType<typeof vi.fn>;
   inspectTree: ReturnType<typeof vi.fn>;
   sleep: ReturnType<typeof vi.fn>;
   lastExitCode: ReturnType<typeof vi.fn>;
@@ -121,6 +123,7 @@ interface FakeIo {
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
   fleetCostUsd: ReturnType<typeof vi.fn>;
+  resizeRequest: ReturnType<typeof vi.fn>;
   attemptBranchHead: ReturnType<typeof vi.fn>;
   logLines: string[];
   now: ReturnType<typeof vi.fn>;
@@ -136,6 +139,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     spawnReconcileWorker: vi.fn(async () => ({ pid: ++nextPid, spawnEpoch: NOW })),
     isAlive: vi.fn(() => true),
     killTree: vi.fn(async () => {}),
+    requestSlotRetire: vi.fn(async () => {}),
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
     // Resolve on a macrotask (not immediately): runSupervisor wraps each tick in
     // guardedTick, which RACES the tick against `sleep(ceiling)`. An
@@ -165,6 +169,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     emitFleetHeartbeat: vi.fn(async () => {}),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
     fleetCostUsd: vi.fn(() => 0),
+    resizeRequest: vi.fn(async () => null),
     attemptBranchHead: vi.fn(async () => undefined as string | undefined),
     logLines: [],
     now: vi.fn(() => NOW),
@@ -177,6 +182,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       isAlive: io.isAlive,
       lastExitCode: io.lastExitCode,
       killTree: io.killTree,
+      requestSlotRetire: io.requestSlotRetire,
       inspectTree: io.inspectTree,
       sleep: io.sleep,
     },
@@ -204,6 +210,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     emitFleetHeartbeat: io.emitFleetHeartbeat,
     unblockSweep: io.unblockSweep,
     attemptBranchHead: io.attemptBranchHead,
+    resizeRequest: io.resizeRequest,
   };
   return { deps, io };
 }
@@ -560,6 +567,7 @@ describe("guardedTick — abandoned flag", () => {
       crashReconciled: [],
       reconciledSlots: [],
       unblocked: [],
+      retiredSlots: [],
       stopped: false,
       queueDepth: 0,
       abandoned: false,
@@ -1244,6 +1252,78 @@ describe("superviseTick", () => {
   });
 });
 
+describe("superviseTick — elastic fleet resize (#1913)", () => {
+  it("grows at runtime by adding slots and spawning them immediately", async () => {
+    const { deps, io } = makeDeps({
+      spawnSlot: vi.fn(async (slot: number) => ({ pid: 9000 + slot, spawnEpoch: NOW })),
+      resizeRequest: vi.fn(async () => ({ target: 3, shrinkMode: "drain-then-retire" })),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 5000;
+    state.slots[0]!.spawnEpoch = NOW - 30;
+
+    const result = await superviseTick(state, deps, config({ target: 1 }), () => false);
+
+    expect(state.slots).toHaveLength(3);
+    expect(io.spawnSlot).toHaveBeenCalledWith(1);
+    expect(io.spawnSlot).toHaveBeenCalledWith(2);
+    expect(state.slots[1]!.pid).toBe(9001);
+    expect(state.slots[2]!.pid).toBe(9002);
+    expect(result.respawned).toEqual([1, 2]);
+  });
+
+  it("shrinks with hard-kill by killing trailing slots, reconciling claims, and removing them immediately", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      resizeRequest: vi.fn(async () => ({ target: 1, shrinkMode: "hard-kill" })),
+      resolveIterDir: vi.fn((slot: number): IterDirInfo | null =>
+        slot === 2 ? crashInfo({ issue: 902, workerId: "wSHRINK" }) : null,
+      ),
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: true })),
+    });
+    deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
+    const state = initSupervisorState(3);
+    state.slots[0]!.pid = 5000;
+    state.slots[1]!.pid = 5001;
+    state.slots[2]!.pid = 5002;
+
+    const result = await superviseTick(state, deps, config({ target: 3 }), () => false);
+
+    expect(io.killTree).toHaveBeenCalledWith(5002);
+    expect(io.killTree).toHaveBeenCalledWith(5001);
+    expect(io.editLabels).toHaveBeenCalledWith(902, ["ready-for-agent"], ["running"]);
+    expect(state.slots).toHaveLength(1);
+    expect(result.retiredSlots).toEqual([2, 1]);
+  });
+
+  it("shrinks with drain-then-retire by marking live trailing slots and removing them only after exit", async () => {
+    const live = new Set([5000, 5001]);
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => live.has(pid)),
+      resizeRequest: vi.fn(async () => ({ target: 1, shrinkMode: "drain-then-retire" })),
+    });
+    const state = initSupervisorState(2);
+    state.slots[0]!.pid = 5000;
+    state.slots[1]!.pid = 5001;
+
+    let result = await superviseTick(state, deps, config({ target: 2 }), () => false);
+
+    expect(state.slots).toHaveLength(2);
+    expect(state.slots[1]!.retiring).toBe(true);
+    expect(io.requestSlotRetire).toHaveBeenCalledWith(1, 5001);
+    expect(io.killTree).not.toHaveBeenCalled();
+    expect(result.retiredSlots).toEqual([]);
+
+    live.delete(5001);
+    io.lastExitCode.mockReturnValue(0);
+    result = await superviseTick(state, deps, config({ target: 2 }), () => false);
+
+    expect(state.slots).toHaveLength(1);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(result.retiredSlots).toEqual([1]);
+  });
+});
+
 // ---------- crash reconcile (#815, ADR 0071 Pattern 5) ----------
 
 function crashInfo(over: Partial<IterDirInfo> = {}): IterDirInfo {
@@ -1597,8 +1677,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];
