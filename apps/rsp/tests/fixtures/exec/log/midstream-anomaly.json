@@ -16,8 +16,8 @@
   "assertions": [
     {
       "question": "oracle preserves planted mid-stream structural outlier",
-      "path": "",
-      "expected": "service=payments level=FATAL panic=InvariantViolation shard=42 trace=midstream-anomaly-7f3a"
+      "path": "summary.outliers.0.text",
+      "expected": "2026-07-17T12:00:00Z service=payments level=FATAL panic=InvariantViolation shard=42 trace=midstream-anomaly-7f3a stack=/srv/app/payments.ts:1442"
     }
   ]
 }
