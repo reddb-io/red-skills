@@ -8,6 +8,23 @@ export interface RemoteUrlFact {
 export interface OperationalProbeContext {
   readonly remoteUrls: readonly (string | RemoteUrlFact)[];
   readonly allowHttpsRemote?: boolean;
+  readonly queueVisibility?: QueueVisibilityProbeInput;
+}
+
+export type QueueVisibilityTransportSurface = "graphql" | "rest" | "rest-cache" | "unknown";
+
+export interface QueueVisibilityTransportFailure {
+  readonly surface?: QueueVisibilityTransportSurface;
+  readonly code?: number;
+  readonly stdout?: string;
+  readonly stderr?: string;
+  readonly message?: string;
+}
+
+export interface QueueVisibilityProbeInput {
+  readonly label?: string;
+  readonly listEngineCandidates: () => Promise<number>;
+  readonly countRestQueue: () => Promise<number>;
 }
 
 export interface OperationalProbeFix {
@@ -42,7 +59,7 @@ export interface OperationalProbe {
   readonly id: string;
   readonly name: string;
   readonly canonicalFix: string;
-  run(context: OperationalProbeContext): OperationalProbeResult;
+  run(context: OperationalProbeContext): OperationalProbeResult | Promise<OperationalProbeResult>;
   applyFix?(finding: OperationalProbeResult, deps: OperationalProbeFixDeps): Promise<OperationalProbeFixResult>;
 }
 
