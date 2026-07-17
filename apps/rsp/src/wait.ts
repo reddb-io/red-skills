@@ -461,7 +461,7 @@ function mergeableState(row: Record<string, unknown>): string {
   return "UNKNOWN";
 }
 
-async function listWaits(cwd: string): Promise<JsonObject[]> {
+export async function listWaits(cwd: string): Promise<JsonObject[]> {
   const dir = await waitRegistryDir(cwd);
   if (!existsSync(dir)) return [];
   const files = await readdir(dir).catch(() => []);
