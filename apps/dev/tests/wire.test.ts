@@ -159,11 +159,12 @@ describe("afkPaths", () => {
     expect(p.historyPath).toBe("/repo/.red/state/afk-history.toonl");
     // Durable supervisor artifacts relocated to the state tier (issue #1685).
     expect(p.fleetStatePath).toBe("/repo/.red/state/afk/afk-supervisor.state.json");
-    expect(p.fleetFirehosePath).toBe("/repo/.red/state/afk/afk-supervisor.log.jsonl");
+    expect(p.fleetFirehosePath).toBe("/repo/.red/state/afk/afk-supervisor.log.toonl");
     expect(p.monitorLogCursorPath).toBe("/repo/.red/state/afk/monitor-log-cursors.json");
     expect(p.supervisorPidPath).toBe("/repo/.red/state/afk/afk-supervisor.pid");
     expect(p.runnerCircuitDir).toBe("/repo/.red/state/afk/runner-circuit");
-    expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.json");
+    expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.toon");
+    expect(p.statuslineRepoCachePath).toBe("/repo/.red/state/statusline/statusline-repo-cache.toon");
     // Scratch worktrees under the tmp worktrees lane.
     expect(p.landingWorktreesDir).toBe("/repo/.red/tmp/worktrees/landing");
     expect(p.reconcileWorktreesDir).toBe("/repo/.red/tmp/worktrees/reconcile");
@@ -963,7 +964,7 @@ describe("statusline count cache write-through", () => {
     try {
       const tmpDir = join(root, ".red", "tmp");
       mkdirSync(tmpDir, { recursive: true });
-      const cachePath = join(tmpDir, "statusline-cache.json");
+      const cachePath = join(tmpDir, "statusline-cache.toon");
       writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: 100 }), "utf8");
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-agent"], ["running"], 200)).toBe(true);
@@ -985,7 +986,7 @@ describe("statusline count cache write-through", () => {
   it("wraps a successful mutation with write-through and does not add API calls", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-write-through-"));
     try {
-      const cachePath = join(root, ".red", "tmp", "statusline-cache.json");
+      const cachePath = join(root, ".red", "tmp", "statusline-cache.toon");
       mkdirSync(join(root, ".red", "tmp"), { recursive: true });
       writeFileSync(cachePath, JSON.stringify({ queue: 1, human: 0, ts: 100 }), "utf8");
       let edits = 0;
