@@ -220,4 +220,29 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
     expect(apply).toContain("pushes a branch, opens a PR, and merges it");
   });
+
+  it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Operational probe families");
+    for (const probe of [
+      "git.remote.https-forbidden",
+      "afk.queue-visibility",
+      "afk.focal-branch-resolution",
+      "afk.base-freshness",
+      "afk.fleet-truth",
+      "afk.claim-hygiene",
+      "afk.label-body-coherence",
+      "config.dev-root-spelling",
+    ]) {
+      expect(skill).toContain(probe);
+    }
+    expect(skill).toContain("what it checks");
+    expect(skill).toContain("evidence it shows");
+    expect(skill).toContain("read-only by default");
+    expect(skill).toContain("destructive fixes are individually gated under `--fix`");
+    expect(skill).toContain("Fleet boot refusal");
+    expect(skill).toContain("refuses to spawn workers");
+    expect(skill).toContain("BootHaltError(\"operational-probe\")");
+  });
 });

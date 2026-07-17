@@ -127,6 +127,23 @@ The loop:
 
 Canonical families live in the target repo's `.red/agents/triage-labels.md`: state (`needs-triage`, `needs-info`, `ready-for-agent`, `running`, `ready-for-human`, `wontfix`), dependency (`blocked:dependency`, `req:N`), typed blocked-reasons (`blocked:quota|runner-transient|merge-conflict|spec|validation|crashed|policy|stalled|infra`), type (`type:spec`, `type:bug`, `needs-slicing`), priority (`priority:high|low|urgent`), relationship (`spec:N`), operational (`runner-error`).
 
+### Operational probe families
+
+Check 21 is the shared operational probe registry (`apps/dev/src/core/operational-probes.ts`). The registry is the source of truth for what it checks, the evidence it shows, and the canonical fix text. `/red-doctor` renders the probes read-only by default; destructive fixes are individually gated under `--fix` by each probe's `fix.gate: "confirm"` contract. If a probe has no wired automated fixer, `--fix` reports a `noop` receipt instead of inventing a mutation.
+
+| Probe id | Probe name | What it checks | Evidence it shows | Fix authority |
+|---|---|---|---|---|
+| `git.remote.https-forbidden` | SSH-only git remotes | Local AFK boot is not using HTTPS git remotes unless the Actions lane explicitly sets `allowHttpsRemote`. | Count of forbidden HTTPS remotes; named remotes also carry the SSH rewrite target in probe data. | Confirm before rewriting named remotes to SSH; otherwise use SSH manually or run in the Actions lane. |
+| `afk.queue-visibility` | AFK queue visibility | The AFK engine and REST queue readers can both list the open queue and agree on the count. | Transport class (`sso-or-scope`, `rate-limit`, GraphQL/REST/generic transport) or engine-vs-REST counts. | No mutation; repair GitHub auth, SSO, rate limits, or network reachability, then restart `/afk`. |
+| `afk.focal-branch-resolution` | AFK focal branch resolution | The resolved focal branch from branch-lock, pin, or trunk is coherent and any branch-lock target still exists or is live-held. | Resolved branch/source, configured trunk, raw lock value, target existence, and live-holder state. | Confirm before clearing a stale branch-lock; live intentional locks stay in place. |
+| `afk.base-freshness` | AFK local trunk freshness | The local trunk is not behind `origin/<trunk>` before autonomous work starts. | Local/remote SHAs when known, ahead/behind counts, and the shared finalizer guard verdict. | Confirm before fast-forwarding local trunk, and only when the guard says on-trunk, clean tree, and local ancestor. |
+| `afk.fleet-truth` | AFK fleet truth | The recorded fleet supervisor pid, heartbeat/state freshness, and bundle version describe a live, current fleet. | Pid liveness, heartbeat/state ages, threshold, bundle/latest version, and finding kind (`zombie`, `version-skew`, `version-unknown`). | Confirm before SIGTERM for a zombie supervisor; optional relaunch is separately confirmed. |
+| `afk.claim-hygiene` | AFK claim hygiene | Open queue issues do not carry dangling claim markers from this machine's dead workers, foreign namespaces, or unknown own workers. | Issue number, marker comment id, namespace, worker, and pid state, plus live/unknown counts. | Confirm per issue before posting concede markers for dead own-namespace workers; foreign markers are reported only. |
+| `afk.label-body-coherence` | AFK label/body coherence | `ready-for-agent` issues do not still carry an active `Current blocker` section in their body. | Issue number, labels, blocker kind/ref/summary/next. | Confirm per issue before archiving the blocker into resolved history and clearing the current blocker. |
+| `config.dev-root-spelling` | Config dev-plugin namespacing | Dev-plugin settings are written under `plugins.dev.*`, not legacy root-level forms. | Off-contract root keys and their canonical `plugins.*` locations. | No generic auto-migration here; route through the config writer or the owning setup flow. |
+
+**Fleet boot refusal.** The fleet boot path runs the same operational probe registry after precheck. If any probe is red, boot raises `BootHaltError("operational-probe")`, prints the probe name, evidence, and canonical fix, and refuses to spawn workers. This is intentional: the registry catches operational states that would make a drain misleading or unsafe before the queue is claimed. Doctor can show the same finding without changing anything, and `red-doctor --fix` can apply only the probe-owned, confirmed repairs.
+
 ### Fix-home (every Pass-1 recommendation carries one)
 
 | Fix-home | Findings it owns |
