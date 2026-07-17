@@ -47,6 +47,11 @@ import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
 import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
 import { getConfig, loadConfig } from "../core/config.js";
 import { reapStaleSupervisorState } from "../runtime/supervisor-state.js";
+import {
+  castleStateSnapshotPath,
+  createEnginePaths,
+  writeCastleStateSnapshot,
+} from "@reddb-io/red-castle/engine";
 
 function isAlive(pid: number): boolean {
   try {
@@ -96,6 +101,50 @@ function writeFleetStateAtomic(path: string, hb: FleetHeartbeat): void {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, fleetHeartbeatState(hb), "utf8");
   renameSync(tmp, path);
+}
+
+async function writeCastleSupervisorSnapshot(
+  root: string,
+  supervisorId: string,
+  hb: FleetHeartbeat,
+): Promise<void> {
+  const paths = createEnginePaths(join(root, ".red"));
+  await writeCastleStateSnapshot(
+    castleStateSnapshotPath(paths, "supervisor", supervisorId),
+    {
+      kind: "supervisor",
+      id: supervisorId,
+      supervisor_id: supervisorId,
+      version: 1,
+      updated_at: hb.ts,
+      runner: hb.runner,
+      pid: process.pid,
+      current: {
+        epoch: hb.epoch,
+        last_progress_epoch: hb.lastProgressEpoch,
+        ready_for_agent: hb.readyForAgent,
+        slots: {
+          busy: hb.slotsBusy,
+          free: hb.slotsFree,
+          total: hb.slotsTotal,
+          parked: hb.slotsParked,
+        },
+        spawns_this_tick: hb.spawnsThisTick,
+        ...(hb.drainBudget
+          ? {
+              drain_budget: {
+                tier: hb.drainBudget.tier,
+                spent_usd: Number(hb.drainBudget.spentUsd.toFixed(4)),
+                limit_usd: Number(hb.drainBudget.limitUsd.toFixed(4)),
+                percent: Number((hb.drainBudget.percent * 100).toFixed(2)),
+              },
+            }
+          : {}),
+      },
+      queue: [],
+      completed: [],
+    },
+  );
 }
 
 /**
@@ -591,6 +640,11 @@ function buildSupervisorDeps(
         writeFleetStateAtomic(statePath, hb);
       } catch {
         // best-effort: state-file failure must not affect the supervisor.
+      }
+      try {
+        await writeCastleSupervisorSnapshot(root, `s${process.pid}`, hb);
+      } catch {
+        // best-effort: castle state mirroring must not affect the supervisor.
       }
       try {
         await appendRecordToonlRow(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
