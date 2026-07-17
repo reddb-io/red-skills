@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
@@ -80,7 +80,7 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     id: "dev.supervisor-firehose",
     plugin: "dev",
     legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
-    toonPath: ".red/tmp/afk-supervisor.log.jsonl",
+    toonPath: ".red/state/afk/afk-supervisor.log.toonl",
     kind: "toonl",
     migration: "sniff-read",
   },
@@ -102,14 +102,14 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     id: "dev.statusline-count-cache",
     plugin: "dev",
     legacyPath: ".red/tmp/statusline-cache.json",
-    toonPath: ".red/tmp/statusline-cache.json",
+    toonPath: ".red/state/statusline/statusline-cache.toon",
     kind: "toon",
   },
   {
     id: "dev.statusline-repo-cache",
     plugin: "dev",
     legacyPath: ".red/tmp/statusline-repo-cache.json",
-    toonPath: ".red/tmp/statusline-repo-cache.json",
+    toonPath: ".red/state/statusline/statusline-repo-cache.toon",
     kind: "toon",
   },
   {
@@ -175,7 +175,7 @@ export async function convertRegisteredToonSurfaces(
 
   for (const surface of selected) {
     if (surface.migration === "sniff-read") {
-      if (await pathExists(join(opts.rootDir, surface.legacyPath))) skipped.push(surface.id);
+      if ((await pathExists(join(opts.rootDir, surface.toonPath))) || (await pathExists(join(opts.rootDir, surface.legacyPath)))) skipped.push(surface.id);
       else missing.push(surface.id);
       continue;
     }
@@ -203,6 +203,9 @@ export async function convertRegisteredToonSurfaces(
       const value = await readLegacyFile(legacy, surface.kind);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, renderSurface(value, surface), "utf8");
+      if (surface.id === "dev.afk-history" && legacy !== target) {
+        await rm(legacy, { force: true });
+      }
       convertedAny = true;
     }
 
@@ -233,7 +236,8 @@ export async function readRegisteredToonSurface(
   if (!surface) throw new Error(`unknown registered TOON surface: ${surfaceId}`);
 
   if (surface.migration === "sniff-read") {
-    const path = join(rootDir, surface.toonPath);
+    const toonPath = join(rootDir, surface.toonPath);
+    const path = (await pathExists(toonPath)) ? toonPath : join(rootDir, surface.legacyPath);
     return {
       surface,
       path,
