@@ -15,6 +15,13 @@ describe("cli routing — native commands", () => {
     });
   });
 
+  it("routes red-doctor with fix/json flags preserved", () => {
+    expect(parseCli(["red-doctor", "--fix", "--json"])).toEqual({
+      command: "red-doctor",
+      args: ["--fix", "--json"],
+    });
+  });
+
   it("routes retake as an issue resumption command", () => {
     expect(parseCli(["retake", "#395", "--json"])).toEqual({ command: "retake", args: ["#395", "--json"] });
   });
