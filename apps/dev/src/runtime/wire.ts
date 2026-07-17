@@ -57,7 +57,7 @@ import { execTool } from "./exec.js";
 import { collectTmpJanitorReport } from "./tmp-janitor.js";
 import { collectFleetTruthProbeInput } from "../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
-import { evaluateFastForwardLocalTarget } from "../core/merge.js";
+import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../core/merge.js";
 
 // ---------- repo resolution ----------
 
@@ -2038,7 +2038,12 @@ async function resolveBranchIssueCache(
  * classification stays exact. Used by a solo `run` (sweeps run) and by the fleet
  * supervisor's pre-spawn boot (#623).
  */
-export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
+export async function buildBootDeps(
+  ctx: RepoContext,
+  options: BootOptions,
+  nowS: number,
+  log?: (line: string) => void,
+): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const paths = afkPaths(ctx.root);
@@ -2086,6 +2091,9 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
       deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
     },
+    log,
+    fastForwardLocalBase: ({ remote, target }) =>
+      fastForwardLocalTarget(gitx.mergeExec(gitCtx), { gitRepo: ctx.root, remote, target }),
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
