@@ -13,11 +13,12 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { copyFileSync, readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readBuildInfo } from "@reddb-io/build-info";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier, rootDevConfigCollisionsFromText } from "../core/config.js";
-import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
+import { compareSemver, newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../core/pin-reader.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
@@ -54,6 +55,8 @@ import { collectLogLineCounts } from "./log-cursor.js";
 import { isLivePid } from "./kill-tree.js";
 import { execTool } from "./exec.js";
 import { collectTmpJanitorReport } from "./tmp-janitor.js";
+import { collectFleetTruthProbeInput } from "../core/operational-probes.js";
+import { resolveSupervisorConfig } from "../core/supervisor.js";
 
 // ---------- repo resolution ----------
 
@@ -1750,6 +1753,23 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const configuredTrunk = resolvedFocalBranch.branch;
   const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
   const pnpmInstalled = pnpmProbe.code !== 127;
+  const installedBundleVersion = readBuildInfo("dev").version;
+  const cachedBundleVersion = newestCachedDevBundleVersion(installedBundleVersion);
+  const latestBundleVersion =
+    cachedBundleVersion && compareSemver(cachedBundleVersion, installedBundleVersion) > 0
+      ? cachedBundleVersion
+      : installedBundleVersion;
+  const supervisorCfg = resolveSupervisorConfig();
+  const fleetTruth = await collectFleetTruthProbeInput(
+    {
+      supervisorPidPath: preferExistingPath(paths.supervisorPidPath, legacyTmpPath(ctx.root, "afk-supervisor.pid")),
+      fleetStatePath: preferExistingPath(paths.fleetStatePath, legacyTmpPath(ctx.root, "afk-supervisor.state.json")),
+    },
+    {
+      heartbeatStaleMs: supervisorCfg.supervisorStaleS * 1000,
+      latestBundleVersion,
+    },
+  );
   return {
     ghInstalled,
     ghAuthenticated,
@@ -1779,6 +1799,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
           },
     },
     configNamespacing: { rootDevKeys },
+    fleetTruth,
   };
 }
 

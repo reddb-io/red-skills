@@ -1,4 +1,5 @@
 export * from "./operational-probes/types.js";
+export * from "./operational-probes/fleet-truth.js";
 export * from "./operational-probes/focal-branch.js";
 export * from "./operational-probes/https-remote.js";
 export * from "./operational-probes/queue-visibility.js";
