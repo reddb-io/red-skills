@@ -9,6 +9,7 @@ import {
   runFleetTruthProbe,
   terminateSupervisorPid,
 } from "../src/core/operational-probes/fleet-truth.js";
+import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 
 const children: number[] = [];
 
@@ -98,6 +99,68 @@ describe("fleet truth operational probe", () => {
 
     expect(result.verdict).toBe("ok");
     expect(result.evidence).not.toContain("version_unknown");
+  });
+
+  it("resolves bundle_version from the TOON supervisor state and still detects skew", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "red-skills-fleet-truth-"));
+    const pidPath = join(dir, "afk-supervisor.pid");
+    const statePath = join(dir, "afk-supervisor.state.json");
+
+    await writeFile(pidPath, "4242\n", "utf8");
+    await writeFile(
+      statePath,
+      encodeDevSnapshotToon({
+        ts: "1970-01-01T00:01:40.000Z",
+        epoch: 100,
+        runner: "codex",
+        bundle_version: "2.64.1",
+        ready_for_agent: 0,
+        slots: { busy: 0, free: 2, total: 2, parked: 0 },
+        spawns_this_tick: 0,
+      }),
+      "utf8",
+    );
+
+    const healthyFacts = await collectFleetTruthProbeInput(
+      { supervisorPidPath: pidPath, fleetStatePath: statePath },
+      {
+        nowMs: 105_000,
+        heartbeatStaleMs: 300_000,
+        latestBundleVersion: "2.64.1",
+        pidLive: (pid) => pid === 4242,
+      },
+    );
+    const healthy = runFleetTruthProbe({ remoteUrls: [], fleetTruth: healthyFacts });
+    expect(healthy.verdict).toBe("ok");
+    expect(healthy.evidence).toContain("bundle=2.64.1 latest=2.64.1");
+    expect(healthy.evidence).not.toContain("version_unknown");
+
+    await writeFile(
+      statePath,
+      encodeDevSnapshotToon({
+        ts: "1970-01-01T00:01:40.000Z",
+        epoch: 100,
+        runner: "codex",
+        bundle_version: "2.63.0",
+        ready_for_agent: 0,
+        slots: { busy: 0, free: 2, total: 2, parked: 0 },
+        spawns_this_tick: 0,
+      }),
+      "utf8",
+    );
+
+    const skewFacts = await collectFleetTruthProbeInput(
+      { supervisorPidPath: pidPath, fleetStatePath: statePath },
+      {
+        nowMs: 105_000,
+        heartbeatStaleMs: 300_000,
+        latestBundleVersion: "2.64.1",
+        pidLive: (pid) => pid === 4242,
+      },
+    );
+    const skew = runFleetTruthProbe({ remoteUrls: [], fleetTruth: skewFacts });
+    expect(skew.verdict).toBe("red");
+    expect(skew.evidence).toContain("version_skew bundle=2.63.0 latest=2.64.1");
   });
 
   it("still flags stale foreign supervisors with unknown versions", () => {
