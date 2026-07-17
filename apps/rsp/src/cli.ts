@@ -11,7 +11,8 @@ import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
-import type { RspElisionStore, RspMintMeta, RspStorageClassStats } from "./elision-store.js";
+import type { RspElisionStore, RspMintMeta, RspRecoveryHandle, RspStorageClassStats } from "./elision-store.js";
+import { withNextSteps } from "./output-levers.js";
 import { formatUsd } from "./pricing.js";
 import type { ResidentResponseMetrics } from "./resident-client.js";
 import { renderStructuredError, renderUnknownFlag } from "./structured-error.js";
@@ -34,6 +35,10 @@ interface ParsedArgs {
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const buildInfo = readBuildInfo("rsp");
+  if (isHelpRequest(argv)) {
+    process.stdout.write(renderCliHelp(argv));
+    return 0;
+  }
   const args = parseArgs(argv);
   if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
     const { runClaudePreExecHook } = await import("./intercept.js");
@@ -190,6 +195,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     if (response.stderr) process.stderr.write(`${response.stderr}\n`);
     return response.status;
   }
+  if (!args.command) {
+    const dashboard = await readDashboardSnapshot(config);
+    process.stdout.write(renderDashboard(dashboard));
+    return 0;
+  }
   if (!args.storeUri && config.storeUri.startsWith("file://") && !existsSync(fileURLToPath(config.storeUri))) {
     if (wrapperCommand) return await runColdWrappedCommand(args, config, residentPaths.rootDir);
     process.stdout.write(renderStructuredError({
@@ -238,7 +248,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     : openResidentStore();
   let closeStore: (() => Promise<void>) | undefined;
   try {
-    if (!args.command || args.command === "stats") {
+    if (args.command === "stats") {
       const { stats, telemetry } = await readStatsSnapshot(config, sinceDays(args.positional, 30));
       process.stdout.write(renderStats(stats, telemetry, statsFull(args.positional)));
       return 0;
@@ -762,6 +772,78 @@ async function readStatsSnapshot(
   }
 }
 
+interface DashboardSnapshot {
+  stats: RspAccountingLaneStats;
+  telemetry: RspTelemetryStats;
+  recoveryHandles: RspRecoveryHandle[];
+  waits: JsonObject[];
+}
+
+async function readDashboardSnapshot(config: RspRuntimeConfig): Promise<DashboardSnapshot> {
+  const { stats, telemetry } = await readStatsSnapshot(config, 30);
+  const [recoveryHandles, waits] = await Promise.all([
+    readRecoveryHandles(config),
+    import("./wait.js").then((module) => module.listWaits(process.cwd()), () => [] as JsonObject[]),
+  ]);
+  return { stats, telemetry, recoveryHandles, waits };
+}
+
+async function readRecoveryHandles(config: RspRuntimeConfig): Promise<RspRecoveryHandle[]> {
+  if (!config.storeUri.startsWith("file://")) return [];
+  const path = fileURLToPath(config.storeUri);
+  if (!existsSync(path)) return [];
+  const { RspElisionStore } = await import("./elision-store.js");
+  const store = await RspElisionStore.open({
+    uri: config.storeUri,
+    ttlDays: config.ttlDays,
+    ephemeralTtlHours: config.ephemeralTtlHours,
+    byteBudget: config.byteBudget,
+  });
+  try {
+    return await store.recoveryHandles(5);
+  } finally {
+    await store.close();
+  }
+}
+
+function renderDashboard(snapshot: DashboardSnapshot): string {
+  const statsView = statsPayload(snapshot.stats, snapshot.telemetry, false);
+  const payload = withNextSteps({
+    executable: {
+      name: "rsp",
+      command: "rsp",
+    },
+    recovery: {
+      pending: snapshot.recoveryHandles.length,
+      handles: snapshot.recoveryHandles as unknown as JsonObject[],
+    },
+    waits: {
+      active: snapshot.waits.length,
+      entries: snapshot.waits,
+    },
+    store: {
+      records: snapshot.stats.records,
+      bytes: snapshot.stats.bytes,
+      oldest: snapshot.stats.oldest,
+      budget: snapshot.stats.budget,
+      storage_classes: (snapshot.stats.storage_classes ?? emptyStorageClassStats()) as unknown as JsonObject,
+    },
+    savings: statsView.savings,
+    health: statsView.health,
+    decisions: statsView.decisions,
+    latency: statsView.latency,
+  }, dashboardNextSteps(snapshot));
+  return `${encodeSnapshotToon(payload)}\n`;
+}
+
+function dashboardNextSteps(snapshot: DashboardSnapshot): string[] {
+  return [
+    snapshot.recoveryHandles.length > 0 ? "rsp show <handle>" : "rsp <wrapped-command> --terse",
+    snapshot.waits.length > 0 ? "rsp wait ls" : "rsp wait cmd -- \"<command>\"",
+    "rsp stats --since <days>d",
+  ];
+}
+
 async function emitWrappedResult(
   args: ParsedArgs,
   result: WrappedCommandResult,
@@ -1184,6 +1266,189 @@ function passthroughTelemetryCommand(argv: readonly string[]): string {
   } catch {
     return argv.join(" ");
   }
+}
+
+function isHelpRequest(argv: readonly string[]): boolean {
+  return argv[0] === "--help" || argv[0] === "-h" || argv.includes("--help") || argv.includes("-h");
+}
+
+function renderCliHelp(argv: readonly string[]): string {
+  const command = argv[0] === "--help" || argv[0] === "-h" ? undefined : argv[0];
+  const lines = commandHelpLines(command);
+  return `${lines.join("\n")}\n`;
+}
+
+function commandHelpLines(command: string | undefined): string[] {
+  switch (command) {
+    case "stats":
+      return scopedHelp("rsp stats [--since <days>d] [--full]", [
+        "Defaults: --since 30d, --full false",
+        "--since <days>d  telemetry window, default 30d",
+        "--full           include wider daily/top-command/failure lists, default false",
+        "--store-uri <uri> read a non-default store",
+      ], ["rsp stats", "rsp stats --since 7d --full"]);
+    case "gains":
+      return scopedHelp("rsp gains [--since <days>d]", [
+        "--since <days>d  gains window, default 28d",
+        "--store-uri <uri> read a non-default shared RedDB store",
+      ], ["rsp gains", "rsp gains --since 14d"]);
+    case "show":
+      return scopedHelp("rsp show <handle>", [
+        "<handle>        elision handle such as el:<id>",
+        "--store-uri <uri> read a non-default store",
+      ], ["rsp show el:<id>", "rsp show <handle>"]);
+    case "git":
+      return scopedHelp("rsp git <status|log|diff|show|blame|branch|commit|push> [options]", [
+        "--brief          compact output, default lossless",
+        "--terse          aggressively summarize and mint recovery handles",
+        "--query <text>   filter rendered rows",
+        "--full           keep full supported wrapper detail",
+      ], ["rsp git status --brief", "rsp git log --terse", "rsp git diff --query <path>"]);
+    case "gh":
+      return scopedHelp("rsp gh <pr|issue|run> <list|view> [options]", [
+        "--brief          compact output, default lossless",
+        "--terse          aggressively summarize and mint recovery handles",
+        "--query <text>   filter rendered rows",
+        "--full           keep full supported wrapper detail",
+      ], ["rsp gh pr list --query <title-or-label>", "rsp gh issue view <number>", "rsp gh run list --limit 20"]);
+    case "vitest":
+      return scopedHelp("rsp vitest [run] [vitest-options]", [
+        "--brief          compact output, default lossless",
+        "--terse          summarize long failures and mint recovery handles",
+        "--query <text>   filter failure rows",
+      ], ["rsp vitest run", "rsp vitest run --query <suite-or-test>"]);
+    case "cargo":
+      return scopedHelp("rsp cargo test [cargo-test-options]", [
+        "--brief          compact output, default lossless",
+        "--terse          summarize long failures and mint recovery handles",
+        "--query <text>   filter failure rows",
+      ], ["rsp cargo test", "rsp cargo test --query <test-name>"]);
+    case "cat":
+      return scopedHelp("rsp cat [--head <n>|--tail <n>|--full] <file>", [
+        "--head <n>       show first n lines, default slice 10",
+        "--tail <n>       show last n lines, default slice 10",
+        "--full           emit full text even when it is large",
+        "--brief/--terse  reduce large text context",
+      ], ["rsp cat <file>", "rsp cat --head 20 <file>", "rsp cat --tail 20 <file>"]);
+    case "exec":
+      return scopedHelp("rsp exec -- \"<command line>\"", [
+        "--brief          compact recognized stdout, default lossless",
+        "--terse          summarize large stdout and mint recovery handles",
+        "--query <text>   filter supported structured summaries",
+      ], ["rsp exec -- \"pnpm -C apps/rsp build\"", "rsp exec -- \"git status --short\""]);
+    case "proxy":
+      return scopedHelp("rsp proxy -- <command line>", [
+        "--brief          compact recognized stdout, default lossless",
+        "--terse          summarize recognized large stdout",
+      ], ["rsp proxy -- git status", "rsp proxy -- pnpm test"]);
+    case "wait":
+      return [
+        "usage: rsp wait <subcommand> [options]",
+        "",
+        "Flags and defaults:",
+        "  --timeout <duration> default 30m for cmd, 60m for pr/run, 2h for release",
+        "  --reason <text>     default empty",
+        "  --signal-pid <pid>  optional completion signal target",
+        "  --signal <signal>   default USR1",
+        "  --notify-cmd <cmd>  optional completion command",
+        "",
+        "Examples:",
+        "  rsp wait pr 123 --reason \"before merge\"",
+        "  rsp wait run --branch feature/wait --latest",
+        "  rsp wait release --tag \"v2.*\"",
+        "  rsp wait cmd -- \"pnpm -C apps/rsp build\"",
+        "  rsp wait ls",
+        "",
+        "Exit codes: 0 = success verdict, 1 = failure verdict, 2 = timeout/indeterminate.",
+      ];
+    case "status":
+      return scopedHelp("rsp status", [
+        "No flags. Prints resident registry status as TOON.",
+      ], ["rsp status"]);
+    case "sweep":
+      return scopedHelp("rsp sweep", [
+        "No flags. Removes stale resident registry entries and prints TOON status.",
+      ], ["rsp sweep"]);
+    case "setup":
+      return scopedHelp("rsp setup", [
+        "No flags. Provisions repo rsp configuration and store state.",
+      ], ["rsp setup"]);
+    case "mcp":
+      return scopedHelp("rsp mcp", [
+        "No flags. Starts the rsp MCP server over stdio.",
+      ], ["rsp mcp"]);
+    case "shell-init":
+      return scopedHelp("rsp shell-init <fish|bash|zsh>", [
+        "<fish|bash|zsh> target shell, no default",
+      ], ["rsp shell-init bash", "rsp shell-init fish"]);
+    case "server":
+      return scopedHelp("rsp server [options]", [
+        "--socket <path>                      default resident socket",
+        "--pid-file <path>                    default resident pid file",
+        "--store-uri <uri>                    default repo store",
+        "--ttl-days <days>                    default from config",
+        "--ephemeral-ttl-hours <hours>        default from config",
+        "--byte-budget <bytes>                default from config",
+        "--idle-ms <ms>                       default from config",
+      ], ["rsp server", "rsp server --socket <path> --store-uri <uri>"]);
+    case "warm-resident":
+      return scopedHelp("rsp warm-resident [options]", [
+        "--socket <path>               default resident socket",
+        "--wake-lock <path>            default resident wake lock",
+        "--store-uri <uri>             default repo store",
+        "--idle-ms <ms>                default from config",
+      ], ["rsp warm-resident", "rsp warm-resident --store-uri <uri>"]);
+    case "gh-api-json":
+      return scopedHelp("rsp gh-api-json <path> [-f name=value ...]", [
+        "-f name=value     string GitHub API field",
+        "-F name=value     typed GitHub API field",
+      ], ["rsp gh-api-json repos/{owner}/{repo}", "rsp gh-api-json repos/{owner}/{repo}/pulls -f state=open"]);
+    case "hook":
+      return scopedHelp("rsp hook <claude-pre-exec|codex-pre-exec|claude-post-exec|codex-post-exec>", [
+        "Reads hook payload from stdin. Defaults come from the calling host.",
+      ], ["rsp hook codex-pre-exec", "rsp hook claude-pre-exec"]);
+    case undefined:
+      return [
+        "usage: rsp <subcommand> [options]",
+        "",
+        "Bare invocation:",
+        "  rsp",
+        "    renders a live TOON dashboard with recovery handles, active waits, savings, and health.",
+        "",
+        "Subcommands:",
+        "  stats, gains, show, git, gh, vitest, cargo, cat, exec, proxy, wait",
+        "  status, sweep, setup, mcp, shell-init, server, warm-resident, gh-api-json, hook",
+        "",
+        "Global flags:",
+        "  --store-uri <uri>  default repo store",
+        "  --brief            compact summaries",
+        "  --terse            aggressive summaries with recovery handles",
+        "  --query <text>     filter supported rendered output",
+        "  --help, -h         scoped help",
+        "",
+        "Examples:",
+        "  rsp",
+        "  rsp stats --since 7d",
+        "  rsp git log --terse",
+        "  rsp show el:<id>",
+      ];
+    default:
+      return scopedHelp(`rsp ${command} [options]`, [
+        "Unknown rsp subcommand. Use root help to list supported subcommands.",
+      ], ["rsp --help"]);
+  }
+}
+
+function scopedHelp(usage: string, flags: readonly string[], examples: readonly string[]): string[] {
+  return [
+    `usage: ${usage}`,
+    "",
+    "Flags and defaults:",
+    ...flags.map((flag) => `  ${flag}`),
+    "",
+    "Examples:",
+    ...examples.map((example) => `  ${example}`),
+  ];
 }
 
 function parseArgs(argv: string[]): ParsedArgs {

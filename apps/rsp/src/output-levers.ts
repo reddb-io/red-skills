@@ -42,9 +42,21 @@ export function filterTextLines(text: string, query?: string): string {
 }
 
 export function withHelp(payload: JsonObject, help: readonly string[]): JsonObject {
-  const clean = help.filter(Boolean);
+  return withNextSteps(payload, help, { includeLegacyHelp: true });
+}
+
+export function withNextSteps(
+  payload: JsonObject,
+  nextSteps: readonly string[],
+  options: { includeLegacyHelp?: boolean } = {},
+): JsonObject {
+  const clean = nextSteps.filter(Boolean);
   if (clean.length === 0) return payload;
-  return { ...payload, help: clean as JsonValue };
+  return {
+    ...payload,
+    ...(options.includeLegacyHelp ? { help: clean as JsonValue } : {}),
+    next_steps: clean as JsonValue,
+  };
 }
 
 function queryText(value: unknown): string {

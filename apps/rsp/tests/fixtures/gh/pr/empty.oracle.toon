@@ -8,3 +8,6 @@ summary: 0 open PRs
 help[2]:
   - rsp gh issue list
   - rsp gh pr list --query <title-or-label>
+next_steps[2]:
+  - rsp gh issue list
+  - rsp gh pr list --query <title-or-label>

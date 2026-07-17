@@ -1269,7 +1269,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
@@ -1296,7 +1296,7 @@ describe("rsp cli", () => {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: { command: "rsp git status" },
+            updatedInput: { command: "rsp proxy -- 'git status'" },
           },
         });
         expect(retryCold.stderr).toEqual(Buffer.alloc(0));
@@ -1319,7 +1319,7 @@ describe("rsp cli", () => {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "allow",
-          updatedInput: { command: "rsp git status" },
+          updatedInput: { command: "rsp proxy -- 'git status'" },
         },
       });
       expect(repeat.stderr).toEqual(Buffer.alloc(0));
@@ -1337,7 +1337,7 @@ describe("rsp cli", () => {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: { command: "rsp git status" },
+            updatedInput: { command: "rsp proxy -- 'git status'" },
           },
         });
         expect(warm.stderr).toEqual(Buffer.alloc(0));
@@ -1392,7 +1392,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
@@ -1406,7 +1406,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
     expect(warm.stderr).toEqual(Buffer.alloc(0));
@@ -1419,7 +1419,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
     expect(expired.stderr).toEqual(Buffer.alloc(0));
@@ -1444,7 +1444,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
 
@@ -1849,7 +1849,7 @@ describe("rsp cli", () => {
     expect(compressed.stderr).toEqual(direct.stderr);
     expect(compressed.stdout.length).toBeLessThan(direct.stdout.length);
     const text = compressed.stdout.toString("utf8");
-    expect(text).toContain("stdout summary");
+    expect(text).toContain("summary:");
     expect(text).toContain("rsp show el:");
     const handle = /rsp show (el:[a-f0-9]{12})/.exec(text)?.[1];
     expect(handle).toBeTruthy();
@@ -2318,19 +2318,29 @@ describe("rsp cli", () => {
     );
   }, 120_000);
 
-  it("fails closed with a structured error instead of creating the default Repo store when setup has not provisioned it", async () => {
+  it("prints a degraded dashboard instead of creating the default Repo store when setup has not provisioned it", async () => {
     const root = await tempRoot();
     await enableRsp(root);
 
     const res = runRspFromCwd(root, [], {});
-    const decoded = decode(res.stdout.toString("utf8")) as { category: string; help: string[]; error: string };
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      executable: { name: string };
+      recovery: { pending: number };
+      waits: { active: number };
+      store: { records: number; bytes: number };
+      savings: { empty: boolean };
+      next_steps: string[];
+    };
 
-    expect(res.status).toBe(1);
+    expect(res.status).toBe(0);
     expect(decoded).toMatchObject({
-      category: "real-error",
-      error: "rsp repo store is not provisioned",
-      help: ["/red-setup"],
+      executable: { name: "rsp" },
+      recovery: { pending: 0 },
+      waits: { active: 0 },
+      store: { records: 0, bytes: 0 },
+      savings: { empty: true },
     });
+    expect(decoded.next_steps).toContain("rsp <wrapped-command> --terse");
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -2438,7 +2448,7 @@ describe("rsp cli", () => {
 
     const debug = runRspFromCwd(root, ["git", "--version"], { RSP_STORE_URI: storeUri, RSP_DEBUG: "1" });
     expect(debug.status).toBe(1);
-    expect(debug.stdout.toString("utf8")).toContain("error: unsupported git subcommand");
+    expect(debug.stdout.toString("utf8")).toContain('error: "unsupported git subcommand');
   });
 
   it("prints rsp wait help with the standardized waiting contract", async () => {
@@ -2554,7 +2564,7 @@ describe("rsp cli", () => {
     expect((decode(after.stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
   });
 
-  it("prints store stats instead of help when called without arguments", async () => {
+  it("prints a content-first live dashboard instead of help when called without arguments", async () => {
     const root = await tempRoot();
     await enableRsp(root);
     const storeUri = `file://${join(root, "red.rdb")}`;
@@ -2576,26 +2586,65 @@ describe("rsp cli", () => {
 
     expect(res.status).toBe(0);
     const decoded = decode(res.stdout.toString("utf8")) as {
-      records: number;
-      oldest: string;
-      budget: number;
-      storage_classes: Record<string, { records: number; bytes: number; raw_bytes: number }>;
+      executable: { name: string; command: string };
+      recovery: {
+        pending: number;
+        handles: Array<{ handle: string; command: string; age_seconds: number; age_display: string; recover: string }>;
+      };
+      waits: { active: number; entries: unknown[] };
+      store: {
+        records: number;
+        oldest: string;
+        budget: number;
+        storage_classes: Record<string, { records: number; bytes: number; raw_bytes: number }>;
+      };
       savings: { window_days: number; empty: boolean; invocations: number };
       health: { degradations: number; degradation_rate_display: string };
       latency: { wrapper_ms_p50: null; wrapper_ms_p50_display: string };
+      next_steps: string[];
     };
-    expect(decoded.records).toBe(1);
-    expect(decoded.oldest).toBe("2026-07-10T12:00:00.000Z");
-    expect(decoded.budget).toBe(67108864);
-    expect(decoded.storage_classes.derivable).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
-    expect(decoded.storage_classes["re-executable"]).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
-    expect(decoded.storage_classes.ephemeral.records).toBe(1);
-    expect(decoded.storage_classes.ephemeral.bytes).toBeGreaterThan(0);
-    expect(decoded.storage_classes.ephemeral.raw_bytes).toBe(3);
+    expect(decoded.executable).toEqual({ name: "rsp", command: "rsp" });
+    expect(decoded.recovery.pending).toBe(1);
+    expect(decoded.recovery.handles).toEqual([
+      expect.objectContaining({
+        command: "cmd",
+        age_seconds: expect.any(Number),
+        age_display: expect.any(String),
+        recover: expect.stringMatching(/^rsp show el:[a-f0-9]{12}$/),
+      }),
+    ]);
+    expect(decoded.waits).toEqual({ active: 0, entries: [] });
+    expect(decoded.store.records).toBe(1);
+    expect(decoded.store.oldest).toBe("2026-07-10T12:00:00.000Z");
+    expect(decoded.store.budget).toBe(67108864);
+    expect(decoded.store.storage_classes.derivable).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.store.storage_classes["re-executable"]).toEqual({ records: 0, bytes: 0, raw_bytes: 0 });
+    expect(decoded.store.storage_classes.ephemeral.records).toBe(1);
+    expect(decoded.store.storage_classes.ephemeral.bytes).toBeGreaterThan(0);
+    expect(decoded.store.storage_classes.ephemeral.raw_bytes).toBe(3);
     expect(decoded.savings).toMatchObject({ window_days: 30, empty: true, invocations: 0 });
     expect(decoded.health).toMatchObject({ degradations: 0, degradation_rate_display: "0.0" });
     expect(decoded.latency).toMatchObject({ wrapper_ms_p50: null, wrapper_ms_p50_display: "none" });
+    expect(decoded.next_steps).toEqual(["rsp show <handle>", "rsp wait cmd -- \"<command>\"", "rsp stats --since <days>d"]);
     expect(res.stderr).toEqual(Buffer.alloc(0));
+  });
+
+  it("prints scoped help for top-level rsp subcommands", async () => {
+    const root = await tempRoot();
+
+    const rootHelp = runRsp(root, ["--help"], {});
+    const statsHelp = runRsp(root, ["stats", "--help"], {});
+    const gitHelp = runRsp(root, ["git", "--help"], {});
+
+    expect(rootHelp.status).toBe(0);
+    expect(rootHelp.stdout.toString("utf8")).toContain("usage: rsp <subcommand> [options]");
+    expect(rootHelp.stdout.toString("utf8")).toContain("Examples:");
+    expect(statsHelp.status).toBe(0);
+    expect(statsHelp.stdout.toString("utf8")).toContain("usage: rsp stats [--since <days>d] [--full]");
+    expect(statsHelp.stdout.toString("utf8")).toContain("Defaults: --since 30d");
+    expect(gitHelp.status).toBe(0);
+    expect(gitHelp.stdout.toString("utf8")).toContain("usage: rsp git <status|log|diff|show|blame|branch|commit|push>");
+    expect(gitHelp.stdout.toString("utf8")).toContain("Examples:");
   });
 
   it("prints a definitive empty telemetry state through rsp stats", async () => {
@@ -2710,7 +2759,11 @@ describe("rsp cli", () => {
     const res = runRsp(root, ["show", handle], { RSP_STORE_URI: storeUri });
 
     expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.from("expired 2026-07-10T18:00:00.000Z — re-run: rerun me\n"));
+    expect(decode(res.stdout.toString("utf8"))).toMatchObject({
+      category: "real-error",
+      error: "expired 2026-07-10T18:00:00.000Z",
+      help: ["rerun me"],
+    });
     expect(res.stderr).toEqual(Buffer.alloc(0));
   });
 });

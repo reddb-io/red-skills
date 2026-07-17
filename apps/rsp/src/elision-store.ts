@@ -54,6 +54,17 @@ export interface RspStoreStats {
   storage_classes: RspStorageClassStats;
 }
 
+export interface RspRecoveryHandle {
+  handle: `el:${string}`;
+  command: string;
+  created_at: string;
+  expires_at: string;
+  age_seconds: number;
+  age_display: string;
+  storage_class: RspStorageClass;
+  recover: string;
+}
+
 export interface RspElisionStoreOptions {
   uri: string;
   ttlDays?: number;
@@ -309,6 +320,13 @@ export class RspElisionStore {
       budget: this.opts.byteBudget,
       storage_classes: storageStatsForIndex(records),
     };
+  }
+
+  async recoveryHandles(limit = 5): Promise<RspRecoveryHandle[]> {
+    if (this.db) return await this.recoveryHandlesRedDb(limit);
+    this.prune();
+    await this.flush();
+    return recoveryHandlesForIndex(this.readIndex().records, this.opts.now(), limit);
   }
 
   private readIndex(): IndexDocument {
@@ -568,6 +586,11 @@ export class RspElisionStore {
       budget: this.opts.byteBudget,
       storage_classes: storageStatsForIndex(index.records),
     };
+  }
+
+  private async recoveryHandlesRedDb(limit: number): Promise<RspRecoveryHandle[]> {
+    const index = await this.pruneRedDb(await this.readRedDbIndex());
+    return recoveryHandlesForIndex(index.records, this.opts.now(), limit);
   }
 
   async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
@@ -899,6 +922,35 @@ function storageStatsForIndex(records: readonly IndexEntry[]): RspStorageClassSt
     stats[storageClass].bytes += entry.bytes;
   }
   return stats;
+}
+
+function recoveryHandlesForIndex(records: readonly IndexEntry[], now: Date, limit: number): RspRecoveryHandle[] {
+  const nowMs = now.getTime();
+  return [...records]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, Math.max(0, limit))
+    .map((entry) => {
+      const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(entry.created_at)) / 1000));
+      return {
+        handle: entry.handle,
+        command: entry.command,
+        created_at: entry.created_at,
+        expires_at: entry.expires_at,
+        age_seconds: ageSeconds,
+        age_display: formatAge(ageSeconds),
+        storage_class: storageClassForIndexEntry(entry),
+        recover: `rsp show ${entry.handle}`,
+      };
+    });
+}
+
+function formatAge(ageSeconds: number): string {
+  if (ageSeconds < 60) return `${ageSeconds}s`;
+  const ageMinutes = Math.floor(ageSeconds / 60);
+  if (ageMinutes < 60) return `${ageMinutes}m`;
+  const ageHours = Math.floor(ageMinutes / 60);
+  if (ageHours < 24) return `${ageHours}h`;
+  return `${Math.floor(ageHours / 24)}d`;
 }
 
 function expiresAtFor(now: Date, storageClass: RspStorageClass, ttlDays: number, ephemeralTtlHours: number): string {
