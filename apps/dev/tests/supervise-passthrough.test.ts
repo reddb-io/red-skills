@@ -28,7 +28,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
     // every internal knob is stripped
     for (const denied of PASSTHROUGH_DENYLIST) {
       if (denied === "RED_AFK_RUNNER") continue; // re-pinned below
-      if (denied === "RED_AFK_SWEEPS_DONE") continue; // re-pinned below (#623)
+      if (denied === "RED_AFK_BOOT_SWEEPS_COMPLETE") continue; // re-pinned below (#623)
       expect(env[denied]).toBeUndefined();
     }
     expect(env.RED_AFK_TARGET).toBeUndefined();
@@ -37,7 +37,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
     expect(env.RED_AFK_RUNNER).toBe("codex");
     // #623: every supervised worker is marked sweeps-done so it boots
     // bootstrap+claim only (skips the sweeps the supervisor already ran).
-    expect(env.RED_AFK_SWEEPS_DONE).toBe("1");
+    expect(env.RED_AFK_BOOT_SWEEPS_COMPLETE).toBe("1");
   });
 
   it("strips per-slot _BASE build-isolation vars (handled per slot, not forwarded)", () => {
