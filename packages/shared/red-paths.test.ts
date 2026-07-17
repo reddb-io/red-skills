@@ -5,6 +5,7 @@ import {
   MEMORY_ROOT_ENV,
   ROOT_OVERRIDE_ENV_VARS,
   SHARED_STORE_REL,
+  isLegacySharedStorePath,
   legacySharedStorePath,
   resolveSharedStorePath,
   WORKERS_NAMESPACE_ENV,
@@ -100,9 +101,10 @@ describe("resolveSharedStorePath (transition-window fallback)", () => {
     expect(resolved).toBe(sharedStorePath(ROOT));
   });
 
-  it("falls back to the legacy tmp store when only that exists", () => {
-    const resolved = resolveSharedStorePath(ROOT, (p) => p === legacySharedStorePath(ROOT));
-    expect(resolved).toBe(legacySharedStorePath(ROOT));
+  it("fails clearly when only the legacy tmp store exists", () => {
+    expect(() => resolveSharedStorePath(ROOT, (p) => p === legacySharedStorePath(ROOT))).toThrow(
+      "Run `rsp setup` to migrate it to .red/state/red-skills.rdb",
+    );
   });
 
   it("defaults to the state-tier store when neither exists", () => {
@@ -111,6 +113,12 @@ describe("resolveSharedStorePath (transition-window fallback)", () => {
 
   it("prefers state over legacy when both exist", () => {
     expect(resolveSharedStorePath(ROOT, () => true)).toBe(sharedStorePath(ROOT));
+  });
+
+  it("recognizes explicit legacy shared-store paths for contract checks", () => {
+    expect(isLegacySharedStorePath(ROOT, ".red/tmp/red-skills.rdb")).toBe(true);
+    expect(isLegacySharedStorePath(ROOT, "/repo/.red/tmp/red-skills.rdb")).toBe(true);
+    expect(isLegacySharedStorePath(ROOT, ".red/state/red-skills.rdb")).toBe(false);
   });
 });
 
