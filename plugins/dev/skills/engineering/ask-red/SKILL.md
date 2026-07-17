@@ -112,7 +112,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   use `apps/rsp/docs/TROUBLESHOOTING.md` for rsp hook silence, resident/store,
   and store-growth incidents.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
-  feature-work routes.
+  feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
+  shipped config template and post-write loader check.
 - TOON/TOONL operational reader changes are documentation-maintenance work:
   `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
   `/afk` plus `/daily-review` own the lane-reading examples.
