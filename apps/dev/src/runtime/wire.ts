@@ -280,7 +280,7 @@ export function resolveRunSettings(
   runner?: Runner,
 ): RunSettings {
   const paths = afkPaths(root);
-  const cfg = loadConfig(paths.configPath, { warn: () => undefined });
+  const cfg = loadConfig(paths.configPath);
   // Precedence: RED_AFK_SANDBOX env override > afk.sandbox config > "none".
   // The env knob lets an E2E/CI run pick the isolation backend without mutating
   // the target repo's .red/config.yaml, consistent with the other RED_AFK_* knobs.
@@ -1711,7 +1711,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const { branchLockPath, readLockedBranch } = await import("./lock.js");
   const lockPath = branchLockPath(ctx.root);
-  const config = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
+  const config = loadConfig(afkPaths(ctx.root).configPath);
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
@@ -1947,7 +1947,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const paths = afkPaths(ctx.root);
-  const cfg = loadConfig(paths.configPath, { warn: () => undefined });
+  const cfg = loadConfig(paths.configPath);
   const countCachePath = statuslineCountCachePath(ctx.root);
   // ONE batched issue-state fetch backs every per-issue boot lookup below.
   const issueStates = await ghx.listIssueStates(ghCtx);

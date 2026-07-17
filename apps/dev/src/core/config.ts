@@ -268,6 +268,30 @@ export class MalformedConfigError extends Error {
   }
 }
 
+function malformedConfigLine(line: number, reason: string): MalformedConfigError {
+  return new MalformedConfigError(`malformed YAML at line ${line}: ${reason}`);
+}
+
+function stripYamlComment(raw: string): string {
+  const content = raw.trimStart();
+  if (content === "" || content.startsWith("#")) return "";
+
+  let quote: '"' | "'" | undefined;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (quote !== undefined) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "#") return raw.slice(0, i);
+  }
+  return raw;
+}
+
 function configDefaults(): ConfigValues {
   return { ...CONFIG_DEFAULTS };
 }
@@ -289,23 +313,23 @@ export function parseConfigYaml(text: string): ConfigValues {
   // flat config map keeps its `dotted.key -> value` shape (see readBackpressure).
   const seqCounters: Record<string, number> = {};
 
+  let lineNumber = 0;
   for (let raw of text.split("\n")) {
+    lineNumber += 1;
     // strip a trailing CR (CRLF tolerance)
     raw = raw.replace(/\r$/, "");
 
-    // strip inline comments unless the line contains a quoted string
-    let stripped = raw;
-    if (!/".*"/.test(stripped) && !/'.*'/.test(stripped)) {
-      const hash = stripped.indexOf("#");
-      if (hash >= 0) stripped = stripped.slice(0, hash);
-    }
+    // Strip comments only when `#` is outside a quoted scalar. Full-line
+    // comments are always skipped before the grammar sees them, even if their
+    // example payload contains quotes.
+    const stripped = stripYamlComment(raw);
 
     // skip blank / whitespace-only lines
     if (stripped.replace(/\s/g, "") === "") continue;
 
     const indentStr = stripped.match(/^\s*/)?.[0] ?? "";
     const indent = indentStr.length;
-    if (indent % 2 !== 0) throw new MalformedConfigError();
+    if (indent % 2 !== 0) throw malformedConfigLine(lineNumber, "odd indentation");
 
     let rest = stripped.slice(indent).replace(/\s+$/, "");
 
@@ -318,10 +342,10 @@ export function parseConfigYaml(text: string): ConfigValues {
         stack.pop();
         indents.pop();
       }
-      if (stack.length === 0) throw new MalformedConfigError();
+      if (stack.length === 0) throw malformedConfigLine(lineNumber, "sequence item without a parent mapping");
 
       let item = rest.slice(1).replace(/^\s+/, "");
-      if (item === "") throw new MalformedConfigError();
+      if (item === "") throw malformedConfigLine(lineNumber, "empty sequence item");
       // Strip an inline comment that follows the closing quote (e.g. `- "cmd" # note`).
       if (item[0] === '"' || item[0] === "'") {
         const q = item[0];
@@ -332,10 +356,14 @@ export function parseConfigYaml(text: string): ConfigValues {
         }
       }
       if (item.startsWith('"')) {
-        if (!item.endsWith('"') || item.length < 2) throw new MalformedConfigError();
+        if (!item.endsWith('"') || item.length < 2) {
+          throw malformedConfigLine(lineNumber, "unclosed double-quoted sequence item");
+        }
         item = item.slice(1, -1);
       } else if (item.startsWith("'")) {
-        if (!item.endsWith("'") || item.length < 2) throw new MalformedConfigError();
+        if (!item.endsWith("'") || item.length < 2) {
+          throw malformedConfigLine(lineNumber, "unclosed single-quoted sequence item");
+        }
         item = item.slice(1, -1);
       }
 
@@ -346,7 +374,9 @@ export function parseConfigYaml(text: string): ConfigValues {
       continue;
     }
 
-    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(rest)) throw new MalformedConfigError();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(rest)) {
+      throw malformedConfigLine(lineNumber, "expected a mapping key");
+    }
 
     const colon = rest.indexOf(":");
     const key = rest.slice(0, colon);
@@ -363,10 +393,14 @@ export function parseConfigYaml(text: string): ConfigValues {
     }
     // unclosed-quote detection / strip matching quotes
     if (value.startsWith('"')) {
-      if (!value.endsWith('"') || value.length < 2) throw new MalformedConfigError();
+      if (!value.endsWith('"') || value.length < 2) {
+        throw malformedConfigLine(lineNumber, "unclosed double-quoted scalar");
+      }
       value = value.slice(1, -1);
     } else if (value.startsWith("'")) {
-      if (!value.endsWith("'") || value.length < 2) throw new MalformedConfigError();
+      if (!value.endsWith("'") || value.length < 2) {
+        throw malformedConfigLine(lineNumber, "unclosed single-quoted scalar");
+      }
       value = value.slice(1, -1);
     }
 
@@ -432,8 +466,9 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
   let parsed: ConfigValues;
   try {
     parsed = parseConfigYaml(text);
-  } catch {
-    warn(`[afk:config] warn: malformed YAML in ${path} — using defaults`);
+  } catch (err) {
+    const detail = err instanceof MalformedConfigError ? ` (${err.message})` : "";
+    warn(`[afk:config] warn: malformed YAML in ${path}${detail} — using defaults`);
     return configDefaults();
   }
 

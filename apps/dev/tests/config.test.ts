@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -175,6 +176,69 @@ describe("config", () => {
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "afk.fleet.target")).toBe("3");
     expect(warnings).toHaveLength(0);
+  });
+
+  it("skips full-line comments even when they contain quoted strings", () => {
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    trunk: develop",
+      "    lock:",
+      "      primary-branch: true",
+      "      branch: release/train",
+      "# command guard examples:",
+      "#     - \"rm -Rf /*\"",
+      "#     - 'git stash'",
+      "",
+    ].join("\n");
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.branch")).toBe("release/train");
+  });
+
+  it("strips inline comments outside quotes while preserving # inside quoted values", () => {
+    expect(parseConfigYaml([
+      "afk:",
+      "  default_runner: codex # unquoted comment",
+      "  model: \"model#tag\" # quoted scalar comment",
+      "  backpressure:",
+      "    - \"npm run test # focused\" # sequence comment",
+      "",
+    ].join("\n"))).toEqual({
+      "afk.default_runner": "codex",
+      "afk.model": "model#tag",
+      "afk.backpressure.0": "npm run test # focused",
+    });
+  });
+
+  it("malformed fallback warning names the first offending line", async () => {
+    const warnings: string[] = [];
+    const path = await writeConfig("afk:\n  default_runner: codex\n   fleet:\n    target: 3\n");
+    loadConfig(path, { warn: (m) => warnings.push(m) });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("line 3");
+  });
+
+  it("loads the shipped setup config template after activation lines are uncommented", () => {
+    const template = readFileSync(
+      new URL("../../../plugins/dev/skills/engineering/red-setup/config-template.yaml", import.meta.url),
+      "utf8",
+    );
+    const activated = template
+      .replace("  #   trunk: main", "    trunk: develop")
+      .replace("  #   lock:", "    lock:")
+      .replace("  #     primary-branch: true", "      primary-branch: true")
+      .replace("  #     branch: my-branch", "      branch: release/train");
+    const values = loadConfig("/x/.red/config.yaml", { read: () => activated });
+
+    expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.branch")).toBe("release/train");
+    expect(getConfig(values, "rsp.enabled")).toBe("true");
   });
 
   it("getConfig returns empty string for unset keys", () => {

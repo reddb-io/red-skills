@@ -428,7 +428,7 @@ function makeBootReconcileRunner(
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
   const lockPath = branchLockPath(ctx.root);
-  const reconcileConfig = loadConfig(paths.configPath, { warn: () => undefined });
+  const reconcileConfig = loadConfig(paths.configPath);
   const configLockedBranch = getConfig(reconcileConfig, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(reconcileConfig, "dev.trunk") || undefined;
 
@@ -610,7 +610,7 @@ async function runReconcileWorker(
   };
 
   const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
-  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const config = loadConfig(paths.configPath);
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
     rebaseOnto: reconcileSettings.feedbackRebaseBase,
     resourceBudget: readValidationResourceBudget(config),
@@ -1981,7 +1981,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
   const sessionHooks = {
-    config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
+    config: loadConfig(afkPaths(ctx.root).configPath),
     resolveOptions: makeHookResolveOptions(ctx.root),
     exec: makeHookExec(ctx.root),
     env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
