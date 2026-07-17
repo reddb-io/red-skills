@@ -71,6 +71,8 @@ export interface SupervisorConfig {
   /** Runner name carried in the discard / no-sentinel envelopes
    * (RED_AFK_RUNNER, default "claude"). */
   runner: string;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
   /** RED_AFK_POLL_S — seconds the health-check loop sleeps between ticks
    * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning.
    * This is the interval used when NO event lane is wired (`deps.wake` absent) —
@@ -699,6 +701,8 @@ export interface FleetHeartbeat {
   /** Runner this fleet was launched with — lets the watchdog relaunch a recovered
    * supervisor with the same runner instead of re-detecting from its own tree. */
   runner: string;
+  /** Dev bundle version the running supervisor was launched from. */
+  bundleVersion?: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
