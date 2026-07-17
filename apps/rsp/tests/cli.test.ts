@@ -679,6 +679,19 @@ async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
 }
 
 describe("rsp cli", () => {
+  it("prints unknown rsp flags as structured usage errors", async () => {
+    const root = await tempRoot();
+
+    const res = runRsp(root, ["--bogus"], {});
+    const decoded = decode(res.stdout.toString("utf8")) as { category: string; exit_code: number; valid_flags: string[] };
+
+    expect(res.status).toBe(2);
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    expect(decoded.category).toBe("usage");
+    expect(decoded.exit_code).toBe(2);
+    expect(decoded.valid_flags).toContain("--brief");
+  });
+
   it.each([
     ["compound-stdout-stderr", "printf 'out\\n'; printf 'err\\n' >&2"],
     ["pipeline", "printf 'one\\ntwo\\n' | sed -n '2p'"],
@@ -1830,7 +1843,7 @@ describe("rsp cli", () => {
     expect(shown.stderr).toEqual(Buffer.alloc(0));
   }, 120_000);
 
-  it("built bundle preserves rsp exec redirects, stderr, and exit code", async () => {
+  it("built bundle preserves rsp exec redirects and structures failing command errors", async () => {
     buildBundleOnce();
     const root = await initGitRepo();
     const cacheDir = await seedWarmRedCache();
@@ -1850,10 +1863,12 @@ describe("rsp cli", () => {
     const failingCommand = `${shellQuote(process.execPath)} -e "process.stderr.write('bad\\\\n'); process.exit(7)"`;
     const direct = runShellFromCwd(root, failingCommand);
     const failing = runBundleFromCwd(root, ["exec", "--", failingCommand], { RED_SKILLS_CACHE_DIR: cacheDir });
+    const decoded = decode(failing.stdout.toString("utf8")) as { category: string; error: string; help: string[] };
 
-    expect(failing.status).toBe(direct.status);
+    expect(failing.status).toBe(1);
+    expect(direct.status).toBe(7);
     expect(failing.stderr).toEqual(direct.stderr);
-    expect(failing.stdout).toEqual(direct.stdout);
+    expect(decoded).toMatchObject({ category: "real-error", error: "bad", help: [`${failingCommand} --help`] });
   }, 120_000);
 
   it("built bundle records invocation and degradation telemetry through the resident", async () => {
@@ -2211,14 +2226,19 @@ describe("rsp cli", () => {
     );
   }, 120_000);
 
-  it("fails closed instead of creating the default Repo store when setup has not provisioned it", async () => {
+  it("fails closed with a structured error instead of creating the default Repo store when setup has not provisioned it", async () => {
     const root = await tempRoot();
     await enableRsp(root);
 
     const res = runRspFromCwd(root, [], {});
+    const decoded = decode(res.stdout.toString("utf8")) as { category: string; help: string[]; error: string };
 
     expect(res.status).toBe(1);
-    expect(res.stdout).toEqual(Buffer.from("error: rsp repo store is not provisioned - run /red-setup\n"));
+    expect(decoded).toMatchObject({
+      category: "real-error",
+      error: "rsp repo store is not provisioned",
+      help: ["/red-setup"],
+    });
     await expect(stat(join(root, ".red", "red.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(root, ".red", "state", "red-skills.rdb"))).rejects.toMatchObject({ code: "ENOENT" });
   });
