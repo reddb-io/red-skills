@@ -139,6 +139,36 @@ export async function branchHead(ctx: GitContext, branch: string): Promise<strin
   return r.code === 0 && sha !== "" ? sha : undefined;
 }
 
+export interface LocalRemoteDivergence {
+  readonly localSha?: string;
+  readonly remoteSha?: string;
+  readonly ahead?: number;
+  readonly behind?: number;
+  readonly remoteReachable: boolean;
+}
+
+export async function localRemoteDivergence(
+  ctx: GitContext,
+  input: { remote: string; branch: string },
+): Promise<LocalRemoteDivergence> {
+  const remote = input.remote.trim() || "origin";
+  const branch = input.branch.trim();
+  if (!branch) return { remoteReachable: false };
+  const fetch = await runGit(ctx, ["fetch", "--quiet", remote, branch]);
+  const localSha = await revParse(ctx, `refs/heads/${branch}`);
+  const remoteSha = await revParse(ctx, `${remote}/${branch}`);
+  const counts = localSha && remoteSha
+    ? await localAheadBehind(ctx, `refs/heads/${branch}`, `${remote}/${branch}`)
+    : undefined;
+  return {
+    localSha,
+    remoteSha,
+    ahead: counts?.ahead,
+    behind: counts?.behind,
+    remoteReachable: fetch.code === 0,
+  };
+}
+
 /** Best-effort `git fetch origin <branch>` (FIX E recovery: try once to pull a
  * sandcastle-pushed worker branch onto the host before declaring it absent). */
 export async function fetchBranch(ctx: GitContext, branch: string): Promise<void> {

@@ -313,7 +313,7 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     const { exec, calls } = fakeExec([onTarget]);
     await fastForwardLocalTarget(exec, base);
     const c = joined(calls);
-    expect(c).toContain("git -C /repo fetch origin main --quiet");
+    expect(c).toContain("git -C /repo fetch --quiet origin main");
     expect(c).toContain("git -C /repo merge --ff-only origin/main");
   });
 

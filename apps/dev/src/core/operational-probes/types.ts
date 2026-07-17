@@ -1,3 +1,5 @@
+import type { FastForwardLocalTargetGuardResult, FastForwardLocalTargetResult } from "../merge.js";
+
 export type OperationalProbeVerdict = "ok" | "red";
 
 export interface RemoteUrlFact {
@@ -14,6 +16,7 @@ export interface OperationalProbeContext {
   readonly fleetTruth?: FleetTruthProbeInput;
   readonly claimHygiene?: ClaimHygieneProbeInput;
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
+  readonly baseFreshness?: BaseFreshnessProbeInput;
 }
 
 export interface ConfigNamespacingProbeInput {
@@ -98,6 +101,17 @@ export interface LabelBodyCoherenceProbeInput {
   readonly listOpenReadyIssues: () => Promise<readonly LabelBodyCoherenceIssueInput[]>;
 }
 
+export interface BaseFreshnessProbeInput {
+  readonly trunk: string;
+  readonly remote: string;
+  readonly localSha?: string;
+  readonly remoteSha?: string;
+  readonly ahead?: number;
+  readonly behind?: number;
+  readonly remoteReachable: boolean;
+  readonly guard: FastForwardLocalTargetGuardResult;
+}
+
 export interface OperationalProbeFix {
   readonly gate: "confirm";
   readonly description: string;
@@ -120,6 +134,10 @@ export interface OperationalProbeFixDeps {
   removeBranchLock?(): Promise<void>;
   writeBranchLock?(branch: string): Promise<void>;
   terminateSupervisor?(pid: number): Promise<boolean>;
+  fastForwardLocalBase?(request: {
+    readonly remote: string;
+    readonly target: string;
+  }): Promise<FastForwardLocalTargetResult>;
   concedeClaim?(issue: number, body: string): Promise<void>;
   updateIssueBody?(issue: number, body: string): Promise<void>;
   relaunchFleet?(request: {

@@ -141,6 +141,8 @@ export interface PrecheckFacts {
   claimHygiene?: OperationalProbeContext["claimHygiene"];
   /** Optional ready-label/body-blocker coherence probe facts for red-doctor and boot visibility. */
   labelBodyCoherence?: OperationalProbeContext["labelBodyCoherence"];
+  /** Optional local trunk freshness probe facts for red-doctor and boot visibility. */
+  baseFreshness?: OperationalProbeContext["baseFreshness"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
