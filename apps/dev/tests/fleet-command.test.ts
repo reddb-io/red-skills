@@ -32,7 +32,7 @@ function writeSupervisorArtifacts(root: string, pid: number | string): Record<st
     pid: join(stateAfk, "afk-supervisor.pid"),
     state: join(stateAfk, "afk-supervisor.state.json"),
     log: join(stateAfk, "afk-supervisor.log"),
-    firehose: join(stateAfk, "afk-supervisor.log.jsonl"),
+    firehose: join(stateAfk, "afk-supervisor.log.toonl"),
   };
   writeFileSync(paths.pid, String(pid), "utf8");
   writeFileSync(paths.state, "{not json", "utf8");
