@@ -61,6 +61,12 @@ import {
   executeSpecSubIssueReconcile,
   type SpecSubIssueCandidate,
 } from "./spec-subissue-reconciler.js";
+import {
+  formatOperationalProbeFinding,
+  runOperationalProbes,
+  type OperationalProbeContext,
+  type OperationalProbeReport,
+} from "./operational-probes.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
@@ -73,7 +79,6 @@ export type Precondition =
   | "gh-missing"
   | "gh-unauthenticated"
   | "not-a-git-repo"
-  | "https-remote-forbidden"
   | "no-main-branch"
   | "not-on-trunk"
   | "pnpm-missing";
@@ -93,8 +98,8 @@ export interface PrecheckFacts {
   ghInstalled: boolean;
   ghAuthenticated: boolean;
   isGitRepo: boolean;
-  /** Every remote URL from `git remote -v` (deduped is fine). */
-  remoteUrls: readonly string[];
+  /** Every remote URL from `git remote -v` (deduped is fine; names enable fixes). */
+  remoteUrls: OperationalProbeContext["remoteUrls"];
   hasMainBranch: boolean;
   /** `git branch --show-current` in the primary checkout. */
   currentBranch: string;
@@ -126,13 +131,12 @@ export interface PrecheckFacts {
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
- * `detail` carries the offending value (e.g. the https URL) or, for a branch
- * mismatch, the current branch, expected branch, and expectation source.
+ * `detail` carries the current branch, expected branch, and expectation source.
  * pnpm-missing is a WARNING in afk.sh (`log "warn: …"`), not a `die`; it is
  * surfaced via `warnings` while the verdict still passes. */
 export type PrecheckResult =
   | { ok: true; warnings: string[] }
-  | { ok: false; failed: Exclude<Precondition, "not-on-trunk">; detail?: string }
+  | { ok: false; failed: Exclude<Precondition, "not-on-trunk"> }
   | { ok: false; failed: "not-on-trunk"; detail: BranchPreconditionDetail };
 
 /** Evaluate the hard preconditions in afk.sh order. The `die` ladder is:
@@ -144,13 +148,6 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
   if (!facts.ghInstalled) return { ok: false, failed: "gh-missing" };
   if (!facts.ghAuthenticated) return { ok: false, failed: "gh-unauthenticated" };
   if (!facts.isGitRepo) return { ok: false, failed: "not-a-git-repo" };
-  if (!facts.allowHttpsRemote) {
-    for (const url of facts.remoteUrls) {
-      if (url.startsWith("https://")) {
-        return { ok: false, failed: "https-remote-forbidden", detail: url };
-      }
-    }
-  }
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
   const expectedBranch = facts.lockedBranch ?? facts.configuredTrunk ?? "main";
   if (facts.currentBranch !== expectedBranch) {
@@ -262,12 +259,23 @@ export type ReconcileBootOutcome = "landed" | "parked" | "skipped";
 export type ReconcileBootRunner = (plan: ReconcileSweepPlan) => Promise<{ outcome: ReconcileBootOutcome }>;
 
 export class BootHaltError extends Error {
+  readonly plan?: DocsSweepPlan;
+  readonly probe?: OperationalProbeReport["findings"][number];
+
+  constructor(phase: "docs-sweep", plan: DocsSweepPlan);
+  constructor(phase: "operational-probe", probe: OperationalProbeReport["findings"][number]);
   constructor(
-    readonly phase: "docs-sweep",
-    readonly plan: DocsSweepPlan,
+    readonly phase: "docs-sweep" | "operational-probe",
+    detail: DocsSweepPlan | OperationalProbeReport["findings"][number],
   ) {
-    super(`Docs Sweep halted (${plan.haltReason ?? "unknown"}): ${renderDocsSweepFileList(plan.files)}`);
+    super(
+      phase === "docs-sweep"
+        ? `Docs Sweep halted (${(detail as DocsSweepPlan).haltReason ?? "unknown"}): ${renderDocsSweepFileList((detail as DocsSweepPlan).files)}`
+        : `Operational probe red: ${formatOperationalProbeFinding(detail as OperationalProbeReport["findings"][number])}`,
+    );
     this.name = "BootHaltError";
+    if (phase === "docs-sweep") this.plan = detail as DocsSweepPlan;
+    else this.probe = detail as OperationalProbeReport["findings"][number];
   }
 }
 
@@ -354,6 +362,7 @@ export interface StaleClaimDir {
 /** The full set of per-step inputs the caller resolves before `runBoot`. */
 export interface BootOptions {
   precheck: PrecheckFacts;
+  operationalProbes?: OperationalProbeContext;
   bootstrap: BootstrapInput;
   orphans: readonly OrphanDir[];
   attemptCap: AttemptCapInput;
@@ -472,6 +481,7 @@ export interface TmpJanitorSweepResult {
  * only `precheck` is populated (the bash `die` aborts before any other step). */
 export interface BootResult {
   precheck: PrecheckResult;
+  operationalProbes?: OperationalProbeReport;
   bootstrap?: { ok: true };
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
@@ -530,6 +540,11 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const pre = precheck(options.precheck);
   if (!pre.ok) return { precheck: pre };
 
+  // ---- 1a. operational probes ----
+  const operationalProbes = runOperationalProbes(options.operationalProbes ?? options.precheck);
+  const redProbe = operationalProbes.findings[0];
+  if (redProbe) throw new BootHaltError("operational-probe", redProbe);
+
   // ---- 2. bootstrap ----
   const b = options.bootstrap;
   await deps.fs.ensureDir(b.tmpDir);
@@ -546,7 +561,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // branch cleanup, unblock sweep, reconcile sweep, or straggler check). This is
   // what makes a respawn cheap and keeps peers from racing over boot state.
   if (options.skipSweeps) {
-    return { precheck: pre, bootstrap: { ok: true } };
+    return { precheck: pre, operationalProbes, bootstrap: { ok: true } };
   }
 
   // ---- 3. orphan cleanup ----
@@ -584,6 +599,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
 
   return {
     precheck: pre,
+    operationalProbes,
     bootstrap: { ok: true },
     orphanCleanup,
     attemptCap,
