@@ -773,6 +773,139 @@ describe("rsp cli", () => {
     await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("doctor reports rsp disabled as a definitive finding, not an error", async () => {
+    const root = await initGitRepo();
+
+    const res = runRspFromCwd(root, ["doctor"], {});
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      status: string;
+      exit_code: number;
+      probes: Array<{ name: string; pass: boolean; finding: string }>;
+      errors: unknown[];
+    };
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    expect(decoded.status).toBe("disabled");
+    expect(decoded.exit_code).toBe(0);
+    expect(decoded.errors).toEqual([]);
+    expect(decoded.probes.map((probe) => probe.name)).toEqual([
+      "config_gate_resolution",
+      "hook_wiring",
+      "proxy_mode",
+      "resident_liveness",
+      "store_provisioning",
+      "recent_degradation_rate",
+    ]);
+    expect(decoded.probes.find((probe) => probe.name === "config_gate_resolution")).toMatchObject({
+      pass: true,
+      finding: "rsp disabled in this directory; run /red-setup to opt in",
+    });
+    await expect(stat(join(root, ".red"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("doctor reports named red plumbing probes with shared structured fix commands", async () => {
+    const root = await initGitRepo();
+    await enableRsp(root);
+
+    const res = runRspFromCwd(root, ["doctor"], {});
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      status: string;
+      exit_code: number;
+      probes: Array<{
+        name: string;
+        pass: boolean;
+        finding: string;
+        fix_command?: string;
+        error?: { command: string; category: string; exit_code: number; error: string; help: string[] };
+      }>;
+      errors: Array<{ command: string; category: string; exit_code: number; error: string; help: string[] }>;
+    };
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    expect(decoded.status).toBe("fail");
+    expect(decoded.exit_code).toBe(1);
+    expect(decoded.probes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "config_gate_resolution", pass: true, finding: "rsp.enabled resolved true for this directory" }),
+      expect.objectContaining({ name: "hook_wiring", pass: true }),
+      expect.objectContaining({ name: "proxy_mode", pass: true }),
+      expect.objectContaining({ name: "resident_liveness", pass: false, fix_command: "rsp warm-resident" }),
+      expect.objectContaining({ name: "store_provisioning", pass: false, fix_command: "rsp setup" }),
+      expect.objectContaining({ name: "recent_degradation_rate", pass: true }),
+    ]));
+    for (const probe of decoded.probes.filter((entry) => !entry.pass)) {
+      expect(probe.error).toMatchObject({
+        command: `rsp doctor:${probe.name}`,
+        category: "real-error",
+        exit_code: 1,
+        error: probe.finding,
+        help: [probe.fix_command],
+      });
+    }
+    expect(decoded.errors).toEqual(decoded.probes.filter((entry) => !entry.pass).map((entry) => entry.error));
+  });
+
+  it("doctor turns recent degradation spikes red with count and dominant reason", async () => {
+    const root = await initGitRepo();
+    await enableRsp(root);
+    const storeUri = `file://${join(root, ".red", "state", "red-skills.rdb")}`;
+    const store = await RspElisionStore.open({ uri: storeUri, allowResidentOpen: true });
+    await store.close();
+    const db = await connect(storeUri);
+    try {
+      await db.kv(RSP_ACCOUNTING_EVENTS_COLLECTION).put("ok", {
+        created_at: new Date().toISOString(),
+        event_type: "invocation",
+        command: "git status",
+        raw_bytes: 20,
+        emitted_bytes: 20,
+      });
+      await db.kv(RSP_ACCOUNTING_EVENTS_COLLECTION).put("degraded-one", {
+        created_at: new Date().toISOString(),
+        event_type: "invocation",
+        command: "git log",
+        degradation_reason: "wrapper-crash",
+        wrapper_family: "git",
+        wrapper_exit_code: 1,
+        stderr_head: "boom",
+      });
+      await db.kv(RSP_ACCOUNTING_EVENTS_COLLECTION).put("degraded-two", {
+        created_at: new Date().toISOString(),
+        event_type: "invocation",
+        command: "git diff",
+        degradation_reason: "wrapper-crash",
+        wrapper_family: "git",
+        wrapper_exit_code: 1,
+        stderr_head: "boom",
+      });
+    } finally {
+      await db.close();
+    }
+
+    const res = runRspFromCwd(root, ["doctor", "--since", "1d"], {});
+    const decoded = decode(res.stdout.toString("utf8")) as {
+      status: string;
+      probes: Array<{
+        name: string;
+        pass: boolean;
+        finding: string;
+        fix_command?: string;
+        error?: { category: string; help: string[] };
+      }>;
+    };
+    const degradation = decoded.probes.find((probe) => probe.name === "recent_degradation_rate");
+
+    expect(res.status).toBe(1);
+    expect(decoded.status).toBe("fail");
+    expect(degradation).toMatchObject({
+      pass: false,
+      finding: "2 degradation(s) in the recent 1d window; dominant reason wrapper-crash (2)",
+      fix_command: "rsp stats --since 1d --full",
+      error: { category: "real-error", help: ["rsp stats --since 1d --full"] },
+    });
+  });
+
   it("built bundle keeps disabled passthrough silent, debuggable, and distinct from enabled degradation", async () => {
     buildBundleOnce();
     const disabledRoot = await initGitRepo();
