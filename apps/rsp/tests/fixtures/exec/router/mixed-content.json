@@ -1,0 +1,23 @@
+{
+  "name": "exec-router-mixed-content",
+  "command": [
+    "exec",
+    "--",
+    "node emit-mixed-router-output.js"
+  ],
+  "large_output": true,
+  "recorded": {
+    "stdout": "ROUTER MIXED CONTENT REPORT\njson block\n{\"phase\":\"plan\",\"count\":2}\n{\"phase\":\"apply\",\"count\":7}\ndiff block\ndiff --git a/src/router.ts b/src/router.ts\n--- a/src/router.ts\n+++ b/src/router.ts\n@@ -1,2 +1,3 @@\n const mode = 'old'\n-const route = 'plain'\n+const route = 'structured'\n+const format = 'toon'\ntable block\nNAME       READY   STATUS\napi-0      1/1     Running\nworker-0   0/1     Pending\nstatus block\nalpha beta gamma delta\ntheta lambda sigma omega\nFATAL panic=MixedRouterFixture trace=mixed-router-42 shard=3\nclosing block\nleft edge retained\nright edge retained\n",
+    "stderr": "",
+    "status": 0,
+    "signal": null
+  },
+  "expected": {},
+  "assertions": [
+    {
+      "question": "router degrades mixed ambiguous content to untyped fallback",
+      "path": "content",
+      "expected": "untyped"
+    }
+  ]
+}
