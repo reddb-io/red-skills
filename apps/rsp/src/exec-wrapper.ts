@@ -4,7 +4,14 @@ import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon"
 import { scoreStructuralOutliers, type PreservedOutlierLine } from "./anomaly-scorer.js";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
-import { NORMALIZE_ANSI, NORMALIZE_BLANK_LINES, NORMALIZE_CR_PROGRESS, NORMALIZE_TRAILING_WHITESPACE } from "./normalize.js";
+import {
+  crushJsonArrayItems,
+  NORMALIZE_ANSI,
+  NORMALIZE_BLANK_LINES,
+  NORMALIZE_CR_PROGRESS,
+  NORMALIZE_TRAILING_WHITESPACE,
+  type JsonArrayCrusher,
+} from "./normalize.js";
 import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
 
 export interface ExecRenderOptions {
@@ -12,6 +19,7 @@ export interface ExecRenderOptions {
   store?: RspMintStore;
   heavyByteThreshold?: number;
   anomalyScorer?: (text: string, options: { headBytes: number; tailStart: number }) => PreservedOutlierLine[];
+  jsonArrayCrusher?: JsonArrayCrusher;
 }
 
 interface RspMintStore {
@@ -85,7 +93,7 @@ export async function renderExecContract(
   if (!handle) throw new Error("rsp exec output elision requires an elision store");
 
   const rendered = normalized.kind === "text"
-    ? renderRoutedTextSummary(normalized.text, rawStdout.length, handle, options.level, commandLine, options.anomalyScorer)
+    ? renderRoutedTextSummary(normalized.text, rawStdout.length, handle, options.level, commandLine, options.anomalyScorer, options.jsonArrayCrusher)
     : renderBytesSummary(rawStdout, rawStdout.length, handle, commandLine);
   return {
     stdout: Buffer.from(rendered.text),
@@ -147,6 +155,7 @@ function renderRoutedTextSummary(
   level: RspLossLevel,
   command: string,
   anomalyScorer = defaultAnomalyScorer,
+  jsonArrayCrusher = crushJsonArrayItems,
 ): ExecSummaryRenderResult {
   const inlineBytes = level === "terse" ? TERSE_INLINE_BYTES : BRIEF_INLINE_BYTES;
   const half = Math.max(1, Math.floor(inlineBytes / 2));
@@ -154,17 +163,18 @@ function renderRoutedTextSummary(
   const tailStart = Math.max(0, stdoutBytes.length - half);
   const outliers = preservedOutliers(stdout, half, tailStart, anomalyScorer);
   const kind = classifyExecContent(stdout);
-  const summary = summarizeByKind(kind, stdout, stdoutBytes, half, tailStart, outliers.kind === "ok" ? outliers.lines : []);
-  const payload = baseSummary(command, kind, rawBytes, countLines(stdoutBytes), handle, summary);
+  const routed = summarizeByKind(kind, stdout, stdoutBytes, half, tailStart, outliers.kind === "ok" ? outliers.lines : [], jsonArrayCrusher);
+  const payload = baseSummary(command, kind, rawBytes, countLines(stdoutBytes), handle, routed.summary);
+  const degradation = outliers.kind === "failed"
+    ? {
+      reason: "exec-anomaly-scorer-failed",
+      family: "exec",
+      stderrHead: truncateDiagnostic(outliers.error),
+    }
+    : routed.degradation;
   return {
     text: encodeToonDocument(payload),
-    degradation: outliers.kind === "failed"
-      ? {
-        reason: "exec-anomaly-scorer-failed",
-        family: "exec",
-        stderrHead: truncateDiagnostic(outliers.error),
-      }
-      : undefined,
+    degradation,
   };
 }
 
@@ -217,47 +227,80 @@ function summarizeByKind(
   headBytes: number,
   tailStart: number,
   outliers: readonly PreservedOutlierLine[],
-): JsonObject {
+  jsonArrayCrusher = crushJsonArrayItems,
+): { summary: JsonObject; degradation?: GitRenderResult["degradation"] } {
   switch (kind) {
     case "json":
-      return summarizeJson(stdout);
+      return summarizeJson(stdout, jsonArrayCrusher);
     case "jsonl":
-      return summarizeJsonLines(stdout);
+      return { summary: summarizeJsonLines(stdout) };
     case "unified-diff":
-      return summarizeUnifiedDiff(stdout);
+      return { summary: summarizeUnifiedDiff(stdout) };
     case "tabular":
-      return summarizeTable(stdout);
+      return { summary: summarizeTable(stdout) };
     case "log-like":
-      return summarizeLog(stdout, outliers);
+      return { summary: summarizeLog(stdout, outliers) };
     case "prose":
-      return summarizeProse(stdout);
+      return { summary: summarizeProse(stdout) };
     case "bytes":
-      return {};
+      return { summary: {} };
     case "untyped":
-      return summarizeUntyped(stdoutBytes, headBytes, tailStart, outliers);
+      return { summary: summarizeUntyped(stdoutBytes, headBytes, tailStart, outliers) };
   }
 }
 
-function summarizeJson(input: string): JsonObject {
+function summarizeJson(input: string, jsonArrayCrusher: JsonArrayCrusher): { summary: JsonObject; degradation?: GitRenderResult["degradation"] } {
   const value = parseJsonContainer(input) as JsonValue;
   if (Array.isArray(value)) {
-    return {
-      root_type: "array",
-      items: value.length,
-      sample: value.slice(0, 5).map(compactJsonValue) as JsonValue[],
-      item_keys: commonKeys(value),
-    };
+    if (value.length > 15) {
+      try {
+        const crushed = jsonArrayCrusher(value, 15);
+        return {
+          summary: {
+            root_type: "array",
+            total: crushed.total,
+            kept: crushed.kept,
+            dropped: crushed.dropped,
+            shape_outliers: crushed.shapeOutliers,
+            value_outliers: crushed.valueOutliers,
+            items: crushed.items.map(compactJsonValue) as JsonValue[],
+            item_keys: commonKeys(value),
+          },
+        };
+      } catch (error) {
+        return {
+          summary: summarizeJsonArraySample(value),
+          degradation: {
+            reason: "exec-json-array-crusher-failed",
+            family: "exec",
+            stderrHead: truncateDiagnostic(error),
+          },
+        };
+      }
+    }
+    return { summary: summarizeJsonArraySample(value) };
   }
   if (isRecord(value)) {
     const entries = Object.entries(value);
     return {
-      root_type: "object",
-      keys: entries.map(([key]) => key).slice(0, 20),
-      key_count: entries.length,
-      sample: Object.fromEntries(entries.slice(0, 8).map(([key, val]) => [key, compactJsonValue(val)])) as JsonObject,
+      summary: {
+        root_type: "object",
+        keys: entries.map(([key]) => key).slice(0, 20),
+        key_count: entries.length,
+        sample: Object.fromEntries(entries.slice(0, 8).map(([key, val]) => [key, compactJsonValue(val)])) as JsonObject,
+      },
     };
   }
-  return { root_type: typeof value, value: compactJsonValue(value) };
+  return { summary: { root_type: typeof value, value: compactJsonValue(value) } };
+}
+
+function summarizeJsonArraySample(value: readonly JsonValue[]): JsonObject {
+  return {
+    root_type: "array",
+    items: value.length,
+    sample: value.slice(0, 5).map(compactJsonValue) as JsonValue[],
+    item_keys: commonKeys(value),
+  };
 }
 
 function summarizeJsonLines(input: string): JsonObject {
