@@ -56,6 +56,7 @@ import {
   createEnginePaths,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
+import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -70,36 +71,39 @@ function fleetHeartbeatMessage(hb: FleetHeartbeat): string {
   return `fleet tick ready=${hb.readyForAgent} busy=${hb.slotsBusy} free=${hb.slotsFree} spawns=${hb.spawnsThisTick}`;
 }
 
-function fleetHeartbeatState(hb: FleetHeartbeat): string {
-  return JSON.stringify(
-    {
-      ts: hb.ts,
-      epoch: hb.epoch,
-      last_progress_epoch: hb.lastProgressEpoch > 0 ? hb.lastProgressEpoch : undefined,
-      runner: hb.runner,
-      bundle_version: hb.bundleVersion,
-      ready_for_agent: hb.readyForAgent,
-      slots: {
-        busy: hb.slotsBusy,
-        free: hb.slotsFree,
-        total: hb.slotsTotal,
-        parked: hb.slotsParked,
-      },
-      spawns_this_tick: hb.spawnsThisTick,
-      ...(hb.drainBudget
-        ? {
-            drain_budget: {
-              tier: hb.drainBudget.tier,
-              spent_usd: Number(hb.drainBudget.spentUsd.toFixed(4)),
-              limit_usd: Number(hb.drainBudget.limitUsd.toFixed(4)),
-              percent: Number((hb.drainBudget.percent * 100).toFixed(2)),
-            },
-          }
-        : {}),
+/**
+ * Serialize the fleet supervisor state snapshot as TOON (castle-engine write
+ * surface — never raw JSON, ADR 0097). Exported so the castle-engine uniformity
+ * test can enumerate this writer and assert it never emits JSON. Undefined-valued
+ * keys are dropped before encoding (TOON `encode` rejects `undefined`), matching
+ * the old `JSON.stringify` behaviour that omitted them.
+ */
+export function fleetHeartbeatState(hb: FleetHeartbeat): string {
+  return encodeDevSnapshotToon({
+    ts: hb.ts,
+    epoch: hb.epoch,
+    ...(hb.lastProgressEpoch > 0 ? { last_progress_epoch: hb.lastProgressEpoch } : {}),
+    runner: hb.runner,
+    ...(hb.bundleVersion ? { bundle_version: hb.bundleVersion } : {}),
+    ready_for_agent: hb.readyForAgent,
+    slots: {
+      busy: hb.slotsBusy,
+      free: hb.slotsFree,
+      total: hb.slotsTotal,
+      parked: hb.slotsParked,
     },
-    null,
-    2,
-  );
+    spawns_this_tick: hb.spawnsThisTick,
+    ...(hb.drainBudget
+      ? {
+          drain_budget: {
+            tier: hb.drainBudget.tier,
+            spent_usd: Number(hb.drainBudget.spentUsd.toFixed(4)),
+            limit_usd: Number(hb.drainBudget.limitUsd.toFixed(4)),
+            percent: Number((hb.drainBudget.percent * 100).toFixed(2)),
+          },
+        }
+      : {}),
+  });
 }
 
 function writeFleetStateAtomic(path: string, hb: FleetHeartbeat): void {
