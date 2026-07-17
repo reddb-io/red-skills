@@ -17,6 +17,7 @@ import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
+import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { resolveBase } from "../core/base-resolver.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
@@ -581,6 +582,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     epoch?: unknown;
     last_progress_epoch?: unknown;
     runner?: unknown;
+    bundle_version?: unknown;
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
     spawns_this_tick?: unknown;
@@ -611,6 +613,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     epoch,
     lastProgressEpoch: Number.isFinite(rawProgress) && rawProgress > 0 ? rawProgress : undefined,
     runner: typeof rec.runner === "string" ? rec.runner : "",
+    bundleVersion: typeof rec.bundle_version === "string" ? rec.bundle_version : undefined,
     readyForAgent: Number(rec.ready_for_agent ?? 0) || 0,
     slotsBusy: Number(rec.slots?.busy ?? 0) || 0,
     slotsFree: Number(rec.slots?.free ?? 0) || 0,
@@ -829,6 +832,9 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     (await readFleetState(
       preferExistingPath(paths.fleetStatePath, legacyTmpPath(root, "afk-supervisor.state.json")),
     ));
+  if (fleet?.bundleVersion) {
+    fleet.latestBundleVersion = newestCachedDevBundleVersion(fleet.bundleVersion) ?? undefined;
+  }
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
   // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
@@ -1308,6 +1314,7 @@ export async function collectStatuslineFleet(
     total: state.slotsTotal,
     queue: state.readyForAgent,
     parked: state.slotsParked,
+    bundleVersion: state.bundleVersion,
   };
 }
 
