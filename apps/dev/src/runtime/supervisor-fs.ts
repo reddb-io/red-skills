@@ -28,10 +28,31 @@ import {
   type LivenessVerdict,
 } from "@reddb-io/red-castle";
 
-/** Absolute path of a slot's per-worker stdout/stderr log
- * (`afk-supervisor-slot-{slot}.log`). Mirrors spawn_slot's slot_log. */
-export function slotLogPath(tmpDir: string, slot: number): string {
+function logDate(at: Date): string {
+  return at.toISOString().slice(0, 10);
+}
+
+/** Dated tmp logs lane for fleet slot spawn diagnostics. */
+export function slotLogDir(tmpDir: string, at: Date = new Date()): string {
+  return join(tmpDir, "logs", logDate(at));
+}
+
+/** Absolute path of a slot's per-worker stdout/stderr log inside the dated
+ * tmp logs lane. Mirrors spawn_slot's slot_log. */
+export function slotLogPath(tmpDir: string, slot: number, logDir: string = slotLogDir(tmpDir)): string {
+  return join(logDir, `afk-supervisor-slot-${slot}.log`);
+}
+
+/** Legacy tmp-root slot log path. Kept as a read fallback only for the logs TTL
+ * aging window; the tmp janitor reclaims these root files as legacy logs. */
+export function legacySlotLogPath(tmpDir: string, slot: number): string {
   return join(tmpDir, `afk-supervisor-slot-${slot}.log`);
+}
+
+function slotLogReadPaths(tmpDir: string, slot: number, logDir?: string): string[] {
+  const primary = slotLogPath(tmpDir, slot, logDir);
+  const legacy = legacySlotLogPath(tmpDir, slot);
+  return primary === legacy ? [primary] : [primary, legacy];
 }
 
 /**
@@ -316,13 +337,17 @@ export function parkedSlotWorkFor(
   slot: number,
   lastPid: number | null = null,
   // The main supervisor launch log now lives in the state tier (issue #1685);
-  // per-slot logs stay disposable in tmp. Defaults to the legacy tmp location so
-  // existing callers/tests keep working.
+  // per-slot logs are disposable spawn diagnostics in the dated tmp logs lane.
   supervisorLogPath: string = join(tmpDir, "afk-supervisor.log"),
+  slotLogsDir: string = slotLogDir(tmpDir),
 ): SweepWork {
 
   // Path 1: slot log boot-stamp parse.
-  const wids = parseWorkerIdsFromLog(slotLogPath(tmpDir, slot));
+  let wids: string[] = [];
+  for (const path of slotLogReadPaths(tmpDir, slot, slotLogsDir)) {
+    wids = parseWorkerIdsFromLog(path);
+    if (wids.length > 0) break;
+  }
   if (wids.length > 0) {
     const workers: SweepWorker[] = wids.map((wid) => ({
       workerId: wid,
