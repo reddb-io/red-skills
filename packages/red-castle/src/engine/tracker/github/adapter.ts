@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import type {
   TrackerIssue,
   TrackerPort,
+  TrackerIssueCreateSpec,
   TrackerLabelMutation,
   TrackerIssueReference,
 } from "../port.js";
@@ -57,6 +58,27 @@ export function createGitHubTrackerAdapter(
   };
 
   return {
+    async createIssue(spec: TrackerIssueCreateSpec) {
+      const stdout = await gh(
+        withRepo([
+          "issue",
+          "create",
+          "--title",
+          spec.title,
+          "--body",
+          spec.body,
+          ...labelArgs(spec.labels ?? []),
+        ]),
+      );
+      const match = stdout.match(/\/issues\/(\d+)\b/);
+      const issue = match ? Number(match[1]) : NaN;
+      if (!Number.isInteger(issue) || issue <= 0) {
+        throw new Error(
+          `tracker failed to create issue: unparseable gh output ${JSON.stringify(stdout.trim())}`,
+        );
+      }
+      return issue;
+    },
     async listOpenIssuesByLabel(label) {
       const stdout = await gh(
         withRepo([
@@ -129,6 +151,10 @@ export function createGitHubTrackerAdapter(
       });
     },
   };
+}
+
+function labelArgs(labels: readonly string[]): string[] {
+  return labels.flatMap((label) => ["--label", label]);
 }
 
 async function defaultGhExec(args: readonly string[]): Promise<string> {
