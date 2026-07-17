@@ -141,7 +141,7 @@ export function afkPaths(root: string): AfkPaths {
     tmpDir: tmp,
     stateDir: state,
     workersRoot: rp.workersDir(root),
-    historyPath: join(state, "afk-history.toonl"),
+    historyPath: join(afkState, "history.toonl"),
     fleetStatePath: join(afkState, "afk-supervisor.state.json"),
     fleetFirehosePath: join(afkState, "afk-supervisor.log.toonl"),
     monitorLogCursorPath: join(afkState, "monitor-log-cursors.json"),
