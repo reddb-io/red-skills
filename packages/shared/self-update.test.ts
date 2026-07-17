@@ -8,11 +8,14 @@ import {
 } from "./bundle-fetch.js";
 import {
   backgroundSelfUpdate,
+  backgroundSelfUpdateWithRetry,
   compareSemver,
   isInRange,
   parseSemver,
   pointerPath,
   resolveActiveVersion,
+  resolveActiveVersionDetailed,
+  statusPath,
   type SelfUpdateIO,
   selectInRangeUpdate,
 } from "./self-update.js";
@@ -52,6 +55,8 @@ function makeIO(opts: {
   packageBundles?: Record<string, Uint8Array>;
   /** when true, the registry query throws a network error. */
   offlineRegistry?: boolean;
+  /** number of registry queries to fail before returning metadata. */
+  failRegistryFetches?: number;
 }) {
   const files: Record<string, Uint8Array> = { ...(opts.files ?? {}) };
   const bundles = opts.packageBundles ?? {};
@@ -59,6 +64,8 @@ function makeIO(opts: {
   const materializes: string[] = [];
   const writes: string[] = [];
   const renames: Array<[string, string]> = [];
+
+  let remainingFetchFailures = opts.failRegistryFetches ?? 0;
 
   const io: SelfUpdateIO = {
     async materialize(spec, stagingDir) {
@@ -73,7 +80,10 @@ function makeIO(opts: {
     },
     async fetchText(url) {
       fetches.push(url);
-      if (opts.offlineRegistry) throw new Error("ECONNREFUSED registry.npmjs.org");
+      if (opts.offlineRegistry || remainingFetchFailures > 0) {
+        remainingFetchFailures -= 1;
+        throw new Error("ECONNREFUSED registry.npmjs.org");
+      }
       if (url === registryPackageUrl()) return registryMetadata(opts.registryVersions ?? []);
       throw new Error(`GET ${url} -> 404`);
     },
@@ -88,6 +98,17 @@ function makeIO(opts: {
     },
     async exists(path) {
       return path in files;
+    },
+    async readdir(path) {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      const names = new Set<string>();
+      for (const file of Object.keys(files)) {
+        if (!file.startsWith(prefix)) continue;
+        const rest = file.slice(prefix.length);
+        if (!rest || rest.includes("/")) continue;
+        names.add(rest);
+      }
+      return [...names];
     },
     sha256,
     async rename(from, to) {
@@ -167,6 +188,61 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
     await expect(
       resolveActiveVersion(io, { plugin: PLUGIN, installedVersion: INSTALLED, cacheDir: CACHE, channel: "stable" }),
     ).resolves.toBe(updated);
+  });
+
+  it("auto-reconciles a pointer that is behind the newest cached lane bundle", async () => {
+    const pointed = "1.144.0";
+    const laneNewest = "1.145.0";
+    const ptr = pointerPath(CACHE, PLUGIN);
+    const { io, files, renames } = makeIO({
+      files: {
+        [ptr]: enc(JSON.stringify({ version: pointed })),
+        [resolveBundle({ plugin: PLUGIN, version: pointed, cacheDir: CACHE })]: bundleBytesFor(pointed),
+        [resolveBundle({ plugin: PLUGIN, version: laneNewest, cacheDir: CACHE })]: bundleBytesFor(laneNewest),
+      },
+    });
+
+    const result = await resolveActiveVersionDetailed(io, {
+      plugin: PLUGIN,
+      installedVersion: INSTALLED,
+      cacheDir: CACHE,
+      channel: "stable",
+    });
+
+    expect(result.version).toBe(laneNewest);
+    expect(result.reconciled).toEqual({ from: pointed, to: laneNewest });
+    expect(result.logNotes.join(" ")).toContain(`reconciled pointer ${pointed} -> ${laneNewest}`);
+    expect(JSON.parse(new TextDecoder().decode(files[ptr]))).toEqual({ version: laneNewest });
+    expect(renames).toEqual([[`${ptr}.${laneNewest}.tmp`, ptr]]);
+  });
+
+  it("surfaces stale failed self-update checks without fetching", async () => {
+    const updated = "1.145.0";
+    const nowMs = 10 * 60 * 60 * 1000;
+    const { io } = makeIO({
+      files: {
+        [pointerPath(CACHE, PLUGIN)]: enc(JSON.stringify({ version: updated })),
+        [resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE })]: bundleBytesFor(updated),
+        [statusPath(CACHE, PLUGIN)]: enc(JSON.stringify({
+          lastFailureAtMs: nowMs - 5 * 60 * 60 * 1000,
+          lastError: "fetch failed",
+          lastStatus: "error",
+        })),
+      },
+    });
+    io.fetchText = async () => {
+      throw new Error("NO FETCH ALLOWED IN A RENDER/HOOK PATH");
+    };
+
+    const result = await resolveActiveVersionDetailed(
+      io,
+      { plugin: PLUGIN, installedVersion: INSTALLED, cacheDir: CACHE, channel: "stable" },
+      { nowMs, staleAfterMs: 4 * 60 * 60 * 1000 },
+    );
+
+    expect(result.version).toBe(updated);
+    expect(result.staleFailure?.lastError).toBe("fetch failed");
+    expect(result.logNotes.join(" ")).toContain("self-update stale: last check failed 5h ago");
   });
 
   it("ignores a pointer whose bundle is missing from the cache", async () => {
@@ -271,7 +347,7 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
 
     expect(res).toEqual({ status: "up-to-date", version: INSTALLED });
     expect(materializes).toEqual([]);
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([statusPath(CACHE, PLUGIN)]);
     expect(renames).toEqual([]);
     expect(files[pointerPath(CACHE, PLUGIN)]).toBeUndefined();
   });
@@ -290,7 +366,7 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     });
     expect(res).toEqual({ status: "up-to-date", version: INSTALLED });
     expect(materializes).toEqual([]);
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([statusPath(CACHE, PLUGIN)]);
     expect(renames).toEqual([]);
   });
 
@@ -310,9 +386,39 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
 
     expect(res.status).toBe("error");
     expect(res.error).toMatch(/ECONNREFUSED|network|failed/i);
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([statusPath(CACHE, PLUGIN)]);
     expect(renames).toEqual([]);
     expect(files[pointerPath(CACHE, PLUGIN)]).toEqual(enc(JSON.stringify({ version: INSTALLED })));
+  });
+
+  it("retries a transient registry failure with bounded backoff and then recovers", async () => {
+    const updated = "1.145.0";
+    const delays: number[] = [];
+    const retries: string[] = [];
+    const { io, fetches } = makeIO({
+      failRegistryFetches: 1,
+      registryVersions: [INSTALLED, updated],
+      packageBundles: { [updated]: bundleBytesFor(updated) },
+    });
+
+    const res = await backgroundSelfUpdateWithRetry(io, {
+      plugin: PLUGIN,
+      installedVersion: INSTALLED,
+      repo: REPO,
+      cacheDir: CACHE,
+      channel: "stable",
+    }, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      maxDelayMs: 40,
+      sleep: async (delayMs) => { delays.push(delayMs); },
+      onRetry: (event) => { retries.push(`${event.attempt}->${event.nextAttempt}:${event.delayMs}`); },
+    });
+
+    expect(res).toEqual({ status: "updated", version: updated, attempts: 2 });
+    expect(fetches).toEqual([registryPackageUrl(), registryPackageUrl()]);
+    expect(delays).toEqual([10]);
+    expect(retries).toEqual(["1->2:10"]);
   });
 
   it("target package unresolvable: no swap (bad target never adopted)", async () => {
@@ -330,6 +436,7 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     });
     expect(res.status).toBe("error");
     expect(renames).toEqual([]);
+    expect(writes).toContain(statusPath(CACHE, PLUGIN));
     expect(writes).not.toContain(pointerPath(CACHE, PLUGIN));
   });
 
