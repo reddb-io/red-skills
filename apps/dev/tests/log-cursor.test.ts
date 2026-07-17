@@ -46,9 +46,11 @@ describe("monitor log cursor", () => {
     await writeFile(log, "line\n", "utf8");
     await collectLogLineCounts(cache, [log]);
 
+    // The cursor cache is a TOON snapshot surface now — never raw JSON.
     const raw = await readFile(cache, "utf8");
-    expect(JSON.parse(raw)).toHaveProperty(log);
+    expect(() => JSON.parse(raw)).toThrow();
     const parsed = await readLogLineCursors(cache);
+    expect(parsed).toHaveProperty(log);
     expect(parsed[log]).toEqual({ size: 5, lines: 1 });
   });
 
