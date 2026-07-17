@@ -1,6 +1,7 @@
 import { readdir, rm, stat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
+  isLegacySlotLogName,
   planTmpJanitor,
   planWorkerDirJanitor,
   type JanitorEntry,
@@ -111,15 +112,17 @@ export async function collectTmpJanitorReport(
   nowS: number,
   lookup: IssueStateLookup,
 ): Promise<TmpJanitorReport> {
-  const [tmpRootNames, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers] =
+  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers] =
     await Promise.all([
       listNames(tmpDir),
+      listEntries(tmpDir),
       listEntries(join(tmpDir, "logs")),
       listEntries(join(tmpDir, "scratch")),
       listEntries(join(tmpDir, "diagnostics")),
       listEntries(join(tmpDir, "worktrees", "feedback")),
       collectWorkerEntries(tmpDir, lookup),
     ]);
+  const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
 
   return {
     plan: planTmpJanitor({
@@ -128,6 +131,7 @@ export async function collectTmpJanitorReport(
       scratchEntries,
       diagnosticsEntries,
       feedbackEntries,
+      legacySlotLogEntries,
       tmpRootNames,
     }),
     staleWorkers: planWorkerDirJanitor(workers),
@@ -143,6 +147,7 @@ export async function applyTmpJanitorReport(
     ...report.plan.scratch.reclaim,
     ...report.plan.diagnostics.reclaim,
     ...report.plan.feedbackWorktrees.reclaim,
+    ...report.plan.legacySlotLogs.reclaim,
   ];
   const result: TmpJanitorApplyResult = {
     expiredLanes: [],
