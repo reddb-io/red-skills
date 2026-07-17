@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" role="img" aria-labelledby="mem-title mem-desc">
+  <title id="mem-title">memory plugin</title>
+  <desc id="mem-desc">The memory plugin is governed operational memory for code agents: decisions, root causes, validation evidence, and readiness that make future agents safer and faster.</desc>
+  <defs>
+    <linearGradient id="mem-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#07090d"/>
+    </linearGradient>
+    <radialGradient id="mem-glow" cx="0.2" cy="0.1" r="0.8">
+      <stop offset="0" stop-color="#ff2056" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mem-rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2056"/>
+      <stop offset="1" stop-color="#ff2056" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="mem-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+    </pattern>
+    <clipPath id="mem-frame">
+      <rect x="0" y="0" width="1200" height="220" rx="18"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#mem-frame)">
+    <rect width="1200" height="220" fill="url(#mem-bg)"/>
+    <rect width="1200" height="220" fill="url(#mem-grid)"/>
+    <ellipse cx="160" cy="20" rx="400" ry="210" fill="url(#mem-glow)"/>
+    <g font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
+      <text x="72" y="92" font-size="26" fill="#ff2056" letter-spacing="2">MEMORY PLUGIN</text>
+      <text x="72" y="142" font-size="56" font-weight="700" fill="#f0f6fc">memory</text>
+      <rect x="72" y="164" width="180" height="3" fill="url(#mem-rule)"/>
+      <text x="72" y="194" font-size="18" fill="#8b949e">governed evidence that makes the next agent safer and faster</text>
+      <rect x="780" y="54" width="360" height="112" rx="12" fill="#0b0f15" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="804" y="90" font-size="15" fill="#6e7681">store and recall</text>
+      <text x="804" y="126" font-size="24" fill="#c9d1d9">decisions &#183; root causes</text>
+      <text x="804" y="152" font-size="14" fill="#3fb950">markdown or governed graph</text>
+    </g>
+    <rect x="0" y="216" width="1200" height="4" fill="#ff2056"/>
+  </g>
+</svg>
