@@ -178,11 +178,12 @@ describe("rsp gh token levers", () => {
   it("filters list rows with --query and appends next-step help", async () => {
     const fixture = (await discoverFidelityFixtures(fixtureRoot)).find((candidate) => candidate.name === "pr-list-default")!;
     const result = await renderGhContract(["gh", "pr", "list", "--query", "Draft"], fixture.recorded, { level: "lossless" });
-    const decoded = decode(result.stdout.toString("utf8")) as { prs: Array<{ title: string }>; summary: string; help: string[] };
+    const decoded = decode(result.stdout.toString("utf8")) as { prs: Array<{ title: string }>; summary: string; help: string[]; next_steps: string[] };
 
     expect(decoded.prs).toEqual([expect.objectContaining({ title: "Draft docs" })]);
     expect(decoded.summary).toBe("1/2 open PRs");
     expect(decoded.help).toContain("rsp gh pr <number>");
+    expect(decoded.next_steps).toContain("rsp gh pr <number>");
   });
 
   it("keeps default list schemas minimal while exposing list aggregates", async () => {
