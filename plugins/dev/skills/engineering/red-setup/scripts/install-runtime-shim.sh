@@ -70,8 +70,12 @@ Expected one of:
 - an installed dev plugin under ~/.claude/plugins/cache/red-skills/dev/*
 - a warmed bundle under ~/.cache/red-skills/bundles/dev-*.bundle.min.mjs
 
+Fallback:
+  npx -y -p @reddb-io/red-skills@<version> red-skills-dev "$@"
+
 Run /red-setup in a repo with plugins.dev.enabled: true, then restart the
-agent session so the plugin SessionStart hook can warm the runtime cache.
+agent session so the plugin SessionStart hook can warm the runtime cache, or use
+the npm direct-run fallback above for a fresh machine.
 EOF
 exit 127
 SH
