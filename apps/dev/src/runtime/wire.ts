@@ -52,6 +52,7 @@ import * as fsx from "./fs.js";
 import { collectLogLineCounts } from "./log-cursor.js";
 import { isLivePid } from "./kill-tree.js";
 import { execTool } from "./exec.js";
+import { collectTmpJanitorReport } from "./tmp-janitor.js";
 
 // ---------- repo resolution ----------
 
@@ -1668,6 +1669,7 @@ export async function collectBootOptions(
     legacyWorkDirs,
     reconcileSweepCandidates,
     specSubIssueCandidates,
+    tmpJanitorIssueStates,
   ] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
@@ -1679,8 +1681,13 @@ export async function collectBootOptions(
       fsx.listLegacyWorkDirs(paths.tmpDir),
       ghx.listParkedMechanicalCandidates(ghCtx),
       ghx.listSpecSubIssueCandidates(ghCtx, nowS),
+      ghx.listIssueStates(ghCtx),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
+  const tmpJanitor = await collectTmpJanitorReport(paths.tmpDir, nowS, (issue) => {
+    const state = tmpJanitorIssueStates.get(issue)?.state;
+    return state === "CLOSED" ? "CLOSED" : state === "OPEN" ? "OPEN" : "UNKNOWN";
+  });
 
   return {
     precheck: facts,
@@ -1694,6 +1701,7 @@ export async function collectBootOptions(
     reconcileSweepCandidates,
     docsSweep: await collectDocsSweepInput(ctx, facts.configuredTrunk ?? "main"),
     specSubIssueCandidates,
+    tmpJanitor,
   };
 }
 
@@ -1935,6 +1943,12 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
       ensureGitignoreLine: fsx.ensureGitignoreLine,
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
+      workerPidLive: async (workerDir) => {
+        const raw = await fsx.readText(join(workerDir, "worker.pid"));
+        if (raw === null) return false;
+        const pid = Number(raw.trim());
+        return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
+      },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
     },
     gh: {
