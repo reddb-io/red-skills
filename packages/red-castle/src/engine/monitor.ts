@@ -43,6 +43,28 @@ export interface SparklineResult {
   line: string;
 }
 
+export interface ProvingDrainCounter {
+  drained: number;
+  required: number;
+  remaining: number;
+  passed: boolean;
+}
+
+export const PROVING_DRAIN_REQUIRED = 20;
+
+export function computeProvingDrainCounter(
+  events: ReadonlyArray<Pick<HistoryRecord, "event">>,
+  required: number = PROVING_DRAIN_REQUIRED,
+): ProvingDrainCounter {
+  const drained = events.filter((event) => event.event === "done").length;
+  return {
+    drained,
+    required,
+    remaining: Math.max(0, required - drained),
+    passed: drained >= required,
+  };
+}
+
 export function readDoneBuckets(
   events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
   fromHour: number,
@@ -590,12 +612,19 @@ export function renderCompactDashboardToon(
     if (compactWorkerTag(w) === "live") active += 1;
   }
   const sparkline = buildSparkline(events, now);
+  const provingDrain = computeProvingDrainCounter(events);
 
   const root: JsonObject = {
     sparkline: sparkline.line,
     diff_added: added,
     diff_removed: removed,
     sources: sourceCountRows(workers),
+    proving_drain: {
+      drained: provingDrain.drained,
+      required: provingDrain.required,
+      remaining: provingDrain.remaining,
+      passed: provingDrain.passed ? 1 : 0,
+    },
   };
 
   if (fleet) {
@@ -647,6 +676,6 @@ export function renderCompactDashboardToon(
 
   return appendSummaryField(
     root,
-    `${workers.length} workers · ${active} active · ${sparkline.total} closed · ${formatDiff(added, removed)}`,
+    `${workers.length} workers · ${active} active · ${sparkline.total} closed · proving ${provingDrain.drained}/${provingDrain.required} · ${formatDiff(added, removed)}`,
   );
 }
