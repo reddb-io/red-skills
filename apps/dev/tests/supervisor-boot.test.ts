@@ -14,6 +14,7 @@ import {
   type SupervisorConfig,
   type SupervisorDeps,
 } from "../src/core/supervisor.js";
+import { BootHaltError } from "../src/core/boot.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
 import type { LivenessVerdict } from "@reddb-io/red-castle";
 
@@ -130,6 +131,27 @@ describe("runSupervisor — supervisor owns the boot (#623)", () => {
 
     expect(spawnSlot).toHaveBeenCalledTimes(1);
     expect(log.mock.calls.some((c) => String(c[0]).includes("boot sweeps failed"))).toBe(true);
+  });
+
+  it("refuses to spawn the fleet when bootSweeps raises a red operational probe", async () => {
+    const { deps, spawnSlot, log } = makeDeps({
+      bootSweeps: vi.fn(async () => {
+        throw new BootHaltError("operational-probe", {
+          id: "git.remote.https-forbidden",
+          name: "SSH-only git remotes",
+          verdict: "red",
+          evidence: "1 forbidden https remote observed",
+          canonicalFix: "Use SSH git remotes for local AFK boot.",
+        });
+      }),
+    });
+    const state = initSupervisorState(1);
+
+    await runSupervisor(state, deps, config({ target: 1 }), () => true);
+
+    expect(spawnSlot).not.toHaveBeenCalled();
+    expect(log.mock.calls.some((c) => String(c[0]).includes("SSH-only git remotes"))).toBe(true);
+    expect(log.mock.calls.some((c) => String(c[0]).includes("Use SSH git remotes"))).toBe(true);
   });
 
   it("spawns normally when no bootSweeps is wired (back-compat)", async () => {
