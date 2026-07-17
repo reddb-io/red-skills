@@ -89,23 +89,25 @@ export interface AfkPaths {
   stateDir: string;
   workersRoot: string;
   historyPath: string;
-  /** Supervisor heartbeat snapshot (state tier, ADR 0098). */
+  /** Singleton native supervisor runtime lane (tmp tier, ADR 0105). */
+  supervisorRuntimeDir: string;
+  /** Supervisor heartbeat snapshot (tmp supervisor lane, ADR 0105). */
   fleetStatePath: string;
-  /** Supervisor firehose log (state tier). */
+  /** Supervisor firehose log (tmp supervisor lane). */
   fleetFirehosePath: string;
-  /** Monitor log-cursor cache (state tier). */
+  /** Monitor log-cursor cache (tmp supervisor lane). */
   monitorLogCursorPath: string;
-  /** Supervisor pid file (state tier). */
+  /** Supervisor pid file (tmp supervisor lane). */
   supervisorPidPath: string;
-  /** Supervisor stop sentinel (state tier). */
+  /** Supervisor stop sentinel (tmp supervisor lane). */
   supervisorStopPath: string;
-  /** Supervisor launch log (state tier). */
+  /** Supervisor human-readable view source (structured TOONL firehose). */
   supervisorLogPath: string;
-  /** Runtime elastic resize request (state tier). */
+  /** Runtime elastic resize request (tmp supervisor lane). */
   supervisorResizePath: string;
-  /** Watchdog restart ledger (state tier). */
+  /** Watchdog restart ledger (tmp supervisor lane). */
   supervisorRestartsPath: string;
-  /** Runner circuit-breaker directory (state tier). */
+  /** Runner circuit-breaker directory (tmp supervisor lane). */
   runnerCircuitDir: string;
   /** GitHub queue/human count cache (statusline state lane). */
   statuslineCachePath: string;
@@ -137,20 +139,22 @@ export function afkPaths(root: string): AfkPaths {
   const state = rp.stateDir(root);
   const afkState = rp.afkStateDir(root);
   const statusline = rp.statuslineStateDir(root);
+  const supervisorRuntime = join(tmp, "supervisors", "default");
   return {
     tmpDir: tmp,
     stateDir: state,
     workersRoot: rp.workersDir(root),
     historyPath: join(afkState, "history.toonl"),
-    fleetStatePath: join(afkState, "afk-supervisor.state.json"),
-    fleetFirehosePath: join(afkState, "afk-supervisor.log.toonl"),
-    monitorLogCursorPath: join(afkState, "monitor-log-cursors.json"),
-    supervisorPidPath: join(afkState, "afk-supervisor.pid"),
-    supervisorStopPath: join(afkState, "afk-supervisor.stop"),
-    supervisorLogPath: join(afkState, "afk-supervisor.log"),
-    supervisorResizePath: join(afkState, "afk-supervisor.resize.json"),
-    supervisorRestartsPath: join(afkState, "afk-supervisor.restarts.json"),
-    runnerCircuitDir: join(afkState, "runner-circuit"),
+    supervisorRuntimeDir: supervisorRuntime,
+    fleetStatePath: join(supervisorRuntime, "state.toon"),
+    fleetFirehosePath: join(supervisorRuntime, "supervisor.log.toonl"),
+    monitorLogCursorPath: join(supervisorRuntime, "monitor-log-cursors.toon"),
+    supervisorPidPath: join(supervisorRuntime, "afk-supervisor.pid"),
+    supervisorStopPath: join(supervisorRuntime, "afk-supervisor.stop"),
+    supervisorLogPath: join(supervisorRuntime, "supervisor.log.toonl"),
+    supervisorResizePath: join(supervisorRuntime, "resize.toon"),
+    supervisorRestartsPath: join(supervisorRuntime, "restarts.toon"),
+    runnerCircuitDir: join(supervisorRuntime, "runner-circuit"),
     statuslineCachePath: join(statusline, "statusline-cache.toon"),
     statuslineRepoCachePath: join(statusline, "statusline-repo-cache.toon"),
     branchLockPath: rp.branchLockFile(root),

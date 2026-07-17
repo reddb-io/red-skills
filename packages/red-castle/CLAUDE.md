@@ -41,11 +41,11 @@ repo config YAML `.red/config.yaml` (its protocol owner sets the format).
 Whole-document snapshot state files are TOON too (issue #2008): the castle
 `state.toon` snapshots plus the fleet-runtime snapshot surfaces in the consuming
 `apps/dev` workspace — the worker identity stamp (`identity.json`), the
-per-attempt worker state (`afk.state.json`), the supervisor state snapshot and
-its restart ledger (`afk-supervisor.state.json` / `.restarts.json`), and the
-monitor log-cursor snapshot (`monitor-log-cursors.json`). Each keeps its
-filename (wave-1 in-place convention) but writes TOON content, and its reader
-sniffs JSON-then-TOON so a file written by an older bundle still reads.
+per-attempt worker state (`afk.state.json`), the supervisor state snapshot
+(`state.toon`), its restart ledger (`restarts.toon`), and the monitor log-cursor
+snapshot (`monitor-log-cursors.toon`). The fleet supervisor files live under
+`.red/tmp/supervisors/default/`; readers sniff JSON-then-TOON so a file written
+by an older bundle still reads.
 Converting a NEW snapshot is a deliberate change with its own reader plan, not a
 drive-by. The `apps/dev` uniformity test (`castle-engine-toon-uniformity.test.ts`)
 enumerates these writers and fails on any raw-JSON emission.

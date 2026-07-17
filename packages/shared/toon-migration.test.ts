@@ -79,7 +79,7 @@ describe("shared TOON migration registry", () => {
           id: "dev.supervisor-firehose",
           plugin: "dev",
           legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
-          toonPath: ".red/state/castle/afk-supervisor.log.toonl",
+          toonPath: ".red/tmp/supervisors/default/supervisor.log.toonl",
           kind: "toonl",
           migration: "sniff-read",
         }),

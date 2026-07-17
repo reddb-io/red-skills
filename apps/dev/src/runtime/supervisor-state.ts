@@ -32,13 +32,17 @@ async function exists(path: string): Promise<boolean> {
 async function supervisorArtifactPaths(dir: string): Promise<string[]> {
   const out = [
     join(dir, "afk-supervisor.pid"),
-    join(dir, "afk-supervisor.state.json"),
-    join(dir, "afk-supervisor.state.json.tmp"),
+    join(dir, "afk-supervisor-boot.pid"),
+    join(dir, "state.toon"),
+    join(dir, "state.toon.tmp"),
     join(dir, "afk-supervisor.stop"),
+    join(dir, "resize.toon"),
+    join(dir, "restarts.toon"),
+    join(dir, "monitor-log-cursors.toon"),
   ];
   try {
     for (const entry of await readdir(dir)) {
-      if (entry.startsWith("afk-supervisor.log")) out.push(join(dir, entry));
+      if (entry.startsWith("afk-supervisor.log") || entry === "supervisor.log.toonl") out.push(join(dir, entry));
     }
   } catch {
     // Missing/unreadable dir means there are no removable artifacts we can see.
@@ -47,8 +51,8 @@ async function supervisorArtifactPaths(dir: string): Promise<string[]> {
 }
 
 /**
- * Reap stale supervisor artifacts across the canonical state-tier home and any
- * legacy `.red/tmp` home (issue #1685). Pass the state dir first; a legacy dir is
+ * Reap stale supervisor artifacts across the canonical tmp supervisor home and any
+ * legacy home (issue #1685). Pass the current dir first; a legacy dir is
  * scanned for the one-release migration window so a supervisor whose pid still
  * lives under the old layout is honoured and its dead artifacts are cleaned up.
  */

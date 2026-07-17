@@ -336,9 +336,9 @@ export function parkedSlotWorkFor(
   tmpDir: string,
   slot: number,
   lastPid: number | null = null,
-  // The main supervisor launch log now lives in the state tier (issue #1685);
+  // The main supervisor firehose lives in the singleton tmp supervisor lane;
   // per-slot logs are disposable spawn diagnostics in the dated tmp logs lane.
-  supervisorLogPath: string = join(tmpDir, "afk-supervisor.log"),
+  supervisorLogPath: string = join(tmpDir, "supervisors", "default", "supervisor.log.toonl"),
   slotLogsDir: string = slotLogDir(tmpDir),
 ): SweepWork {
 

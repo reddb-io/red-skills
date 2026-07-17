@@ -6,7 +6,6 @@
 
 import { constants } from "node:fs";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { closeSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
@@ -17,6 +16,7 @@ import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
+import { appendRecordToonl } from "../core/jsonl-log.js";
 // The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
 // with the fleet reaper and `fleet stop` (#580). It matters for recovery
 // correctness here too: the supervisor's own `finally` removes the pid/stop
@@ -45,10 +45,10 @@ async function fileExists(path: string): Promise<boolean> {
 
 /**
  * Build a WatchdogIO bound to `root`. `log` lines are written to `stdout` (so a
- * monitor tick / launch surfaces the recovery loudly) AND appended to
- * afk-supervisor.log so the recovery is durable in the same place the fleet's
- * own heartbeat lives. The last fleet-state read by `liveness()` is cached so a
- * relaunch restores the prior target/runner instead of guessing.
+ * monitor tick / launch surfaces the recovery loudly) AND appended to the
+ * structured supervisor firehose so recovery events share the fleet heartbeat
+ * lane. The last fleet-state read by `liveness()` is cached so a relaunch
+ * restores the prior target/runner instead of guessing.
  */
 export function buildWatchdogIO(
   root: string,
@@ -223,16 +223,10 @@ export function buildWatchdogIO(
       } catch {
         // best-effort
       }
-      try {
-        const fd = openSync(logFile, "a");
-        try {
-          writeSync(fd, `[${new Date().toISOString()}] ${line}\n`);
-        } finally {
-          closeSync(fd);
-        }
-      } catch {
-        // best-effort: a log-write failure must never affect recovery.
-      }
+      void appendRecordToonl(logFile, "watchdog", line, {
+        ts: new Date().toISOString(),
+        fields: { worker: "fleet" },
+      }).catch(() => undefined);
     },
   };
 }

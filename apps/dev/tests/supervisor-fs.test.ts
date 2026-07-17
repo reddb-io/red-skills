@@ -118,7 +118,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       expect(work.workers[0]!.pairs).toHaveLength(1);
       expect(work.workers[0]!.pairs[0]!.issue).toBe(42);
       expect(work.workers[0]!.pairs[0]!.dir).toBe(iterDir);
-      expect(work.supervisorLogPath).toContain("afk-supervisor.log");
+      expect(work.supervisorLogPath).toContain("supervisor.log.toonl");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

@@ -808,7 +808,7 @@ export interface SupervisorDeps {
   recoveryEnv?: RecoveryEnv;
   /**
    * Optional liveness sink: one line per supervise tick (the CLI appends it to
-   * afk-supervisor.log). Makes a healthy fleet's heartbeat — and a wedged one's
+   * supervisor.log.toonl). Makes a healthy fleet's heartbeat — and a wedged one's
    * silence — observable, so an operator never has to guess fleet state from a
    * stale log. Best-effort; never throws.
    */

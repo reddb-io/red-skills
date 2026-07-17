@@ -1849,7 +1849,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const paths = afkPaths(cwd);
 
   // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
-  // the state tier before this worker reads/writes supervisor/circuit state
+  // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
   // (issue #1685). Idempotent + best-effort — a second boot is a no-op.
   await migrateLegacyDevPaths(cwd).catch(() => undefined);
 

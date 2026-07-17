@@ -33,11 +33,7 @@ import type { FleetHeartbeat } from "../src/core/supervisor.js";
 
 /** The single sanctioned non-TOON file the stack writes (ADR 0097). */
 const SOLE_NON_TOON_FILE = ".red/config.yaml";
-const LEGACY_STATE_TOON_NAME_EXEMPTIONS = new Set([
-  // Deleted by the #1920/#1921 castle boot-migration chain; issue #2039
-  // explicitly excludes renaming this dual-write mirror in this slice.
-  "afk-supervisor.state.json",
-]);
+const LEGACY_STATE_TOON_NAME_EXEMPTIONS = new Set<string>();
 
 /** Assert a snapshot document's bytes are TOON, never raw JSON. Raw JSON of an
  * object/non-empty array starts with `{`/`[` and round-trips through
@@ -102,7 +98,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
 
   it("the fresh-relaunch supervisor heartbeat stamp is TOON, never raw JSON", async () => {
     const dir = await mkdtemp(join(tmpdir(), "castle-toon-stamp-"));
-    const path = join(dir, "afk-supervisor.state.json");
+    const path = join(dir, "state.toon");
     stampFreshFleetHeartbeat(path, 7, "claude", 2);
     const bytes = await readFile(path, "utf8");
     expect(() => JSON.parse(bytes)).toThrow();
@@ -125,7 +121,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
 
   it("the monitor log-cursor snapshot is TOON, never raw JSON", async () => {
     const dir = await mkdtemp(join(tmpdir(), "castle-toon-cursors-"));
-    const path = join(dir, "monitor-log-cursors.json");
+    const path = join(dir, "monitor-log-cursors.toon");
     const cursors = { "/x/afk.log": { size: 5, lines: 1 } };
     await writeLogLineCursors(path, cursors);
     const bytes = await readFile(path, "utf8");
@@ -149,7 +145,10 @@ describe("castle-engine write-surface TOON uniformity", () => {
     const paths = afkPaths(join(tmpdir(), "repo"));
     const surfaces = [
       paths.historyPath,
+      paths.fleetStatePath,
       paths.fleetFirehosePath,
+      paths.monitorLogCursorPath,
+      paths.supervisorRestartsPath,
       paths.statuslineCachePath,
       paths.statuslineRepoCachePath,
     ];
@@ -160,7 +159,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
   });
 
   it("documents the only legacy state-tier TOON snapshot name exemption", () => {
-    expect(LEGACY_STATE_TOON_NAME_EXEMPTIONS).toEqual(new Set(["afk-supervisor.state.json"]));
+    expect(LEGACY_STATE_TOON_NAME_EXEMPTIONS).toEqual(new Set());
   });
 
   it("documents .red/config.yaml as the single sanctioned non-TOON file", () => {

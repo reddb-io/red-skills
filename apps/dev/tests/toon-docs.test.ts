@@ -27,7 +27,7 @@ describe("TOONL operational docs", () => {
 
     expect(joined).toContain("tq -p toonl -o json -r .msg");
     expect(joined).toContain(".red/state/castle/history.toonl");
-    expect(joined).toContain(".red/state/castle/afk-supervisor.log.toonl");
+    expect(joined).toContain(".red/tmp/supervisors/default/supervisor.log.toonl");
     expect(joined).toContain("there is no jq fallback");
     expect(joined).not.toMatch(/afk-history\.jsonl/);
     const laneReaderLines = joined
@@ -41,7 +41,7 @@ describe("TOONL operational docs", () => {
     try {
       const agentLane = join(dir, "agent.log.jsonl");
       const historyLane = join(dir, "afk-history.toonl");
-      const supervisorFirehose = join(dir, "afk-supervisor.log.toonl");
+      const supervisorFirehose = join(dir, "supervisor.log.toonl");
       await writeFile(
         agentLane,
         [

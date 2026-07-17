@@ -31,8 +31,8 @@ describe("auditRedTaxonomy — ADR 0098 lane registry", () => {
         path: ".red/tmp/afk-supervisor.pid",
         kind: "durable-state-in-tmp",
         verdict: "error",
-        reason: ".red/tmp/afk-supervisor.pid is durable dev/AFK state in the disposable tmp tier",
-        target: ".red/state/castle/afk-supervisor.pid",
+        reason: ".red/tmp/afk-supervisor.pid is durable dev/AFK supervisor state in the disposable tmp tier",
+        target: ".red/tmp/supervisors/default/afk-supervisor.pid",
       },
       {
         path: ".red/tmp/orphan.txt",
