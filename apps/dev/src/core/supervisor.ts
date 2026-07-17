@@ -810,7 +810,7 @@ export interface SupervisorDeps {
    * Run the shared boot sweeps ONCE before the initial fleet spawn (#623). The
    * fleet supervisor owns the boot: it runs orphan cleanup / attempt cap /
    * branch cleanup / unblock sweep / straggler check a single time, pre-spawn,
-   * and every worker it then spawns carries the `RED_AFK_SWEEPS_DONE` marker so
+   * and every worker it then spawns carries the `RED_AFK_BOOT_SWEEPS_COMPLETE` marker so
    * it boots bootstrap+claim only — respawns are cheap and workers never race
    * peers over shared `.red/tmp` state. Called exactly once per supervisor
    * lifetime (never on a respawn, which happens inside the tick loop). The
