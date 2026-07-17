@@ -73,8 +73,16 @@ export type Precondition =
   | "not-a-git-repo"
   | "https-remote-forbidden"
   | "no-main-branch"
-  | "not-on-main"
+  | "not-on-trunk"
   | "pnpm-missing";
+
+export type FocalBranchSource = "lock" | "pin" | "trunk";
+
+export interface BranchPreconditionDetail {
+  current: string;
+  expected: string;
+  source: FocalBranchSource;
+}
 
 /** Facts the precheck consumes. The caller resolves each via real IO (command
  * lookups, `gh auth status`, `git remote -v`, `git branch --show-current`) and
@@ -96,11 +104,13 @@ export interface PrecheckFacts {
    */
   lockedBranch?: string;
   /**
-   * The configured AFK boot branch resolved by the caller from repo config
-   * (config lock/trunk, falling back to main). Kept injected so precheck stays
-   * a pure rule over facts.
+   * The configured AFK boot branch resolved by the caller from repo config:
+   * static branch pin first, then trunk/default. Kept injected so precheck
+   * stays a pure rule over facts.
    */
   configuredTrunk?: string;
+  /** Where `configuredTrunk` came from when no runtime lock overrides it. */
+  configuredTrunkSource?: Exclude<FocalBranchSource, "lock">;
   pnpmInstalled: boolean;
   /**
    * Relax the SSH-only remote rule. "Reject https remote" is a LOCAL-dev safety
@@ -115,17 +125,19 @@ export interface PrecheckFacts {
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
  * `detail` carries the offending value (e.g. the https URL) or, for a branch
- * mismatch, the branch the checkout was expected to be on. pnpm-missing is a
- * WARNING in afk.sh (`log "warn: …"`), not a `die`; it is surfaced via
- * `warnings` while the verdict still passes. */
+ * mismatch, the current branch, expected branch, and expectation source.
+ * pnpm-missing is a WARNING in afk.sh (`log "warn: …"`), not a `die`; it is
+ * surfaced via `warnings` while the verdict still passes. */
 export type PrecheckResult =
   | { ok: true; warnings: string[] }
-  | { ok: false; failed: Precondition; detail?: string };
+  | { ok: false; failed: Exclude<Precondition, "not-on-trunk">; detail?: string }
+  | { ok: false; failed: "not-on-trunk"; detail: BranchPreconditionDetail };
 
 /** Evaluate the hard preconditions in afk.sh order. The `die` ladder is:
  *   gh installed → gh authenticated → is-git-repo → no https remote →
- *   local main exists → on main. pnpm is the lone soft check (warn, not die),
- *   evaluated last so a clean pass still reports the warning. */
+ *   local main exists → on the resolved focal branch. pnpm is the lone soft
+ *   check (warn, not die), evaluated last so a clean pass still reports the
+ *   warning. */
 export function precheck(facts: PrecheckFacts): PrecheckResult {
   if (!facts.ghInstalled) return { ok: false, failed: "gh-missing" };
   if (!facts.ghAuthenticated) return { ok: false, failed: "gh-unauthenticated" };
@@ -140,13 +152,28 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
   const expectedBranch = facts.lockedBranch ?? facts.configuredTrunk ?? "main";
   if (facts.currentBranch !== expectedBranch) {
-    return { ok: false, failed: "not-on-main", detail: expectedBranch };
+    const source: FocalBranchSource = facts.lockedBranch !== undefined
+      ? "lock"
+      : facts.configuredTrunkSource ?? "trunk";
+    return {
+      ok: false,
+      failed: "not-on-trunk",
+      detail: { current: facts.currentBranch, expected: expectedBranch, source },
+    };
   }
   const warnings: string[] = [];
   if (!facts.pnpmInstalled) {
     warnings.push("pnpm not on PATH; feedback loops will be skipped");
   }
   return { ok: true, warnings };
+}
+
+export function formatPreconditionFailure(result: Extract<PrecheckResult, { ok: false }>): string {
+  if (result.failed === "not-on-trunk") {
+    const d = result.detail;
+    return `${result.failed}: current=${d.current} expected=${d.expected} source=${d.source}`;
+  }
+  return result.failed;
 }
 
 // ---------- injected IO ----------
