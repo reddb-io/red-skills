@@ -19,6 +19,10 @@ export function structuredExitCode(category: RspErrorCategory): 0 | 1 | 2 {
 }
 
 export function renderStructuredError(options: RspStructuredErrorOptions): Buffer {
+  return Buffer.from(`${encode(structuredErrorPayload(options))}\n`);
+}
+
+export function structuredErrorPayload(options: RspStructuredErrorOptions): JsonObject {
   const payload: JsonObject = {
     command: options.command,
     category: options.category,
@@ -28,7 +32,7 @@ export function renderStructuredError(options: RspStructuredErrorOptions): Buffe
   };
   if (options.validFlags && options.validFlags.length > 0) payload.valid_flags = [...options.validFlags] as JsonValue;
   if (options.diagnostics) payload.diagnostics = firstLines(options.diagnostics, 3);
-  return Buffer.from(`${encode(payload)}\n`);
+  return payload;
 }
 
 export function renderNoop(command: string, summary: string, help: string): Buffer {
