@@ -3,13 +3,16 @@
 // Best-effort throughout: a boot must never fail because a legacy artifact could
 // not be relocated, so every fs error is swallowed and the artifact is simply
 // left where it is (a later reader's legacy fallback still finds it).
-import { mkdir, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { appendCastleHistoryRecord } from "@reddb-io/red-castle/engine";
 import {
   migrationActionFor,
   planDevDurablePathMigration,
   supervisorLogMigration,
 } from "../core/red-path-migration.js";
+import { parseHistoryLines } from "../core/history.js";
+import { afkStateDir, stateDir } from "@reddb-io/shared/red-paths.js";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -42,6 +45,25 @@ export interface DevPathMigrationResult {
   moved: string[];
 }
 
+async function convertLegacyJsonlHistoryIfSafe(root: string): Promise<boolean> {
+  const legacy = join(stateDir(root), "afk-history.jsonl");
+  const current = join(afkStateDir(root), "history.toonl");
+  const [legacyExists, currentExists] = await Promise.all([pathExists(legacy), pathExists(current)]);
+  if (migrationActionFor(legacyExists, currentExists) !== "move") return false;
+  try {
+    const records = parseHistoryLines(await readFile(legacy, "utf8"));
+    await mkdir(dirname(current), { recursive: true });
+    const tmp = `${current}.tmp.${process.pid}.${Date.now()}`;
+    await writeFile(tmp, "", "utf8");
+    for (const record of records) await appendCastleHistoryRecord(tmp, record);
+    await rename(tmp, current);
+    await rm(legacy, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Relocate every dev-owned durable artifact from its legacy `.red/tmp` home to
  * the state tier, once and idempotently. A second boot (legacy already gone) is a
@@ -52,6 +74,7 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   for (const entry of planDevDurablePathMigration(root)) {
     if (await moveIfSafe(entry.legacy, entry.current)) moved.push(entry.id);
   }
+  if (await convertLegacyJsonlHistoryIfSafe(root)) moved.push("afk-history.jsonl");
   // Rotated supervisor launch logs (afk-supervisor.log, .log.N) plus the old
   // TOONL firehose name (afk-supervisor.log.jsonl -> afk-supervisor.log.toonl).
   const { legacyDir, currentDir, logPrefix } = supervisorLogMigration(root);

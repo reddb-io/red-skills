@@ -1,6 +1,6 @@
 // core/red-path-migration.ts — the one-time, idempotent boot migration that
 // relocates dev-owned DURABLE artifacts from their legacy homes to
-// the ADR 0098 state-tier lanes (`.red/state/afk`, `.red/state/statusline`, the
+// the ADR 0098 state-tier lanes (`.red/state/castle`, `.red/state/statusline`, the
 // state-root branch lock). Pure: the planner only BUILDS paths from the shared
 // path authority (`@reddb-io/shared/red-paths`); the runtime executor
 // (runtime/red-path-migration.ts) does the fs moves.
@@ -18,7 +18,13 @@
 // registries, and the disposable scratch worktree lanes are NOT migrated: they
 // are already collision-safe, swept, and keep their names.
 import { join } from "node:path";
-import { afkStateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
+import {
+  afkStateDir,
+  legacyAfkStateDir,
+  statuslineStateDir,
+  tmpDir,
+  stateDir,
+} from "@reddb-io/shared/red-paths.js";
 
 /** How a migration entry is materialised on disk. */
 export type MigrationEntryKind = "file" | "dir";
@@ -44,7 +50,9 @@ export interface DevPathMigrationEntry {
  */
 export function planDevDurablePathMigration(root: string): DevPathMigrationEntry[] {
   const tmp = tmpDir(root);
-  const afkState = afkStateDir(root);
+  const castleState = afkStateDir(root);
+  const legacyAfkState = legacyAfkStateDir(root);
+  const state = stateDir(root);
   const statusline = statuslineStateDir(root);
   const file = (name: string, dest: string): DevPathMigrationEntry => ({
     id: name,
@@ -64,13 +72,31 @@ export function planDevDurablePathMigration(root: string): DevPathMigrationEntry
     current,
     kind: "file",
   });
+  const dirFrom = (id: string, legacy: string, current: string): DevPathMigrationEntry => ({
+    id,
+    legacy,
+    current,
+    kind: "dir",
+  });
+  const castleFile = (name: string): DevPathMigrationEntry => file(name, castleState);
+  const legacyCastleFile = (name: string): DevPathMigrationEntry =>
+    fileFrom(`state/afk/${name}`, join(legacyAfkState, name), join(castleState, name));
   return [
-    file("afk-supervisor.state.json", afkState),
-    file("afk-supervisor.pid", afkState),
-    file("afk-supervisor.stop", afkState),
-    file("afk-supervisor.restarts.json", afkState),
-    file("monitor-log-cursors.json", afkState),
-    { id: "runner-circuit", legacy: join(tmp, "runner-circuit"), current: join(afkState, "runner-circuit"), kind: "dir" },
+    castleFile("afk-supervisor.state.json"),
+    castleFile("afk-supervisor.pid"),
+    castleFile("afk-supervisor.stop"),
+    castleFile("afk-supervisor.restarts.json"),
+    castleFile("monitor-log-cursors.json"),
+    { id: "runner-circuit", legacy: join(tmp, "runner-circuit"), current: join(castleState, "runner-circuit"), kind: "dir" },
+    fileFrom("afk-history.toonl", join(state, "afk-history.toonl"), join(castleState, "history.toonl")),
+    legacyCastleFile("afk-supervisor.state.json"),
+    legacyCastleFile("afk-supervisor.pid"),
+    legacyCastleFile("afk-supervisor.stop"),
+    legacyCastleFile("afk-supervisor.restarts.json"),
+    legacyCastleFile("monitor-log-cursors.json"),
+    legacyCastleFile("afk-supervisor.log"),
+    legacyCastleFile("afk-supervisor.log.toonl"),
+    dirFrom("state/afk/runner-circuit", join(legacyAfkState, "runner-circuit"), join(castleState, "runner-circuit")),
     renamedFile("statusline-cache.json", statusline, "statusline-cache.toon"),
     renamedFile("statusline-repo-cache.json", statusline, "statusline-repo-cache.toon"),
     fileFrom("state/statusline-cache.json", join(statusline, "statusline-cache.json"), join(statusline, "statusline-cache.toon")),
@@ -88,7 +114,7 @@ export function planDevDurablePathMigration(root: string): DevPathMigrationEntry
 }
 
 /**
- * The legacy tmp dir and the canonical state/afk dir, plus the filename prefix
+ * The legacy tmp dir and the canonical state/castle dir, plus the filename prefix
  * for the rotated supervisor logs (`afk-supervisor.log`, `.log.jsonl`, `.log.N`).
  * The executor globs `legacyDir` for entries starting with `logPrefix` and moves
  * each to `currentDir` under the same idempotent rule.

@@ -14,22 +14,45 @@ describe("planDevDurablePathMigration", () => {
   it("maps every durable artifact from .red/tmp to its state-tier home", () => {
     expect(byId.get("afk-supervisor.state.json")).toMatchObject({
       legacy: "/repo/.red/tmp/afk-supervisor.state.json",
-      current: "/repo/.red/state/afk/afk-supervisor.state.json",
+      current: "/repo/.red/state/castle/afk-supervisor.state.json",
       kind: "file",
     });
-    expect(byId.get("afk-supervisor.pid")?.current).toBe("/repo/.red/state/afk/afk-supervisor.pid");
-    expect(byId.get("afk-supervisor.stop")?.current).toBe("/repo/.red/state/afk/afk-supervisor.stop");
+    expect(byId.get("afk-supervisor.pid")?.current).toBe("/repo/.red/state/castle/afk-supervisor.pid");
+    expect(byId.get("afk-supervisor.stop")?.current).toBe("/repo/.red/state/castle/afk-supervisor.stop");
     expect(byId.get("afk-supervisor.restarts.json")?.current).toBe(
-      "/repo/.red/state/afk/afk-supervisor.restarts.json",
+      "/repo/.red/state/castle/afk-supervisor.restarts.json",
     );
-    expect(byId.get("monitor-log-cursors.json")?.current).toBe("/repo/.red/state/afk/monitor-log-cursors.json");
+    expect(byId.get("monitor-log-cursors.json")?.current).toBe("/repo/.red/state/castle/monitor-log-cursors.json");
+    expect(byId.get("afk-history.toonl")).toMatchObject({
+      legacy: "/repo/.red/state/afk-history.toonl",
+      current: "/repo/.red/state/castle/history.toonl",
+      kind: "file",
+    });
   });
 
-  it("relocates the runner circuit directory into state/afk", () => {
+  it("relocates runner circuit directories into state/castle", () => {
     expect(byId.get("runner-circuit")).toMatchObject({
       legacy: "/repo/.red/tmp/runner-circuit",
-      current: "/repo/.red/state/afk/runner-circuit",
+      current: "/repo/.red/state/castle/runner-circuit",
       kind: "dir",
+    });
+    expect(byId.get("state/afk/runner-circuit")).toMatchObject({
+      legacy: "/repo/.red/state/afk/runner-circuit",
+      current: "/repo/.red/state/castle/runner-circuit",
+      kind: "dir",
+    });
+  });
+
+  it("retires the legacy state/afk supervisor lane into state/castle", () => {
+    expect(byId.get("state/afk/afk-supervisor.pid")).toMatchObject({
+      legacy: "/repo/.red/state/afk/afk-supervisor.pid",
+      current: "/repo/.red/state/castle/afk-supervisor.pid",
+      kind: "file",
+    });
+    expect(byId.get("state/afk/afk-supervisor.log.toonl")).toMatchObject({
+      legacy: "/repo/.red/state/afk/afk-supervisor.log.toonl",
+      current: "/repo/.red/state/castle/afk-supervisor.log.toonl",
+      kind: "file",
     });
   });
 
@@ -61,10 +84,10 @@ describe("planDevDurablePathMigration", () => {
 });
 
 describe("supervisorLogMigration", () => {
-  it("globs the rotated supervisor logs from tmp into state/afk", () => {
+  it("globs the rotated supervisor logs from tmp into state/castle", () => {
     expect(supervisorLogMigration(ROOT)).toEqual({
       legacyDir: "/repo/.red/tmp",
-      currentDir: "/repo/.red/state/afk",
+      currentDir: "/repo/.red/state/castle",
       logPrefix: "afk-supervisor.log",
     });
   });

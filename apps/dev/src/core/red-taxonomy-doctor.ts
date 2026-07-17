@@ -66,12 +66,12 @@ const KNOWN_WORKTREE_LANES = new Set([
 ]);
 
 const DURABLE_TMP_TARGETS = new Map<string, { target: string; owner: string }>([
-  ["afk-supervisor.state.json", { target: ".red/state/afk/afk-supervisor.state.json", owner: "dev/AFK" }],
-  ["afk-supervisor.pid", { target: ".red/state/afk/afk-supervisor.pid", owner: "dev/AFK" }],
-  ["afk-supervisor.stop", { target: ".red/state/afk/afk-supervisor.stop", owner: "dev/AFK" }],
-  ["afk-supervisor.restarts.json", { target: ".red/state/afk/afk-supervisor.restarts.json", owner: "dev/AFK" }],
-  ["monitor-log-cursors.json", { target: ".red/state/afk/monitor-log-cursors.json", owner: "dev/AFK" }],
-  ["runner-circuit", { target: ".red/state/afk/runner-circuit", owner: "dev/AFK" }],
+  ["afk-supervisor.state.json", { target: ".red/state/castle/afk-supervisor.state.json", owner: "dev/AFK" }],
+  ["afk-supervisor.pid", { target: ".red/state/castle/afk-supervisor.pid", owner: "dev/AFK" }],
+  ["afk-supervisor.stop", { target: ".red/state/castle/afk-supervisor.stop", owner: "dev/AFK" }],
+  ["afk-supervisor.restarts.json", { target: ".red/state/castle/afk-supervisor.restarts.json", owner: "dev/AFK" }],
+  ["monitor-log-cursors.json", { target: ".red/state/castle/monitor-log-cursors.json", owner: "dev/AFK" }],
+  ["runner-circuit", { target: ".red/state/castle/runner-circuit", owner: "dev/AFK" }],
   ["statusline-cache.json", { target: ".red/state/statusline/statusline-cache.toon", owner: "dev/statusline" }],
   ["statusline-repo-cache.json", { target: ".red/state/statusline/statusline-repo-cache.toon", owner: "dev/statusline" }],
   ["branch-lock.yaml", { target: ".red/state/branch-lock.yaml", owner: "branch lock" }],

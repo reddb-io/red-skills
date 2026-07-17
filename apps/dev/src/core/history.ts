@@ -1,9 +1,9 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
-import { appendCastleHistoryRecord } from "@reddb-io/red-castle/engine";
+import { appendCastleHistoryRecord, readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
 // JSONL record shape, the 48h `done`-event bucketing, and the sparkline glyph
@@ -281,19 +281,10 @@ export const defaultHistoryIO: HistoryIO = {
   },
 };
 
-function castleHistoryMirrorPath(path: string, io: HistoryIO): string | null {
-  if (io !== defaultHistoryIO) return null;
-  const file = basename(path);
-  if (file !== "afk-history.toonl" && file !== "afk-history.jsonl") return null;
-  const stateDir = dirname(path);
-  if (basename(stateDir) !== "state") return null;
-  return join(stateDir, "castle", "history.toonl");
-}
-
-async function mirrorCastleHistory(path: string, record: HistoryRecord, io: HistoryIO): Promise<void> {
-  const castlePath = castleHistoryMirrorPath(path, io);
-  if (castlePath === null) return;
-  await appendCastleHistoryRecord(castlePath, record).catch(() => undefined);
+function isCanonicalCastleHistoryPath(path: string, io: Pick<HistoryIO, "read">): boolean {
+  if (io !== defaultHistoryIO) return false;
+  const normalized = path.replace(/\\/g, "/");
+  return normalized.endsWith("/.red/state/castle/history.toonl");
 }
 
 export interface HistoryTrimTool {
@@ -327,15 +318,17 @@ export async function historyAppend(
 ): Promise<HistoryRecord> {
   if (!path) throw new Error("history: need <path>");
   const record = buildHistoryRecord(clock, event, fields);
+  if (isCanonicalCastleHistoryPath(path, io)) {
+    await appendCastleHistoryRecord(path, record);
+    return record;
+  }
   await io.ensureDir(dirname(path));
   if (path.endsWith(".toonl")) {
     const existing = parseHistoryLines((await io.read(path)) ?? "");
     await io.write(path, renderHistoryToonl([...existing, record]));
-    await mirrorCastleHistory(path, record, io);
     return record;
   }
   await io.append(path, `${serializeHistoryRecord(record)}\n`);
-  await mirrorCastleHistory(path, record, io);
   return record;
 }
 
@@ -343,6 +336,22 @@ export async function readHistoryRecords(
   path: string,
   io: Pick<HistoryIO, "read"> = defaultHistoryIO,
 ): Promise<HistoryRecord[]> {
+  if (isCanonicalCastleHistoryPath(path, io)) {
+    return (await readCastleHistoryRecords(path)).map((record) => {
+      const historyRecord: HistoryRecord = {
+        ts: record.ts,
+        epoch: record.epoch,
+        worker: record.worker,
+        issue: record.issue,
+        event: record.event,
+        duration_s: record.duration_s,
+        runner: record.runner,
+      };
+      if (record.merge_sha) historyRecord.merge_sha = record.merge_sha;
+      if (record.reason) historyRecord.reason = record.reason;
+      return historyRecord;
+    });
+  }
   const converted = await io.read(path);
   if (converted !== null) return parseHistoryLines(converted);
   if (path.endsWith(".toonl")) {

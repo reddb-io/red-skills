@@ -14,6 +14,7 @@ import {
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 import { loadConfig } from "../src/core/config.js";
+import { afkPaths } from "../src/runtime/wire.js";
 import { resolveResidentPaths } from "../../rsp/src/resident-client.js";
 
 /** Strip ANSI SGR escapes so assertions read the plain rendered text. The
@@ -107,7 +108,7 @@ async function writeFleetSnapshot(
   root: string,
   over: Record<string, unknown> = {},
 ): Promise<void> {
-  const dir = join(root, ".red", "state", "afk");
+  const dir = dirname(afkPaths(root).supervisorPidPath);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
   await writeFile(
@@ -671,7 +672,7 @@ describe("statusline command — rendered line", () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 2, 0);
     await writeFleetSnapshot(root);
-    await writeFile(join(root, ".red", "state", "afk", "afk-supervisor.pid"), "999999999\n", "utf8");
+    await writeFile(afkPaths(root).supervisorPidPath, "999999999\n", "utf8");
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));

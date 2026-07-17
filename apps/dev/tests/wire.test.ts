@@ -156,13 +156,13 @@ describe("afkPaths", () => {
     expect(p.tmpDir).toBe("/repo/.red/tmp");
     expect(p.stateDir).toBe("/repo/.red/state");
     expect(p.workersRoot).toBe("/repo/.red/tmp/workers");
-    expect(p.historyPath).toBe("/repo/.red/state/afk-history.toonl");
-    // Durable supervisor artifacts relocated to the state tier (issue #1685).
-    expect(p.fleetStatePath).toBe("/repo/.red/state/afk/afk-supervisor.state.json");
-    expect(p.fleetFirehosePath).toBe("/repo/.red/state/afk/afk-supervisor.log.toonl");
-    expect(p.monitorLogCursorPath).toBe("/repo/.red/state/afk/monitor-log-cursors.json");
-    expect(p.supervisorPidPath).toBe("/repo/.red/state/afk/afk-supervisor.pid");
-    expect(p.runnerCircuitDir).toBe("/repo/.red/state/afk/runner-circuit");
+    expect(p.historyPath).toBe("/repo/.red/state/castle/history.toonl");
+    // Durable supervisor artifacts now live in the castle state lane.
+    expect(p.fleetStatePath).toBe("/repo/.red/state/castle/afk-supervisor.state.json");
+    expect(p.fleetFirehosePath).toBe("/repo/.red/state/castle/afk-supervisor.log.toonl");
+    expect(p.monitorLogCursorPath).toBe("/repo/.red/state/castle/monitor-log-cursors.json");
+    expect(p.supervisorPidPath).toBe("/repo/.red/state/castle/afk-supervisor.pid");
+    expect(p.runnerCircuitDir).toBe("/repo/.red/state/castle/runner-circuit");
     expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.toon");
     expect(p.statuslineRepoCachePath).toBe("/repo/.red/state/statusline/statusline-repo-cache.toon");
     // Scratch worktrees under the tmp worktrees lane.

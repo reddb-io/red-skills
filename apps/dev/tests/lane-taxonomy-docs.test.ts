@@ -65,7 +65,7 @@ describe("writer skill lane taxonomy docs", () => {
       readRepoFile("plugins/dev/skills/engineering/afk/docs/BOOT-SWEEPS.md"),
     ]);
 
-    expect(skill).toContain(".red/state/afk/");
+    expect(skill).toContain(".red/state/castle/");
     expect(sweeps).toContain("state tier");
     expect(sweeps).toContain("lane janitor");
     expect(sweeps).toContain("pid-guarded and slug-sparing");

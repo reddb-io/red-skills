@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { afkStateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
+import { afkStateDir, legacyAfkStateDir, stateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
+import { readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
 
 const roots: string[] = [];
@@ -71,6 +72,46 @@ describe("migrateLegacyDevPaths", () => {
     const second = await migrateLegacyDevPaths(root);
     expect(second.moved).toEqual([]);
     expect(await readFile(join(afkStateDir(root), "afk-supervisor.pid"), "utf8")).toBe("9");
+  });
+
+  it("relocates already-state-tier legacy AFK artifacts to the castle state lane", async () => {
+    const root = await freshRoot();
+    const legacyAfk = legacyAfkStateDir(root);
+    await mkdir(join(legacyAfk, "runner-circuit"), { recursive: true });
+    await writeFile(join(legacyAfk, "afk-supervisor.pid"), "321", "utf8");
+    await writeFile(join(legacyAfk, "afk-supervisor.log.toonl"), "[0]{ts,msg}:\n", "utf8");
+    await writeFile(join(legacyAfk, "runner-circuit", "codex.json"), "{}", "utf8");
+    await writeFile(join(stateDir(root), "afk-history.toonl"), "[0]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:\n", "utf8");
+
+    const { moved } = await migrateLegacyDevPaths(root);
+
+    expect(await readFile(join(afkStateDir(root), "afk-supervisor.pid"), "utf8")).toBe("321");
+    expect(await readFile(join(afkStateDir(root), "afk-supervisor.log.toonl"), "utf8")).toBe("[0]{ts,msg}:\n");
+    expect(await readFile(join(afkStateDir(root), "runner-circuit", "codex.json"), "utf8")).toBe("{}");
+    expect(await readFile(join(afkStateDir(root), "history.toonl"), "utf8")).toBe(
+      "[0]{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:\n",
+    );
+    expect(await exists(join(legacyAfk, "afk-supervisor.pid"))).toBe(false);
+    expect(await exists(join(stateDir(root), "afk-history.toonl"))).toBe(false);
+    expect(moved).toContain("state/afk/afk-supervisor.pid");
+    expect(moved).toContain("afk-history.toonl");
+  });
+
+  it("converts legacy JSONL history into castle TOONL when no castle history exists", async () => {
+    const root = await freshRoot();
+    await mkdir(stateDir(root), { recursive: true });
+    await writeFile(
+      join(stateDir(root), "afk-history.jsonl"),
+      `${JSON.stringify({ ts: "t", epoch: 1, worker: "wA", issue: 1, event: "done", duration_s: 2, runner: "codex" })}\n`,
+      "utf8",
+    );
+
+    const { moved } = await migrateLegacyDevPaths(root);
+    const converted = await readCastleHistoryRecords(join(afkStateDir(root), "history.toonl"));
+
+    expect(converted).toEqual([expect.objectContaining({ ts: "t", issue: 1, event: "done", runner: "codex" })]);
+    expect(await exists(join(stateDir(root), "afk-history.jsonl"))).toBe(false);
+    expect(moved).toContain("afk-history.jsonl");
   });
 
   it("never deletes the legacy copy when the canonical copy already exists (ambiguous)", async () => {

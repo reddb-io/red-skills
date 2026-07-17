@@ -78,7 +78,7 @@ describe("codex monitor agent prompt", () => {
     expect(prompt).toContain("Do not edit files.");
     expect(prompt).toContain("Do not run /dev:afk run");
     expect(prompt).toContain("Do not repair state. Only observe and report.");
-    expect(prompt).toContain("Exit once there is no live .red/state/afk/afk-supervisor.pid");
+    expect(prompt).toContain("Exit once there is no live .red/state/castle/afk-supervisor.pid");
     expect(prompt).toContain("no [live] or [quiet] workers");
   });
 

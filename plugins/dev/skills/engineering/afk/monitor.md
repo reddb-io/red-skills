@@ -45,7 +45,7 @@ The progress counter is `issues <done>/<total>` — issues *closed* over the que
 
 When invoking from inside another agent session (Claude Code, Codex), prefer `--once` even if stdin is a pipe — explicit beats inference. Don't use the full TTY mode in agent transcripts; the 3 s refresh loop floods the captured stream and gets truncated to garbage.
 
-Single-worker operation shows one section/line. Multi-worker adds one section/line per live worker, sorted by `started_at`. The sparkline aggregates **all workers** in this checkout's `.red/state/afk-history.toonl` — not fractured per-worker; the `Δ fleet` diff total likewise sums every worker.
+Single-worker operation shows one section/line. Multi-worker adds one section/line per live worker, sorted by `started_at`. The sparkline aggregates **all workers** in this checkout's `.red/state/castle/history.toonl` — not fractured per-worker; the `Δ fleet` diff total likewise sums every worker.
 
 The header of every render shows a **48h sparkline** of issues closed, one glyph per hour, scaled to the peak hour:
 
@@ -53,7 +53,7 @@ The header of every render shows a **48h sparkline** of issues closed, one glyph
 48h: ·▁··▁·▁·▁··█▁▁··▁·▁···▁·▁·▆▁▁··▁···▁▆·▁··▁▃▁·▃▁·  (35 closed, peak 5/h)
 ```
 
-Source data: `.red/state/afk-history.toonl`, an append-only TOONL event log written by the orchestrator on every terminal event. `tq` is the pinned required reader for this lane; do not document or use a jq fallback.
+Source data: `.red/state/castle/history.toonl`, an append-only TOONL event log written by the orchestrator on every terminal event. `tq` is the pinned required reader for this lane; do not document or use a jq fallback.
 
 ```toonl
 []{ts,epoch,worker,issue,event,duration_s,runner,merge_sha,reason}:
@@ -65,7 +65,7 @@ Source data: `.red/state/afk-history.toonl`, an append-only TOONL event log writ
 Example inspection:
 
 ```bash
-tq -p toonl -o json 'select(.event == "done") | {issue: .issue, worker: .worker, runner: .runner}' .red/state/afk-history.toonl
+tq -p toonl -o json 'select(.event == "done") | {issue: .issue, worker: .worker, runner: .runner}' .red/state/castle/history.toonl
 ```
 
 `.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and the boot-time orphan sweep truncates the file to the last 10000 lines if it grows past that cap.

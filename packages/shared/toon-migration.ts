@@ -66,7 +66,7 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     id: "dev.afk-history",
     plugin: "dev",
     legacyPath: ".red/state/afk-history.jsonl",
-    toonPath: ".red/state/afk-history.toonl",
+    toonPath: ".red/state/castle/history.toonl",
     kind: "toonl",
   },
   {
@@ -80,7 +80,7 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
     id: "dev.supervisor-firehose",
     plugin: "dev",
     legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
-    toonPath: ".red/state/afk/afk-supervisor.log.toonl",
+    toonPath: ".red/state/castle/afk-supervisor.log.toonl",
     kind: "toonl",
     migration: "sniff-read",
   },

@@ -79,7 +79,7 @@ Read the focused reference before touching that concern:
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - Boot cleanup, stale attempts, branch reapers, and unblock sweep mechanics:
   [`docs/BOOT-SWEEPS.md`](./docs/BOOT-SWEEPS.md).
-- Durable AFK process state lives under `.red/state/afk/`; disposable worker
+- Durable AFK process state lives under `.red/state/castle/`; disposable worker
   attempts, claim locks, worktrees, logs, and diagnostics stay in registered
   `.red/tmp/` lanes and are the only targets of the lane janitor.
 - State files, terminal-event envelope, attempt-outcome mapping, JSONL lanes,
