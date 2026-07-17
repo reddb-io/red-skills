@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
 import * as rp from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
-import { loadConfig, getConfig, resolveTier } from "../core/config.js";
+import { loadConfig, getConfig, resolveTier, rootDevConfigCollisionsFromText } from "../core/config.js";
 import { newestCachedDevBundleVersion } from "../core/bundle-version.js";
 import { resolveBase, resolveBaseWithSource } from "../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../core/pin-reader.js";
@@ -1711,7 +1711,18 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const { branchLockPath, readLockedBranch } = await import("./lock.js");
   const lockPath = branchLockPath(ctx.root);
-  const config = loadConfig(afkPaths(ctx.root).configPath);
+  const paths = afkPaths(ctx.root);
+  const configPath = paths.configPath;
+  const configText = await fsx.readText(configPath);
+  const config = loadConfig(configPath);
+  let rootDevKeys: string[] = [];
+  if (configText !== null) {
+    try {
+      rootDevKeys = rootDevConfigCollisionsFromText(configText).map((collision) => collision.key);
+    } catch {
+      rootDevKeys = [];
+    }
+  }
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
@@ -1767,6 +1778,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
             heldByLiveSession: lockedBranch ? currentBranch === lockedBranch : false,
           },
     },
+    configNamespacing: { rootDevKeys },
   };
 }
 

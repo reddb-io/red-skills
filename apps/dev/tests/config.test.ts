@@ -15,6 +15,7 @@ import {
   resolveTier,
   resolveCiTimeoutSeconds,
   DEFAULT_MERGE_CI_TIMEOUT_S,
+  rootDevConfigCollisionsFromText,
 } from "../src/core/config.js";
 
 async function writeConfig(yaml: string): Promise<string> {
@@ -354,6 +355,46 @@ describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
     const text = "plugins:\n  dev:\n    trunk: develop\n";
     const values = loadConfig("/x/.red/config.yaml", { read: () => text });
     expect(getConfig(values, "dev.trunk")).toBe("develop");
+  });
+
+  it("warns when root-level dev.trunk is used, while preserving the current folded accessor behavior", () => {
+    const warnings: string[] = [];
+    const text = "dev:\n  trunk: develop\n";
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => text,
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("dev.trunk");
+    expect(warnings[0]).toContain("plugins.dev.trunk");
+  });
+
+  it("keeps canonical plugins.dev.trunk ahead of accidental root-level dev.trunk", () => {
+    const warnings: string[] = [];
+    const text = "dev:\n  trunk: wrong\nplugins:\n  dev:\n    trunk: develop\n";
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => text,
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+    expect(warnings).toHaveLength(1);
+    expect(rootDevConfigCollisionsFromText(text)).toEqual([
+      { key: "dev.trunk", canonicalKey: "plugins.dev.trunk" },
+    ]);
+  });
+
+  it("does not warn for the legacy-supported top-level afk.* block", () => {
+    const warnings: string[] = [];
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "afk:\n  default_runner: codex\n",
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+    expect(warnings).toEqual([]);
   });
 
   it("accepts a namespaced branch value (e.g. workspace/<user>)", () => {

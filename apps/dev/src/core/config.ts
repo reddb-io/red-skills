@@ -434,6 +434,11 @@ export interface LoadConfigOptions {
   warn?: ConfigWarn;
 }
 
+export interface RootDevConfigCollision {
+  readonly key: string;
+  readonly canonicalKey: string;
+}
+
 const defaultReader: ConfigReader = (path) => {
   try {
     return readFileSync(path, "utf8");
@@ -445,6 +450,20 @@ const defaultReader: ConfigReader = (path) => {
 const defaultWarn: ConfigWarn = (message) => {
   process.stderr.write(`${message}\n`);
 };
+
+export function rootDevConfigCollisions(values: ConfigValues): RootDevConfigCollision[] {
+  return Object.keys(values)
+    .filter((key) => key.startsWith("dev."))
+    .sort()
+    .map((key) => ({
+      key,
+      canonicalKey: `plugins.${key}`,
+    }));
+}
+
+export function rootDevConfigCollisionsFromText(text: string): RootDevConfigCollision[] {
+  return rootDevConfigCollisions(parseConfigYaml(text));
+}
 
 /**
  * Load config from `path`, merging file overrides onto the v1 defaults.
@@ -484,6 +503,12 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
   for (const [key, value] of Object.entries(parsed)) {
     values[key] = value;
     explicitAccessorKeys.add(key);
+  }
+  for (const collision of rootDevConfigCollisions(parsed)) {
+    warn(
+      `[afk:config] warn: root-level \`${collision.key}\` is off-contract; ` +
+        `use \`${collision.canonicalKey}\` in .red/config.yaml`,
+    );
   }
   for (const [key, value] of Object.entries(parsed)) {
     const m = /^plugins\.dev\.(.+)$/.exec(key);

@@ -10,6 +10,11 @@ export interface OperationalProbeContext {
   readonly allowHttpsRemote?: boolean;
   readonly queueVisibility?: QueueVisibilityProbeInput;
   readonly focalBranch?: FocalBranchProbeInput;
+  readonly configNamespacing?: ConfigNamespacingProbeInput;
+}
+
+export interface ConfigNamespacingProbeInput {
+  readonly rootDevKeys: readonly string[];
 }
 
 export type FocalBranchSource = "lock" | "pin" | "trunk";
