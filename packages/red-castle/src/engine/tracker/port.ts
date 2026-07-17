@@ -10,6 +10,12 @@ export interface TrackerIssueReference {
   readonly url?: string;
 }
 
+export interface TrackerIssueCreateSpec {
+  readonly title: string;
+  readonly body: string;
+  readonly labels?: readonly string[];
+}
+
 export interface TrackerLabelMutation {
   readonly remove: readonly string[];
   readonly add: readonly string[];
@@ -39,6 +45,7 @@ export interface TrackerClaimDecision {
 }
 
 export interface TrackerPort {
+  createIssue?(spec: TrackerIssueCreateSpec): Promise<number>;
   listOpenIssuesByLabel(label: string): Promise<TrackerIssue[]>;
   isIssueClosed(issue: number): Promise<boolean>;
   editIssueLabels(issue: number, mutation: TrackerLabelMutation): Promise<void>;
