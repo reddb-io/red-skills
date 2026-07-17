@@ -49,6 +49,7 @@ describe("operational probe registry", () => {
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
       { id: "afk.fleet-truth", name: "AFK fleet truth", verdict: "ok" },
+      { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
       { id: "config.dev-root-spelling", name: "Config dev-plugin namespacing", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
