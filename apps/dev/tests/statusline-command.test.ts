@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, writeFile, rm, readFile, utimes } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
@@ -209,6 +209,17 @@ async function initRepoWithDevelopTrunk(root: string): Promise<void> {
   await writeFile(join(root, "work.txt"), "work\n", "utf8");
   git(root, ["add", "work.txt"]);
   git(root, ["commit", "-m", "feature work"]);
+}
+
+async function initSimpleRepo(root: string): Promise<void> {
+  await mkdir(root, { recursive: true });
+  git(root, ["init"]);
+  git(root, ["config", "user.email", "agent@example.test"]);
+  git(root, ["config", "user.name", "Agent"]);
+  git(root, ["checkout", "-b", "main"]);
+  await writeFile(join(root, "README.md"), "# repo\n", "utf8");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-m", "initial"]);
 }
 
 async function withFakeGh<T>(fn: () => Promise<T>): Promise<T> {
@@ -704,6 +715,76 @@ describe("statusline command — rendered line", () => {
     expect(line).not.toContain("Opus");
     expect(line).not.toContain("%");
     expect(line.length).toBeGreaterThan(0);
+  });
+
+  it("uses the primary checkout repo name and keeps the active branch", async () => {
+    const repo = join(root, "red-request");
+    await initSimpleRepo(repo);
+    await seedFreshRepoCache(repo, 0, 0);
+    await seedFreshCache(repo, 0, 0);
+
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      const code = await withFakeGh(() => statuslineCommand([repo], repo, out.stream, fakeStdin(PAYLOAD)));
+      expect(code).toBe(0);
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    expect(stripAnsi(out.text())).toMatch(/^red-request \(main\)(?: v[^ ·]+)?(?: ·|$)/);
+  });
+
+  it("uses the common git dir repo name in linked worktrees while keeping the worktree ref", async () => {
+    const repo = join(root, "red-request");
+    await initSimpleRepo(repo);
+    const worktree = join(root, "worktree-bump-reddb-1231");
+    git(repo, ["worktree", "add", "-b", "bump-reddb-1231", worktree]);
+    await seedFreshRepoCache(worktree, 0, 0);
+    await seedFreshCache(worktree, 0, 0);
+
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      const branchOut = sink();
+      const branchCode = await withFakeGh(() => statuslineCommand([worktree], worktree, branchOut.stream, fakeStdin(PAYLOAD)));
+      expect(branchCode).toBe(0);
+      const branchText = stripAnsi(branchOut.text());
+      expect(branchText).toMatch(/^red-request \(bump-reddb-1231\)(?: v[^ ·]+)?(?: ·|$)/);
+      expect(branchText).not.toContain("worktree-bump-reddb-1231");
+
+      git(worktree, ["checkout", "--detach", "HEAD"]);
+      const sha = git(worktree, ["rev-parse", "--short", "HEAD"]);
+      const detachedOut = sink();
+      const detachedCode = await withFakeGh(() => statuslineCommand([worktree], worktree, detachedOut.stream, fakeStdin(PAYLOAD)));
+      expect(detachedCode).toBe(0);
+      expect(stripAnsi(detachedOut.text())).toMatch(new RegExp(`^red-request \\(detached ${sha}\\)(?: v[^ ·]+)?(?: ·|$)`));
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+  });
+
+  it("falls back to the cwd basename outside git", async () => {
+    const dir = join(root, "not-a-git-repo");
+    await mkdir(dir, { recursive: true });
+    await seedFreshRepoCache(dir, 0, 0);
+    await seedFreshCache(dir, 0, 0);
+
+    const out = sink();
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      const code = await withFakeGh(() => statuslineCommand([dir], dir, out.stream, fakeStdin("")));
+      expect(code).toBe(0);
+    } finally {
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
+
+    expect(stripAnsi(out.text()).trim()).toMatch(new RegExp(`^${basename(dir)}(?: v[^ ·]+)?$`));
   });
 
   it("emits nothing when the per-project opt-out is set", async () => {

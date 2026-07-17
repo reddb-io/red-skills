@@ -17,7 +17,7 @@
 // else `.workspace.current_dir // .cwd`, else `process.cwd()`.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
@@ -28,6 +28,7 @@ import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import { branchLockPath, readLockedBranch } from "../runtime/lock.js";
+import { git as gitExec } from "../runtime/exec.js";
 import { resolveRspConfig } from "../../../rsp/src/config.js";
 import { resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
@@ -250,15 +251,25 @@ async function resolveProject(root: string): Promise<ProjectInput> {
   const version = readBuildInfo("dev").version;
   const bundleCache = readDevBundleCacheState(version);
   const latestCachedVersion = bundleCache.laneNewestVersion;
+  const repoBasename = await resolveRepoBasename(root);
   const base: ProjectInput = latestCachedVersion === undefined
-    ? { basename: basename(root), version }
-    : { basename: basename(root), version, latestCachedVersion };
+    ? { basename: repoBasename, version }
+    : { basename: repoBasename, version, latestCachedVersion };
   const withPointer = bundleCache.pointerVersion ? { ...base, pointerVersion: bundleCache.pointerVersion } : base;
   const branch = await gitx.currentBranch(ctx);
   if (branch) return { ...withPointer, branch };
   const sha = await gitx.headShortSha(ctx);
   if (sha) return { ...withPointer, detachedSha: sha };
   return withPointer;
+}
+
+async function resolveRepoBasename(root: string): Promise<string> {
+  const fallback = basename(root);
+  const commonDir = await gitExec(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root });
+  if (commonDir.code !== 0) return fallback;
+  const gitCommonDir = commonDir.stdout.trim();
+  if (!gitCommonDir) return fallback;
+  return basename(dirname(gitCommonDir)) || fallback;
 }
 
 /** Project the Claude Code payload into the renderer's block-2/3 input. */
