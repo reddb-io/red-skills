@@ -2,9 +2,9 @@
 //
 // `--scout` is a READ-ONLY investigation lane of `/go`: it mints a DISPOSABLE
 // tracking issue in the isolated `lane:scout` lane (never `ready-for-agent` or
-// `lane:go`), spins a DEDICATED namespaced worker (`scout-workers/`, separate
-// from `/go`'s `go-workers/` and `/afk`'s `workers/`), and reuses the FULL AFK
-// engine with `origin=scout`, `run_mode=scout`, and `continuousPush=false`.
+// `lane:go`), spins a castle worker stamped with `current.kind=scout`, and
+// reuses the FULL AFK engine with `origin=scout`, `run_mode=scout`, and
+// `continuousPush=false`.
 //
 // The `run_mode=scout` flag is the enforcement point in `process-issue.ts`:
 // after the agent emits DONE, the engine skips push / feedback / landing
@@ -13,7 +13,7 @@
 // nothing lands on main. Guaranteed by code, not by convention.
 //
 // IO-free: every effect (label, issue create, engine run) is injected, so the
-// dispatch DECISIONS — lane label, disposable body, namespaced root, engine
+// dispatch DECISIONS — lane label, disposable body, worker kind, engine
 // argv — are pure and unit-testable with zero gh or subprocess.
 
 import { LABEL_SCOUT_LANE } from "./triage-labels.js";
@@ -25,10 +25,9 @@ export { LABEL_SCOUT_LANE };
  * `/afk` and `/go` (issue #930). */
 export const SCOUT_ORIGIN = "scout";
 
-/** The worker/worktree root segment for scout runs, kept separate from
- * `/go`'s `go-workers/` and `/afk`'s `workers/` so they never collide under
- * `.red/tmp`. Honoured by `worker-paths.workersSegment()` via
- * `RED_AFK_WORKERS_NAMESPACE`. */
+/** Legacy worker/worktree root segment for scout runs. Current castle workers
+ * stamp `current.kind=scout`; this segment remains for compatibility with older
+ * readers and env-based dispatch probes. */
 export const SCOUT_WORKERS_SEGMENT = "scout-workers";
 
 /** The `run_mode` value that tells `process-issue` to skip all mutations
@@ -74,8 +73,7 @@ export function buildScoutIssueSpec(question: string): ScoutIssueSpec {
   return { title, body, labels: [LABEL_SCOUT_LANE] };
 }
 
-/** The `/scout` worker/worktree root: `<tmpDir>/scout-workers`, separate from
- * `/go`'s `<tmpDir>/go-workers` and `/afk`'s `<tmpDir>/workers`. */
+/** Legacy `/scout` worker/worktree root helper retained for compatibility. */
 export function scoutWorkersRoot(tmpDir: string): string {
   return `${tmpDir.replace(/\/+$/, "")}/${SCOUT_WORKERS_SEGMENT}`;
 }
