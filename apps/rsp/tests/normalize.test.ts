@@ -241,21 +241,36 @@ describe("generic JSON lane — detection, selection, encoding, reversibility", 
     expect(result.output).toBe("outer:\n  inner:\n    value: 3");
   });
 
-  it("keeps boundary rows, error-shaped rows, anomalies, and emits an explicit marker", async () => {
-    const rows = Array.from({ length: 40 }, (_, i) => ({
+  it("crushes homogeneous JSON arrays to boundary rows plus statistical shape and value outliers", async () => {
+    const rows: Array<Record<string, unknown>> = Array.from({ length: 240 }, (_, i) => ({
       id: i,
-      status: i === 12 ? 500 : 200,
-      latency: i === 21 ? 1000 : i,
-      phase: i < 25 ? "steady" : "changed",
+      value: i === 42 ? 10_000 : 100,
+      bucket: i === 177 ? "rare" : "steady",
     }));
-    const result = await renderGenericJsonLane(JSON.stringify(rows), { level: "terse", minTokens: 1, maxItems: 8 });
+    rows[111] = { ...rows[111]!, extra: "shape-break" };
+    const result = await renderGenericJsonLane(JSON.stringify(rows), { level: "terse", minTokens: 1, maxItems: 12 });
     expect(result.lossy).toBe(true);
-    expect(result.output).toContain("items: 8 of 40 kept");
-    expect(result.output).toContain("items[8]{id,status,latency,phase}");
-    expect(result.output).toContain("original: unavailable - re-run: command");
-    expect(result.output).toContain("12,500,12,steady");
-    expect(result.output).toContain("21,200,1000,steady");
-    expect(result.output).toContain("39,200,39,changed");
+    expect(result.output).toBe([
+      "items: 5 kept, 235 dropped (shape outliers: 1, value outliers: 2)",
+      "original: unavailable - re-run: command",
+      "items[5]:",
+      "  - id: 0",
+      "    value: 100",
+      "    bucket: steady",
+      "  - id: 42",
+      "    value: 10000",
+      "    bucket: steady",
+      "  - id: 111",
+      "    value: 100",
+      "    bucket: steady",
+      "    extra: shape-break",
+      "  - id: 177",
+      "    value: 100",
+      "    bucket: rare",
+      "  - id: 239",
+      "    value: 100",
+      "    bucket: steady",
+    ].join("\n"));
   });
 
   it("mints a handle to original bytes for lossy output", async () => {
@@ -277,6 +292,30 @@ describe("generic JSON lane — detection, selection, encoding, reversibility", 
     expect(result.output).toContain("original: rsp show el:test");
     expect(minted.get("el:test")?.toString("utf8")).toBe(original);
   });
+
+  it("falls open to uncrushed JSON and records degradation when the array crusher fails", async () => {
+    const original = JSON.stringify(Array.from({ length: 25 }, (_, i) => ({ id: i, value: 100 })));
+    const result = await renderGenericJsonLane(original, {
+      level: "terse",
+      minTokens: 1,
+      maxItems: 6,
+      crusher: () => {
+        throw new Error("fixture crusher failure");
+      },
+    });
+    expect(result).toMatchObject({
+      detected: true,
+      lossy: false,
+      totalItems: 25,
+      keptItems: 25,
+      degradation: {
+        reason: "json-array-crusher-failed",
+        family: "json",
+        stderrHead: "fixture crusher failure",
+      },
+    });
+    expect(result.output).toBe(transcodeJsonToToon(original));
+  });
 });
 
 // ─── Structural invariant ─────────────────────────────────────────────────────
@@ -295,6 +334,13 @@ describe("structural invariant: no mint API access", () => {
       "blank-lines",
       "json-to-toon",
     ]);
+  });
+
+  it("JSON array crusher has no legacy field-name shortcut allowlist", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "src", "normalize.ts"), "utf8");
+    expect(src).not.toContain("isErrorShaped");
+    expect(src).not.toMatch(/toLowerCase\(\)\s*===\s*["']error["']/);
+    expect(src).not.toMatch(/status\s*>?=\s*400/);
   });
 });
 

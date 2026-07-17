@@ -156,6 +156,66 @@ describe("rsp exec anomaly-preserving elision", () => {
     expect(store.originals.get("el:123456789abc")?.toString("utf8")).toBe(stdout);
   });
 
+  it("uses the deterministic JSON-array crusher for JSON-classified exec output", async () => {
+    const rows: Array<Record<string, unknown>> = Array.from({ length: 220 }, (_, i) => ({
+      seq: i,
+      metric: i === 80 ? 9000 : 50,
+      class: i === 160 ? "rare" : "normal",
+    }));
+    rows[120] = { ...rows[120]!, variant: "shape-break" };
+    const stdout = JSON.stringify(rows);
+    const store = new MemoryStore();
+
+    const result = await renderExecContract("node emit-json-array.js", {
+      stdout,
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, { level: "terse", store, heavyByteThreshold: 1 });
+
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("json");
+    expect(valueAt(decoded, ["summary", "root_type"])).toBe("array");
+    expect(valueAt(decoded, ["summary", "kept"])).toBe(5);
+    expect(valueAt(decoded, ["summary", "dropped"])).toBe(215);
+    expect(valueAt(decoded, ["summary", "shape_outliers"])).toBe(1);
+    expect(valueAt(decoded, ["summary", "value_outliers"])).toBe(2);
+    expect(valueAt(decoded, ["summary", "items", 1, "seq"])).toBe(80);
+    expect(valueAt(decoded, ["summary", "items", 2, "variant"])).toBe("shape-break");
+    expect(valueAt(decoded, ["summary", "items", 3, "class"])).toBe("rare");
+    expect(valueAt(decoded, ["recovery", "original"])).toBe("rsp show el:123456789abc");
+    expect(store.originals.get("el:123456789abc")?.toString("utf8")).toBe(stdout);
+  });
+
+  it("falls open to the prior JSON sample summary and reports degradation when array crushing fails", async () => {
+    const stdout = JSON.stringify(Array.from({ length: 40 }, (_, i) => ({ seq: i, metric: 50 })));
+
+    const result = await renderExecContract("node emit-json-array.js", {
+      stdout,
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, {
+      level: "terse",
+      store: new MemoryStore(),
+      heavyByteThreshold: 1,
+      jsonArrayCrusher: () => {
+        throw new Error("fixture crusher failure");
+      },
+    });
+
+    const decoded = decode(result.stdout.toString("utf8")) as Record<string, unknown>;
+    expect(decoded["content"]).toBe("json");
+    expect(valueAt(decoded, ["summary", "items"])).toBe(40);
+    expect(valueAt(decoded, ["summary", "sample", 4, "seq"])).toBe(4);
+    expect(valueAt(decoded, ["summary", "kept"])).toBeUndefined();
+    expect(result.degradation).toEqual({
+      reason: "exec-json-array-crusher-failed",
+      family: "exec",
+      stderrHead: "fixture crusher failure",
+    });
+  });
+
   it("falls open to head and tail when scoring fails and reports degradation identity", async () => {
     const stdout = largeLog();
     const result = await renderExecContract("node emit-log.js", {

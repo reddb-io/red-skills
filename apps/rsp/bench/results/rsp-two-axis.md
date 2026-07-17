@@ -1,4 +1,4 @@
-rsp two-axis benchmark: 33 fixtures across 15 filters
+rsp two-axis benchmark: 34 fixtures across 15 filters
 Corpus: home
 
 Corpus provenance:
@@ -10,7 +10,7 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | cargo:test | active | 3 | 478 | 203 | 132 | 468 | 203 | 100% | 65% | 3.6% | 61.9/83.6% | 100% | 57.7/83.6% | 100% | 100% | 100% |
 | cat:file | active | 1 | 1489 | 332 | rtk: not-covered | headroom: not-covered | 166 | 87.5% | rtk: not-covered | headroom: not-covered | 77.7/77.7% | 100% | 87.1/87.1% | 100% | rtk: not-covered | headroom: not-covered |
-| exec:-- | active | 2 | 32852 | 648 | rtk: not-covered | headroom: not-covered | 175 | 98.6% | rtk: not-covered | headroom: not-covered | -24.8/99.3% | 100% | -16.9/99.3% | 100% | rtk: not-covered | headroom: not-covered |
+| exec:-- | active | 3 | 33149 | 851 | rtk: not-covered | headroom: not-covered | 345 | 98.5% | rtk: not-covered | headroom: not-covered | 31.6/99.3% | 100% | 31.6/99.3% | 100% | rtk: not-covered | headroom: not-covered |
 | gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 123 | 80 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 108 | 64 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | gh:run | passthrough | 3 | 121 | 121 | rtk: not-covered | 121 | 49 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
@@ -24,7 +24,7 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | git:status | active | 2 | 153 | 79 | 54 | 153 | 83 | 95.2% | 65.1% | 0% | 60.5/75% | 100% | 60.5/75% | 50% | 100% | 100% |
 | vitest:run | active | 6 | 51368 | 609 | 208 | 51060 | 442 | 99.7% | 47.1% | 0.6% | 58.8/100% | 100% | 69.9/100% | 100% | 100% | 83.3% |
 
-Aggregate oracle ceiling: raw 99026 tokens (0% capture), rsp 14557 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14049 tokens.
+Aggregate oracle ceiling: raw 99323 tokens (0% capture), rsp 14760 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14219 tokens.
 
 Large-output filters: cat:file, exec:--, git:diff, git:log, vitest:run.
 

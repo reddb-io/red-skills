@@ -1,0 +1,28 @@
+# oracle: preserves first and last rows plus planted shape and value outliers from an exec JSON array.
+command: rsp exec -- node emit-json-array.js
+content: json
+summary:
+  root_type: array
+  total: 24
+  kept: 5
+  dropped: 19
+  shape_outliers: 1
+  value_outliers: 2
+  items[5]:
+    - seq: 0
+      metric: 50
+      class: normal
+    - seq: 7
+      metric: 9000
+      class: normal
+    - seq: 12
+      metric: 50
+      class: normal
+      variant: shape-break
+    - seq: 18
+      metric: 50
+      class: rare
+    - seq: 23
+      metric: 50
+      class: normal
+recovery: full original stdout behind elision handle
