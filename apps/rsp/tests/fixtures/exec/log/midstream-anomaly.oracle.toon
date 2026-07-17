@@ -1,0 +1,6 @@
+# oracle: preserves the planted mid-stream structural outlier from exec-midstream-anomaly plus the recovery contract.
+command: rsp exec -- node emit-large-log.js
+summary: large generic stdout with one preserved structural outlier
+outliers[1]{line,text}:
+  381,2026-07-17T12:00:00Z service=payments level=FATAL panic=InvariantViolation shard=42 trace=midstream-anomaly-7f3a stack=/srv/app/payments.ts:1442
+recovery: full original stdout behind elision handle

@@ -26,13 +26,14 @@ describe("rsp two-axis benchmark report", () => {
 
     expect(report.corpus).toMatchObject({
       label: "home",
-      fixture_count: 31,
-      large_output_filters: ["cat:file", "git:diff", "git:log", "vitest:run"],
+      fixture_count: 32,
+      large_output_filters: ["cat:file", "exec:--", "git:diff", "git:log", "vitest:run"],
     });
     expect(report.corpus.provenance[0]).toContain("Repo-authored");
     expect(report.corpus.filters).toEqual([
       "cargo:test",
       "cat:file",
+      "exec:--",
       "gh:issue",
       "gh:pr",
       "gh:run",
@@ -55,6 +56,17 @@ describe("rsp two-axis benchmark report", () => {
       captured_at: expect.stringMatching(/^2026-07-13T/),
     });
     expect(report.method.external_claims[0]).toMatchObject({ status: "cited_unverified", measured_locally: false });
+
+    const exec = report.filters.find((row) => row.filter === "exec:--");
+    expect(exec).toMatchObject({
+      fixture_count: 1,
+      mode: "active",
+      brief: { fidelity_pass_rate_pct: 100 },
+      terse: { fidelity_pass_rate_pct: 100 },
+      rtk: { coverage: "not-covered", label: "rtk: not-covered" },
+      headroom: { coverage: "not-covered", label: "headroom: not-covered" },
+    });
+    expect(exec?.oracle_capture.rsp.capture_pct).toBeGreaterThan(0);
 
     const ghPr = report.filters.find((row) => row.filter === "gh:pr");
     expect(ghPr).toMatchObject({

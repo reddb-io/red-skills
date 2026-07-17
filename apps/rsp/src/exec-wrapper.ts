@@ -1,5 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { spawn } from "node:child_process";
+import { scoreStructuralOutliers, type PreservedOutlierLine } from "./anomaly-scorer.js";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
 import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
@@ -8,6 +9,7 @@ export interface ExecRenderOptions {
   level: RspLossLevel;
   store?: RspMintStore;
   heavyByteThreshold?: number;
+  anomalyScorer?: (text: string, options: { headBytes: number; tailStart: number }) => PreservedOutlierLine[];
 }
 
 interface RspMintStore {
@@ -83,14 +85,16 @@ export async function renderExecContract(
   });
   if (!handle) throw new Error("rsp exec output elision requires an elision store");
 
+  const rendered = renderTextSummary(emitted, rawStdout.length, handle, options.level, options.anomalyScorer);
   return {
-    stdout: Buffer.from(renderTextSummary(emitted, rawStdout.length, handle, options.level)),
+    stdout: Buffer.from(rendered.text),
     stderr,
     status: contract.status,
     signal: contract.signal,
     mintedHandle: handle,
     bytesElided,
     rawOutput: rawStdout,
+    degradation: rendered.degradation,
   };
 }
 
@@ -127,12 +131,20 @@ function renderNormalizedStdout(stdout: Buffer): { kind: "text"; text: string } 
   return { kind: "text", text: normalizeOutput(stdout.toString("utf8")) };
 }
 
-function renderTextSummary(stdout: Buffer, rawBytes: number, handle: string, level: RspLossLevel): string {
+function renderTextSummary(
+  stdout: Buffer,
+  rawBytes: number,
+  handle: string,
+  level: RspLossLevel,
+  anomalyScorer = defaultAnomalyScorer,
+): { text: string; degradation?: GitRenderResult["degradation"] } {
   const inlineBytes = level === "terse" ? TERSE_INLINE_BYTES : BRIEF_INLINE_BYTES;
   const half = Math.max(1, Math.floor(inlineBytes / 2));
   const head = truncateUtf8(stdout.subarray(0, half));
-  const tail = truncateUtf8(stdout.subarray(Math.max(0, stdout.length - half)));
+  const tailStart = Math.max(0, stdout.length - half);
+  const tail = truncateUtf8(stdout.subarray(tailStart));
   const lines = countLines(stdout);
+  const outliers = preservedOutliers(stdout, half, tailStart, anomalyScorer);
   const parts = [
     "stdout summary",
     `bytes: ${rawBytes}`,
@@ -141,8 +153,54 @@ function renderTextSummary(stdout: Buffer, rawBytes: number, handle: string, lev
     head,
   ];
   if (tail && tail !== head) parts.push("tail:", tail);
-  parts.push(`… elided stdout (+${rawBytes}) — ${recoveryInstruction(handle)}`);
-  return `${parts.join("\n")}\n`;
+  if (outliers.kind === "ok" && outliers.lines.length > 0) {
+    parts.push("preserved outliers:");
+    for (const outlier of outliers.lines) {
+      parts.push(`[outlier line ${outlier.lineNumber} score ${outlier.score.toFixed(2)}] ${outlier.text}`);
+    }
+  }
+  const markerSuffix = outliers.kind === "ok" && outliers.lines.length > 0
+    ? `; preserved_outliers: ${outliers.lines.length}`
+    : "";
+  parts.push(`… elided stdout (+${rawBytes}${markerSuffix}) — ${recoveryInstruction(handle)}`);
+  return {
+    text: `${parts.join("\n")}\n`,
+    degradation: outliers.kind === "failed"
+      ? {
+        reason: "exec-anomaly-scorer-failed",
+        family: "exec",
+        stderrHead: truncateDiagnostic(outliers.error),
+      }
+      : undefined,
+  };
+}
+
+function preservedOutliers(
+  stdout: Buffer,
+  headBytes: number,
+  tailStart: number,
+  anomalyScorer: (text: string, options: { headBytes: number; tailStart: number }) => PreservedOutlierLine[],
+): { kind: "ok"; lines: PreservedOutlierLine[] } | { kind: "failed"; error: unknown } {
+  try {
+    return { kind: "ok", lines: anomalyScorer(stdout.toString("utf8"), { headBytes, tailStart }) };
+  } catch (error) {
+    return { kind: "failed", error };
+  }
+}
+
+function defaultAnomalyScorer(text: string, options: { headBytes: number; tailStart: number }): PreservedOutlierLine[] {
+  return scoreStructuralOutliers(text, {
+    excludedByteRanges: [
+      { start: 0, end: options.headBytes },
+      { start: options.tailStart, end: Buffer.byteLength(text, "utf8") },
+    ],
+  });
+}
+
+function truncateDiagnostic(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error ?? "unknown scorer failure");
+  const line = text.split(/\r?\n/, 1)[0]?.replace(/\s+/g, " ").trim() || "unknown scorer failure";
+  return line.length <= 240 ? line : `${line.slice(0, 239)}…`;
 }
 
 function truncateUtf8(bytes: Buffer): string {

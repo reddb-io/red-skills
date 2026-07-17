@@ -38,6 +38,11 @@ export interface GitRenderResult {
   rowsElided?: number;
   oneLine?: boolean;
   rawOutput?: Buffer;
+  degradation?: {
+    reason: string;
+    family: string;
+    stderrHead: string;
+  };
 }
 
 export async function runGitWrapper(argv: readonly string[], options: GitRenderOptions): Promise<GitRenderResult> {
