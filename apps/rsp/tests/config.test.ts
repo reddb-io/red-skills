@@ -50,6 +50,7 @@ describe("resolveRspConfig", () => {
       telemetryDrainTimeoutMs: 456,
       idleMs: 10_000,
       heavyGitByteThreshold: 99,
+      measurementHoldoutShare: 0,
     });
   });
 
@@ -72,7 +73,20 @@ describe("resolveRspConfig", () => {
       telemetryDrainTimeoutMs: DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS,
       idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
+      measurementHoldoutShare: 0,
     });
+  });
+
+  it("keeps measurement holdout off by default and reads it additively", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  measurement:\n    holdoutShare: 0.05\n", "utf8");
+
+    const config = resolveRspConfig(root, {}, undefined);
+
+    expect(config.proxyEnabled).toBe(true);
+    expect(config.measurementHoldoutShare).toBe(0.05);
+    expect(resolveRspConfig(root, { RSP_MEASUREMENT_HOLDOUT_SHARE: "0" }, undefined).measurementHoldoutShare).toBe(0);
   });
 
   it("exposes the universal proxy flag separately from rsp enablement", async () => {
