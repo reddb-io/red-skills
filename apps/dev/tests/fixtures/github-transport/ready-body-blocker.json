@@ -1,0 +1,8 @@
+[
+  {
+    "number": 1971,
+    "title": "Label-body coherence probe",
+    "labels": ["ready-for-agent", "priority:normal"],
+    "body": "## Summary\nReady label was restored by hand.\n\n## Current blocker\n\n<!-- red:blocker-state v1 -->\nstatus: blocked\nkind: validation\nref: #1965\nsummary: Gate failed before the manual requeue.\nnext: Confirm the issue is safe to delegate again.\n<!-- /red:blocker-state -->\n\n## Acceptance\n- [ ] Gate green\n"
+  }
+]
