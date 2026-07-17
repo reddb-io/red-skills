@@ -610,27 +610,145 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  *   4. `merge --ff-only` only — never `reset`, never `--no-ff`.
  * Every git call is best-effort; any non-zero exit leaves the primary untouched.
  */
-export async function fastForwardLocalTarget(
+export type FastForwardLocalTargetRefusal =
+  | "head-unresolved"
+  | "not-on-trunk"
+  | "status-unreadable"
+  | "dirty-tree"
+  | "fetch-failed"
+  | "not-ancestor"
+  | "merge-failed";
+
+export interface FastForwardLocalTargetGuardResult {
+  readonly guard: "passed" | "refused";
+  readonly target: string;
+  readonly remote: string;
+  readonly currentBranch?: string;
+  readonly failed?: FastForwardLocalTargetRefusal;
+  readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "merge";
+  readonly evidence: string;
+}
+
+export interface FastForwardLocalTargetResult extends FastForwardLocalTargetGuardResult {
+  readonly action: "fast-forward" | "noop";
+}
+
+/**
+ * Observable half of {@link fastForwardLocalTarget}. The mutating finalizer and
+ * operational probes share this exact guard so findings report the same refusal
+ * reasons the real fast-forward will enforce.
+ */
+export async function evaluateFastForwardLocalTarget(
   exec: Exec,
   input: { gitRepo: string; remote: string; target: string },
-): Promise<void> {
+): Promise<FastForwardLocalTargetGuardResult> {
   const { gitRepo, remote, target } = input;
   // 1. Only advance the branch the operator is actually on.
   const head = await exec(["git", "-C", gitRepo, "symbolic-ref", "--short", "HEAD"]);
-  if (head.code !== 0 || head.stdout.trim() !== target) return;
+  const currentBranch = head.stdout.trim();
+  if (head.code !== 0) {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      failed: "head-unresolved",
+      failedCondition: "on-trunk",
+      evidence: `condition failed: on-trunk (could not resolve current branch; expected=${target})`,
+    };
+  }
+  if (currentBranch !== target) {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      currentBranch,
+      failed: "not-on-trunk",
+      failedCondition: "on-trunk",
+      evidence: `condition failed: on-trunk (current=${currentBranch || "unknown"} expected=${target})`,
+    };
+  }
   // 2. A dirty primary keeps pending WIP — never write over it (#1019).
   const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
-  if (status.code !== 0 || status.stdout.trim() !== "") return;
+  if (status.code !== 0) {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      currentBranch,
+      failed: "status-unreadable",
+      failedCondition: "clean-tree",
+      evidence: "condition failed: clean-tree (could not read git status)",
+    };
+  }
+  const dirty = status.stdout.trim();
+  if (dirty !== "") {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      currentBranch,
+      failed: "dirty-tree",
+      failedCondition: "clean-tree",
+      evidence: `condition failed: clean-tree (${dirty.split("\n").length} dirty path(s))`,
+    };
+  }
   // Refresh the remote ref so the ancestry test and the FF see the merge.
-  await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
+  const fetch = await exec(["git", "-C", gitRepo, "fetch", "--quiet", remote, target]);
+  if (fetch.code !== 0) {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      currentBranch,
+      failed: "fetch-failed",
+      failedCondition: "fetch",
+      evidence: `condition failed: fetch (${remote}/${target} unavailable)`,
+    };
+  }
   // 3. Pure fast-forward only: local <target> must be an ancestor of the tip.
   const ancestor = await exec([
     "git", "-C", gitRepo,
     "merge-base", "--is-ancestor", target, `${remote}/${target}`,
   ]);
-  if (ancestor.code !== 0) return;
+  if (ancestor.code !== 0) {
+    return {
+      guard: "refused",
+      target,
+      remote,
+      currentBranch,
+      failed: "not-ancestor",
+      failedCondition: "ancestor",
+      evidence: `condition failed: ancestor (${target} is not an ancestor of ${remote}/${target})`,
+    };
+  }
+  return {
+    guard: "passed",
+    target,
+    remote,
+    currentBranch,
+    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})`,
+  };
+}
+
+export async function fastForwardLocalTarget(
+  exec: Exec,
+  input: { gitRepo: string; remote: string; target: string },
+): Promise<FastForwardLocalTargetResult> {
+  const guard = await evaluateFastForwardLocalTarget(exec, input);
+  if (guard.guard !== "passed") return { ...guard, action: "noop" };
   // 4. Advance the pointer. ff-only can only succeed as a pure fast-forward.
-  await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
+  const ff = await exec(["git", "-C", input.gitRepo, "merge", "--ff-only", `${input.remote}/${input.target}`]);
+  if (ff.code !== 0) {
+    return {
+      ...guard,
+      guard: "refused",
+      action: "noop",
+      failed: "merge-failed",
+      failedCondition: "merge",
+      evidence: `condition failed: merge (ff-only merge of ${input.remote}/${input.target} failed)`,
+    };
+  }
+  return { ...guard, action: "fast-forward", evidence: `fast-forwarded ${input.target} to ${input.remote}/${input.target}` };
 }
 
 /**
