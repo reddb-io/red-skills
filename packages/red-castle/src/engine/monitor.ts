@@ -249,6 +249,12 @@ export interface FleetState {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Recent supervisor death/respawn churn inside a sliding window. */
+  churn?: {
+    windowS: number;
+    deaths: number;
+    respawns: number;
+  };
   /** Per-slot details for non-closed slots. Absent/empty = all slots closed.
    * Absent on state files written before this field was added (#630). */
   slotDetails?: SlotDetail[];
@@ -288,11 +294,16 @@ export function renderFleetLine(fleet: FleetState, now: number): string {
   const bundle = fleet.bundleVersion
     ? `  bundle:${fleet.bundleVersion}${compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? `<${fleet.latestBundleVersion}` : ""}`
     : "";
+  const churn =
+    fleet.churn && (fleet.churn.deaths > 0 || fleet.churn.respawns > 0)
+      ? `  churn:${fleet.churn.deaths} deaths/${fleet.churn.respawns} respawns/${fleet.churn.windowS}s`
+      : "";
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
     `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
     `  spawns:${fleet.spawnsThisTick}` +
+    churn +
     bundle
   );
 }
@@ -663,6 +674,9 @@ export function renderCompactDashboardToon(
       slots_free: fleet.slotsFree,
       slots_parked: fleet.slotsParked,
       spawns: fleet.spawnsThisTick,
+      churn_deaths: fleet.churn?.deaths ?? 0,
+      churn_respawns: fleet.churn?.respawns ?? 0,
+      churn_window_s: fleet.churn?.windowS ?? 0,
       bundle_version: fleet.bundleVersion ?? "",
       latest_bundle_version: fleet.latestBundleVersion ?? "",
       version_skew: compareSemver(fleet.latestBundleVersion, fleet.bundleVersion) > 0 ? 1 : 0,
