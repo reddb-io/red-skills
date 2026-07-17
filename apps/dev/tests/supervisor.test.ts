@@ -1621,6 +1621,22 @@ describe("runSupervisor", () => {
     });
   });
 
+  it("emits recent deaths and respawns in the fleet heartbeat churn window", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => pid !== 1001),
+      readyQueueDepth: vi.fn(async () => 5),
+    });
+    const state = initSupervisorState(1);
+    let probes = 0;
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15, circuitWindowS: 90 }), () => ++probes >= 2);
+
+    expect(io.emitFleetHeartbeat).toHaveBeenCalledTimes(2);
+    expect(io.emitFleetHeartbeat.mock.calls[0]![0]).toMatchObject({
+      churn: { windowS: 90, deaths: 1, respawns: 1 },
+    });
+  });
+
   it("repairs a stale state heartbeat writer from the current tick snapshot", async () => {
     let clock = NOW;
     let probes = 0;
