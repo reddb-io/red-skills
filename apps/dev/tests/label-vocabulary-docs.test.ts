@@ -151,6 +151,21 @@ describe("label vocabulary docs", () => {
 });
 
 describe("red-setup docs", () => {
+  it("requires template-first config authoring and rejects folded accessor spellings", async () => {
+    const contract = await readRepoFile("plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md");
+    const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
+
+    expect(contract).toContain("Write `.red/config.yaml` keys only in the spellings");
+    expect(contract).toContain("Folded accessor names such as root-level `dev.*` or bare `afk.*`");
+    expect(contract).toContain("split-brain config");
+    expect(contract).toContain("Do not compose the `plugins:` block from memory");
+    expect(contract).toContain("start from the shipped template");
+    expect(contract).toContain("Mandatory post-write config check");
+    expect(contract).toContain("through the real dev config loader");
+    expect(contract).toContain("treat the check as red");
+    expect(askRed).toContain("shipped config template and post-write loader check");
+  });
+
   it("documents Section H as the development-workflow activation on-ramp", async () => {
     const skill = await readSetupRedSkillsDocs();
     const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
