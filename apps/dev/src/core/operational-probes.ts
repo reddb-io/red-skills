@@ -1,3 +1,4 @@
 export * from "./operational-probes/types.js";
 export * from "./operational-probes/https-remote.js";
+export * from "./operational-probes/queue-visibility.js";
 export * from "./operational-probes/registry.js";
