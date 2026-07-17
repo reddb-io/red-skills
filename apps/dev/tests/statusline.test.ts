@@ -54,6 +54,29 @@ describe("statusline — formatCacheAge", () => {
   });
 });
 
+describe("statusline — fleet block", () => {
+  it("renders the supervisor bundle version when present", () => {
+    expect(renderFleetBlock({
+      runner: "codex",
+      busy: 0,
+      total: 2,
+      queue: 4,
+      bundleVersion: "2.61.0",
+    })).toBe("flt=codex 0/2 @2.61.0 q=4");
+  });
+
+  it("marks fleet bundle skew against the latest cached bundle", () => {
+    expect(renderFleetBlock({
+      runner: "codex",
+      busy: 0,
+      total: 2,
+      queue: 4,
+      bundleVersion: "2.60.2",
+      latestBundleVersion: "2.61.0",
+    })).toBe("flt=codex 0/2 @2.60.2<2.61.0 q=4");
+  });
+});
+
 describe("statusline — humanizeAlive", () => {
   it("renders seconds when under one minute", () => {
     expect(humanizeAlive(30 * 1000)).toBe("30s");
