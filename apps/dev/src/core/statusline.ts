@@ -174,6 +174,14 @@ export interface FleetInput {
   queue: number;
   /** Parked slots from the supervisor snapshot. */
   parked?: number;
+  /** True when supervisor busy slots are not corroborated by fresh local worker
+   * liveness. Rendered as a visible marker on the occupancy token. */
+  degraded?: boolean;
+  /** Recent death/respawn churn from the supervisor snapshot. Zero/absent stays
+   * silent so healthy fleets render exactly as before. */
+  churnDeaths?: number;
+  churnRespawns?: number;
+  churnWindowS?: number;
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   /** Stable pointer version the shim would serve from the local cache. */
@@ -487,7 +495,7 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
-  const parts = [`flt=${runner} ${busy}/${total}`];
+  const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
   if (fleet.bundleVersion) {
     const versions = [fleet.bundleVersion, fleet.pointerVersion, fleet.latestBundleVersion]
       .filter((v): v is string => Boolean(v));
@@ -501,6 +509,12 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   parts.push(`q=${queue}`);
   if (fleet.parked !== undefined && fleet.parked > 0) {
     parts.push(`prk=${Math.floor(fleet.parked)}`);
+  }
+  const churnDeaths = Math.max(0, Math.floor(fleet.churnDeaths ?? 0));
+  const churnRespawns = Math.max(0, Math.floor(fleet.churnRespawns ?? 0));
+  if (churnDeaths > 0 || churnRespawns > 0) {
+    const windowS = Math.max(1, Math.floor(fleet.churnWindowS ?? 1));
+    parts.push(`churn=${churnDeaths}d/${churnRespawns}r/${windowS}s`);
   }
   return parts.join(" ");
 }
