@@ -184,7 +184,6 @@ export function deriveHookEnv(base: Record<string, string>, contextJson: string)
   set("RED_AFK_ISSUE", obj(ctx.issue)?.number);
   set("RED_AFK_WORKSPACE", ctx.workspace);
   set("RED_AFK_RUNNER", ctx.runner);
-  set("RED_AFK_ATTEMPT_N", ctx.attempt_n);
   set("RED_AFK_MERGE_BASE", ctx.merge_base);
 
   // Per-attempt file paths — set by the orchestrator in the post_attempt context
