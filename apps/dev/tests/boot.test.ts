@@ -968,6 +968,27 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     expect(ghCalls.comment[0].body).toContain("cross-host stale-claim sweep");
   });
 
+  it("repairs an open running issue whose latest claim marker is a concede", async () => {
+    const claimedIssues = async () => [
+      {
+        issue: 43,
+        records: [
+          claim(10, "host1:wGone", 120),
+          { commentId: 20, worker: "host1:wGone", kind: "concede" as const },
+        ],
+      },
+    ];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [43], repairedConceded: [43] });
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 43, remove: ["running"], add: ["ready-for-agent"] },
+    ]);
+    expect(ghCalls.comment).toHaveLength(1);
+    expect(ghCalls.comment[0].body).toContain("claim-label sweep");
+    expect(ghCalls.comment[0].body).toContain("ended in concede");
+  });
+
   it("never releases an issue still held by a live worker", async () => {
     const claimedIssues = async () => [{ issue: 42, records: [claim(10, "host1:wXY", 120)] }];
     const { deps, ghCalls } = makeDeps({ claimedIssues });
