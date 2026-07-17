@@ -14,9 +14,13 @@ describe("shouldUseResidentMemory", () => {
     expect(shouldUseResidentMemory(ROOT, graphConfig("/repo/.red/state/red-skills.rdb"))).toBe(true);
   });
 
-  it("still uses the resident for the legacy tmp-tier shared store during the transition", () => {
-    expect(shouldUseResidentMemory(ROOT, graphConfig(".red/tmp/red-skills.rdb"))).toBe(true);
-    expect(shouldUseResidentMemory(ROOT, graphConfig("/repo/.red/tmp/red-skills.rdb"))).toBe(true);
+  it("rejects the legacy tmp-tier shared store with a migration path", () => {
+    expect(() => shouldUseResidentMemory(ROOT, graphConfig(".red/tmp/red-skills.rdb"))).toThrow(
+      "Run `rsp setup` to migrate it to .red/state/red-skills.rdb",
+    );
+    expect(() => shouldUseResidentMemory(ROOT, graphConfig("/repo/.red/tmp/red-skills.rdb"))).toThrow(
+      "Run `rsp setup` to migrate it to .red/state/red-skills.rdb",
+    );
   });
 
   it("does not use the resident for a private graph store or in markdown-only mode", () => {
