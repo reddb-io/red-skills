@@ -68,7 +68,6 @@ describe("engine config reader", () => {
         "afk:",
         "  sandbox: docker",
         "  max_iterations: 4",
-        "  attempt_timeout: 99",
         "  statusline_cache_ttl: 42",
         "",
       ].join("\n"),
@@ -79,7 +78,6 @@ describe("engine config reader", () => {
         RED_AFK_SANDBOX: "podman",
         RED_AFK_RUNNER: "codex",
         RED_AFK_MAX_ITERATIONS: "8",
-        RED_AFK_ATTEMPT_TIMEOUT_S: "123",
         RED_AFK_STATUSLINE_CACHE_TTL_S: "77",
       },
     });
@@ -87,9 +85,30 @@ describe("engine config reader", () => {
     expect(cfg.get("afk.sandbox")).toBe("podman");
     expect(cfg.get("afk.default_runner")).toBe("codex");
     expect(cfg.get("afk.max_iterations")).toBe("8");
-    expect(cfg.get("afk.attempt_timeout")).toBe("123");
     expect(cfg.get("afk.statusline_cache_ttl")).toBe("77");
     expect(cfg.values["RED_AFK_SANDBOX"]).toBeUndefined();
+  });
+
+  it("ignores deleted attempt-era timeout knobs", () => {
+    const redRoot = redRootWithConfig(
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "afk:",
+        "  attempt_timeout: 99",
+        "",
+      ].join("\n"),
+    );
+
+    const cfg = loadEngineConfig(redRoot, {
+      env: {
+        RED_AFK_ATTEMPT_TIMEOUT_S: "123",
+      },
+    });
+
+    expect(cfg.get("afk.attempt_timeout")).toBe("");
+    expect(cfg.values.RED_AFK_ATTEMPT_TIMEOUT_S).toBeUndefined();
   });
 
   it("parses list values into indexed dotted keys", () => {
