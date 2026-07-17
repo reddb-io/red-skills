@@ -324,7 +324,8 @@ It creates and wires the RedSkills operating surface:
 - Optional statusline wiring and primary-checkout branch guardrails.
 
 Re-run `/red-setup` when adoption drifts. Run `/red-doctor` to inspect drift
-without changing anything, or `/red-doctor --fix` for the approved repair path.
+and operational probes without changing anything, or `/red-doctor --fix` for the
+approved, per-finding gated repair path.
 
 ### 2. Move Work Through Issues
 
