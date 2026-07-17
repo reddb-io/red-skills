@@ -65,7 +65,7 @@ describe("shared TOON migration registry", () => {
           id: "dev.afk-history",
           plugin: "dev",
           legacyPath: ".red/state/afk-history.jsonl",
-          toonPath: ".red/state/afk-history.toonl",
+          toonPath: ".red/state/castle/history.toonl",
           kind: "toonl",
         }),
         expect.objectContaining({
@@ -79,7 +79,7 @@ describe("shared TOON migration registry", () => {
           id: "dev.supervisor-firehose",
           plugin: "dev",
           legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
-          toonPath: ".red/state/afk/afk-supervisor.log.toonl",
+          toonPath: ".red/state/castle/afk-supervisor.log.toonl",
           kind: "toonl",
           migration: "sniff-read",
         }),
@@ -213,7 +213,7 @@ describe("shared TOON migration registry", () => {
     });
 
     const first = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
-    const toonPath = join(root, ".red/state/afk-history.toonl");
+    const toonPath = join(root, ".red/state/castle/history.toonl");
     const afterFirst = await readFile(toonPath, "utf8");
     const second = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
 
