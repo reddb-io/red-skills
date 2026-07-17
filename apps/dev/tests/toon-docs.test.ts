@@ -26,13 +26,13 @@ describe("TOONL operational docs", () => {
     const joined = docs.join("\n");
 
     expect(joined).toContain("tq -p toonl -o json -r .msg");
-    expect(joined).toContain(".red/state/afk-history.toonl");
-    expect(joined).toContain(".red/state/afk/afk-supervisor.log.toonl");
+    expect(joined).toContain(".red/state/castle/history.toonl");
+    expect(joined).toContain(".red/state/castle/afk-supervisor.log.toonl");
     expect(joined).toContain("there is no jq fallback");
     expect(joined).not.toMatch(/afk-history\.jsonl/);
     const laneReaderLines = joined
       .split("\n")
-      .filter((line) => /agent\.log|afk-history|live transcript|TOONL lane/i.test(line));
+      .filter((line) => /agent\.log|castle\/history|live transcript|TOONL lane/i.test(line));
     expect(laneReaderLines.join("\n")).not.toMatch(/\|\s*jq\b/);
   });
 
