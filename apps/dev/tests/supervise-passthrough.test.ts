@@ -161,7 +161,8 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
-        "branches snapshot=1 remote=0 local=2 | docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
+        "branches snapshot=1 remote=0 local=2 | tmp-janitor expired=0 workers=0 unknown=0 protected=0 | " +
+        "docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
     );
   });
 

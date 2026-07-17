@@ -178,3 +178,38 @@ export function planTmpJanitor(input: TmpJanitorInput): TmpJanitorPlan {
     unknownTmpRoots: auditTmpRoot(input.tmpRootNames).unknown,
   };
 }
+
+// ---------- stale worker planner ----------
+
+export interface WorkerDirIssueState {
+  issue: number;
+  state: "OPEN" | "CLOSED" | "UNKNOWN";
+}
+
+export interface WorkerDirJanitorEntry {
+  path: string;
+  workerPidLive: boolean;
+  issues: readonly WorkerDirIssueState[];
+}
+
+export interface WorkerDirJanitorPlan {
+  reclaim: WorkerDirJanitorEntry[];
+  spare: WorkerDirJanitorEntry[];
+}
+
+/** Plan dead-worker-dir cleanup. A worker dir is reclaimable only when its
+ * worker.pid is not live, it has at least one issue-bearing attempt, and every
+ * issue represented by the worker dir is known closed. */
+export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]): WorkerDirJanitorPlan {
+  const reclaim: WorkerDirJanitorEntry[] = [];
+  const spare: WorkerDirJanitorEntry[] = [];
+  for (const entry of entries) {
+    const issues = entry.issues;
+    if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
+      reclaim.push(entry);
+    } else {
+      spare.push(entry);
+    }
+  }
+  return { reclaim, spare };
+}

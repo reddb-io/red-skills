@@ -10,8 +10,10 @@ import {
   planLogsJanitor,
   planScratchJanitor,
   planTmpJanitor,
+  planWorkerDirJanitor,
   SCRATCH_TTL_S,
   type JanitorEntry,
+  type WorkerDirJanitorEntry,
 } from "../src/core/tmp-janitor.js";
 
 const NOW = 1_000_000_000;
@@ -252,5 +254,37 @@ describe("planTmpJanitor", () => {
       tmpRootNames: ["workers", "go-workers", "claims", "waits", "worktrees"],
     });
     expect(plan.unknownTmpRoots).toEqual([]);
+  });
+});
+
+describe("planWorkerDirJanitor", () => {
+  function worker(over: Partial<WorkerDirJanitorEntry>): WorkerDirJanitorEntry {
+    return {
+      path: "/red/tmp/workers/w1",
+      workerPidLive: false,
+      issues: [{ issue: 1, state: "CLOSED" }],
+      ...over,
+    };
+  }
+
+  it("reclaims dead worker dirs when every represented issue is closed", () => {
+    const entry = worker({ issues: [{ issue: 10, state: "CLOSED" }, { issue: 11, state: "CLOSED" }] });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [entry], spare: [] });
+  });
+
+  it("spares worker dirs with a live worker.pid", () => {
+    const entry = worker({ workerPidLive: true });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+  });
+
+  it("spares worker dirs with open or unknown issues", () => {
+    const open = worker({ path: "/red/tmp/workers/w-open", issues: [{ issue: 1, state: "OPEN" }] });
+    const unknown = worker({ path: "/red/tmp/workers/w-unknown", issues: [{ issue: 2, state: "UNKNOWN" }] });
+    expect(planWorkerDirJanitor([open, unknown])).toEqual({ reclaim: [], spare: [open, unknown] });
+  });
+
+  it("spares dead worker dirs with no issue-bearing attempts", () => {
+    const entry = worker({ issues: [] });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
   });
 });

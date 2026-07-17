@@ -12,6 +12,7 @@
 // or fs call lives here — the deciders perform no IO, and `runBoot` performs IO
 // only through the injected `deps`.
 
+import { join } from "node:path";
 import {
   decideOrphanFate,
   planAttemptCap,
@@ -60,6 +61,7 @@ import {
   executeSpecSubIssueReconcile,
   type SpecSubIssueCandidate,
 } from "./spec-subissue-reconciler.js";
+import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -189,6 +191,8 @@ export interface BootFs {
   writeWorkerPid(pidFile: string, pid: number): Promise<void>;
   /** rm -rf an orphaned attempt dir. */
   removeDir(path: string): Promise<void>;
+  /** Final worker.pid liveness guard before removing a whole worker dir. */
+  workerPidLive?(workerDir: string): Promise<boolean>;
   /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
   reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
 }
@@ -377,6 +381,13 @@ export interface BootOptions {
    * sub-issue children. The reconciler attaches missing native edges and strips a
    * stale `needs-slicing` label once at least one slice exists. */
   specSubIssueCandidates?: readonly SpecSubIssueCandidate[];
+  /** ADR 0098 tmp janitor plan: expired named lanes, audited unknown root entries,
+   * and stale worker dirs whose worker.pid was already observed dead and whose
+   * represented issues are closed. */
+  tmpJanitor?: {
+    plan: TmpJanitorPlan;
+    staleWorkers: WorkerDirJanitorPlan;
+  };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
    * bootstrap only and returns before orphan cleanup / attempt cap / branch
@@ -450,6 +461,13 @@ export interface DocsSweepResult {
   plan: DocsSweepPlan;
 }
 
+export interface TmpJanitorSweepResult {
+  expiredLanes: string[];
+  staleWorkers: string[];
+  unknownTmpRoots: string[];
+  protectedLiveWorkers: string[];
+}
+
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
  * only `precheck` is populated (the bash `die` aborts before any other step). */
 export interface BootResult {
@@ -458,6 +476,7 @@ export interface BootResult {
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
+  tmpJanitor?: TmpJanitorSweepResult;
   docsSweep?: DocsSweepResult;
   unblockSweep?: UnblockSweepResult;
   mixedBlockedNormalize?: MixedBlockedNormalizeResult;
@@ -482,6 +501,8 @@ export interface BootResult {
  *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
+ *   5a. tmp janitor         — reclaim expired ADR 0098 lanes, dead closed-issue
+ *                             worker dirs, and audited unknown tmp-root entries.
  *   6. docs sweep           — planDocsSweep; land stranded .red docs or halt.
  *   7. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
  *   7a. mixed-blocked normalizer — shed stale blocked:* from queued/active issues.
@@ -537,6 +558,9 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 5. snapshot grace + live/local branch cleanup ----
   const branchCleanup = await runBranchCleanup(deps, options.branches);
 
+  // ---- 5a. ADR 0098 tmp janitor ----
+  const tmpJanitor = await runTmpJanitorSweep(deps, options);
+
   // ---- 6. docs sweep ----
   const docsSweep = await runDocsSweep(deps, options);
 
@@ -564,6 +588,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     orphanCleanup,
     attemptCap,
     branchCleanup,
+    tmpJanitor,
     docsSweep,
     unblockSweep,
     mixedBlockedNormalize,
@@ -572,6 +597,49 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     reconcileSweep,
     straggler,
   };
+}
+
+async function runTmpJanitorSweep(
+  deps: BootDeps,
+  options: BootOptions,
+): Promise<TmpJanitorSweepResult> {
+  const sweep = options.tmpJanitor;
+  const result: TmpJanitorSweepResult = {
+    expiredLanes: [],
+    staleWorkers: [],
+    unknownTmpRoots: [],
+    protectedLiveWorkers: [],
+  };
+  if (!sweep) return result;
+
+  const expired = [
+    ...sweep.plan.logs.reclaim,
+    ...sweep.plan.scratch.reclaim,
+    ...sweep.plan.diagnostics.reclaim,
+    ...sweep.plan.feedbackWorktrees.reclaim,
+  ];
+  for (const entry of expired) {
+    await deps.fs.removeDir(entry.path);
+    result.expiredLanes.push(entry.path);
+  }
+
+  for (const worker of sweep.staleWorkers.reclaim) {
+    const live = await deps.fs.workerPidLive?.(worker.path).catch(() => true);
+    if (live !== false) {
+      result.protectedLiveWorkers.push(worker.path);
+      continue;
+    }
+    await deps.fs.removeDir(worker.path);
+    result.staleWorkers.push(worker.path);
+  }
+
+  for (const name of sweep.plan.unknownTmpRoots) {
+    const path = join(options.bootstrap.tmpDir, name);
+    await deps.fs.removeDir(path);
+    result.unknownTmpRoots.push(path);
+  }
+
+  return result;
 }
 
 async function runDocsSweep(deps: BootDeps, options: BootOptions): Promise<DocsSweepResult> {

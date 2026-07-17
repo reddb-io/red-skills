@@ -176,6 +176,7 @@ function makeDeps(over: Partial<{
   straggler: BootDeps["lookups"]["straggler"];
   claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
+  workerPidLive: BootDeps["fs"]["workerPidLive"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
@@ -218,6 +219,14 @@ function makeDeps(over: Partial<{
         calls.push(`fs.removeDir:${p}`);
         fsCalls.removeDir.push(p);
       },
+      ...(over.workerPidLive
+        ? {
+            async workerPidLive(workerDir: string) {
+              calls.push(`fs.workerPidLive:${workerDir}`);
+              return over.workerPidLive!(workerDir);
+            },
+          }
+        : {}),
     },
     gh: {
       async editLabels(issue, remove, add) {
@@ -420,6 +429,7 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(result.orphanCleanup).toBeUndefined();
     expect(result.attemptCap).toBeUndefined();
     expect(result.branchCleanup).toBeUndefined();
+    expect(result.tmpJanitor).toBeUndefined();
     expect(result.unblockSweep).toBeUndefined();
     expect(result.reconcileSweep).toBeUndefined();
     expect(result.straggler).toBeUndefined();
@@ -434,6 +444,80 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(result.precheck).toEqual({ ok: false, failed: "gh-missing" });
     expect(result.bootstrap).toBeUndefined();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("runBoot tmp janitor", () => {
+  it("reclaims expired named lanes, closed-issue dead workers, and audited unknown tmp roots", async () => {
+    const { deps, fsCalls } = makeDeps({ workerPidLive: async () => false });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            logs: { reclaim: [{ path: "/p/.red/tmp/logs/old", mtimeS: NOW - 99 }], spare: [] },
+            scratch: { reclaim: [{ path: "/p/.red/tmp/scratch/old", mtimeS: NOW - 99 }], spare: [] },
+            diagnostics: { reclaim: [], spare: [] },
+            feedbackWorktrees: { reclaim: [], spare: [] },
+            unknownTmpRoots: ["work-old"],
+          },
+          staleWorkers: {
+            reclaim: [
+              {
+                path: "/p/.red/tmp/workers/wOLD",
+                workerPidLive: false,
+                issues: [{ issue: 9, state: "CLOSED" }],
+              },
+            ],
+            spare: [],
+          },
+        },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([
+      "/p/.red/tmp/logs/old",
+      "/p/.red/tmp/scratch/old",
+      "/p/.red/tmp/workers/wOLD",
+      "/p/.red/tmp/work-old",
+    ]);
+    expect(result.tmpJanitor).toEqual({
+      expiredLanes: ["/p/.red/tmp/logs/old", "/p/.red/tmp/scratch/old"],
+      staleWorkers: ["/p/.red/tmp/workers/wOLD"],
+      unknownTmpRoots: ["/p/.red/tmp/work-old"],
+      protectedLiveWorkers: [],
+    });
+  });
+
+  it("rechecks worker.pid before removing a stale worker dir and protects live anchors", async () => {
+    const { deps, fsCalls } = makeDeps({ workerPidLive: async () => true });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            logs: { reclaim: [], spare: [] },
+            scratch: { reclaim: [], spare: [] },
+            diagnostics: { reclaim: [], spare: [] },
+            feedbackWorktrees: { reclaim: [], spare: [] },
+            unknownTmpRoots: [],
+          },
+          staleWorkers: {
+            reclaim: [
+              {
+                path: "/p/.red/tmp/workers/wLIVE",
+                workerPidLive: false,
+                issues: [{ issue: 9, state: "CLOSED" }],
+              },
+            ],
+            spare: [],
+          },
+        },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveWorkers).toEqual(["/p/.red/tmp/workers/wLIVE"]);
   });
 });
 
