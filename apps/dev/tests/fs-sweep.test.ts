@@ -8,6 +8,7 @@ import {
   listLegacyWorkDirs,
   tryAcquireClaimDir,
   listOrphanDirs,
+  removeDir,
   reapDeadEmptyWorkerShells,
 } from "../src/runtime/fs.js";
 
@@ -65,6 +66,52 @@ describe("listStaleClaimDirs", () => {
       writeFileSync(join(blank, "pid"), "   ");
       const stale = (await listStaleClaimDirs(root)).map((s) => s.path).sort();
       expect(stale).toEqual([noPid, blank].sort());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("removeDir sweep guard (#1928)", () => {
+  it("refuses to remove the .red/tmp root", async () => {
+    const root = scratch();
+    try {
+      const tmpRoot = join(root, ".red", "tmp");
+      mkdirSync(tmpRoot, { recursive: true });
+
+      await expect(removeDir(tmpRoot)).rejects.toThrow("refusing to remove .red/tmp root");
+      expect(existsSync(tmpRoot)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to remove a live supervisor anchor", async () => {
+    const root = scratch();
+    try {
+      const stateAfk = join(root, ".red", "state", "afk");
+      mkdirSync(stateAfk, { recursive: true });
+      writeFileSync(join(stateAfk, "afk-supervisor.pid"), ALIVE_PID);
+      const log = join(stateAfk, "afk-supervisor.log");
+      writeFileSync(log, "live\n");
+
+      await expect(removeDir(log)).rejects.toThrow("refusing to remove live supervisor artifact");
+      expect(readFileSync(log, "utf8")).toBe("live\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to remove a live worker anchor", async () => {
+    const root = scratch();
+    try {
+      const worker = join(root, ".red", "tmp", "workers", "wLIVE");
+      mkdirSync(worker, { recursive: true });
+      const pidFile = join(worker, "worker.pid");
+      writeFileSync(pidFile, ALIVE_PID);
+
+      await expect(removeDir(pidFile)).rejects.toThrow("refusing to remove live worker artifact");
+      expect(readFileSync(pidFile, "utf8")).toBe(ALIVE_PID);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
