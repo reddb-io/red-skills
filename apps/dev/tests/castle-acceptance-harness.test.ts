@@ -158,6 +158,7 @@ describe("castle acceptance harness", () => {
           ready_for_agent: 0,
           slots: { busy: 2, free: 0, total: 2, parked: 0 },
           spawns_this_tick: 2,
+          churn: { window_s: 90, deaths: 2, respawns: 2 },
         },
         queue: [],
         completed: [PROVEN_TICKET.number],
@@ -231,6 +232,7 @@ describe("castle acceptance harness", () => {
       slotsFree: 0,
       slotsTotal: 2,
       spawnsThisTick: 2,
+      churn: { windowS: 90, deaths: 2, respawns: 2 },
     });
     expect(history).toEqual([{ event: "done", epoch: NOW_EPOCH }]);
 
@@ -238,7 +240,7 @@ describe("castle acceptance harness", () => {
       renderCompactDashboardToon(workers, history, NOW_EPOCH, fleet),
     ) as {
       workers: Array<{ id: string; issue: number }>;
-      fleet: { slots_busy: number; slots_free: number };
+      fleet: { slots_busy: number; slots_free: number; churn_deaths: number; churn_respawns: number };
       proving_drain: { drained: number; required: number; remaining: number; passed: number };
       summary: string;
     };
@@ -246,7 +248,7 @@ describe("castle acceptance harness", () => {
       1917,
       1918,
     ]);
-    expect(monitor.fleet).toMatchObject({ slots_busy: 2, slots_free: 0 });
+    expect(monitor.fleet).toMatchObject({ slots_busy: 2, slots_free: 0, churn_deaths: 2, churn_respawns: 2 });
     expect(monitor.proving_drain).toMatchObject({
       drained: 1,
       required: 20,
