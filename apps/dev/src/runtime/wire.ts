@@ -1719,7 +1719,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       ghx.ghInstalled(ghCtx),
       ghx.ghAuthenticated(ghCtx),
       gitx.isGitRepo(gitCtx),
-      gitx.remoteUrls(gitCtx),
+      gitx.remoteUrlFacts(gitCtx),
       gitx.hasMainBranch(gitCtx),
       gitx.currentBranch(gitCtx),
       import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
