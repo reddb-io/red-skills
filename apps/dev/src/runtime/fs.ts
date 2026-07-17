@@ -164,9 +164,11 @@ function supervisorArtifactDir(path: string): string | null {
   const name = parts.at(-1) ?? "";
   const parent = parts.at(-2) ?? "";
   const grandparent = parts.at(-3) ?? "";
-  if (name.startsWith("afk-supervisor.") && parent === "afk" && grandparent === "state") return dirname(path);
+  if (name.startsWith("afk-supervisor.") && (parent === "castle" || parent === "afk") && grandparent === "state") {
+    return dirname(path);
+  }
   if (name.startsWith("afk-supervisor.") && parent === "tmp" && grandparent === ".red") return dirname(path);
-  if (name === "afk" && parent === "state") return path;
+  if ((name === "castle" || name === "afk") && parent === "state") return path;
   return null;
 }
 
