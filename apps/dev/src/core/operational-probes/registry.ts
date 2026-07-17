@@ -1,4 +1,5 @@
 import { encode as encodeToon } from "@reddb-io/toon";
+import { baseFreshnessProbe } from "./base-freshness.js";
 import { claimHygieneProbe } from "./claim-hygiene.js";
 import { configNamespacingProbe } from "./config-namespacing.js";
 import { fleetTruthProbe } from "./fleet-truth.js";
@@ -18,6 +19,7 @@ export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
   httpsRemoteProbe,
   queueVisibilityProbe,
   focalBranchProbe,
+  baseFreshnessProbe,
   fleetTruthProbe,
   claimHygieneProbe,
   labelBodyCoherenceProbe,
