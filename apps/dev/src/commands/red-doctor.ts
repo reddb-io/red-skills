@@ -2,7 +2,7 @@ import { relative } from "node:path";
 import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
-import { listIssueStates, type GhContext } from "../runtime/gh.js";
+import { listIssueStates, postClaimComment, type GhContext } from "../runtime/gh.js";
 import { applyTmpJanitorReport, collectTmpJanitorReport, type TmpJanitorApplyResult, type TmpJanitorReport } from "../runtime/tmp-janitor.js";
 import { branchLockPath, clearBranchLock, writeBranchLock } from "../runtime/lock.js";
 import {
@@ -171,6 +171,9 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           removeBranchLock: async () => clearBranchLock(lockPath),
           writeBranchLock: async (branch) => writeBranchLock(lockPath, branch),
           terminateSupervisor: terminateSupervisorPid,
+          concedeClaim: async (issue, body) => {
+            await postClaimComment({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext, issue, body);
+          },
           confirmRelaunch: async () => flags.yes,
           relaunchFleet: async (request) => {
             const args = [
