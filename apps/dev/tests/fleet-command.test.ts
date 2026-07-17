@@ -17,7 +17,7 @@ vi.mock("../src/runtime/supervisor-spawn.js", () => ({
   spawnSupervisor: vi.fn(async () => 43210),
 }));
 
-import { launchFleet, stopFleet } from "../src/commands/fleet.js";
+import { launchFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
@@ -111,6 +111,30 @@ describe("fleet command stale supervisor state", () => {
       // Every live orphan was killed — "stopped" is never a lie while workers merge.
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(111111);
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(222222);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("statusFleet reports supervisor + slots ground truth read-only, no supervisor → absent (#2060)", async () => {
+    const root = scratch();
+    try {
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
+
+      const result = await statusFleet(root, out);
+
+      expect(result).toEqual({ status: "reported" });
+      const text = writes.join("");
+      expect(text).toContain("supervisor");
+      expect(text).toContain("health");
+      // A clean scratch has no supervisor pid → classifySupervisor returns absent.
+      expect(text).toMatch(/health:\s*absent/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
