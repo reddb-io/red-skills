@@ -173,6 +173,8 @@ export interface SupervisorConfig {
    * original attempt branch to advance before rotating the issue back to
    * ready-for-agent. */
   reapContestWindowS: number;
+  /** RED_AFK_SHRINK_MODE — runtime fleet shrink behavior. */
+  shrinkMode: ElasticShrinkMode;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -194,7 +196,15 @@ export const SUPERVISOR_DEFAULTS = {
   supervisorMaxRestarts: 5,
   supervisorRestartWindowS: 300,
   reapContestWindowS: 30,
+  shrinkMode: "drain-then-retire",
 } as const satisfies SupervisorConfig;
+
+export type ElasticShrinkMode = "hard-kill" | "drain-then-retire";
+
+export interface ElasticResizeRequest {
+  target: number;
+  shrinkMode?: ElasticShrinkMode;
+}
 
 export type DrainBudgetTier = "OK" | "WARNING" | "CRITICAL" | "HARD_STOP";
 
@@ -221,6 +231,11 @@ function parsePositiveNumber(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function parseShrinkMode(raw: string | undefined): ElasticShrinkMode | undefined {
+  if (raw === "hard-kill" || raw === "drain-then-retire") return raw;
+  return undefined;
 }
 
 export type SupervisorConfigReader = (key: string) => string;
@@ -325,6 +340,10 @@ export function resolveSupervisorConfig(
       parsePositiveNumber(env.RED_AFK_DRAIN_MAX_COST_USD) ??
       parsePositiveNumber(getCfg("afk.drain.max_cost_usd")),
     reapContestWindowS: num("RED_AFK_REAP_CONTEST_WINDOW_S", SUPERVISOR_DEFAULTS.reapContestWindowS),
+    shrinkMode:
+      parseShrinkMode(env.RED_AFK_SHRINK_MODE) ??
+      parseShrinkMode(getCfg("afk.shrink_mode")) ??
+      SUPERVISOR_DEFAULTS.shrinkMode,
   };
 }
 
@@ -542,6 +561,10 @@ export interface SupervisorProc {
    * The reaper gates its worktree teardown on this so `rm -rf` never races a
    * still-live worker (#580). */
   killTree(pid: number): Promise<boolean | void>;
+  /** Ask a live slot worker to finish its current claim and exit before the next
+   * claim. Optional: older runtimes simply leave the supervisor-side retiring
+   * flag active until the worker exits. */
+  requestSlotRetire?(slot: number, pid: number): Promise<void>;
   /** Sample the worker tree into the per-process snapshot the reaper-signal
    * reduction consumes (deriveSnapshot). Mirrors sup_descendant_pids feeding
    * sup_active_descendant + sup_tree_cpu. */
@@ -796,6 +819,9 @@ export interface SupervisorDeps {
   /** Resolve the current local HEAD of an attempt branch. Best-effort: undefined
    * means the contest window cannot observe advancement yet. */
   attemptBranchHead?(branch: string): Promise<string | undefined>;
+  /** Runtime elastic fleet request, typically read from the state/afk control
+   * file written by `fleet N`. Null means keep the launched config target. */
+  resizeRequest?(): Promise<ElasticResizeRequest | null>;
 }
 
 // ---------- per-slot runtime state ----------
@@ -844,6 +870,8 @@ export interface SlotState {
    * `running` + `contested`; a late commit on `branch` reclaims the issue,
    * otherwise the normal clean retry label flip runs when `deadlineEpoch` passes. */
   contest: ReapContestState | null;
+  /** Slot is above the current target and should not claim another issue. */
+  retiring: boolean;
 }
 
 export function freshSlot(): SlotState {
@@ -862,6 +890,7 @@ export function freshSlot(): SlotState {
     backoffStep: 0,
     halfOpen: false,
     contest: null,
+    retiring: false,
   };
 }
 
@@ -1077,6 +1106,8 @@ export interface TickResult {
    * this tick (#844). Empty when the sweep was throttled, unwired, found nothing
    * to promote, or failed (best-effort). */
   unblocked: number[];
+  /** Slots removed from the runtime fleet by elastic shrink this tick. */
+  retiredSlots: number[];
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
   /** Ready-queue depth sampled at the start of this tick (0 on an abandoned
@@ -1600,6 +1631,128 @@ async function spawnSlotForBudget(
   return policy ? deps.proc.spawnSlot(slot, policy) : deps.proc.spawnSlot(slot);
 }
 
+async function resolveElasticResize(
+  deps: SupervisorDeps,
+  config: SupervisorConfig,
+): Promise<Required<ElasticResizeRequest>> {
+  let request: ElasticResizeRequest | null = null;
+  try {
+    request = (await deps.resizeRequest?.()) ?? null;
+  } catch {
+    request = null;
+  }
+  const target =
+    request && Number.isInteger(request.target) && request.target >= 0
+      ? request.target
+      : config.target;
+  return {
+    target,
+    shrinkMode: request?.shrinkMode ?? config.shrinkMode,
+  };
+}
+
+async function growFleetToTarget(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  config: SupervisorConfig,
+  target: number,
+  drainBudget: DrainBudgetStatus | undefined,
+  result: TickResult,
+): Promise<void> {
+  for (const slot of state.slots) {
+    slot.retiring = false;
+  }
+  while (state.slots.length < target) {
+    const slotIndex = state.slots.length;
+    const slot = freshSlot();
+    state.slots.push(slot);
+    const spawned = await spawnSlotForBudget(slotIndex, deps, state, drainBudget);
+    if (spawned === null) continue;
+    slot.pid = spawned.pid;
+    slot.spawnEpoch = spawned.spawnEpoch;
+    result.respawned.push(slotIndex);
+    if (deps.dispatchFleetHook) {
+      try {
+        await deps.dispatchFleetHook("on_slot_spawn", {
+          event: "on_slot_spawn",
+          runner: config.runner,
+          slot: slotIndex,
+          pid: slot.pid,
+        });
+      } catch {
+        // best-effort
+      }
+    }
+  }
+}
+
+async function retireSlotAt(
+  state: SupervisorState,
+  index: number,
+  result: TickResult,
+): Promise<void> {
+  state.slots.splice(index, 1);
+  result.retiredSlots.push(index);
+}
+
+async function shrinkFleetToTarget(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  target: number,
+  mode: ElasticShrinkMode,
+  result: TickResult,
+): Promise<void> {
+  if (target >= state.slots.length) return;
+  for (let i = state.slots.length - 1; i >= target; i -= 1) {
+    const slot = state.slots[i]!;
+    if (mode === "hard-kill") {
+      const pid = slot.pid;
+      const info = deps.fs.resolveIterDir(i);
+      if (pid !== null && deps.proc.isAlive(pid)) {
+        await deps.proc.killTree(pid);
+      }
+      slot.pid = null;
+      slot.stalled = false;
+      slot.stallSinceEpoch = 0;
+      slot.reaped = false;
+      try {
+        const reconciled = await reconcileDeadWorkerClaim(info, deps);
+        if (reconciled !== null) result.crashReconciled.push(reconciled);
+      } catch {
+        // best-effort
+      }
+      await retireSlotAt(state, i, result);
+      continue;
+    }
+
+    slot.retiring = true;
+    const pid = slot.pid;
+    if (pid !== null && deps.proc.isAlive(pid)) {
+      try {
+        await deps.proc.requestSlotRetire?.(i, pid);
+      } catch {
+        // best-effort
+      }
+      continue;
+    }
+    await retireSlotAt(state, i, result);
+  }
+}
+
+async function retireDrainedSlots(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  result: TickResult,
+): Promise<void> {
+  for (let i = state.slots.length - 1; i >= 0; i -= 1) {
+    const slot = state.slots[i]!;
+    if (!slot.retiring) continue;
+    const pid = slot.pid;
+    if (pid !== null && deps.proc.isAlive(pid)) continue;
+    await retireSlotAt(state, i, result);
+  }
+}
+
 /**
  * handle_dead_slot (supervisor.sh ~994): a slot whose worker exited. Record the
  * death against the circuit breaker; on a trip park the slot and run the trip
@@ -1856,6 +2009,7 @@ export async function superviseTick(
     crashReconciled: [],
     reconciledSlots: [],
     unblocked: [],
+    retiredSlots: [],
     stopped: false,
     queueDepth: 0,
     abandoned: false,
@@ -1880,6 +2034,17 @@ export async function superviseTick(
   result.drainBudget = drainBudget;
   logDrainBudgetTransition(state, deps, drainBudget, queueDepth);
   const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
+
+  const resize = await resolveElasticResize(deps, config);
+  if (resize.target >= state.slots.length) {
+    for (const slot of state.slots) slot.retiring = false;
+  }
+  if (resize.target > state.slots.length && spawnPolicy !== "hard-stop") {
+    await growFleetToTarget(state, deps, config, resize.target, drainBudget, result);
+  } else if (resize.target < state.slots.length) {
+    await shrinkFleetToTarget(state, deps, resize.target, resize.shrinkMode, result);
+  }
+  await retireDrainedSlots(state, deps, result);
 
   for (let i = 0; i < state.slots.length; i += 1) {
     await resolveReapContest(i, state.slots[i]!, deps, config);
@@ -2240,7 +2405,7 @@ export async function runSupervisor(
 /** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
  * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**

@@ -88,6 +88,8 @@ export interface AfkPaths {
   supervisorStopPath: string;
   /** Supervisor launch log (state tier). */
   supervisorLogPath: string;
+  /** Runtime elastic resize request (state tier). */
+  supervisorResizePath: string;
   /** Watchdog restart ledger (state tier). */
   supervisorRestartsPath: string;
   /** Runner circuit-breaker directory (state tier). */
@@ -133,6 +135,7 @@ export function afkPaths(root: string): AfkPaths {
     supervisorPidPath: join(afkState, "afk-supervisor.pid"),
     supervisorStopPath: join(afkState, "afk-supervisor.stop"),
     supervisorLogPath: join(afkState, "afk-supervisor.log"),
+    supervisorResizePath: join(afkState, "afk-supervisor.resize.json"),
     supervisorRestartsPath: join(afkState, "afk-supervisor.restarts.json"),
     runnerCircuitDir: join(afkState, "runner-circuit"),
     statuslineCachePath: join(statusline, "statusline-cache.json"),

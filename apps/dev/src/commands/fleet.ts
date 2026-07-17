@@ -1,11 +1,11 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afkPaths, preferExistingPath } from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
-import { classifySupervisor, resolveSupervisorConfig } from "../core/supervisor.js";
+import { classifySupervisor, resolveSupervisorConfig, type ElasticShrinkMode } from "../core/supervisor.js";
 import { teardownWedgedSupervisor } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
@@ -13,7 +13,7 @@ import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import { reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 
 export interface FleetLaunchResult {
-  status: "launched";
+  status: "launched" | "resized";
   pid: number;
   target: number;
   log: string;
@@ -42,13 +42,20 @@ function parsePositiveNumber(raw: string | undefined, flag: string): number {
   return n;
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; passthrough: string[] } {
+function parseShrinkMode(raw: string | undefined, flag: string): ElasticShrinkMode {
+  if (raw === undefined) throw new Error(`${flag} requires a value`);
+  if (raw === "hard-kill" || raw === "drain-then-retire") return raw;
+  throw new Error(`${flag} must be hard-kill or drain-then-retire`);
+}
+
+function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
   const passthrough: string[] = [];
   let stop = false;
   let target: number | undefined;
   let request: string | undefined;
   let runnerFlag: string | undefined;
   let drainBudgetUsd: number | undefined;
+  let shrinkMode: ElasticShrinkMode | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -86,13 +93,31 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; target: numbe
       drainBudgetUsd = parsePositiveNumber(arg.slice("--drain-budget-usd=".length), "--drain-budget-usd");
       continue;
     }
+    if (arg === "--shrink-mode") {
+      shrinkMode = parseShrinkMode(args[++i], arg);
+      continue;
+    }
+    if (arg.startsWith("--shrink-mode=")) {
+      shrinkMode = parseShrinkMode(arg.slice("--shrink-mode=".length), "--shrink-mode");
+      continue;
+    }
     if (/^[0-9]+$/.test(arg) && target === undefined) {
       target = Number(arg);
       continue;
     }
     passthrough.push(arg);
   }
-  return { stop, target: target ?? 2, request, runnerFlag, drainBudgetUsd, passthrough };
+  return { stop, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
+}
+
+async function writeResizeRequest(path: string, target: number, shrinkMode: ElasticShrinkMode): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(
+    tmp,
+    `${JSON.stringify({ target, shrink_mode: shrinkMode }, null, 2)}\n`,
+    "utf8",
+  );
+  await rename(tmp, path);
 }
 
 export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStopResult> {
@@ -175,7 +200,12 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     const liveness = await io.liveness();
     const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
     if (health !== "quiescent") {
-      throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).\n  to stop it: /dev:afk fleet stop`);
+      const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
+      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode);
+      stdout.write(
+        `fleet resize requested (supervisor pid=${existing}, target=${parsed.target}, shrink-mode=${shrinkMode})\n`,
+      );
+      return { status: "resized", pid: existing, target: parsed.target, log: logFile };
     }
     const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
     io.log(
@@ -198,6 +228,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     passthrough: parsed.passthrough,
     request: parsed.request,
     drainBudgetUsd: parsed.drainBudgetUsd,
+    shrinkMode: parsed.shrinkMode,
   });
   if (!supervisorPid) {
     let tail = "";
