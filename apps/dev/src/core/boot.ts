@@ -132,6 +132,8 @@ export interface PrecheckFacts {
   queueVisibility?: OperationalProbeContext["queueVisibility"];
   /** Optional boot-time focal-branch probe, sharing the same lock/pin/trunk resolver as the precheck. */
   focalBranch?: OperationalProbeContext["focalBranch"];
+  /** Optional config namespacing probe facts for red-doctor and boot visibility. */
+  configNamespacing?: OperationalProbeContext["configNamespacing"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
