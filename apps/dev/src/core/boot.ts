@@ -138,6 +138,8 @@ export interface PrecheckFacts {
   fleetTruth?: OperationalProbeContext["fleetTruth"];
   /** Optional claim hygiene probe facts for red-doctor and boot visibility. */
   claimHygiene?: OperationalProbeContext["claimHygiene"];
+  /** Optional ready-label/body-blocker coherence probe facts for red-doctor and boot visibility. */
+  labelBodyCoherence?: OperationalProbeContext["labelBodyCoherence"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
