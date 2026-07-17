@@ -1,7 +1,7 @@
 // Boot-time reclaim deciders for the AFK orphan cleanup and attempt cap passes
 // (PRD #244, issues #252 / #257). Ported from afk.sh: prune_orphans (the orphan
 // attempt-dir fate decision) and cap_issue_attempts (the per-issue age/count
-// cap), plus the attempt_ttl_s / attempt_keep env resolvers.
+// cap).
 //
 // The classification is PURE, mirroring branch-cleanup.ts: the orphan decider
 // takes the already-resolved issue state, label, envelope flag, dir age, and a
@@ -17,11 +17,9 @@ import { LABEL_HUMAN, LABEL_RUNNING } from "./triage-labels.js";
 export const ORPHAN_TTL_LONG_S = 7 * 86400;
 export const ORPHAN_TTL_SHORT_S = 1 * 86400;
 
-/** Attempt-cap env defaults (afk.sh attempt_ttl_s / attempt_keep). */
+/** Attempt-cap defaults retained only for legacy-dir cleanup. */
 export const DEFAULT_ATTEMPT_TTL_S = 14 * 86400;
 export const DEFAULT_ATTEMPT_KEEP = 5;
-
-const NUMERIC_RE = /^[0-9]+$/;
 
 // ---------- orphan fate (prune_orphans) ----------
 
@@ -109,9 +107,9 @@ export interface AttemptDir {
 }
 
 export interface AttemptCapOptions {
-  /** Resolved age cap (resolveAttemptTtlS). */
+  /** Age cap in seconds. */
   ttlS: number;
-  /** Resolved count cap (resolveAttemptKeep). */
+  /** Count cap. */
   keep: number;
   /** Current epoch seconds. */
   nowS: number;
@@ -221,34 +219,4 @@ export function planLivenessReclaim(
     });
   }
   return out;
-}
-
-// ---------- env resolvers (attempt_ttl_s / attempt_keep) ----------
-
-function resolvePositiveInt(
-  raw: string | undefined,
-  fallback: number,
-): number {
-  if (raw !== undefined && NUMERIC_RE.test(raw)) {
-    const n = Number(raw);
-    if (n > 0) return n;
-  }
-  return fallback;
-}
-
-/** Resolve RED_AFK_ATTEMPT_TTL_S (default 14 days). Mirrors attempt_ttl_s: a
- * non-numeric OR zero OR negative value falls back to the default so an operator
- * typo can never disable the age cap. */
-export function resolveAttemptTtlS(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  return resolvePositiveInt(env.RED_AFK_ATTEMPT_TTL_S, DEFAULT_ATTEMPT_TTL_S);
-}
-
-/** Resolve RED_AFK_ATTEMPT_KEEP (default 5, newest kept). Mirrors attempt_keep:
- * same default-on-bad-input rule as resolveAttemptTtlS. */
-export function resolveAttemptKeep(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  return resolvePositiveInt(env.RED_AFK_ATTEMPT_KEEP, DEFAULT_ATTEMPT_KEEP);
 }
