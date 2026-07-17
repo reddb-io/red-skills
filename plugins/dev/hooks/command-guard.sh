@@ -584,6 +584,136 @@ enforce_tmp_root_write_policy() {
 
 enforce_tmp_root_write_policy
 
+strip_path_token() {
+  local s="$1"
+  [[ "$s" == \'* ]] && s="${s:1}" && s="${s%\'}"
+  [[ "$s" == \"* ]] && s="${s:1}" && s="${s%\"}"
+  printf '%s' "$s"
+}
+
+pid_file_live() {
+  local pid_file="$1" raw
+  [[ -f "$pid_file" ]] || return 1
+  raw="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+  [[ "$raw" =~ ^[1-9][0-9]*$ ]] || return 1
+  kill -0 "$raw" 2>/dev/null
+}
+
+supervisor_delete_reason() {
+  local abs="$1" dir
+  for dir in \
+    "$(canonical_path "$REPO_ROOT" ".red/state/afk")" \
+    "$(canonical_path "$REPO_ROOT" ".red/tmp")"
+  do
+    case "$abs" in
+      "$dir"/afk-supervisor.*|"$dir")
+        if pid_file_live "$dir/afk-supervisor.pid"; then
+          printf 'refusing to delete live supervisor artifacts under %s' "$dir"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+
+worker_delete_reason() {
+  local abs="$1" tmp_root ns prefix rel worker worker_dir
+  tmp_root="$(canonical_path "$REPO_ROOT" ".red/tmp")"
+  for ns in workers go-workers scout-workers; do
+    prefix="$tmp_root/$ns/"
+    case "$abs" in
+      "$prefix"*)
+        rel="${abs#$prefix}"
+        worker="${rel%%/*}"
+        [[ -n "$worker" ]] || continue
+        worker_dir="$prefix$worker"
+        if pid_file_live "$worker_dir/worker.pid"; then
+          printf 'refusing to delete live worker artifacts under %s' "$worker_dir"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+
+delete_target_reason() {
+  local raw="$1" s abs tmp_root rel reason
+  s="$(strip_path_token "$raw")"
+  [[ -n "$s" ]] || return 1
+  abs="$(canonical_path "$ROOT" "$s")"
+  tmp_root="$(canonical_path "$REPO_ROOT" ".red/tmp")"
+
+  if [[ "$abs" == "$tmp_root" ]]; then
+    printf 'refusing to delete the .red/tmp root'
+    return 0
+  fi
+
+  case "$abs" in
+    "$tmp_root"/*)
+      rel="${abs#$tmp_root/}"
+      if [[ "$rel" == "*" ]]; then
+        printf 'refusing to delete every entry under .red/tmp'
+        return 0
+      fi
+      ;;
+  esac
+
+  reason="$(supervisor_delete_reason "$abs" || true)"
+  if [[ -n "$reason" ]]; then
+    printf '%s' "$reason"
+    return 0
+  fi
+
+  reason="$(worker_delete_reason "$abs" || true)"
+  if [[ -n "$reason" ]]; then
+    printf '%s' "$reason"
+    return 0
+  fi
+
+  return 1
+}
+
+deny_tmp_delete() {
+  local path="$1" reason="$2"
+  deny "$(cat <<EOF
+BLOCKED by RedSkills tmp deletion guard.
+plugins.dev.enabled is true, so cleanup commands must delete a named lane under .red/tmp/, not the tmp root or live liveness anchors.
+
+Requested path: $path
+Reason: $reason
+
+Target a specific owned lane or stop the live supervisor/worker before removing its anchors.
+EOF
+  )"
+}
+
+enforce_tmp_delete_policy() {
+  local -a tokens
+  read -ra tokens <<<"$COMMAND"
+  local n=${#tokens[@]}
+  ((n > 0)) || return 0
+
+  local i j arg reason
+  for ((i = 0; i < n; i++)); do
+    case "${tokens[i]}" in
+      rm|/bin/rm|/usr/bin/rm)
+        for ((j = i + 1; j < n; j++)); do
+          arg="${tokens[j]}"
+          case "$arg" in '>'|'>>'|'|'|'&&'|'||'|';') break ;; esac
+          [[ "$arg" == -- ]] && continue
+          [[ "${arg:0:1}" == "-" ]] && continue
+          reason="$(delete_target_reason "$arg" || true)"
+          [[ -n "$reason" ]] && deny_tmp_delete "$arg" "$reason"
+        done
+        ;;
+    esac
+  done
+}
+
+enforce_tmp_delete_policy
+
 guard_scope_for_path() {
   local path="$1"
   case "$path" in
