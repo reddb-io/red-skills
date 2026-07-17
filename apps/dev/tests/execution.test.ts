@@ -30,12 +30,10 @@ import {
   MINIMAX_EFFORTS,
   parseMaxIterations,
   parseIdleTimeout,
-  parseAttemptTimeout,
   startAttemptGuard,
   exceedsBudget,
   type AttemptBudget,
   type AttemptBudgetUsage,
-  DEFAULT_ATTEMPT_TIMEOUT_S,
   type SandcastleDeps,
   type RunAgentInput,
   type AgentStreamEvent,
@@ -1296,19 +1294,6 @@ function manualScheduler() {
   };
   return { schedule, tick };
 }
-
-describe("parseAttemptTimeout", () => {
-  it("accepts a positive integer, rejects 0 / negative / non-numeric / undefined", () => {
-    expect(parseAttemptTimeout("2700")).toBe(2700);
-    expect(parseAttemptTimeout("0")).toBeUndefined();
-    expect(parseAttemptTimeout("-5")).toBeUndefined();
-    expect(parseAttemptTimeout("abc")).toBeUndefined();
-    expect(parseAttemptTimeout(undefined)).toBeUndefined();
-  });
-  it("documents a sane default", () => {
-    expect(DEFAULT_ATTEMPT_TIMEOUT_S).toBeGreaterThan(0);
-  });
-});
 
 describe("startAttemptGuard — commit-anchored progress watchdog", () => {
   it("aborts once the cap elapses with no new commit", async () => {
