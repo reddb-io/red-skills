@@ -4,6 +4,7 @@ import { scoreStructuralOutliers, type PreservedOutlierLine } from "./anomaly-sc
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
 import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
+import { classifyWrappedFailure, renderStructuredError } from "./structured-error.js";
 
 export interface ExecRenderOptions {
   level: RspLossLevel;
@@ -33,6 +34,16 @@ export async function renderExecContract(
 ): Promise<GitRenderResult> {
   const rawStdout = Buffer.from(contract.stdout, "binary");
   const stderr = Buffer.from(contract.stderr, "binary");
+  if ((contract.status ?? 0) !== 0 || contract.signal) {
+    const error = classifyWrappedFailure(commandLine, contract.stdout, contract.stderr);
+    return {
+      stdout: renderStructuredError(error),
+      stderr,
+      status: error.exitCode ?? 1,
+      signal: contract.signal,
+      rawOutput: rawStdout,
+    };
+  }
   if (rawStdout.length === 0) {
     return {
       stdout: rawStdout,
