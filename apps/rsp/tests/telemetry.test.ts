@@ -69,6 +69,12 @@ describe("rsp telemetry spool", () => {
       tokens_saved_high: null,
       dollars_saved_estimate_usd: 0.00125,
     });
+    expect(tokenSavingsEstimate(1_000_000, false, "claude-sonnet-4")).toMatchObject({
+      tokens_saved: 1_000_000,
+      dollars_saved_estimate_usd: 3,
+      pricing_model_family: "claude-sonnet-4",
+      pricing_input_usd_per_million_tokens: 3,
+    });
   });
 
   it("appends TOONL rows without throwing when the target is unavailable", async () => {
@@ -1045,8 +1051,33 @@ describe("rsp telemetry spool", () => {
         wrapper_ms: 100,
         store_open_count: 0,
       });
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("holdout-one", {
+        created_at: "2026-07-08T12:17:00.000Z",
+        command: "git log --brief",
+        event_type: "control_holdout",
+        control_holdout: true,
+        holdout_share: 0.1,
+        raw_bytes: 2400,
+        emitted_bytes: 2400,
+        tokens_raw: 600,
+        tokens_emitted: 600,
+      });
+      await db.kv(RSP_ACCOUNTING_EVENTS_COLLECTION).put("show-git-log", {
+        created_at: "2026-07-08T12:18:00.000Z",
+        event_type: "show",
+        command: "rsp show",
+        recovered_command: "git log --brief",
+        hit: true,
+        raw_bytes: 1000,
+        emitted_bytes: 1000,
+      });
       await db.kv(RSP_TELEMETRY_DEGRADATIONS_COLLECTION).put("degraded", {
         created_at: "2026-07-08T12:16:00.000Z",
+        command: "git --version",
+        reason: "wrapper failed",
+      });
+      await db.kv(RSP_TELEMETRY_DEGRADATIONS_COLLECTION).put("degraded-two", {
+        created_at: "2026-07-08T12:19:00.000Z",
         command: "git --version",
         reason: "wrapper failed",
       });
@@ -1059,7 +1090,7 @@ describe("rsp telemetry spool", () => {
         label: "window: 28d, data: 9d",
         empty: false,
         invocations: 3,
-        degradations: 1,
+        degradations: 2,
       });
       expect(report.latency.global).toEqual({
         wrapper_ms_p50: 20,
@@ -1095,10 +1126,31 @@ describe("rsp telemetry spool", () => {
       expect(report.savings.top_commands_by_tokens_saved[0]).toMatchObject({ command_family: "git log", invocations: 2, tokens_saved: 1150 });
       expect(report.savings.top_commands_by_invocation_count[0]).toMatchObject({ command_family: "git log", invocations: 2 });
       expect(report.savings.single_biggest_elision).toMatchObject({ command_family: "git log", tokens_saved: 900 });
+      expect(report.savings.measured_control_holdout).toMatchObject({
+        enabled: true,
+        holdout_share: 0.1,
+        holdout_invocations: 1,
+        compressed_invocations: 3,
+        savings_rate: expect.any(Number),
+        confidence_interval_95: { low: expect.any(Number), high: expect.any(Number) },
+      });
+      expect(report.mining.recovery_usage_by_family).toEqual([
+        { command_family: "git log", show_total: 1, show_hits: 1, show_misses: 0, show_hit_rate: 1 },
+      ]);
+      expect(report.mining.degradation_clusters).toEqual([
+        expect.objectContaining({
+          command_family: "git --version",
+          reason: "wrapper failed",
+          count: 2,
+          suggestion: expect.stringContaining("Investigate"),
+        }),
+      ]);
+      expect(report.mining.threshold_tuning_suggestions.length).toBeGreaterThan(0);
       expect(report.health.degradation_timeline).toEqual([
         { timestamp: "2026-07-08T12:16:00.000Z", command_family: "git --version", reason: "wrapper failed" },
+        { timestamp: "2026-07-08T12:19:00.000Z", command_family: "git --version", reason: "wrapper failed" },
       ]);
-      expect(report.health.degradations_by_reason).toEqual([{ reason: "wrapper failed", count: 1 }]);
+      expect(report.health.degradations_by_reason).toEqual([{ reason: "wrapper failed", count: 2 }]);
       expect(report.health).toMatchObject({ cold_boots: 1, warm_hits: 2 });
     } finally {
       await db.close();
