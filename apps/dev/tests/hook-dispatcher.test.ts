@@ -320,7 +320,7 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
     expect(deriveHookEnv(base, "not json")).toEqual(base);
   });
 
-  it("derives the pre_attempt env from issue, workspace, runner, and attempt_n", () => {
+  it("derives the pre_attempt env from issue, workspace, and runner", () => {
     const env = deriveHookEnv(
       base,
       JSON.stringify({
@@ -337,7 +337,6 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
       RED_AFK_WORKSPACE: "/repo/.red/tmp/worktree",
       RED_AFK_ISSUE: "585",
       RED_AFK_RUNNER: "codex",
-      RED_AFK_ATTEMPT_N: "2",
     });
   });
 
@@ -362,7 +361,7 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
     expect(env.RED_AFK_MERGE_BASE).toBe("main");
     expect(env.RED_AFK_MERGE_COMMIT).toBe("abc123456");
     expect(env.RED_AFK_MERGE_SHA).toBe("abc1234");
-    expect(env.RED_AFK_ATTEMPT_N).toBe("1");
+    expect("RED_AFK_ATTEMPT_N" in env).toBe(false);
   });
 
   it("leaves irrelevant or empty fields unset", () => {
@@ -451,7 +450,6 @@ describe("dispatchHooks layers the per-event env onto the base env", () => {
       RED_AFK_WORKSPACE: "/wt",
       RED_AFK_ISSUE: "585",
       RED_AFK_RUNNER: "codex",
-      RED_AFK_ATTEMPT_N: "1",
     });
   });
 });

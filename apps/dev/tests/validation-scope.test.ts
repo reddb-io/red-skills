@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CORE_MODULE_MANIFEST,
   computeValidationScope,
   formatValidationScope,
   isRootTrigger,
@@ -81,9 +80,8 @@ describe("isRootTrigger", () => {
 // ---- scopeNeedsWholeSuite ----
 
 describe("scopeNeedsWholeSuite", () => {
-  it("escalates core-module touches via the explicit manifest", () => {
-    expect(CORE_MODULE_MANIFEST).toContain("apps/dev/src/core");
-    expect(scopeNeedsWholeSuite(["apps/dev/src/core/process-issue.ts"])).toBe(true);
+  it("does not escalate package-local core-module touches through the deleted manifest", () => {
+    expect(scopeNeedsWholeSuite(["apps/dev/src/core/process-issue.ts"])).toBe(false);
   });
 
   it("keeps leaf touches on the scoped package path", () => {
@@ -133,13 +131,14 @@ describe("computeValidationScope — whole-workspace escalation", () => {
     expect(scopesForValidationScope(scope)).toEqual(["."]);
   });
 
-  it("escalates to whole-workspace on a manifest core-module change", () => {
+  it("keeps package-local core-module changes in the package cone", () => {
     const scope = computeValidationScope(["apps/dev/src/core/process-issue.ts"], layout, g);
-    expect(scope.type).toBe("whole-workspace");
-    if (scope.type === "whole-workspace") {
-      expect(scope.triggerFile).toBe("apps/dev/src/core/process-issue.ts");
+    expect(scope.type).toBe("cone");
+    if (scope.type === "cone") {
+      expect(scope.packages).toEqual(["apps/dev"]);
+      expect(scope.triggerPackages).toEqual(["apps/dev"]);
     }
-    expect(scopesForValidationScope(scope)).toEqual(["."]);
+    expect(scopesForValidationScope(scope)).toEqual(["apps/dev"]);
   });
 });
 

@@ -92,7 +92,7 @@ import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
-import type { AgentStreamEvent, AttemptBudget } from "../core/execution.js";
+import type { AgentStreamEvent } from "../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
 import { renderClaimComment } from "../core/claim.js";
 
@@ -760,9 +760,7 @@ export function buildProcessDeps(
   runner: Runner,
   exec?: ExecFn,
   maxIterations?: number,
-  attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
-  attemptBudget?: AttemptBudget,
   inlineVerifyCommand?: string,
   goVerifyRetries?: number,
 ): ProcessIssueDeps {
@@ -1041,17 +1039,13 @@ export function buildProcessDeps(
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
     postAttemptFormatCommands: readPostAttemptFormat(config),
-    // #908: thread the resolved budget + a LIVE usage probe off this attempt's
-    // activity meter (late-bound — `activityMeter` is reassigned per attempt dir,
-    // and `peek()` returns a superset of AttemptBudgetUsage). makeRunAgent only
-    // wires it when the progress guard is armed.
+    // Thread a live activity probe off this attempt's activity meter. The
+    // progress guard uses it as a soft progress signal when armed.
     runAgent: makeRunAgent(
       sandbox,
       process.env,
       maxIterations,
-      attemptTimeoutSeconds,
       laneIdle,
-      attemptBudget,
       () => activityMeter.peek(),
     ),
     sandboxMode: sandbox,
@@ -2034,9 +2028,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       runner,
       undefined,
       settings.maxIterations,
-      settings.attemptTimeoutSeconds,
       settings.laneIdle,
-      settings.attemptBudget,
       flags.verifyCommand,
       flags.goVerifyRetries,
     ),

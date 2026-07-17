@@ -18,7 +18,7 @@ Sandcastle (`@ai-hero/sandcastle` ≥ 0.6.6) exposes `RunOptions.signal?: AbortS
 
 1. **Add an attempt progress guard.** While the inner agent runs, poll the worker branch's HEAD (`git rev-parse refs/heads/<branch>` — the ref lives in the shared `.git`, so commits made in sandcastle's worktree are visible). If **no new commit lands within the cap**, abort via the sandcastle `AbortSignal`. The deadline **resets on every new commit**, so a steadily-committing agent is never killed — only one that spins without producing work. Commits are the proof of *productive* life; the existing agent lane + `idleTimeoutSeconds` remain the proof of *liveness*.
 
-2. **Cap = `RED_AFK_ATTEMPT_TIMEOUT_S` / `plugins.dev.afk.attempt_timeout`, default 2700s (45min).** Typo-safe parse (non-numeric / zero / negative → default); never silently disabled.
+2. **Cap = fixed 2700s (45min).** ADR 0107 Wave 3 removed the former env/config knob; the guard remains active with the fixed cap.
 
 3. **On fire → park, never retry.** The guard surfaces a `timeout` agent-outcome which `processIssue` maps to the existing `stalled` terminal outcome: `recoveryReasonFor("stalled")` is `null` → always escalate → `ready-for-human` + the typed `blocked:stalled` label, a failure envelope, and the attempt dir/branch/PR preserved. No auto-retry — the work is there for a human to review (the maintainer's "review first, don't merge" disposition).
 
@@ -38,5 +38,5 @@ Accepted; implemented (PR-A). Externalized proof-of-life (heartbeat enrichment +
 ## Related
 
 - ADR 0026 — AFK lifecycle hooks (the `on_heartbeat` follow-up extends this).
-- ADR 0042 — config under `plugins.dev.afk` (the `attempt_timeout` knob lives here).
+- ADR 0107 — Wave 3 removed the old attempt-timeout knob while retaining the fixed progress guard.
 - `attempt-outcome.ts` — the single owner of the outcome vocabulary (`stalled` → `blocked:stalled`).
