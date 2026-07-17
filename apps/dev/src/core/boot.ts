@@ -14,10 +14,10 @@
 
 import { join } from "node:path";
 import {
+  DEFAULT_ATTEMPT_KEEP,
+  DEFAULT_ATTEMPT_TTL_S,
   decideOrphanFate,
   planAttemptCap,
-  resolveAttemptKeep,
-  resolveAttemptTtlS,
   type AttemptDir,
   type IssueOpenState,
 } from "./reclaim.js";
@@ -917,15 +917,17 @@ async function runOrphanCleanup(
   return { removed, restored, kept, legacyWiped, claimsReleased };
 }
 
-/** Step 4: planAttemptCap per issue with the resolved age/count caps, then rm
- * -rf each reclaimed dir. Mirrors cap_issue_attempts. */
+/** Step 4: planAttemptCap per issue with fixed legacy cleanup caps, then rm
+ * -rf each reclaimed dir. */
 async function runAttemptCap(deps: BootDeps, input: AttemptCapInput): Promise<AttemptCapResult> {
-  const ttlS = resolveAttemptTtlS(deps.env);
-  const keep = resolveAttemptKeep(deps.env);
   const reclaimed: string[] = [];
 
   for (const [, attempts] of input.byIssue) {
-    const reaped = planAttemptCap(attempts, { ttlS, keep, nowS: deps.nowS });
+    const reaped = planAttemptCap(attempts, {
+      ttlS: DEFAULT_ATTEMPT_TTL_S,
+      keep: DEFAULT_ATTEMPT_KEEP,
+      nowS: deps.nowS,
+    });
     for (const dir of reaped) {
       await deps.fs.removeDir(dir.path);
       reclaimed.push(dir.path);
@@ -943,7 +945,7 @@ async function runBranchCleanup(
   deps: BootDeps,
   input: BranchCleanupInput,
 ): Promise<BranchCleanupResult> {
-  const graceS = resolveSnapshotGraceS(deps.env);
+  const graceS = resolveSnapshotGraceS();
 
   const snapshotPlan = planAttemptSnapshotCleanup(
     input.snapshotRefs,
