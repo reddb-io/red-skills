@@ -1770,6 +1770,21 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
       latestBundleVersion,
     },
   );
+  const workerPidState = (worker: string) => {
+    const hostPrefix = hostFingerprintPrefix();
+    if (!worker.startsWith(hostPrefix)) return "foreign" as const;
+    const workerId = worker.slice(hostPrefix.length);
+    if (!workerId) return "unknown" as const;
+    const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+    if (!existsSync(pidPath)) return "dead" as const;
+    try {
+      const pid = Number(readFileSync(pidPath, "utf8").trim());
+      if (!Number.isInteger(pid) || pid <= 0) return "dead" as const;
+      return isLivePid(pid) ? "live" as const : "dead" as const;
+    } catch {
+      return "unknown" as const;
+    }
+  };
   return {
     ghInstalled,
     ghAuthenticated,
@@ -1786,6 +1801,21 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     allowHttpsRemote:
       process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
     queueVisibility: ctx.repo ? ghx.queueVisibilityProbeInput(ghCtx) : undefined,
+    claimHygiene: ctx.repo
+      ? {
+          ownWorkerPrefix: hostFingerprintPrefix(),
+          listOpenQueueIssues: async () => {
+            const candidates = await ghx.listCandidates(ghCtx, LABEL_READY);
+            return Promise.all(
+              candidates.map(async (candidate) => ({
+                number: candidate.number,
+                comments: await ghx.listClaimComments(ghCtx, candidate.number),
+              })),
+            );
+          },
+          workerPidState,
+        }
+      : undefined,
     focalBranch: {
       resolved: resolvedFocalBranch,
       configuredTrunk: normalizeConfiguredTrunk(configTrunk),
