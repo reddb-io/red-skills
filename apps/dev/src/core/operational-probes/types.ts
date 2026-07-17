@@ -11,6 +11,7 @@ export interface OperationalProbeContext {
   readonly queueVisibility?: QueueVisibilityProbeInput;
   readonly focalBranch?: FocalBranchProbeInput;
   readonly configNamespacing?: ConfigNamespacingProbeInput;
+  readonly fleetTruth?: FleetTruthProbeInput;
 }
 
 export interface ConfigNamespacingProbeInput {
@@ -49,6 +50,21 @@ export interface QueueVisibilityProbeInput {
   readonly countRestQueue: () => Promise<number>;
 }
 
+export interface FleetTruthProbeInput {
+  readonly supervisorPid?: number | null;
+  readonly supervisorPidLive: boolean;
+  readonly supervisorPidMtimeMs?: number;
+  readonly stateMtimeMs?: number;
+  readonly heartbeatEpochMs?: number;
+  readonly nowMs: number;
+  readonly heartbeatStaleMs: number;
+  readonly bundleVersion?: string;
+  readonly latestBundleVersion?: string;
+  readonly runner?: string;
+  readonly target?: number;
+  readonly relaunchArgs?: readonly string[];
+}
+
 export interface OperationalProbeFix {
   readonly gate: "confirm";
   readonly description: string;
@@ -66,9 +82,16 @@ export interface OperationalProbeResult {
 
 export interface OperationalProbeFixDeps {
   confirm(finding: OperationalProbeResult): Promise<boolean>;
+  confirmRelaunch?(finding: OperationalProbeResult): Promise<boolean>;
   setRemoteUrl?(name: string, url: string): Promise<void>;
   removeBranchLock?(): Promise<void>;
   writeBranchLock?(branch: string): Promise<void>;
+  terminateSupervisor?(pid: number): Promise<boolean>;
+  relaunchFleet?(request: {
+    readonly target?: number;
+    readonly runner?: string;
+    readonly args?: readonly string[];
+  }): Promise<{ readonly status: string; readonly pid?: number | null }>;
 }
 
 export type OperationalProbeFixStatus = "applied" | "declined" | "noop";
