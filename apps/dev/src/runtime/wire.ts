@@ -24,11 +24,11 @@ import { DEFAULT_BRANCH } from "../core/pin-reader.js";
 import { classifyDocsPath, planDocsSweep, type DocsSweepFileState, type DocsSweepPlan } from "../core/docs-sweep.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { SandboxMode } from "../core/execution.js";
-import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
-import { parseAttemptTimeout, parseMaxIterations } from "../core/execution.js";
+import { parseMaxIterations } from "../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { inspectProcessTreeNative } from "./proc-tree.js";
 import { statSync } from "node:fs";
@@ -202,20 +202,13 @@ export interface RunSettings {
    */
   maxIterations?: number;
   /**
-   * Attempt progress-guard cap (seconds), resolved with precedence
-   * RED_AFK_ATTEMPT_TIMEOUT_S env > `afk.attempt_timeout` config > undefined
-   * (→ DEFAULT_ATTEMPT_TIMEOUT_S). The guard aborts a run that produces no new
-   * commit within the cap (proof-of-progress) → blocked:stalled / ready-for-human.
-   */
-  attemptTimeoutSeconds?: number;
-  /**
    * Solo-path lane-idle stall reaper config (issue #363), resolved + validated
    * at boot via resolveLaneIdleStallConfig (RED_AFK_STALL_THRESHOLD_S /
    * RED_AFK_STALL_KILL_THRESHOLD_S / RED_AFK_STALL_POLL_S, fleet defaults
    * 600 / 1800 / 30). A kill ≤ soft threshold THROWS here, so a misconfigured
    * solo run fails fast at boot — the same invariant the supervisor enforces.
-   * Complementary to attemptTimeoutSeconds: this cuts an idle hang at the stall
-   * threshold; the progress guard caps the whole attempt on no-commit.
+   * Complementary to the fixed progress guard: this cuts an idle hang at the
+   * stall threshold; the progress guard caps the whole attempt on no-commit.
    */
   laneIdle: LaneIdleStallConfig;
   /**
@@ -231,52 +224,9 @@ export interface RunSettings {
    * pinned bases are exactly why the flag defaults off.
    */
   feedbackRebaseBase?: string;
-  /**
-   * Per-attempt resource budget (#908): the optional token / cost / tool-call /
-   * waiting-window ceilings the attempt guard enforces. Every field is optional;
-   * an all-undefined budget is inert (today's behaviour). The #788 antidote —
-   * the proxy ceilings (tool-calls / waiting-windows) fire live even for
-   * claude/minimax, which stream 0 token usage on the wire.
-   */
-  attemptBudget?: AttemptBudget;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
-
-/** Parse a positive number (int or float) for a budget ceiling; undefined when
- * unset / non-numeric / non-positive, so a typo can never silently set a 0 cap
- * that aborts every attempt instantly. */
-function parsePositive(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
-}
-
-/**
- * Resolve the per-attempt budget (#908) from env overrides then `.red/config.yaml`
- * `plugins.dev.afk.attempt.*` (folded to `afk.attempt.*`). Returns `undefined`
- * when NO ceiling is set, so makeRunAgent can skip wiring the probe entirely and
- * the guard stays at today's behaviour.
- */
-export function resolveAttemptBudget(
-  env: NodeJS.ProcessEnv,
-  getCfg: (key: string) => string,
-): AttemptBudget | undefined {
-  const budget: AttemptBudget = {
-    maxTotalTokens: parsePositive(env.RED_AFK_ATTEMPT_MAX_TOKENS) ?? parsePositive(getCfg("afk.attempt.max_tokens")),
-    maxCostUsd: parsePositive(env.RED_AFK_ATTEMPT_MAX_COST_USD) ?? parsePositive(getCfg("afk.attempt.max_cost_usd")),
-    maxToolCalls:
-      parsePositive(env.RED_AFK_ATTEMPT_MAX_TOOL_CALLS) ?? parsePositive(getCfg("afk.attempt.max_tool_calls")),
-    maxWaitingWindows:
-      parsePositive(env.RED_AFK_ATTEMPT_MAX_WAITING_WINDOWS) ?? parsePositive(getCfg("afk.attempt.max_waiting_windows")),
-  };
-  const anySet =
-    budget.maxTotalTokens !== undefined ||
-    budget.maxCostUsd !== undefined ||
-    budget.maxToolCalls !== undefined ||
-    budget.maxWaitingWindows !== undefined;
-  return anySet ? budget : undefined;
-}
 
 export function resolveRunSettings(
   root: string,
@@ -306,12 +256,6 @@ export function resolveRunSettings(
   // env or the config can never disable the cap or pin the agent to 1 iteration.
   const maxIterations =
     parseMaxIterations(env.RED_AFK_MAX_ITERATIONS) ?? parseMaxIterations(getConfig(cfg, "afk.max_iterations"));
-  // Precedence mirrors maxIterations: RED_AFK_ATTEMPT_TIMEOUT_S env >
-  // afk.attempt_timeout config > undefined (→ DEFAULT_ATTEMPT_TIMEOUT_S in
-  // makeRunAgent). Typo-safe: a non-numeric / zero / negative value parses to
-  // undefined from either source.
-  const attemptTimeoutSeconds =
-    parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ?? parseAttemptTimeout(getConfig(cfg, "afk.attempt_timeout"));
   // Solo lane-idle reaper thresholds (issue #363), env-driven with fleet
   // defaults and the same boot invariant (kill > soft) — throws here on a `<=`
   // config so the run fails fast before claiming an issue.
@@ -327,19 +271,14 @@ export function resolveRunSettings(
   const feedbackRebaseBase = rebaseFlag
     ? getConfig(cfg, "dev.lock.branch") || getConfig(cfg, "dev.trunk") || "main"
     : undefined;
-  // Per-attempt resource budget (#908) — env > `afk.attempt.*` config; undefined
-  // when no ceiling is set (inert).
-  const attemptBudget = resolveAttemptBudget(env, (key) => getConfig(cfg, key));
   return {
     sandbox,
     defaultRunner,
     model: tier.model,
     effort: tier.effort,
     maxIterations,
-    attemptTimeoutSeconds,
     laneIdle,
     feedbackRebaseBase,
-    attemptBudget,
   };
 }
 
@@ -442,12 +381,7 @@ export function makeRunAgent(
   sandbox: SandboxMode,
   env: NodeJS.ProcessEnv = process.env,
   maxIterations?: number,
-  attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
-  // Per-attempt budget (#908): the resolved ceilings + a live usage probe (the
-  // attempt's activity meter `peek()`). Both must be present to arm the cap; it
-  // rides the existing progress guard, so it is only active when that guard is.
-  attemptBudget?: AttemptBudget,
   budgetUsage?: () => AttemptBudgetUsage,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
@@ -458,7 +392,6 @@ export function makeRunAgent(
       parseIdleTimeout,
       DEFAULT_ATTEMPT_TIMEOUT_S,
       DEFAULT_ATTEMPT_HARD_CAP_S,
-      parseAttemptHardCap,
     } = await import("../core/execution.js");
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
@@ -483,14 +416,12 @@ export function makeRunAgent(
     // agent); resolveAttemptGuardArming decouples the two.
     const attemptTimeout =
       input.attemptTimeoutSeconds ??
-      attemptTimeoutSeconds ??
-      parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ??
       DEFAULT_ATTEMPT_TIMEOUT_S;
     // Commit-anchored hard cap (issue #637): bounds how long the edit-signal
     // below may keep extending the soft deadline. Never below the soft cap, so
     // a low override cannot make the hard cap fire before plain ADR 0044 would.
     const attemptHardCap = Math.max(
-      input.attemptHardCapSeconds ?? parseAttemptHardCap(env.RED_AFK_ATTEMPT_HARD_CAP_S) ?? DEFAULT_ATTEMPT_HARD_CAP_S,
+      input.attemptHardCapSeconds ?? DEFAULT_ATTEMPT_HARD_CAP_S,
       attemptTimeout,
     );
     // Resolved lane-idle config is threaded from resolveRunSettings (validated at
@@ -533,7 +464,6 @@ export function makeRunAgent(
       // configured resource budget. The budget predicate itself still requires
       // both the ceilings and the usage probe.
       ...(guardArmed && budgetUsage ? { budgetUsage } : {}),
-      ...(guardArmed && attemptBudget && budgetUsage ? { budget: attemptBudget } : {}),
       ...(laneArmed && laneAttemptDir
         ? {
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
@@ -871,16 +801,22 @@ import type { AfkInput, DocsInput, FleetInput, RepoInput } from "../core/statusl
 export const STATUSLINE_CACHE_TTL_S = 900;
 export const STATUSLINE_REFRESH_LOCK_TTL_S = 60;
 
+function parsePositive(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /**
  * Resolve the effective statusline cache TTL (seconds) with precedence
  * RED_AFK_STATUSLINE_CACHE_TTL_S env > `afk.statusline_cache_ttl` config >
- * {@link STATUSLINE_CACHE_TTL_S} default (180). Mirrors the resolveAttemptBudget
- * / parseAttemptTimeout precedence pattern. Typo-safe: a missing / non-numeric /
- * zero / negative value from EITHER source falls through to the next source and
- * ultimately the 180 default — never 0. A 0 TTL would make the cache always-stale
- * and refresh on every render, defeating the whole purpose. Note the FLAT config
- * key `afk.statusline_cache_ttl` — NOT nested under `afk.statusline`, which is
- * already the boolean opt-out (YAML cannot make one key both a boolean and a map).
+ * {@link STATUSLINE_CACHE_TTL_S} default (180). Typo-safe: a missing /
+ * non-numeric / zero / negative value from EITHER source falls through to the
+ * next source and ultimately the 180 default — never 0. A 0 TTL would make the
+ * cache always-stale and refresh on every render, defeating the whole purpose.
+ * Note the FLAT config key `afk.statusline_cache_ttl` — NOT nested under
+ * `afk.statusline`, which is already the boolean opt-out (YAML cannot make one
+ * key both a boolean and a map).
  */
 export function resolveStatuslineCacheTtl(env: NodeJS.ProcessEnv, getCfg: (key: string) => string): number {
   return (
@@ -2199,7 +2135,7 @@ export async function buildBootDeps(
 
 /**
  * Build a MINIMAL {@link BootDeps} for a supervised worker whose boot skips
- * every shared sweep (#623, `RED_AFK_SWEEPS_DONE`). `runBoot` with
+ * every shared sweep (#623, `RED_AFK_BOOT_SWEEPS_COMPLETE`). `runBoot` with
  * `skipSweeps:true` touches only `deps.fs` (the bootstrap mkdir / gitignore /
  * worker.pid writes) and `deps.nowS` before returning, so the gh/git/lookup
  * closures are never reached — they are present only to satisfy the type and
