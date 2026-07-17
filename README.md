@@ -3,10 +3,10 @@
 <img src="docs/hero.svg" alt="RedSkills - agent workflow, governed Memory, and Brain knowledge for serious engineering agents" width="100%" />
 
 <p>
-  <a href="https://github.com/reddb-io/red-skills/releases"><img src="https://img.shields.io/github/v/release/reddb-io/red-skills?style=for-the-badge&color=ff2056&labelColor=0b0b0d" alt="Release"></a>
-  <a href="https://github.com/reddb-io/red-skills/actions/workflows/red-workspace-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/reddb-io/red-skills/red-workspace-ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=0b0b0d" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=for-the-badge&labelColor=0b0b0d" alt="License"></a>
-  <img src="https://img.shields.io/badge/Claude%20Code%20%7C%20Codex%20%7C%20OpenCode-555?style=for-the-badge&label=hosts&labelColor=0b0b0d" alt="Hosts">
+  <a href="https://www.npmjs.com/package/@reddb-io/red-skills"><img src="https://img.shields.io/npm/v/%40reddb-io%2Fred-skills?style=for-the-badge&label=npm&color=ff2056&labelColor=0d1117" alt="npm version"></a>
+  <a href="https://github.com/reddb-io/red-skills/actions/workflows/red-workspace-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/reddb-io/red-skills/red-workspace-ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=0d1117" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=for-the-badge&labelColor=0d1117" alt="License"></a>
+  <a href=".claude-plugin/marketplace.json"><img src="https://img.shields.io/badge/marketplace-dev%20%7C%20memory%20%7C%20brain-ff2056?style=for-the-badge&label=plugins&labelColor=0d1117" alt="Plugins"></a>
 </p>
 
 <strong>The operating system for agentic engineering work.</strong><br>
@@ -372,6 +372,8 @@ knowledge the human wants preserved, searched, and cited later.
 
 ### Dev
 
+<img src="docs/plugin-dev.svg" alt="dev plugin - issue pipeline, AFK runtime, landing, and codebase orientation" width="100%" />
+
 `dev` owns the engineering workflow: issue pipeline, AFK runtime, interactive
 landing, process visibility, setup/adoption checks, codebase orientation, and
 the [code-nav MCP server](./apps/code-nav/README.md).
@@ -430,6 +432,8 @@ plugins:
 
 ### Memory
 
+<img src="docs/plugin-memory.svg" alt="memory plugin - governed evidence that makes the next agent safer and faster" width="100%" />
+
 `memory` is governed operational memory for code agents. It stores work
 evidence that can make future agents safer and faster: decisions, root causes,
 validation evidence, reasoning attempts, stale-claim checks, readiness,
@@ -448,6 +452,8 @@ Broad human-facing project knowledge belongs in Brain too.
 Start with [plugins/memory/README.md](./plugins/memory/README.md).
 
 ### Brain
+
+<img src="docs/plugin-brain.svg" alt="brain plugin - project-local knowledge, cited synthesis, and a local dashboard" width="100%" />
 
 `brain` is a project-local knowledge repository under `.red/brain/*`. It stores
 typed artifacts and graph connections for later search and cited synthesis.
