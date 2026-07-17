@@ -44,6 +44,9 @@ describe("GitHub tracker adapter", () => {
         });
         return `${id}\n`;
       }
+      if (args[0] === "issue" && args[1] === "create") {
+        return "https://github.com/owner/repo/issues/77\n";
+      }
       return "";
     };
 
@@ -57,6 +60,13 @@ describe("GitHub tracker adapter", () => {
     });
 
     try {
+      await expect(
+        tracker.createIssue?.({
+          title: "/go: x",
+          body: "demand",
+          labels: ["lane:go", "kind,with-comma"],
+        }),
+      ).resolves.toBe(77);
       await expect(
         tracker.listOpenIssuesByLabel("wait:dependency"),
       ).resolves.toEqual([
@@ -99,6 +109,20 @@ describe("GitHub tracker adapter", () => {
     ]);
 
     expect(calls).toEqual([
+      [
+        "issue",
+        "create",
+        "--title",
+        "/go: x",
+        "--body",
+        "demand",
+        "--label",
+        "lane:go",
+        "--label",
+        "kind,with-comma",
+        "--repo",
+        "owner/repo",
+      ],
       [
         "issue",
         "list",
