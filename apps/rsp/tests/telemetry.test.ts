@@ -601,15 +601,25 @@ describe("rsp telemetry spool", () => {
         decision: "failed-open",
         reason: "hook-exception",
       });
+      await db.kv(RSP_DECISIONS_COLLECTION).put("quota-free", {
+        created_at: "2026-07-10T10:03:00.000Z",
+        command: "gh api repos/o/r/issues/1",
+        command_family: "gh api",
+        decision: "contributed",
+        reason: "gh-conditional-304",
+        quota_free: true,
+        saved_units: 1,
+      });
 
       const stats = await readTelemetryStats(db, 7, new Date("2026-07-11T00:00:00.000Z"));
 
       expect(stats.decisions).toEqual({
-        seen: 4,
-        contributed: 0,
+        seen: 5,
+        contributed: 1,
         passed: 3,
         failed_open: 1,
-        contribution_rate: 0,
+        quota_free_saved_units: 1,
+        contribution_rate: 0.2,
         top_pass_reasons: [
           { reason: "disabled", count: 1 },
           { reason: "hook-exception", count: 1 },
