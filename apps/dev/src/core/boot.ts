@@ -46,6 +46,7 @@ import {
 } from "./boot-sweep.js";
 import {
   planStaleClaimSweep,
+  renderConcededClaimSweepAudit,
   renderDeadClaimSweepAudit,
   renderStaleClaimSweepAudit,
   resolveClaimReaperConfig,
@@ -369,6 +370,8 @@ export interface BranchCleanupInput {
 export interface StaleClaimDir {
   /** Absolute path to the claim lock dir (`.red/tmp/claims/<N>`). */
   path: string;
+  /** Issue number from the claim dir basename, when parseable. */
+  issue?: number;
 }
 
 /** The full set of per-step inputs the caller resolves before `runBoot`. */
@@ -467,6 +470,8 @@ export interface StaleClaimSweepResult {
   /** Issues released back to the executable pool because their cross-host owner
    * stopped refreshing past the staleness window. */
   released: number[];
+  /** Released issues whose active claim markers had already ended in concede. */
+  repairedConceded?: number[];
 }
 
 export interface ReconcileSweepResult {
@@ -711,6 +716,7 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
   const config = resolveClaimReaperConfig(deps.env ?? process.env, (key) => deps.config?.[key] ?? "");
   const plans = planStaleClaimSweep(claimed, deps.nowS, config);
   const released: number[] = [];
+  const repairedConceded: number[] = [];
   for (const p of plans) {
     try {
       // Re-fetch current labels: the batched issueStates snapshot used by
@@ -729,20 +735,25 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
         released.push(p.issue);
         continue;
       }
-      const addLabels = currentLabels.includes(LABEL_HUMAN) ? [] : [LABEL_READY];
+      const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
+      const addLabels = parked ? [] : [LABEL_READY];
       await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
       const claimedIssue = claimed.find((c) => c.issue === p.issue);
       const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
-      const body = p.staleOwners.some((owner) => deadOwners.has(owner))
-        ? renderDeadClaimSweepAudit(p.staleOwners)
-        : renderStaleClaimSweepAudit(p.staleOwners);
+      const concededOwners = p.concededOwners ?? [];
+      const body = concededOwners.length > 0
+        ? renderConcededClaimSweepAudit(concededOwners)
+        : p.staleOwners.some((owner) => deadOwners.has(owner))
+          ? renderDeadClaimSweepAudit(p.staleOwners)
+          : renderStaleClaimSweepAudit(p.staleOwners);
       await deps.gh.comment(p.issue, body);
       released.push(p.issue);
+      if (concededOwners.length > 0) repairedConceded.push(p.issue);
     } catch {
       // Best-effort: a failed release leaves the issue for the next boot's sweep.
     }
   }
-  return { released };
+  return repairedConceded.length > 0 ? { released, repairedConceded } : { released };
 }
 
 /** Step 3: decideOrphanFate per dir, then apply the fate via gh + fs. Mirrors
@@ -834,6 +845,17 @@ async function runOrphanCleanup(
   // `for c in "$TMP_DIR"/claims/*/` loop in prune_orphans. Runs last, after the
   // attempt-dir sweep, so a freshly-released claim is never re-examined.
   for (const claim of options.staleClaimDirs ?? []) {
+    if (claim.issue !== undefined) {
+      try {
+        const currentLabels = await deps.gh.viewLabels(claim.issue);
+        const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
+        if (currentLabels.includes(LABEL_RUNNING) && !parked) {
+          await deps.gh.editLabels(claim.issue, [LABEL_RUNNING], [LABEL_READY]);
+        }
+      } catch {
+        // Best-effort: stale local claim dirs are still safe to remove.
+      }
+    }
     await deps.fs.removeDir(claim.path);
     claimsReleased.push(claim.path);
   }
