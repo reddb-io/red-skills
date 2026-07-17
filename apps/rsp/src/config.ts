@@ -16,6 +16,7 @@ export const DEFAULT_RSP_TELEMETRY_DRAIN_INTERVAL_MS = 30_000;
 export const DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
 export const DEFAULT_RSP_IDLE_MS = 5 * 60_000;
 export const MIN_RSP_IDLE_MS = 5_000;
+export const DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE = 0;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
@@ -30,6 +31,7 @@ export interface RspRuntimeConfig {
   telemetryDrainTimeoutMs: number;
   idleMs: number;
   heavyGitByteThreshold: number;
+  measurementHoldoutShare: number;
 }
 
 export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitStoreUri?: string): RspRuntimeConfig {
@@ -71,6 +73,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_HEAVY_GIT_BYTE_THRESHOLD) ?? readNumericYamlPath(yaml, "rsp.heavyGitByteThreshold"),
     DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
   );
+  const measurementHoldoutShare = shareNumber(
+    numericEnv(env.RSP_MEASUREMENT_HOLDOUT_SHARE) ?? readNumericYamlPath(yaml, "rsp.measurement.holdoutShare"),
+    DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE,
+  );
   const storeRoot = resolveResidentPaths(cwd).rootDir;
   // Honor the transition window: open the legacy tmp-tier store if it still
   // exists and setup has not yet migrated it to the state tier.
@@ -90,6 +96,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     telemetryDrainTimeoutMs,
     idleMs,
     heavyGitByteThreshold,
+    measurementHoldoutShare,
   };
 }
 
@@ -107,6 +114,13 @@ function positiveNumber(value: number | undefined, fallback: number): number {
 function minNumber(value: number | undefined, fallback: number, min: number): number {
   const n = positiveNumber(value, fallback);
   return Math.max(n, min);
+}
+
+function shareNumber(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
 }
 
 function numericEnv(value: string | undefined): number | undefined {
