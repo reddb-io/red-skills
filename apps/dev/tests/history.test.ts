@@ -141,9 +141,9 @@ describe("history append", () => {
     expect(total).toBe(1);
   });
 
-  it("mirrors the default AFK history ledger into castle history", async () => {
+  it("writes the canonical castle history ledger directly", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
-    const path = join(dir, ".red", "state", "afk-history.toonl");
+    const path = join(dir, ".red", "state", "castle", "history.toonl");
 
     await historyAppend(
       path,
@@ -152,9 +152,7 @@ describe("history append", () => {
       { worker: "wCASTLE", issue: 1919, runner: "codex", duration_s: 180, merge_sha: "abc1234" },
     );
 
-    const castle = await readCastleHistoryRecords(
-      join(dir, ".red", "state", "castle", "history.toonl"),
-    );
+    const castle = await readCastleHistoryRecords(path);
     expect(castle).toEqual([
       expect.objectContaining({
         event: "done",
