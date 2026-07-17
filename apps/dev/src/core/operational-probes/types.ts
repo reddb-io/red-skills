@@ -13,6 +13,7 @@ export interface OperationalProbeContext {
   readonly configNamespacing?: ConfigNamespacingProbeInput;
   readonly fleetTruth?: FleetTruthProbeInput;
   readonly claimHygiene?: ClaimHygieneProbeInput;
+  readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
 }
 
 export interface ConfigNamespacingProbeInput {
@@ -86,6 +87,17 @@ export interface ClaimHygieneProbeInput {
   readonly workerPidState: (worker: string) => ClaimHygieneWorkerPidState;
 }
 
+export interface LabelBodyCoherenceIssueInput {
+  readonly number: number;
+  readonly title?: string;
+  readonly labels: readonly string[];
+  readonly body: string;
+}
+
+export interface LabelBodyCoherenceProbeInput {
+  readonly listOpenReadyIssues: () => Promise<readonly LabelBodyCoherenceIssueInput[]>;
+}
+
 export interface OperationalProbeFix {
   readonly gate: "confirm";
   readonly description: string;
@@ -109,6 +121,7 @@ export interface OperationalProbeFixDeps {
   writeBranchLock?(branch: string): Promise<void>;
   terminateSupervisor?(pid: number): Promise<boolean>;
   concedeClaim?(issue: number, body: string): Promise<void>;
+  updateIssueBody?(issue: number, body: string): Promise<void>;
   relaunchFleet?(request: {
     readonly target?: number;
     readonly runner?: string;
