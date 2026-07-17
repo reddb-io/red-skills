@@ -6,6 +6,7 @@ import { renderGitContract, type GitRenderResult, type RecordedGitContract } fro
 import { renderGhContract } from "./gh-wrapper.js";
 import { renderTestContract } from "./test-wrapper.js";
 import { renderCatContract } from "./cat-wrapper.js";
+import { renderExecContract } from "./exec-wrapper.js";
 import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
 
 export interface FidelityAssertion {
@@ -70,6 +71,9 @@ export async function renderFixture(
   if (fixture.command[0] === "vitest" || fixture.command[0] === "cargo") {
     return await renderTestContract(fixture.command, fixture.recorded, options);
   }
+  if (fixture.command[0] === "exec") {
+    return await renderExecContract(fixture.command.slice(2).join(" "), fixture.recorded, options);
+  }
   if (fixture.command[0] === "cat") return await renderCatContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] === "gh") return await renderGhContract(fixture.command, fixture.recorded, options);
   if (fixture.command[0] !== "git") throw new Error(`unsupported fixture command: ${fixture.command.join(" ")}`);
@@ -84,6 +88,7 @@ function decodeRenderOutput(result: GitRenderResult): unknown {
 function readDecodedToon(stdout: Buffer): unknown {
   const text = stdout.toString("utf8");
   if (text === "git empty\n") return "git empty\n";
+  if (text.startsWith("stdout summary\n")) return text;
   if (text.startsWith("0 ")) return text;
   const toon = text.split("\n").filter((line) => !line.startsWith("… elided ")).join("\n");
   return decode(toon);
