@@ -61,6 +61,7 @@ function sampleHeartbeat(): FleetHeartbeat {
     slotsTotal: 2,
     slotsParked: 0,
     spawnsThisTick: 0,
+    churn: { deaths: 2, respawns: 2, windowS: 300 },
   } as FleetHeartbeat;
 }
 
@@ -96,6 +97,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
     const decoded = decode(bytes) as Record<string, unknown>;
     expect(decoded.epoch).toBe(42);
     expect(decoded.slots).toEqual({ busy: 1, free: 1, total: 2, parked: 0 });
+    expect(decoded.churn).toEqual({ deaths: 2, respawns: 2, window_s: 300 });
   });
 
   it("the fresh-relaunch supervisor heartbeat stamp is TOON, never raw JSON", async () => {
