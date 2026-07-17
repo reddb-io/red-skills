@@ -38,7 +38,7 @@ describe("listStaleClaimDirs", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "pid"), DEAD_PID);
       const stale = await listStaleClaimDirs(root);
-      expect(stale).toEqual([{ path: dir }]);
+      expect(stale).toEqual([{ path: dir, issue: 7 }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -64,8 +64,11 @@ describe("listStaleClaimDirs", () => {
       mkdirSync(noPid, { recursive: true });
       mkdirSync(blank, { recursive: true });
       writeFileSync(join(blank, "pid"), "   ");
-      const stale = (await listStaleClaimDirs(root)).map((s) => s.path).sort();
-      expect(stale).toEqual([noPid, blank].sort());
+      const stale = (await listStaleClaimDirs(root)).sort((a, b) => a.path.localeCompare(b.path));
+      expect(stale).toEqual([
+        { path: noPid, issue: 11 },
+        { path: blank, issue: 12 },
+      ].sort((a, b) => a.path.localeCompare(b.path)));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
