@@ -26,6 +26,11 @@ import type { ActorTrustVerdict, RepoVisibility } from "../core/trust-gate.js";
 import type { IssueOpenState } from "../core/reclaim.js";
 import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
 import type { SpecSubIssueCandidate } from "../core/spec-subissue-reconciler.js";
+import type {
+  QueueVisibilityProbeInput,
+  QueueVisibilityTransportFailure,
+  QueueVisibilityTransportSurface,
+} from "../core/operational-probes.js";
 import {
   MAIN_RED_REPAIR_TITLE,
   type MainRedRepairIssue,
@@ -122,7 +127,30 @@ export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
  * `ready-for-agent` lane the `/afk` fleet drains; `/go` passes its isolated
  * `lane:go` label so its dedicated worker sees only the minted disposable issue
  * and the fleet never does. */
-export async function listCandidates(ctx: GhContext, label: string = LABEL_READY): Promise<IssueCandidate[]> {
+export interface CandidateListDiagnostics {
+  onTransportFailure?(failure: QueueVisibilityTransportFailure): void;
+}
+
+function emitTransportFailure(
+  diagnostics: CandidateListDiagnostics | undefined,
+  surface: QueueVisibilityTransportSurface,
+  r: ExecOutput,
+  message: string,
+): void {
+  diagnostics?.onTransportFailure?.({
+    surface,
+    code: r.code,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    message,
+  });
+}
+
+export async function listCandidates(
+  ctx: GhContext,
+  label: string = LABEL_READY,
+  diagnostics?: CandidateListDiagnostics,
+): Promise<IssueCandidate[]> {
   const cached = await listIssuesViaRsp(ctx, label, "200");
   if (cached) return cached.map((item): IssueCandidate => ({
     number: item.number,
@@ -145,14 +173,21 @@ export async function listCandidates(ctx: GhContext, label: string = LABEL_READY
       "number,title,labels,body",
     ],
   );
-  if (r.code !== 0) return [];
+  if (r.code !== 0) {
+    emitTransportFailure(diagnostics, "graphql", r, "gh issue list failed");
+    return [];
+  }
   let raw: unknown;
   try {
     raw = JSON.parse(r.stdout || "[]");
   } catch {
+    emitTransportFailure(diagnostics, "graphql", r, "gh issue list returned malformed JSON");
     return [];
   }
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) {
+    emitTransportFailure(diagnostics, "graphql", r, "gh issue list returned a non-array payload");
+    return [];
+  }
   return raw.map((row): IssueCandidate => {
     const item = row as { number?: number; title?: string; body?: string; labels?: Array<{ name?: string }> };
     return {
@@ -1019,6 +1054,60 @@ async function listIssuesViaRsp(ctx: GhContext, label: string, limit: string): P
   } catch {
     return null;
   }
+}
+
+function queueVisibilityError(
+  surface: QueueVisibilityTransportSurface,
+  r: ExecOutput,
+  message: string,
+): Error & QueueVisibilityTransportFailure {
+  return Object.assign(new Error(message), {
+    surface,
+    code: r.code,
+    stdout: r.stdout,
+    stderr: r.stderr,
+  });
+}
+
+async function countOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number> {
+  if (!ctx.repo) return 0;
+  const r = await runGh(ctx, [
+    "api",
+    "--method",
+    "GET",
+    "search/issues",
+    "-f",
+    `q=repo:${ctx.repo} is:issue is:open label:"${label}"`,
+    "--jq",
+    ".total_count",
+  ]);
+  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue search failed");
+  const count = Number(r.stdout.trim());
+  if (!Number.isFinite(count)) throw queueVisibilityError("rest", r, "gh api REST issue search returned a non-numeric count");
+  return count;
+}
+
+export function queueVisibilityProbeInput(ctx: GhContext, label: string = LABEL_READY): QueueVisibilityProbeInput {
+  return {
+    label,
+    listEngineCandidates: async () => {
+      const failures: QueueVisibilityTransportFailure[] = [];
+      const candidates = await listCandidates(ctx, label, {
+        onTransportFailure: (failure) => failures.push(failure),
+      });
+      if (failures.length > 0 && candidates.length === 0) {
+        const failure = failures[failures.length - 1];
+        throw Object.assign(new Error(failure.message ?? "AFK engine candidate listing failed"), {
+          surface: failure.surface,
+          code: failure.code,
+          stdout: failure.stdout,
+          stderr: failure.stderr,
+        });
+      }
+      return candidates.length;
+    },
+    countRestQueue: () => countOpenIssuesByLabelViaRest(ctx, label),
+  };
 }
 
 async function countSearchViaRsp(ctx: GhContext, query: string): Promise<number | null> {
