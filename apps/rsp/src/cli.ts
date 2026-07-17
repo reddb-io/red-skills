@@ -458,6 +458,11 @@ interface WrappedCommandResult {
   mintedHandle?: string;
   bytesElided?: number;
   rawOutput?: Buffer;
+  degradation?: {
+    reason: string;
+    family: string;
+    stderrHead: string;
+  };
 }
 
 class LazyRspElisionStore implements ElisionStoreLike {
@@ -779,6 +784,32 @@ async function appendInvocationTelemetry(
     store_elapsed_ms: metrics?.storeElapsedMs,
     accounting_recorded: true,
   });
+  if (result.degradation) {
+    await appendTelemetryEvent(telemetryRoot, {
+      collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+      event_type: "invocation",
+      ts: new Date().toISOString(),
+      command: telemetryCommand(args),
+      command_class: args.command ?? "unknown",
+      loss: args.level,
+      raw_bytes: raw.length,
+      emitted_bytes: emitted.length,
+      degradation_reason: result.degradation.reason,
+      wrapper_family: result.degradation.family,
+      wrapper_exit_code: 0,
+      stderr_head: result.degradation.stderrHead,
+    });
+    await appendTelemetryEvent(telemetryRoot, {
+      collection: "rsp_telemetry_degradations_v1",
+      ts: new Date().toISOString(),
+      command: telemetryCommand(args),
+      reason: result.degradation.reason,
+      wrapper_family: result.degradation.family,
+      wrapper_exit_code: 0,
+      stderr_head: result.degradation.stderrHead,
+      accounting_recorded: true,
+    });
+  }
 }
 
 function appendFastInvocationTelemetry(
