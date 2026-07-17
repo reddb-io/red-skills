@@ -341,6 +341,35 @@ describe("runBoot precheck short-circuit", () => {
     ).rejects.toThrow(/SSH-only git remotes.*Use SSH git remotes/);
     expect(calls).toEqual([]);
   });
+
+  it("refuses on an unlistable queue, naming the queue visibility probe", async () => {
+    const { deps, calls } = makeDeps();
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            remoteUrls: [],
+            queueVisibility: {
+              listEngineCandidates: async () => {
+                throw Object.assign(new Error("Resource protected by organization SAML enforcement"), {
+                  surface: "graphql",
+                });
+              },
+              countRestQueue: async () => 3,
+            },
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "operational-probe",
+      probe: {
+        name: "AFK queue visibility",
+        canonicalFix: expect.stringContaining("gh auth refresh"),
+      },
+    });
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("runBoot Docs Sweep", () => {
