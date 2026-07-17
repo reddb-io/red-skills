@@ -148,6 +148,52 @@ describe("rsp two-axis benchmark report", () => {
     expect(report.aggregate.oracle_ceiling.capture_pct).toBe(100);
     expect(report.aggregate.raw.token_count).toBeGreaterThan(report.aggregate.oracle_ceiling.token_count);
     expect(report.aggregate.headroom.source).toBe("recorded");
+    expect(report.quality_corpora.map((row) => row.corpus)).toEqual([
+      "pre-existing-quality",
+      "anomaly",
+      "mixed-content",
+      "json-outlier",
+    ]);
+    expect(report.quality_corpora.find((row) => row.corpus === "anomaly")).toMatchObject({
+      fixture_count: 1,
+      filters: ["exec:--"],
+      oracle_capture: {
+        raw: { token_count: expect.any(Number) },
+        rsp: { token_count: expect.any(Number), source: "measured" },
+        oracle_ceiling: { source: "fixture-oracle" },
+      },
+    });
+    expect(report.end_task_parity).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fixture: "exec-midstream-anomaly",
+        task: "oracle preserves planted mid-stream structural outlier",
+        same_answer: true,
+      }),
+      expect.objectContaining({
+        fixture: "exec-json-array-crusher",
+        task: "crusher keeps numeric value outlier",
+        raw_answer: 7,
+        rsp_answer: 7,
+        same_answer: true,
+      }),
+      expect.objectContaining({
+        fixture: "exec-router-mixed-content",
+        task: "router degrades mixed ambiguous content to untyped fallback",
+        raw_answer: "untyped",
+        rsp_answer: "untyped",
+        same_answer: true,
+      }),
+      expect.objectContaining({
+        fixture: "pr-list-default",
+        task: "which PR is first?",
+        same_answer: true,
+      }),
+      expect.objectContaining({
+        fixture: "vitest-many-failures",
+        task: "how many failed?",
+        same_answer: true,
+      }),
+    ]));
   });
 
   it("writes a reproducible TOON artifact and matching human summary", async () => {
@@ -166,6 +212,10 @@ describe("rsp two-axis benchmark report", () => {
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("rtk: not-covered");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("Headroom baseline is replayed from checked-in recorded fixtures only");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("Aggregate oracle ceiling:");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Corpus | Fixtures | Filters | raw tokens | rsp tokens | Headroom tokens | oracle tokens | rsp capture | Headroom capture |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| anomaly | 1 | exec:-- |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| End-task parity probe | Fixture | Raw answer | rsp summary answer | Same answer |");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain("| crusher keeps numeric value outlier | exec-json-array-crusher | 7 | 7 | yes |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| Anti-suppression audit | Level | Verdict | Note |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:commit | brief | audited: fixed |");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain("| git:push | terse | audited: fixed |");

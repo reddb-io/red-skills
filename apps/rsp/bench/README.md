@@ -67,6 +67,7 @@ in `src/two-axis-thresholds.ts`.
 
 The benchmark discovers fidelity fixtures under `apps/rsp/tests/fixtures`:
 
+- `exec`
 - `file-read`
 - `gh`
 - `git`
@@ -77,6 +78,11 @@ fixtures have an adjacent `.oracle.toon` file that represents the hand-reviewed
 compact oracle. The benchmark requires large-output fixtures for git diff,
 git log, vitest green output, and vitest failure output so the result continues
 to cover the cases where reduction matters most.
+
+The default invocation is the standing quality arbiter: it runs the pre-existing
+quality corpus and the anomaly, mixed-content, and JSON-outlier families in one
+report. The generated summary emits oracle-capture and token counts for each
+family as well as for the full aggregate.
 
 The RTK and Headroom comparators are recorded baselines:
 
@@ -118,6 +124,11 @@ The main table has one row per filter:
 The aggregate line combines all fixtures. It is the fastest way to compare rsp,
 RTK, Headroom, raw output, and the oracle ceiling.
 
+The corpus table breaks the same token and oracle-capture numbers down by
+quality family. The end-task parity table then checks representative agent
+questions against both raw-output answers and rsp-summary answers; every row
+must report the same answer.
+
 ## Read the TOON Artifact
 
 `bench/results/rsp-two-axis.toon` is the machine-readable report. It includes:
@@ -128,7 +139,11 @@ RTK, Headroom, raw output, and the oracle ceiling.
   oracle-capture axes, and hypothetical active-mode results for passthrough
   filters.
 - `aggregate`: corpus-wide oracle-capture counts and percentages.
+- `quality_corpora`: pre-existing, anomaly, mixed-content, and JSON-outlier
+  corpus rows with token counts and oracle-capture percentages.
 - `parity`: direct fidelity gates for selected parity domains.
+- `end_task_parity`: representative same-answer probes comparing raw-output
+  answers with rsp-summary answers.
 - `anti_suppression_audit`: notes explaining why each filter does not hide the
   decision signal.
 
