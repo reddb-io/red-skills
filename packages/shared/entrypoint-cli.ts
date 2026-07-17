@@ -29,7 +29,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,8 +44,8 @@ import {
 import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
 import { findUp, flatConfigValue, isPluginEnabled } from "./plugin-gate.js";
 import {
-  backgroundSelfUpdate,
-  resolveActiveVersion,
+  backgroundSelfUpdateWithRetry,
+  resolveActiveVersionDetailed,
   type SelfUpdateIO,
 } from "./self-update.js";
 
@@ -122,6 +122,9 @@ const realIO: BundleIO = {
 /** realIO + an atomic rename for the self-update pointer swap (ADR 0084). */
 const realSelfUpdateIO: SelfUpdateIO = {
   ...realIO,
+  async readdir(path: string) {
+    return await readdir(path);
+  },
   async rename(from, to) {
     await rename(from, to);
   },
@@ -318,15 +321,17 @@ async function runMode(plan: RunPlan): Promise<never> {
   // atomically swapped in, if any. This is a LOCAL read only (pointer + cache
   // existence) — it can never fetch, so the render/hook path stays fetch-free
   // (the blank-statusline class stays dead). No pointer → the installed version.
-  const version = await resolveActiveVersion(realSelfUpdateIO, {
+  const resolution = await resolveActiveVersionDetailed(realSelfUpdateIO, {
     plugin,
     installedVersion,
     cacheDir,
     channel,
   });
+  const version = resolution.version;
   // Audit line so a fleet's channel is visible in its boot output (ADR 0058).
+  const resolutionNote = resolution.logNotes.length > 0 ? `; ${resolution.logNotes.join("; ")}` : "";
   process.stderr.write(
-    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})\n`,
+    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})${resolutionNote}\n`,
   );
 
   let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
@@ -468,17 +473,24 @@ async function selfUpdateMode(argv: readonly string[]): Promise<never> {
     process.exit(0);
   }
   const channel = resolveLauncherChannel(process.env, readProjectConfig());
-  const result = await backgroundSelfUpdate(realSelfUpdateIO, {
+  const result = await backgroundSelfUpdateWithRetry(realSelfUpdateIO, {
     plugin,
     installedVersion,
     repo: plan.repo,
     cacheDir,
     channel,
+  }, {
+    onRetry: async ({ attempt, nextAttempt, delayMs, error }) => {
+      await logLine(
+        cacheDir,
+        `self-update: ${plugin} check failed on attempt ${attempt} (${error}); retry ${nextAttempt} in ${Math.round(delayMs / 1000)}s`,
+      );
+    },
   });
   if (result.status === "updated") {
-    await logLine(cacheDir, `self-update: ${plugin} swapped to ${result.version} for next boot`);
+    await logLine(cacheDir, `self-update: ${plugin} swapped to ${result.version} for next boot after ${result.attempts ?? 1} attempt(s)`);
   } else if (result.status === "error") {
-    await logLine(cacheDir, `self-update: ${plugin} check failed (${result.error}); cached bundle keeps serving`);
+    await logLine(cacheDir, `self-update: ${plugin} check failed after ${result.attempts ?? 1} attempt(s) (${result.error}); cached bundle keeps serving`);
   }
   process.exit(0);
 }
