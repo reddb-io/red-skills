@@ -1698,6 +1698,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
   const config = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
+  const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
   const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch] =
     await Promise.all([
       ghx.ghInstalled(ghCtx),
@@ -1728,6 +1729,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     currentBranch,
     lockedBranch,
     configuredTrunk,
+    configuredTrunkSource,
     pnpmInstalled,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
