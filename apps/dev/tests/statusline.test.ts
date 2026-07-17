@@ -73,7 +73,19 @@ describe("statusline — fleet block", () => {
       queue: 4,
       bundleVersion: "2.60.2",
       latestBundleVersion: "2.61.0",
-    })).toBe("flt=codex 0/2 @2.60.2<2.61.0 q=4");
+    })).toBe("flt=codex 0/2 @2.60.2!<2.61.0 q=4");
+  });
+
+  it("marks fleet bundle skew against the stable pointer even when lane newest matches", () => {
+    expect(renderFleetBlock({
+      runner: "codex",
+      busy: 0,
+      total: 2,
+      queue: 4,
+      bundleVersion: "2.63.0",
+      pointerVersion: "2.64.0",
+      latestBundleVersion: "2.64.0",
+    })).toBe("flt=codex 0/2 @2.63.0!<2.64.0 q=4");
   });
 });
 
