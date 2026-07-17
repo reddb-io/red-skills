@@ -128,6 +128,8 @@ export interface PrecheckFacts {
    * Set by the runtime facts-builder from the environment.
    */
   allowHttpsRemote?: boolean;
+  /** Optional boot-time queue probe; injected by runtime facts so boot refuses on an unlistable AFK queue. */
+  queueVisibility?: OperationalProbeContext["queueVisibility"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
@@ -541,7 +543,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   if (!pre.ok) return { precheck: pre };
 
   // ---- 1a. operational probes ----
-  const operationalProbes = runOperationalProbes(options.operationalProbes ?? options.precheck);
+  const operationalProbes = await runOperationalProbes(options.operationalProbes ?? options.precheck);
   const redProbe = operationalProbes.findings[0];
   if (redProbe) throw new BootHaltError("operational-probe", redProbe);
 
