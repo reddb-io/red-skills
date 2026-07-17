@@ -37,6 +37,10 @@ describe("rsp proxy segment recognition", () => {
       commandLine: "cd apps && rsp --terse git log",
       matches: [expect.objectContaining({ capabilityId: "git:log", command: "git log" })],
     });
+    expect(rewriteProxyCommandLine("git branch -av", "brief")).toMatchObject({
+      commandLine: "rsp --brief git branch -av",
+      matches: [expect.objectContaining({ capabilityId: "git:branch:av", command: "git branch -av" })],
+    });
     expect(rewriteProxyCommandLine("printf 'x\\n' | grep x", "brief")).toMatchObject({
       commandLine: "printf 'x\\n' | grep x",
       matches: [],
