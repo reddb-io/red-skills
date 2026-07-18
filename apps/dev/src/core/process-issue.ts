@@ -937,6 +937,8 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "./issue-lifecycle.js";
+import { allowlistExternalWidened } from "./shared-gate.js";
+import { ALLOWLIST_PATH } from "./toon-json-guard.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -2623,7 +2625,23 @@ export async function processIssue(
           "--",
           "package.json", "**/package.json",
         ]);
-        return { changedFiles, packageJsonDiff: diffRes.stdout };
+        // Diff-aware exemption for the TOON guard allowlist: a shrink-only edit
+        // (no `external` entry added or changed) is safe to auto-land, so a
+        // migration slice that only removes converted `migrate` entries does not
+        // park on the `.red/` sensitive-path guard. git show writes an empty
+        // stdout when the file is absent at a ref; the widening check fails
+        // closed on unparseable content.
+        let allowlistExemption: { path: string; safe: boolean } | undefined;
+        if (changedFiles.includes(ALLOWLIST_PATH)) {
+          const oldContent = (
+            await deps.mergeExec(["git", "-C", input.repoDir, "show", `${input.remote}/${base}:${ALLOWLIST_PATH}`])
+          ).stdout;
+          const newContent = (
+            await deps.mergeExec(["git", "-C", input.repoDir, "show", `${workerBranch}:${ALLOWLIST_PATH}`])
+          ).stdout;
+          allowlistExemption = { path: ALLOWLIST_PATH, safe: !allowlistExternalWidened(oldContent, newContent) };
+        }
+        return { changedFiles, packageJsonDiff: diffRes.stdout, allowlistExemption };
       },
       landingPhase: markLandingPhase,
     },

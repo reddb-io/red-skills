@@ -118,7 +118,16 @@ export interface LandingDeps {
    * Absent (the default) → the guard is skipped (safe for the direct path and
    * existing callers that have not yet wired the dep).
    */
-  getDiffPaths?: () => Promise<{ changedFiles: string[]; packageJsonDiff: string }>;
+  getDiffPaths?: () => Promise<{
+    changedFiles: string[];
+    packageJsonDiff: string;
+    /**
+     * Diff-aware exemption for the TOON guard allowlist. Present when the branch
+     * touched it; `safe` is true when the edit only shrank the allowlist (no
+     * `external` entry added or changed), so the sensitive-path guard skips it.
+     */
+    allowlistExemption?: { path: string; safe: boolean };
+  }>;
   /**
    * Opt-in CI-aware merge for the UNLOCKED PR landing (#812). Present →
    * landPr polls the PR's merge state and merges only once it is genuinely
@@ -417,8 +426,8 @@ export async function doLanding(
   const landingInput = diffPaths ? { ...input, changedFiles: diffPaths.changedFiles } : input;
 
   if (diffPaths && input.sensitivePathApproved !== true) {
-    const { changedFiles, packageJsonDiff } = diffPaths;
-    const hits = checkSensitivePaths(changedFiles, packageJsonDiff);
+    const { changedFiles, packageJsonDiff, allowlistExemption } = diffPaths;
+    const hits = checkSensitivePaths(changedFiles, packageJsonDiff, allowlistExemption);
     if (hits.length > 0) {
       return { ok: false, reason: "sensitive-paths", locked, sensitivePaths: hits };
     }

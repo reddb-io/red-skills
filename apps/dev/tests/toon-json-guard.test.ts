@@ -43,4 +43,18 @@ describe("toon JSON file I/O guard", () => {
 
     expect(formatToonJsonGuardViolations({ findings, allowlist })).toEqual([]);
   });
+
+  it("mints a line-independent id — a pure line shift keeps the allowlist entry valid", () => {
+    const write = `writeFileSync(join(root, "state.json"), JSON.stringify({ ok: true }), "utf8");`;
+    const near = `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nexport function persistState(root: string) {\n  ${write}\n}\n`;
+    const shifted = `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\n// an unrelated comment\n// and another line\n// and a third line above the site\nexport function persistState(root: string) {\n  ${write}\n}\n`;
+    const [a] = collectToonJsonIoFindingsFromFiles([
+      { relativePath: "apps/example/src/state.ts", sourceText: near },
+    ]);
+    const [b] = collectToonJsonIoFindingsFromFiles([
+      { relativePath: "apps/example/src/state.ts", sourceText: shifted },
+    ]);
+    expect(a!.line).not.toBe(b!.line); // the statement genuinely moved
+    expect(a!.id).toBe(b!.id); // ...but the snippet-anchored id is stable
+  });
 });

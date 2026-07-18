@@ -31,7 +31,7 @@ export interface ToonJsonSourceFile {
   sourceText: string;
 }
 
-const ALLOWLIST_PATH = ".red/contracts/toon-json-file-io-allowlist.json";
+export const ALLOWLIST_PATH = ".red/contracts/toon-json-file-io-allowlist.json";
 const SOURCE_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".tsx"]);
 const SKIP_DIRS = new Set([
   ".git",
@@ -303,9 +303,13 @@ function makeFinding(
   const snippet = node.getText(sourceFile).replace(/\s+/g, " ").trim();
   const line = pos.line + 1;
   const column = pos.character + 1;
-  const hash = createHash("sha1").update(`${kind}\0${file.relativePath}\0${line}\0${column}\0${snippet}`).digest("hex").slice(0, 12);
+  // Snippet-anchored id: independent of line/column so a pure line shift (an
+  // unrelated edit above the site) never invalidates an allowlist entry. Only a
+  // change to the JSON statement text itself mints a new id (and warrants
+  // re-review). line/column survive as finding fields for the violation message.
+  const hash = createHash("sha1").update(`${kind}\0${file.relativePath}\0${snippet}`).digest("hex").slice(0, 12);
   return {
-    id: `${file.relativePath}:${line}:${column}#${kind}#${hash}`,
+    id: `${file.relativePath}#${kind}#${hash}`,
     kind,
     relativePath: file.relativePath,
     line,

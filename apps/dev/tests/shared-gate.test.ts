@@ -13,6 +13,7 @@ import {
   isSensitivePath,
   hasLifecycleScriptInDiff,
   checkSensitivePaths,
+  allowlistExternalWidened,
   type EscalationOutcome,
   type GateFinding,
   type SharedGateDeps,
@@ -496,6 +497,92 @@ describe("checkSensitivePaths — integrated guard", () => {
       "",
     );
     expect(hits).toHaveLength(0);
+  });
+});
+
+// ---------- diff-aware allowlist exemption ----------
+
+const ALLOWLIST_FILE = ".red/contracts/toon-json-file-io-allowlist.json";
+const allowlistJson = (entries: { id: string; classification: string; reason?: string }[]) =>
+  JSON.stringify({ version: 1, entries }, null, 2);
+const mig = (id: string) => ({ id, classification: "migrate" });
+const ext = (id: string, reason: string) => ({ id, classification: "external", reason });
+
+describe("checkSensitivePaths — diff-aware allowlist exemption", () => {
+  it("does NOT flag a shrink-only allowlist edit (safe exemption)", () => {
+    const hits = checkSensitivePaths([ALLOWLIST_FILE, "apps/memory/src/inbox.ts"], "", {
+      path: ALLOWLIST_FILE,
+      safe: true,
+    });
+    expect(hits).toHaveLength(0);
+  });
+
+  it("flags the allowlist when the exemption is unsafe (external widened)", () => {
+    const hits = checkSensitivePaths([ALLOWLIST_FILE], "", { path: ALLOWLIST_FILE, safe: false });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].path).toBe(ALLOWLIST_FILE);
+    expect(hits[0].reason).toMatch(/trust\/gate/);
+  });
+
+  it("flags the allowlist with no exemption provided (backwards-compatible default)", () => {
+    expect(checkSensitivePaths([ALLOWLIST_FILE], "")).toHaveLength(1);
+  });
+
+  it("the exemption covers only its own path — other .red/ files still flag", () => {
+    const hits = checkSensitivePaths([ALLOWLIST_FILE, ".red/config.yaml"], "", {
+      path: ALLOWLIST_FILE,
+      safe: true,
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].path).toBe(".red/config.yaml");
+  });
+});
+
+describe("allowlistExternalWidened — trust-preserving allowlist diff", () => {
+  it("removing a migrate entry is safe (not widened)", () => {
+    const oldC = allowlistJson([mig("a#k#1"), mig("b#k#2"), ext("c#k#3", "MCP config")]);
+    const newC = allowlistJson([mig("a#k#1"), ext("c#k#3", "MCP config")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(false);
+  });
+
+  it("removing an external entry is safe (shrinking the exception set)", () => {
+    const oldC = allowlistJson([ext("c#k#3", "MCP config"), mig("a#k#1")]);
+    const newC = allowlistJson([mig("a#k#1")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(false);
+  });
+
+  it("adding a new external entry is widened (unsafe)", () => {
+    const oldC = allowlistJson([mig("a#k#1")]);
+    const newC = allowlistJson([mig("a#k#1"), ext("new#k#9", "sneaked in")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(true);
+  });
+
+  it("changing an external entry's reason is widened (unsafe)", () => {
+    const oldC = allowlistJson([ext("c#k#3", "MCP config")]);
+    const newC = allowlistJson([ext("c#k#3", "now something else")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(true);
+  });
+
+  it("flipping a migrate entry to external is widened (unsafe)", () => {
+    const oldC = allowlistJson([mig("a#k#1")]);
+    const newC = allowlistJson([ext("a#k#1", "reclassified")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(true);
+  });
+
+  it("adding a migrate entry is safe (tracked debt, not a guard bypass)", () => {
+    const oldC = allowlistJson([mig("a#k#1")]);
+    const newC = allowlistJson([mig("a#k#1"), mig("b#k#2")]);
+    expect(allowlistExternalWidened(oldC, newC)).toBe(false);
+  });
+
+  it("unparseable new content fails closed (treated as widened)", () => {
+    const oldC = allowlistJson([mig("a#k#1")]);
+    expect(allowlistExternalWidened(oldC, "{ not json")).toBe(true);
+  });
+
+  it("identical content is not widened", () => {
+    const c = allowlistJson([mig("a#k#1"), ext("c#k#3", "MCP config")]);
+    expect(allowlistExternalWidened(c, c)).toBe(false);
   });
 });
 
