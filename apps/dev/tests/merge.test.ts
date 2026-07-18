@@ -559,8 +559,16 @@ describe("CI-aware merge classification (#812)", () => {
     expect(classifyMergeState(view("DIRTY"))).toBe("conflict");
   });
 
-  it("BEHIND (non-fast-forward) → conflict", () => {
-    expect(classifyMergeState(view("BEHIND"))).toBe("conflict");
+  it("BEHIND (out of date, still mergeable) → pending, NOT conflict (the #2084 phantom-conflict loop)", () => {
+    // preMergeRebase already integrated the base before the PR, so a BEHIND at
+    // check time is transient / a benign race — resolved by re-polling, never a
+    // terminal merge-conflict concede-loop on a provably fast-forwardable branch.
+    expect(classifyMergeState(view("BEHIND"))).toBe("pending");
+  });
+
+  it("BEHIND with a FAILED required check → ci-failed (surface the real failure, do not loop)", () => {
+    const v = view("BEHIND", [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" }]);
+    expect(classifyMergeState(v)).toBe("ci-failed");
   });
 
   it("BLOCKED with a FAILED required check → ci-failed", () => {

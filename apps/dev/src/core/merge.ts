@@ -380,8 +380,9 @@ export async function waitForReviewCheck(
  *   - `merge`     — ready to merge (CLEAN, or non-required checks flaky; BLOCKED
  *                   by a required review is attempted and surfaces as `merge-failed`
  *                   rather than being bypassed).
- *   - `conflict`  — a real git conflict / DIRTY / BEHIND (non-fast-forward). Maps
- *                   to the existing bounded `merge-conflict` recovery.
+ *   - `conflict`  — a genuine git conflict (DIRTY / `mergeable=CONFLICTING`).
+ *                   Maps to the existing bounded `merge-conflict` recovery.
+ *                   BEHIND is deliberately NOT here — see `classifyMergeState`.
  *   - `ci-failed` — a required check FAILED. A distinct outcome so the next
  *                   attempt fixes the red check, not a blind full re-run.
  *   - `pending`   — required checks still running / GitHub still computing. The
@@ -468,22 +469,30 @@ export function parseMergeStateView(stdout: string): MergeStateView {
 
 /**
  * Decide the merge readiness from the parsed merge state. Order matters:
- *   1. DIRTY / BEHIND → a real git conflict / non-fast-forward → `conflict`.
+ *   1. DIRTY → a genuine conflict (GitHub `mergeable=CONFLICTING`) → `conflict`.
  *   2. any required check FAILED → `ci-failed` (even when GitHub still reports
  *      BLOCKED — a failed check never clears by waiting).
- *   3. CLEAN → `merge`.
- *   4. any check still running → `pending` (keep waiting).
- *   5. BLOCKED with neither failures nor pending checks → likely blocked by a
+ *   3. BEHIND → the head is merely out of date vs the base (still MERGEABLE,
+ *      unlike DIRTY). NOT a conflict: `preMergeRebase` already integrated the
+ *      base before the PR, so a BEHIND at check time is GitHub still settling
+ *      mergeability or a benign race → `pending` (re-poll; it settles to
+ *      CLEAN/UNSTABLE → `merge`, or the poll times out and the OPEN PR is handed
+ *      off). Treating BEHIND as a conflict caused the #2084 phantom-conflict
+ *      concede-loop — a provably fast-forwardable branch looping forever.
+ *   4. CLEAN → `merge`.
+ *   5. any check still running → `pending` (keep waiting).
+ *   6. BLOCKED with neither failures nor pending checks → likely blocked by a
  *      required REVIEW; attempts merge, which surfaces as `merge-failed` if the
  *      repository's branch protection requires a review (correct: honored, not
  *      bypassed) → `merge`.
- *   6. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
- *   7. UNKNOWN / DRAFT / empty → `pending` (GitHub still computing mergeability).
+ *   7. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
+ *   8. UNKNOWN / DRAFT / empty → `pending` (GitHub still computing mergeability).
  */
 export function classifyMergeState(view: MergeStateView): MergeReadiness {
   const s = up(view.mergeStateStatus);
-  if (s === "DIRTY" || s === "BEHIND") return "conflict";
+  if (s === "DIRTY") return "conflict";
   if (view.anyFailed) return "ci-failed";
+  if (s === "BEHIND") return "pending";
   if (s === "CLEAN") return "merge";
   if (view.anyPending) return "pending";
   if (s === "BLOCKED") return "merge";
