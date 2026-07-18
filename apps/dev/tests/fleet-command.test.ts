@@ -233,7 +233,7 @@ describe("fleet command stale supervisor state", () => {
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
       expect(writes.join("")).toContain("fleet directive applied");
-      expect(JSON.parse(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
+      expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         runner: "codex",
         shrink_mode: "drain-then-retire",
