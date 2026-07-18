@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import {
   branchExists,
   fetchBranch,
+  FLEET_TRUNK_REF,
   changedFiles,
   prepareFreshWorkerBranch,
   resolveFreshBase,
@@ -84,56 +85,56 @@ describe("fetchBranch (FIX E recovery)", () => {
 });
 
 describe("resolveFreshBase (worker base freshness)", () => {
-  it("fetches the base and uses the remote-tracking tip when local is behind", async () => {
+  it("fetches the base, advances the fleet mirror, and returns that mirror as the worktree base", async () => {
     const { exec, calls } = recordingExec((_cmd, args) => {
       const joined = args.join(" ");
       if (joined === "fetch origin main") return ok("");
       if (joined === "rev-parse --verify --quiet origin/main") return ok("remote-tip\n");
-      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("local-tip\n");
-      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t3\n");
+      if (joined === `rev-parse --verify --quiet ${FLEET_TRUNK_REF}`) return ok("old-mirror\n");
+      if (joined === `merge-base --is-ancestor ${FLEET_TRUNK_REF} origin/main`) return ok("");
+      if (joined === `update-ref ${FLEET_TRUNK_REF} remote-tip`) return ok("");
       return fail();
     });
 
     await expect(resolveFreshBase({ cwd: "/repo", exec }, { base: "main", remote: "origin" })).resolves.toMatchObject({
       ok: true,
-      baseRef: "origin/main",
+      baseRef: "red-trunk",
       sha: "remote-tip",
-      source: "remote",
+      source: "mirror",
       remoteReachable: true,
-      localSha: "local-tip",
-      localAhead: 0,
-      localBehind: 3,
     });
     expect(calls[0]).toEqual(["git", "fetch", "origin", "main"]);
+    expect(calls).toContainEqual(["git", "update-ref", FLEET_TRUNK_REF, "remote-tip"]);
+    expect(calls.some((c) => c.includes("refs/heads/main"))).toBe(false);
+    expect(calls.some((c) => c.includes("symbolic-ref") || c.includes("status"))).toBe(false);
   });
 
-  it("allows offline local fallback when local is not behind the last-known origin tip", async () => {
-    const { exec } = recordingExec((_cmd, args) => {
+  it("resets the fleet mirror to origin when trunk history is rewritten", async () => {
+    const { exec, calls } = recordingExec((_cmd, args) => {
       const joined = args.join(" ");
-      if (joined === "fetch origin main") return fail();
-      if (joined === "rev-parse --verify --quiet origin/main") return ok("same-tip\n");
-      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("same-tip\n");
-      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t0\n");
+      if (joined === "fetch origin main") return ok("");
+      if (joined === "rev-parse --verify --quiet origin/main") return ok("rewritten-tip\n");
+      if (joined === `rev-parse --verify --quiet ${FLEET_TRUNK_REF}`) return ok("orphaned-mirror\n");
+      if (joined === `merge-base --is-ancestor ${FLEET_TRUNK_REF} origin/main`) return fail();
+      if (joined === `update-ref ${FLEET_TRUNK_REF} rewritten-tip`) return ok("");
       return fail();
     });
 
     await expect(resolveFreshBase({ cwd: "/repo", exec }, { base: "main", remote: "origin" })).resolves.toMatchObject({
       ok: true,
-      baseRef: "main",
-      sha: "same-tip",
-      source: "local",
-      remoteReachable: false,
-      localBehind: 0,
+      baseRef: "red-trunk",
+      sha: "rewritten-tip",
+      source: "mirror",
+      remoteReachable: true,
     });
+    expect(calls).toContainEqual(["git", "update-ref", FLEET_TRUNK_REF, "rewritten-tip"]);
   });
 
-  it("parks typed when offline local fallback is behind the last-known origin tip", async () => {
+  it("parks typed when origin cannot refresh the mirror instead of falling back to the primary branch", async () => {
     const { exec } = recordingExec((_cmd, args) => {
       const joined = args.join(" ");
       if (joined === "fetch origin main") return fail();
       if (joined === "rev-parse --verify --quiet origin/main") return ok("remote-tip\n");
-      if (joined === "rev-parse --verify --quiet refs/heads/main") return ok("local-tip\n");
-      if (joined === "rev-list --left-right --count refs/heads/main...origin/main") return ok("0\t4\n");
       return fail();
     });
 
@@ -142,10 +143,8 @@ describe("resolveFreshBase (worker base freshness)", () => {
       reason: "base-stale",
       baseRef: "origin/main",
       sha: "remote-tip",
-      source: "local",
+      source: "mirror",
       remoteReachable: false,
-      localSha: "local-tip",
-      localBehind: 4,
     });
   });
 });
