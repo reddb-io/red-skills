@@ -207,6 +207,7 @@ export type ElasticShrinkMode = "hard-kill" | "drain-then-retire";
 export interface ElasticResizeRequest {
   target: number;
   shrinkMode?: ElasticShrinkMode;
+  runner?: string;
 }
 
 export type DrainBudgetTier = "OK" | "WARNING" | "CRITICAL" | "HARD_STOP";
@@ -702,6 +703,10 @@ export interface FleetHeartbeat {
   /** Runner this fleet was launched with — lets the watchdog relaunch a recovered
    * supervisor with the same runner instead of re-detecting from its own tree. */
   runner: string;
+  /** Desired worker count most recently applied from config/directive. */
+  target: number;
+  /** Runtime shrink behavior most recently applied from config/directive. */
+  shrinkMode: ElasticShrinkMode;
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   readyForAgent: number;
@@ -872,6 +877,8 @@ export interface SupervisorDeps {
   /** Runtime elastic fleet request, typically read from the state/afk control
    * file written by `fleet N`. Null means keep the launched config target. */
   resizeRequest?(): Promise<ElasticResizeRequest | null>;
+  /** Re-pin real runtime spawn/hook configuration when a live directive changes runner. */
+  configureRunner?(runner: string): void | Promise<void>;
 }
 
 // ---------- per-slot runtime state ----------
@@ -1180,6 +1187,8 @@ export interface TickResult {
   unblocked: number[];
   /** Slots removed from the runtime fleet by elastic shrink this tick. */
   retiredSlots: number[];
+  /** True when a live directive changed the fleet runner this tick. */
+  runnerChanged: boolean;
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
   /** Ready-queue depth sampled at the start of this tick (0 on an abandoned
@@ -1273,8 +1282,7 @@ async function emitFleetHeartbeat(
   state: SupervisorState,
   deps: SupervisorDeps,
   result: TickResult,
-  runner: string,
-  config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS" | "circuitWindowS">,
+  config: Pick<SupervisorConfig, "runner" | "target" | "shrinkMode" | "halfOpenBaseS" | "halfOpenCapS" | "circuitWindowS">,
 ): Promise<{ heartbeat: FleetHeartbeat; write: FleetHeartbeatEmitResult }> {
   // Queue depth was fetched once by superviseTick at the start of this tick
   // and stored in result.queueDepth — reuse it here so there is exactly one
@@ -1286,7 +1294,9 @@ async function emitFleetHeartbeat(
     ts: isoFromEpoch(epoch),
     epoch,
     lastProgressEpoch: state.lastProgressEpoch,
-    runner,
+    runner: config.runner,
+    target: config.target,
+    shrinkMode: config.shrinkMode,
     readyForAgent,
     ...fleetSlotCounts(state, deps),
     spawnsThisTick: result.respawned.length,
@@ -1801,7 +1811,49 @@ async function resolveElasticResize(
   return {
     target,
     shrinkMode: request?.shrinkMode ?? config.shrinkMode,
+    runner:
+      typeof request?.runner === "string" && request.runner.length > 0
+        ? request.runner
+        : config.runner,
   };
+}
+
+async function applyRunnerDirective(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  config: SupervisorConfig,
+  runner: string,
+  result: TickResult,
+): Promise<boolean> {
+  if (runner === config.runner) return false;
+  const from = config.runner;
+  await deps.configureRunner?.(runner);
+  config.runner = runner;
+  await emitSupervisorEvent(deps, {
+    kind: "supervisor.scale",
+    payload: {
+      from: state.slots.length,
+      to: state.slots.length,
+      mode: "drain-then-retire",
+      runner_from: from,
+      runner_to: runner,
+    },
+  });
+  for (let i = 0; i < state.slots.length; i += 1) {
+    const slot = state.slots[i]!;
+    if (slot.retiring) continue;
+    slot.retiring = true;
+    const pid = slot.pid;
+    if (pid !== null && deps.proc.isAlive(pid)) {
+      try {
+        await deps.proc.requestSlotRetire?.(i, pid);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  result.runnerChanged = true;
+  return true;
 }
 
 async function growFleetToTarget(
@@ -1902,6 +1954,12 @@ async function retireDrainedSlots(
     if (!slot.retiring) continue;
     const pid = slot.pid;
     if (pid !== null && deps.proc.isAlive(pid)) continue;
+    try {
+      const reconciled = await reconcileDeadWorkerClaim(deps.fs.resolveIterDir(i), deps);
+      if (reconciled !== null) result.crashReconciled.push(reconciled);
+    } catch {
+      // best-effort
+    }
     await retireSlotAt(state, i, result);
   }
 }
@@ -2163,6 +2221,7 @@ export async function superviseTick(
     reconciledSlots: [],
     unblocked: [],
     retiredSlots: [],
+    runnerChanged: false,
     stopped: false,
     queueDepth: 0,
     abandoned: false,
@@ -2189,6 +2248,9 @@ export async function superviseTick(
   const spawnPolicy = spawnPolicyForBudget(state, drainBudget);
 
   const resize = await resolveElasticResize(deps, config);
+  const runnerChanged = await applyRunnerDirective(state, deps, config, resize.runner, result);
+  config.target = resize.target;
+  config.shrinkMode = resize.shrinkMode;
   const slotsBeforeResize = state.slots.length;
   if (resize.target !== slotsBeforeResize) {
     await emitSupervisorEvent(deps, {
@@ -2200,7 +2262,7 @@ export async function superviseTick(
       },
     });
   }
-  if (resize.target >= state.slots.length) {
+  if (resize.target > state.slots.length && !runnerChanged) {
     for (const slot of state.slots) slot.retiring = false;
   }
   if (resize.target > state.slots.length && spawnPolicy !== "hard-stop") {
@@ -2538,7 +2600,7 @@ export async function runSupervisor(
     if (!result.abandoned) {
       state.lastProgressEpoch = deps.now();
     }
-    const { heartbeat, write } = await emitFleetHeartbeat(state, deps, result, config.runner, config);
+    const { heartbeat, write } = await emitFleetHeartbeat(state, deps, result, config);
     await superviseHeartbeatStateWrite(state, deps, heartbeat, write);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
@@ -2615,7 +2677,7 @@ export async function runSupervisor(
 /** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
  * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], runnerChanged: false, stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**

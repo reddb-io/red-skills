@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
-import { afkPaths, collectMonitorInputs, resolveRepoSlug } from "../runtime/wire.js";
+import { afkPaths, collectMonitorInputs, readFleetState, resolveRepoSlug } from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
@@ -116,14 +116,36 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
   return { stop, status, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
 }
 
-async function writeResizeRequest(path: string, target: number, shrinkMode: ElasticShrinkMode): Promise<void> {
+async function writeResizeRequest(
+  path: string,
+  target: number,
+  shrinkMode: ElasticShrinkMode,
+  runner?: string,
+): Promise<void> {
   const tmp = `${path}.tmp`;
+  const request = {
+    target,
+    ...(runner !== undefined ? { runner } : {}),
+    shrink_mode: shrinkMode,
+  };
   await writeFile(
     tmp,
-    encodeToon({ target, shrink_mode: shrinkMode }),
+    encodeToon(request),
     "utf8",
   );
   await rename(tmp, path);
+}
+
+function directiveAck(
+  state: Awaited<ReturnType<typeof readFleetState>>,
+  request: { target: number; shrinkMode: ElasticShrinkMode; runner?: string },
+): "applied" | "pending" {
+  if (!state) return "pending";
+  const appliedTarget = state.target ?? state.slotsTotal;
+  if (appliedTarget !== request.target) return "pending";
+  if ((state.shrinkMode ?? request.shrinkMode) !== request.shrinkMode) return "pending";
+  if (request.runner !== undefined && state.runner !== request.runner) return "pending";
+  return "applied";
 }
 
 export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStopResult> {
@@ -231,7 +253,7 @@ export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableS
       alive: liveness.pidAlive,
       health,
       runner: fleet?.runner ?? "",
-      target: fleet?.slotsTotal ?? 0,
+      target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
       bundle_latest: fleet?.latestBundleVersion ?? "",
       heartbeat_age_s: heartbeatAgeS,
@@ -290,9 +312,16 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
     if (health !== "quiescent") {
       const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
-      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode);
+      const directiveRunner = parsed.runnerFlag ? detectRunner({ flag: parsed.runnerFlag }).runner : undefined;
+      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode, directiveRunner);
+      const ack = directiveAck(await readFleetState(paths.fleetStatePath), {
+        target: parsed.target,
+        shrinkMode,
+        ...(directiveRunner !== undefined ? { runner: directiveRunner } : {}),
+      });
       stdout.write(
-        `fleet resize requested (supervisor pid=${existing}, target=${parsed.target}, shrink-mode=${shrinkMode})\n`,
+        `fleet directive ${ack} (supervisor pid=${existing}, target=${parsed.target}` +
+          `${directiveRunner !== undefined ? `, runner=${directiveRunner}` : ""}, shrink-mode=${shrinkMode})\n`,
       );
       return { status: "resized", pid: existing, target: parsed.target, log: logFile };
     }

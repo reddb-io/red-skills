@@ -58,7 +58,7 @@ import {
   createCastleLaneWriters,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
-import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -70,7 +70,7 @@ function isAlive(pid: number): boolean {
 }
 
 function fleetHeartbeatMessage(hb: FleetHeartbeat): string {
-  return `fleet tick ready=${hb.readyForAgent} busy=${hb.slotsBusy} free=${hb.slotsFree} spawns=${hb.spawnsThisTick}`;
+  return `fleet tick target=${hb.target} runner=${hb.runner} shrink-mode=${hb.shrinkMode} ready=${hb.readyForAgent} busy=${hb.slotsBusy} free=${hb.slotsFree} spawns=${hb.spawnsThisTick}`;
 }
 
 /**
@@ -85,7 +85,9 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
     ts: hb.ts,
     epoch: hb.epoch,
     ...(hb.lastProgressEpoch > 0 ? { last_progress_epoch: hb.lastProgressEpoch } : {}),
+    ...(hb.target !== undefined ? { target: hb.target } : {}),
     runner: hb.runner,
+    ...(hb.shrinkMode !== undefined ? { shrink_mode: hb.shrinkMode } : {}),
     ...(hb.bundleVersion ? { bundle_version: hb.bundleVersion } : {}),
     ready_for_agent: hb.readyForAgent,
     slots: {
@@ -138,6 +140,8 @@ async function writeCastleSupervisorSnapshot(
       current: {
         epoch: hb.epoch,
         last_progress_epoch: hb.lastProgressEpoch,
+        ...(hb.target !== undefined ? { target: hb.target } : {}),
+        ...(hb.shrinkMode !== undefined ? { shrink_mode: hb.shrinkMode } : {}),
         ready_for_agent: hb.readyForAgent,
         slots: {
           busy: hb.slotsBusy,
@@ -275,8 +279,13 @@ function slotRetirePath(statePath: string, slot: number): string {
 
 function readResizeRequest(path: string): ElasticResizeRequest | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+    // Sniff-decode: the launcher writes the directive as TOON (encodeToon), but
+    // tolerate a legacy JSON directive left by an older bundle. JSON.parse alone
+    // would throw on the TOON body and silently drop every resize/runner
+    // directive (the write side is TOON on main).
+    const parsed = decodeDevSnapshotSniff(readFileSync(path, "utf8")) as {
       target?: unknown;
+      runner?: unknown;
       shrink_mode?: unknown;
       shrinkMode?: unknown;
     };
@@ -286,9 +295,11 @@ function readResizeRequest(path: string): ElasticResizeRequest | null {
       rawMode === "hard-kill" || rawMode === "drain-then-retire"
         ? rawMode
         : undefined;
+    const runner = typeof parsed.runner === "string" && parsed.runner.length > 0 ? parsed.runner : undefined;
     return {
       target: parsed.target as number,
       ...(shrinkMode !== undefined ? { shrinkMode } : {}),
+      ...(runner !== undefined ? { runner } : {}),
     };
   } catch {
     return null;
@@ -473,14 +484,16 @@ function buildSupervisorDeps(
   // (gap 4). Operator-set RED_AFK_* vars (RED_AFK_SKIP_PERF, etc) and the rest of
   // the environment survive. RED_AFK_RUNNER is re-added explicitly below so the
   // worker's detection cascade pins the supervisor's runner.
-  const workerEnv = buildWorkerEnv(process.env, runner);
+  let activeRunner = runner;
+  let workerEnv = buildWorkerEnv(process.env, activeRunner);
+  let hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
 
   return {
     proc: {
       spawnSlot: async (slot, policy) => {
         // Forward the Spec/Ticket filter + runner-swap policy so a supervised
         // fleet honours the same filter a single `/afk run` would (gap 5).
-        const runArgs = ["run", "--once", "--runner", runner, ...slotArgs];
+        const runArgs = ["run", "--once", "--runner", activeRunner, ...slotArgs];
         // Each slot gets its own log file so the circuit-trip sweep can
         // resolve which worker IDs ran in the slot via parseWorkerIdsFromLog
         // (mirrors spawn_slot's per-slot slot_log in supervisor.sh).
@@ -507,7 +520,7 @@ function buildSupervisorDeps(
       },
       spawnReconcileWorker: async (slot, candidate) => {
         const runArgs = [
-          "run", "--once", "--runner", runner,
+          "run", "--once", "--runner", activeRunner,
           "--reconcile-issue", String(candidate.issue),
           ...slotArgs,
         ];
@@ -668,13 +681,18 @@ function buildSupervisorDeps(
     },
     attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
     resizeRequest: async () => readResizeRequest(afkPaths(root).supervisorResizePath),
+    configureRunner: (nextRunner) => {
+      activeRunner = nextRunner;
+      workerEnv = buildWorkerEnv(process.env, activeRunner);
+      hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
+    },
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
     // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
     // a dispatch failure is returned to the caller; the caller catches and logs.
     dispatchFleetHook: async (name, context) => {
       const commands = fleetHooks[name];
       return dispatchFleetHook(name, commands, context, fleetHookExec, {
-        env: hookEnvBase,
+        env: hookEnv,
         log: logLine,
       });
     },
@@ -703,6 +721,8 @@ function buildSupervisorDeps(
             extra: {
               scope: "fleet",
               runner: stamped.runner,
+              target: String(stamped.target),
+              shrink_mode: stamped.shrinkMode,
               bundle_version: stamped.bundleVersion ?? null,
               ready_for_agent: String(stamped.readyForAgent),
               slots_busy: String(stamped.slotsBusy),

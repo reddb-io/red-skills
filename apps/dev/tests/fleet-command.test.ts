@@ -178,15 +178,65 @@ describe("fleet command stale supervisor state", () => {
         "utf8",
       );
       vi.mocked(isLivePid).mockReturnValue(true);
-      const out = stream();
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
 
       const result = await launchFleet(["4", "--shrink-mode", "hard-kill"], root, out);
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
+      expect(writes.join("")).toContain("fleet directive pending");
       expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         shrink_mode: "hard-kill",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("launchFleet reports applied when a live runner directive already matches the heartbeat", async () => {
+    const root = scratch();
+    try {
+      const stateAfk = join(root, ".red", "state", "castle");
+      mkdirSync(stateAfk, { recursive: true });
+      writeFileSync(join(stateAfk, "afk-supervisor.pid"), "12345", "utf8");
+      const epoch = Math.floor(Date.now() / 1000);
+      writeFileSync(
+        join(stateAfk, "afk-supervisor.state.json"),
+        JSON.stringify({
+          epoch,
+          last_progress_epoch: epoch,
+          target: 4,
+          runner: "codex",
+          shrink_mode: "drain-then-retire",
+          slots: { busy: 1, free: 3, total: 4, parked: 0 },
+        }),
+        "utf8",
+      );
+      vi.mocked(isLivePid).mockReturnValue(true);
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
+
+      const result = await launchFleet(["4", "--runner", "codex"], root, out);
+
+      expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
+      expect(spawnSupervisor).not.toHaveBeenCalled();
+      expect(writes.join("")).toContain("fleet directive applied");
+      expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
+        target: 4,
+        runner: "codex",
+        shrink_mode: "drain-then-retire",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

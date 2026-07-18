@@ -126,6 +126,7 @@ interface FakeIo {
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
   attemptBranchHead: ReturnType<typeof vi.fn>;
+  configureRunner: ReturnType<typeof vi.fn>;
   emitSupervisorEvent: ReturnType<typeof vi.fn>;
   bootSweeps: ReturnType<typeof vi.fn>;
   logLines: string[];
@@ -175,6 +176,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     fleetCostUsd: vi.fn(() => 0),
     resizeRequest: vi.fn(async () => null),
     attemptBranchHead: vi.fn(async () => undefined as string | undefined),
+    configureRunner: vi.fn(async () => {}),
     emitSupervisorEvent: vi.fn(async () => {}),
     bootSweeps: vi.fn(async () => {}),
     logLines: [],
@@ -217,6 +219,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     repairFleetHeartbeat: io.repairFleetHeartbeat,
     unblockSweep: io.unblockSweep,
     attemptBranchHead: io.attemptBranchHead,
+    configureRunner: io.configureRunner,
     resizeRequest: io.resizeRequest,
     emitSupervisorEvent: io.emitSupervisorEvent,
     bootSweeps: io.bootSweeps,
@@ -577,6 +580,7 @@ describe("guardedTick — abandoned flag", () => {
       reconciledSlots: [],
       unblocked: [],
       retiredSlots: [],
+      runnerChanged: false,
       stopped: false,
       queueDepth: 0,
       abandoned: false,
@@ -1335,6 +1339,63 @@ describe("superviseTick — elastic fleet resize (#1913)", () => {
     expect(io.spawnSlot).not.toHaveBeenCalled();
     expect(result.retiredSlots).toEqual([1]);
   });
+
+  it("switches runner at runtime by retiring every live slot before respawning on the new runner", async () => {
+    const live = new Set([5000, 5001]);
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => live.has(pid)),
+      resizeRequest: vi.fn(async () => ({ target: 2, runner: "codex", shrinkMode: "drain-then-retire" })),
+      spawnSlot: vi.fn(async (slot: number) => ({ pid: 9000 + slot, spawnEpoch: NOW })),
+    });
+    const cfg = config({ target: 2, runner: "claude" });
+    const state = initSupervisorState(2);
+    state.slots[0]!.pid = 5000;
+    state.slots[1]!.pid = 5001;
+
+    let result = await superviseTick(state, deps, cfg, () => false);
+
+    expect(cfg.runner).toBe("codex");
+    expect(io.configureRunner).toHaveBeenCalledWith("codex");
+    expect(state.slots).toHaveLength(2);
+    expect(state.slots.every((slot) => slot.retiring)).toBe(true);
+    expect(io.requestSlotRetire).toHaveBeenCalledWith(0, 5000);
+    expect(io.requestSlotRetire).toHaveBeenCalledWith(1, 5001);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(result.runnerChanged).toBe(true);
+
+    live.clear();
+    io.lastExitCode.mockReturnValue(0);
+    result = await superviseTick(state, deps, cfg, () => false);
+
+    expect(state.slots).toHaveLength(0);
+    expect(result.retiredSlots).toEqual([1, 0]);
+
+    result = await superviseTick(state, deps, cfg, () => false);
+
+    expect(state.slots).toHaveLength(2);
+    expect(io.spawnSlot).toHaveBeenCalledWith(0);
+    expect(io.spawnSlot).toHaveBeenCalledWith(1);
+    expect(result.respawned).toEqual([0, 1]);
+  });
+
+  it("treats an unchanged runner directive as a no-op", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      resizeRequest: vi.fn(async () => ({ target: 2, runner: "claude", shrinkMode: "drain-then-retire" })),
+    });
+    const cfg = config({ target: 2, runner: "claude" });
+    const state = initSupervisorState(2);
+    state.slots[0]!.pid = 5000;
+    state.slots[1]!.pid = 5001;
+
+    const result = await superviseTick(state, deps, cfg, () => false);
+
+    expect(io.configureRunner).not.toHaveBeenCalled();
+    expect(io.requestSlotRetire).not.toHaveBeenCalled();
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(state.slots.every((slot) => !slot.retiring)).toBe(true);
+    expect(result.runnerChanged).toBe(false);
+  });
 });
 
 // ---------- crash reconcile (#815, ADR 0071 Pattern 5) ----------
@@ -1660,6 +1721,9 @@ describe("runSupervisor", () => {
     expect(io.emitFleetHeartbeat).toHaveBeenCalledTimes(2);
     expect(io.emitFleetHeartbeat.mock.calls[0]![0]).toMatchObject({
       ts: new Date(NOW * 1000).toISOString(),
+      target: 1,
+      runner: "claude",
+      shrinkMode: "drain-then-retire",
       readyForAgent: 5,
       slotsBusy: 1,
       slotsFree: 0,
@@ -1766,8 +1830,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], runnerChanged: false, stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], runnerChanged: false, stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];
