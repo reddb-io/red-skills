@@ -19,6 +19,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { encodeLines } from "@reddb-io/toon";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
@@ -231,7 +232,7 @@ function appendAdoptLivenessRecord(attemptDir: string): void {
     mkdirSync(attemptDir, { recursive: true });
     appendFileSync(
       join(attemptDir, LIVENESS_LANE_FILENAME),
-      `${JSON.stringify({ at: Date.now(), kind: "iteration-start" })}\n`,
+      encodeLines().push({ at: Date.now(), kind: "iteration-start" }),
     );
   } catch {
     // best-effort: the presence row still renders on pid liveness alone.
