@@ -528,6 +528,7 @@ function parseFleetState(raw: unknown): FleetState | null {
       message?: unknown;
     };
     slot_details?: unknown;
+    slot_pids?: unknown;
   };
   const epoch = Number(rec.epoch ?? 0);
   if (!Number.isFinite(epoch) || epoch <= 0) return null;
@@ -551,6 +552,22 @@ function parseFleetState(raw: unknown): FleetState | null {
       const rawRetry = entry.retry_at !== undefined ? Number(entry.retry_at) : undefined;
       const retryAt = rawRetry !== undefined && Number.isFinite(rawRetry) ? rawRetry : undefined;
       slotDetails.push({ index: idx, status: status as SlotDetail["status"], ...(retryAt !== undefined ? { retryAt } : {}) });
+    }
+  }
+
+  let slotPids: FleetState["slotPids"] | undefined;
+  if (Array.isArray(rec.slot_pids)) {
+    slotPids = [];
+    const seen = new Set<number>();
+    for (const p of rec.slot_pids as unknown[]) {
+      if (p === null || typeof p !== "object") continue;
+      const entry = p as { slot?: unknown; pid?: unknown };
+      const slot = Number(entry.slot);
+      const pid = Number(entry.pid);
+      if (!Number.isSafeInteger(slot) || slot < 0 || seen.has(slot)) continue;
+      if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+      seen.add(slot);
+      slotPids.push({ slot, pid });
     }
   }
 
@@ -600,6 +617,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     churnWindowS: Number(rec.churn?.window_s ?? 0) || 0,
     ...(trunkFreshness !== undefined ? { trunkFreshness } : {}),
     ...(slotDetails !== undefined ? { slotDetails } : {}),
+    ...(slotPids !== undefined ? { slotPids } : {}),
   };
 }
 
