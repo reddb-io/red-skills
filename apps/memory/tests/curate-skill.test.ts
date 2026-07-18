@@ -18,6 +18,7 @@ import {
 } from "../src/curate-skill/archive-engine.js";
 import type { ArchiveFs } from "../src/curate-skill/archive-engine.js";
 import type { ArchiveCandidate, CuratorReportEnvelope } from "../src/curate-skill/types.js";
+import { decodeMemoryStateDocument } from "../src/toon-state.js";
 
 const TIMEOUT = 30_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -259,7 +260,16 @@ describe("archive-engine — archive + restore round-trip", () => {
 
       // Manifest is well-formed and records both files with hashes.
       const manifestRaw = await readFile(archived.receipt.manifestPath, "utf8");
-      const manifest = JSON.parse(manifestRaw);
+      expect(archived.receipt.manifestPath.endsWith("manifest.toon")).toBe(true);
+      expect(manifestRaw.trimStart().startsWith("{")).toBe(false);
+      const manifest = decodeMemoryStateDocument<{
+        name: string;
+        originalRoot: string;
+        archivedAt: string;
+        category: string;
+        reason: string;
+        files: Array<{ relativePath: string }>;
+      }>(manifestRaw);
       expect(manifest.name).toBe("demo-skill");
       expect(manifest.originalRoot).toBe(skillDir);
       expect(manifest.archivedAt).toBe("2026-05-22T16:00:00.000Z");
