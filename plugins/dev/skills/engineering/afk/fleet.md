@@ -85,6 +85,20 @@ Steps, in order:
    - Bare/unknown: print `no native monitor teardown for this runner.`
 4. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 1 and the runner-specific teardown no-op in step 3. Exit 0 either way.
 
+### `/dev:afk fleet logs` — local structured log reader
+
+`/dev:afk fleet logs --supervisor`, `/dev:afk fleet logs --worker <id>`, and
+`/dev:afk fleet logs --all` are read-only local views over the castle lanes.
+They do not call GitHub and do not mutate fleet state. They decode structured
+TOONL records and render human-readable lines only at read time:
+
+- `--supervisor` reads supervisor lanes under `.red/tmp/supervisors/`.
+- `--worker <id>` reads that worker's `.red/tmp/workers/<id>/worker.log.toonl`.
+- `--all` reads every worker lane, merges records by timestamp, and prefixes
+  each rendered line with `[worker-id]`.
+- `--follow` keeps polling the selected lane set and streams appended records
+  until the caller stops the command.
+
 ### Circuit Trip Sweep
 
 When the circuit breaker parks a slot (`CIRCUIT_K` fast deaths inside `CIRCUIT_WINDOW_S`) the supervisor — not a human — runs `sweep_parked_slot` to clean up after the burned workers. Three actions, in order, gated on the trip:
