@@ -32,9 +32,9 @@
       "reason": "GitHub review API --input payload is JSON."
     },
     {
-      "id": "apps/memory/src/bench-eval.ts#json-parse-file-read#9f8ee3a49186",
+      "id": "apps/memory/src/bench-eval/loaders.ts#json-parse-file-read#66b9c0159970",
       "classification": "external",
-      "reason": "Benchmark question fixtures are JSON inputs."
+      "reason": "External JSON I/O relocated by a behavior-preserving file-split; re-seeded (see #2104 splits)."
     },
     {
       "id": "apps/memory/src/bench-latency.ts#json-parse-file-read#c2af8acfa0f2",
@@ -50,21 +50,6 @@
       "id": "apps/memory/src/bench-recall.ts#json-parse-file-read#cd9ba4816a71",
       "classification": "external",
       "reason": "Benchmark query fixtures are JSON inputs."
-    },
-    {
-      "id": "apps/memory/src/cli.ts#json-parse-file-read#ed1088009085",
-      "classification": "external",
-      "reason": "User-supplied graph contract may be JSON."
-    },
-    {
-      "id": "apps/memory/src/cli.ts#json-stringify-file-write#0b91ffb44ffd",
-      "classification": "external",
-      "reason": "Export command deliberately emits JSON metadata."
-    },
-    {
-      "id": "apps/memory/src/cli.ts#json-stringify-file-write#0d38e8a06ad0",
-      "classification": "external",
-      "reason": "Export command deliberately emits JSON artifacts."
     },
     {
       "id": "apps/memory/src/export.ts#json-stringify-file-write#f2d8c9d8ed18",
