@@ -9,7 +9,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
-import type { ElasticShrinkMode } from "../core/supervisor.js";
+import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +56,8 @@ export interface SpawnSupervisorOptions {
   drainBudgetUsd?: number;
   /** Initial shrink mode for runtime target decreases. */
   shrinkMode?: ElasticShrinkMode;
+  /** Prior supervisor slot -> worker pid map for takeover/adoption. */
+  adoptSlotPids?: readonly HeartbeatSlotPid[];
 }
 
 /**
@@ -80,6 +82,9 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
   if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
   if (opts.shrinkMode !== undefined) env.RED_AFK_SHRINK_MODE = opts.shrinkMode;
+  if (opts.adoptSlotPids && opts.adoptSlotPids.length > 0) {
+    env.RED_AFK_ADOPT_SLOT_PIDS = JSON.stringify(opts.adoptSlotPids);
+  }
 
   const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
     cwd: opts.root,
@@ -118,6 +123,7 @@ export function stampFreshFleetHeartbeat(
     shrink_mode: "drain-then-retire",
     ready_for_agent: 0,
     slots: { busy: 0, free: target, total: target, parked: 0 },
+    slot_pids: [],
     spawns_this_tick: 0,
   });
   const tmp = `${statePath}.tmp`;

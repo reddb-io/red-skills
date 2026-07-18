@@ -169,13 +169,13 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
   if (supervisor.status === "stale") {
     await sweepOrphans();
-    stdout.write(`no fleet running (stale supervisor files — cleaned).\n`);
+    stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
     return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
   }
   const pid = supervisor.pid;
   if (!pid) {
     await sweepOrphans();
-    stdout.write("no fleet running.\n");
+    stdout.write("no fleet running (reason=no supervisor pid).\n");
     return { status: "none" };
   }
   await writeFile(stopFile, "", "utf8");
@@ -186,7 +186,7 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
       // exit, but sweep detached survivors anyway — a slot the loop lost track of
       // (moved-pid, mid-spawn) would otherwise outlive the "stopped" report.
       await sweepOrphans();
-      stdout.write(`🛑 fleet stopped (supervisor pid=${pid} exited).\n`);
+      stdout.write(`🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`);
       return { status: "stopped", pid };
     }
     await sleep(1_000);
@@ -206,7 +206,7 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     await rm(stopFile, { force: true });
     // killTree of the supervisor pid misses the detached workers — sweep them.
     await sweepOrphans();
-    stdout.write(`🛑 fleet stopped (supervisor pid=${pid} killed after graceful-stop timeout).\n`);
+    stdout.write(`🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`);
     return { status: "stopped", pid };
   }
   stdout.write(
@@ -294,6 +294,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   await migrateLegacyDevPaths(root).catch(() => undefined);
   const pidFile = paths.supervisorPidPath;
   const logFile = paths.supervisorLogPath;
+  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(() => null);
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
   if (supervisor.status === "stale") {
     stdout.write(`cleaned stale supervisor files before fleet launch.\n`);
@@ -347,6 +348,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     request: parsed.request,
     drainBudgetUsd: parsed.drainBudgetUsd,
     shrinkMode: parsed.shrinkMode,
+    adoptSlotPids: priorFleetState?.slotPids ?? [],
   });
   if (!supervisorPid) {
     let tail = "";

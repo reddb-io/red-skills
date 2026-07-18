@@ -75,6 +75,36 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("launchFleet passes the prior slot pid map to the relaunched supervisor", async () => {
+    const root = scratch();
+    try {
+      const paths = writeSupervisorArtifacts(root, 999_999_999);
+      const epoch = Math.floor(Date.now() / 1000);
+      writeFileSync(
+        paths.state,
+        JSON.stringify({
+          ts: new Date(epoch * 1000).toISOString(),
+          epoch,
+          runner: "codex",
+          ready_for_agent: 2,
+          slots: { busy: 2, free: 0, total: 2, parked: 0 },
+          slot_pids: [{ slot: 0, pid: 11111 }, { slot: 1, pid: 22222 }],
+          spawns_this_tick: 0,
+        }),
+        "utf8",
+      );
+
+      await launchFleet(["2", "--runner", "codex"], root, stream());
+
+      expect(spawnSupervisor).toHaveBeenCalledWith(expect.objectContaining({
+        adoptSlotPids: [{ slot: 0, pid: 11111 }, { slot: 1, pid: 22222 }],
+      }));
+      expect(existsSync(paths.state)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("stopFleet removes dead supervisor pid/state/log files", async () => {
     const root = scratch();
     try {

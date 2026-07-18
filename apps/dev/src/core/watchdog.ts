@@ -350,6 +350,9 @@ async function recoverDeadSupervisor(
   } catch (err) {
     io.log(`watchdog: relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  io.log(`watchdog: dead supervisor respawned — fresh fleet relaunched (target ${signals.target}).`);
+  io.log(
+    `watchdog: dead supervisor respawned — reason=${signals.readyForAgent} ready stranded, ` +
+      `${signals.liveWorkers}/${signals.target} live worker(s); fresh fleet relaunched.`,
+  );
   return { ...base, respawnedDeadSupervisor: true };
 }

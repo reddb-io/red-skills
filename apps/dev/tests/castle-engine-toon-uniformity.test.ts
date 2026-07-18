@@ -50,6 +50,8 @@ function sampleHeartbeat(): FleetHeartbeat {
     epoch: 42,
     lastProgressEpoch: 41,
     runner: "claude",
+    target: 2,
+    shrinkMode: "drain-then-retire",
     bundleVersion: "9.9.9",
     readyForAgent: 3,
     slotsBusy: 1,
@@ -58,7 +60,9 @@ function sampleHeartbeat(): FleetHeartbeat {
     slotsParked: 0,
     spawnsThisTick: 0,
     churn: { deaths: 2, respawns: 2, windowS: 300 },
-  } as FleetHeartbeat;
+    slotDetails: [],
+    slotPids: [{ slot: 0, pid: 12345 }],
+  };
 }
 
 describe("castle-engine write-surface TOON uniformity", () => {
@@ -93,6 +97,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
     const decoded = decode(bytes) as Record<string, unknown>;
     expect(decoded.epoch).toBe(42);
     expect(decoded.slots).toEqual({ busy: 1, free: 1, total: 2, parked: 0 });
+    expect(decoded.slot_pids).toEqual([{ slot: 0, pid: 12345 }]);
     expect(decoded.churn).toEqual({ deaths: 2, respawns: 2, window_s: 300 });
   });
 
@@ -105,6 +110,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
     const decoded = decode(bytes) as Record<string, unknown>;
     expect(decoded.epoch).toBe(7);
     expect(decoded.slots).toEqual({ busy: 0, free: 2, total: 2, parked: 0 });
+    expect(decoded.slot_pids).toEqual([]);
   });
 
   it("the supervisor restart ledger is TOON, never raw JSON", async () => {

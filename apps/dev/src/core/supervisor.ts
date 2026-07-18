@@ -570,6 +570,9 @@ export interface SupervisorProc {
   spawnSlot(slot: number, policy?: SpawnPolicy): Promise<{ pid: number; spawnEpoch: number }>;
   /** True when the pid is alive (kill -0). Mirrors `kill -0 "$pid"`. */
   isAlive(pid: number): boolean;
+  /** Last persisted worker pid for a slot, used by a relaunched supervisor to
+   * adopt surviving detached workers instead of spawning a parallel fleet. */
+  slotPid?(slot: number): number | null;
   /** kill_tree the pid and its descendants: SIGTERM, grace, then SIGKILL, and
    * CONFIRM the tree is gone (handled by the impl). Mirrors sup_kill_tree.
    * Returns true when death is confirmed, false when the tree survived SIGKILL;
@@ -699,6 +702,11 @@ export interface HeartbeatSlotDetail {
   retryAt?: number;
 }
 
+export interface HeartbeatSlotPid {
+  slot: number;
+  pid: number;
+}
+
 export type TrunkFreshnessStatus = "refreshed" | "failed" | "throttled";
 
 export interface TrunkFreshnessOutcome {
@@ -764,6 +772,8 @@ export interface FleetHeartbeat {
   trunkFreshness?: TrunkFreshnessOutcome;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
   slotDetails: HeartbeatSlotDetail[];
+  /** Persisted slot -> worker pid map for supervisor takeover/adoption. */
+  slotPids: HeartbeatSlotPid[];
 }
 
 export interface FleetHeartbeatEmitResult {
@@ -1303,6 +1313,17 @@ function buildSlotDetails(
   return details;
 }
 
+function buildSlotPidMap(state: SupervisorState): HeartbeatSlotPid[] {
+  const out: HeartbeatSlotPid[] = [];
+  for (let i = 0; i < state.slots.length; i += 1) {
+    const pid = state.slots[i]!.pid;
+    if (pid !== null && Number.isSafeInteger(pid) && pid > 0) {
+      out.push({ slot: i, pid });
+    }
+  }
+  return out;
+}
+
 function pruneEpochsInWindow(epochs: readonly number[], now: number, windowS: number): number[] {
   const floor = now - Math.max(1, windowS);
   return epochs.filter((epoch) => epoch >= floor);
@@ -1356,6 +1377,7 @@ async function emitFleetHeartbeat(
       ? { trunkFreshness: result.trunkFreshness ?? state.lastTrunkFreshness }
       : {}),
     slotDetails: buildSlotDetails(state, config),
+    slotPids: buildSlotPidMap(state),
   };
   let rawWrite: FleetHeartbeatEmitResult | void = undefined;
   try {
@@ -2592,6 +2614,53 @@ export async function terminateAll(state: SupervisorState, deps: SupervisorDeps)
   }
 }
 
+export interface SupervisorAdoptionResult {
+  adopted: HeartbeatSlotPid[];
+  dead: HeartbeatSlotPid[];
+}
+
+export async function adoptPersistedSlotPids(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+): Promise<SupervisorAdoptionResult> {
+  const result: SupervisorAdoptionResult = { adopted: [], dead: [] };
+  if (!deps.proc.slotPid) return result;
+
+  for (let i = 0; i < state.slots.length; i += 1) {
+    const slot = state.slots[i]!;
+    if (slot.pid !== null) continue;
+    const pid = deps.proc.slotPid(i);
+    if (pid === null || !Number.isSafeInteger(pid) || pid <= 0) continue;
+    if (deps.proc.isAlive(pid)) {
+      slot.pid = pid;
+      slot.spawnEpoch = 0;
+      slot.stalled = false;
+      slot.stallSinceEpoch = 0;
+      slot.reaped = false;
+      result.adopted.push({ slot: i, pid });
+    } else {
+      result.dead.push({ slot: i, pid });
+    }
+  }
+
+  if (result.adopted.length > 0 || result.dead.length > 0) {
+    deps.log?.(
+      `takeover adoption: adopted=${result.adopted.length} dead=${result.dead.length} target=${state.slots.length}`,
+    );
+    await emitSupervisorEvent(deps, {
+      kind: "supervisor.message",
+      payload: {
+        message: "takeover adoption",
+        adopted: result.adopted.length,
+        dead: result.dead.length,
+        target: state.slots.length,
+      },
+    });
+  }
+
+  return result;
+}
+
 /**
  * The supervisor's startup + health-check loop, composing the steps above. This
  * is the testable shape of supervisor.sh's main body (~1109-1141): validate
@@ -2670,11 +2739,17 @@ export async function runSupervisor(
     }
   }
 
+  // Adopt live detached workers from the previous supervisor's persisted
+  // slot->pid snapshot before spawning the initial fleet. Dead pids are left as
+  // empty slots, so the spawn loop fills only the remainder.
+  await adoptPersistedSlotPids(state, deps);
+
   // Spawn the initial fleet to target.
   const initialBudget = readDrainBudget(state, deps, config);
   logDrainBudgetTransition(state, deps, initialBudget, 0);
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
+    if (slot.pid !== null && deps.proc.isAlive(slot.pid)) continue;
     const spawned = await spawnSlotForBudget(i, deps, state, initialBudget);
     if (spawned === null) continue;
     slot.pid = spawned.pid;

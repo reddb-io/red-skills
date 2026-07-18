@@ -217,3 +217,44 @@ release trigger even though the code diff is already on `main`.
 
 This playbook establishes the documentation contract for release troubleshooting
 in #1863; the durable release policy remains the conventional-commit pipeline.
+
+## Fleet stop and takeover verification
+
+### Symptom
+
+A fleet supervisor was stopped, killed, relaunched, or watchdog-respawned, and
+you need to prove whether workers were cleanly stopped or adopted by the new
+supervisor.
+
+### Confirm
+
+1. Run `red-skills-dev fleet status` and read the supervisor health, target,
+   slot counts, and live worker list.
+2. Check `.red/tmp/supervisors/default/state.toon` for `slot_pids`. A relaunched
+   supervisor uses this map to adopt live detached workers into their original
+   slots before spawning replacements.
+3. For a clean stop, verify `afk-supervisor.pid` is gone and no live worker pids
+   remain under `.red/tmp/workers/*/worker.pid`.
+4. For takeover, compare the pre-relaunch `slot_pids` with the post-relaunch
+   state: live pids should remain in slots, dead pids should disappear, and
+   `spawns_this_tick` should fill only the missing remainder.
+5. Check `.red/state/castle/supervisors/` for stale `s<PID>` snapshot dirs. Dead
+   supervisor dirs should be removed on the next supervisor boot.
+
+### Recover
+
+1. Prefer `red-skills-dev fleet stop` for a clean stop; it writes the stop file,
+   waits for the supervisor, then sweeps detached orphan workers.
+2. If the supervisor died unexpectedly, let `red-skills-dev fleet` or the
+   watchdog relaunch it. The relaunch should report why it respawned, including
+   ready work stranded and live workers versus target.
+3. If live workers were not adopted, stop the fleet, verify no pids remain live,
+   then relaunch from a clean state.
+4. If stale castle supervisor dirs remain after boot, remove only dead `s<PID>`
+   dirs after confirming the pid is not live.
+
+### Root fix
+
+Supervisor snapshots persist slot pids so takeover is automatic. This playbook
+is the manual verification path for #2067 and should stay aligned with the
+state snapshot contract.
