@@ -198,6 +198,63 @@ describe("rsp git fidelity fixtures", () => {
     }
   });
 
+  it.each(["--short", "-s"])("parses git status %s rows instead of reporting clean", async (flag) => {
+    const result = await renderGitContract(["git", "status", flag], {
+      stdout: [
+        "## feature/rsp",
+        " M apps/rsp/src/git-wrapper.ts",
+        "?? apps/rsp/src/new-file.ts",
+        "R  old-name.ts -> new-name.ts",
+        "",
+      ].join("\n"),
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as {
+      branch: string;
+      rows: Array<{ path: string; index: string; worktree: string; state: string }>;
+      summary: string;
+    };
+
+    expect(result.status).toBe(0);
+    expect(decoded.branch).toBe("feature/rsp");
+    expect(decoded.rows).toEqual([
+      { path: "apps/rsp/src/git-wrapper.ts", index: ".", worktree: "M", state: "modified" },
+      { path: "apps/rsp/src/new-file.ts", index: "?", worktree: "?", state: "untracked" },
+      { path: "new-name.ts", index: "R", worktree: ".", state: "renamed" },
+    ]);
+    expect(decoded.summary).toContain("3 changes");
+    expect(decoded.summary).not.toContain("clean");
+  });
+
+  it("fails open to raw stdout when git status output is non-empty but unparseable", async () => {
+    const result = await renderGitContract(["git", "status", "--porcelain"], {
+      stdout: "not a git status format\n",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, { level: "lossless" });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.toString("utf8")).toBe("not a git status format\n");
+    expect(result.payload).toBeUndefined();
+    expect(result.degradation).toMatchObject({ reason: "git-status-unparseable", family: "git status" });
+  });
+
+  it("reports git status clean only when status stdout is genuinely empty", async () => {
+    const result = await renderGitContract(["git", "status", "--short"], {
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }, { level: "lossless" });
+    const decoded = decode(result.stdout.toString("utf8")) as { category: string; empty: boolean; summary: string };
+
+    expect(result.status).toBe(0);
+    expect(decoded).toMatchObject({ category: "no-op", empty: true, summary: "git status clean: 0 changes" });
+  });
+
   it("reports already-satisfied git push as an explicit no-op", async () => {
     const result = await renderGitContract(["git", "push"], {
       stdout: [
