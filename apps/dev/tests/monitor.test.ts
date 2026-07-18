@@ -388,6 +388,34 @@ describe("monitor — compact dashboard", () => {
       expect(decoded.fleet.version_skew).toBe(1);
     });
 
+    it("includes trunk freshness fields in the fleet status block", () => {
+      const out = renderCompactDashboardToon([], fixtureEvents, 1780138815, {
+        ...baseFleet(),
+        trunkFreshness: {
+          status: "refreshed",
+          refreshedAtEpoch: 1780138800,
+          intervalS: 60,
+          remoteRef: "origin/main",
+          mirrorRef: "red-trunk",
+          sha: "abc123",
+        },
+      });
+      const decoded = decode(out) as {
+        fleet: {
+          trunk_freshness_status: string;
+          trunk_freshness_refreshed_at: string;
+          trunk_freshness_remote_ref: string;
+          trunk_freshness_mirror_ref: string;
+          trunk_freshness_sha: string;
+        };
+      };
+      expect(decoded.fleet.trunk_freshness_status).toBe("refreshed");
+      expect(decoded.fleet.trunk_freshness_refreshed_at).toBe("00:00:15");
+      expect(decoded.fleet.trunk_freshness_remote_ref).toBe("origin/main");
+      expect(decoded.fleet.trunk_freshness_mirror_ref).toBe("red-trunk");
+      expect(decoded.fleet.trunk_freshness_sha).toBe("abc123");
+    });
+
     it("is materially cheaper than JSON for a typical multi-worker board (#995)", () => {
       // The token win is the whole point of TOON as the default agent-facing
       // render (#995): the worker table names its 20 columns ONCE, where JSON
@@ -458,6 +486,24 @@ describe("monitor — compact dashboard", () => {
       1780138815,
     );
     expect(line).toContain("churn deaths:2 respawns:2/300s");
+  });
+
+  it("surfaces the trunk freshness outcome on the fleet line", () => {
+    const line = renderFleetLine(
+      baseFleet({
+        trunkFreshness: {
+          status: "refreshed",
+          refreshedAtEpoch: 1780138800,
+          intervalS: 60,
+          remoteRef: "origin/main",
+          mirrorRef: "red-trunk",
+          sha: "abc123",
+        },
+      }),
+      1780138815,
+    );
+
+    expect(line).toContain("trunk:refreshed");
   });
 
   it("carries parked:N unconditionally — zero when all slots closed", () => {
