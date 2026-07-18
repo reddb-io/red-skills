@@ -97,6 +97,20 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
       parked: hb.slotsParked,
     },
     spawns_this_tick: hb.spawnsThisTick,
+    ...(hb.trunkFreshness
+      ? {
+          trunk_freshness: {
+            status: hb.trunkFreshness.status,
+            refreshed_at_epoch: hb.trunkFreshness.refreshedAtEpoch,
+            interval_s: hb.trunkFreshness.intervalS,
+            ...(hb.trunkFreshness.nextDueEpoch !== undefined ? { next_due_epoch: hb.trunkFreshness.nextDueEpoch } : {}),
+            ...(hb.trunkFreshness.remoteRef ? { remote_ref: hb.trunkFreshness.remoteRef } : {}),
+            ...(hb.trunkFreshness.mirrorRef ? { mirror_ref: hb.trunkFreshness.mirrorRef } : {}),
+            ...(hb.trunkFreshness.sha ? { sha: hb.trunkFreshness.sha } : {}),
+            ...(hb.trunkFreshness.message ? { message: hb.trunkFreshness.message } : {}),
+          },
+        }
+      : {}),
     churn: {
       deaths: hb.churn.deaths,
       respawns: hb.churn.respawns,
@@ -150,6 +164,20 @@ async function writeCastleSupervisorSnapshot(
           parked: hb.slotsParked,
         },
         spawns_this_tick: hb.spawnsThisTick,
+        ...(hb.trunkFreshness
+          ? {
+              trunk_freshness: {
+                status: hb.trunkFreshness.status,
+                refreshed_at_epoch: hb.trunkFreshness.refreshedAtEpoch,
+                interval_s: hb.trunkFreshness.intervalS,
+                ...(hb.trunkFreshness.nextDueEpoch !== undefined ? { next_due_epoch: hb.trunkFreshness.nextDueEpoch } : {}),
+                ...(hb.trunkFreshness.remoteRef ? { remote_ref: hb.trunkFreshness.remoteRef } : {}),
+                ...(hb.trunkFreshness.mirrorRef ? { mirror_ref: hb.trunkFreshness.mirrorRef } : {}),
+                ...(hb.trunkFreshness.sha ? { sha: hb.trunkFreshness.sha } : {}),
+                ...(hb.trunkFreshness.message ? { message: hb.trunkFreshness.message } : {}),
+              },
+            }
+          : {}),
         churn: {
           deaths: hb.churn.deaths,
           respawns: hb.churn.respawns,
@@ -440,6 +468,7 @@ function buildSupervisorDeps(
   supervisorId: string,
   runner: string,
   ghCtx: ghx.GhContext,
+  trunk: string,
   slotArgs: readonly string[],
   hookEnvBase: Record<string, string>,
 ): SupervisorDeps {
@@ -679,6 +708,25 @@ function buildSupervisorDeps(
         return [];
       }
     },
+    refreshTrunkMirror: async () => {
+      const base = trunk.trim() || "main";
+      const refreshed = await gitx.resolveFreshBase({ cwd: root }, { base, remote: "origin" });
+      if (refreshed.ok) {
+        return {
+          status: "refreshed",
+          remoteRef: `origin/${base}`,
+          mirrorRef: refreshed.baseRef,
+          sha: refreshed.sha,
+        };
+      }
+      return {
+        status: "failed",
+        remoteRef: `origin/${base}`,
+        mirrorRef: gitx.FLEET_TRUNK,
+        ...(refreshed.sha ? { sha: refreshed.sha } : {}),
+        message: refreshed.message,
+      };
+    },
     attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
     resizeRequest: async () => readResizeRequest(afkPaths(root).supervisorResizePath),
     configureRunner: (nextRunner) => {
@@ -734,6 +782,16 @@ function buildSupervisorDeps(
               drain_budget_spent_usd: stamped.drainBudget?.spentUsd.toFixed(4) ?? null,
               drain_budget_limit_usd: stamped.drainBudget?.limitUsd.toFixed(4) ?? null,
               drain_budget_percent: stamped.drainBudget ? (stamped.drainBudget.percent * 100).toFixed(2) : null,
+              trunk_freshness_status: stamped.trunkFreshness?.status ?? null,
+              trunk_freshness_remote_ref: stamped.trunkFreshness?.remoteRef ?? null,
+              trunk_freshness_mirror_ref: stamped.trunkFreshness?.mirrorRef ?? null,
+              trunk_freshness_sha: stamped.trunkFreshness?.sha ?? null,
+              trunk_freshness_refreshed_at_epoch: stamped.trunkFreshness
+                ? String(stamped.trunkFreshness.refreshedAtEpoch)
+                : null,
+              trunk_freshness_next_due_epoch: stamped.trunkFreshness?.nextDueEpoch !== undefined
+                ? String(stamped.trunkFreshness.nextDueEpoch)
+                : null,
             },
           },
         });
@@ -807,6 +865,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
   const state = initSupervisorState(config.target);
   const repo = await resolveRepoSlug(root).catch(() => "");
+  const trunk = getConfig(values, "dev.trunk") || "main";
   const ghCtx = { cwd: root, repo };
   const supervisorId = `s${process.pid}`;
   // The filter/policy flags fleet.ts forwarded (--spec/--issues/--alternate/
@@ -819,7 +878,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     RED_AFK_RUNNER: config.runner,
     ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
   };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, slotArgs, hookEnvBase);
+  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, trunk, slotArgs, hookEnvBase);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 

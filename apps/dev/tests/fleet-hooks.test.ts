@@ -51,6 +51,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
     unblockSweepIntervalS: 60,
+    trunkFreshnessIntervalS: 60,
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
     reapContestWindowS: 30,

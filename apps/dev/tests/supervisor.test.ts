@@ -80,6 +80,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
     unblockSweepIntervalS: 60,
+    trunkFreshnessIntervalS: 60,
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
     reapContestWindowS: 30,
@@ -123,6 +124,7 @@ interface FakeIo {
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   repairFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
+  refreshTrunkMirror: ReturnType<typeof vi.fn>;
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
   attemptBranchHead: ReturnType<typeof vi.fn>;
@@ -173,6 +175,12 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     emitFleetHeartbeat: vi.fn(async () => {}),
     repairFleetHeartbeat: vi.fn(async () => ({ stateWritten: true })),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
+    refreshTrunkMirror: vi.fn(async () => ({
+      status: "refreshed",
+      remoteRef: "origin/main",
+      mirrorRef: "red-trunk",
+      sha: "abc123",
+    })),
     fleetCostUsd: vi.fn(() => 0),
     resizeRequest: vi.fn(async () => null),
     attemptBranchHead: vi.fn(async () => undefined as string | undefined),
@@ -218,6 +226,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     emitFleetHeartbeat: io.emitFleetHeartbeat,
     repairFleetHeartbeat: io.repairFleetHeartbeat,
     unblockSweep: io.unblockSweep,
+    refreshTrunkMirror: io.refreshTrunkMirror,
     attemptBranchHead: io.attemptBranchHead,
     configureRunner: io.configureRunner,
     resizeRequest: io.resizeRequest,
@@ -2376,6 +2385,128 @@ describe("superviseTick — periodic dependency Unblock Sweep (#844)", () => {
 
     expect(result.unblocked).toEqual([]);
     expect(state.lastUnblockSweepEpoch).toBe(0); // never stamped
+  });
+});
+
+// ---------- continuous trunk freshness tick (#2074) ----------
+
+describe("superviseTick — continuous trunk freshness (#2074)", () => {
+  it("refreshes the fleet trunk mirror on the first eligible tick", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      refreshTrunkMirror: vi.fn(async () => ({
+        status: "refreshed",
+        remoteRef: "origin/main",
+        mirrorRef: "red-trunk",
+        sha: "abc123",
+      })),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+
+    const result = await superviseTick(state, deps, config({ trunkFreshnessIntervalS: 60 }), () => false);
+
+    expect(io.refreshTrunkMirror).toHaveBeenCalledOnce();
+    expect(state.lastTrunkFreshnessEpoch).toBe(NOW);
+    expect(result.trunkFreshness).toEqual({
+      status: "refreshed",
+      remoteRef: "origin/main",
+      mirrorRef: "red-trunk",
+      sha: "abc123",
+      refreshedAtEpoch: NOW,
+      intervalS: 60,
+    });
+  });
+
+  it("throttles mirror refreshes inside the configured interval", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      now: vi.fn(() => NOW),
+      refreshTrunkMirror: vi.fn(async () => ({
+        status: "refreshed",
+        remoteRef: "origin/main",
+        mirrorRef: "red-trunk",
+        sha: "abc123",
+      })),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.lastTrunkFreshnessEpoch = NOW - 30;
+
+    const result = await superviseTick(state, deps, config({ trunkFreshnessIntervalS: 60 }), () => false);
+
+    expect(io.refreshTrunkMirror).not.toHaveBeenCalled();
+    expect(state.lastTrunkFreshnessEpoch).toBe(NOW - 30);
+    expect(result.trunkFreshness).toEqual({
+      status: "throttled",
+      refreshedAtEpoch: NOW - 30,
+      nextDueEpoch: NOW + 30,
+      intervalS: 60,
+    });
+  });
+
+  it("records failed mirror refreshes and still throttles the next attempt", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      refreshTrunkMirror: vi.fn(async () => ({
+        status: "failed",
+        remoteRef: "origin/main",
+        mirrorRef: "red-trunk",
+        message: "fetch failed",
+      })),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+
+    const result = await superviseTick(state, deps, config({ trunkFreshnessIntervalS: 60 }), () => false);
+
+    expect(io.refreshTrunkMirror).toHaveBeenCalledOnce();
+    expect(state.lastTrunkFreshnessEpoch).toBe(NOW);
+    expect(result.trunkFreshness).toEqual({
+      status: "failed",
+      remoteRef: "origin/main",
+      mirrorRef: "red-trunk",
+      message: "fetch failed",
+      refreshedAtEpoch: NOW,
+      intervalS: 60,
+    });
+  });
+
+  it("surfaces the latest freshness outcome in heartbeat and structured tick events", async () => {
+    let probes = 0;
+    const stop = () => {
+      probes += 1;
+      return probes >= 2;
+    };
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      refreshTrunkMirror: vi.fn(async () => ({
+        status: "refreshed",
+        remoteRef: "origin/main",
+        mirrorRef: "red-trunk",
+        sha: "abc123",
+      })),
+    });
+    const state = initSupervisorState(1);
+
+    await runSupervisor(state, deps, config({ target: 1, trunkFreshnessIntervalS: 60 }), stop);
+
+    expect(io.emitFleetHeartbeat.mock.calls[0]?.[0]).toMatchObject({
+      trunkFreshness: {
+        status: "refreshed",
+        remoteRef: "origin/main",
+        mirrorRef: "red-trunk",
+        sha: "abc123",
+      },
+    });
+    expect(io.emitSupervisorEvent.mock.calls.find((call) => call[0].kind === "supervisor.tick")?.[0]).toMatchObject({
+      payload: expect.objectContaining({
+        trunk_freshness_status: "refreshed",
+        trunk_freshness_remote_ref: "origin/main",
+        trunk_freshness_mirror_ref: "red-trunk",
+        trunk_freshness_sha: "abc123",
+      }),
+    });
   });
 });
 
