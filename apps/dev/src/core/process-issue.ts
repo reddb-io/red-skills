@@ -234,18 +234,16 @@ export interface ProcessGit {
   /** git -C primary branch -d <branch> after landing (best-effort). */
   deleteLocalBranch(branch: string): Promise<void>;
   /**
-   * git -C primary fetch origin <base> — make the resolved base ref current
-   * before sandcastle forks the worker branch off it (ADR 0031). Best-effort;
-   * sandcastle's NamedBranchStrategy.baseBranch start point reads the fetched
-   * ref. Optional so existing wiring/tests that predate the start point degrade
-   * to sandcastle's HEAD default.
+   * Legacy fallback: git -C primary fetch origin <base> before sandcastle forks
+   * the worker branch. Modern wiring prefers `resolveFreshBase`, which refreshes
+   * the fleet-owned `red-trunk` mirror and returns that as the start point.
    */
   fetchBase?(base: string): Promise<void>;
   /**
    * Resolve the exact base commit a new worker branch should fork from. Preferred
-   * over `fetchBase`: online it fetches and returns `origin/<base>`; offline it
-   * permits the local branch only when it is not behind the last-known origin tip,
-   * else returns `ok:false, reason:"base-stale"` so the attempt parks typed.
+   * over `fetchBase`: online it fetches `origin/<base>`, updates `red-trunk`, and
+   * returns the mirror ref; if the mirror cannot be refreshed, it returns
+   * `ok:false, reason:"base-stale"` so the attempt parks typed.
    */
   resolveFreshBase?(input: { base: string; remote: string }): Promise<WorkerBaseResolution>;
   /**
@@ -265,7 +263,7 @@ export interface WorkerBaseResolution {
   base: string;
   baseRef: string;
   sha: string;
-  source: "remote" | "local";
+  source: "remote" | "local" | "mirror";
   remoteReachable: boolean;
   localSha?: string;
   localAhead?: number;
@@ -1563,10 +1561,9 @@ export async function processIssue(
     return claimLost(issue, hooksFired);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
-  // ADR 0083 landing precondition (#1018): the configured Trunk (`plugins.dev.trunk`,
-  // default `main`) the primary checkout tracks — distinct from the resolved `base`
-  // (which may be a lock/pin branch). Both the ADR 0055 no-agent reconcile and the
-  // DONE-path doLanding verify the LOCAL trunk has not diverged from `origin/<trunk>`.
+  // Configured Trunk (`plugins.dev.trunk`, default `main`) is distinct from the
+  // resolved `base` (which may be a lock/pin branch). Freshness is enforced by
+  // the fleet-owned `red-trunk` mirror before worktree birth.
   const trunk = (deps.lookups.base.configTrunk ?? "").trim() || "main";
   const startedAt = deps.nowIso();
 
@@ -1644,11 +1641,8 @@ export async function processIssue(
   // `base` by the base-resolver), spawns the agent with `handoffPath` as the
   // prompt, detects the DONE/BLOCKED completion signal, and commits on `branch`.
   // Make the resolved base ref current so sandcastle forks the worker branch off
-  // it (ADR 0031): the pinned/locked base becomes the branch's parent, not HEAD.
-  // The preferred resolver fetches `origin/<base>` and returns that concrete tip;
-  // if the remote is unreachable it permits the local branch only when it is not
-  // behind the last-known origin tip. A stale local base parks typed instead of
-  // silently forking a branch that can revert already-landed sibling work (#1380).
+  // it (ADR 0031/0108): the preferred resolver fetches `origin/<base>`, updates
+  // `red-trunk`, and returns that mirror as the concrete start point.
   let baseResolution: WorkerBaseResolution;
   if (deps.git.resolveFreshBase) {
     baseResolution = await deps.git.resolveFreshBase({ base, remote: input.remote });
@@ -2662,10 +2656,9 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
-    // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL trunk
-    // has DIVERGED from origin/<trunk>. The landing aborted BEFORE integrating the
-    // attempt branch and never repaired the divergence — park ready-for-human with
-    // a divergence envelope naming both SHAs so a human reconciles the local state.
+    // Legacy ADR 0083 local-trunk-divergence route. New landing no longer emits
+    // this because trunk freshness is owned by the `red-trunk` mirror, but keep
+    // the handler for compatibility with older call paths.
     if (landing.reason === "trunk-diverged") {
       return await trunkDivergedBlocked(
         common,
@@ -4052,8 +4045,8 @@ function reconcileInputFor(
     labels: liveLabels,
     branch,
     base,
-    // ADR 0083 landing precondition (#1018): the configured Trunk for doLanding's
-    // local-trunk-divergence guard on the ADR 0055 no-agent reconcile land.
+    // Configured Trunk retained in the landing input for compatibility; freshness
+    // is now carried by the `red-trunk` mirror.
     trunk,
     repo: input.repo,
     repoDir: input.repoDir,
