@@ -147,6 +147,13 @@ export interface SupervisorConfig {
    */
   unblockSweepIntervalS: number;
   /**
+   * RED_AFK_TRUNK_FRESHNESS_INTERVAL_S — minimum seconds between supervisor
+   * refreshes of `origin/<trunk>` into the fleet-owned `red-trunk` mirror
+   * (default 60). The first eligible tick refreshes immediately; later ticks
+   * inside this window report `throttled` and avoid another remote fetch.
+   */
+  trunkFreshnessIntervalS: number;
+  /**
    * RED_AFK_SUPERVISOR_MAX_RESTARTS — crash-loop bound for the dead-supervisor
    * watchdog (#1097, default 5). When a supervisor is found DEAD (its pid file
    * points to a no-longer-alive process) with a non-empty `ready-for-agent` queue
@@ -196,6 +203,7 @@ export const SUPERVISOR_DEFAULTS = {
   halfOpenBaseS: SLOT_CIRCUIT_DEFAULTS.halfOpenBaseS,
   halfOpenCapS: SLOT_CIRCUIT_DEFAULTS.halfOpenCapS,
   unblockSweepIntervalS: 60,
+  trunkFreshnessIntervalS: 60,
   supervisorMaxRestarts: 5,
   supervisorRestartWindowS: 300,
   reapContestWindowS: 30,
@@ -331,6 +339,10 @@ export function resolveSupervisorConfig(
     unblockSweepIntervalS:
       num("RED_AFK_UNBLOCK_SWEEP_INTERVAL_S", SUPERVISOR_DEFAULTS.unblockSweepIntervalS) ||
       SUPERVISOR_DEFAULTS.unblockSweepIntervalS,
+    trunkFreshnessIntervalS:
+      num("RED_AFK_TRUNK_FRESHNESS_INTERVAL_S", SUPERVISOR_DEFAULTS.trunkFreshnessIntervalS) ||
+      parsePositiveNumber(getCfg("afk.trunk_freshness_interval_s")) ||
+      SUPERVISOR_DEFAULTS.trunkFreshnessIntervalS,
     // 0 would disable the crash-loop bound (endless respawns) — floor back to the
     // default so a typo can never turn the safety net into an infinite loop.
     supervisorMaxRestarts:
@@ -687,6 +699,29 @@ export interface HeartbeatSlotDetail {
   retryAt?: number;
 }
 
+export type TrunkFreshnessStatus = "refreshed" | "failed" | "throttled";
+
+export interface TrunkFreshnessOutcome {
+  status: TrunkFreshnessStatus;
+  /** Remote ref fetched by the refresh implementation, usually `origin/<trunk>`. */
+  remoteRef?: string;
+  /** Fleet-owned mirror ref advanced by the refresh implementation. */
+  mirrorRef?: string;
+  /** Resolved remote tip SHA when the refresh reached the remote. */
+  sha?: string;
+  /** Epoch seconds of the most recent attempted refresh. */
+  refreshedAtEpoch: number;
+  /** Next epoch at which another remote fetch is allowed. */
+  nextDueEpoch?: number;
+  /** Minimum configured interval between remote fetches. */
+  intervalS: number;
+  /** Short best-effort diagnostic for failed refreshes. */
+  message?: string;
+}
+
+export type TrunkMirrorRefreshResult =
+  Omit<TrunkFreshnessOutcome, "refreshedAtEpoch" | "nextDueEpoch" | "intervalS">;
+
 export interface FleetHeartbeat {
   /** ISO-8601 timestamp for the supervisor tick. */
   ts: string;
@@ -725,6 +760,8 @@ export interface FleetHeartbeat {
   };
   /** Optional per-drain budget status; absent when no budget is configured. */
   drainBudget?: DrainBudgetStatus;
+  /** Latest supervisor tick outcome for the fleet-owned trunk mirror. */
+  trunkFreshness?: TrunkFreshnessOutcome;
   /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
   slotDetails: HeartbeatSlotDetail[];
 }
@@ -863,6 +900,12 @@ export interface SupervisorDeps {
    */
   unblockSweep?(): Promise<number[]>;
   /**
+   * Refresh `origin/<trunk>` into the fleet-owned `red-trunk` mirror. The
+   * supervisor owns throttling and observability; the injected runtime owns the
+   * concrete git exec.
+   */
+  refreshTrunkMirror?(): Promise<TrunkMirrorRefreshResult>;
+  /**
    * Dispatch a fleet-scoped lifecycle hook at a supervisor checkpoint. Receives
    * the fleet-scoped context (slot, pid, death ring, runner — no issue/worktree
    * fields). Best-effort: throws from the hook executor are caught by the
@@ -968,6 +1011,10 @@ export interface SupervisorState {
    * queue still self-heals within one interval without a per-tick gh cost.
    */
   lastUnblockSweepEpoch: number;
+  /** Epoch seconds of the last attempted supervisor trunk-mirror refresh. */
+  lastTrunkFreshnessEpoch: number;
+  /** Last recorded trunk freshness outcome for heartbeat/status surfacing. */
+  lastTrunkFreshness?: TrunkFreshnessOutcome;
   /**
    * Cumulative wake accounting (#934): how many health-check loop iterations woke
    * on a worker state-change event vs the safety-net timer. Lets the supervisor
@@ -994,6 +1041,7 @@ export function initSupervisorState(target: number): SupervisorState {
     slots: Array.from({ length: target }, () => freshSlot()),
     lastProgressEpoch: 0,
     lastUnblockSweepEpoch: 0,
+    lastTrunkFreshnessEpoch: 0,
     wakeStats: freshWakeStats(),
     drainBudgetHardStopped: false,
     lastHeartbeatStateWriteEpoch: 0,
@@ -1185,6 +1233,8 @@ export interface TickResult {
    * this tick (#844). Empty when the sweep was throttled, unwired, found nothing
    * to promote, or failed (best-effort). */
   unblocked: number[];
+  /** Latest continuous trunk freshness tick outcome, when the seam is wired. */
+  trunkFreshness?: TrunkFreshnessOutcome;
   /** Slots removed from the runtime fleet by elastic shrink this tick. */
   retiredSlots: number[];
   /** True when a live directive changed the fleet runner this tick. */
@@ -1302,6 +1352,9 @@ async function emitFleetHeartbeat(
     spawnsThisTick: result.respawned.length,
     churn,
     ...(result.drainBudget ? { drainBudget: result.drainBudget } : {}),
+    ...(result.trunkFreshness ?? state.lastTrunkFreshness
+      ? { trunkFreshness: result.trunkFreshness ?? state.lastTrunkFreshness }
+      : {}),
     slotDetails: buildSlotDetails(state, config),
   };
   let rawWrite: FleetHeartbeatEmitResult | void = undefined;
@@ -1318,6 +1371,20 @@ async function emitFleetHeartbeat(
 
 function shortError(message: string | undefined): string {
   return message && message.length > 0 ? ` error=${message}` : "";
+}
+
+function trunkFreshnessEventPayload(outcome: TrunkFreshnessOutcome | undefined): Record<string, string | number> {
+  if (outcome === undefined) return {};
+  return {
+    trunk_freshness_status: outcome.status,
+    trunk_freshness_refreshed_at_epoch: outcome.refreshedAtEpoch,
+    trunk_freshness_interval_s: outcome.intervalS,
+    ...(outcome.nextDueEpoch !== undefined ? { trunk_freshness_next_due_epoch: outcome.nextDueEpoch } : {}),
+    ...(outcome.remoteRef !== undefined ? { trunk_freshness_remote_ref: outcome.remoteRef } : {}),
+    ...(outcome.mirrorRef !== undefined ? { trunk_freshness_mirror_ref: outcome.mirrorRef } : {}),
+    ...(outcome.sha !== undefined ? { trunk_freshness_sha: outcome.sha } : {}),
+    ...(outcome.message !== undefined ? { trunk_freshness_message: outcome.message } : {}),
+  };
 }
 
 async function superviseHeartbeatStateWrite(
@@ -2191,15 +2258,57 @@ export async function dispatchReconcileIfPossible(
   return freeIdx;
 }
 
+async function refreshTrunkMirrorIfDue(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  config: Pick<SupervisorConfig, "trunkFreshnessIntervalS">,
+): Promise<TrunkFreshnessOutcome | undefined> {
+  if (!deps.refreshTrunkMirror) return undefined;
+
+  const now = deps.now();
+  const intervalS = Math.max(1, config.trunkFreshnessIntervalS);
+  if (state.lastTrunkFreshnessEpoch > 0 && now - state.lastTrunkFreshnessEpoch < intervalS) {
+    const throttled: TrunkFreshnessOutcome = {
+      status: "throttled",
+      refreshedAtEpoch: state.lastTrunkFreshnessEpoch,
+      nextDueEpoch: state.lastTrunkFreshnessEpoch + intervalS,
+      intervalS,
+    };
+    state.lastTrunkFreshness = throttled;
+    return throttled;
+  }
+
+  state.lastTrunkFreshnessEpoch = now;
+  let outcome: TrunkFreshnessOutcome;
+  try {
+    const refreshed = await deps.refreshTrunkMirror();
+    outcome = {
+      ...refreshed,
+      refreshedAtEpoch: now,
+      intervalS,
+    };
+  } catch (err) {
+    outcome = {
+      status: "failed",
+      refreshedAtEpoch: now,
+      intervalS,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+  state.lastTrunkFreshness = outcome;
+  return outcome;
+}
+
 /**
  * superviseTick — advance the health-check loop one cycle (the body of
  * supervisor.sh's `while :` at ~1122-1141). In order:
  *   1. honour the stop-file: terminate every worker and return early.
- *   2. sample ready-queue depth (single fetch per tick, shared with heartbeat).
- *   3. un-park idle-parked slots when the queue has work.
- *   4. respawn / park dead non-parked, non-idle-parked, non-spawning slots.
- *   5. poll the passive stall detector + gated hard reaper (pollStallDetector).
- *   6. reconcile dispatch: fill a free slot with a reconcile worker if eligible.
+ *   2. refresh the fleet-owned trunk mirror when the throttle allows it.
+ *   3. sample ready-queue depth (single fetch per tick, shared with heartbeat).
+ *   4. un-park idle-parked slots when the queue has work.
+ *   5. respawn / park dead non-parked, non-idle-parked, non-spawning slots.
+ *   6. poll the passive stall detector + gated hard reaper (pollStallDetector).
+ *   7. reconcile dispatch: fill a free slot with a reconcile worker if eligible.
  *
  * `stopRequested` is the injected stop-file probe (the bash `[[ -f $STOP_FILE ]]`
  * check). The real loop is `while (!await superviseTick(...).stopped)`.
@@ -2232,6 +2341,8 @@ export async function superviseTick(
     result.stopped = true;
     return result;
   }
+
+  result.trunkFreshness = await refreshTrunkMirrorIfDue(state, deps, config);
 
   // Sample queue depth once per tick for idle-park / un-park decisions and the
   // fleet heartbeat. Best-effort: 0 on any failure or missing implementation.
@@ -2608,6 +2719,7 @@ export async function runSupervisor(
         `half-opened=${result.halfOpened.length} reaped=${result.reaped.length} ` +
         `unblocked=${result.unblocked.length} ` +
         `crash-reconciled=${result.crashReconciled.length} ` +
+        `trunk=${heartbeat.trunkFreshness?.status ?? "unwired"} ` +
         `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
     await emitSupervisorEvent(deps, {
@@ -2625,6 +2737,7 @@ export async function runSupervisor(
         ready_for_agent: heartbeat.readyForAgent,
         slots_busy: heartbeat.slotsBusy,
         slots_free: heartbeat.slotsFree,
+        ...trunkFreshnessEventPayload(heartbeat.trunkFreshness),
       },
     });
     if (result.stopped) {
