@@ -510,6 +510,14 @@ export interface ProcessIssueDeps {
    */
   resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
   /**
+   * Agent-conflict resolver for the PR path's fresh-base rebase (#2075). Runs
+   * after the mechanical resolver declines and before the in-lock post-merge
+   * gate decides whether the resolved tree may merge.
+   */
+  resolveAgentConflict?: (repo: string) => Promise<boolean>;
+  /** Small attempt budget for `resolveAgentConflict`; defaults in merge.ts. */
+  maxAgentConflictResolveAttempts?: number;
+  /**
    * Landing-mode flag, decoupled from the lock (ADR 0030 amended, #842). Resolved
    * from `afk.worktree_launches_pull_request` (default `true`) by the CLI. `true`
    * → the attempt lands via an admin-merged PR into the resolved base; `false` →
@@ -1715,6 +1723,7 @@ export async function processIssue(
   };
   let validationSidecar: string[] = [];
   let lastValidationScope: ValidationScope | undefined = undefined;
+  let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
   let mainRed = false;
   let mainRedRepairSyncFailure: string | null = null;
@@ -2332,6 +2341,7 @@ export async function processIssue(
       deps.graph ?? { packages: [] },
     );
     const feedbackScopes = scopesForValidationScope(validationScope);
+    landingFeedbackScopes = feedbackScopes;
     // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
     // non-zero exit VETOES validation and routes the attempt to the abort-after-
     // claim terminal (the branch/PR is preserved, the issue returns to the queue).
@@ -2553,6 +2563,8 @@ export async function processIssue(
       fireHook,
       conflictResolver: deps.conflictResolver,
       resolveMechanicalConflict: deps.resolveMechanicalConflict,
+      resolveAgentConflict: deps.resolveAgentConflict,
+      maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
       findMainRedRepairIssue: deps.gh.findMainRedRepairIssue,
@@ -2568,6 +2580,38 @@ export async function processIssue(
       // aggregated COMMENT ledger lands on the open PR. Best-effort + fully
       // decoupled — it never affects whether or how the PR merges.
       onPrResolved: (pr) => emitBackpressureReview(common, pr),
+      postMergeGate: async (mergedTreeDir) => {
+        const mergedFeedback = await runFeedback(deps.pnpm, {
+          worktree: mergedTreeDir,
+          scopes: landingFeedbackScopes,
+          layout: deps.layout,
+          now: deps.nowEpoch,
+          baselineWorktree: base,
+          validationScope: lastValidationScope,
+          resourceBudget: deps.validationResourceBudget,
+        });
+        if (!mergedFeedback.ok) {
+          validationSidecar = mergedFeedback.sidecar;
+          await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
+          return { ok: false };
+        }
+        const gateBackpressureCommands = deps.backpressureCommands ?? [];
+        if (deps.backpressure && gateBackpressureCommands.length > 0) {
+          const mergedBackpressure = await runBackpressure(deps.backpressure, {
+            worktree: mergedTreeDir,
+            commands: gateBackpressureCommands,
+            now: deps.nowEpoch,
+          });
+          common.backpressureChecks = mergedBackpressure.checks;
+          validationSidecar = [...mergedFeedback.sidecar, ...mergedBackpressure.sidecar];
+          if (!mergedBackpressure.ok) {
+            await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
+          }
+          return { ok: mergedBackpressure.ok };
+        }
+        validationSidecar = mergedFeedback.sidecar;
+        return { ok: true };
+      },
       // Sensitive-path guard (issue #1102): diff the worker branch against the
       // resolved base before landing. Uses three-dot notation so the diff reflects
       // only what this branch changed, not the entire base history.
