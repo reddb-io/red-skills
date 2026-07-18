@@ -70,7 +70,26 @@ export async function renderGitContract(
   }
 
   const subcommand = parseGitSubcommand(parsedCommand.argv);
-  const payload = parseGitPayload(subcommand, parsedCommand.argv, contract.stdout, parsedCommand.query);
+  let payload: JsonObject;
+  try {
+    payload = parseGitPayload(subcommand, parsedCommand.argv, contract.stdout, parsedCommand.query);
+  } catch (err) {
+    if (err instanceof GitStatusPassthroughError) {
+      return {
+        stdout: Buffer.from(contract.stdout),
+        stderr: Buffer.from(contract.stderr),
+        status: contract.status,
+        signal: contract.signal,
+        rawOutput: Buffer.from(contract.stdout),
+        degradation: {
+          reason: err.reason,
+          family: "git status",
+          stderrHead: err.message,
+        },
+      };
+    }
+    throw err;
+  }
 
   const fullToon = encode(payload);
   if (shouldEmitFull(subcommand, fullToon, parsedCommand.full, options)) {
@@ -247,32 +266,130 @@ function parseGitPayload(subcommand: GitSubcommand, command: readonly string[], 
 function parseStatus(command: readonly string[], stdout: string, query?: string): JsonObject {
   let branch = "";
   const rows: JsonObject[] = [];
-  for (const raw of stdout.split("\0")) {
+  let recognized = false;
+  let sawContent = false;
+  for (const raw of statusRecords(stdout)) {
     if (!raw) continue;
+    sawContent = true;
     if (raw.startsWith("# branch.head ")) {
       branch = raw.slice("# branch.head ".length);
+      recognized = true;
       continue;
     }
-    if (!raw.startsWith("1 ")) continue;
-    const parts = raw.split(" ");
-    const xy = parts[1] ?? "..";
-    const path = parts.slice(8).join(" ");
-    rows.push({
-      path,
-      index: xy[0] ?? ".",
-      worktree: xy[1] ?? ".",
-      state: statusState(xy),
-    });
+    if (raw.startsWith("# ")) {
+      recognized = true;
+      continue;
+    }
+    if (raw.startsWith("## ")) {
+      branch = shortStatusBranch(raw);
+      recognized = true;
+      continue;
+    }
+    const v2 = parsePorcelainV2StatusRow(raw);
+    if (v2) {
+      recognized = true;
+      rows.push(v2);
+      continue;
+    }
+    const short = parseShortStatusRow(raw);
+    if (short) {
+      recognized = true;
+      rows.push(short);
+    }
   }
-  if (rows.length === 0) return cleanStatusPayload(command.join(" "), branch);
+  if (rows.length === 0) {
+    if (!sawContent || recognized) return cleanStatusPayload(command.join(" "), branch);
+    throw new GitStatusPassthroughError("git-status-unparseable");
+  }
   const filteredRows = filterRows(rows, query);
   const counts = countBy(filteredRows, "state");
   return helpIfQueried({
     command: command.join(" "),
     branch,
     rows: filteredRows as JsonValue,
-    summary: `${query ? `${filteredRows.length}/${rows.length}` : filteredRows.length} changes: ${counts.added ?? 0} added, ${counts.modified ?? 0} modified, ${counts.deleted ?? 0} deleted`,
+    summary: statusSummary(filteredRows.length, rows.length, counts, query),
   }, query, ["rsp git diff --query <path>", "rsp git log --query <subject>"]);
+}
+
+function statusRecords(stdout: string): string[] {
+  return stdout.includes("\0") ? stdout.split("\0") : stdout.split(/\r?\n/);
+}
+
+function parsePorcelainV2StatusRow(raw: string): JsonObject | null {
+  if (raw.startsWith("1 ")) {
+    const parts = raw.split(" ");
+    const xy = parts[1] ?? "..";
+    const path = parts.slice(8).join(" ");
+    return statusRow(path, xy);
+  }
+  if (raw.startsWith("2 ")) {
+    const parts = raw.split(" ");
+    const xy = parts[1] ?? "..";
+    return statusRow(parts.slice(9).join(" "), xy);
+  }
+  if (raw.startsWith("u ")) {
+    const parts = raw.split(" ");
+    const xy = parts[1] ?? "..";
+    return statusRow(parts.slice(10).join(" "), xy);
+  }
+  if (raw.startsWith("? ")) return statusRow(raw.slice(2), "??");
+  return null;
+}
+
+function parseShortStatusRow(raw: string): JsonObject | null {
+  if (raw.length < 4 || raw[2] !== " ") return null;
+  const xy = raw.slice(0, 2);
+  if (!/^[ MADRCU?!][ MADRCU?!?]$/.test(xy)) return null;
+  return statusRow(shortStatusPath(raw.slice(3), xy), xy);
+}
+
+function statusRow(path: string, xy: string): JsonObject {
+  const index = normalizeStatusCode(xy[0] ?? ".");
+  const worktree = normalizeStatusCode(xy[1] ?? ".");
+  return {
+    path: decodeGitQuotedPath(path),
+    index,
+    worktree,
+    state: statusState(`${index}${worktree}`),
+  };
+}
+
+function normalizeStatusCode(code: string): string {
+  return code === " " ? "." : code;
+}
+
+function shortStatusBranch(raw: string): string {
+  const branch = raw.slice(3).split("...")[0]?.trim() ?? "";
+  return branch === "HEAD (no branch)" ? "HEAD" : branch;
+}
+
+function shortStatusPath(rawPath: string, xy: string): string {
+  if (!xy.includes("R") && !xy.includes("C")) return rawPath;
+  const arrow = rawPath.lastIndexOf(" -> ");
+  return arrow >= 0 ? rawPath.slice(arrow + " -> ".length) : rawPath;
+}
+
+function decodeGitQuotedPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("\"") || !trimmed.endsWith("\"")) return trimmed;
+  try {
+    return JSON.parse(trimmed) as string;
+  } catch {
+    return trimmed.slice(1, -1);
+  }
+}
+
+function statusSummary(
+  filtered: number,
+  total: number,
+  counts: Record<string, number>,
+  query: string | undefined,
+): string {
+  const extras: string[] = [];
+  if (counts.renamed) extras.push(`${counts.renamed} renamed`);
+  if (counts.untracked) extras.push(`${counts.untracked} untracked`);
+  if (counts.changed) extras.push(`${counts.changed} changed`);
+  return `${query ? `${filtered}/${total}` : filtered} changes: ${counts.added ?? 0} added, ${counts.modified ?? 0} modified, ${counts.deleted ?? 0} deleted${extras.length ? `, ${extras.join(", ")}` : ""}`;
 }
 
 export function cleanStatusPayload(command = "git status", branch = ""): JsonObject {
@@ -398,6 +515,12 @@ export class StructuredUsageError extends Error {
   }
 }
 
+class GitStatusPassthroughError extends Error {
+  constructor(readonly reason: string) {
+    super("git status output was not recognized; passing raw stdout through");
+  }
+}
+
 function parseBlame(command: readonly string[], stdout: string, query?: string): JsonObject {
   const lines = stdout.split("\n");
   const attributions: Array<{ line_start: number; line_end: number; author: string; commit: string; path: string }> = [];
@@ -517,6 +640,7 @@ function helpIfQueried(payload: JsonObject, query: string | undefined, help: rea
 
 
 function statusState(xy: string): string {
+  if (xy === "??") return "untracked";
   if (xy.includes("A")) return "added";
   if (xy.includes("D")) return "deleted";
   if (xy.includes("R")) return "renamed";
