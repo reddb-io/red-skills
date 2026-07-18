@@ -96,6 +96,14 @@ export interface LandingDeps {
    */
   resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
   /**
+   * Agent conflict resolver for the PR path's pre-merge rebase (issue #2075).
+   * Runs after the mechanical resolver declines, while the land-lock is held,
+   * and before the exact post-merge gate revalidates the resolved tree.
+   */
+  resolveAgentConflict?: (repo: string) => Promise<boolean>;
+  /** Small attempt budget for the agent resolver; defaults in merge.ts. */
+  maxAgentConflictResolveAttempts?: number;
+  /**
    * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Present → landPr holds until the
    * named review check concludes before the admin-merge, then merges regardless
@@ -674,6 +682,8 @@ async function preMergeRebaseInWorktree(
       base: input.base,
       branch: input.branch,
       resolveMechanical: deps.resolveMechanicalConflict,
+      resolveAgent: deps.resolveAgentConflict,
+      maxAgentResolveAttempts: deps.maxAgentConflictResolveAttempts,
     });
     if (!rebased.ok) {
       // Real conflict / exhausted force-with-lease retries → park merge-conflict.

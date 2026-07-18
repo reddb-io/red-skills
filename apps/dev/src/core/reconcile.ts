@@ -43,6 +43,7 @@ import {
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
+import { type LandLock } from "./land-lock.js";
 import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
@@ -167,6 +168,10 @@ export interface ReconcileDeps {
    * Absent → any rebase conflict parks `blocked:merge-conflict` as before.
    */
   resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
+  /** Agent conflict resolver for semantic rebase conflicts after mechanical declines (#2075). */
+  resolveAgentConflict?: (repo: string) => Promise<boolean>;
+  /** Small attempt budget for `resolveAgentConflict`; defaults in merge.ts. */
+  maxAgentConflictResolveAttempts?: number;
   /**
    * Landing-mode flag, decoupled from the lock (#842). `true`/undefined → land via
    * an admin-merged PR; `false` → a direct merge. Threaded from process-issue's
@@ -191,6 +196,8 @@ export interface ReconcileDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   /** Opt-in advisory-review wait for the admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
+  /** Global AFK land-lock (#1337), threaded into no-agent relands too. */
+  landLock?: LandLock;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
   /**
@@ -471,11 +478,30 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       fireHook: deps.fireHook ?? (async () => true),
       conflictResolver: deps.conflictResolver,
       resolveMechanicalConflict: deps.resolveMechanicalConflict,
+      resolveAgentConflict: deps.resolveAgentConflict,
+      maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
+      landLock: deps.landLock,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
+      postMergeGate: async (mergedTreeDir) => {
+        const mergedFeedback = await runFeedback(deps.pnpm, {
+          worktree: mergedTreeDir,
+          scopes: relevantScopes(deps.layout, changedFiles),
+          layout: deps.layout,
+          now: deps.nowEpoch,
+          baselineWorktree: input.base,
+        });
+        if (!mergedFeedback.ok) {
+          await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
+          return { ok: false };
+        }
+        feedback = mergedFeedback;
+        await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
+        return { ok: true };
+      },
     },
     {
       openPr,

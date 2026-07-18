@@ -43,6 +43,8 @@ interface HarnessOptions {
   body?: string;
   /** Aggregate feedback gate verdict. Defaults to passing (green). */
   feedbackOk?: boolean;
+  /** Aggregate in-lock post-merge feedback verdict. Defaults to passing. */
+  postMergeFeedbackOk?: boolean;
   changedFiles?: string[];
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
@@ -181,6 +183,9 @@ function harness(opts: HarnessOptions = {}): {
       if (dir === "main" || dir.startsWith("main/")) {
         return { code: 0, stdout: "", stderr: "" };
       }
+      if (dir === "/rwt") {
+        return { code: opts.postMergeFeedbackOk === false ? 1 : 0, stdout: "", stderr: "merged boom\n" };
+      }
       return { code: opts.feedbackOk === false ? 1 : 0, stdout: "", stderr: "boom\n" };
     },
     layout: {
@@ -264,8 +269,8 @@ describe("reconcile — green → land", () => {
       expect(result.locked).toBe(false);
       expect(result.posted).toBe(true);
     }
-    // The feedback gate ran (four scripts on the root scope).
-    expect(trace.pnpmCalls).toBe(4);
+    // The feedback gate ran before landing and again on the integrated tree.
+    expect(trace.pnpmCalls).toBe(8);
     // Landed → issue closed, remote + local branch removed, attempt dir swept.
     expect(trace.closed).toEqual([9]);
     expect(trace.deletedRemote.length).toBe(1);
@@ -318,7 +323,7 @@ describe("reconcile — green → land", () => {
     expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
   });
 
-  it("trusts prior green (#1095): lands WITHOUT re-running the feedback gate", async () => {
+  it("trusts prior green (#1095) before landing, then revalidates the integrated tree in the land-lock", async () => {
     const { deps, input, trace } = harness({
       // feedbackOk left unset — the gate must NOT run at all on this path.
       labels: ["ready-for-human", "blocked:merge-conflict", "priority:high"],
@@ -326,13 +331,27 @@ describe("reconcile — green → land", () => {
     const result = await reconcile(deps, { ...input, trustPriorValidation: true });
 
     expect(result.outcome).toBe("landed");
-    // The scoped feedback gate was SKIPPED — zero pnpm invocations.
-    expect(trace.pnpmCalls).toBe(0);
+    // The pre-land scoped feedback gate was skipped, but the integrated tree was revalidated.
+    expect(trace.pnpmCalls).toBe(4);
     // Still lands + closes + sheds the merge-conflict blocked label.
     expect(trace.closed).toEqual([9]);
     const close = trace.labelEdits.at(-1)!;
     expect(close.remove).toEqual(["ready-for-human", "blocked:merge-conflict"]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+  });
+
+  it("parks a trusted merge-conflict reland when the in-lock integrated-tree gate fails", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["ready-for-human", "blocked:merge-conflict", "priority:high"],
+      postMergeFeedbackOk: false,
+    });
+    const result = await reconcile(deps, { ...input, trustPriorValidation: true });
+
+    expect(result).toEqual({ outcome: "parked", reason: "merge-conflict", posted: true });
+    expect(trace.pnpmCalls).toBe(8);
+    expect(trace.closed).toEqual([]);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
   });
 
   it("lands a PARKED issue, shedding ready-for-human + the mechanical blocked label", async () => {
