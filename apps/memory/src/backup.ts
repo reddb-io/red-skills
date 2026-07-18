@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DEFAULT_STORE_PATH, readConfig, type MemoryConfig } from "./config.js";
+import { readMemoryStateFile, writeMemoryStateFile } from "./toon-state.js";
 
 export interface MemoryBackupFile {
   path: string;
@@ -46,7 +47,8 @@ export interface MemoryRestoreResult {
   warnings: string[];
 }
 
-const MANIFEST = "manifest.json";
+const MANIFEST = "manifest.toon";
+const LEGACY_MANIFEST = "manifest.json";
 const BACKUPS_DIR = "backups";
 
 export async function createMemoryBackup(
@@ -68,10 +70,10 @@ export async function createMemoryBackup(
   const copied: MemoryBackupFile[] = [];
   for (const file of files) {
     // The config now lives in `.red/config.yaml` (ADR 0042), not under
-    // `.red/memory`. We synthesize a self-contained `config.json` snapshot
+    // `.red/memory`. We synthesize a self-contained `config.toon` snapshot
     // below from the resolved config, so skip any legacy in-tree copy to avoid
     // a duplicate manifest entry.
-    if (file === "config.json") continue;
+    if (file === "config.json" || file === "config.toon") continue;
     const src = join(memoryDir, file);
     const dest = join(dataDir, file);
     await mkdir(dirname(dest), { recursive: true });
@@ -81,8 +83,8 @@ export async function createMemoryBackup(
 
   // Embed a normalized config snapshot so the backup is self-contained and the
   // manifest is stable regardless of where the live config is stored.
-  await writeFile(join(dataDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  copied.push(await fileManifest(dataDir, "config.json"));
+  await writeMemoryStateFile(join(dataDir, "config.toon"), config);
+  copied.push(await fileManifest(dataDir, "config.toon"));
 
   const manifest: MemoryBackupManifest = {
     schema_version: "memory.backup.v1",
@@ -95,7 +97,7 @@ export async function createMemoryBackup(
     warnings,
   };
   const manifestPath = join(backupDir, MANIFEST);
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writeMemoryStateFile(manifestPath, manifest);
   return {
     manifest,
     backup_dir: backupDir,
@@ -140,11 +142,20 @@ export async function readMemoryBackupManifest(
   name: string,
 ): Promise<MemoryBackupManifest> {
   const backupDir = backupPath(rootDir, name);
-  const manifest = JSON.parse(await readFile(join(backupDir, MANIFEST), "utf8")) as MemoryBackupManifest;
+  const manifest = await readBackupManifestFile(backupDir);
   if (manifest.schema_version !== "memory.backup.v1") {
     throw new Error(`unsupported Memory backup manifest in ${backupDir}`);
   }
   return manifest;
+}
+
+async function readBackupManifestFile(backupDir: string): Promise<MemoryBackupManifest> {
+  try {
+    return await readMemoryStateFile<MemoryBackupManifest>(join(backupDir, MANIFEST));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  return readMemoryStateFile<MemoryBackupManifest>(join(backupDir, LEGACY_MANIFEST));
 }
 
 export async function restoreMemoryBackup(
