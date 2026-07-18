@@ -1417,6 +1417,7 @@ export function buildProcessDeps(
         // the legacy path only when no worktree is registered yet.
         const worktree =
           (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
+          castleWorktreeUnder(current.attemptDir) ??
           join(current.attemptDir, "worktree");
         // Fall back to the configured Trunk (ADR 0083), not a literal "main".
         const baseRef = info.base
@@ -1889,6 +1890,34 @@ async function runnerCircuitOpen(
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve the red-castle worktree from the filesystem. Red-castle creates the
+ * agent's worktree at `{attemptDir}/.red-castle/worktrees/{slug}` as a worktree
+ * of the red-trunk MIRROR, not the primary checkout, so it never appears in the
+ * primary's `git worktree list` — {@link worktreePathUnder} (which lists the
+ * primary via `gitCtx`) returns undefined for it, and the heartbeat then fell
+ * back to the non-existent legacy `{attemptDir}/worktree` and read a permanent
+ * `+0 -0` diff (blank `loc` on the statusline for every red-castle worker). This
+ * reads the real layout directly: the single `.git`-bearing subdirectory of
+ * `{attemptDir}/.red-castle/worktrees/`.
+ */
+export function castleWorktreeUnder(attemptDir: string): string | undefined {
+  const dir = join(attemptDir, ".red-castle", "worktrees");
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return undefined; // no castle worktree tree yet (attempt not started / cleaned)
+  }
+  for (const name of entries) {
+    const candidate = join(dir, name);
+    // A git worktree carries a `.git` gitdir pointer (a file for a linked
+    // worktree). Its presence distinguishes the real worktree from stray dirs.
+    if (existsSync(join(candidate, ".git"))) return candidate;
+  }
+  return undefined;
 }
 
 /** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
