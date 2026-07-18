@@ -2192,4 +2192,87 @@ describe("runAgent — forwards onHeartbeat to the guard tick", () => {
     const res = await p;
     expect(res.outcome).toBe("done");
   });
+
+  it("pulses the heartbeat from codex stream activity before the first guard poll", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    const ticks: AttemptProgressInfo[] = [];
+    let resolveRun: ((r: RunResult) => void) | undefined;
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((res) => {
+            resolveRun = res;
+            if (o.logging?.type === "file") {
+              o.logging.onAgentStreamEvent?.({
+                type: "toolCall",
+                name: "Bash",
+                formattedArgs: "pnpm test",
+                iteration: 1,
+                timestamp: new Date(clock),
+              });
+            }
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => new AbortController(),
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      runner: "codex",
+      model: "gpt-5.4",
+      logPath: "/tmp/afk.log",
+      attemptTimeoutSeconds: 60,
+      headProbe: async () => "static",
+      onHeartbeat: (i) => ticks.push(i),
+    });
+    await flush();
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.head).toBe("static");
+    expect(ticks[0]!.nowMs).toBe(0);
+    resolveRun?.(fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await p;
+    expect(res.outcome).toBe("done");
+  });
+
+  it("keeps non-codex stream activity on the scheduled guard cadence", async () => {
+    const sched = manualScheduler();
+    const ticks: AttemptProgressInfo[] = [];
+    let resolveRun: ((r: RunResult) => void) | undefined;
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((res) => {
+            resolveRun = res;
+            if (o.logging?.type === "file") {
+              o.logging.onAgentStreamEvent?.({
+                type: "toolCall",
+                name: "Bash",
+                formattedArgs: "pnpm test",
+                iteration: 1,
+                timestamp: new Date(0),
+              });
+            }
+          }),
+      ),
+      now: () => 0,
+      schedule: sched.schedule,
+      makeAbortController: () => new AbortController(),
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      logPath: "/tmp/afk.log",
+      attemptTimeoutSeconds: 60,
+      headProbe: async () => "static",
+      onHeartbeat: (i) => ticks.push(i),
+    });
+    await flush();
+    expect(ticks).toHaveLength(0);
+    await sched.tick();
+    expect(ticks).toHaveLength(1);
+    resolveRun?.(fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await p;
+    expect(res.outcome).toBe("done");
+  });
 });

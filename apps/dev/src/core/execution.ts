@@ -1274,8 +1274,37 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   let timeoutReason: AttemptTimeoutReason | undefined;
   let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
+  let heartbeatIntervalMs = 60_000;
+  let lastHeartbeatEmitMs: number | undefined;
+  const emitHeartbeat = (info: AttemptProgressInfo): void => {
+    lastHeartbeatEmitMs = info.nowMs;
+    input.onHeartbeat?.(info);
+  };
+  const pulseCodexHeartbeatFromStream = (event: AgentStreamEvent): void => {
+    if (!input.onHeartbeat || input.runner !== "codex" || !input.headProbe) return;
+    if (event.type === "raw" || event.type === "sessionId") return;
+    const nowMs = now();
+    if (lastHeartbeatEmitMs !== undefined && nowMs - lastHeartbeatEmitMs < heartbeatIntervalMs) return;
+    void (async () => {
+      let head: string | undefined;
+      try {
+        head = await input.headProbe?.();
+      } catch {
+        head = undefined;
+      }
+      emitHeartbeat({ head, lastProgressMs: nowMs, nowMs });
+    })();
+  };
+  const agentEventSink: RunAgentInput["onAgentEvent"] | undefined =
+    input.onAgentEvent || input.runner === "codex"
+      ? (event) => {
+          input.onAgentEvent?.(event);
+          pulseCodexHeartbeatFromStream(event);
+        }
+      : undefined;
   if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
     const capMs = input.attemptTimeoutSeconds * 1000;
+    heartbeatIntervalMs = Math.min(capMs, 60_000);
     controller = makeController();
     const cap = input.attemptTimeoutSeconds;
     const hardCap = input.attemptHardCapSeconds;
@@ -1310,7 +1339,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
       // heartbeat sink (firehose record + state.last_progress_at + on_heartbeat
       // hook). execution.ts stays ignorant of what it does.
-      ...(input.onHeartbeat ? { onTick: input.onHeartbeat } : {}),
+      ...(input.onHeartbeat ? { onTick: emitHeartbeat } : {}),
     });
   }
 
@@ -1352,7 +1381,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
 
   let result: RunResult;
   try {
-    const options = buildRunOptions(deps, input);
+    const options = buildRunOptions(deps, agentEventSink ? { ...input, onAgentEvent: agentEventSink } : input);
     result = await deps.run(controller ? { ...options, signal: controller.signal } : options);
   } catch (error) {
     // The lane-idle reaper aborted: agent lane silent past the kill threshold
