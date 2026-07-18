@@ -509,7 +509,9 @@ function parseFleetState(raw: unknown): FleetState | null {
     ts?: unknown;
     epoch?: unknown;
     last_progress_epoch?: unknown;
+    target?: unknown;
     runner?: unknown;
+    shrink_mode?: unknown;
     bundle_version?: unknown;
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
@@ -520,6 +522,11 @@ function parseFleetState(raw: unknown): FleetState | null {
   const epoch = Number(rec.epoch ?? 0);
   if (!Number.isFinite(epoch) || epoch <= 0) return null;
   const rawProgress = Number(rec.last_progress_epoch ?? 0);
+  const target = Number(rec.target ?? 0);
+  const shrinkMode =
+    rec.shrink_mode === "hard-kill" || rec.shrink_mode === "drain-then-retire"
+      ? rec.shrink_mode
+      : undefined;
 
   let slotDetails: SlotDetail[] | undefined;
   if (Array.isArray(rec.slot_details)) {
@@ -542,6 +549,8 @@ function parseFleetState(raw: unknown): FleetState | null {
     epoch,
     lastProgressEpoch: Number.isFinite(rawProgress) && rawProgress > 0 ? rawProgress : undefined,
     runner: typeof rec.runner === "string" ? rec.runner : "",
+    target: Number.isFinite(target) && target >= 0 ? target : undefined,
+    ...(shrinkMode !== undefined ? { shrinkMode } : {}),
     bundleVersion: typeof rec.bundle_version === "string" ? rec.bundle_version : undefined,
     readyForAgent: Number(rec.ready_for_agent ?? 0) || 0,
     slotsBusy: Number(rec.slots?.busy ?? 0) || 0,

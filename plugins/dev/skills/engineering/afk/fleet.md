@@ -36,12 +36,18 @@ not part of the current fleet contract.
 `N` is optional and defaults to `2`. Parse it as a non-negative integer; reject anything else (including `stop`, which is the other subcommand and routes below). Steps the agent must perform, in order:
 
 1. **Resolve runner.** Determine the active runner using the same intent as the normal AFK cascade: explicit user `--runner` if present, else `RED_AFK_RUNNER`, else runner env/process/path signals, else `claude`. The resolved value is carried into the supervisor as `RED_AFK_RUNNER=<runner>` so detached workers do not fall through to the supervisor's historical `claude` fallback. Under Codex, this must resolve to `codex`.
-2. **PID-file pre-check.** Read `.red/tmp/supervisors/default/afk-supervisor.pid`. If it exists and `kill -0 <pid>` succeeds, refuse the launch:
+2. **PID-file pre-check / live directive.** Read `.red/tmp/supervisors/default/afk-supervisor.pid`. If it exists and `kill -0 <pid>` succeeds, do not launch a second supervisor. Instead the bundle command writes the `afk-supervisor.resize` directive file in the supervisor runtime lane (`.red/tmp/supervisors/default/`) as the live directive:
+   - `fleet <N>` changes the desired worker count while keeping the current runner.
+   - `fleet <N> --shrink-mode hard-kill|drain-then-retire` changes the resize shrink behavior. The default is `drain-then-retire`.
+   - `fleet <N> --runner <runner>` asks the running supervisor to switch runner. A changed runner is applied by re-pinning the supervisor's worker env, marking every live slot `drain-then-retire`, letting in-flight claims finish, then respawning replacement slots on the new runner. An unchanged runner is a no-op.
+   After writing the directive, the launcher reads `.red/tmp/supervisors/default/state.toon` and prints `fleet directive applied ...` when the heartbeat already echoes the requested target/runner/shrink-mode, or `fleet directive pending ...` while waiting for the next supervisor tick to apply it.
+
+   Older launch guidance used to say a live supervisor is refused:
    ```
    ✗ fleet already running (supervisor pid=<pid>, log .red/tmp/supervisors/default/supervisor.log.toonl).
      to stop it: /dev:afk fleet stop
    ```
-   Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
+   That remains the model for truly conflicting second supervisors, but `fleet <N>` is now the supported live resize/switch surface. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
 3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
    RED_AFK_RUNNER=<runner> red-skills-dev fleet <N> [--request <text>]

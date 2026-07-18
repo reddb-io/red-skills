@@ -113,7 +113,9 @@ export function stampFreshFleetHeartbeat(
     // A fresh relaunch stamp counts as progress: the new supervisor is
     // healthy until proven otherwise, so seed both epochs to `epoch`.
     last_progress_epoch: epoch,
+    target,
     runner,
+    shrink_mode: "drain-then-retire",
     ready_for_agent: 0,
     slots: { busy: 0, free: target, total: target, parked: 0 },
     spawns_this_tick: 0,

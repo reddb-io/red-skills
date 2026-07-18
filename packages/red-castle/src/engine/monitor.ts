@@ -239,6 +239,10 @@ export interface FleetState {
   lastProgressEpoch?: number;
   /** Runner the fleet was launched with (default "" for pre-#407 state files). */
   runner: string;
+  /** Desired worker count currently applied by the live supervisor. */
+  target?: number;
+  /** Runtime shrink behavior currently applied by the live supervisor. */
+  shrinkMode?: "hard-kill" | "drain-then-retire";
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   /** Newest compatible dev bundle seen in the local cache. */
