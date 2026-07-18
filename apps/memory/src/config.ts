@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AiProviderConfig } from "./extract-conversation.js";
 import type { RecallRankingConfig } from "./recall-ranking.js";
 import { mergeMemoryBlock, parsePluginsMemory } from "./shared-config.js";
+import { readMemoryStateFile } from "./toon-state.js";
 
 /** Storage backends the `memory init` wizard can configure. */
 export type StorageMode = "markdown-only" | "graph" | "hybrid";
@@ -193,6 +194,10 @@ export function legacyConfigPath(rootDir: string): string {
   return resolve(rootDir, ".red/memory/config.json");
 }
 
+export function legacyToonConfigPath(rootDir: string): string {
+  return resolve(rootDir, ".red/memory/config.toon");
+}
+
 /** Resolve a config's `notesDir` (always repo-relative) to an absolute path. */
 export function resolveNotesDir(rootDir: string, config: MemoryConfig): string {
   return isAbsolute(config.notesDir)
@@ -244,13 +249,18 @@ export async function readConfig(rootDir: string): Promise<MemoryConfig | null> 
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
-  try {
-    const raw = await readFile(legacyConfigPath(rootDir), "utf8");
-    return JSON.parse(raw) as MemoryConfig;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
+  return readLegacyStandaloneConfig(rootDir);
+}
+
+async function readLegacyStandaloneConfig(rootDir: string): Promise<MemoryConfig | null> {
+  for (const path of [legacyToonConfigPath(rootDir), legacyConfigPath(rootDir)]) {
+    try {
+      return await readMemoryStateFile<MemoryConfig>(path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
+  return null;
 }
 
 export interface StorePathMigrationResult {

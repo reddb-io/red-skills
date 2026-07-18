@@ -32,6 +32,7 @@ import {
   type CandidateRejection,
   type RestoreReceipt,
 } from "./types.js";
+import { decodeMemoryStateDocument, encodeMemoryStateToon } from "../toon-state.js";
 
 /**
  * Minimal filesystem surface the engine uses. Each member maps to a
@@ -76,6 +77,8 @@ export interface ArchiveEngineOptions {
 }
 
 const DEFAULT_ARCHIVE_DIR = ".red/memory/skill-archive";
+const ARCHIVE_MANIFEST = "manifest.toon";
+const LEGACY_ARCHIVE_MANIFEST = "manifest.json";
 
 interface ResolvedOptions {
   rootDir: string;
@@ -188,8 +191,8 @@ export async function executeArchive(
     reason: candidate.reason,
     files,
   };
-  const manifestPath = join(archiveRoot, "manifest.json");
-  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const manifestPath = join(archiveRoot, ARCHIVE_MANIFEST);
+  await fs.writeFile(manifestPath, encodeMemoryStateToon(manifest));
 
   return {
     ok: true,
@@ -214,11 +217,11 @@ export async function executeRestore(
 ): Promise<RestoreReceipt> {
   const { archiveBaseDir, fs } = resolveOptions(options);
   const archiveRoot = join(archiveBaseDir, name);
-  const manifestPath = join(archiveRoot, "manifest.json");
+  const manifestPath = await archiveManifestPath(fs, archiveRoot);
   const payloadRoot = join(archiveRoot, "payload");
 
   const manifestRaw = (await fs.readFile(manifestPath)).toString("utf8");
-  const manifest = JSON.parse(manifestRaw) as ArchiveManifest;
+  const manifest = decodeMemoryStateDocument<ArchiveManifest>(manifestRaw);
 
   if (await pathExists(fs, manifest.originalRoot)) {
     throw new Error(
@@ -251,6 +254,12 @@ export async function executeRestore(
     restoredRoot: manifest.originalRoot,
     files: manifest.files,
   };
+}
+
+async function archiveManifestPath(fs: ArchiveFs, archiveRoot: string): Promise<string> {
+  const toonPath = join(archiveRoot, ARCHIVE_MANIFEST);
+  if (await pathExists(fs, toonPath)) return toonPath;
+  return join(archiveRoot, LEGACY_ARCHIVE_MANIFEST);
 }
 
 /** Surfaces the resolved archive base directory for the CLI. */

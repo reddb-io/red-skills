@@ -48,18 +48,6 @@
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/backup.ts#json-parse-file-read#1d64c7ed63c2",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/backup.ts#json-stringify-file-write#319d7ee767e0",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/backup.ts#json-stringify-file-write#d490a167d82e",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/memory/src/bench-eval.ts#json-parse-file-read#9f8ee3a49186",
       "classification": "external",
       "reason": "Benchmark question fixtures are JSON inputs."
@@ -95,14 +83,6 @@
       "reason": "Export command deliberately emits JSON artifacts."
     },
     {
-      "id": "apps/memory/src/competitive-baseline.ts#json-stringify-file-write#1fd6fed03b3a",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/config.ts#json-parse-file-read#2b08c55aae9a",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/memory/src/export.ts#json-stringify-file-write#f2d8c9d8ed18",
       "classification": "external",
       "reason": "Memory export command deliberately emits JSON."
@@ -126,14 +106,6 @@
       "id": "apps/memory/src/import-ams.ts#json-parse-file-read#84cfe0136522",
       "classification": "external",
       "reason": "AMS import accepts external JSON dump format."
-    },
-    {
-      "id": "apps/memory/src/inbox.ts#json-parse-file-read#3ed29a34b863",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/inbox.ts#json-stringify-file-write#edcbaa2eb421",
-      "classification": "migrate"
     },
     {
       "id": "apps/opencode-host/src/emit.ts#json-stringify-file-write#9bc9165f331e",

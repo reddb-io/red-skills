@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { classifyCandidateMemory, type StoreClassification } from "./store-classifier.js";
 import {
@@ -8,6 +8,7 @@ import {
   type PrivacyFinding,
 } from "./privacy.js";
 import type { Confidence, MemoryProvenance, MemoryScope } from "./schema.js";
+import { readMemoryStateFile, writeMemoryStateFile } from "./toon-state.js";
 
 export type InboxStatus = "quarantined" | "approved" | "rejected" | "promoted";
 
@@ -105,16 +106,17 @@ export async function listInboxItems(rootDir: string): Promise<MemoryInboxItem[]
   }
   const items: MemoryInboxItem[] = [];
   for (const entry of entries) {
-    if (!entry.endsWith(".json")) continue;
-    items.push(await readInboxItem(rootDir, entry.slice(0, -".json".length)));
+    const id = inboxIdFromFile(entry);
+    if (!id) continue;
+    items.push(await readInboxItem(rootDir, id));
   }
   return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function readInboxItem(rootDir: string, id: string): Promise<MemoryInboxItem> {
-  const path = inboxPath(rootDir, id);
+  const path = await existingInboxPath(rootDir, id);
   try {
-    return JSON.parse(await readFile(path, "utf8")) as MemoryInboxItem;
+    return await readMemoryStateFile<MemoryInboxItem>(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(`memory inbox item not found: ${id}`);
@@ -202,12 +204,29 @@ export function inboxItemToProvenance(item: MemoryInboxItem): MemoryProvenance {
 
 async function writeInboxItem(rootDir: string, item: MemoryInboxItem): Promise<void> {
   await mkdir(inboxRoot(rootDir), { recursive: true });
-  await writeFile(inboxPath(rootDir, item.id), `${JSON.stringify(item, null, 2)}\n`, "utf8");
+  await writeMemoryStateFile(inboxPath(rootDir, item.id), item);
 }
 
 function inboxPath(rootDir: string, id: string): string {
   if (!/^inbox-[a-f0-9]{12}$/.test(id)) throw new Error(`invalid memory inbox id: ${id}`);
+  return join(inboxRoot(rootDir), `${id}.toon`);
+}
+
+async function existingInboxPath(rootDir: string, id: string): Promise<string> {
+  const toonPath = inboxPath(rootDir, id);
+  try {
+    await readFile(toonPath);
+    return toonPath;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (!/^inbox-[a-f0-9]{12}$/.test(id)) throw new Error(`invalid memory inbox id: ${id}`);
   return join(inboxRoot(rootDir), `${id}.json`);
+}
+
+function inboxIdFromFile(file: string): string | null {
+  const match = /^(inbox-[a-f0-9]{12})\.(?:toon|json)$/.exec(file);
+  return match?.[1] ?? null;
 }
 
 function normalizeProvenance(input: Partial<InboxProvenanceContext> = {}): InboxProvenanceContext {

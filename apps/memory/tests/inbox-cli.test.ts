@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { decodeMemoryStateDocument } from "../src/toon-state.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -61,6 +62,13 @@ describe("memory inbox CLI", () => {
       expect.arrayContaining([expect.objectContaining({ kind: "openai-token" })]),
     );
     expect(JSON.stringify(created)).not.toContain(token);
+    const toonPath = join(root, ".red/memory/inbox", `${created.item.id}.toon`);
+    const toonRaw = await readFile(toonPath, "utf8");
+    expect(toonRaw.trimStart().startsWith("{")).toBe(false);
+    expect(decodeMemoryStateDocument(toonRaw)).toMatchObject({ id: created.item.id, status: "quarantined" });
+    await expect(readFile(join(root, ".red/memory/inbox", `${created.item.id}.json`), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     const inspect = runMemory(["inbox", "inspect", created.item.id, "--root", root]);
     expect(inspect.status, inspect.stderr).toBe(0);
@@ -71,6 +79,12 @@ describe("memory inbox CLI", () => {
     expect(inspect.stdout).toContain("privacy: openai-token");
     expect(inspect.stdout).toContain("provenance: hook writer=codex hook=Stop confidence=AMBIGUOUS");
     expect(inspect.stdout).not.toContain(token);
+
+    await rm(toonPath);
+    await writeFile(join(root, ".red/memory/inbox", `${created.item.id}.json`), `${JSON.stringify(created.item, null, 2)}\n`);
+    const legacyInspect = runMemory(["inbox", "inspect", created.item.id, "--root", root]);
+    expect(legacyInspect.status, legacyInspect.stderr).toBe(0);
+    expect(legacyInspect.stdout).toContain("status: quarantined");
 
     const stats = runMemory(["stats", "--root", root]);
     expect(stats.status, stats.stderr).toBe(0);

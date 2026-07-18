@@ -12,6 +12,7 @@ import {
   parsePluginsMemory,
   parseYamlFlat,
 } from "../src/shared-config.js";
+import { writeMemoryStateFile } from "../src/toon-state.js";
 
 const roots: string[] = [];
 
@@ -226,6 +227,16 @@ describe("plugins.memory.enabled (ADR 0067 activation flag)", () => {
 });
 
 describe("migrateStorePathToRepoStore", () => {
+  test("readConfig sniffs legacy standalone TOON config before JSON fallback", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red", "memory"), { recursive: true });
+    await writeMemoryStateFile(join(root, ".red", "memory", "config.toon"), markdownOnlyConfig());
+
+    await expect(readConfig(root)).resolves.toMatchObject({ mode: "markdown-only" });
+    const raw = await readFile(join(root, ".red", "memory", "config.toon"), "utf8");
+    expect(raw.trimStart().startsWith("{")).toBe(false);
+  });
+
   test("copies a legacy standalone graph store and repoints memory config", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red", "memory"), { recursive: true });
