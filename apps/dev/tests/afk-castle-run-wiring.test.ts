@@ -4,11 +4,11 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const runTs = resolve(here, "../src/commands/run.ts");
+const runCommandTs = resolve(here, "../src/commands/run/command.ts");
 
 describe("afk run castle engine flip", () => {
   it("routes the drain through the red-castle worker engine instead of the dev session loop", () => {
-    const source = readFileSync(runTs, "utf8");
+    const source = readFileSync(runCommandTs, "utf8");
 
     expect(source).toContain('from "@reddb-io/red-castle/engine"');
     expect(source).toContain("runCastleWorkerDrain");
