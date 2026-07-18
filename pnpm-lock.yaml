@@ -115,6 +115,9 @@ importers:
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.3.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -331,6 +334,10 @@ importers:
         version: 2.1.9(@types/node@22.20.1)
 
   packages/browser-bridge:
+    dependencies:
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.3.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

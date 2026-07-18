@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { decode } from "@reddb-io/toon";
 import {
   openArtifact,
   recordAnnotation,
@@ -42,7 +43,33 @@ describe("openArtifact", () => {
     expect(stripBridgeSdk(augmented)).toBe(HTML);
 
     expect(loadSession(root, "s1")?.id).toBe("s1");
+    expect(decode(readFileSync(join(root, ".red/browser-bridge/s1/session.json"), "utf8"))).toEqual(s);
     expect(listSessions(root)).toContain("s1");
+  });
+
+  it("loads legacy JSON session state", () => {
+    const dir = join(root, ".red/browser-bridge/s1");
+    mkdirSync(dir, { recursive: true });
+    const session = {
+      id: "s1",
+      artifactPath: artifact,
+      augmentedPath: artifact.replace(/\.html?$/i, "") + ".bridge.html",
+      endpoint: "http://127.0.0.1:8917",
+      status: "open" as const,
+      createdAt: "2026-06-30T00:00:00Z",
+    };
+    const annotation = {
+      id: "a1",
+      selector: "#t",
+      comment: "legacy",
+      createdAt: "2026-06-30T01:00:00Z",
+      status: "open" as const,
+    };
+    writeFileSync(join(dir, "session.json"), JSON.stringify(session), "utf8");
+    writeFileSync(join(dir, "annotations.json"), JSON.stringify([annotation]), "utf8");
+
+    expect(loadSession(root, "s1")).toEqual(session);
+    expect(listAnnotations(root, "s1")).toEqual([annotation]);
   });
 });
 
@@ -79,6 +106,27 @@ describe("annotation round-trip (human -> agent)", () => {
     expect(next.annotations).toHaveLength(1);
     expect(next.annotations[0].id).toBe("a2");
     expect(next.annotations[0].textRange).toBeUndefined();
+    expect(decode(readFileSync(join(root, ".red/browser-bridge/s1/annotations.json"), "utf8"))).toEqual({
+      annotations: [
+        {
+          id: stored.id,
+          selector: stored.selector,
+          comment: stored.comment,
+          createdAt: stored.createdAt,
+          status: stored.status,
+          textRangeStart: 0,
+          textRangeEnd: 5,
+          textRangeQuote: "Title",
+        },
+        {
+          id: next.annotations[0]?.id,
+          selector: next.annotations[0]?.selector,
+          comment: next.annotations[0]?.comment,
+          createdAt: next.annotations[0]?.createdAt,
+          status: next.annotations[0]?.status,
+        },
+      ],
+    });
   });
 
   it("resolves an annotation the agent acted on", () => {

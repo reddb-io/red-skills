@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChannelBridge, ChannelBridgePollResult, ChannelEvent } from "../src/channel-bridge.js";
 import {
@@ -143,8 +144,18 @@ describe("loadIngestionState / saveIngestionState", () => {
     const path = join(root, "state.json");
     const saved: IngestionState = { cursor: 123, lastRunAt: "2026-06-10T00:00:00.000Z" };
     await saveIngestionState(path, saved);
+    expect(decode(await readFile(path, "utf8"))).toEqual(saved);
     const loaded = await loadIngestionState(path);
     expect(loaded).toEqual(saved);
+  });
+
+  it("loads legacy JSON state files", async () => {
+    const root = await tempDir();
+    const path = join(root, "state.json");
+    const saved: IngestionState = { cursor: "legacy", lastRunAt: "2026-06-10T00:00:00.000Z" };
+    await writeFile(path, JSON.stringify(saved), "utf8");
+
+    await expect(loadIngestionState(path)).resolves.toEqual(saved);
   });
 
   it("creates missing parent directories on save", async () => {

@@ -11,14 +11,6 @@
       "classification": "migrate"
     },
     {
-      "id": "apps/brain/src/scheduled-ingestion.ts#json-parse-file-read#42423a2a3f01",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/brain/src/scheduled-ingestion.ts#json-stringify-file-write#58cce3d7e63e",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
       "classification": "external",
       "reason": "Fetched plugin manifest remains JSON at the package boundary."
@@ -128,37 +120,9 @@
       "reason": ".mcp.json is MCP ecosystem JSON."
     },
     {
-      "id": "apps/rsp/src/elision-store.ts#json-parse-file-read#02b50089d194",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/rsp/src/elision-store.ts#json-stringify-file-write#4cd974a313ee",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
       "classification": "external",
       "reason": "Benchmark baseline fixture is JSON input."
-    },
-    {
-      "id": "packages/browser-bridge/session.ts#json-parse-file-read#e5efe89c117e",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#03a88404dc0f",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#3838fbf06b17",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#72a74a329bd7",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#d657022a1604",
-      "classification": "migrate"
     },
     {
       "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",

@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { decode, type JsonValue } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { ChannelBridge } from "./channel-bridge.js";
 import { ingestEvents } from "./ingest-events.js";
 import type { BrainStoreLike } from "./store.js";
@@ -51,7 +53,13 @@ export async function scheduledIngest(input: ScheduledIngestInput): Promise<Sche
 export async function loadIngestionState(path: string): Promise<IngestionState> {
   try {
     const text = await readFile(path, "utf8");
-    return JSON.parse(text) as IngestionState;
+    const body = text.trim();
+    if (!body) return {};
+    try {
+      return JSON.parse(body) as IngestionState;
+    } catch {
+      return decode(body) as IngestionState;
+    }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw err;
@@ -60,5 +68,5 @@ export async function loadIngestionState(path: string): Promise<IngestionState> 
 
 export async function saveIngestionState(path: string, state: IngestionState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  await writeFile(path, `${encodeSnapshotToon(state as unknown as JsonValue)}\n`, "utf8");
 }

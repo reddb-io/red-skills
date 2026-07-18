@@ -17,6 +17,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@reddb-io/toon": "catalog:"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:",

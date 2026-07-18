@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RSP_BYTE_BUDGET,
@@ -25,7 +26,75 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+async function readStoreSnapshot<T>(path: string): Promise<T> {
+  return decode(await readFile(path, "utf8")) as T;
+}
+
 describe("RspElisionStore", () => {
+  it("reads legacy JSON store documents and rewrites them as TOON", async () => {
+    const root = await tempRoot();
+    const storePath = join(root, "store.rdb");
+    const now = new Date("2026-07-10T12:00:00.000Z");
+    const original = Buffer.from("legacy elision");
+    const handle = "el:legacy";
+    await writeFile(
+      storePath,
+      `${JSON.stringify({
+        version: 1,
+        records: {
+          [handle]: {
+            collection: RSP_ELISION_COLLECTION,
+            handle,
+            original: original.toString("base64"),
+            original_encoding: "base64",
+            original_bytes: original.length,
+            command: "node legacy.js",
+            created_at: now.toISOString(),
+            expires_at: new Date("2026-07-17T12:00:00.000Z").toISOString(),
+            loss: { level: "brief", bytes_elided: original.length },
+            storage_class: "ephemeral",
+          },
+        },
+        blobs: {},
+        tombstones: {},
+        index: {
+          version: 1,
+          records: [{
+            handle,
+            key: "legacy",
+            bytes: original.length,
+            raw_bytes: original.length,
+            command: "node legacy.js",
+            created_at: now.toISOString(),
+            expires_at: new Date("2026-07-17T12:00:00.000Z").toISOString(),
+            storage_class: "ephemeral",
+          }],
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    const store = await RspElisionStore.open({
+      uri: `file://${storePath}`,
+      now: () => now,
+    });
+    try {
+      const recovered = await store.get(handle);
+      if (!recovered || "status" in recovered) throw new Error("expected live legacy record");
+      expect(recovered.original).toEqual(original);
+
+      await store.mint(Buffer.from("new elision"), {
+        command: "node current.js",
+        loss: { level: "brief", bytes_elided: 11 },
+      });
+      const rewritten = await readFile(storePath, "utf8");
+      expect(() => JSON.parse(rewritten)).toThrow();
+      expect(decode(rewritten)).toMatchObject({ version: 1 });
+    } finally {
+      await store.close();
+    }
+  });
+
   it("stores derivable handles as git object recipes and re-derives byte-identical output", async () => {
     const root = await tempRoot();
     git(root, ["init"]);
@@ -50,7 +119,9 @@ describe("RspElisionStore", () => {
         loss: { level: "terse", bytes_elided: original.length },
       });
 
-      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+      const storeText = await readFile(storePath, "utf8");
+      expect(() => JSON.parse(storeText)).toThrow();
+      const raw = decode(storeText) as {
         records: Record<string, { original?: string; derivation_recipe?: { object_ids?: string[] } }>;
         index: { records: Array<{ bytes: number }> };
       };
@@ -90,9 +161,9 @@ describe("RspElisionStore", () => {
         command: "git diff",
         loss: { level: "terse", bytes_elided: original.length },
       });
-      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+      const raw = await readStoreSnapshot<{
         records: Record<string, { derivation_recipe?: { object_ids?: string[] } }>;
-      };
+      }>(storePath);
       const oid = Object.values(raw.records)[0]?.derivation_recipe?.object_ids?.[0];
       if (!oid) throw new Error("missing derivation object id");
       await rm(join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2)), { force: true });
@@ -129,14 +200,14 @@ describe("RspElisionStore", () => {
         loss: { level: "terse", bytes_elided: original.length },
       });
 
-      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+      const raw = await readStoreSnapshot<{
         records: Record<string, {
           original?: string;
           content_hash?: string;
           reexecution_recipe?: { argv?: string[]; content_hash?: string };
         }>;
         index: { records: Array<{ bytes: number; storage_class?: string }> };
-      };
+      }>(storePath);
       const [stored] = Object.values(raw.records);
       expect(stored?.original).toBeUndefined();
       expect(stored?.content_hash).toMatch(/^[0-9a-f]{64}$/);
@@ -217,11 +288,11 @@ describe("RspElisionStore", () => {
       });
 
       expect(second).not.toBe(first);
-      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+      const raw = await readStoreSnapshot<{
         blobs?: Record<string, { bytes?: string; encoding?: string; stored_bytes?: number; original_bytes?: number }>;
         records: Record<string, { original?: string; blob_key?: string; content_hash?: string }>;
         index: { records: Array<{ bytes: number; raw_bytes?: number; blob_key?: string; storage_class?: string }> };
-      };
+      }>(storePath);
       const blobs = Object.values(raw.blobs ?? {});
       expect(blobs).toHaveLength(1);
       expect(blobs[0]?.encoding).toBe("gzip+base64");
@@ -609,10 +680,10 @@ describe("RspElisionStore", () => {
         loss: { level: "terse", bytes_elided: 11 },
       });
 
-      const raw = JSON.parse(await readFile(storePath, "utf8")) as {
+      const raw = await readStoreSnapshot<{
         index: { records: Array<{ storage_class?: string }> };
         records: Record<string, { storage_class?: string }>;
-      };
+      }>(storePath);
       expect(raw.index.records.map((entry) => entry.storage_class).sort()).toEqual([
         "derivable",
         "ephemeral",

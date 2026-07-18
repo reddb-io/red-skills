@@ -7,6 +7,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { connect, type RedDB } from "@reddb-io/sdk";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_EPHEMERAL_TTL_HOURS, DEFAULT_RSP_TTL_DAYS } from "./config.js";
 
 export const RSP_ELISION_COLLECTION = "rsp_elisions_v1";
@@ -1337,8 +1338,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readStoreDocument(path: string): Promise<StoreDocument> {
   try {
     const text = await readFile(path, "utf8");
-    if (text.trim() === "") return emptyStoreDocument();
-    const parsed = JSON.parse(text) as unknown;
+    const body = text.trim();
+    if (body === "") return emptyStoreDocument();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body) as unknown;
+    } catch {
+      parsed = decode(body);
+    }
     if (isStoreDocument(parsed)) return { ...parsed, blobs: parsed.blobs ?? {} };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -1397,8 +1404,25 @@ export async function ensureReddbBinaryFromWarmCache(): Promise<void> {
 async function writeStoreDocument(path: string, document: StoreDocument): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(document)}\n`, "utf8");
+  await writeFile(tmp, `${encode(toJsonValue(document))}\n`, "utf8");
   await rename(tmp, path);
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (value == null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) {
+    return value.map((item) => toJsonValue(item));
+  }
+  if (typeof value === "object") {
+    const out: Record<string, JsonValue> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (child !== undefined) out[key] = toJsonValue(child);
+    }
+    return out;
+  }
+  return String(value);
 }
 
 function emptyStoreDocument(): StoreDocument {
