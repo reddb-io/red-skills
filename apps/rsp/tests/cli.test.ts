@@ -679,6 +679,15 @@ async function waitForPidGone(pid: number, timeoutMs: number): Promise<void> {
 }
 
 describe("rsp cli", () => {
+  it("keeps the cli entrypoint as a small stable barrel", async () => {
+    const source = await readFile(cli, "utf8");
+    const lineCount = source.split(/\r?\n/).length;
+    const exports = await import("../src/cli.js");
+
+    expect(lineCount).toBeLessThanOrEqual(1200);
+    expect(Object.keys(exports).sort()).toEqual(["main", "renderSetupResult", "renderStats"]);
+  });
+
   it("prints unknown rsp flags as structured usage errors", async () => {
     const root = await tempRoot();
 
