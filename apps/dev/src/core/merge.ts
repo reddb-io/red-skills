@@ -17,6 +17,8 @@
 
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 
+const FLEET_TRUNK_REF = "refs/heads/red-trunk";
+
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
   code: number;
@@ -519,7 +521,7 @@ export async function waitForMergeReady(
 export interface LandPrInput {
   /** `owner/repo` slug passed to `gh -R`. */
   repo: string;
-  /** Repo dir passed to `git -C` for the local fast-forward (primary checkout). */
+  /** Repo dir passed to `git -C` for ref-only mirror promotion. */
   gitRepo: string;
   /** Remote name (e.g. `origin`). */
   remote: string;
@@ -537,11 +539,8 @@ export interface LandPrInput {
   worktree?: string;
   /**
    * Session lock state, retained for caller compatibility and result
-   * observability. It no longer gates the step-4 local fast-forward (ADR 0083 §2
-   * amended): {@link fastForwardLocalTarget} now promotes the primary for both
-   * lock states, guarded so it is a guaranteed no-op on any primary it must not
-   * touch — the #1019 WIP-eating failure mode stays impossible without keeping a
-   * locked repo's local base permanently stale.
+   * observability. It does not gate mirror promotion; both locked and unlocked
+   * PR landings promote `red-trunk` after a successful non-queued merge.
    */
   locked?: boolean;
   /**
@@ -646,6 +645,66 @@ export interface FastForwardLocalTargetGuardResult {
 
 export interface FastForwardLocalTargetResult extends FastForwardLocalTargetGuardResult {
   readonly action: "fast-forward" | "noop";
+}
+
+export interface PromoteFleetTrunkMirrorResult {
+  readonly action: "promoted" | "noop";
+  readonly mirrorRef: string;
+  readonly target: string;
+  readonly remote: string;
+  readonly evidence: string;
+}
+
+/**
+ * Promote the fleet-owned trunk mirror to the freshly-fetched remote target tip.
+ * This is intentionally ref-only: it never resolves HEAD, reads status, checks
+ * out a branch, or merges in the primary checkout. A force-push/history rewrite
+ * on the target is safe because `red-trunk` holds no unique commits; updating it
+ * to the remote tip is just resetting the mirror.
+ */
+export async function promoteFleetTrunkMirror(
+  exec: Exec,
+  input: { gitRepo: string; remote: string; target: string; mirrorRef?: string },
+): Promise<PromoteFleetTrunkMirrorResult> {
+  const mirrorRef = input.mirrorRef ?? FLEET_TRUNK_REF;
+  const fetch = await exec(["git", "-C", input.gitRepo, "fetch", "--quiet", input.remote, input.target]);
+  if (fetch.code !== 0) {
+    return {
+      action: "noop",
+      mirrorRef,
+      target: input.target,
+      remote: input.remote,
+      evidence: `condition failed: fetch (${input.remote}/${input.target} unavailable)`,
+    };
+  }
+  const tip = await exec(["git", "-C", input.gitRepo, "rev-parse", "--verify", "--quiet", `${input.remote}/${input.target}`]);
+  const sha = tip.stdout.trim();
+  if (tip.code !== 0 || sha === "") {
+    return {
+      action: "noop",
+      mirrorRef,
+      target: input.target,
+      remote: input.remote,
+      evidence: `condition failed: resolve (${input.remote}/${input.target} unavailable)`,
+    };
+  }
+  const updated = await exec(["git", "-C", input.gitRepo, "update-ref", mirrorRef, sha]);
+  if (updated.code !== 0) {
+    return {
+      action: "noop",
+      mirrorRef,
+      target: input.target,
+      remote: input.remote,
+      evidence: `condition failed: update-ref (${mirrorRef} -> ${input.remote}/${input.target})`,
+    };
+  }
+  return {
+    action: "promoted",
+    mirrorRef,
+    target: input.target,
+    remote: input.remote,
+    evidence: `promoted ${mirrorRef} to ${input.remote}/${input.target}`,
+  };
 }
 
 /**
@@ -773,14 +832,12 @@ export async function fastForwardLocalTarget(
  *   2. reuse an open PR for this head/base, else `gh pr create --base <target>
  *      --head <branch>`;
  *   3. `gh pr merge <num> --merge` (no --admin: branch protection is honored);
- *   4. fast-forward local `<target>` to the merge commit (best-effort) so HEAD
- *      carries the merge for the closing envelope.
+ *   4. promote the fleet-owned `red-trunk` mirror to the merged remote tip.
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  // `locked` (LandPrInput) is no longer read here: step 4 promotes the primary
-  // for both lock states via the hardened fastForwardLocalTarget, which is a
-  // guaranteed no-op on any primary it must not touch.
+  // `locked` is retained for caller compatibility; mirror promotion is identical
+  // for both lock states.
   const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
@@ -849,12 +906,9 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // the local fast-forward rather than pulling a tip that does not carry this work.
   if (mergeQueue) return { ok: true, prNumber };
 
-  // 4. Promote the primary's local <target> to the freshly merged origin tip —
-  // for BOTH lock states now (ADR 0083 §2 amended). Hardened so it can never
-  // touch a dirty or diverged primary, so a locked repo no longer leaves local
-  // main deriving behind origin while its worker worktrees keep forking from
-  // that stale base (see fastForwardLocalTarget).
-  await fastForwardLocalTarget(exec, { gitRepo, remote, target });
+  // 4. Promote the fleet-owned mirror to the freshly merged origin tip. This is
+  // ref-only and decoupled from the primary checkout's branch and working tree.
+  await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
 
   return { ok: true, prNumber };
 }

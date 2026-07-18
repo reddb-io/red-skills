@@ -167,8 +167,8 @@ function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
-      // fastForwardLocalTarget probes (ADR 0083 §2 amended): the primary sits on
-      // <base>, and its tree is clean unless the test opts into dirtyPrimary.
+      // Legacy primary-promotion probes. They stay here so tests can fail if a
+      // path accidentally reintroduces the old primary fast-forward.
       if (j.includes("symbolic-ref --short HEAD")) {
         return { code: 0, stdout: `${input.base}\n`, stderr: "" };
       }
@@ -191,6 +191,9 @@ function harness(opts: Opts = {}): Harness {
       }
       // origin/<trunk> SHA, captured for the divergence envelope.
       if (j.includes("rev-parse --short origin/")) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j === `git -C /repo rev-parse --verify --quiet origin/${input.base}`) {
         return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
       }
       // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
@@ -510,43 +513,32 @@ describe("doLanding — conventional landing titles (#1267)", () => {
   });
 });
 
-describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
-  it("diverged local trunk → aborts with trunk-diverged BEFORE any push/integrate/land, naming both SHAs", async () => {
+describe("doLanding — fleet mirror decouples landing from the primary checkout", () => {
+  it("diverged local trunk no longer gates PR landing or reads primary local trunk refs", async () => {
     const h = harness({ locked: false, trunk: "diverged" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({
-      ok: false,
-      reason: "trunk-diverged",
-      locked: false,
-      localTrunkSha: "1oca1sha",
-      originTrunkSha: "0r1g1nsha",
-    });
-    // The abort is loud and EARLY: no attempt-branch push, no hooks, no landing.
-    expect(h.pushedAttempt).toEqual([]);
-    expect(h.firedHooks).toEqual([]);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.pushedAttempt.length).toBe(1);
+    expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
-    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+    expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
+    expect(j.some((c) => c.includes("symbolic-ref") || c.includes("status --porcelain"))).toBe(false);
+    expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
   });
 
-  it("diverged local trunk on the DIRECT (locked) path also aborts before integrating", async () => {
+  it("diverged local trunk no longer gates direct landing; promotion is mirror-only", async () => {
     const h = harness({ locked: true, trunk: "diverged" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({
-      ok: false,
-      reason: "trunk-diverged",
-      locked: true,
-      localTrunkSha: "1oca1sha",
-      originTrunkSha: "0r1g1nsha",
-    });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    // Never provisioned a landing worktree, never integrated origin/<base>.
-    expect(h.removedWorktrees).toEqual([]);
-    expect(j.some((c) => c.includes("merge --ff-only"))).toBe(false);
-    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+    expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
+    expect(j.some((c) => c.includes("refs/heads/main") && c.includes("-C /repo"))).toBe(false);
+    expect(j.some((c) => c.includes("symbolic-ref") || c.includes("status --porcelain"))).toBe(false);
+    expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
   });
 
-  it("the precondition NEVER resets / stashes / auto-commits / force-pushes to repair the divergence", async () => {
+  it("mirror promotion never resets, stashes, auto-commits, or checks out the primary", async () => {
     const h = harness({ locked: false, trunk: "diverged" });
     await doLanding(h.deps, h.input, h.hooks);
     for (const c of h.mergeCalls) {
@@ -554,30 +546,29 @@ describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
       expect(j.includes("reset")).toBe(false);
       expect(j.includes("stash")).toBe(false);
       expect(j.includes("commit")).toBe(false);
-      expect(j.includes("--force")).toBe(false);
+      expect(j.includes("checkout")).toBe(false);
+      expect(j.includes("switch")).toBe(false);
     }
-    // The only primary-checkout touches are the read-only precondition probes.
     const primaryOps = joined(h.mergeCalls).filter((c) => c.includes("-C /repo"));
-    for (const op of primaryOps) {
-      expect(/fetch|rev-parse|merge-base/.test(op)).toBe(true);
-    }
+    expect(primaryOps.every((op) => /fetch|rev-parse|update-ref/.test(op))).toBe(true);
   });
 
-  it("absent local trunk → precondition proceeds and lands unchanged", async () => {
+  it("absent local trunk → still lands and promotes the mirror", async () => {
     const h = harness({ locked: false, trunk: "absent" });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(joined(h.mergeCalls)).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
   });
 
-  it("ancestor local trunk (default) → precondition proceeds and lands unchanged", async () => {
+  it("ancestor local trunk (default) → lands without primary fast-forward", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
-    // The precondition fresh-fetched origin/<trunk> then admin-merged.
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c === "git -C /repo fetch origin main --quiet")).toBe(true);
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+    expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
+    expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
   });
 });
 
@@ -1000,14 +991,13 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
   });
 
-  it("no lock + false + stale local main → fast-forwards the freshly fetched origin/main to the validated branch tip", async () => {
+  it("no lock + false + stale local main → lands from the worktree and promotes red-trunk after the push", async () => {
     const branchTip = "1234567890abcdef";
     const h = harness({ locked: false, openPr: false, branchTip });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
 
     const j = joined(h.mergeCalls);
-    const fetchBaseIdx = j.findIndex((c) => c === "git -C /repo fetch origin main --quiet");
     const integrateIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only origin/main`);
     const resolveTipIdx = j.findIndex(
       (c) => c === `git -C ${WT} rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing`,
@@ -1015,13 +1005,14 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     const ancestorIdx = j.findIndex((c) => c === `git -C ${WT} merge-base --is-ancestor origin/main ${branchTip}`);
     const fastForwardIdx = j.findIndex((c) => c === `git -C ${WT} merge --ff-only ${branchTip}`);
     const pushIdx = j.findIndex((c) => c === `git -C ${WT} push origin HEAD:refs/heads/main`);
+    const promoteIdx = j.findIndex((c) => c === "git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
 
-    expect(fetchBaseIdx).toBeGreaterThanOrEqual(0);
-    expect(integrateIdx).toBeGreaterThan(fetchBaseIdx);
+    expect(integrateIdx).toBeGreaterThanOrEqual(0);
     expect(resolveTipIdx).toBeGreaterThan(integrateIdx);
     expect(ancestorIdx).toBeGreaterThan(resolveTipIdx);
     expect(fastForwardIdx).toBeGreaterThan(ancestorIdx);
     expect(pushIdx).toBeGreaterThan(fastForwardIdx);
+    expect(promoteIdx).toBeGreaterThan(pushIdx);
     expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
   });
 
@@ -1068,65 +1059,49 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   });
 });
 
-describe("doLanding — primary promotion is a guarded fast-forward only (ADR 0083 §2 amended, #1019)", () => {
-  // ADR 0083 §2 (amended): a landing may now advance the primary's local <base>
-  // to the freshly merged origin tip — for LOCKED landings too — via the
-  // hardened fastForwardLocalTarget, so a locked repo's local base stops rotting
-  // and the next worker forks a fresh base. The §2 SAFETY intent is preserved:
-  // the ONLY primary write any landing path may issue is `merge --ff-only`, and
-  // never on a dirty or diverged primary. A DESTRUCTIVE verb against `/repo`
-  // (`merge --no-ff`, reset, rebase, checkout, switch, commit, cherry-pick)
-  // remains categorically forbidden.
+describe("doLanding — post-land promotion advances red-trunk, not the primary checkout", () => {
   const DESTRUCTIVE_VERBS = new Set(["reset", "rebase", "checkout", "switch", "commit", "cherry-pick"]);
-  /** `git -C /repo …` calls that mutate primary content beyond a pure ff — the
-   * forbidden set. `merge --ff-only` is the one allowed primary write, so a
-   * `merge` token counts only when it is NOT `--ff-only`. */
   function destructivePrimaryWrites(h: Harness): string[] {
     return h.mergeCalls
       .filter((argv) => {
         const i = argv.indexOf("/repo");
         if (i < 1 || argv[i - 1] !== "-C") return false;
-        const destructiveMerge = argv.includes("merge") && !argv.includes("--ff-only");
-        return destructiveMerge || argv.some((tok) => DESTRUCTIVE_VERBS.has(tok));
+        return argv.includes("merge") || argv.some((tok) => DESTRUCTIVE_VERBS.has(tok));
       })
       .map((argv) => argv.join(" "));
   }
 
-  it("locked + PR (default flag) → admin-merges remotely AND guard-fast-forwards the primary's local lock branch", async () => {
+  it("locked + PR (default flag) → admin-merges remotely AND promotes red-trunk", async () => {
     const h = harness({ locked: true, openPr: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true });
     const j = joined(h.mergeCalls);
-    // The PR is admin-merged remotely — the integration lands on origin.
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
-    // The guarded promotion now advances the primary's local lock branch too.
-    expect(j).toContain("git -C /repo merge --ff-only origin/feature-locked");
-    // …but no destructive write ever touches the primary.
+    expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
+    expect(j.some((c) => c.includes("symbolic-ref") || c.includes("status --porcelain"))).toBe(false);
     expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
-  it("locked + PR on a DIRTY primary → skips the promotion (WIP is sacred, #1019)", async () => {
+  it("locked + PR on a DIRTY primary → still promotes red-trunk without reading primary WIP", async () => {
     const h = harness({ locked: true, openPr: true, dirtyPrimary: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
-    // The dirty-tree guard makes the promotion a no-op — the primary is untouched.
-    expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
+    expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
+    expect(j.some((c) => c.includes("status --porcelain"))).toBe(false);
     expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
-  it("locked + direct → merges/pushes in the worktree, then guard-fast-forwards the primary", async () => {
+  it("locked + direct → merges/pushes in the worktree, then promotes red-trunk", async () => {
     const h = harness({ locked: true, openPr: false });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
-    // The integrated result reaches the maintainer on origin/<lock-branch>.
     expect(joined(h.mergeCalls)).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
-    // The primary's local lock branch is promoted by the guarded ff, nothing more.
-    expect(joined(h.mergeCalls)).toContain("git -C /repo merge --ff-only origin/feature-locked");
+    expect(joined(h.mergeCalls)).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
     expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
@@ -1141,12 +1116,12 @@ describe("doLanding — primary promotion is a guarded fast-forward only (ADR 00
     expect(destructivePrimaryWrites(h)).toEqual([]);
   });
 
-  it("UNLOCKED PR landing is unchanged — still fast-forwards the primary's local main (criterion 3)", async () => {
+  it("UNLOCKED PR landing also promotes red-trunk instead of local main", async () => {
     const h = harness({ locked: false, openPr: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false });
-    // The unlocked path keeps its best-effort local fast-forward of <target>=main.
-    expect(joined(h.mergeCalls).some((c) => c.includes("git -C /repo merge --ff-only origin/main"))).toBe(true);
+    expect(joined(h.mergeCalls)).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
+    expect(joined(h.mergeCalls).some((c) => c.includes("git -C /repo merge --ff-only origin/main"))).toBe(false);
   });
 });
 

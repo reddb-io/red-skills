@@ -179,7 +179,7 @@ describe("landMerge (locked path)", () => {
 });
 
 describe("landPr (unlocked path)", () => {
-  it("force-pushes the attempt, creates a PR, admin-merges it, then ffs local", async () => {
+  it("force-pushes the attempt, creates a PR, admin-merges it, then promotes the fleet mirror", async () => {
     // pr list returns empty before create, then 77 after.
     let prMade = false;
     const exec: Exec = async (argv) => {
@@ -188,10 +188,8 @@ describe("landPr (unlocked path)", () => {
       if (cmd.includes("pr list")) {
         return { code: 0, stdout: prMade ? "77\n" : "\n", stderr: "" };
       }
-      // fastForwardLocalTarget guards: on the target branch, clean tree (empty
-      // porcelain, the default), and a pure fast-forward (is-ancestor code 0).
-      if (cmd.includes("symbolic-ref --short HEAD")) {
-        return { code: 0, stdout: "main\n", stderr: "" };
+      if (cmd === "git -C /repo rev-parse --verify --quiet origin/main") {
+        return { code: 0, stdout: "origin-tip\n", stderr: "" };
       }
       return { code: 0, stdout: "", stderr: "" };
     };
@@ -219,8 +217,10 @@ describe("landPr (unlocked path)", () => {
       c.some((x) => x.includes("pr create --base main --head afk/wBBBB/9-x")),
     ).toBe(true);
     expect(c.some((x) => x.includes("pr merge 77 --merge"))).toBe(true);
-    // Local ff-merge to carry the merge commit for the closing envelope.
-    expect(c).toContain("git -C /repo merge --ff-only origin/main");
+    // Promotion advances the fleet-owned mirror, not the primary checkout.
+    expect(c).toContain("git -C /repo update-ref refs/heads/red-trunk origin-tip");
+    expect(c.some((x) => x.includes("symbolic-ref") || x.includes("status --porcelain"))).toBe(false);
+    expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
     // No direct merge of the attempt branch into target.
     expect(c.some((x) => x.includes("merge --no-ff afk/wBBBB/9-x"))).toBe(false);
   });
@@ -277,15 +277,10 @@ describe("landPr (unlocked path)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("locked → admin-merges AND now guard-fast-forwards the primary (ADR 0083 §2 amended)", async () => {
-    // The §2 invariant was about never EATING primary WIP (#1019). A locked
-    // landing on a clean primary sitting on <target> may safely advance the local
-    // base to the just-merged origin tip, so the next worker forks a fresh base.
+  it("locked → admin-merges AND promotes the mirror without reading the primary", async () => {
     const { exec, calls } = fakeExec([
       { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
-      // Guards satisfied: on <target>, clean tree (empty porcelain default),
-      // pure fast-forward (is-ancestor code 0 default).
-      { match: (a) => a.join(" ").includes("symbolic-ref --short HEAD"), result: { stdout: "feature-locked\n" } },
+      { match: (a) => a.join(" ") === "git -C /repo rev-parse --verify --quiet origin/feature-locked", result: { stdout: "lock-tip\n" } },
     ]);
     const result = await landPr(exec, {
       repo: "reddb-io/red-skills",
@@ -300,8 +295,9 @@ describe("landPr (unlocked path)", () => {
     expect(result.ok).toBe(true);
     const c = joined(calls);
     expect(c.some((x) => x.includes("pr merge 42 --merge"))).toBe(true);
-    // The guarded promotion now runs for the locked path too.
-    expect(c).toContain("git -C /repo merge --ff-only origin/feature-locked");
+    expect(c).toContain("git -C /repo update-ref refs/heads/red-trunk lock-tip");
+    expect(c.some((x) => x.includes("symbolic-ref") || x.includes("status --porcelain"))).toBe(false);
+    expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
   });
 });
 

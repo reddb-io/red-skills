@@ -394,6 +394,17 @@ function harness(opts: HarnessOptions = {}): {
         return "abc1234";
       },
       async deleteLocalBranch() {},
+      async resolveFreshBase({ base, remote }) {
+        if (opts.fetchedBases) opts.fetchedBases.push(base);
+        return {
+          ok: true,
+          base,
+          baseRef: "red-trunk",
+          sha: `${remote}/${base}-tip`,
+          source: "mirror",
+          remoteReachable: true,
+        };
+      },
       async fetchBase(base) {
         if (opts.fetchedBases) opts.fetchedBases.push(base);
       },
@@ -768,11 +779,11 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/wAAAA/9-fix-the-thing",
-        baseRef: "origin/main",
+        baseRef: "red-trunk",
         force: true,
       },
     ]);
-    expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
     expect(trace.handoffs[0]?.content).toContain("prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing");
     expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
   });
@@ -797,7 +808,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/wAAAA/9-fix-the-thing",
-        baseRef: "origin/main",
+        baseRef: "red-trunk",
         force: false,
       },
     ]);
@@ -2734,7 +2745,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(fetchedBases).toEqual(["main"]);
     // runAgent receives the remote-tracking ref so sandcastle forks from the
     // freshly-fetched ref, not the potentially-stale local branch.
-    expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
   });
 
   it("resolves feedback scopes from the fetched origin base, not a stale local base", async () => {
@@ -2745,7 +2756,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
       packageScopes: ["packages/stale", "packages/fresh"],
       changedFilesByBase: {
         main: ["packages/stale/src/old.ts"],
-        "origin/main": ["packages/fresh/src/new.ts"],
+        "red-trunk": ["packages/fresh/src/new.ts"],
       },
     });
     const result = await processIssue(deps, input);
@@ -2753,7 +2764,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(result.outcome).toBe("done");
     expect(trace.changedFileCalls).toContainEqual({
       branch: "afk/wAAAA/9-fix-the-thing",
-      base: "origin/main",
+      base: "red-trunk",
     });
     const pnpmDirs = trace.pnpmArgs
       .map((args) => {
@@ -2765,7 +2776,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
   });
 
-  it("resolves an unlocked, pinless issue to the configured Trunk and forks off origin/<trunk> (ADR 0083)", async () => {
+  it("resolves an unlocked, pinless issue to the configured Trunk and forks off red-trunk", async () => {
     const fetchedBases: string[] = [];
     const { deps, input, trace } = harness({
       outcome: "done",
@@ -2777,10 +2788,10 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     const result = await processIssue(deps, input);
 
     expect(result.base).toBe("develop");
-    // the trunk is fetched current before the run — the resolver's value is
-    // only ever consumed as its fresh-fetched remote ref, never the local branch.
+    // the trunk is fetched current before the run and projected through the
+    // fleet-owned mirror, never the primary checkout's local branch.
     expect(fetchedBases).toEqual(["develop"]);
-    expect(trace.runAgentCalls[0]?.base).toBe("origin/develop");
+    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
   });
 });
 
