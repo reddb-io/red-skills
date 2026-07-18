@@ -1,7 +1,13 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
+import {
+  castleLanePath,
+  createEnginePaths,
+  readCastleLaneRecords,
+  type CastleLaneRecord,
+} from "@reddb-io/red-castle/engine";
 import { afkPaths, collectMonitorInputs, readFleetState, resolveRepoSlug } from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
@@ -219,6 +225,232 @@ export interface FleetStatusResult {
   status: "reported";
 }
 
+type FleetLogMode =
+  | { kind: "supervisor" }
+  | { kind: "worker"; workerId: string }
+  | { kind: "all" };
+
+interface FleetLogsArgs {
+  mode: FleetLogMode;
+  follow: boolean;
+}
+
+interface FleetLogSource {
+  id: string;
+  path: string;
+  prefix: string;
+}
+
+interface FleetLogEntry {
+  sourceId: string;
+  index: number;
+  at: string;
+  line: string;
+}
+
+export interface FleetLogsResult {
+  status: "logged";
+  follow: boolean;
+  sources: number;
+}
+
+export interface FleetLogsOptions {
+  followPollMs?: number;
+  signal?: AbortSignal;
+}
+
+function parseFleetLogsArgs(args: readonly string[]): FleetLogsArgs {
+  let mode: FleetLogMode | undefined;
+  let follow = false;
+
+  function setMode(next: FleetLogMode): void {
+    if (mode !== undefined) throw new Error("fleet logs accepts only one of --supervisor, --worker, or --all");
+    mode = next;
+  }
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--follow" || arg === "-f") {
+      follow = true;
+      continue;
+    }
+    if (arg === "--supervisor") {
+      setMode({ kind: "supervisor" });
+      continue;
+    }
+    if (arg === "--all") {
+      setMode({ kind: "all" });
+      continue;
+    }
+    if (arg === "--worker" || arg === "-w") {
+      const workerId = args[++i];
+      if (!workerId) throw new Error(`${arg} requires a worker id`);
+      setMode({ kind: "worker", workerId });
+      continue;
+    }
+    if (arg.startsWith("--worker=")) {
+      const workerId = arg.slice("--worker=".length);
+      if (!workerId) throw new Error("--worker requires a worker id");
+      setMode({ kind: "worker", workerId });
+      continue;
+    }
+    throw new Error(`unknown fleet logs argument: ${arg}`);
+  }
+
+  if (mode === undefined) throw new Error("fleet logs requires --supervisor, --worker <id>, or --all");
+  return { mode, follow };
+}
+
+async function childDirs(path: string): Promise<string[]> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+async function readableFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function supervisorLogSources(root: string): Promise<FleetLogSource[]> {
+  const paths = createEnginePaths(join(root, ".red"));
+  const ids = await childDirs(paths.supervisorsRoot);
+  const sources: FleetLogSource[] = [];
+  for (const id of ids) {
+    const path = castleLanePath(paths, "supervisor", id);
+    if (await readableFile(path)) {
+      sources.push({ id: `supervisor:${id}`, path, prefix: "" });
+    }
+  }
+  return sources;
+}
+
+async function workerLogSources(root: string, mode: Extract<FleetLogMode, { kind: "worker" | "all" }>): Promise<FleetLogSource[]> {
+  const paths = createEnginePaths(join(root, ".red"));
+  const workerIds = mode.kind === "worker" ? [mode.workerId] : await childDirs(paths.workersRoot);
+  const sources: FleetLogSource[] = [];
+  for (const workerId of workerIds) {
+    const path = castleLanePath(paths, "worker", workerId);
+    if (mode.kind === "worker" || await readableFile(path)) {
+      sources.push({
+        id: `worker:${workerId}`,
+        path,
+        prefix: mode.kind === "all" ? `[${workerId}] ` : "",
+      });
+    }
+  }
+  return sources;
+}
+
+async function fleetLogSources(root: string, mode: FleetLogMode): Promise<FleetLogSource[]> {
+  if (mode.kind === "supervisor") return supervisorLogSources(root);
+  return workerLogSources(root, mode);
+}
+
+function payloadText(payload: Record<string, unknown> | undefined): string {
+  if (!payload) return "";
+  const message = payload.message;
+  if (typeof message === "string") return message;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined) continue;
+    parts.push(`${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  }
+  return parts.join(" ");
+}
+
+function renderRecord(record: CastleLaneRecord, prefix: string): string {
+  const parts = [record.at, record.kind];
+  if (record.issue !== undefined) parts.push(`#${record.issue}`);
+  if (record.attempt !== undefined) parts.push(`a${record.attempt}`);
+  const payload = payloadText(record.payload);
+  return `${prefix}${parts.join(" ")}${payload ? ` ${payload}` : ""}`;
+}
+
+async function readLogEntries(source: FleetLogSource): Promise<FleetLogEntry[]> {
+  const records = await readCastleLaneRecords(source.path);
+  return records.map((record, index) => ({
+    sourceId: source.id,
+    index,
+    at: record.at,
+    line: renderRecord(record, source.prefix),
+  }));
+}
+
+function sortEntries(entries: FleetLogEntry[]): FleetLogEntry[] {
+  return entries.sort((a, b) => {
+    const at = a.at.localeCompare(b.at);
+    if (at !== 0) return at;
+    const source = a.sourceId.localeCompare(b.sourceId);
+    if (source !== 0) return source;
+    return a.index - b.index;
+  });
+}
+
+const wait = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+  if (signal?.aborted) {
+    resolve();
+    return;
+  }
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => {
+    clearTimeout(timer);
+    resolve();
+  }, { once: true });
+});
+
+/**
+ * `fleet logs` is the read-only human view over the structured castle lanes.
+ * It never asks GitHub or mutates local state: it decodes supervisor/worker
+ * TOONL lanes and renders prose only at read time (ADR 0084).
+ */
+export async function logsFleet(
+  args: readonly string[],
+  root = process.cwd(),
+  stdout: NodeJS.WritableStream = process.stdout,
+  options: FleetLogsOptions = {},
+): Promise<FleetLogsResult> {
+  const parsed = parseFleetLogsArgs(args);
+  const emitted = new Map<string, number>();
+  let sourcesSeen = 0;
+
+  async function emitAvailable(): Promise<void> {
+    const sources = await fleetLogSources(root, parsed.mode);
+    sourcesSeen = Math.max(sourcesSeen, sources.length);
+    const nextEntries: FleetLogEntry[] = [];
+    for (const source of sources) {
+      const entries = await readLogEntries(source);
+      const previous = emitted.get(source.id) ?? 0;
+      if (entries.length < previous) emitted.set(source.id, 0);
+      const start = entries.length < previous ? 0 : previous;
+      nextEntries.push(...entries.slice(start));
+      emitted.set(source.id, entries.length);
+    }
+    for (const entry of sortEntries(nextEntries)) {
+      stdout.write(`${entry.line}\n`);
+    }
+  }
+
+  await emitAvailable();
+  while (parsed.follow && !options.signal?.aborted) {
+    await wait(options.followPollMs ?? 250, options.signal);
+    if (options.signal?.aborted) break;
+    await emitAvailable();
+  }
+
+  return { status: "logged", follow: parsed.follow, sources: sourcesSeen };
+}
+
 /**
  * Read-only fleet ground truth in one place (#2060). Answers "what is actually
  * running right now?" — the question that today requires cross-referencing the
@@ -369,6 +601,16 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 }
 
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  if (args[0] === "logs") {
+    try {
+      await logsFleet(args.slice(1), cwd);
+      return 0;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`✗ ${message}`);
+      return 1;
+    }
+  }
   const parsed = parseFleetArgs(args);
   try {
     if (parsed.status) {
