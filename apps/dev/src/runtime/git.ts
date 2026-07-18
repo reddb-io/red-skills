@@ -11,6 +11,9 @@ import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/m
 import type { BranchRef } from "../core/branch-cleanup.js";
 import type { RemoteUrlFact } from "../core/operational-probes.js";
 
+export const FLEET_TRUNK = "red-trunk";
+export const FLEET_TRUNK_REF = `refs/heads/${FLEET_TRUNK}`;
+
 export interface GitContext {
   /** The primary checkout dir. */
   cwd: string;
@@ -186,7 +189,7 @@ export interface FreshBaseResolution {
   base: string;
   baseRef: string;
   sha: string;
-  source: "remote" | "local";
+  source: "remote" | "local" | "mirror";
   remoteReachable: boolean;
   localSha?: string;
   localAhead?: number;
@@ -218,11 +221,14 @@ async function localAheadBehind(
 /**
  * Resolve the concrete commit a new AFK worker should branch from.
  *
- * Online: fetch `<remote> <base>` and use the freshly-fetched
- * `<remote>/<base>` ref, never the local branch. Offline: fall back to the local
- * branch only when it is not behind the last-known remote-tracking tip; a stale
- * local branch returns a typed `base-stale` park decision instead of silently
- * forking from rotten history.
+ * Online: fetch `<remote> <base>`, advance the fleet-owned `red-trunk` mirror
+ * ref to that tip, and fork workers from the mirror. The mirror is never checked
+ * out or committed to directly; it is just an owned ref updated with
+ * `git update-ref`. If upstream history was rewritten, the mirror is reset to
+ * the fetched remote tip because it holds no unique commits.
+ *
+ * Offline or unresolvable remote: return a typed `base-stale` park decision
+ * instead of falling back to the primary checkout's local branch.
  */
 export async function resolveFreshBase(
   ctx: GitContext,
@@ -231,40 +237,34 @@ export async function resolveFreshBase(
   const base = input.base.trim();
   const remote = input.remote?.trim() || "origin";
   const remoteRef = `${remote}/${base}`;
-  const localRef = `refs/heads/${base}`;
   const fetch = base ? await runGit(ctx, ["fetch", remote, base]) : failOutput("empty base");
   const remoteSha = base ? await revParse(ctx, remoteRef) : undefined;
-  const localSha = base ? await revParse(ctx, localRef) : undefined;
-  const counts =
-    localSha && remoteSha ? await localAheadBehind(ctx, localRef, remoteRef) : undefined;
-  const localAhead = counts?.ahead;
-  const localBehind = counts?.behind;
 
   if (fetch.code === 0 && remoteSha) {
+    const mirrorSha = await revParse(ctx, FLEET_TRUNK_REF);
+    if (mirrorSha && mirrorSha !== remoteSha) {
+      await runGit(ctx, ["merge-base", "--is-ancestor", FLEET_TRUNK_REF, remoteRef]);
+    }
+    const updated = await runGit(ctx, ["update-ref", FLEET_TRUNK_REF, remoteSha]);
+    if (updated.code !== 0) {
+      return {
+        ok: false,
+        base,
+        baseRef: remoteRef,
+        sha: remoteSha,
+        source: "mirror",
+        remoteReachable: true,
+        reason: "base-stale",
+        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+      };
+    }
     return {
       ok: true,
       base,
-      baseRef: remoteRef,
+      baseRef: FLEET_TRUNK,
       sha: remoteSha,
-      source: "remote",
+      source: "mirror",
       remoteReachable: true,
-      localSha,
-      localAhead,
-      localBehind,
-    };
-  }
-
-  if (localSha && (localBehind ?? 0) === 0) {
-    return {
-      ok: true,
-      base,
-      baseRef: base,
-      sha: localSha,
-      source: "local",
-      remoteReachable: false,
-      localSha,
-      localAhead,
-      localBehind,
     };
   }
 
@@ -272,17 +272,11 @@ export async function resolveFreshBase(
     ok: false,
     base,
     baseRef: remoteRef,
-    sha: remoteSha ?? localSha ?? "",
-    source: "local",
+    sha: remoteSha ?? "",
+    source: "mirror",
     remoteReachable: false,
-    localSha,
-    localAhead,
-    localBehind,
     reason: "base-stale",
-    message:
-      localSha && remoteSha
-        ? `local ${base} is ${localBehind ?? "unknown"} commit(s) behind last-known ${remoteRef}`
-        : `could not resolve a fresh or non-stale local base for ${base}`,
+    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
   };
 }
 
