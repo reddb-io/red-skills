@@ -27,24 +27,24 @@ Use GitHub's native issue relationships for the human-facing graph, and keep the
 
 ### Create a native sub-issue relationship
 
-Create the child issue first, then attach it to its parent Spec or map with the sub-issues endpoint:
+Create the child issue first, then attach it to its parent Spec or map with the sub-issues endpoint. Pass the child's numeric database id with `-F` (typed field) so `gh` sends it as a JSON integer — `-f` sends a string and the endpoint rejects it with HTTP 422:
 
 ```bash
 child_id="$(gh api "repos/{owner}/{repo}/issues/<child-number>" --jq '.id')"
 gh api --method POST "repos/{owner}/{repo}/issues/<parent-number>/sub_issues" \
-  -f "sub_issue_id=$child_id"
+  -F "sub_issue_id=$child_id"
 ```
 
 For Spec slicing, also apply `spec:<parent-number>` to the child. For `/wayfinder`, the parent carries `wayfinder:map` and the child carries exactly one `wayfinder:<type>` label.
 
 ### Create a native blocked-by relationship
 
-Use the child's dependency endpoint and pass the blocker issue's numeric database id:
+Use the child's dependency endpoint and pass the blocker issue's numeric database id (again with `-F`, for the same reason):
 
 ```bash
 blocker_id="$(gh api "repos/{owner}/{repo}/issues/<blocker-number>" --jq '.id')"
 gh api --method POST "repos/{owner}/{repo}/issues/<child-number>/dependencies/blocked_by" \
-  -f "issue_id=$blocker_id"
+  -F "issue_id=$blocker_id"
 ```
 
 **Trap:** `issue_id` must be the blocker's numeric database id from the REST issue `.id` field. It is never the GitHub issue `#number`, and it is never the GraphQL `node_id`. Passing the wrong value can link the wrong issue silently.

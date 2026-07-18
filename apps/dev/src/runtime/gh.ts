@@ -452,7 +452,9 @@ export async function attachSubIssue(ctx: GhContext, parent: number, child: numb
     "-X",
     "POST",
     apiPath(ctx, `issues/${parent}/sub_issues`),
-    "-f",
+    // `-F` (not `-f`): sub_issue_id is a JSON integer field, and `-f` would send
+    // it as a string, which the sub-issues endpoint rejects with HTTP 422.
+    "-F",
     `sub_issue_id=${childId}`,
   ]);
   if (r.code !== 0) {
