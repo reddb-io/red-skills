@@ -14,6 +14,7 @@ import {
   type FleetHeartbeat,
   type FleetHeartbeatEmitResult,
   type ElasticResizeRequest,
+  type HeartbeatSlotPid,
   initSupervisorState,
   resolveSupervisorConfig,
   runSupervisor,
@@ -28,6 +29,7 @@ import {
   collectPrecheckFacts,
   collectBootOptions,
   buildBootDeps,
+  readFleetState,
   type RepoContext,
 } from "../runtime/wire.js";
 import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
@@ -51,7 +53,7 @@ import { resolveFleetHooks } from "../core/fleet-hook-config.js";
 import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
 import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
 import { getConfig, loadConfig } from "../core/config.js";
-import { reapStaleSupervisorState } from "../runtime/supervisor-state.js";
+import { reapDeadSupervisorSnapshotDirs, reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 import {
   castleStateSnapshotPath,
   createEnginePaths,
@@ -96,6 +98,7 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
       total: hb.slotsTotal,
       parked: hb.slotsParked,
     },
+    slot_pids: hb.slotPids.map((entry) => ({ slot: entry.slot, pid: entry.pid })),
     spawns_this_tick: hb.spawnsThisTick,
     ...(hb.trunkFreshness
       ? {
@@ -163,6 +166,7 @@ async function writeCastleSupervisorSnapshot(
           total: hb.slotsTotal,
           parked: hb.slotsParked,
         },
+        slot_pids: hb.slotPids.map((entry) => ({ slot: entry.slot, pid: entry.pid })),
         spawns_this_tick: hb.spawnsThisTick,
         ...(hb.trunkFreshness
           ? {
@@ -334,6 +338,29 @@ function readResizeRequest(path: string): ElasticResizeRequest | null {
   }
 }
 
+function parseAdoptSlotPids(raw: string | undefined): HeartbeatSlotPid[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: HeartbeatSlotPid[] = [];
+    const seen = new Set<number>();
+    for (const entry of parsed) {
+      if (entry === null || typeof entry !== "object") continue;
+      const rec = entry as { slot?: unknown; pid?: unknown };
+      const slot = Number(rec.slot);
+      const pid = Number(rec.pid);
+      if (!Number.isSafeInteger(slot) || slot < 0 || seen.has(slot)) continue;
+      if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+      seen.add(slot);
+      out.push({ slot, pid });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Parse the supervisor's own argv (forwarded by fleet.ts) into the filter /
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
@@ -471,6 +498,7 @@ function buildSupervisorDeps(
   trunk: string,
   slotArgs: readonly string[],
   hookEnvBase: Record<string, string>,
+  adoptSlotPids: readonly HeartbeatSlotPid[] = [],
 ): SupervisorDeps {
   const bundle = process.argv[1];
   const bundleVersion = readBuildInfo("dev").version;
@@ -504,7 +532,9 @@ function buildSupervisorDeps(
   });
   const fleetHookExec = makeHookExec(root, resolveOptions.libraryHooksDir);
   // slot index → live orchestrator pid (SLOT_PIDS parity).
-  const slotPids = new Map<number, number>();
+  const slotPids = new Map<number, number>(
+    adoptSlotPids.map((entry) => [entry.slot, entry.pid] as const),
+  );
   // slot index → exit code of the most recent worker for that slot.
   const slotExitCodes = new Map<number, number>();
   // Worker env (build_passthrough_env parity): start from the supervisor's full
@@ -571,6 +601,7 @@ function buildSupervisorDeps(
         slotPids.set(slot, pid);
         return { pid, spawnEpoch: now() };
       },
+      slotPid: (slot) => slotPids.get(slot) ?? null,
       lastExitCode: (slot) => slotExitCodes.get(slot) ?? null,
       isAlive,
       requestSlotRetire: async (slot) => {
@@ -840,9 +871,20 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
   await import("../runtime/fs.js").then((m) => m.ensureDir(stateAfk));
   await import("../runtime/fs.js").then((m) => m.ensureDir(slotLogsDir));
+  await reapDeadSupervisorSnapshotDirs(
+    join(root, ".red", "state", "castle", "supervisors"),
+    isAlive,
+    process.pid,
+  );
   // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
   // attach from boot rather than waiting for the first worker to create it.
   await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
+  const envAdoptSlotPids = parseAdoptSlotPids(process.env.RED_AFK_ADOPT_SLOT_PIDS);
+  const stateAdoptSlotPids =
+    envAdoptSlotPids.length > 0
+      ? []
+      : ((await readFleetState(stateFile).catch(() => null))?.slotPids ?? []);
+  const adoptSlotPids = envAdoptSlotPids.length > 0 ? envAdoptSlotPids : stateAdoptSlotPids;
   await reapStaleSupervisorState(stateAfk, isAlive);
   // single-supervisor lock
   if (existsSync(pidFile)) {
@@ -878,7 +920,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     RED_AFK_RUNNER: config.runner,
     ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
   };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, trunk, slotArgs, hookEnvBase);
+  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 
