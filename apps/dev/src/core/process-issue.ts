@@ -937,8 +937,7 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "./issue-lifecycle.js";
-import { allowlistExternalWidened } from "./shared-gate.js";
-import { ALLOWLIST_PATH } from "./toon-json-guard.js";
+import { allowlistExternalWidened, ALLOWLIST_PATH } from "./shared-gate.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue

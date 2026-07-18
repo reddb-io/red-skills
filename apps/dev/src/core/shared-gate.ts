@@ -185,6 +185,14 @@ export async function runSharedGate(
  * list AND update the issue. The default is SAFE: anything not on this list
  * proceeds normally.
  */
+/**
+ * The TOON JSON-IO guard allowlist path. Defined here (a typescript-free leaf
+ * module) rather than in `toon-json-guard.ts` so runtime code — `process-issue`
+ * consumes it for the diff-aware exemption — never imports the guard, which
+ * pulls the full `typescript` compiler into the bundle (it is test-only).
+ */
+export const ALLOWLIST_PATH = ".red/contracts/toon-json-file-io-allowlist.json";
+
 export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   /^\.github\/workflows\//,     // CI workflow files
   /^\.github\/actions\//,       // composite actions executed by CI workflows

@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   collectToonJsonGuardReport,
@@ -8,6 +9,7 @@ import {
 } from "../src/core/toon-json-guard.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
+const DEV_SRC = join(import.meta.dirname, "..", "src");
 
 describe("toon JSON file I/O guard", () => {
   it("ratchets the live apps/packages JSON file I/O allowlist", async () => {
@@ -56,5 +58,28 @@ describe("toon JSON file I/O guard", () => {
     ]);
     expect(a!.line).not.toBe(b!.line); // the statement genuinely moved
     expect(a!.id).toBe(b!.id); // ...but the snippet-anchored id is stable
+  });
+
+  it("stays test-only — no runtime src imports the guard or typescript (keeps the compiler out of the bundle)", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(p);
+          continue;
+        }
+        if (!entry.name.endsWith(".ts") || entry.name.includes(".test.") || entry.name === "toon-json-guard.ts") continue;
+        const text = readFileSync(p, "utf8");
+        if (/from ["'][^"']*toon-json-guard(\.js)?["']/.test(text) || /from ["']typescript["']/.test(text)) {
+          offenders.push(relative(ROOT, p));
+        }
+      }
+    };
+    walk(DEV_SRC);
+    // The guard imports the full `typescript` compiler; if any other runtime src
+    // imports the guard (or typescript directly) it lands in dev.bundle.min.mjs
+    // — the regression the release contract check caught. Keep it test-only.
+    expect(offenders).toEqual([]);
   });
 });

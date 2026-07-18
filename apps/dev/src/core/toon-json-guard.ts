@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
+import { ALLOWLIST_PATH } from "./shared-gate.js";
 
 export type ToonJsonIoKind = "json-parse-file-read" | "json-stringify-file-write";
 export type ToonJsonAllowlistClassification = "migrate" | "external";
@@ -31,7 +32,6 @@ export interface ToonJsonSourceFile {
   sourceText: string;
 }
 
-export const ALLOWLIST_PATH = ".red/contracts/toon-json-file-io-allowlist.json";
 const SOURCE_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".tsx"]);
 const SKIP_DIRS = new Set([
   ".git",
