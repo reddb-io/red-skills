@@ -76,7 +76,7 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   }
   if (await convertLegacyJsonlHistoryIfSafe(root)) moved.push("afk-history.jsonl");
   // Retire the old tmp-root structured supervisor firehose
-  // (afk-supervisor.log.jsonl -> supervisor.log.toonl). Human prose
+  // (afk-supervisor.log.toonl -> supervisor.log.toonl). Human prose
   // afk-supervisor.log is not moved or dual-written into a new lane.
   const { legacyDir, currentDir, logPrefix } = supervisorLogMigration(root);
   let entries: string[] = [];
@@ -87,7 +87,7 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   }
   for (const name of entries) {
     if (!name.startsWith(logPrefix)) continue;
-    if (name !== "afk-supervisor.log.jsonl" && name !== "afk-supervisor.log.toonl") continue;
+    if (name !== "afk-supervisor.log.toonl" && name !== "afk-supervisor.log.toonl") continue;
     const currentName = "supervisor.log.toonl";
     if (await moveIfSafe(join(legacyDir, name), join(currentDir, currentName))) moved.push(name);
   }

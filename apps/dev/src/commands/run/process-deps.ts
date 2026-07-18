@@ -558,7 +558,7 @@ export function buildProcessDeps(
       // the meter + iteration markers. Returning here also narrows `event` to the
       // non-raw variants for the rest of the handler.
       if (event.type === "raw") {
-        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "raw", {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "raw", {
           iteration: event.iteration,
           line: event.line,
         }, {
@@ -567,7 +567,7 @@ export function buildProcessDeps(
         return;
       }
       if (event.type === "sessionId") {
-        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "session", `session ${event.sessionId}`, {
           ts,
           fields: {
             extra: {
@@ -610,7 +610,7 @@ export function buildProcessDeps(
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
-          void appendRecordToonlTaggedRow(join(dir0, "log.jsonl"), "iteration", line, {
+          void appendRecordToonlTaggedRow(join(dir0, "log.toonl"), "iteration", line, {
             ts,
             fields: { extra: { iteration: String(n), phase } },
           }).catch(() => {});
@@ -618,7 +618,7 @@ export function buildProcessDeps(
         if (lastIter > 0) emit(formatIterationMarker(lastIter, "ended", iterMax), "ended", lastIter);
         lastIter = event.iteration;
         emit(formatIterationMarker(lastIter, "started", iterMax), "started", lastIter);
-        void updateState(join(dir0, "afk.state.json"), { "current.iteration": String(lastIter) }).catch(() => {});
+        void updateState(join(dir0, "afk.state.toon"), { "current.iteration": String(lastIter) }).catch(() => {});
       }
       const msg =
         event.type === "text"
@@ -634,7 +634,7 @@ export function buildProcessDeps(
               : event.type === "result"
                 ? `result: ${event.result}`
                 : `→ ${event.name} ${event.formattedArgs}`;
-      void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
+      void appendAgentRecord(join(current.attemptDir, "agent.log.toonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
@@ -645,14 +645,14 @@ export function buildProcessDeps(
       // Firehose lane (issue #250): every record in the uniform envelope. The
       // native port left this unopened; restore it so the post-mortem firehose
       // carries the agent turns alongside the (future) heartbeat/hook records.
-      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "agent", msg, {
+      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "agent", msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
       // The plaintext `[agent] …` mirror into afk.log is intentionally gone:
       // red-castle's file-log now points at the SAME afk.log (process-issue.ts), so
       // it already renders agent text + tool calls there — re-appending here would
-      // double every turn. The structured per-event record stays in agent.log.jsonl
+      // double every turn. The structured per-event record stays in agent.log.toonl
       // + the firehose above, where the rich reasoning/usage glyphs live.
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
@@ -683,7 +683,7 @@ export function buildProcessDeps(
             }
           : {};
       if (activity || discrete) {
-        void updateState(join(current.attemptDir, "afk.state.json"), {
+        void updateState(join(current.attemptDir, "afk.state.toon"), {
           ...(activity ? { "current.activity": activity, "current.last_stream_line": msg.slice(0, 200) } : {}),
           // Any inner-agent stream activity means we are in the macro `coding`
           // phase (collapses explore/impl/tests/commit — the fine activity lives in
@@ -772,12 +772,12 @@ export function buildProcessDeps(
           removed,
           activity,
         });
-        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
+        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "heartbeat", hb.msg, {
           ts,
           fields: { extra: hb.extra },
         }).catch(() => {});
         await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
-        await updateState(join(current.attemptDir, "afk.state.json"), {
+        await updateState(join(current.attemptDir, "afk.state.toon"), {
           ...hb.statePatch,
           "current.loc_peak_added": peakLocAdded,
           "current.loc_peak_removed": peakLocRemoved,
@@ -829,7 +829,7 @@ export function buildProcessDeps(
     // signal must never fail the run.
     markPhase: (phase) => {
       void (async () => {
-        await updateState(join(current.attemptDir, "afk.state.json"), {
+        await updateState(join(current.attemptDir, "afk.state.toon"), {
           "current.phase": phase,
         }).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
@@ -837,7 +837,7 @@ export function buildProcessDeps(
     },
     markState: (patch) => {
       void (async () => {
-        await updateState(join(current.attemptDir, "afk.state.json"), patch).catch(() => {});
+        await updateState(join(current.attemptDir, "afk.state.toon"), patch).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
       })();
     },

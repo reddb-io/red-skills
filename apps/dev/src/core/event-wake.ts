@@ -17,7 +17,7 @@ export type WakeReason = "event" | "timer";
 
 /**
  * A source of worker state-change events. `waitForEvent` resolves the moment the
- * next state change is observed (a worker writing its afk.state.json / appending
+ * next state change is observed (a worker writing its afk.state.toon / appending
  * a heartbeat-firehose record). The `signal` is aborted by {@link waitForNextWake}
  * when the OTHER lane (the timer) wins the race, so the implementation must tear
  * down its watcher on abort — never leak an fs.watch per loop iteration. A throw

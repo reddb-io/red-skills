@@ -39,7 +39,7 @@ describe("TOONL operational docs", () => {
   it("keeps the documented tq examples valid against produced TOONL lane files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "red-skills-toon-docs-"));
     try {
-      const agentLane = join(dir, "agent.log.jsonl");
+      const agentLane = join(dir, "agent.log.toonl");
       const historyLane = join(dir, "afk-history.toonl");
       const supervisorFirehose = join(dir, "supervisor.log.toonl");
       await writeFile(

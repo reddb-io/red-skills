@@ -20,11 +20,11 @@ export const IDENTITY_FILENAME = "identity.json";
 
 /**
  * The immutable spawn-time identity of one attempt (issue #1219). Written once by
- * {@link writeIdentitySync} beside `afk.state.json` and NEVER clobbered by the
+ * {@link writeIdentitySync} beside `afk.state.toon` and NEVER clobbered by the
  * vitals `updateState` read-modify-writes. It is the durable source the isolation
  * fallback in {@link readWorkerState} reads to render a live worker's real
  * `worker_id`/`runner`/`origin`/`started_at`/issue number when the host-side
- * `afk.state.json` is still zeroed (pid 0, empty identity) pre-sync — so a live
+ * `afk.state.toon` is still zeroed (pid 0, empty identity) pre-sync — so a live
  * worker can never render as the `?  run=-  00:00:00` ghost.
  */
 export interface WorkerIdentity {
@@ -85,7 +85,7 @@ export function readIdentitySync(attemptDir: string): WorkerIdentity | null {
 /**
  * One-release back-compat read shim (ADR 0065): map legacy worker-vitals keys on
  * `current` onto their canonical names when the canonical key is absent, so a NEW
- * bundle reads an OLD afk.state.json without losing the value. The state file is
+ * bundle reads an OLD afk.state.toon without losing the value. The state file is
  * ephemeral (rewritten each ~60s heartbeat), so this only bridges the upgrade
  * window. Remove the shim — and the legacy keys — one release after S1 lands.
  */

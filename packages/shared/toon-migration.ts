@@ -72,14 +72,14 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
   {
     id: "dev.agent-log",
     plugin: "dev",
-    legacyPath: ".red/tmp/agent.log.jsonl",
+    legacyPath: ".red/tmp/agent.log.toonl",
     toonPath: ".red/tmp/agent.log.toonl",
     kind: "toonl",
   },
   {
     id: "dev.supervisor-firehose",
     plugin: "dev",
-    legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
+    legacyPath: ".red/tmp/afk-supervisor.log.toonl",
     toonPath: ".red/tmp/supervisors/default/supervisor.log.toonl",
     kind: "toonl",
     migration: "sniff-read",
@@ -94,8 +94,8 @@ export const DEV_TOON_MIGRATION_SURFACES: readonly RegisteredToonSurface[] = [
   {
     id: "dev.attempt-state",
     plugin: "dev",
-    legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
-    toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+    legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.toon",
+    toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.toon",
     kind: "toon",
   },
   {
@@ -308,7 +308,7 @@ async function expandSurfaceTargets(rootDir: string, surface: RegisteredToonSurf
         continue;
       }
       for (const attempt of attempts) {
-        const path = join(workerRoot, attempt, "afk.state.json");
+        const path = join(workerRoot, attempt, "afk.state.toon");
         if (await pathExists(path)) out.push({ surface, legacyPath: path, toonPath: path });
       }
     }

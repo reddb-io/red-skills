@@ -15,7 +15,7 @@ function record(
   renderableLive: boolean,
 ): WorkerStateRecord {
   return {
-    path: `${root}/.red/tmp/workers/${worker}/${issue}-a1/afk.state.json`,
+    path: `${root}/.red/tmp/workers/${worker}/${issue}-a1/afk.state.toon`,
     state: parseState({ worker_id: worker, current: { number: issue } }),
     live: renderableLive,
     active: renderableLive,

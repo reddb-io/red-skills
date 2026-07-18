@@ -791,7 +791,7 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
       // boot-stamp so the slot log records them. Only the second claimed an issue.
       writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wAAA1\n[afk] worker: wBBB2\n", "utf8");
 
-      // wAAA1 — died before claiming (no afk.state.json → issue null).
+      // wAAA1 — died before claiming (no afk.state.toon → issue null).
       const dir1 = join(tmp, "workers", "wAAA1", "9-a1");
       mkdirSync(dir1, { recursive: true });
 
@@ -799,7 +799,7 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
       const dir2 = join(tmp, "workers", "wBBB2", "99-a1");
       mkdirSync(dir2, { recursive: true });
       writeFileSync(
-        join(dir2, "afk.state.json"),
+        join(dir2, "afk.state.toon"),
         JSON.stringify({ current: { number: 99 } }),
         "utf8",
       );

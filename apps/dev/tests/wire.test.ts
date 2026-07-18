@@ -43,7 +43,7 @@ function writeRenderableAttempt(root: string, worker: string, issue: number, sta
   const attemptDir = join(root, ".red", "tmp", "workers", worker, `${issue}-a1`);
   mkdirSync(attemptDir, { recursive: true });
   writeFileSync(
-    join(attemptDir, "afk.state.json"),
+    join(attemptDir, "afk.state.toon"),
     JSON.stringify({
       worker_id: worker,
       pid: process.pid,
@@ -395,7 +395,7 @@ describe("collectMonitorInputs", () => {
       // renderableLive gate (#1219: the dashboard now drops dead/stale rows;
       // dead-worker filtering is covered by worker-state-reader's isRenderableLive suite).
       writeFileSync(
-        join(attemptDir, "afk.state.json"),
+        join(attemptDir, "afk.state.toon"),
         JSON.stringify({ worker_id: "wAB12", pid: process.pid, runner: "claude", total: 3, done: 1 }),
       );
       writeFileSync(join(attemptDir, "afk.log"), "a\nb\n");
@@ -944,7 +944,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
       const dir = join(tmpDir, "workers", "wQ", "55-a1");
       mkdirSync(dir, { recursive: true });
       writeFileSync(
-        join(dir, "afk.state.json"),
+        join(dir, "afk.state.toon"),
         JSON.stringify({
           pid: process.pid, // alive
           current: {
@@ -988,7 +988,7 @@ describe("collectStatuslineAfk — cache discipline", () => {
       const dir = join(tmpDir, "workers", "wZ", "77-a1");
       mkdirSync(dir, { recursive: true });
       writeFileSync(
-        join(dir, "afk.state.json"),
+        join(dir, "afk.state.toon"),
         JSON.stringify({
           pid: process.pid,
           current: {
@@ -1309,14 +1309,14 @@ describe("resolveStatuslineCacheTtl (#1217)", () => {
 
 // ---------------------------------------------------------------------------
 // collectMonitorInputs — layout discovery (#1029)
-// Both sandcastle and legacy layouts put afk.state.json at the same path
-// ({workersRoot}/{workerID}/{attemptDir}/afk.state.json) — the difference is
+// Both sandcastle and legacy layouts put afk.state.toon at the same path
+// ({workersRoot}/{workerID}/{attemptDir}/afk.state.toon) — the difference is
 // where the git worktree lives. This suite verifies both layouts are discovered
 // by the Worker state reader, satisfying the "no monitor-private globbing" contract.
 // ---------------------------------------------------------------------------
 
 describe("collectMonitorInputs — layout discovery (#1029)", () => {
-  it("discovers a sandcastle-layout worker (state at attemptDir/afk.state.json, worktree absent pre-heartbeat)", async () => {
+  it("discovers a sandcastle-layout worker (state at attemptDir/afk.state.toon, worktree absent pre-heartbeat)", async () => {
     const root = scratch();
     try {
       // Sandcastle layout: state file at the standard path; worktree field not yet
@@ -1325,7 +1325,7 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
       const attemptDir = join(root, ".red", "tmp", "workers", "wSC", "42-a1");
       mkdirSync(attemptDir, { recursive: true });
       writeFileSync(
-        join(attemptDir, "afk.state.json"),
+        join(attemptDir, "afk.state.toon"),
         JSON.stringify({ worker_id: "wSC", pid: process.pid, runner: "claude", total: 5, done: 2 }),
       );
       const { workers } = await collectMonitorInputs(root);
@@ -1339,7 +1339,7 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
     }
   });
 
-  it("discovers a legacy-layout worker (state at attemptDir/afk.state.json, worktree at attemptDir/worktree)", async () => {
+  it("discovers a legacy-layout worker (state at attemptDir/afk.state.toon, worktree at attemptDir/worktree)", async () => {
     const root = scratch();
     try {
       const attemptDir = join(root, ".red", "tmp", "workers", "wLG", "7-a1");
@@ -1347,7 +1347,7 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
       // Legacy layout: current.worktree points to {attemptDir}/worktree (doesn't
       // exist here; git call fails gracefully, diffstat returns 0,0 safely).
       writeFileSync(
-        join(attemptDir, "afk.state.json"),
+        join(attemptDir, "afk.state.toon"),
         JSON.stringify({
           // Live pid → survives the #1219 renderableLive gate; legacy-layout discovery is what's tested.
           worker_id: "wLG",
@@ -1375,7 +1375,7 @@ describe("collectMonitorInputs — layout discovery (#1029)", () => {
       // Use process.pid so isStateLive → true (pid is alive).
       const attemptDir = join(root, ".red", "tmp", "workers", "wLIVE", "99-a1");
       mkdirSync(attemptDir, { recursive: true });
-      const stateFile = join(attemptDir, "afk.state.json");
+      const stateFile = join(attemptDir, "afk.state.toon");
       writeFileSync(
         stateFile,
         JSON.stringify({

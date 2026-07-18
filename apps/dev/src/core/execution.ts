@@ -311,7 +311,7 @@ export interface RunAgentInput {
    * captures the stream itself). When set together with {@link logPath},
    * `buildRunOptions` wires it into sandcastle's `logging.onAgentStreamEvent`,
    * yielding one callback per text chunk / tool call. process-issue forwards
-   * each event to `agent.log.jsonl` (the clean lane `reaper-signal` /
+   * each event to `agent.log.toonl` (the clean lane `reaper-signal` /
    * `supervisor-fs` read for liveness) + the firehose — without it the lanes'
    * mtime freezes at iteration start and the stall detector / monitor go blind
    * to a live agent. sandcastle swallows any error this callback throws.
@@ -445,7 +445,7 @@ export interface SandcastleDeps {
    * Build the sandbox provider for a mode. `opts.mountPath` (issue #405) is the
    * absolute host attempt dir: under docker/podman it is added as a bind-mount at
    * the identical path inside the container so the attempt dir's proof-of-life
-   * lane (afk.state.json / agent.log.jsonl / log.jsonl) AND the worktree
+   * lane (afk.state.toon / agent.log.toonl / log.toonl) AND the worktree
    * sandcastle creates under it are host-visible in real time — the precondition
    * for arming the progress guard + heartbeat under isolation. Ignored for the
    * host-native `none` mode (no container to mount into).

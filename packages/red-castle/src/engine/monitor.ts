@@ -167,7 +167,7 @@ export interface CompactCurrent {
   waiting_count?: number;
 }
 
-/** The subset of afk.state.json the compact line reads. */
+/** The subset of afk.state.toon the compact line reads. */
 export interface CompactState {
   worker_id: string;
   pid: number;

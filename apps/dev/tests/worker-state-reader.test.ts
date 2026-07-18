@@ -29,7 +29,7 @@ function psWithChild(pid: number, childPid: number): string {
 
 async function writeState(dir: string, raw: unknown): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const path = join(dir, "afk.state.json");
+  const path = join(dir, "afk.state.toon");
   await writeFile(path, JSON.stringify(raw), "utf8");
   return path;
 }
@@ -122,7 +122,7 @@ describe("worker-state-reader", () => {
 
   it("reads a TOON attempt-state snapshot through the same schema path", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-toon-"));
-    const path = join(base, "afk.state.json");
+    const path = join(base, "afk.state.toon");
     await mkdir(base, { recursive: true });
     await writeFile(
       path,
@@ -149,7 +149,7 @@ describe("worker-state-reader", () => {
 
   it("writes the attempt-state snapshot as spec-valid TOON", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-write-toon-"));
-    const path = join(base, "afk.state.json");
+    const path = join(base, "afk.state.toon");
     initStateSync(path, {
       worker_id: "wWRITE",
       pid: 4242,
@@ -165,12 +165,12 @@ describe("worker-state-reader", () => {
   });
 
   it("returns null for a missing file", () => {
-    expect(readWorkerState(join(tmpdir(), "nope", "afk.state.json"))).toBeNull();
+    expect(readWorkerState(join(tmpdir(), "nope", "afk.state.toon"))).toBeNull();
   });
 
   it("returns null for malformed JSON", async () => {
     const base = await mkdtemp(join(tmpdir(), "wsr-bad-"));
-    const path = join(base, "afk.state.json");
+    const path = join(base, "afk.state.toon");
     await writeFile(path, "{ not json", "utf8");
     expect(readWorkerState(path)).toBeNull();
   });
@@ -197,7 +197,7 @@ describe("worker-state-reader", () => {
     const recs = await readWorkerStates(root, {
       nowMs: NOW,
       psSnapshot: () => psWithChild(2, 9999), // pid 2 has a child → wB is quiet-but-live
-      glob: async () => [live, stale, join(root, "ghost", "afk.state.json")],
+      glob: async () => [live, stale, join(root, "ghost", "afk.state.toon")],
     });
     expect(recs).toHaveLength(2);
     const byId = Object.fromEntries(recs.map((r) => [r.state.worker_id, r]));
@@ -250,9 +250,9 @@ describe("worker-state-reader", () => {
     expect(union.map((r) => r.state.worker_id)).toEqual(single.map((r) => r.state.worker_id));
   });
 
-  // Isolation fallback: worker.pid liveness when afk.state.json.pid === 0
+  // Isolation fallback: worker.pid liveness when afk.state.toon.pid === 0
   it("isolation: live worker.pid + pid:0 state → quiet-but-live, issue derived from path", async () => {
-    // Path must look like {worker}/{N}-a{n}/afk.state.json so issue derivation works.
+    // Path must look like {worker}/{N}-a{n}/afk.state.toon so issue derivation works.
     const base = await mkdtemp(join(tmpdir(), "wsr-iso-live-"));
     const attemptDir = join(base, "wISO", "1085-a1");
     const path = await writeState(attemptDir, { pid: 0, current: {} });

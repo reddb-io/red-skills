@@ -59,7 +59,7 @@ interface Trace {
   iterLogs: string[];
   /** Main-red repair issue create attempts from the baseline probe sync path. */
   mainRedRepairCreates: Array<{ title: string; body: string; labels: readonly string[] }>;
-  /** Compact state patches written to afk.state.json. */
+  /** Compact state patches written to afk.state.toon. */
   statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
   cascadeRebaseAttempts: string[];

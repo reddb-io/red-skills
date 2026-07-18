@@ -21,7 +21,7 @@ import type { WorkerStateRecord } from "../src/core/worker-state-reader.js";
 // A worker-state record whose path encodes (issue, attempt) for parseWorkerAttemptPath.
 function record(issue: number, attempt: number, current: Record<string, unknown>, live = true): WorkerStateRecord {
   return {
-    path: `/r/.red/tmp/workers/host-w/${issue}-a${attempt}/afk.state.json`,
+    path: `/r/.red/tmp/workers/host-w/${issue}-a${attempt}/afk.state.toon`,
     state: parseState({ current: { number: issue, ...current } }),
     live,
     active: live,

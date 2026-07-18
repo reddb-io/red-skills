@@ -79,7 +79,7 @@ describe("recommendRetake", () => {
       branches: [{ name: "origin/codex/123-retake", remote: true }],
       worktrees: [],
       workerState: {
-        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.json",
+        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.toon",
         attemptDir: "/repo/.red/tmp/workers/wAAAA/123-a2",
         issue: 123,
         attempt: 2,
@@ -169,7 +169,7 @@ describe("recommendRetake", () => {
       branches: [{ name: "origin/codex/123-retake", remote: true }],
       worktrees: [],
       workerState: {
-        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.json",
+        path: "/repo/.red/tmp/workers/wAAAA/123-a2/afk.state.toon",
         attemptDir: "/repo/.red/tmp/workers/wAAAA/123-a2",
         issue: 123,
         attempt: 2,

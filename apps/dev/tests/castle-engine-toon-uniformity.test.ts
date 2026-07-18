@@ -82,7 +82,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
 
   it("the per-attempt worker state snapshot is TOON, never raw JSON", async () => {
     const dir = await mkdtemp(join(tmpdir(), "castle-toon-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
     const state = defaultState();
     await writeStateAtomic(path, state);
     const bytes = await readFile(path, "utf8");

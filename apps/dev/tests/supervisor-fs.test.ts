@@ -97,7 +97,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
     }
   });
 
-  it("resolves worker ID + claimed issue from slot log + afk.state.json", () => {
+  it("resolves worker ID + claimed issue from slot log + afk.state.toon", () => {
     const tmp = scratch();
     try {
       const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
@@ -107,7 +107,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const iterDir = join(tmp, "workers", "wAAAA", "42-a1");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
-        join(iterDir, "afk.state.json"),
+        join(iterDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 42 } }),
         "utf8",
       );
@@ -124,7 +124,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
     }
   });
 
-  it("handles a pre-claim worker (no afk.state.json → issue null)", () => {
+  it("handles a pre-claim worker (no afk.state.toon → issue null)", () => {
     const tmp = scratch();
     try {
       const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
@@ -132,7 +132,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       writeFileSync(slotLogPath(tmp, 1, logs), "[afk] worker: wBBBB\n", "utf8");
       const iterDir = join(tmp, "workers", "wBBBB", "7-a1");
       mkdirSync(iterDir, { recursive: true });
-      // No afk.state.json — worker died before claiming.
+      // No afk.state.toon — worker died before claiming.
 
       const work = parkedSlotWorkFor(tmp, 1, null, undefined, logs);
       expect(work.workers).toHaveLength(1);
@@ -157,7 +157,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const ccDir = join(tmp, "workers", "wCCCC", "10-a1");
       mkdirSync(ccDir, { recursive: true });
       writeFileSync(
-        join(ccDir, "afk.state.json"),
+        join(ccDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 10 } }),
         "utf8",
       );
@@ -165,7 +165,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const ddDir = join(tmp, "workers", "wDDDD", "11-a1");
       mkdirSync(ddDir, { recursive: true });
       writeFileSync(
-        join(ddDir, "afk.state.json"),
+        join(ddDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 11 } }),
         "utf8",
       );
@@ -218,7 +218,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const iterDir = join(workerPath, "55-a1");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
-        join(iterDir, "afk.state.json"),
+        join(iterDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 55 } }),
         "utf8",
       );
@@ -234,7 +234,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
     }
   });
 
-  it("PID fallback returns pre-claim worker (no afk.state.json) with issue null", () => {
+  it("PID fallback returns pre-claim worker (no afk.state.toon) with issue null", () => {
     const tmp = scratch();
     try {
       const wid = "wQQQQ";
@@ -244,7 +244,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       mkdirSync(workerPath, { recursive: true });
       writeFileSync(join(workerPath, "worker.pid"), String(pid), "utf8");
 
-      // Iter dir created but worker died before writing afk.state.json.
+      // Iter dir created but worker died before writing afk.state.toon.
       const iterDir = join(workerPath, "7-a1");
       mkdirSync(iterDir, { recursive: true });
 
@@ -297,7 +297,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const logIterDir = join(tmp, "workers", logWid, "20-a1");
       mkdirSync(logIterDir, { recursive: true });
       writeFileSync(
-        join(logIterDir, "afk.state.json"),
+        join(logIterDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 20 } }),
         "utf8",
       );
@@ -309,7 +309,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const pidIterDir = join(pidWorkerPath, "21-a1");
       mkdirSync(pidIterDir, { recursive: true });
       writeFileSync(
-        join(pidIterDir, "afk.state.json"),
+        join(pidIterDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 21 } }),
         "utf8",
       );
@@ -332,7 +332,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const iterDir = join(tmp, "workers", "wOLD1", "88-a1");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
-        join(iterDir, "afk.state.json"),
+        join(iterDir, "afk.state.toon"),
         JSON.stringify({ current: { number: 88 } }),
         "utf8",
       );

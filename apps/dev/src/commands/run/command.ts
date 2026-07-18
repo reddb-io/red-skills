@@ -321,7 +321,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         await fsx.removeDir(pi.attemptDir).catch(() => {});
         return result;
       }
-      const sp = join(pi.attemptDir, "afk.state.json");
+      const sp = join(pi.attemptDir, "afk.state.toon");
       if (await fsx.pathExists(sp)) {
         await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
@@ -372,7 +372,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // Point the session-scoped envelope/iter-log closures at this attempt.
       current.attemptDir = attemptDir;
       // Native-path observability (sibling of #350): the shell era's iter_open
-      // initialised afk.state.json here; the TS port's ensureAttemptDir is
+      // initialised afk.state.toon here; the TS port's ensureAttemptDir is
       // mkdir-only, so every live native worker was invisible to `monitor` /
       // `statusline` and the fleet stall-detector (which key off this file's
       // pid + current.{number,activity} and its mtime). Restore it: write the
@@ -388,7 +388,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // vitals but NO identity (rendered as a pid-0 `?`/idle ghost in monitor /
       // statusline). Seeding synchronously guarantees the identity exists before
       // any updateState runs, so every later read preserves it.
-      const statePath = join(attemptDir, "afk.state.json");
+      const statePath = join(attemptDir, "afk.state.toon");
       const startedAt = new Date().toISOString();
       try {
         initStateSync(statePath, {
@@ -420,7 +420,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         // Durable write-once identity sidecar (issue #1219): the immutable
         // worker_id/runner/origin/number/started_at the isolation fallback in
         // readWorkerState reads so a live isolation worker whose host-side
-        // afk.state.json is still zeroed renders its real identity instead of the
+        // afk.state.toon is still zeroed renders its real identity instead of the
         // `?  run=-  00:00:00` ghost. Never clobbered by vitals updateState writes.
         writeIdentitySync(attemptDir, {
           worker_id: c.workerId,

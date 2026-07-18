@@ -366,8 +366,8 @@ async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
       continue;
     }
     for (const attempt of attempts) {
-      out.push(join(workersRoot, worker, attempt, "log.jsonl"));
-      out.push(join(workersRoot, worker, attempt, "agent.log.jsonl"));
+      out.push(join(workersRoot, worker, attempt, "log.toonl"));
+      out.push(join(workersRoot, worker, attempt, "agent.log.toonl"));
     }
   }
   return out;

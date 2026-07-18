@@ -408,7 +408,7 @@ describe("reapDeadEmptyWorkerShells (#1355)", () => {
       const preservedWorker = join(root, "scout-workers", "wPRESERVE");
       const preservedAttempt = join(preservedWorker, "13-a1");
       mkdirSync(preservedAttempt, { recursive: true });
-      writeFileSync(join(preservedAttempt, "agent.log.jsonl"), "blocked evidence");
+      writeFileSync(join(preservedAttempt, "agent.log.toonl"), "blocked evidence");
       writeFileSync(join(preservedWorker, "worker.pid"), DEAD_PID);
 
       const result = await reapDeadEmptyWorkerShells(root);
@@ -416,7 +416,7 @@ describe("reapDeadEmptyWorkerShells (#1355)", () => {
       expect(result.workerDirs).toEqual([emptyWorker]);
       expect(result.emptyAttemptDirs).toEqual([join(emptyWorker, "12-a1")]);
       expect(existsSync(emptyWorker)).toBe(false);
-      expect(readdirSync(preservedAttempt)).toEqual(["agent.log.jsonl"]);
+      expect(readdirSync(preservedAttempt)).toEqual(["agent.log.toonl"]);
       expect(readFileSync(join(preservedWorker, "worker.pid"), "utf8")).toBe(DEAD_PID);
     } finally {
       rmSync(root, { recursive: true, force: true });

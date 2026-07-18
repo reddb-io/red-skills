@@ -382,12 +382,12 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
         result: { status: "success", outcome: "done" },
         attempt_n: 1,
         iter_log: "/repo/.red/tmp/workers/w0/42-1/afk.log",
-        state_file: "/repo/.red/tmp/workers/w0/42-1/afk.state.json",
+        state_file: "/repo/.red/tmp/workers/w0/42-1/afk.state.toon",
       }),
     );
 
     expect(env.RED_AFK_ITER_LOG).toBe("/repo/.red/tmp/workers/w0/42-1/afk.log");
-    expect(env.RED_AFK_STATE_FILE).toBe("/repo/.red/tmp/workers/w0/42-1/afk.state.json");
+    expect(env.RED_AFK_STATE_FILE).toBe("/repo/.red/tmp/workers/w0/42-1/afk.state.toon");
   });
 
   it("leaves RED_AFK_ITER_LOG and RED_AFK_STATE_FILE unset when absent from context", () => {

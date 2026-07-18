@@ -1,6 +1,6 @@
-// core/worker-state-reader.ts — the ONE owner for reading afk.state.json.
+// core/worker-state-reader.ts — the ONE owner for reading afk.state.toon.
 //
-// Every consumer that turns an `afk.state.json` on disk into a usable worker
+// Every consumer that turns an `afk.state.toon` on disk into a usable worker
 // record — the monitor/statusline collectors, the mirror feed, boot facts, and
 // the fleet supervisor's reaper — goes through here, so there is a SINGLE parse
 // path: JSON.parse → `parseState` (schema + the ADR 0065 legacy-key shim) →
@@ -31,7 +31,7 @@ export type WorkerLivenessVerdict = "active" | "quiet-but-live" | "dead";
 
 /** One normalized, liveness-tagged worker state read. */
 export interface WorkerStateRecord {
-  /** Absolute path of the `afk.state.json` this record was read from. */
+  /** Absolute path of the `afk.state.toon` this record was read from. */
   path: string;
   /** Parsed state with the schema + ADR 0065 legacy-key shim applied. */
   state: AfkState;
@@ -219,7 +219,7 @@ export interface WorkerStateReadOpts {
    * `{dirname(dirname(path))}/worker.pid` from disk. Only consulted when
    * `state.pid === 0` and the primary evaluator returns "stalled" — this is
    * the host-side liveness signal for isolation workers (docker/podman) where
-   * the host's `afk.state.json.pid` is never populated during the run.
+   * the host's `afk.state.toon.pid` is never populated during the run.
    */
   workerPidContent?: string;
   /**
@@ -254,7 +254,7 @@ function verdictToLiveness(v: LivenessVerdict): WorkerLivenessVerdict {
 }
 
 /**
- * Read and normalize ONE `afk.state.json`. Synchronous so the supervisor reaper
+ * Read and normalize ONE `afk.state.toon`. Synchronous so the supervisor reaper
  * can call it inside its sync closures. Returns `null` when the file is missing,
  * unreadable, not valid JSON, or fails the schema — the safe value every caller
  * already degrades to (issue null / worker skipped). A present-but-partial file
@@ -305,12 +305,12 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
   // the attempt stalled (empty lane + no descendants), probe the per-worker
   // worker.pid file instead. The supervisor writes it on the host regardless of
   // sandbox mode, so it is the reliable host-side liveness signal for isolation
-  // workers even before afk.state.json syncs back at run end.
+  // workers even before afk.state.toon syncs back at run end.
   let finalVerdict = livenessVerdict;
   let hostPidLive = false;
   if (livenessVerdict.status === "stalled" && state.pid === 0 && isNewestAttemptDirForWorker(path)) {
     // worker.pid lives one directory above the attempt dir:
-    // {workersRoot}/{workerId}/{N}-a{n}/afk.state.json → {workersRoot}/{workerId}/worker.pid
+    // {workersRoot}/{workerId}/{N}-a{n}/afk.state.toon → {workersRoot}/{workerId}/worker.pid
     const workerPidPath = join(dirname(dirname(path)), "worker.pid");
     let hostPidText: string | null;
     if (opts.workerPidContent !== undefined) {
@@ -334,7 +334,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
       if (hostPidAlive) {
         hostPidLive = true;
         // Synthesize a "quiet-but-live" verdict: the orchestrator is running on
-        // the host but afk.state.json has not synced yet (isolation pre-sync).
+        // the host but afk.state.toon has not synced yet (isolation pre-sync).
         finalVerdict = {
           status: "alive",
           laneFresh: false,
@@ -342,7 +342,7 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
           reason: `state.pid=0 but worker.pid=${hostPid} is alive (isolation worker)`,
         };
         // Durable identity fallback (issue #1219): a live isolation worker whose
-        // host-side afk.state.json is still zeroed (pid 0, empty worker_id/runner)
+        // host-side afk.state.toon is still zeroed (pid 0, empty worker_id/runner)
         // must NOT render as the `?  run=-  00:00:00` ghost. Read the write-once
         // identity.json sidecar and populate the zeroed identity fields from it —
         // never overwriting a value the state file already carries.

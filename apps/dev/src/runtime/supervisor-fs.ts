@@ -6,7 +6,7 @@
 //   find_slot_iter_dir         (slot pid → worker dir → newest attempt dir)
 //   workerLivenessFor          (iter dir → liveness lane → evaluator verdict)
 //   iter_dirs_for_worker       (worker dir → every attempt dir)
-//   iter_dir_issue_number      (afk.state.json → .current.number)
+//   iter_dir_issue_number      (afk.state.toon → .current.number)
 //   reap_stalled_slot reads    (notes, afk.log tail, duration)
 //
 // Every export is BEST-EFFORT: a failed read / stat / glob degrades to the safe
@@ -124,7 +124,7 @@ export function sumWorkerCostUsd(tmpDir: string): number {
       continue;
     }
     for (const attempt of attempts) {
-      const rec = readWorkerState(join(wdir, attempt, "afk.state.json"));
+      const rec = readWorkerState(join(wdir, attempt, "afk.state.toon"));
       if (rec === null) continue;
       const cost = rec.state.current.cost_usd;
       if (Number.isFinite(cost) && cost > 0) total += cost;
@@ -133,12 +133,12 @@ export function sumWorkerCostUsd(tmpDir: string): number {
   return total;
 }
 
-/** `.current.number` from a dir's afk.state.json, or null. Mirrors
+/** `.current.number` from a dir's afk.state.toon, or null. Mirrors
  * iter_dir_issue_number. Reads through the single owner
  * (core/worker-state-reader) so the schema + legacy-key shim apply — no private
  * JSON.parse. */
 export function iterDirIssueNumber(dir: string): number | null {
-  const rec = readWorkerState(join(dir, "afk.state.json"));
+  const rec = readWorkerState(join(dir, "afk.state.toon"));
   const n = rec?.state.current.number;
   return typeof n === "number" && Number.isInteger(n) ? n : null;
 }
@@ -228,7 +228,7 @@ export function workerLivenessFor(
   // Worker pid from the state file for the descendant probe.
   let agentPid = 0;
   try {
-    const rec = readWorkerState(join(dir, "afk.state.json"));
+    const rec = readWorkerState(join(dir, "afk.state.toon"));
     if (rec !== null) agentPid = rec.state.pid;
   } catch {
     // best-effort
@@ -268,7 +268,7 @@ function tailFile(path: string, n: number): string {
 
 /**
  * resolveIterDir backing: the slot's current iteration + the envelope material
- * reap_stalled_slot pulls from afk.state.json (issue, worker_id, started_at →
+ * reap_stalled_slot pulls from afk.state.toon (issue, worker_id, started_at →
  * duration), handoff.md (notes), and afk.log (log tail). Returns null when no
  * iter dir resolves. Best-effort: missing pieces degrade to empty / 0.
  */
@@ -286,7 +286,7 @@ export function resolveIterDirInfo(
   let branch: string | undefined;
   // Single owner (core/worker-state-reader): null when the dir has no/malformed
   // state, in which case issue/worker stay empty and teardown still proceeds.
-  const rec = readWorkerState(join(dir, "afk.state.json"));
+  const rec = readWorkerState(join(dir, "afk.state.toon"));
   if (rec !== null) {
     const n = rec.state.current.number;
     if (typeof n === "number" && Number.isInteger(n)) issue = n;

@@ -8,7 +8,7 @@ import { readEnvelopePosted, writeEnvelopePosted } from "../src/runtime/fs.js";
 describe("envelope posted state persistence", () => {
   it("preserves accumulated worker state while updating the envelope flag", async () => {
     const attemptDir = await mkdtemp(join(tmpdir(), "afk-envelope-"));
-    const statePath = join(attemptDir, "afk.state.json");
+    const statePath = join(attemptDir, "afk.state.toon");
     const original = `${JSON.stringify({
       worker_id: "wENV",
       pid: 123,

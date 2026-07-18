@@ -286,7 +286,7 @@ export function resolveRunSettings(
  *
  * Replaces the old `agentLaneMtimeSeconds` firehose-mtime probe (#1022): the
  * liveness lane is the un-poisonable signal that the substrate's own control
- * flow refreshes — never afk.log / agent.log.jsonl / the heartbeat (#243).
+ * flow refreshes — never afk.log / agent.log.toonl / the heartbeat (#243).
  */
 export function agentLivenessVerdictSync(
   attemptDir: string,
@@ -1635,7 +1635,7 @@ export async function collectBootOptions(
     // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
     // excluded from the cap even when briefly quiet), read through the single
     // owner so the schema + legacy-key shim apply here too.
-    const live = readWorkerState(join(o.path, "afk.state.json"))?.live ?? false;
+    const live = readWorkerState(join(o.path, "afk.state.toon"))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];
     list.push({ path: o.path, mtimeS, live });

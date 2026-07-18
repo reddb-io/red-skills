@@ -75,7 +75,7 @@ function snapshotFromState(
 function readAttemptState(attemptDir: string): AfkState | null {
   if (!attemptDir) return null;
   try {
-    return parseStateDocument(readFileSync(join(attemptDir, "afk.state.json"), "utf8"));
+    return parseStateDocument(readFileSync(join(attemptDir, "afk.state.toon"), "utf8"));
   } catch {
     return null;
   }

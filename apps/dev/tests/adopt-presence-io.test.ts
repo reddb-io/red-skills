@@ -29,7 +29,7 @@ describe("makeAdoptPresenceIo — real state file, read through the shipped read
     const tmpDir = join(root, ".red", "tmp");
     const io = makeAdoptPresenceIo("claude");
     const dir = attemptDir(tmpDir, 42);
-    const statePath = join(dir, "afk.state.json");
+    const statePath = join(dir, "afk.state.toon");
 
     const outcome = await withAdoptPresence(
       io,
@@ -65,7 +65,7 @@ describe("makeAdoptPresenceIo — real state file, read through the shipped read
     await expect(
       withAdoptPresence(io, { tmpDir, issue: 7, title: "Boom", runner: "claude" }, async () => {
         // The row exists while the body runs.
-        expect(existsSync(join(dir, "afk.state.json"))).toBe(true);
+        expect(existsSync(join(dir, "afk.state.toon"))).toBe(true);
         throw new Error("gate exploded");
       }),
     ).rejects.toThrow("gate exploded");
