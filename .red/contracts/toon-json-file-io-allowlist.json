@@ -7,10 +7,6 @@
       "reason": "MCP runtime config is JSON for MCP client interoperability."
     },
     {
-      "id": "apps/brain/src/hook-runtime.ts#json-stringify-file-write#785a7ac362b7",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
       "classification": "external",
       "reason": "Fetched plugin manifest remains JSON at the package boundary."
@@ -34,10 +30,6 @@
       "id": "apps/dev/src/runtime/review-gh.ts#json-stringify-file-write#d6ea528ec9b4",
       "classification": "external",
       "reason": "GitHub review API --input payload is JSON."
-    },
-    {
-      "id": "apps/dev/src/runtime/wire.ts#json-stringify-file-write#1ded525e3fc7",
-      "classification": "migrate"
     },
     {
       "id": "apps/memory/src/bench-eval.ts#json-parse-file-read#9f8ee3a49186",
@@ -131,7 +123,8 @@
     },
     {
       "id": "packages/red-castle/src/WorktreeLock.ts#json-parse-file-read#231944fa112d",
-      "classification": "migrate"
+      "classification": "external",
+      "reason": "Vendored upstream red-castle; its WorktreeLock JSON format is owned by upstream and kept JSON to avoid divergence on cherry-pick sync."
     },
     {
       "id": "packages/red-castle/tsup.config.ts#json-parse-file-read#3ec8644e7f1e",
