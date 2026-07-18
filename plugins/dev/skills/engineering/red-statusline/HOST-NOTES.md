@@ -45,7 +45,7 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
+    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && [ -n \"$N\" ] && exec \"$N\" \"$b\" statusline'",
     "refreshInterval": 60
   }
 }
@@ -74,6 +74,18 @@ It should print the themed **header line** (e.g. `» red-skills (main) v… Opus
 are only set for plugin hooks and MCP/LSP subprocesses. A statusLine that
 references `$CLAUDE_PLUGIN_ROOT` expands it to an empty string and fails with
 `Cannot find module` — the statusline then silently renders blank.
+
+**Why resolve `node` explicitly, not bare `exec node`.** Claude Code runs the
+`statusLine` command in a **non-interactive shell** that does not source the
+user's `~/.bashrc`/`~/.zshrc`, so a Node installed through a **version manager**
+(nvm, fnm, volta, asdf, nodenv, …) is not on `PATH` — a bare `exec node …` then
+fails with `node: not found` (exit 127) and the statusline silently renders
+blank. The command resolves the interpreter itself, manager-agnostic:
+**`command -v node` first** — which already covers every host with Node on `PATH`
+(system package, Homebrew, or no version manager at all) — and only when that
+misses does it scan the common install roots (nvm, fnm, volta, asdf, nodenv,
+Homebrew, `/usr/local`, `/usr`), newest wins. So the line renders regardless of
+how Node was installed or how the host shell was launched.
 
 **Why the cached bundle, not `afk.mjs` directly.** Since ADR 0038, the installed
 `afk.mjs` is a tiny **launcher that fetches** the real runtime bundle from the
