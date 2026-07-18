@@ -38,6 +38,7 @@ import { buildReadinessEnvelope } from "./readiness.js";
 import { buildMemoryRoutingGuide, SUPPORTED_ROUTING_AGENTS } from "./routing-guide.js";
 import type { EdgeLabel } from "./schema.js";
 import { classifyCandidateMemory } from "./store-classifier.js";
+import { writeMemoryStateFile } from "./toon-state.js";
 import { commitMemoryGraph } from "./vcs-commit.js";
 
 type Claim = "advantage" | "parity" | "mixed" | "conceded-gap" | "not-claimed";
@@ -1841,16 +1842,16 @@ async function scaffoldFederationRoot(
   const dir = join(parent, name);
   const notesDir = join(dir, ".red/memory/notes");
   await mkdir(notesDir, { recursive: true });
-  await writeFile(
-    join(dir, ".red/memory/config.json"),
-    JSON.stringify({
+  await writeMemoryStateFile(
+    join(dir, ".red/memory/config.toon"),
+    {
       version: 1,
       mode: "markdown-only",
       notesDir: ".red/memory/notes",
       hooks: { sessionStart: false, postToolUse: false, stop: false, preCompact: false },
       mcp: false,
       reddb: false,
-    }),
+    },
   );
   for (const [file, body] of Object.entries(notes)) {
     await writeFile(join(notesDir, file), body);
