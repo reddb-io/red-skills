@@ -630,8 +630,8 @@ describe("CI-aware merge classification (#812)", () => {
   });
 
   it("parseMergeStateView tolerates non-JSON / empty stdout", () => {
-    expect(parseMergeStateView("")).toEqual({ mergeStateStatus: "", anyFailed: false, anyPending: false });
-    expect(parseMergeStateView("not json")).toEqual({ mergeStateStatus: "", anyFailed: false, anyPending: false });
+    expect(parseMergeStateView("")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
+    expect(parseMergeStateView("not json")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
   });
 });
 
@@ -656,7 +656,7 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     const r = await waitForMergeReady(exec, "o/r", 77, { sleep: noSleep });
     expect(r).toBe("merge");
     expect(calls.filter((c) => c.join(" ").includes("pr view 77")).length).toBe(3);
-    expect(calls[0].join(" ")).toContain("--json mergeStateStatus,statusCheckRollup");
+    expect(calls[0].join(" ")).toContain("--json mergeStateStatus,mergeable,statusCheckRollup");
   });
 
   it("returns ci-failed immediately on a failed required check (no further polls)", async () => {
