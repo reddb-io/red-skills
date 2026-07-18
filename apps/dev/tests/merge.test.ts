@@ -548,8 +548,8 @@ describe("landPr wait_for_review wiring", () => {
 });
 
 describe("CI-aware merge classification (#812)", () => {
-  const view = (mergeStateStatus: string, rollup: unknown[] = []) =>
-    parseMergeStateView(JSON.stringify({ mergeStateStatus, statusCheckRollup: rollup }));
+  const view = (mergeStateStatus: string, rollup: unknown[] = [], mergeable = "") =>
+    parseMergeStateView(JSON.stringify({ mergeStateStatus, mergeable, statusCheckRollup: rollup }));
 
   it("CLEAN → merge", () => {
     expect(classifyMergeState(view("CLEAN"))).toBe("merge");
@@ -557,6 +557,24 @@ describe("CI-aware merge classification (#812)", () => {
 
   it("DIRTY (real git conflict) → conflict", () => {
     expect(classifyMergeState(view("DIRTY"))).toBe("conflict");
+  });
+
+  it("mergeable=CONFLICTING → conflict (the authoritative, settled conflict signal)", () => {
+    expect(classifyMergeState(view("DIRTY", [], "CONFLICTING"))).toBe("conflict");
+    expect(classifyMergeState(view("UNKNOWN", [], "CONFLICTING"))).toBe("conflict");
+  });
+
+  it("mergeable=UNKNOWN → pending even when mergeStateStatus transiently reads DIRTY (the #2085 phantom-conflict fix)", () => {
+    // GitHub is still computing mergeability; a pre-settle DIRTY must NOT
+    // terminally park a provably fast-forwardable branch — re-poll until it
+    // settles. This is the deeper layer the BEHIND-only fix (#2096) missed.
+    expect(classifyMergeState(view("DIRTY", [], "UNKNOWN"))).toBe("pending");
+    expect(classifyMergeState(view("BEHIND", [], "UNKNOWN"))).toBe("pending");
+    expect(classifyMergeState(view("", [], "UNKNOWN"))).toBe("pending");
+  });
+
+  it("mergeable=MERGEABLE + CLEAN → merge (settled and mergeable)", () => {
+    expect(classifyMergeState(view("CLEAN", [], "MERGEABLE"))).toBe("merge");
   });
 
   it("BEHIND (out of date, still mergeable) → pending, NOT conflict (the #2084 phantom-conflict loop)", () => {

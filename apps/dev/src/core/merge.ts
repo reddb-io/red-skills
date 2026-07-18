@@ -437,6 +437,10 @@ function checkPending(entry: RollupEntry): boolean {
 
 interface MergeStateView {
   mergeStateStatus: string;
+  /** GitHub `mergeable`: MERGEABLE | CONFLICTING | UNKNOWN (empty when a caller
+   * did not fetch it). The settled-vs-computing signal: `mergeStateStatus` alone
+   * can read a transient value before GitHub finishes computing mergeability. */
+  mergeable: string;
   anyFailed: boolean;
   anyPending: boolean;
 }
@@ -446,50 +450,59 @@ interface MergeStateView {
  * keeps polling rather than mis-deciding on a transient gh hiccup. */
 export function parseMergeStateView(stdout: string): MergeStateView {
   const text = stdout.trim();
-  if (text === "") return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+  if (text === "") return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) {
-      return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+      return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
     }
     const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
+    const mergeable = (parsed as { mergeable?: unknown }).mergeable;
     const rollup = (parsed as { statusCheckRollup?: unknown }).statusCheckRollup;
     const entries: RollupEntry[] = Array.isArray(rollup)
       ? rollup.filter((e): e is RollupEntry => typeof e === "object" && e !== null)
       : [];
     return {
       mergeStateStatus: typeof mergeStateStatus === "string" ? mergeStateStatus : "",
+      mergeable: typeof mergeable === "string" ? mergeable : "",
       anyFailed: entries.some(checkFailed),
       anyPending: entries.some(checkPending),
     };
   } catch {
-    return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+    return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
   }
 }
 
 /**
- * Decide the merge readiness from the parsed merge state. Order matters:
- *   1. DIRTY → a genuine conflict (GitHub `mergeable=CONFLICTING`) → `conflict`.
- *   2. any required check FAILED → `ci-failed` (even when GitHub still reports
- *      BLOCKED — a failed check never clears by waiting).
- *   3. BEHIND → the head is merely out of date vs the base (still MERGEABLE,
- *      unlike DIRTY). NOT a conflict: `preMergeRebase` already integrated the
- *      base before the PR, so a BEHIND at check time is GitHub still settling
- *      mergeability or a benign race → `pending` (re-poll; it settles to
- *      CLEAN/UNSTABLE → `merge`, or the poll times out and the OPEN PR is handed
- *      off). Treating BEHIND as a conflict caused the #2084 phantom-conflict
- *      concede-loop — a provably fast-forwardable branch looping forever.
- *   4. CLEAN → `merge`.
- *   5. any check still running → `pending` (keep waiting).
- *   6. BLOCKED with neither failures nor pending checks → likely blocked by a
- *      required REVIEW; attempts merge, which surfaces as `merge-failed` if the
- *      repository's branch protection requires a review (correct: honored, not
- *      bypassed) → `merge`.
- *   7. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
- *   8. UNKNOWN / DRAFT / empty → `pending` (GitHub still computing mergeability).
+ * Decide the merge readiness from the parsed merge state. `mergeable` is the
+ * settled-vs-computing AUTHORITY: `mergeStateStatus` alone can read a transient
+ * value (even a spurious `DIRTY`) before GitHub finishes computing mergeability,
+ * and classifying that pre-settle read as a terminal `conflict` is exactly the
+ * #2084/#2085 phantom-conflict concede-loop on a provably fast-forwardable
+ * branch. Order matters:
+ *   1. mergeable=CONFLICTING → a settled, genuine conflict → `conflict`.
+ *   2. mergeable=UNKNOWN → GitHub is still computing mergeability → `pending`
+ *      (re-poll until it settles; the poll budget accommodates it). A transient
+ *      `mergeStateStatus` is never terminal while mergeability is unsettled.
+ *   3. DIRTY → `conflict`. Fallback for callers/tests that did NOT fetch
+ *      `mergeable` (it is empty). Unreachable once `mergeable` is fetched — case
+ *      1 covers real conflicts — but kept for back-compat.
+ *   4. any required check FAILED → `ci-failed` (never clears by waiting).
+ *   5. BEHIND → out of date vs base but still MERGEABLE (unlike DIRTY);
+ *      `preMergeRebase` already integrated the base, so a BEHIND at check time is
+ *      a benign race → `pending` (re-poll).
+ *   6. CLEAN → `merge`.
+ *   7. any check still running → `pending`.
+ *   8. BLOCKED (no failures/pending) → likely a required REVIEW; attempts merge,
+ *      surfacing as `merge-failed` if branch protection requires it → `merge`.
+ *   9. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
+ *  10. UNKNOWN / DRAFT / empty mergeStateStatus → `pending`.
  */
 export function classifyMergeState(view: MergeStateView): MergeReadiness {
   const s = up(view.mergeStateStatus);
+  const m = up(view.mergeable);
+  if (m === "CONFLICTING") return "conflict";
+  if (m === "UNKNOWN") return "pending";
   if (s === "DIRTY") return "conflict";
   if (view.anyFailed) return "ci-failed";
   if (s === "BEHIND") return "pending";
@@ -517,7 +530,7 @@ export async function waitForMergeReady(
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
     const res = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,statusCheckRollup",
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,statusCheckRollup",
     ]);
     const verdict = classifyMergeState(parseMergeStateView(res.stdout));
     if (verdict !== "pending") return verdict;
