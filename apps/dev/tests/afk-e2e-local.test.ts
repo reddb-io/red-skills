@@ -492,11 +492,18 @@ describe("AFK e2e (real local git) — full lifecycle through processIssue", () 
     expect(onMain).not.toContain(WORKER_MARKER);
   });
 
-  it("classifyMergeState honors the #2096 fix in both directions (BEHIND→pending, DIRTY→conflict)", () => {
+  it("classifyMergeState honors the phantom-conflict fixes (BEHIND→pending + mergeable-gate)", () => {
     // The unit invariant the two real-git flows above exercise end-to-end: a
     // transient BEHIND must re-poll (land), a real DIRTY must park.
-    expect(classifyMergeState({ mergeStateStatus: "BEHIND", anyFailed: false, anyPending: false })).toBe("pending");
-    expect(classifyMergeState({ mergeStateStatus: "CLEAN", anyFailed: false, anyPending: false })).toBe("merge");
-    expect(classifyMergeState({ mergeStateStatus: "DIRTY", anyFailed: false, anyPending: false })).toBe("conflict");
+    const v = (mergeStateStatus: string, mergeable = "") => ({ mergeStateStatus, mergeable, anyFailed: false, anyPending: false });
+    expect(classifyMergeState(v("BEHIND"))).toBe("pending");
+    expect(classifyMergeState(v("CLEAN"))).toBe("merge");
+    expect(classifyMergeState(v("DIRTY"))).toBe("conflict");
+    // mergeable-gate (the deeper #2085 layer): a DIRTY read taken before GitHub
+    // settles mergeability (mergeable=UNKNOWN) must NOT terminally park a
+    // fast-forwardable branch — re-poll. Only mergeable=CONFLICTING is a conflict.
+    expect(classifyMergeState(v("DIRTY", "UNKNOWN"))).toBe("pending");
+    expect(classifyMergeState(v("DIRTY", "CONFLICTING"))).toBe("conflict");
+    expect(classifyMergeState(v("CLEAN", "MERGEABLE"))).toBe("merge");
   });
 });
