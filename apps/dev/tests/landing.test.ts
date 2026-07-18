@@ -40,6 +40,8 @@ interface Harness {
   resolverCwds: string[];
   /** dirs the post-merge gate was invoked with (#1335). */
   postMergeGateDirs: string[];
+  /** dirs the mechanical rebase-conflict resolver was invoked with (#2072). */
+  mechanicalResolverDirs: string[];
   /** landing visibility phase transitions published for statusline (#1427). */
   landingPhases: string[];
 }
@@ -88,6 +90,8 @@ interface Opts {
   noRebaseWorktree?: boolean;
   /** rc the rebase in the rebase worktree returns (1 → real conflict → abort). */
   rebaseCode?: number;
+  /** First-attempt PR-path mechanical rebase-conflict resolver result. */
+  mechanicalConflictResolve?: "resolve" | "decline";
   /** rc the force-with-lease push returns (1 → reject on every attempt). */
   rebasePushCode?: number;
   /**
@@ -149,6 +153,7 @@ function harness(opts: Opts = {}): Harness {
   let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   const postMergeGateDirs: string[] = [];
+  const mechanicalResolverDirs: string[] = [];
   const landingPhases: string[] = [];
   let mergeResolved = false;
   let prCreated = false;
@@ -273,6 +278,12 @@ function harness(opts: Opts = {}): Harness {
           removedRebaseWorktrees.push(dir);
         }
       : undefined,
+    resolveMechanicalConflict: opts.mechanicalConflictResolve
+      ? async (dir) => {
+          mechanicalResolverDirs.push(dir);
+          return opts.mechanicalConflictResolve === "resolve";
+        }
+      : undefined,
     // #1102/#1373: only wired when the test opts in (opt-in — absent → guard skipped).
     getDiffPaths: opts.sensitivePaths || opts.changedFiles
       ? async () => ({
@@ -349,6 +360,7 @@ function harness(opts: Opts = {}): Harness {
     },
     resolverCwds,
     postMergeGateDirs,
+    mechanicalResolverDirs,
     landingPhases,
   };
 }
@@ -1215,6 +1227,71 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.postMergeGateDirs).toEqual([]);
+  });
+});
+
+describe("doLanding — first-attempt mechanical conflict resolution (#2072)", () => {
+  it("PR rebase conflict resolved mechanically → revalidates inside the land-lock before merging", async () => {
+    const trace: string[] = [];
+    const landLock: LandLock = {
+      acquire: async () => {
+        trace.push("enter");
+        return async () => {
+          trace.push("exit");
+        };
+      },
+    };
+    const h = harness({
+      locked: false,
+      openPr: true,
+      rebaseCode: 1,
+      mechanicalConflictResolve: "resolve",
+      postMergeGate: true,
+      landLock,
+    });
+
+    const resolve = h.deps.resolveMechanicalConflict!;
+    h.deps.resolveMechanicalConflict = async (dir) => {
+      trace.push(`resolve:${dir}`);
+      return resolve(dir);
+    };
+    const gate = h.deps.postMergeGate!;
+    h.deps.postMergeGate = async (dir) => {
+      trace.push(`gate:${dir}`);
+      return gate(dir);
+    };
+    const exec = h.deps.mergeExec;
+    h.deps.mergeExec = async (args) => {
+      if (args.join(" ").includes("pr merge")) trace.push("merge");
+      return exec(args);
+    };
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(h.mechanicalResolverDirs).toEqual([RWT]);
+    expect(h.postMergeGateDirs).toEqual([RWT]);
+    expect(joined(h.mergeCalls).some((c) => c === `git -C ${RWT} rebase --abort`)).toBe(false);
+    expect(trace).toEqual(["enter", `resolve:${RWT}`, `gate:${RWT}`, "merge", "exit"]);
+  });
+
+  it("PR rebase conflict outside the mechanical allowlist → aborts and parks as pr-conflict", async () => {
+    const h = harness({
+      locked: false,
+      openPr: true,
+      rebaseCode: 1,
+      mechanicalConflictResolve: "decline",
+      postMergeGate: true,
+    });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    expect(h.mechanicalResolverDirs).toEqual([RWT]);
+    expect(h.postMergeGateDirs).toEqual([]);
+    const j = joined(h.mergeCalls);
+    expect(j).toContain(`git -C ${RWT} rebase --abort`);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
   });
 });
 
