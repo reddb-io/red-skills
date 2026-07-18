@@ -11,6 +11,7 @@ import {
 } from "../src/backup.js";
 import { readConfig } from "../src/config.js";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
+import { decodeMemoryStateDocument } from "../src/toon-state.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -48,9 +49,15 @@ describe("Memory backup snapshots", () => {
       mode: "markdown-only",
     });
     expect(first.manifest.files.map((file) => file.path)).toEqual(
-      expect.arrayContaining(["config.json", "notes/auth.md"]),
+      expect.arrayContaining(["config.toon", "notes/auth.md"]),
     );
     expect(first.manifest.files.some((file) => file.path.startsWith("backups/"))).toBe(false);
+    await expect(readFile(join(root, ".red/memory/backups/before-auth/manifest.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const manifestRaw = await readFile(join(root, ".red/memory/backups/before-auth/manifest.toon"), "utf8");
+    expect(manifestRaw.trimStart().startsWith("{")).toBe(false);
+    expect(decodeMemoryStateDocument(manifestRaw)).toMatchObject({ name: "before-auth" });
 
     const manifest = await readMemoryBackupManifest(root, "before-auth");
     expect(manifest.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256))).toBe(true);
@@ -122,7 +129,7 @@ describe("Memory backup snapshots", () => {
       const created = runMemory(["backup", "create", "--root", root, "--name", "before-new", "--json"]);
       expect(created.status, created.stderr).toBe(0);
       const backup = JSON.parse(created.stdout) as { manifest: { files: Array<{ path: string }> } };
-      expect(backup.manifest.files.some((file) => file.path === "config.json")).toBe(true);
+      expect(backup.manifest.files.some((file) => file.path === "config.toon")).toBe(true);
       expect(backup.manifest.files.some((file) => file.path.startsWith("graph.rdb"))).toBe(true);
 
       const newStore = runMemory(["store", "Database passwords live in Vault.", "--root", root]);
