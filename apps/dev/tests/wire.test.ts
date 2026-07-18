@@ -23,6 +23,7 @@ import {
   collectStatuslineRepo,
   collectStatuslineDocs,
   statuslineCountCachePath,
+  startDetachedStatuslineCountRefresh,
   STATUSLINE_CACHE_TTL_S,
   applyStatuslineCountCacheLabelDelta,
   editLabelsWithStatuslineCache,
@@ -713,6 +714,61 @@ function readToonCache<T>(path: string): T {
 // ---------------------------------------------------------------------------
 // collectStatuslineAfk — cache discipline (#818)
 // ---------------------------------------------------------------------------
+
+describe("statusline refresh lock — TOON round-trip seam", () => {
+  const lockPathFor = (root: string): string => `${statuslineCountCachePath(root)}.refresh.lock`;
+
+  it("writes a TOON lock (not JSON) and re-reads its ts to refuse a concurrent refresh", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-lock-"));
+    try {
+      const rec = detachedSpawnRecorder();
+      const ctx = { root, repo: "o/r", remote: "origin" };
+      const now = nowS();
+
+      // WRITE half: acquire the lock (spawns one detached refresh).
+      const first = startDetachedStatuslineCountRefresh(ctx, { spawn: rec.spawn, argv1: "/tmp/afk.mjs", nowS: now });
+      expect(first).toBe(true);
+      expect(rec.calls).toHaveLength(1);
+
+      // On disk it is TOON, not JSON, and decodes back to the { pid, ts } payload.
+      const raw = readFileSync(lockPathFor(root), "utf8");
+      expect(raw.trimStart().startsWith("{")).toBe(false);
+      const decoded = decode(raw) as { pid: number; ts: number };
+      expect(decoded.pid).toBe(process.pid);
+      expect(decoded.ts).toBe(now);
+
+      // READ half: a second acquire re-reads the fresh TOON lock's ts and refuses
+      // (no second spawn). If the sniff-read could not recover ts, it would treat
+      // the lock as stale and re-acquire — so this proves the round-trip.
+      const second = startDetachedStatuslineCountRefresh(ctx, { spawn: rec.spawn, argv1: "/tmp/afk.mjs", nowS: now + 1 });
+      expect(second).toBe(false);
+      expect(rec.calls).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("sniff-reads a legacy JSON lock written by an older bundle", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-lock-"));
+    try {
+      const rec = detachedSpawnRecorder();
+      const ctx = { root, repo: "o/r", remote: "origin" };
+      const now = nowS();
+
+      // Pre-seed a fresh legacy JSON lock, as an older bundle would have written.
+      const lockPath = lockPathFor(root);
+      mkdirSync(dirname(lockPath), { recursive: true });
+      writeFileSync(lockPath, JSON.stringify({ pid: process.pid, ts: now }), "utf8");
+
+      // The read half sniff-decodes the legacy JSON ts and refuses (still fresh).
+      const acquired = startDetachedStatuslineCountRefresh(ctx, { spawn: rec.spawn, argv1: "/tmp/afk.mjs", nowS: now + 1 });
+      expect(acquired).toBe(false);
+      expect(rec.calls).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("collectStatuslineAfk — cache discipline", () => {
   it("cold cache: awaits gh + writes cache before returning", async () => {

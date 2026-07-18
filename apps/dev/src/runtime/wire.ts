@@ -1006,7 +1006,10 @@ function releaseStatuslineRefreshLock(lockPath: string): void {
 
 function acquireStatuslineRefreshLock(lockPath: string, nowS: number): boolean {
   mkdirSync(dirname(lockPath), { recursive: true });
-  const payload = JSON.stringify({ pid: process.pid, ts: nowS });
+  // Lock payload is TOON on-disk (the stack's snapshot doctrine); the read side
+  // (readStatuslineCache → decodeCacheDocument) sniff-decodes JSON-then-TOON, so
+  // a legacy JSON lock written by an older bundle still reads back its `ts`.
+  const payload = encodeDevSnapshotToon({ pid: process.pid, ts: nowS } as unknown as ToonValue);
   try {
     writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
     return true;
