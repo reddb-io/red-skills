@@ -503,6 +503,13 @@ export interface ProcessIssueDeps {
    */
   conflictResolver?: ConflictResolver;
   /**
+   * Mechanical-conflict resolver for the PR path's fresh-base rebase. When the
+   * first-attempt DONE path hits a rebase conflict, doLanding gives this port a
+   * chance to resolve closed-allowlist conflicts before parking
+   * blocked:merge-conflict. It returns false for genuine content conflicts.
+   */
+  resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
+  /**
    * Landing-mode flag, decoupled from the lock (ADR 0030 amended, #842). Resolved
    * from `afk.worktree_launches_pull_request` (default `true`) by the CLI. `true`
    * → the attempt lands via an admin-merged PR into the resolved base; `false` →
@@ -2545,6 +2552,7 @@ export async function processIssue(
       remoteGit: deps.remoteGit,
       fireHook,
       conflictResolver: deps.conflictResolver,
+      resolveMechanicalConflict: deps.resolveMechanicalConflict,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
       findMainRedRepairIssue: deps.gh.findMainRedRepairIssue,
