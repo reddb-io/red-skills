@@ -228,6 +228,11 @@ export interface SlotDetail {
   retryAt?: number;
 }
 
+export interface SlotPid {
+  slot: number;
+  pid: number;
+}
+
 export interface FleetTrunkFreshness {
   status: "refreshed" | "failed" | "throttled";
   refreshedAtEpoch: number;
@@ -271,6 +276,8 @@ export interface FleetState {
   /** Per-slot details for non-closed slots. Absent/empty = all slots closed.
    * Absent on state files written before this field was added (#630). */
   slotDetails?: SlotDetail[];
+  /** Persisted supervisor slot -> worker pid map for takeover/adoption. */
+  slotPids?: SlotPid[];
 }
 
 export const FLEET_STALE_AFTER_S = 180;
