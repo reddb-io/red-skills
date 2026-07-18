@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { decode } from "@reddb-io/toon";
+import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/red-castle/engine";
 
 const killTreeMocks = vi.hoisted(() => ({
   isLivePid: vi.fn((_pid: number) => false),
@@ -18,7 +19,7 @@ vi.mock("../src/runtime/supervisor-spawn.js", () => ({
   spawnSupervisor: vi.fn(async () => 43210),
 }));
 
-import { launchFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
+import { launchFleet, logsFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
@@ -268,6 +269,116 @@ describe("fleet command stale supervisor state", () => {
         runner: "codex",
         shrink_mode: "drain-then-retire",
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("fleet logs", () => {
+  it("renders the supervisor structured lane as human-readable lines (#2066)", async () => {
+    const root = scratch();
+    try {
+      const writers = createCastleLaneWriters(createEnginePaths(join(root, ".red")), {
+        clock: () => "2026-07-18T00:00:00.000Z",
+      });
+      await writers.supervisor("s123").append({
+        kind: "supervisor.message",
+        supervisor_id: "s123",
+        payload: { message: "fleet tick target=2 ready=1" },
+      });
+      const writes: string[] = [];
+      const out = { write: vi.fn((s: string) => { writes.push(s); return true; }) } as unknown as NodeJS.WritableStream;
+
+      await logsFleet(["--supervisor"], root, out);
+
+      expect(writes.join("")).toContain("2026-07-18T00:00:00.000Z supervisor.message fleet tick target=2 ready=1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renders one worker's structured stream (#2066)", async () => {
+    const root = scratch();
+    try {
+      const writers = createCastleLaneWriters(createEnginePaths(join(root, ".red")), {
+        clock: () => "2026-07-18T00:01:00.000Z",
+      });
+      await writers.worker("wAAAA").append({
+        kind: "worker.claimed",
+        worker_id: "wAAAA",
+        issue: 2066,
+        attempt: 1,
+        payload: { message: "claimed issue" },
+      });
+      const writes: string[] = [];
+      const out = { write: vi.fn((s: string) => { writes.push(s); return true; }) } as unknown as NodeJS.WritableStream;
+
+      await logsFleet(["--worker", "wAAAA"], root, out);
+
+      expect(writes.join("")).toContain("2026-07-18T00:01:00.000Z worker.claimed #2066 a1 claimed issue");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges every worker stream with per-worker prefixes (#2066)", async () => {
+    const root = scratch();
+    try {
+      const writers = createCastleLaneWriters(createEnginePaths(join(root, ".red")));
+      await writers.worker("wBBBB").append({
+        at: "2026-07-18T00:03:00.000Z",
+        kind: "worker.heartbeat",
+        worker_id: "wBBBB",
+        payload: { message: "second" },
+      });
+      await writers.worker("wAAAA").append({
+        at: "2026-07-18T00:02:00.000Z",
+        kind: "worker.heartbeat",
+        worker_id: "wAAAA",
+        payload: { message: "first" },
+      });
+      const writes: string[] = [];
+      const out = { write: vi.fn((s: string) => { writes.push(s); return true; }) } as unknown as NodeJS.WritableStream;
+
+      await logsFleet(["--all"], root, out);
+
+      expect(writes.join("")).toBe(
+        "[wAAAA] 2026-07-18T00:02:00.000Z worker.heartbeat first\n" +
+        "[wBBBB] 2026-07-18T00:03:00.000Z worker.heartbeat second\n",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("streams appended records in follow mode (#2066)", async () => {
+    const root = scratch();
+    try {
+      const writers = createCastleLaneWriters(createEnginePaths(join(root, ".red")));
+      const writes: string[] = [];
+      const out = { write: vi.fn((s: string) => { writes.push(s); return true; }) } as unknown as NodeJS.WritableStream;
+      const controller = new AbortController();
+      const running = logsFleet(["--worker", "wLIVE", "--follow"], root, out, {
+        followPollMs: 10,
+        signal: controller.signal,
+      });
+
+      await writers.worker("wLIVE").append({
+        at: "2026-07-18T00:04:00.000Z",
+        kind: "worker.heartbeat",
+        worker_id: "wLIVE",
+        payload: { message: "still working" },
+      });
+
+      const deadline = Date.now() + 1000;
+      while (!writes.join("").includes("still working") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      controller.abort();
+      await running;
+
+      expect(writes.join("")).toContain("2026-07-18T00:04:00.000Z worker.heartbeat still working");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
