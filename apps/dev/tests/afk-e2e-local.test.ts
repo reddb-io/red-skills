@@ -31,6 +31,12 @@ import { classifyMergeState } from "../src/core/merge.js";
 // scenario forces a GENUINE `git rebase origin/main` conflict and asserts the
 // issue PARKS terminally — proving the fix is correct in BOTH directions
 // (BEHIND lands, DIRTY parks), which the all-fake test cannot demonstrate.
+//
+// A deeper phantom-conflict layer (#2085) is pinned too: a transient DIRTY read
+// carrying `mergeable:"UNKNOWN"` — taken before GitHub finishes computing
+// mergeability — must ALSO re-poll and LAND. `classifyMergeState` gates on
+// `mergeable` (UNKNOWN→pending, CONFLICTING→conflict), with DIRTY→conflict only a
+// back-compat fallback, so only a genuine conflict parks.
 
 interface ExecOut {
   code: number;
@@ -112,7 +118,13 @@ afterEach(async () => {
  *   - true  → rewrite the shared line AND land a conflicting concurrent commit on
  *             origin/main, so the real pre-merge `git rebase origin/main` conflicts.
  */
-async function setup(opts: { conflict: boolean }): Promise<{
+async function setup(opts: {
+  conflict: boolean;
+  /** Scripted `gh pr view` settle sequence (index = prior poll count; the last
+   * entry repeats). Clean scenarios pass their own; the conflict scenario never
+   * reaches the poll. */
+  prView?: Array<{ mergeStateStatus: string; mergeable: string }>;
+}): Promise<{
   deps: ProcessIssueDeps;
   input: ProcessIssueInput;
   trace: Trace;
@@ -167,13 +179,32 @@ async function setup(opts: { conflict: boolean }): Promise<{
       return { code: 0, stdout: "", stderr: "" };
     }
     if (sub === "view") {
-      // The #2084/#2096 replay: GitHub reports BEHIND on the first settle poll,
-      // then CLEAN. In the conflict scenario it reports DIRTY (mergeable=CONFLICTING)
-      // — a belt-and-suspenders fallback; the real rebase conflict below actually
-      // drives that scenario's park before this poll is ever reached.
+      // The reader now fetches `mergeStateStatus,mergeable,statusCheckRollup` and
+      // gates primarily on `mergeable` (#2085): CONFLICTING→conflict, UNKNOWN→pending
+      // (GitHub still computing mergeability → re-poll), with DIRTY→conflict only a
+      // back-compat fallback when `mergeable` is absent. Each scenario scripts its
+      // own settle sequence; the conflict scenario never reaches this poll (its real
+      // pre-merge rebase parks first), so its default is a belt-and-suspenders read.
+      const idx = state.prViewCalls;
       state.prViewCalls += 1;
-      const mergeStateStatus = opts.conflict ? "DIRTY" : state.prViewCalls === 1 ? "BEHIND" : "CLEAN";
-      return { code: 0, stdout: JSON.stringify({ mergeStateStatus, statusCheckRollup: [] }), stderr: "" };
+      const sequence =
+        opts.prView ??
+        (opts.conflict
+          ? [{ mergeStateStatus: "DIRTY", mergeable: "CONFLICTING" }]
+          : [
+              { mergeStateStatus: "BEHIND", mergeable: "MERGEABLE" },
+              { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" },
+            ]);
+      const pick = sequence[Math.min(idx, sequence.length - 1)];
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          mergeStateStatus: pick.mergeStateStatus,
+          mergeable: pick.mergeable,
+          statusCheckRollup: [],
+        }),
+        stderr: "",
+      };
     }
     if (sub === "merge") {
       // A real land: fast-forward origin/main to the worker branch tip so the
@@ -490,6 +521,48 @@ describe("AFK e2e (real local git) — full lifecycle through processIssue", () 
     const onMain = (await gitAt(originDir, ["show", "main:src/x.ts"])).stdout;
     expect(onMain).toContain(MAINLINE_MARKER);
     expect(onMain).not.toContain(WORKER_MARKER);
+  });
+
+  it("SUCCESS: a transient unsettled DIRTY/mergeable=UNKNOWN read still LANDS after re-poll (#2085)", async () => {
+    // The deeper phantom-conflict layer the BEHIND fix (#2096) missed: GitHub can
+    // report a spurious DIRTY with `mergeable=UNKNOWN` before it finishes computing
+    // mergeability, then settle to CLEAN/MERGEABLE. The reader must gate on
+    // `mergeable` (UNKNOWN→pending→re-poll), NOT classify the transient DIRTY as a
+    // terminal conflict — else a fast-forwardable branch loops forever (#2085).
+    const { deps, input, trace, state, originDir, initialMainSha } = await setup({
+      conflict: false,
+      prView: [
+        { mergeStateStatus: "DIRTY", mergeable: "UNKNOWN" }, // still computing → re-poll
+        { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" }, // settled → land
+      ],
+    });
+
+    const result = await processIssue(deps, input);
+
+    // Lands exactly like the BEHIND case — the transient unsettled read never parks.
+    expect(result.outcome).toBe("done");
+    expect(result.branch).toBe(WORKER_BRANCH);
+    expect(result.base).toBe("main");
+    expect(trace.runAgentCalls).toBe(1);
+
+    // Re-polled after the unsettled read, then landed — never mis-parked.
+    expect(state.prViewCalls).toBeGreaterThanOrEqual(2);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    expect(trace.labelEdits.every((e) => !e.add.includes("blocked:merge-conflict"))).toBe(true);
+    expect(trace.labelEdits.every((e) => !e.add.includes("ready-for-human"))).toBe(true);
+    expect(trace.comments.every((c) => !/merge.conflict/i.test(c.body))).toBe(true);
+
+    expect(trace.closed).toContain(9);
+    expect(trace.swept).toContain(9);
+    expect(trace.released).toContain(9);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+
+    // Real land: origin/main fast-forwarded to the worker commit + carries the change.
+    const originMain = await revParse(originDir, "refs/heads/main");
+    expect(originMain).toBe(state.workerCommitSha);
+    expect(originMain).not.toBe(initialMainSha);
+    const landed = (await gitAt(originDir, ["show", "main:src/x.ts"])).stdout;
+    expect(landed).toContain(WORKER_MARKER);
   });
 
   it("classifyMergeState honors the phantom-conflict fixes (BEHIND→pending + mergeable-gate)", () => {
