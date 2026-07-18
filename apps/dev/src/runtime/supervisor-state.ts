@@ -86,3 +86,32 @@ export async function reapStaleSupervisorState(
   }
   return { status: "stale", ...(pid !== null ? { pid } : {}), removed };
 }
+
+export async function reapDeadSupervisorSnapshotDirs(
+  supervisorsRoot: string,
+  isLivePid: (pid: number) => boolean = defaultIsLivePid,
+  currentPid: number = process.pid,
+): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(supervisorsRoot);
+  } catch {
+    return [];
+  }
+
+  const removed: string[] = [];
+  for (const entry of entries) {
+    const match = /^s([1-9][0-9]*)$/.exec(entry);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid === currentPid || isLivePid(pid)) continue;
+    const dir = join(supervisorsRoot, entry);
+    try {
+      await rm(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch {
+      // Best-effort cleanup; a failed remove remains visible for the next boot.
+    }
+  }
+  return removed;
+}
