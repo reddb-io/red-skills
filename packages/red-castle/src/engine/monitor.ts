@@ -228,6 +228,17 @@ export interface SlotDetail {
   retryAt?: number;
 }
 
+export interface FleetTrunkFreshness {
+  status: "refreshed" | "failed" | "throttled";
+  refreshedAtEpoch: number;
+  intervalS: number;
+  nextDueEpoch?: number;
+  remoteRef?: string;
+  mirrorRef?: string;
+  sha?: string;
+  message?: string;
+}
+
 export interface FleetState {
   ts: string;
   epoch: number;
@@ -253,6 +264,7 @@ export interface FleetState {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  trunkFreshness?: FleetTrunkFreshness;
   churnDeaths?: number;
   churnRespawns?: number;
   churnWindowS?: number;
@@ -302,11 +314,13 @@ export function renderFleetLine(fleet: FleetState, now: number, degraded = false
   const churn = churnDeaths > 0 || churnRespawns > 0
     ? `  churn deaths:${churnDeaths} respawns:${churnRespawns}/${Math.max(1, Math.floor(fleet.churnWindowS ?? 1))}s`
     : "";
+  const trunk = fleet.trunkFreshness ? `  trunk:${fleet.trunkFreshness.status}` : "";
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
     `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
     `  spawns:${fleet.spawnsThisTick}` +
+    trunk +
     churn +
     bundle
   );
@@ -683,6 +697,13 @@ export function renderCompactDashboardToon(
       slots_free: fleet.slotsFree,
       slots_parked: fleet.slotsParked,
       spawns: fleet.spawnsThisTick,
+      trunk_freshness_status: fleet.trunkFreshness?.status ?? "",
+      trunk_freshness_refreshed_at: fleet.trunkFreshness
+        ? formatElapsed(Math.max(0, now - fleet.trunkFreshness.refreshedAtEpoch))
+        : "",
+      trunk_freshness_remote_ref: fleet.trunkFreshness?.remoteRef ?? "",
+      trunk_freshness_mirror_ref: fleet.trunkFreshness?.mirrorRef ?? "",
+      trunk_freshness_sha: fleet.trunkFreshness?.sha ?? "",
       churn_deaths: fleet.churnDeaths ?? 0,
       churn_respawns: fleet.churnRespawns ?? 0,
       churn_window_s: fleet.churnWindowS ?? 0,
