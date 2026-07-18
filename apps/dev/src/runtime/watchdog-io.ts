@@ -8,6 +8,7 @@ import { constants } from "node:fs";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
+import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
@@ -65,6 +66,7 @@ export function buildWatchdogIO(
   // wedged supervisor left no usable heartbeat.
   let lastTarget = 2;
   let lastRunner = "";
+  let lastSlotPids: HeartbeatSlotPid[] = [];
 
   // Count worker processes that survived the supervisor's death. Workers are
   // spawned detached, so they outlive the supervisor; the dead-supervisor net
@@ -99,6 +101,7 @@ export function buildWatchdogIO(
       if (fleet) {
         if (fleet.slotsTotal > 0) lastTarget = fleet.slotsTotal;
         if (fleet.runner) lastRunner = fleet.runner;
+        lastSlotPids = fleet.slotPids ?? [];
       }
       return {
         pid,
@@ -167,7 +170,7 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
-      await spawnSupervisor({ root, target: lastTarget, runner });
+      await spawnSupervisor({ root, target: lastTarget, runner, adoptSlotPids: lastSlotPids });
       // Stamp a fresh heartbeat so the very next watchdog pass (a monitor cron
       // tick firing every poll) sees the new supervisor as healthy and does not
       // double-fire while it boots.
