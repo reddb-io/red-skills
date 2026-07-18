@@ -17,6 +17,7 @@ const TROUBLESHOOTING_DOCS = [
       "## Base-stale decision procedure",
       "## Requeue escalation map",
       "## Release-pipeline playbook",
+      "## Fleet stop and takeover verification",
     ],
   },
   {
