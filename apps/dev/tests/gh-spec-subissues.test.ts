@@ -86,7 +86,7 @@ describe("attachSubIssue", () => {
       },
       {
         cmd: "gh",
-        args: ["api", "-X", "POST", "repos/acme/widgets/issues/42/sub_issues", "-f", "sub_issue_id=12345"],
+        args: ["api", "-X", "POST", "repos/acme/widgets/issues/42/sub_issues", "-F", "sub_issue_id=12345"],
       },
     ]);
   });

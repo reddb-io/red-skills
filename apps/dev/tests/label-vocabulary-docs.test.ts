@@ -77,9 +77,9 @@ describe("label vocabulary docs", () => {
 
     expect(tracker).toContain("## Dependency & hierarchy operations");
     expect(tracker).toContain("/issues/<parent-number>/sub_issues");
-    expect(tracker).toContain("-f \"sub_issue_id=$child_id\"");
+    expect(tracker).toContain("-F \"sub_issue_id=$child_id\"");
     expect(tracker).toContain("/issues/<child-number>/dependencies/blocked_by");
-    expect(tracker).toContain("-f \"issue_id=$blocker_id\"");
+    expect(tracker).toContain("-F \"issue_id=$blocker_id\"");
     expect(tracker).toContain("numeric database id from the REST issue `.id` field");
     expect(tracker).toContain("never the GitHub issue `#number`");
     expect(tracker).toContain("never the GraphQL `node_id`");
