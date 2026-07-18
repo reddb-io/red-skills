@@ -243,6 +243,52 @@ export function hasLifecycleScriptInDiff(diffText: string): boolean {
 }
 
 /**
+ * Trust-preserving exemption for the TOON JSON-IO guard allowlist
+ * (`.red/contracts/toon-json-file-io-allowlist.json`). An `external` entry is a
+ * permanent JSON exception that BYPASSES the guard, so growing or changing that
+ * set is a trust decision that must be human-reviewed. A migration slice, by
+ * contrast, only ever SHRINKS the allowlist — it removes `migrate` entries as it
+ * converts JSON→TOON — which is safe to auto-land.
+ *
+ * Returns true when the `external` set GREW or CHANGED between `oldContent` and
+ * `newContent`: a new external id, or a changed reason on an existing one.
+ * Removing external entries, and any change to `migrate` entries, are safe (the
+ * guard still independently catches genuinely-new JSON). Unparseable new content
+ * is treated as widened — fail closed. PURE — no IO.
+ */
+export function allowlistExternalWidened(oldContent: string, newContent: string): boolean {
+  const externalSet = (content: string): Map<string, string> => {
+    const parsed = JSON.parse(content) as { entries?: unknown };
+    const out = new Map<string, string>();
+    if (Array.isArray(parsed.entries)) {
+      for (const entry of parsed.entries) {
+        const rec = entry as Record<string, unknown>;
+        if (rec.classification === "external") {
+          out.set(String(rec.id ?? ""), typeof rec.reason === "string" ? rec.reason : "");
+        }
+      }
+    }
+    return out;
+  };
+  let newExternal: Map<string, string>;
+  try {
+    newExternal = externalSet(newContent);
+  } catch {
+    return true; // fail closed: an unparseable new allowlist must be reviewed
+  }
+  let oldExternal: Map<string, string>;
+  try {
+    oldExternal = externalSet(oldContent);
+  } catch {
+    oldExternal = new Map(); // no trustworthy baseline → any external reads as new
+  }
+  for (const [id, reason] of newExternal) {
+    if (oldExternal.get(id) !== reason) return true;
+  }
+  return false;
+}
+
+/**
  * Scan `changedFiles` (repo-relative paths from the branch diff) and
  * `packageJsonDiff` (unified diff of any `package.json` files in the branch)
  * for sensitive-path hits. Returns an empty array when the diff is clean.
@@ -254,11 +300,16 @@ export function hasLifecycleScriptInDiff(diffText: string): boolean {
 export function checkSensitivePaths(
   changedFiles: string[],
   packageJsonDiff: string,
+  allowlistExemption?: { path: string; safe: boolean },
 ): SensitivePathHit[] {
   const hits: SensitivePathHit[] = [];
 
   for (const p of changedFiles) {
     if (isSensitivePath(p)) {
+      // Diff-aware exemption: a shrink-only edit to the TOON guard allowlist (no
+      // `external` entry added or changed) is safe to auto-land, so a migration
+      // slice that only removes converted `migrate` entries does not park.
+      if (allowlistExemption && p === allowlistExemption.path && allowlistExemption.safe) continue;
       hits.push({ path: p, reason: sensitivePathReason(p) });
     }
   }

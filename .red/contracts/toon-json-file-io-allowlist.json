@@ -2,281 +2,249 @@
   "version": 1,
   "entries": [
     {
-      "id": "apps/benchmark-code-understanding/src/runner.ts:97:9#json-stringify-file-write#c9345d716e00",
+      "id": "apps/benchmark-code-understanding/src/runner.ts#json-stringify-file-write#1a95f6559ad4",
       "classification": "external",
       "reason": "MCP runtime config is JSON for MCP client interoperability."
     },
     {
-      "id": "apps/brain/src/hook-runtime.ts:15:9#json-stringify-file-write#3d8f9a0e734e",
+      "id": "apps/brain/src/hook-runtime.ts#json-stringify-file-write#785a7ac362b7",
       "classification": "migrate"
     },
     {
-      "id": "apps/brain/src/scheduled-ingestion.ts:54:12#json-parse-file-read#9581dce4f6da",
+      "id": "apps/brain/src/scheduled-ingestion.ts#json-parse-file-read#42423a2a3f01",
       "classification": "migrate"
     },
     {
-      "id": "apps/brain/src/scheduled-ingestion.ts:63:9#json-stringify-file-write#76820ec0cff4",
+      "id": "apps/brain/src/scheduled-ingestion.ts#json-stringify-file-write#58cce3d7e63e",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/activity-review.ts:335:20#json-parse-file-read#1e6c06036cd8",
+      "id": "apps/dev/src/commands/activity-review.ts#json-parse-file-read#7155e41a10b1",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/activity-review.ts:349:9#json-stringify-file-write#ce2f54a1ed1c",
+      "id": "apps/dev/src/commands/activity-review.ts#json-stringify-file-write#fb01f23f34a6",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/requeue.ts:232:5#json-stringify-file-write#73e266428283",
+      "id": "apps/dev/src/commands/requeue.ts#json-stringify-file-write#e451b52ded48",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/run.ts:1446:25#json-parse-file-read#61d090f580f9",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts:1454:15#json-stringify-file-write#ebdfef068ac4",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts:1675:16#json-parse-file-read#b69a317dc57f",
+      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
       "classification": "external",
       "reason": "Fetched plugin manifest remains JSON at the package boundary."
     },
     {
-      "id": "apps/dev/src/commands/run.ts:1751:13#json-stringify-file-write#27b9a7137312",
+      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#78cdbf004ef3",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#c6341de5e558",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#3368a1bbf848",
       "classification": "external",
       "reason": "Temporary Brain CLI handoff payload is an interop export."
     },
     {
-      "id": "apps/dev/src/commands/run.ts:1807:9#json-stringify-file-write#25fc383a7c1f",
+      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#5a38957c5d3c",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/run.ts:1832:9#json-stringify-file-write#a8168d7dcd7c",
+      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#982a128ff187",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/run.ts:1851:20#json-parse-file-read#86c344997d9c",
+      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#b7e3f9d05b27",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/core/bundle-version.ts:109:20#json-parse-file-read#2354ffad933d",
+      "id": "apps/dev/src/core/bundle-version.ts#json-parse-file-read#3a978a412439",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/core/toon-json-guard.ts:112:18#json-parse-file-read#0eceada6ed44",
+      "id": "apps/dev/src/core/toon-json-guard.ts#json-parse-file-read#0f36cd7ce70f",
       "classification": "external",
       "reason": "Checked-in guard allowlist is JSON by contract."
     },
     {
-      "id": "apps/dev/src/runtime/feedback-worktree.ts:323:21#json-parse-file-read#0aa5c33b3d62",
+      "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
       "classification": "external",
       "reason": "package.json is ecosystem JSON."
     },
     {
-      "id": "apps/dev/src/runtime/review-gh.ts:93:9#json-stringify-file-write#a2a5d957db20",
+      "id": "apps/dev/src/runtime/review-gh.ts#json-stringify-file-write#d6ea528ec9b4",
       "classification": "external",
       "reason": "GitHub review API --input payload is JSON."
     },
     {
-      "id": "apps/dev/src/runtime/wire.ts:1011:5#json-stringify-file-write#906a47ac66dc",
+      "id": "apps/dev/src/runtime/wire.ts#json-stringify-file-write#1ded525e3fc7",
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/runtime/wire.ts:1018:7#json-stringify-file-write#7fb7403d3202",
+      "id": "apps/memory/src/backup.ts#json-parse-file-read#1d64c7ed63c2",
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/backup.ts:143:20#json-parse-file-read#dda0e20f7f1e",
+      "id": "apps/memory/src/backup.ts#json-stringify-file-write#319d7ee767e0",
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/backup.ts:84:9#json-stringify-file-write#fc291fc6ac22",
+      "id": "apps/memory/src/backup.ts#json-stringify-file-write#d490a167d82e",
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/backup.ts:98:9#json-stringify-file-write#efaf12324749",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/bench-eval.ts:387:18#json-parse-file-read#4c10a115b739",
+      "id": "apps/memory/src/bench-eval.ts#json-parse-file-read#9f8ee3a49186",
       "classification": "external",
       "reason": "Benchmark question fixtures are JSON inputs."
     },
     {
-      "id": "apps/memory/src/bench-eval.ts:394:18#json-parse-file-read#2b849c38340c",
-      "classification": "external",
-      "reason": "Benchmark question fixtures are JSON inputs."
-    },
-    {
-      "id": "apps/memory/src/bench-latency.ts:484:20#json-parse-file-read#ff426a366dd8",
+      "id": "apps/memory/src/bench-latency.ts#json-parse-file-read#c2af8acfa0f2",
       "classification": "external",
       "reason": "Benchmark workload fixture is JSON input."
     },
     {
-      "id": "apps/memory/src/bench-mistake-avoided.ts:111:18#json-parse-file-read#2c8e3a5a961c",
+      "id": "apps/memory/src/bench-mistake-avoided.ts#json-parse-file-read#e71d9417acbf",
       "classification": "external",
       "reason": "Benchmark scenario fixture is JSON input."
     },
     {
-      "id": "apps/memory/src/bench-recall.ts:47:18#json-parse-file-read#8216e51fd1ec",
+      "id": "apps/memory/src/bench-recall.ts#json-parse-file-read#cd9ba4816a71",
       "classification": "external",
       "reason": "Benchmark query fixtures are JSON inputs."
     },
     {
-      "id": "apps/memory/src/bench-recall.ts:54:18#json-parse-file-read#7dc5d84f72b1",
-      "classification": "external",
-      "reason": "Benchmark query fixtures are JSON inputs."
-    },
-    {
-      "id": "apps/memory/src/cli.ts:3108:7#json-stringify-file-write#05834a8e8826",
-      "classification": "external",
-      "reason": "Export command deliberately emits JSON artifacts."
-    },
-    {
-      "id": "apps/memory/src/cli.ts:3110:7#json-stringify-file-write#1a28d0d80ff3",
-      "classification": "external",
-      "reason": "Export command deliberately emits JSON metadata."
-    },
-    {
-      "id": "apps/memory/src/cli.ts:8037:17#json-parse-file-read#c824a01ef376",
+      "id": "apps/memory/src/cli.ts#json-parse-file-read#ed1088009085",
       "classification": "external",
       "reason": "User-supplied graph contract may be JSON."
     },
     {
-      "id": "apps/memory/src/competitive-baseline.ts:1844:9#json-stringify-file-write#079e569527d8",
+      "id": "apps/memory/src/cli.ts#json-stringify-file-write#0b91ffb44ffd",
+      "classification": "external",
+      "reason": "Export command deliberately emits JSON metadata."
+    },
+    {
+      "id": "apps/memory/src/cli.ts#json-stringify-file-write#0d38e8a06ad0",
+      "classification": "external",
+      "reason": "Export command deliberately emits JSON artifacts."
+    },
+    {
+      "id": "apps/memory/src/competitive-baseline.ts#json-stringify-file-write#1fd6fed03b3a",
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/config.ts:249:12#json-parse-file-read#517090196539",
+      "id": "apps/memory/src/config.ts#json-parse-file-read#2b08c55aae9a",
       "classification": "migrate"
     },
     {
-      "id": "apps/memory/src/export.ts:182:5#json-stringify-file-write#c80da12dd8ce",
+      "id": "apps/memory/src/export.ts#json-stringify-file-write#f2d8c9d8ed18",
       "classification": "external",
       "reason": "Memory export command deliberately emits JSON."
     },
     {
-      "id": "apps/memory/src/extract-dev-artifact.ts:154:20#json-parse-file-read#3a88947ab6d9",
+      "id": "apps/memory/src/extract-dev-artifact.ts#json-parse-file-read#5fb73f71086b",
       "classification": "external",
       "reason": "package.json script extraction reads ecosystem JSON."
     },
     {
-      "id": "apps/memory/src/hook-coverage.ts:112:22#json-parse-file-read#9b71e6bdb888",
-      "classification": "external",
-      "reason": "Plugin manifest files are JSON by host contract."
-    },
-    {
-      "id": "apps/memory/src/hook-coverage.ts:192:12#json-parse-file-read#dc24826c7405",
+      "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#1277b6df964e",
       "classification": "external",
       "reason": "Coverage manifest is a deliberate JSON report input."
     },
     {
-      "id": "apps/memory/src/import-ams.ts:184:14#json-parse-file-read#be6d4e2a7a95",
-      "classification": "external",
-      "reason": "AMS import accepts external JSON dump format."
-    },
-    {
-      "id": "apps/memory/src/inbox.ts:117:12#json-parse-file-read#bfb372ea2744",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/memory/src/inbox.ts:205:9#json-stringify-file-write#40e5b2ff1cf7",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/opencode-host/src/emit.ts:98:5#json-stringify-file-write#b44f40dea7d5",
-      "classification": "external",
-      "reason": "opencode.json is an OpenCode host manifest."
-    },
-    {
-      "id": "apps/opencode-host/src/generate.ts:264:5#json-stringify-file-write#e5e4aaa124d5",
-      "classification": "external",
-      "reason": "Generated OpenCode manifest is JSON by host contract."
-    },
-    {
-      "id": "apps/opencode-host/src/hooks-to-events.ts:564:13#json-parse-file-read#88fea6286137",
-      "classification": "external",
-      "reason": "OpenCode hook config is external JSON."
-    },
-    {
-      "id": "apps/opencode-host/src/mcp-passthrough.ts:70:12#json-parse-file-read#5c2085922680",
-      "classification": "external",
-      "reason": ".mcp.json is MCP ecosystem JSON."
-    },
-    {
-      "id": "apps/rsp/src/elision-store.ts:1341:20#json-parse-file-read#99e6919848c4",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/rsp/src/elision-store.ts:1400:9#json-stringify-file-write#0c59c09ca48a",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/rsp/src/two-axis-benchmark.ts:422:18#json-parse-file-read#cf04ec9f7556",
-      "classification": "external",
-      "reason": "Benchmark baseline fixture is JSON input."
-    },
-    {
-      "id": "apps/rsp/src/two-axis-benchmark.ts:428:18#json-parse-file-read#2acb36d5b74d",
-      "classification": "external",
-      "reason": "Benchmark baseline fixture is JSON input."
-    },
-    {
-      "id": "packages/browser-bridge/session.ts:133:3#json-stringify-file-write#270772003fae",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts:160:3#json-stringify-file-write#cc2a0b9cb869",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts:168:3#json-stringify-file-write#ec1ecd13fd33",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts:55:12#json-parse-file-read#d2f26452dc19",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/browser-bridge/session.ts:89:3#json-stringify-file-write#9da22d37f254",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts:44:3#json-stringify-file-write#dcc9303b3180",
-      "classification": "external",
-      "reason": "Castle workflow helper writes JSON interop artifacts."
-    },
-    {
-      "id": "packages/red-castle/src/WorktreeLock.ts:182:24#json-parse-file-read#3ba17a080cd9",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/red-castle/src/WorktreeLock.ts:53:22#json-parse-file-read#5a64faac4443",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/red-castle/src/WorktreeLock.ts:95:18#json-parse-file-read#e740dec46214",
-      "classification": "migrate"
-    },
-    {
-      "id": "packages/red-castle/tsup.config.ts:4:13#json-parse-file-read#6714d89c2000",
-      "classification": "external",
-      "reason": "package.json is ecosystem JSON."
-    },
-    {
-      "id": "packages/shared/entrypoint-cli.ts:257:12#json-parse-file-read#da57542f7f85",
+      "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#4f72ffcb65b4",
       "classification": "external",
       "reason": "Plugin manifest files are JSON by host contract."
     },
     {
-      "id": "packages/shared/toon-migration.ts:366:10#json-parse-file-read#15afb48d3ad6",
+      "id": "apps/memory/src/import-ams.ts#json-parse-file-read#84cfe0136522",
       "classification": "external",
-      "reason": "TOON migration accepts legacy JSON inputs."
+      "reason": "AMS import accepts external JSON dump format."
     },
     {
-      "id": "packages/shared/toon-migration.ts:469:12#json-parse-file-read#d7206ae9aa16",
+      "id": "apps/memory/src/inbox.ts#json-parse-file-read#3ed29a34b863",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/memory/src/inbox.ts#json-stringify-file-write#edcbaa2eb421",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/opencode-host/src/emit.ts#json-stringify-file-write#9bc9165f331e",
+      "classification": "external",
+      "reason": "opencode.json is an OpenCode host manifest."
+    },
+    {
+      "id": "apps/opencode-host/src/generate.ts#json-stringify-file-write#daef2b897070",
+      "classification": "external",
+      "reason": "Generated OpenCode manifest is JSON by host contract."
+    },
+    {
+      "id": "apps/opencode-host/src/hooks-to-events.ts#json-parse-file-read#75c187c88bc1",
+      "classification": "external",
+      "reason": "OpenCode hook config is external JSON."
+    },
+    {
+      "id": "apps/opencode-host/src/mcp-passthrough.ts#json-parse-file-read#399ed3f05e9d",
+      "classification": "external",
+      "reason": ".mcp.json is MCP ecosystem JSON."
+    },
+    {
+      "id": "apps/rsp/src/elision-store.ts#json-parse-file-read#02b50089d194",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/rsp/src/elision-store.ts#json-stringify-file-write#4cd974a313ee",
+      "classification": "migrate"
+    },
+    {
+      "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
+      "classification": "external",
+      "reason": "Benchmark baseline fixture is JSON input."
+    },
+    {
+      "id": "packages/browser-bridge/session.ts#json-parse-file-read#e5efe89c117e",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#03a88404dc0f",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#3838fbf06b17",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#72a74a329bd7",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/browser-bridge/session.ts#json-stringify-file-write#d657022a1604",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",
+      "classification": "external",
+      "reason": "Castle workflow helper writes JSON interop artifacts."
+    },
+    {
+      "id": "packages/red-castle/src/WorktreeLock.ts#json-parse-file-read#231944fa112d",
+      "classification": "migrate"
+    },
+    {
+      "id": "packages/red-castle/tsup.config.ts#json-parse-file-read#3ec8644e7f1e",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON."
+    },
+    {
+      "id": "packages/shared/entrypoint-cli.ts#json-parse-file-read#19e906dc0db9",
+      "classification": "external",
+      "reason": "Plugin manifest files are JSON by host contract."
+    },
+    {
+      "id": "packages/shared/toon-migration.ts#json-parse-file-read#5c446b349f65",
       "classification": "external",
       "reason": "TOON migration accepts legacy JSON inputs."
     }
