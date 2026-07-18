@@ -88,6 +88,7 @@ import { join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../core/state.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../core/loc-memo.js";
 import { createActivityMeter } from "../core/activity-meter.js";
@@ -1442,16 +1443,11 @@ export function buildProcessDeps(
           computeUncommitted: () =>
             gitx.diffstatUncommitted({ cwd: worktree }).catch(() => ({ added: 0, removed: 0 })),
           readMemo: () => {
-            try {
-              const m = JSON.parse(readFileSync(memoPath, "utf8")) as Partial<LocMemo>;
-              return { sha: String(m.sha ?? ""), added: Number(m.added ?? 0), removed: Number(m.removed ?? 0) };
-            } catch {
-              return null;
-            }
+            return decodeLocMemoSnapshot(readFileSync(memoPath, "utf8"));
           },
           writeMemo: (m) => {
             try {
-              writeFileSync(memoPath, JSON.stringify(m), "utf8");
+              writeFileSync(memoPath, encodeLocMemoSnapshot(m), "utf8");
             } catch {
               // best-effort, like the surrounding heartbeat writes
             }
@@ -1794,17 +1790,57 @@ interface CurrentAttempt {
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
 
+export function decodeLocMemoSnapshot(text: string): LocMemo | null {
+  try {
+    const m = decodeDevSnapshotSniff(text) as Partial<LocMemo>;
+    return { sha: String(m.sha ?? ""), added: Number(m.added ?? 0), removed: Number(m.removed ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+export function encodeLocMemoSnapshot(memo: LocMemo): string {
+  return encodeDevSnapshotToon(memo as unknown as Parameters<typeof encodeDevSnapshotToon>[0]);
+}
+
+export function encodeRunnerCircuitSnapshot(state: {
+  runner: Runner;
+  opened_at: number;
+  expires_at: number;
+  reason: "runner-transient";
+}): string {
+  return encodeDevSnapshotToon(state);
+}
+
+export function decodeRunnerCircuitSnapshot(text: string): { expires_at?: unknown } {
+  return decodeDevSnapshotSniff(text) as { expires_at?: unknown };
+}
+
+export function encodeBootErrorPayload(payload: {
+  type: "boot-error" | "session-error";
+  at: string;
+  message: string;
+  stack?: string;
+}): string {
+  return encodeDevSnapshotToon(payload);
+}
+
 async function recordBootError(workerDir: string, type: "boot-error" | "session-error", err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
-  const payload = {
+  const payload: {
+    type: "boot-error" | "session-error";
+    at: string;
+    message: string;
+    stack?: string;
+  } = {
     type,
     at: new Date().toISOString(),
     message,
     stack,
   };
   await fsx.ensureDir(workerDir);
-  await writeFile(join(workerDir, `${type}.log`), `${JSON.stringify(payload)}\n`, "utf8");
+  await writeFile(join(workerDir, `${type}.log`), encodeBootErrorPayload(payload), "utf8");
   process.stderr.write(`[afk] ${type}: ${message}\n`);
 }
 
@@ -1831,12 +1867,12 @@ async function openRunnerCircuit(
   await fsx.ensureDir(circuitDir);
   await writeFile(
     runnerCircuitPath(circuitDir, runner),
-    `${JSON.stringify({
+    encodeRunnerCircuitSnapshot({
       runner,
       opened_at: nowS,
       expires_at: nowS + cooldownS,
       reason: "runner-transient",
-    })}\n`,
+    }),
     "utf8",
   );
 }
@@ -1848,7 +1884,7 @@ async function runnerCircuitOpen(
 ): Promise<boolean> {
   try {
     const raw = await readFile(runnerCircuitPath(circuitDir, runner), "utf8");
-    const parsed = JSON.parse(raw) as { expires_at?: unknown };
+    const parsed = decodeRunnerCircuitSnapshot(raw);
     return typeof parsed.expires_at === "number" && parsed.expires_at > nowS;
   } catch {
     return false;

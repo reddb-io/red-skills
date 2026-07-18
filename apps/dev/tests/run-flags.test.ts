@@ -1,5 +1,16 @@
+import { decode } from "@reddb-io/toon";
 import { describe, expect, it } from "vitest";
-import { parseRunFlags, RunFlagError, deriveActivity, resolveRunDispatchIdentity } from "../src/commands/run.js";
+import {
+  decodeLocMemoSnapshot,
+  decodeRunnerCircuitSnapshot,
+  encodeBootErrorPayload,
+  encodeLocMemoSnapshot,
+  encodeRunnerCircuitSnapshot,
+  parseRunFlags,
+  RunFlagError,
+  deriveActivity,
+  resolveRunDispatchIdentity,
+} from "../src/commands/run.js";
 import type { AgentStreamEvent } from "../src/core/execution.js";
 
 describe("deriveActivity (native-path monitor stage detection)", () => {
@@ -91,6 +102,44 @@ describe("deriveActivity (native-path monitor stage detection)", () => {
 
   it("returns undefined for an unrecognised tool with no stage signal", () => {
     expect(deriveActivity(tool("WebFetch", "https://example.com"))).toBeUndefined();
+  });
+});
+
+describe("run command TOON state snapshots", () => {
+  it("round-trips the LOC memo through TOON and still reads legacy JSON", () => {
+    const memo = { sha: "abc123", added: 12, removed: 3 };
+    const toon = encodeLocMemoSnapshot(memo);
+
+    expect(toon.trimStart().startsWith("{")).toBe(false);
+    expect(decodeLocMemoSnapshot(toon)).toEqual(memo);
+    expect(decodeLocMemoSnapshot(JSON.stringify(memo))).toEqual(memo);
+  });
+
+  it("round-trips the runner circuit through TOON and still reads legacy JSON", () => {
+    const state = {
+      runner: "codex" as const,
+      opened_at: 100,
+      expires_at: 400,
+      reason: "runner-transient" as const,
+    };
+    const toon = encodeRunnerCircuitSnapshot(state);
+
+    expect(toon.trimStart().startsWith("{")).toBe(false);
+    expect(decodeRunnerCircuitSnapshot(toon)).toEqual(state);
+    expect(decodeRunnerCircuitSnapshot(JSON.stringify(state))).toEqual(state);
+  });
+
+  it("writes worker boot/session error payloads as TOON", () => {
+    const payload = {
+      type: "boot-error" as const,
+      at: "2026-07-18T00:00:00.000Z",
+      message: "runner unavailable",
+      stack: "Error: runner unavailable",
+    };
+    const toon = encodeBootErrorPayload(payload);
+
+    expect(toon.trimStart().startsWith("{")).toBe(false);
+    expect(decode(toon)).toEqual(payload);
   });
 });
 

@@ -19,50 +19,14 @@
       "classification": "migrate"
     },
     {
-      "id": "apps/dev/src/commands/activity-review.ts#json-parse-file-read#7155e41a10b1",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/activity-review.ts#json-stringify-file-write#fb01f23f34a6",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/requeue.ts#json-stringify-file-write#e451b52ded48",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
       "classification": "external",
       "reason": "Fetched plugin manifest remains JSON at the package boundary."
     },
     {
-      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#78cdbf004ef3",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#c6341de5e558",
-      "classification": "migrate"
-    },
-    {
       "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#3368a1bbf848",
       "classification": "external",
       "reason": "Temporary Brain CLI handoff payload is an interop export."
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#5a38957c5d3c",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#982a128ff187",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/commands/run.ts#json-stringify-file-write#b7e3f9d05b27",
-      "classification": "migrate"
-    },
-    {
-      "id": "apps/dev/src/core/bundle-version.ts#json-parse-file-read#3a978a412439",
-      "classification": "migrate"
     },
     {
       "id": "apps/dev/src/core/toon-json-guard.ts#json-parse-file-read#0f36cd7ce70f",

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -250,6 +250,11 @@ describe("activity review", () => {
 
     const first = await collectTokenSummary(root, start, end);
     expect(first).toEqual({ available: true, input: 7, output: 11, total: null, sourceRecords: 1 });
+    const cacheRaw = await readFile(join(root, ".activity-review-token-cursors.json"), "utf8");
+    expect(cacheRaw.trimStart().startsWith("{")).toBe(false);
+    expect(Object.values(decode(cacheRaw) as Record<string, unknown>)[0]).toMatchObject({
+      rows: [{ input: 7, output: 11, total: 0 }],
+    });
 
     await appendRecordToonlTaggedRow(log, "raw", { iteration: 2, line: "{\"inputTokens\":13,\"outputTokens\":17}" }, {
       ts: "2026-07-15T12:05:00.000Z",

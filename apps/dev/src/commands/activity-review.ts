@@ -22,6 +22,7 @@ import {
 import { readHistoryRecords, type HistoryRecord } from "../core/history.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 
 /** Output format. TOON is the default agent-facing wire format (PRD #928 / ADR
  * 0081); `--json` forces raw JSON (tooling/escape hatch), `--human` the prose. */
@@ -332,7 +333,7 @@ function validTokenFileCache(value: unknown): TokenFileCache | null {
 
 async function readTokenSummaryCache(path: string): Promise<TokenSummaryCache> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const parsed = decodeDevSnapshotSniff(await readFile(path, "utf8")) as Record<string, unknown>;
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const out: TokenSummaryCache = {};
     for (const [file, value] of Object.entries(parsed)) {
@@ -346,7 +347,7 @@ async function readTokenSummaryCache(path: string): Promise<TokenSummaryCache> {
 }
 
 async function writeTokenSummaryCache(path: string, cache: TokenSummaryCache): Promise<void> {
-  await writeFile(path, `${JSON.stringify(cache)}\n`, "utf8");
+  await writeFile(path, encodeDevSnapshotToon(cache as unknown as Parameters<typeof encodeDevSnapshotToon>[0]), "utf8");
 }
 
 async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
