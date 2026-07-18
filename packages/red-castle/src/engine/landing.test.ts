@@ -127,4 +127,100 @@ describe("castle landing coordinator", () => {
     });
     expect(t.closed).toEqual([1911]);
   });
+
+  it("cascade-rebases DONE-waiting siblings after a successful land while skipping active workers", async () => {
+    const t = tracker();
+    const calls: string[] = [];
+    const cascadeRebase = vi.fn(async ({ issue }: { issue: number }) => {
+      calls.push(`cascade:${issue}`);
+      if (issue === 2002) {
+        return {
+          ok: false as const,
+          outcome: "parked" as const,
+          message: "agent ladder parked semantic conflict",
+        };
+      }
+      return { ok: true as const, outcome: "rebased" as const };
+    });
+
+    const result = await runCastleLanding({
+      issue: 2001,
+      branch: "worker/2001",
+      base: "main",
+      gate: gate(true, ["approved"]),
+      tracker: {
+        ...t,
+        async closeIssue(issue) {
+          calls.push(`close:${issue}`);
+          await t.closeIssue(issue);
+        },
+        async commentOnIssue(issue, body) {
+          calls.push(`comment:${issue}`);
+          await t.commentOnIssue(issue, body);
+        },
+      },
+      land: async () => {
+        calls.push("land");
+        return { ok: true, mergeSha: "trunk-tip" };
+      },
+      cascade: {
+        siblings: [
+          { issue: 2002, branch: "worker/2002", state: "done-waiting" },
+          { issue: 2003, branch: "worker/2003", state: "done-waiting" },
+          { issue: 2004, branch: "worker/2004", state: "active" },
+        ],
+        rebase: cascadeRebase,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      mergeSha: "trunk-tip",
+      cascade: [
+        {
+          issue: 2002,
+          branch: "worker/2002",
+          status: "parked",
+          message: "agent ladder parked semantic conflict",
+        },
+        {
+          issue: 2003,
+          branch: "worker/2003",
+          status: "rebased",
+        },
+        {
+          issue: 2004,
+          branch: "worker/2004",
+          status: "skipped-active",
+        },
+      ],
+    });
+    expect(cascadeRebase).toHaveBeenCalledTimes(2);
+    expect(cascadeRebase).toHaveBeenNthCalledWith(1, {
+      issue: 2002,
+      branch: "worker/2002",
+      base: "main",
+      trunkTip: "trunk-tip",
+    });
+    expect(cascadeRebase).toHaveBeenNthCalledWith(2, {
+      issue: 2003,
+      branch: "worker/2003",
+      base: "main",
+      trunkTip: "trunk-tip",
+    });
+    expect(calls).toEqual([
+      "land",
+      "cascade:2002",
+      "comment:2002",
+      "cascade:2003",
+      "comment:2003",
+      "comment:2004",
+      "close:2001",
+    ]);
+    expect(t.comments.map((comment) => comment.body)).toEqual([
+      "🤖 Castle cascade rebase: worker/2002 parked after the landing rebase ladder: agent ladder parked semantic conflict.",
+      "🤖 Castle cascade rebase: worker/2003 rebased onto trunk-tip.",
+      "🤖 Castle cascade rebase: worker/2004 skipped because the worker is active.",
+    ]);
+  });
 });
