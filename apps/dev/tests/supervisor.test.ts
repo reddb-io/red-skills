@@ -6,6 +6,7 @@ import {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
+  adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
   reconcileDeadWorkerClaim,
@@ -1560,6 +1561,27 @@ describe("superviseTick — crash reconcile on respawn (#815)", () => {
 // ---------- runSupervisor end-to-end shape ----------
 
 describe("runSupervisor", () => {
+  it("adopts live persisted slot pids and leaves dead ones for spawn", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => pid === 5000),
+      spawnSlot: vi.fn(async (slot: number) => ({ pid: 9000 + slot, spawnEpoch: NOW })),
+    });
+    deps.proc.slotPid = vi.fn((slot: number) => (slot === 0 ? 5000 : slot === 1 ? 6000 : null));
+    const state = initSupervisorState(2);
+
+    const adoption = await adoptPersistedSlotPids(state, deps);
+
+    expect(adoption.adopted).toEqual([{ slot: 0, pid: 5000 }]);
+    expect(adoption.dead).toEqual([{ slot: 1, pid: 6000 }]);
+    expect(state.slots[0]!.pid).toBe(5000);
+    expect(state.slots[1]!.pid).toBeNull();
+
+    await runSupervisor(state, deps, config({ target: 2 }), () => true);
+
+    expect(io.spawnSlot).toHaveBeenCalledTimes(1);
+    expect(io.spawnSlot).toHaveBeenCalledWith(1);
+  });
+
   it("emits structured supervisor lane records for boot, tick, reconcile, wake, and scale", async () => {
     let clock = NOW;
     let probes = 0;
