@@ -27,10 +27,10 @@
 // result (`mergeSha`) since the primary HEAD no longer advances.
 
 import {
-  fastForwardLocalTarget,
   integrateOrigin,
   landMerge,
   landPr,
+  promoteFleetTrunkMirror,
   preMergeRebase,
   resolveMergeConflict,
   type ConflictResolver,
@@ -206,13 +206,10 @@ export interface LandingInput {
   /** Resolved base branch (lock > pin > main). */
   base: string;
   /**
-   * The configured Trunk (`plugins.dev.trunk`, default `main`; ADR 0083) — the
-   * repo's focal branch. The landing precondition ({@link verifyTrunkPrecondition})
-   * verifies the primary checkout's LOCAL `<trunk>` ref has not diverged from its
-   * fresh-fetched `origin/<trunk>` before integrating any attempt branch. This is
-   * distinct from {@link base}: `base` is the resolved landing target (which may be
-   * a lock/pin branch), while the precondition guards the maintainer-owned trunk
-   * the primary checkout tracks.
+   * The configured Trunk (`plugins.dev.trunk`, default `main`; ADR 0083). Kept
+   * for caller compatibility and observability; trunk freshness is resolved
+   * before landing by the fleet-owned `red-trunk` mirror, not by inspecting the
+   * primary checkout's local trunk branch.
    */
   trunk: string;
   /** Issue number, for the merge/PR message + hook contexts. */
@@ -340,11 +337,9 @@ export type LandingResult =
         | "pr-merge-failed"
         | "infra"
         | "main-red-untracked"
-        // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
-        // `<trunk>` ref has DIVERGED from `origin/<trunk>`. The landing aborted
-        // BEFORE integrating the attempt branch and NEVER repaired the divergence
-        // (no reset / stash / auto-commit / force-push). The caller parks the
-        // issue ready-for-human with a divergence envelope naming the two SHAs.
+        // Legacy ADR 0083 landing-precondition route. New trunk freshness uses
+        // the fleet-owned `red-trunk` mirror and no longer emits this from
+        // landing, but older callers/tests may still reference the result shape.
         | "trunk-diverged"
         // Sensitive-path guard (issue #1102): the branch diff touches a CI
         // workflow file, a package.json lifecycle script, a git hook, or `.red/`
@@ -359,9 +354,9 @@ export type LandingResult =
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
-      /** ADR 0083 divergence (`trunk-diverged`): the primary's LOCAL `<trunk>` SHA. */
+      /** Legacy ADR 0083 divergence (`trunk-diverged`): the primary's LOCAL `<trunk>` SHA. */
       localTrunkSha?: string;
-      /** ADR 0083 divergence (`trunk-diverged`): the fresh-fetched `origin/<trunk>` SHA. */
+      /** Legacy ADR 0083 divergence (`trunk-diverged`): the fresh-fetched `origin/<trunk>` SHA. */
       originTrunkSha?: string;
       /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
       sensitivePaths?: SensitivePathHit[];
@@ -389,10 +384,9 @@ export type LandingResult =
  *   openPr=true → {@link landAdminPr}. The PR is admin-merged REMOTELY into
  *   `<base>`, so there is nothing to integrate locally first; the prior pre-merge
  *   `merge --ff-only origin/<base>` is dropped (it failed the whole landing on a
- *   diverged primary, #572). landPr's own best-effort local fast-forward is the
- *   only primary touch, and even that is SKIPPED on a LOCKED landing (ADR 0083
- *   §2, #1019) — the locked PR path integrates on `origin/<locked-branch>` and
- *   never writes to the primary at all.
+ *   diverged primary, #572). After a successful non-queued merge, landPr
+ *   promotes the fleet-owned `red-trunk` mirror with `update-ref`, never the
+ *   primary checkout.
  *
  *   openPr=false → {@link landDirectInWorktree}. The merge / push / rollback run
  *   inside an ISOLATED detached worktree (makeLandingWorktree) at `<base>`, so the
@@ -401,64 +395,6 @@ export type LandingResult =
  *   capture the integrated tip → landMerge → one-shot conflict self-resolve →
  *   post_merge.
  */
-/** Result of the ADR 0083 trunk landing precondition. `ok:true` → proceed with
- * the landing (local trunk absent, an ancestor of origin, or indeterminate);
- * `ok:false` → the local trunk DIVERGED, carrying both SHAs for the caller's
- * ready-for-human divergence envelope. */
-type TrunkPreconditionResult = { ok: true } | { ok: false; localSha: string; originSha: string };
-
-/**
- * ADR 0083 landing precondition (#1018). Verify the primary checkout's LOCAL
- * `<trunk>` ref has NOT diverged from its fresh-fetched `origin/<trunk>` before
- * any attempt branch is integrated.
- *
- * The trunk is always read as its fresh-fetched remote ref (ADR 0083), so the
- * check first fetches `origin/<trunk>` (best-effort — an offline fetch must not
- * fabricate a divergence; the comparison then falls back to the origin ref the
- * repo already knows). Then:
- *   - Local `<trunk>` ABSENT (the primary never checked it out) → nothing can
- *     diverge → `{ ok:true }`.
- *   - Local trunk is an ANCESTOR of `origin/<trunk>` (behind or equal) → the
- *     healthy case → `{ ok:true }`.
- *   - `git merge-base --is-ancestor` returns a definitive `1` (NOT an ancestor —
- *     the local trunk carries commits origin does not) → DIVERGED →
- *     `{ ok:false, localSha, originSha }`. Any OTHER non-zero code is a git error
- *     (e.g. a missing origin ref on a fresh repo), treated as indeterminate →
- *     `{ ok:true }` so a transient error never blocks a landing.
- *
- * READ-ONLY: it runs only `fetch` / `rev-parse` / `merge-base` against the
- * primary checkout. It NEVER resets, stashes, auto-commits, or force-pushes to
- * repair a divergence — that repair is a human-only decision (ADR 0083 + the
- * standing maintainer rules), so none of those verbs exist even as a fallback.
- */
-async function verifyTrunkPrecondition(
-  exec: MergeExec,
-  input: { repoDir: string; remote: string; trunk: string },
-): Promise<TrunkPreconditionResult> {
-  const { repoDir, remote, trunk } = input;
-
-  // Fresh-fetch the remote trunk so the comparison is against origin's real tip.
-  // Best-effort: a fetch failure (offline) is ignored — we then compare against
-  // whatever `origin/<trunk>` the local repo already knows.
-  await exec(["git", "-C", repoDir, "fetch", remote, trunk, "--quiet"]);
-
-  // Local trunk ABSENT → nothing to diverge; proceed.
-  const local = await exec(["git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "--short", `refs/heads/${trunk}`]);
-  if (local.code !== 0) return { ok: true };
-  const localSha = local.stdout.trim();
-
-  // Local trunk is an ANCESTOR of origin/<trunk> (exit 0) → proceed. Only a
-  // definitive exit 1 (NOT an ancestor) is a divergence; any other code is a git
-  // error → indeterminate → proceed (never block on a transient error).
-  const ancestor = await exec([
-    "git", "-C", repoDir, "merge-base", "--is-ancestor", localSha, `${remote}/${trunk}`,
-  ]);
-  if (ancestor.code !== 1) return { ok: true };
-
-  const origin = await exec(["git", "-C", repoDir, "rev-parse", "--short", `${remote}/${trunk}`]);
-  return { ok: false, localSha, originSha: origin.stdout.trim() };
-}
-
 export async function doLanding(
   deps: LandingDeps,
   input: LandingInput,
@@ -486,28 +422,6 @@ export async function doLanding(
     if (hits.length > 0) {
       return { ok: false, reason: "sensitive-paths", locked, sensitivePaths: hits };
     }
-  }
-
-  // 0. ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
-  // `<trunk>` ref must be an ANCESTOR of `origin/<trunk>`. Verified BEFORE any
-  // attempt branch is pushed or integrated so a diverged local trunk fails loud
-  // instead of silently eating the maintainer's work. On divergence the landing
-  // ABORTS and NEVER repairs it (no reset / stash / auto-commit / force-push);
-  // the caller parks the issue ready-for-human with the two SHAs. Local trunk
-  // absent, an ancestor, or an indeterminate git error → proceed unchanged.
-  const trunkCheck = await verifyTrunkPrecondition(deps.mergeExec, {
-    repoDir: input.repoDir,
-    remote: input.remote,
-    trunk: input.trunk,
-  });
-  if (!trunkCheck.ok) {
-    return {
-      ok: false,
-      reason: "trunk-diverged",
-      locked,
-      localTrunkSha: trunkCheck.localSha,
-      originTrunkSha: trunkCheck.originSha,
-    };
   }
 
   // 1. push the worker branch so landMerge/landPr have a remote ref.
@@ -580,9 +494,8 @@ export async function doLanding(
  * lock. The merge happens remotely on the forge, so no local integrate runs first
  * — that was the only step that could fail the landing on a diverged primary
  * checkout (#572). The landing succeeds independent of the primary's local
- * `<base>` state. `locked` is echoed for the caller's result observability AND
- * passed to {@link landPr}: on a LOCKED landing landPr skips its best-effort local
- * fast-forward so the primary checkout is never written to (ADR 0083 §2, #1019).
+ * `<base>` state. `locked` is echoed for the caller's result observability;
+ * mirror promotion is identical for locked and unlocked PR landings.
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
   if (input.base === input.trunk && input.mainRed === true) {
@@ -621,11 +534,8 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     // Native merge queue (#1337): enqueue rather than merge on the spot, letting
     // the forge serialize + rebase + revalidate every entry onto the current tip.
     mergeQueue: input.nativeMergeQueue === true,
-    // Untouchable primary (ADR 0083 §2, #1019): on a LOCKED landing landPr skips
-    // its step-4 local fast-forward, so the integration reaches the maintainer
-    // only via `origin/<locked-branch>` (they promote by pulling). The lock only
-    // resolved `base` (#842); this is the one primary write the locked PR path
-    // still had.
+    // Untouchable primary (ADR 0083 / 0108): landPr promotes the fleet mirror,
+    // not a local primary branch. `locked` is observability only.
     locked: input.locked,
   });
   if (r.ok) return { ok: true, locked: input.locked };
@@ -786,11 +696,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
         return { ok: false, reason: "land-failed", locked: input.locked };
       }
       const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
-      // Promote the primary's local <base> to the just-pushed origin tip — the
-      // direct path lands entirely in the worktree, so without this the primary
-      // never advances and its local base rots (ADR 0083 §2 amended). The helper
-      // is a guaranteed no-op on any primary it must not touch.
-      await fastForwardLocalTarget(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
+      await promoteFleetTrunkMirror(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
       return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
     }
 
@@ -843,9 +749,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // The merge commit lives on the worktree's HEAD (and now origin/<base>); the
     // primary HEAD did not advance, so carry the landed sha back for the close.
     const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
-    // Best-effort promote the primary's local <base> to the merged origin tip
-    // (ADR 0083 §2 amended) — guarded to never touch a dirty or diverged primary.
-    await fastForwardLocalTarget(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
+    await promoteFleetTrunkMirror(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
     return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
   } finally {
     await deps.removeLandingWorktree?.(landDir);
