@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { isLivePid as defaultIsLivePid } from "./kill-tree.js";
 
 export interface SupervisorStateReapResult {
@@ -18,6 +18,49 @@ export async function readSupervisorPid(pidFile: string): Promise<number | null>
   } catch {
     return null;
   }
+}
+
+export interface SupervisorPidDiscovery {
+  pid: number;
+  source: "pid-file" | "snapshot-dir";
+  path: string;
+}
+
+export async function discoverLiveSupervisorPid(
+  supervisorRuntimeDir: string,
+  isLivePid: (pid: number) => boolean = defaultIsLivePid,
+): Promise<SupervisorPidDiscovery | null> {
+  const pidFile = join(supervisorRuntimeDir, "afk-supervisor.pid");
+  const pid = await readSupervisorPid(pidFile);
+  if (pid !== null && isLivePid(pid)) {
+    return { pid, source: "pid-file", path: pidFile };
+  }
+
+  let entries: string[];
+  const supervisorsRoot = dirname(supervisorRuntimeDir);
+  try {
+    entries = await readdir(supervisorsRoot);
+  } catch {
+    return null;
+  }
+
+  const candidates = entries
+    .map((entry) => {
+      const match = /^s([1-9][0-9]*)$/.exec(entry);
+      if (!match) return null;
+      const lanePid = Number(match[1]);
+      if (!Number.isSafeInteger(lanePid) || lanePid <= 0) return null;
+      return { pid: lanePid, path: join(supervisorsRoot, entry) };
+    })
+    .filter((candidate): candidate is { pid: number; path: string } => candidate !== null)
+    .sort((a, b) => b.pid - a.pid);
+
+  for (const candidate of candidates) {
+    if (isLivePid(candidate.pid)) {
+      return { pid: candidate.pid, source: "snapshot-dir", path: candidate.path };
+    }
+  }
+  return null;
 }
 
 async function exists(path: string): Promise<boolean> {
