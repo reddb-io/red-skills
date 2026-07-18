@@ -11,9 +11,9 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | cargo:test | active | 3 | 478 | 203 | 132 | 468 | 203 | 100% | 65% | 3.6% | 61.9/83.6% | 100% | 57.7/83.6% | 100% | 100% | 100% |
 | cat:file | active | 1 | 1489 | 332 | rtk: not-covered | headroom: not-covered | 166 | 87.5% | rtk: not-covered | headroom: not-covered | 77.7/77.7% | 100% | 87.1/87.1% | 100% | rtk: not-covered | headroom: not-covered |
 | exec:-- | active | 3 | 33149 | 851 | rtk: not-covered | headroom: not-covered | 345 | 98.5% | rtk: not-covered | headroom: not-covered | 31.6/99.3% | 100% | 31.6/99.3% | 100% | rtk: not-covered | headroom: not-covered |
-| gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 123 | 80 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
-| gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 108 | 64 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
-| gh:run | passthrough | 3 | 121 | 121 | rtk: not-covered | 121 | 49 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| gh:issue | passthrough | 3 | 123 | 123 | rtk: not-covered | 123 | 86 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| gh:pr | passthrough | 3 | 108 | 108 | rtk: not-covered | 108 | 137 | 78.8% | rtk: not-covered | 78.8% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
+| gh:run | passthrough | 3 | 130 | 130 | rtk: not-covered | 121 | 58 | 0% | rtk: not-covered | 12.5% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | git:blame | passthrough | 1 | 88 | 88 | rtk: not-covered | 88 | 83 | 0% | rtk: not-covered | 0% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | git:branch | passthrough | 1 | 64 | 64 | rtk: not-covered | 64 | 100 | 64% | rtk: not-covered | 64% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
 | git:commit | passthrough | 1 | 33 | 33 | 59 | 33 | 69 | 47.8% | 85.5% | 47.8% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
@@ -21,14 +21,14 @@ Production mode uses admission threshold 60%; passthrough filters count as 0% to
 | git:log | passthrough | 2 | 4467 | 4467 | 68 | 4467 | 4717 | 94.7% | 1.4% | 94.7% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
 | git:push | passthrough | 2 | 58 | 58 | 63 | 58 | 102 | 56.9% | 61.8% | 56.9% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
 | git:show | passthrough | 1 | 98 | 98 | rtk: not-covered | 98 | 132 | 74.2% | rtk: not-covered | 74.2% | 0/0% | 100% | 0/0% | 100% | rtk: not-covered | 100% |
-| git:status | active | 2 | 153 | 79 | 54 | 153 | 83 | 95.2% | 65.1% | 0% | 60.5/75% | 100% | 60.5/75% | 50% | 100% | 100% |
+| git:status | passthrough | 2 | 153 | 153 | 54 | 153 | 122 | 0% | 44.3% | 0% | 0/0% | 100% | 0/0% | 100% | 100% | 100% |
 | vitest:run | active | 6 | 51368 | 609 | 208 | 51060 | 442 | 99.7% | 47.1% | 0.6% | 58.8/100% | 100% | 69.9/100% | 100% | 100% | 83.3% |
 
-Aggregate oracle ceiling: raw 99323 tokens (0% capture), rsp 14760 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14219 tokens.
+Aggregate oracle ceiling: raw 99332 tokens (0% capture), rsp 14843 tokens (99.4% capture), RTK 646 tokens (4.9% capture), Headroom 64367 tokens (0.6% capture), oracle 14346 tokens.
 
 | Corpus | Fixtures | Filters | raw tokens | rsp tokens | Headroom tokens | oracle tokens | rsp capture | Headroom capture |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| pre-existing-quality | 31 | cargo:test, cat:file, gh:issue, gh:pr, gh:run, git:blame, git:branch, git:commit, git:diff, git:log, git:push, git:show, git:status, vitest:run | 66174 | 13909 | 64367 | 13874 | 99.9% | 0.6% |
+| pre-existing-quality | 31 | cargo:test, cat:file, gh:issue, gh:pr, gh:run, git:blame, git:branch, git:commit, git:diff, git:log, git:push, git:show, git:status, vitest:run | 66183 | 13992 | 64367 | 14001 | 99.9% | 0.6% |
 | anomaly | 1 | exec:-- | 32686 | 235 | headroom: not-covered | 96 | 99.6% | headroom: not-covered |
 | mixed-content | 1 | exec:-- | 166 | 413 | headroom: not-covered | 79 | 0% | headroom: not-covered |
 | json-outlier | 1 | exec:-- | 297 | 203 | headroom: not-covered | 170 | 74% | headroom: not-covered |
