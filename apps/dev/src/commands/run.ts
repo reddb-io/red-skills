@@ -1091,6 +1091,7 @@ export function buildProcessDeps(
       const { execTool } = await import("../runtime/exec.js");
       await execTool(invocation.command, invocation.args, { cwd });
     },
+    resolveMechanicalConflict: makeMechanicalConflictResolver(gitCtx),
     // Isolated landing worktree for the LOCKED path (#572): a detached worktree at
     // <base> so the locked merge/push/rollback never `git -C`'s the primary
     // checkout. The primary branch is sacred — a rejected push's `reset --hard`
