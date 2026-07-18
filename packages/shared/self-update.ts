@@ -31,6 +31,8 @@
  * wires in-memory fakes, so the whole policy is unit-testable with no network.
  */
 
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
+
 import {
   type BundleIO,
   ensureBundle,
@@ -151,7 +153,17 @@ export interface SelfUpdateStateRecord {
 
 function readState(text: string): SelfUpdateStateRecord {
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const body = text.trim();
+    if (!body) return {};
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      const decoded = decode(body);
+      parsed = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded as Record<string, unknown>
+        : {};
+    }
     const out: SelfUpdateStateRecord = {};
     if (Number.isFinite(parsed.lastCheckAtMs)) out.lastCheckAtMs = Number(parsed.lastCheckAtMs);
     if (Number.isFinite(parsed.lastSuccessAtMs)) out.lastSuccessAtMs = Number(parsed.lastSuccessAtMs);
@@ -192,7 +204,7 @@ async function writeStateFile(
   patch: SelfUpdateStateRecord,
 ): Promise<void> {
   const prior = await readStateFile(io, cacheDir, plugin);
-  await io.writeFile(statusPath(cacheDir, plugin), new TextEncoder().encode(JSON.stringify({ ...prior, ...patch })));
+  await io.writeFile(statusPath(cacheDir, plugin), new TextEncoder().encode(`${encode(toJsonValue({ ...prior, ...patch }))}\n`));
 }
 
 async function tryWriteStateFile(
@@ -499,6 +511,21 @@ async function newestCachedLaneVersion(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (value == null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map((item) => toJsonValue(item));
+  if (typeof value === "object") {
+    const out: Record<string, JsonValue> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (child !== undefined) out[key] = toJsonValue(child);
+    }
+    return out;
+  }
+  return String(value);
 }
 
 function formatAgeMs(ms: number): string {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { decode } from "@reddb-io/toon";
 import { describe, expect, it } from "vitest";
 import {
   NPM_PACKAGE,
@@ -243,6 +244,43 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
     expect(result.version).toBe(updated);
     expect(result.staleFailure?.lastError).toBe("fetch failed");
     expect(result.logNotes.join(" ")).toContain("self-update stale: last check failed 5h ago");
+  });
+
+  it("writes self-update status as TOON and reads legacy JSON status", async () => {
+    const updated = "1.145.0";
+    const nowMs = 10 * 60 * 60 * 1000;
+    const legacyStatus = {
+      lastFailureAtMs: nowMs - 5 * 60 * 60 * 1000,
+      lastError: "fetch failed",
+      lastStatus: "error",
+    };
+    const status = statusPath(CACHE, PLUGIN);
+    const { io, files } = makeIO({
+      files: {
+        [pointerPath(CACHE, PLUGIN)]: enc(JSON.stringify({ version: updated })),
+        [resolveBundle({ plugin: PLUGIN, version: updated, cacheDir: CACHE })]: bundleBytesFor(updated),
+        [status]: enc(JSON.stringify(legacyStatus)),
+      },
+      registryVersions: [INSTALLED],
+    });
+
+    const result = await backgroundSelfUpdate(io, {
+      plugin: PLUGIN,
+      repo: REPO,
+      installedVersion: INSTALLED,
+      cacheDir: CACHE,
+      channel: "stable",
+    }, { nowMs: () => nowMs });
+
+    expect(result.status).toBe("up-to-date");
+    const written = new TextDecoder().decode(files[status]);
+    expect(() => JSON.parse(written)).toThrow();
+    expect(decode(written)).toMatchObject({
+      lastFailureAtMs: legacyStatus.lastFailureAtMs,
+      lastCheckAtMs: nowMs,
+      lastSuccessAtMs: nowMs,
+      lastStatus: "up-to-date",
+    });
   });
 
   it("ignores a pointer whose bundle is missing from the cache", async () => {
