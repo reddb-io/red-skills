@@ -24,7 +24,7 @@ export interface HeartbeatVitals {
   rss: number;
 }
 
-/** Per-tick state re-read from afk.state.json. */
+/** Per-tick state re-read from afk.state.toon. */
 export interface HeartbeatState {
   activity: string;
   lastStreamLine: string;
@@ -283,7 +283,7 @@ export function buildHeartbeatRecord(
 
 /** Injected per-tick IO: re-read state, read process vitals, get a clock. */
 export interface HeartbeatTickIO {
-  /** Re-read `current.activity` / `current.last_stream_line` from afk.state.json. */
+  /** Re-read `current.activity` / `current.last_stream_line` from afk.state.toon. */
   readState: () => HeartbeatState;
   /** Best-effort cpu/rss from `ps` against the orchestrator pid. */
   readVitals: () => HeartbeatVitals;

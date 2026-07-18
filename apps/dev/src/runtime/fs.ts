@@ -234,7 +234,7 @@ export async function readText(path: string): Promise<string | null> {
 }
 
 /**
- * Glob the worker state files `.../workers/*\/*\/afk.state.json` under a workers
+ * Glob the worker state files `.../workers/*\/*\/afk.state.toon` under a workers
  * root, returning absolute paths. Two levels deep (worker dir → attempt dir).
  */
 export async function globWorkerStates(workersRoot: string): Promise<string[]> {
@@ -254,7 +254,7 @@ export async function globWorkerStates(workersRoot: string): Promise<string[]> {
       continue;
     }
     for (const attempt of attempts) {
-      const stateFile = join(workerPath, attempt, "afk.state.json");
+      const stateFile = join(workerPath, attempt, "afk.state.toon");
       if (await pathExists(stateFile)) out.push(stateFile);
     }
   }
@@ -284,14 +284,14 @@ export async function writeFailureMarkers(attemptDir: string, markers: FailureMa
 /** Persist the `envelope.posted` signal into the iteration state file. Best
  * effort: a malformed/absent state file degrades to writing a minimal object. */
 export async function writeEnvelopePosted(attemptDir: string, posted: boolean): Promise<void> {
-  await updateState(join(attemptDir, "afk.state.json"), { "envelope.posted": posted });
+  await updateState(join(attemptDir, "afk.state.toon"), { "envelope.posted": posted });
 }
 
 /** Read the `envelope.posted` flag from an attempt state file (false when
  * absent/malformed). */
 export async function readEnvelopePosted(attemptDir: string): Promise<boolean> {
   try {
-    return (await readState(join(attemptDir, "afk.state.json"))).envelope.posted === true;
+    return (await readState(join(attemptDir, "afk.state.toon"))).envelope.posted === true;
   } catch {
     return false;
   }

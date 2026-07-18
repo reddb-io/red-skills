@@ -699,7 +699,7 @@ function buildSupervisorDeps(
     now,
     // Event-driven wake (#934): a recursive fs.watch over the workers root resolves
     // the supervisor's inter-tick wait the instant a worker rewrites its
-    // afk.state.json (claim / stage / phase / progress transition), so the loop
+    // afk.state.toon (claim / stage / phase / progress transition), so the loop
     // reacts to a state change immediately instead of waiting out the safety-net
     // timer. Best-effort: a watch failure degrades to pure-timer polling.
     wake: buildStateChangeWake(join(tmpDir, "workers")),

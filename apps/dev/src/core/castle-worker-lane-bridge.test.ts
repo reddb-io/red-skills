@@ -20,7 +20,7 @@ describe("createCastleWorkerLaneBridge", () => {
     const workerId = "wAB12";
     const attemptDir = join(redRoot, "tmp", "workers", workerId, "2064-a1");
     await mkdir(attemptDir, { recursive: true });
-    initStateSync(join(attemptDir, "afk.state.json"), {
+    initStateSync(join(attemptDir, "afk.state.toon"), {
       worker_id: workerId,
       pid: 1234,
       runner: "codex",

@@ -14,7 +14,7 @@ function writeState(root: string, worker: string, attempt: string, variant: stri
   const dir = join(root, ".red", "tmp", "workers", worker, attempt);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
-    join(dir, "afk.state.json"),
+    join(dir, "afk.state.toon"),
     JSON.stringify({
       current: {
         number: Number(attempt.split("-")[0]),
@@ -59,7 +59,7 @@ describe("AFK output shaping report", () => {
     mkdirSync(toonDir, { recursive: true });
     mkdirSync(legacyDir, { recursive: true });
     writeFileSync(
-      join(toonDir, "afk.state.json"),
+      join(toonDir, "afk.state.toon"),
       encode({
         current: {
           number: 8,
@@ -70,7 +70,7 @@ describe("AFK output shaping report", () => {
       "utf8",
     );
     writeFileSync(
-      join(legacyDir, "afk.state.json"),
+      join(legacyDir, "afk.state.toon"),
       JSON.stringify({
         current: {
           number: 9,

@@ -14,7 +14,7 @@ function settledWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 describe("buildStateChangeWake", () => {
-  it("resolves when a worker rewrites its afk.state.json (event-driven wake)", async () => {
+  it("resolves when a worker rewrites its afk.state.toon (event-driven wake)", async () => {
     const root = mkdtempSync(join(tmpdir(), "rs-statewatch-"));
     const workersRoot = join(root, "workers");
     const workerDir = join(workersRoot, "w1");
@@ -25,7 +25,7 @@ describe("buildStateChangeWake", () => {
       const fired = wake.waitForEvent(controller.signal);
       // Give the watcher a beat to attach, then write the state file.
       await new Promise((r) => setTimeout(r, 20));
-      writeFileSync(join(workerDir, "afk.state.json"), '{"stage":"impl"}');
+      writeFileSync(join(workerDir, "afk.state.toon"), '{"stage":"impl"}');
       expect(await settledWithin(fired, 1000)).toBe(true);
       controller.abort();
     } finally {

@@ -175,7 +175,7 @@ describe("red-envelope parity", () => {
   it("writes result_status from context into state file", async () => {
     if (skipIfMissing("red-envelope")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-envelope-"));
-    const stateFile = join(tmp, "afk.state.json");
+    const stateFile = join(tmp, "afk.state.toon");
     writeFileSync(stateFile, JSON.stringify({ current: { activity: "running" } }));
     const ctx = JSON.stringify({ result: { status: "success", outcome: "done" } });
     const r = await runScript("red-envelope", { RED_AFK_STATE_FILE: stateFile }, ctx);
@@ -189,7 +189,7 @@ describe("red-envelope parity", () => {
   it("falls back to RED_AFK_RESULT_STATUS env when ctx.result.status absent", async () => {
     if (skipIfMissing("red-envelope")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-envelope-"));
-    const stateFile = join(tmp, "afk.state.json");
+    const stateFile = join(tmp, "afk.state.toon");
     writeFileSync(stateFile, JSON.stringify({ current: {} }));
     const r = await runScript("red-envelope", { RED_AFK_STATE_FILE: stateFile, RED_AFK_RESULT_STATUS: "fail" }, "{}");
     expect(r.code).toBe(0);

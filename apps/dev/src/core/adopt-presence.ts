@@ -39,7 +39,7 @@ export type AdoptPresenceStage = "validating" | "landing";
 /** The immutable identity + issue fields a {@link AdoptPresenceIo.seed} writes
  * onto the presence state file. */
 export interface AdoptPresenceSeed {
-  /** Absolute path of the presence `afk.state.json`. */
+  /** Absolute path of the presence `afk.state.toon`. */
   statePath: string;
   /** The attempt dir the state file (and its liveness lane) live in. */
   attemptDir: string;
@@ -105,7 +105,7 @@ export async function withAdoptPresence<T>(
     params.issue,
     REQUEUE_ADOPT_ATTEMPT,
   );
-  const statePath = join(attemptDir, "afk.state.json");
+  const statePath = join(attemptDir, "afk.state.toon");
   io.seed({
     statePath,
     attemptDir,

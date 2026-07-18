@@ -185,22 +185,22 @@ describe("jsonl-log lane routing", () => {
     const firehose: string[] = [];
     const sink = async (_p: string, line: string) => void firehose.push(line);
 
-    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "raw", { iteration: 1, line: "{\"inputTokens\":3}" }, {
+    await appendRecordToonlTaggedRow("/attempt/log.toonl", "raw", { iteration: 1, line: "{\"inputTokens\":3}" }, {
       ts: TS,
       fields: { extra: { iteration: "1" } },
       sink,
     });
-    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "agent", "hello", {
+    await appendRecordToonlTaggedRow("/attempt/log.toonl", "agent", "hello", {
       ts: TS,
       fields: { extra: { iteration: "1", kind: "text" } },
       sink,
     });
-    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "raw", { iteration: 2, line: "{\"outputTokens\":5}" }, {
+    await appendRecordToonlTaggedRow("/attempt/log.toonl", "raw", { iteration: 2, line: "{\"outputTokens\":5}" }, {
       ts: TS,
       fields: { extra: { iteration: "2" } },
       sink,
     });
-    await appendRecordToonlTaggedRow("/attempt/log.jsonl", "agent", "again", {
+    await appendRecordToonlTaggedRow("/attempt/log.toonl", "agent", "again", {
       ts: TS,
       fields: { extra: { kind: "text", iteration: "2" } },
       sink,
@@ -267,7 +267,7 @@ describe("jsonl-log append accumulation and readers", () => {
 
   it("writes stable-schema TOONL lanes with one header and appended rows", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-toonl-row-"));
-    const lane = join(dir, "afk-supervisor.log.jsonl");
+    const lane = join(dir, "afk-supervisor.log.toonl");
     await appendRecordToonlRow(lane, "heartbeat", "first", {
       ts: TS,
       fields: { worker: "fleet", extra: { scope: "fleet", runner: "codex" } },

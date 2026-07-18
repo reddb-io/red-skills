@@ -58,7 +58,7 @@ function listStateFiles(dir: string): string[] {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) files.push(...listStateFiles(path));
-    else if (entry.isFile() && entry.name === "afk.state.json") files.push(path);
+    else if (entry.isFile() && entry.name === "afk.state.toon") files.push(path);
   }
   return files;
 }

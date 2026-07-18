@@ -211,7 +211,7 @@ describe("activity review", () => {
     const root = await mkdtemp(join(tmpdir(), "activity-review-firehose-"));
     const attemptDir = join(root, "wAAAA", "1824-a1");
     await mkdir(attemptDir, { recursive: true });
-    const log = join(attemptDir, "log.jsonl");
+    const log = join(attemptDir, "log.toonl");
     const tagged: string[] = [];
     const sink = async (_p: string, line: string) => void tagged.push(line);
     await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
@@ -240,7 +240,7 @@ describe("activity review", () => {
     const root = await mkdtemp(join(tmpdir(), "activity-review-cursor-"));
     const attemptDir = join(root, "wAAAA", "1825-a1");
     await mkdir(attemptDir, { recursive: true });
-    const log = join(attemptDir, "log.jsonl");
+    const log = join(attemptDir, "log.toonl");
     await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
       ts: "2026-07-15T12:00:00.000Z",
       fields: { extra: { iteration: "1" } },

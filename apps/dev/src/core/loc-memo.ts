@@ -3,7 +3,7 @@
 // Issue #1210 (Part B): the statusline/monitor render paths must NEVER shell out
 // to `git diff --shortstat` — that ownership moves to the WRITERS (the per-attempt
 // heartbeat and/or post-commit hook), which stamp `loc_added`/`loc_removed` into
-// `afk.state.json` for ALL runners (codex included — the writer is runner-agnostic,
+// `afk.state.toon` for ALL runners (codex included — the writer is runner-agnostic,
 // so the historical codex `0/0` gap that forced the render fallback disappears).
 //
 // The diffstat is EXPENSIVE (two git subprocesses via {@link diffstatShortstat}),

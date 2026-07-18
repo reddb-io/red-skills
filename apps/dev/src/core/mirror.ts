@@ -3,7 +3,7 @@
 // Read-only reflection of live AFK workers onto the runner's native task list.
 // Three layers, the diff/map ones pure:
 //
-//   reader      readWorkers(states) — normalizes raw afk.state.json reads (keyed
+//   reader      readWorkers(states) — normalizes raw afk.state.toon reads (keyed
 //     worker_id:issue) into one WorkerRecord per worker that currently owns a
 //     task. Idle workers (no current issue) own no task and are omitted. Liveness
 //     is supplied by the caller via each state's `live` flag, so this stays pure.

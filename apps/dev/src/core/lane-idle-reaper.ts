@@ -23,7 +23,7 @@
 //
 // SIGNAL HYGIENE (#243 / #1022): the liveness signal is the red-castle
 // `evaluateLiveness` evaluator over the attempt's `liveness.lane.jsonl` —
-// never `afk.log` or the firehose `agent.log.jsonl`, which the per-minute
+// never `afk.log` or the firehose `agent.log.toonl`, which the per-minute
 // heartbeat keeps fresh and would mask a real stall. The caller wires
 // `livenessVerdict` to a sync probe that reads the liveness lane and calls
 // the evaluator (runtime/wire.ts `agentLivenessVerdictSync`).

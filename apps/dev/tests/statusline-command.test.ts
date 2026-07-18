@@ -61,7 +61,7 @@ async function writeWorkerState(
 ): Promise<void> {
   const dir = join(root, ".red", "tmp", namespace, worker, attempt);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "afk.state.json"), JSON.stringify({ pid: process.pid, ...state }), "utf8");
+  await writeFile(join(dir, "afk.state.toon"), JSON.stringify({ pid: process.pid, ...state }), "utf8");
 }
 
 /** Write a FRESH liveness lane record into an attempt dir so the red-castle

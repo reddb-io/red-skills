@@ -25,7 +25,7 @@ describe("state", () => {
 
   it("writes atomically and supports dotted updates", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
     await initState(path, { worker_id: "wAAAA", pid: 123, "current.activity": "impl" });
     await updateState(path, { "current.activity": "tests", "envelope.posted": true, queue: [2, 3] });
     const state = await readState(path);
@@ -39,7 +39,7 @@ describe("state", () => {
 
   it("round-trips resolved base provenance fields through state updates", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
     await initState(path, { worker_id: "wAAAA", pid: 123, "current.activity": "setup" });
 
     await updateState(path, {
@@ -68,7 +68,7 @@ describe("state", () => {
 
   it("initStateSync seeds identity synchronously so a later updateState preserves it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
 
     // Synchronous seed — the file MUST exist with full identity the instant the
     // call returns (the whole point: it beats the async sink's read-modify-write).
@@ -98,7 +98,7 @@ describe("state", () => {
 
   it("records and preserves the castle worker kind under current.kind", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
 
     initStateSync(path, {
       worker_id: "wGO12",
@@ -122,7 +122,7 @@ describe("state", () => {
 
   it("preserves stamped identity, vitals, and loc when a stage writer carries default identity fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
 
     initStateSync(path, {
       worker_id: "w8UV2",
@@ -178,7 +178,7 @@ describe("state", () => {
 
   it("preserves live pid and current identity when stamping the validating phase", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
 
     initStateSync(path, {
       worker_id: "wSVD3",
@@ -218,7 +218,7 @@ describe("state", () => {
 
   it("only allows pid to reset to zero when the caller marks a real teardown", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
 
     initStateSync(path, { worker_id: "wLIVE", pid: 99, "current.number": 1238 });
 
@@ -277,8 +277,8 @@ describe("state", () => {
 
   it("read-shims legacy worker-vitals keys onto their canonical names (ADR 0065)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
-    // An OLD afk.state.json written by a pre-S1 bundle: legacy keys only.
+    const path = join(dir, "afk.state.toon");
+    // An OLD afk.state.toon written by a pre-S1 bundle: legacy keys only.
     const legacy = {
       version: 1,
       current: {
@@ -299,7 +299,7 @@ describe("state", () => {
 
   it("prefers the canonical key over the legacy alias when both are present", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
-    const path = join(dir, "afk.state.json");
+    const path = join(dir, "afk.state.toon");
     const both = { version: 1, current: { loc_added: 99, diff_added: 1 } };
     await writeFile(path, JSON.stringify(both), "utf8");
     const state = await readState(path);

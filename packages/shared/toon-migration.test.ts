@@ -71,14 +71,14 @@ describe("shared TOON migration registry", () => {
         expect.objectContaining({
           id: "dev.agent-log",
           plugin: "dev",
-          legacyPath: ".red/tmp/agent.log.jsonl",
+          legacyPath: ".red/tmp/agent.log.toonl",
           toonPath: ".red/tmp/agent.log.toonl",
           kind: "toonl",
         }),
         expect.objectContaining({
           id: "dev.supervisor-firehose",
           plugin: "dev",
-          legacyPath: ".red/tmp/afk-supervisor.log.jsonl",
+          legacyPath: ".red/tmp/afk-supervisor.log.toonl",
           toonPath: ".red/tmp/supervisors/default/supervisor.log.toonl",
           kind: "toonl",
           migration: "sniff-read",
@@ -93,8 +93,8 @@ describe("shared TOON migration registry", () => {
         expect.objectContaining({
           id: "dev.attempt-state",
           plugin: "dev",
-          legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
-          toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.json",
+          legacyPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.toon",
+          toonPath: ".red/tmp/{workers,go-workers,scout-workers}/*/*/afk.state.toon",
           kind: "toon",
         }),
         expect.objectContaining({
@@ -237,7 +237,7 @@ describe("shared TOON migration registry", () => {
     const root = await scratch();
     await write(
       root,
-      ".red/tmp/agent.log.jsonl",
+      ".red/tmp/agent.log.toonl",
       [
         JSON.stringify({ ts: "t1", worker: "wA", type: "agent", msg: "line A", iteration: "1", kind: "text" }),
         "{torn crash tail",
@@ -265,7 +265,7 @@ describe("shared TOON migration registry", () => {
     const root = await scratch();
     await write(
       root,
-      ".red/tmp/afk-supervisor.log.jsonl",
+      ".red/tmp/afk-supervisor.log.toonl",
       [
         JSON.stringify({ ts: "t1", worker: "fleet", type: "heartbeat", msg: "legacy" }),
         encode([{ ts: "t2", worker: "fleet", type: "heartbeat", msg: "toon" }]),
@@ -273,9 +273,9 @@ describe("shared TOON migration registry", () => {
       ].join("\n"),
     );
 
-    const before = await readFile(join(root, ".red/tmp/afk-supervisor.log.jsonl"), "utf8");
+    const before = await readFile(join(root, ".red/tmp/afk-supervisor.log.toonl"), "utf8");
     const report = await convertRegisteredToonSurfaces({ rootDir: root, plugin: "dev" });
-    const after = await readFile(join(root, ".red/tmp/afk-supervisor.log.jsonl"), "utf8");
+    const after = await readFile(join(root, ".red/tmp/afk-supervisor.log.toonl"), "utf8");
 
     expect(report.converted).not.toContain("dev.supervisor-firehose");
     expect(report.skipped).toContain("dev.supervisor-firehose");
@@ -349,7 +349,7 @@ describe("shared TOON migration registry", () => {
     const root = await scratch();
     await write(
       root,
-      ".red/tmp/workers/wA/1783-a1/afk.state.json",
+      ".red/tmp/workers/wA/1783-a1/afk.state.toon",
       JSON.stringify({ worker_id: "wA", pid: 0, current: { number: 1783, activity: "impl" } }),
     );
     await write(root, ".red/tmp/statusline-cache.json", JSON.stringify({ queue: 4, human: 1, ts: 100 }));
@@ -383,7 +383,7 @@ describe("shared TOON migration registry", () => {
         "dev.rsp-wait-registry",
       ]),
     );
-    const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.json"), "utf8");
+    const stateRaw = await readFile(join(root, ".red/tmp/workers/wA/1783-a1/afk.state.toon"), "utf8");
     const countRaw = await readFile(join(root, ".red/state/statusline/statusline-cache.toon"), "utf8");
     const repoRaw = await readFile(join(root, ".red/state/statusline/statusline-repo-cache.toon"), "utf8");
     const residentRaw = await readFile(join(root, ".red/state/rsp/rsp-resident.pid.json"), "utf8");

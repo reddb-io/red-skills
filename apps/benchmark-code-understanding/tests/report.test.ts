@@ -21,7 +21,7 @@ function record(overrides: Partial<RunRecord>): RunRecord {
     duration_ms: 1000,
     exit_code: 0,
     signal: null,
-    log_path: "/tmp/log.jsonl",
+    log_path: "/tmp/log.toonl",
     mcp_config_path: "/tmp/mcp.json",
     command: ["claude"],
     metrics: {

@@ -108,7 +108,7 @@ import { renderClaimComment } from "../../core/claim.js";
  * (Opus effort=high) and carry no exclusive activity signal; returning `undefined`
  * prevents them from clobbering a concrete activity already set by the preceding
  * tool call. Used by `recordAgentEvent` to advance `current.activity` in
- * afk.state.json so the monitor reflects progress.
+ * afk.state.toon so the monitor reflects progress.
  */
 type DerivedActivity =
   | "explore"

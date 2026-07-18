@@ -1087,7 +1087,7 @@ export function postAttemptContext(
     result: { status, outcome },
     attempt_n: input.attempt,
     iter_log: `${input.attemptDir}/afk.log`,
-    state_file: `${input.attemptDir}/afk.state.json`,
+    state_file: `${input.attemptDir}/afk.state.toon`,
   });
 }
 export function onErrorContext(input: ProcessIssueInput, workspace: string, errClass: string, attempt: number): string {

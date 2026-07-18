@@ -32,7 +32,7 @@ export interface LivenessRecord {
 
 /**
  * Canonical filename for the lane inside an attempt state directory. Kept
- * distinct from the firehose (`log.jsonl`) and proof-of-life (`afk.state.json`)
+ * distinct from the firehose (`log.toonl`) and proof-of-life (`afk.state.toon`)
  * so nothing that writes those can refresh the lane by accident.
  *
  * The filename keeps its `.jsonl` suffix for compatibility, but the content is

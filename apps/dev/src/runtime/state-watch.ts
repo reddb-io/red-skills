@@ -1,7 +1,7 @@
 // runtime/state-watch.ts — the REAL worker-state-change event source backing the
 // supervisor's event-driven wake (#934). A recursive fs.watch over the workers
 // root (.red/tmp/workers) resolves the supervisor's per-iteration wait the moment
-// a worker rewrites its `afk.state.json` (every claim / stage / phase / progress
+// a worker rewrites its `afk.state.toon` (every claim / stage / phase / progress
 // transition writes that file atomically). The supervisor races this against its
 // safety-net timer, so a state change is reacted to immediately while the timer
 // still guarantees a wake if an event is ever missed.
@@ -18,12 +18,12 @@ import type { WakeSource } from "../core/event-wake.js";
  * event naming this file is a genuine state change worth waking the supervisor
  * for; events on the noisier log/firehose siblings are ignored so a `tail -f`
  * churn does not wake the loop. */
-const STATE_FILENAME = "afk.state.json";
+const STATE_FILENAME = "afk.state.toon";
 
 /**
  * Build the supervisor's worker-state-change {@link WakeSource} over a recursive
  * fs.watch of `workersRoot`. Each `waitForEvent` call installs a fresh watcher
- * that resolves on the FIRST `afk.state.json` change (then tears itself down) or
+ * that resolves on the FIRST `afk.state.toon` change (then tears itself down) or
  * on abort (the supervisor's timer won the race). A watch that cannot be
  * established — directory missing, recursive unsupported, fs error — resolves
  * only on abort, so the supervisor falls back to its timer with no spurious wakes.

@@ -800,7 +800,7 @@ export type SupervisorEventRecord = Omit<CastleLaneRecord, "at" | "kind"> & {
 };
 
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
- * fields reap_stalled_slot pulls out of afk.state.json. */
+ * fields reap_stalled_slot pulls out of afk.state.toon. */
 export interface IterDirInfo {
   path: string;
   /** .current.number, or null when the worker died before claiming. */
@@ -843,7 +843,7 @@ export interface SupervisorDeps {
   now(): number;
   /**
    * Event-driven wake source (#934): resolves the instant a worker's state
-   * changes (its afk.state.json is rewritten / a heartbeat-firehose record is
+   * changes (its afk.state.toon is rewritten / a heartbeat-firehose record is
    * appended), letting the health-check loop react WITHOUT waiting out the full
    * `pollIntervalS` timer. The timer is always retained as the safety-net
    * fallback — whichever fires first wins the per-iteration race. Absent → the

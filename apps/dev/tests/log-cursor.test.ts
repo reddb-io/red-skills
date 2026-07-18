@@ -56,7 +56,7 @@ describe("monitor log cursor", () => {
 
   it("counts appended TOONL records from a structured-lane cursor", async () => {
     const root = await mkdtemp(join(tmpdir(), "afk-log-cursor-"));
-    const log = join(root, "log.jsonl");
+    const log = join(root, "log.toonl");
     const cache = join(root, "monitor-log-cursors.json");
     await appendRecordToonlTaggedRow(log, "agent", "first", {
       ts: "2026-07-15T12:00:00.000Z",

@@ -42,7 +42,7 @@ describe("migrateLegacyDevPaths", () => {
     await writeFile(join(tmp, "afk-supervisor.state.json"), "state", "utf8");
     await writeFile(join(tmp, "statusline-cache.json"), "{}", "utf8");
     await writeFile(join(tmp, "afk-supervisor.log"), "log", "utf8");
-    await writeFile(join(tmp, "afk-supervisor.log.jsonl"), "{}", "utf8");
+    await writeFile(join(tmp, "afk-supervisor.log.toonl"), "{}", "utf8");
     await writeFile(join(tmp, "monitor-log-cursors.json"), "cursors", "utf8");
     await mkdir(join(tmp, "runner-circuit"), { recursive: true });
     await writeFile(join(tmp, "runner-circuit", "claude.json"), "{}", "utf8");
@@ -63,7 +63,7 @@ describe("migrateLegacyDevPaths", () => {
     // The retired human prose log is not dual-written into a new lane.
     expect(await readFile(join(tmp, "afk-supervisor.log"), "utf8")).toBe("log");
     expect(moved).toContain("afk-supervisor.pid");
-    expect(moved).toContain("afk-supervisor.log.jsonl");
+    expect(moved).toContain("afk-supervisor.log.toonl");
   });
 
   it("renames legacy statusline state cache files to .toon", async () => {
