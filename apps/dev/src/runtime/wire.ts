@@ -517,6 +517,16 @@ function parseFleetState(raw: unknown): FleetState | null {
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
     spawns_this_tick?: unknown;
     churn?: { deaths?: unknown; respawns?: unknown; window_s?: unknown };
+    trunk_freshness?: {
+      status?: unknown;
+      refreshed_at_epoch?: unknown;
+      interval_s?: unknown;
+      next_due_epoch?: unknown;
+      remote_ref?: unknown;
+      mirror_ref?: unknown;
+      sha?: unknown;
+      message?: unknown;
+    };
     slot_details?: unknown;
   };
   const epoch = Number(rec.epoch ?? 0);
@@ -544,6 +554,33 @@ function parseFleetState(raw: unknown): FleetState | null {
     }
   }
 
+  let trunkFreshness: FleetState["trunkFreshness"] | undefined;
+  if (rec.trunk_freshness !== undefined && rec.trunk_freshness !== null) {
+    const raw = rec.trunk_freshness;
+    const status = raw.status;
+    const refreshedAtEpoch = Number(raw.refreshed_at_epoch ?? 0);
+    const intervalS = Number(raw.interval_s ?? 0);
+    if (
+      (status === "refreshed" || status === "failed" || status === "throttled") &&
+      Number.isFinite(refreshedAtEpoch) &&
+      refreshedAtEpoch > 0 &&
+      Number.isFinite(intervalS) &&
+      intervalS > 0
+    ) {
+      const nextDueEpoch = Number(raw.next_due_epoch);
+      trunkFreshness = {
+        status,
+        refreshedAtEpoch,
+        intervalS,
+        ...(Number.isFinite(nextDueEpoch) && nextDueEpoch > 0 ? { nextDueEpoch } : {}),
+        ...(typeof raw.remote_ref === "string" ? { remoteRef: raw.remote_ref } : {}),
+        ...(typeof raw.mirror_ref === "string" ? { mirrorRef: raw.mirror_ref } : {}),
+        ...(typeof raw.sha === "string" ? { sha: raw.sha } : {}),
+        ...(typeof raw.message === "string" ? { message: raw.message } : {}),
+      };
+    }
+  }
+
   return {
     ts: typeof rec.ts === "string" ? rec.ts : "",
     epoch,
@@ -561,6 +598,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     churnDeaths: Number(rec.churn?.deaths ?? 0) || 0,
     churnRespawns: Number(rec.churn?.respawns ?? 0) || 0,
     churnWindowS: Number(rec.churn?.window_s ?? 0) || 0,
+    ...(trunkFreshness !== undefined ? { trunkFreshness } : {}),
     ...(slotDetails !== undefined ? { slotDetails } : {}),
   };
 }
