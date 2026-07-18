@@ -1,3 +1,4 @@
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -38,7 +39,26 @@ import {
 const CORPUS_DIR = join(__dirname, "../bench/eval/single-hop");
 const STRUCTURED_CORPUS_DIR = join(__dirname, "../bench/eval/structured");
 const GOVERNED_CORPUS_DIR = join(__dirname, "../bench/eval/governed");
+const SOURCE_DIR = join(__dirname, "../src");
 const FIXED_NOW = new Date("2026-06-02T00:00:00.000Z");
+
+describe("memory bench eval — module boundary", () => {
+  test("bench-eval barrel and sibling modules stay under the file-size ceiling", async () => {
+    const maxLines = 1200;
+    const barrel = await readFile(join(SOURCE_DIR, "bench-eval.ts"), "utf8");
+    expect(barrel.split("\n").length).toBeLessThanOrEqual(maxLines);
+
+    const moduleDir = join(SOURCE_DIR, "bench-eval");
+    const files = await readdir(moduleDir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const file of files.filter((name) => name.endsWith(".ts"))) {
+      const source = await readFile(join(moduleDir, file), "utf8");
+      expect(source.split("\n").length, file).toBeLessThanOrEqual(maxLines);
+    }
+  });
+});
 
 describe("memory bench eval — fixture integrity", () => {
   test("every question's gold_doc_id resolves and its gold_answer matches that entry's fact", async () => {
