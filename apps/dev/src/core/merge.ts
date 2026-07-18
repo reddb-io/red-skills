@@ -113,6 +113,15 @@ export interface PreMergeRebaseInput {
    * existing landing path is byte-identical.
    */
   resolveMechanical?: (repo: string) => Promise<boolean>;
+  /**
+   * Opt-in agent-conflict resolver (issue #2075). On a rebase CONFLICT that the
+   * mechanical resolver declines, dispatch the runner against the conflicted
+   * rebase worktree. Returns true only when it resolved every conflict and
+   * continued the rebase. Bounded by `maxAgentResolveAttempts` below.
+   */
+  resolveAgent?: (repo: string) => Promise<boolean>;
+  /** Small attempt budget for `resolveAgent`; default 2. */
+  maxAgentResolveAttempts?: number;
 }
 
 /** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
@@ -142,6 +151,7 @@ export interface PreMergeRebaseResult {
 export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Promise<PreMergeRebaseResult> {
   const { repo, remote, base, branch } = input;
   const maxRetries = input.maxPushRetries ?? 2;
+  const maxAgentResolveAttempts = Math.max(0, input.maxAgentResolveAttempts ?? 2);
   const baseRef = `${remote}/${base}`;
 
   // Fetch the base tip and rebase the worker branch onto it. Reused by the
@@ -158,6 +168,11 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
       // abort. It returns false for anything non-mechanical → abort as before.
       if (input.resolveMechanical && (await input.resolveMechanical(repo))) {
         return { ok: true };
+      }
+      for (let attempt = 0; attempt < maxAgentResolveAttempts; attempt++) {
+        if (input.resolveAgent && (await input.resolveAgent(repo))) {
+          return { ok: true };
+        }
       }
       await exec(["git", "-C", repo, "rebase", "--abort"]);
       return { ok: false, reason: "conflict" };
