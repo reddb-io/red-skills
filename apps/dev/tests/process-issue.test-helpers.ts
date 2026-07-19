@@ -63,6 +63,9 @@ export interface Trace {
     issueBody: string;
     prNumber: number;
     diff: string;
+    runner: string;
+    model: string;
+    effort?: AgentEffort;
     maxIterations: number;
   }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
@@ -550,8 +553,8 @@ export function harness(opts: HarnessOptions = {}): {
     },
     adversarialReview: opts.adversarialReview,
     extractAdversarialReview: opts.adversarialReview
-      ? async ({ context, maxIterations }) => {
-          trace.adversarialReviewContexts.push({ ...context, maxIterations });
+      ? async ({ context, runner, model, effort, maxIterations }) => {
+          trace.adversarialReviewContexts.push({ ...context, runner, model, effort, maxIterations });
           return opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ?? opts.adversarialFindings ?? {
             summary: "Stubbed adversarial review summary.",
             findings: [
