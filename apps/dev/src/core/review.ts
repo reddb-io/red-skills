@@ -52,6 +52,7 @@ export interface InlineComment {
   readonly path: string;
   readonly line: number;
   readonly body: string;
+  readonly blocking?: boolean;
 }
 
 export interface ReviewFindings {
@@ -254,6 +255,7 @@ function parseInlineComment(value: unknown): InlineComment {
     path: asString(record.path ?? record.file, "inline comment path"),
     line: rawLine,
     body: asString(record.body ?? record.comment, "inline comment body"),
+    blocking: record.blocking === true,
   };
 }
 
