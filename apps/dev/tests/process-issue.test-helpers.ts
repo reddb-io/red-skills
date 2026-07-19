@@ -238,6 +238,7 @@ export interface HarnessOptions {
   /** Advisory adversarial review tracer (#2207). */
   adversarialReview?: ProcessIssueDeps["adversarialReview"];
   adversarialFindings?: AdversarialReviewFindings;
+  adversarialFindingsSequence?: AdversarialReviewFindings[];
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
@@ -551,7 +552,7 @@ export function harness(opts: HarnessOptions = {}): {
     extractAdversarialReview: opts.adversarialReview
       ? async ({ context, maxIterations }) => {
           trace.adversarialReviewContexts.push({ ...context, maxIterations });
-          return opts.adversarialFindings ?? {
+          return opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ?? opts.adversarialFindings ?? {
             summary: "Stubbed adversarial review summary.",
             findings: [
               {
