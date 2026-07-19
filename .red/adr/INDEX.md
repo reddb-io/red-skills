@@ -99,6 +99,10 @@ stale notes inline.
 ## Manager orchestration
 - **0109** Manager is a local portfolio liaison with repository-owned projections — `dev:manager` composes existing owner workflows rather than creating an engine; one operator-and-host-scoped portfolio owns unmaterialised intent and cross-repository coordination, each tracker artifact owns its work facts, and lazily-created per-repository Manager maps join through an immutable effort ID. Deterministic reconciliation, effort leases, checkpoints, a bounded brief, trusted directives, semantic completion, and Claude/Codex/OpenCode parity form the first functional slice.
 
+## Pi (pi-coding-agent) integration
+- **0075-0077, 0079, 0080** OpenCode host adapter — earlier Slice 1-4 work; Pi is the fourth host, scoped separately under 0111.
+- **0111** Pi packages ship on npm as `@reddb-io/red-skills-<plugin>` for one-command install — the public user path becomes `pi install npm:@reddb-io/red-skills-{dev,memory,brain}`, with `--source-dir` keeping the in-repo path install for development; four packages mirror the Claude/Codex plugin set, version-locked to the monorepo release (ADR 0040), and idempotently published + smoke-tested by `red-release.yml`. The path-based install from PR #2167 is no longer the canonical public path but stays the canonical dev path. *(supersedes the path-only install slice; no published ADRs are invalidated)*
+
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal
 - *(see also 0030, 0031)*

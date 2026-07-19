@@ -14,7 +14,10 @@
     "codex:manifests": "node scripts/generate-codex-manifests.mjs",
     "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check",
     "pi:manifests": "node scripts/generate-pi-manifests.mjs",
-    "pi:manifests:check": "node scripts/generate-pi-manifests.mjs --check"
+    "pi:manifests:check": "node scripts/generate-pi-manifests.mjs --check",
+    "pi:packages:build": "node scripts/build-pi-packages.mjs",
+    "pi:packages:check": "node scripts/build-pi-packages.mjs --check",
+    "pi:packages:publish": "node scripts/publish-pi-packages.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

@@ -582,6 +582,51 @@ jobs:
           # which points npm dist-tag `canary` at an already-published version.
           pnpm publish --access public --no-git-checks
 
+      - name: Build + publish Pi packages to npm
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          version="${NEXT#v}"
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills-<plugin>@${version}"
+            exit 1
+          fi
+          # Stage the npm-ready Pi packages from plugins/<name>/skills/<bucket>/
+          # into packaging/pi/<name>/. The build runs before publish so the
+          # tarball carries the current source, not a stale staging.
+          pnpm pi:packages:build
+          # Idempotent on already-published (same shape as @reddb-io/red-skills):
+          # a re-run after transient post-publish failure resumes the release
+          # tail instead of dying on publish-over-published conflict.
+          pnpm pi:packages:publish
+
+      - name: Smoke published Pi packages from registry
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          version="${NEXT#v}"
+          # Registry read replicas can lag the publish by several minutes
+          # (same budget as the @reddb-io/red-skills smoke above).
+          for plugin in dev memory brain; do
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if output="$(npm view "@reddb-io/red-skills-${plugin}@${version}" name version 2>&1)"; then
+                if grep -qF "@reddb-io/red-skills-${plugin} ${version}" <<<"$output"; then
+                  echo "registry smoke returned @reddb-io/red-skills-${plugin}@${version}"
+                  continue 2
+                fi
+              fi
+              echo "registry smoke attempt ${attempt}/10 for @reddb-io/red-skills-${plugin}@${version} not yet resolvable; sleeping ${attempt}*15s"
+              sleep "$((attempt * 15))"
+            done
+            echo "::error::registry smoke failed for @reddb-io/red-skills-${plugin}@${version} after 10 attempts"
+            exit 1
+          done
+
       - name: Smoke published npm package from registry
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:

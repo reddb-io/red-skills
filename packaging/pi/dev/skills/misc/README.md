@@ -1,0 +1,8 @@
+# Misc
+
+Tools I keep around but rarely use.
+
+- **[branch-lock](./branch-lock/SKILL.md)** — Lock the agent to a branch and block it from switching away, via agent-only pre-tool hooks for Claude Code and Codex plus a `/branch-lock` set/clear command.
+- **[git-guardrails-claude-code](./git-guardrails-claude-code/SKILL.md)** — Set up Claude Code hooks to block dangerous git commands (push, reset --hard, clean, etc.) before they execute.
+- **[migrate-to-shoehorn](./migrate-to-shoehorn/SKILL.md)** — Migrate test files from `as` type assertions to @total-typescript/shoehorn.
+- **[setup-pre-commit](./setup-pre-commit/SKILL.md)** — Set up Husky pre-commit hooks with lint-staged, Prettier, type checking, and tests.

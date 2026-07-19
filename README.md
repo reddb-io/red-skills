@@ -166,17 +166,25 @@ drift from the generator output.
 
 ### Pi Manifest Maintenance
 
-Pi packages are generated artifacts. Do not hand-edit
-`plugins/<name>/package.json`. Change the Claude-side plugin manifest or
-plugin tree, then run:
+Pi ships two generated artifacts that must stay in sync with the Claude-side
+plugin tree:
+
+- `plugins/<name>/package.json` — the local-path install surface (ADR 0075-era
+  shape; consumed by `pi install <path>`).
+- `packaging/pi/<name>/package.json` plus `packaging/pi/<name>/skills/` — the
+  npm publish surface (ADR 0110; consumed by `pi install npm:@reddb-io/red-skills-<plugin>`).
+
+Both are generated. Do not hand-edit either. Change the Claude-side plugin
+manifest or the plugin tree, then run:
 
 ```bash
-pnpm pi:manifests
+pnpm pi:manifests        # regenerates plugins/<name>/package.json
+pnpm pi:packages:build   # stages packaging/pi/<name>/ from plugins/<name>/
 ```
 
-CI runs `pnpm pi:manifests:check` and fails when committed Pi packages drift
-from the generator output. The install script runs the same generator before
-calling `pi install`, so a manual regeneration is only required when working
+CI runs both `pnpm pi:manifests:check` and `pnpm pi:packages:check` and fails
+when either committed artifact drifts. The release pipeline runs the build
+step before publishing, so a manual regeneration is only required when working
 on Pi support itself.
 
 ### Manual: OpenCode
@@ -219,35 +227,54 @@ secrets. Details live in [apps/opencode-host](./apps/opencode-host/README.md).
 
 ### Manual: Pi
 
-Pi support ships one Pi package per RedSkills plugin. The packages live at
-`plugins/<name>/package.json` and are generated from the same Claude-side
-manifests the other hosts consume. Pi uses the agent skills protocol, so the
-install exposes the same skill buckets (`engineering`, `knowledge`,
-`productivity`, `misc`, `core`) Claude Code and Codex already see.
+RedSkills ships one Pi package per published plugin on npm under the
+`@reddb-io` scope. The packages are generated from the same Claude-side
+manifests the other hosts consume, so the same skill buckets (`engineering`,
+`knowledge`, `productivity`, `misc`, `core`) Claude Code and Codex already
+expose are what Pi discovers.
+
+The natural install is the same one-liner Pi documents for every npm package:
 
 ```bash
-# user-scoped install into ~/.pi/agent/settings.json
+pi install npm:@reddb-io/red-skills-dev
+pi install npm:@reddb-io/red-skills-memory
+pi install npm:@reddb-io/red-skills-brain
+# (optional) maintainer-only — gated by plugins.internal.enabled: true
+pi install npm:@reddb-io/red-skills-internal
+```
+
+Updates follow the rest of the release train: `pi update --all` resolves the
+latest matching version from the npm registry and the new skills reload on the
+next session start.
+
+For repo-scoped installs that ship with the project (so teammates pick up the
+same RedSkills surface on first launch), use the bundled installer:
+
+```bash
+# user-scoped install into ~/.pi/agent/settings.json (npm: surface)
 scripts/install-pi.sh
 
 # project-scoped install into <repo>/.pi/settings.json
 scripts/install-pi.sh --project /path/to/your-project
 
-# dry-run + inspect
-scripts/install-pi.sh --project . --dry-run
+# pin a specific published version (e.g. before a tagged release)
+RED_SKILLS_PI_VERSION=2.75.2 scripts/install-pi.sh
+
+# dev path: install from a local checkout (in-repo workflow)
+scripts/install-pi.sh --source-dir /path/to/red-skills-checkout
 
 # user-scoped uninstall
 scripts/install-pi.sh --uninstall
+
+# dry-run + inspect
+scripts/install-pi.sh --project . --dry-run
 ```
 
-The install script regenerates every `plugins/<name>/package.json` via
-`scripts/generate-pi-manifests.mjs` so the published manifest stays in sync with
-the Claude/Codex sources of truth, then calls `pi install <plugin-dir>` once per
-published plugin (dev, memory, brain). It records the install in
-`~/.pi/agent/redskills-install-manifest.json` (or
-`<project>/.pi/redskills-install-manifest.json`) so a subsequent
-`scripts/install-pi.sh --uninstall` cleanly removes every package this script
-registered. Re-run the install script whenever you bump RedSkills to pick up new
-skill buckets.
+`scripts/install-pi.sh` writes `~/.pi/agent/redskills-install-manifest.json` (or
+`<project>/.pi/redskills-install-manifest.json` for `--project`) recording each
+`npm:` spec it registered, so a subsequent `--uninstall` cleanly tears down
+exactly that surface. The `--source-dir` form records local-path specs in the
+same manifest under a separate `source` discriminator.
 
 Known limitations versus the other hosts:
 
@@ -260,12 +287,16 @@ Known limitations versus the other hosts:
   Pi warns on duplicate skill names and keeps the first one registered, so
   install `memory` or `brain` last depending on which `view` you want as the
   primary entry point.
-- Pi does not advertise the plugin display metadata Codex uses; the package
-  description is the only user-visible summary in `pi list`.
+- Pi does not advertise the plugin display metadata Codex uses; the npm
+  `description` field is the only user-visible summary in `pi list`.
+- The `internal` package is gated by `plugins.internal.enabled: true`
+  (ADR 0067) the same way the Claude and Codex marketplaces expose it. The npm
+  package is public; the gate is what keeps it inactive in non-maintainer
+  repos.
 
 After installing, restart any open Pi session so the new skills reload.
-`scripts/install-pi.sh --help` documents the user/project scope split and the
-`--uninstall` flow.
+`scripts/install-pi.sh --help` documents the user/project scope split, the
+`--source-dir` dev path, and the `--uninstall` flow.
 
 ### No Marketplace
 
@@ -434,7 +465,7 @@ knowledge the human wants preserved, searched, and cited later.
 | Claude Code | Marketplace plugins, slash commands, skills, hooks, MCP servers | Primary interactive host. |
 | Codex CLI | Marketplace plugins, `$skill` invocation, MCP servers, footer integration | Namespace-qualified skill names may appear depending on client version. |
 | OpenCode | Generated `.opencode/skills`, plugin modules, MCP config, provider config, TUI attention config | Installed through `scripts/install-opencode.sh`. |
-| Pi | One Pi package per plugin (`plugins/<name>/package.json`) carrying the shared skill buckets | Installed through `scripts/install-pi.sh` (`--user` or `--project`). |
+| Pi | One npm-published package per plugin (`@reddb-io/red-skills-<plugin>` on npm, staged under `packaging/pi/<name>/`) carrying the shared skill buckets | Installed through `pi install npm:@reddb-io/red-skills-<plugin>`, or via `scripts/install-pi.sh` for repo-scoped installs and the `--source-dir` dev path. |
 | GitHub Actions | Reusable AFK attempt workflow and composable action | Runs one AFK attempt per issue in adopter repos. |
 
 ## Plugin Boundaries

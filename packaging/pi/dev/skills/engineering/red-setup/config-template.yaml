@@ -1,0 +1,174 @@
+# .red/config.yaml — per-project plugin settings (consumed by /afk and friends)
+# Uncomment any line to override the default.
+
+# Plugin activation gate (ADR 0067). RedSkills hooks are installed globally on
+# every agent but stay fully inert in any directory whose `.red/config.yaml`
+# does NOT set `plugins.<name>.enabled: true`. /red-setup writes this
+# block; it is the only authorized creator of `.red/`. Strict opt-in: a block
+# without `enabled: true` is OFF.
+plugins:
+  dev:
+    enabled: true                 # the engineering stack (/afk, /triage, /retake, …)
+  #   trunk: main                 # canonical location: plugins.dev.trunk.
+  #                               # The Trunk (ADR 0083): the focal branch agent work
+  #                               # bases on and lands to when no lock/pin names one
+  #                               # (precedence lock > pin > trunk). Always consumed
+  #                               # as fresh-fetched origin/<trunk>, never the local
+  #                               # branch. Set e.g. develop or workspace/<user>.
+  #   lock:
+  #     primary-branch: true      # branch-lock compatibility/base-pinning flag
+  #                               # (Section H of /red-setup sets this)
+  #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
+  #                               # the runtime /branch-lock overrides it per session
+  #   triage:
+  #     external_pr_surface:
+  #       enabled: false          # default OFF. When true, /triage may list/read
+  #                               # external PRs as request data. It still treats
+  #                               # PR bodies/diffs as untrusted and never checks
+  #                               # out, builds, tests, or executes PR code.
+  # memory:
+  #   enabled: true               # then run /memory:init to pick a storage mode
+  # brain:
+  #   enabled: true               # the agentic command-center context
+
+# rsp hook activation and retention (ADR 0095 amended by ADR 0098). /red-setup
+# provisions `.red/state/red-skills.rdb`; the hook remains inert unless this
+# explicit flag is true.
+rsp:
+  enabled: true
+  ttlDays: 7
+  ephemeralTtlHours: 6
+  byteBudget: 67108864            # 64 MiB
+
+# Required host binaries (ADR 0097). /red-setup installs these through their
+# checksum-verified upstream installers and records the exact pin here so
+# /red-doctor can red-flag absence or version drift. tq is required for
+# TOON/TOONL inspection; there is no jq fallback lane.
+host_binaries:
+  tq:
+    version: 0.3.0
+
+# Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
+# worktrees must live under a registered .red/tmp/ lane, and branch-changing
+# commands in the primary checkout are blocked. Create task branches with:
+#   git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main
+#
+# Command guard policy. The installed Claude Code, Codex, and opencode hooks are
+# thin proxies: they read this repo-owned policy at runtime and stay inert unless
+# plugins.dev.enabled is true. These rules are additional to the built-in
+# registered .red/tmp worktree boundary above. Uncomment only rules this repo actually wants.
+# command_guard:
+#   global:                       # applies in main sessions and runtime worktrees
+#     - "rm -Rf /*"
+#     - "git stash"
+#   main:                         # primary interactive session scope, not branch name
+#     - "git rebase"
+#     - "git checkout -b"
+#   worktree:                     # /afk and /go worktrees under .red/tmp/
+#     - "git clean"
+
+# afk:
+#   default_runner: claude        # fallback runner when no explicit signal
+#   worktree_launches_pull_request: true   # landing MODE, decoupled from the lock
+#                                 # (ADR 0030 amended, #842). true (default) → land
+#                                 # via an admin-merged PR into the resolved base;
+#                                 # false → direct merge into that base (offline,
+#                                 # no PR). The branch-lock only resolves the target
+#                                 # base (lock > pin > main, ADR 0031), NOT the mode.
+#                                 # How a PR merges stays governed by `afk.merge.*`.
+#                                 # NOTE: default true means a locked repo now gets
+#                                 # an admin-PR to the lock branch; set false to keep
+#                                 # the old offline/direct-promotion flow.
+#   models:                       # per-runner AFK tier table (ADR 0049)
+#     claude:
+#       validate:
+#         model: claude-haiku-4-5
+#         effort: low
+#       simple:
+#         model: claude-sonnet-4-6
+#         effort: high
+#       complex:
+#         model: claude-opus-4-8
+#         effort: medium
+#       think:                    # default until the AFK classifier lands
+#         model: claude-opus-4-8
+#         effort: high
+#     codex:
+#       validate:
+#         model: gpt-5.5
+#         effort: low
+#       simple:
+#         model: gpt-5.5
+#         effort: high
+#       complex:
+#         model: gpt-5.5
+#         effort: medium
+#       think:
+#         model: gpt-5.5
+#         effort: high
+#     opencode:                   # ADR 0059 — endpoint-agnostic; slug = <provider>/<model>
+#       base:                     # auto-populates EVERY tier of this runner. Set the model
+#         model: minimax/MiniMax-M3   # once to point the whole runner at one provider/model;
+#         effort: medium          # `base.effort` is optional (omit it to keep per-tier defaults).
+#       think:                    # specialize a single tier — overrides `base` for that tier only
+#         model: minimax/MiniMax-M3
+#   fleet:
+#     target: 2                   # default supervisor worker target
+#   release:                      # bundle release channel (ADR 0058)
+#     channel: canary             # `stable` (default = today's version-pinned
+#                                 # release) or `canary` (npm dist-tag pointer to
+#                                 # an already-published stable package version).
+#                                 # The launcher reads this or the
+#                                 # `RED_SKILLS_CHANNEL` env var (env wins); absent
+#                                 # config keeps tracking stable. Canary promotion
+#                                 # moves the npm dist-tag (scripts/afk-promote-channel.sh),
+#                                 # gated on the proof-by-drain telemetry.
+#   backpressure:                 # extra merge gates run on every successful
+#     - npm run test              # iteration (DONE + salvaged no-sentinel), after
+#     - npm run lint              # the built-in feedback gate. Any non-zero exit
+#                                 # blocks the merge and parks to ready-for-human,
+#                                 # exactly like a feedback failure. Optional;
+#                                 # absent/empty = no-op. (#430 / PRD #429)
+#   output_shaping:
+#     terse_steering: false       # default OFF. When true, even-numbered issues
+#                                 # get a phrasing-only terse steering block;
+#                                 # odd-numbered issues are the holdout. The arm
+#                                 # is stamped next to heartbeat output-token
+#                                 # counters and reported by `afk-output-shaping`.
+#   test:
+#     quarantine:                 # config-declared flaky-test quarantine lane (issue #1035).
+#                                 # Each entry excludes a known-flaky test file from the
+#                                 # scoped gate run and emits a visible "quarantined" sidecar
+#                                 # record — exclusions are NEVER silent (repo norm). An entry
+#                                 # without an issue ref fails the gate loudly. /red-doctor warns
+#                                 # when a referenced issue is closed (managed debt, not
+#                                 # permanent forgetting).
+#                                 # Pattern is a repo-relative file path passed to vitest
+#                                 # --exclude (relative to the scope dir at run time).
+#                                 # Named entries e0, e1, e2 … are read in order until the
+#                                 # first gap.
+#       e0:
+#         pattern: apps/dev/tests/supervisor.test.ts
+#         issue: "https://github.com/reddb-io/red-skills/issues/1063"
+#         since: "2026-07-02"
+#         reason: "OOM under AFK fleet=2 concurrent load (exit 137 / SIGKILL)"
+#       e1:
+#         pattern: apps/brain/tests/dashboard.test.ts
+#         issue: "https://github.com/reddb-io/red-skills/issues/1064"
+#         since: "2026-07-02"
+#         reason: "tsx spawn timeout under concurrent AFK load (40 s ceiling)"
+#   hooks:
+#     defaults:
+#       cargo: true               # ship cargo isolation on Rust projects
+#       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
+#   trust-gate:                   # "executable issue" trust gate (#621, ADR 0085)
+#     allowlist: alice,bob        # comma/space-separated GitHub logins. An issue is
+#                                 # executable only when its AUTHOR is in this list AND
+#                                 # `ready-for-agent` was applied by a listed actor
+#                                 # (read from the issue timeline, not the label set).
+#                                 # ABSENT/empty (the default) → PERMISSIVE: the gate
+#                                 # never fires and every ready-for-agent issue is
+#                                 # claimable, exactly as today. Setting it switches the
+#                                 # repo to STRICT mode; a ready-for-agent applied by a
+#                                 # non-listed actor is skipped at claim and may be
+#                                 # stripped by a sweep with an audit comment.
