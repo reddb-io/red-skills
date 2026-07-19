@@ -101,6 +101,11 @@ import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js
 import type { HistoryClock } from "../history.js";
 import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "../go.js";
 import { setActiveClaimFinalizer } from "../process-safety.js";
+import type {
+  AdversarialReviewConfig,
+  AdversarialReviewFindings,
+  AdversarialReviewContext,
+} from "../adversarial-review.js";
 import {
   LABEL_READY,
   LABEL_RUNNING,
@@ -275,6 +280,20 @@ export interface ProcessIssueDeps {
   ciAwait?: CiAwaitInput;
   reviewGate?: ReviewGateConfig;
   reviewGateLabel?: string;
+  adversarialReview?: AdversarialReviewConfig;
+  extractAdversarialReview?(input: {
+    context: AdversarialReviewContext;
+    runner: Runner;
+    model: string;
+    effort?: AgentEffort;
+    maxIterations: number;
+  }): Promise<AdversarialReviewFindings>;
+  postAdversarialReview?(input: {
+    pr: number;
+    issue: number;
+    body: string;
+    findings: AdversarialReviewFindings;
+  }): Promise<void>;
   envelope: EmitEnvelopeDeps;
   nowEpoch(): number;
   nowIso(): string;
