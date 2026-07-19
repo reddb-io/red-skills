@@ -6,6 +6,7 @@ import {
   makeDeps,
   options,
   runBoot,
+  type BootDeps,
 } from "./boot.helpers.js";
 
 describe("runBoot precheck short-circuit", () => {
