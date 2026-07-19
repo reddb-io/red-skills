@@ -12,6 +12,11 @@ async function readCodexManifest(): Promise<{ skills: string[] }> {
   return JSON.parse(raw) as { skills: string[] };
 }
 
+async function readPiManifest(): Promise<{ name: string; pi: { skills: string[] } }> {
+  const raw = await readFile(join(ROOT, "plugins/dev/package.json"), "utf8");
+  return JSON.parse(raw);
+}
+
 async function listSkillFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files = await Promise.all(
@@ -66,5 +71,22 @@ describe("dev plugin manifest + frontmatter hygiene", () => {
     // Every published bucket must be present; in-progress/ must be absent.
     const buckets = manifest.skills.map((s) => s.replace(/^\.\/skills\//, "").replace(/\/$/, ""));
     expect(buckets.sort()).toEqual(["engineering", "knowledge", "misc", "productivity"]);
+  });
+
+  it("Pi dev package mirrors the Codex dev manifest bucket list", async () => {
+    const codex = await readCodexManifest();
+    const pi = await readPiManifest();
+
+    // Same published buckets, with the leading `./skills/` prefix the Pi
+    // package manifest requires because it lives at plugins/dev/package.json.
+    expect(pi.name).toBe("@reddb-io/red-skills-dev");
+    const codexBuckets = codex.skills
+      .map((s) => s.replace(/^\.\/skills\//, "").replace(/\/$/, ""))
+      .sort();
+    const piBuckets = pi.pi.skills
+      .map((s) => s.replace(/^\.\/skills\//, "").replace(/\/$/, ""))
+      .sort();
+    expect(piBuckets).toEqual(codexBuckets);
+    expect(piBuckets).not.toContain("in-progress");
   });
 });

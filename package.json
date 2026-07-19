@@ -12,7 +12,9 @@
     "audit:hooks": "bash scripts/audit-hook-hardening-contract.sh",
     "release:manifest": "node scripts/release-manifest.mjs",
     "codex:manifests": "node scripts/generate-codex-manifests.mjs",
-    "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check"
+    "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check",
+    "pi:manifests": "node scripts/generate-pi-manifests.mjs",
+    "pi:manifests:check": "node scripts/generate-pi-manifests.mjs --check"
   },
   "devDependencies": {
     "turbo": "^2.5.4",
