@@ -1,0 +1,494 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { readBuildInfo } from "@reddb-io/build-info";
+import { hostFingerprintPrefix } from "../../core/host-identity.js";
+import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
+import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
+import { resolveBaseWithSource } from "../../core/base-resolver.js";
+import { DEFAULT_BRANCH } from "../../core/pin-reader.js";
+import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../../core/boot.js";
+import type { AttemptDir } from "../../core/reclaim.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
+import { allWorkersRoots, parseWorkerAttemptPath } from "../../core/worker-paths.js";
+import { parseClaimRecords } from "../../core/claim.js";
+import { collectFleetTruthProbeInput } from "../../core/operational-probes.js";
+import { resolveSupervisorConfig } from "../../core/supervisor.js";
+import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
+import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
+import { readWorkerState } from "../../core/worker-state-reader.js";
+import { isLivePid } from "../kill-tree.js";
+import { collectTmpJanitorReport } from "../tmp-janitor.js";
+import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
+import * as ghx from "../gh.js";
+import * as gitx from "../git.js";
+import * as fsx from "../fs.js";
+import { afkPaths, type RepoContext } from "./paths.js";
+import { collectDocsSweepInput, landDocsSweep } from "./docs.js";
+import { editLabelsWithStatuslineCache, statuslineCountCachePath } from "./statusline-cache.js";
+
+export async function collectBootOptions(
+  ctx: RepoContext,
+  facts: PrecheckFacts,
+  bootstrap: BootstrapInput,
+  nowS: number,
+): Promise<BootOptions> {
+  const paths = afkPaths(ctx.root);
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+
+  // Orphan dirs + the same dirs grouped by issue for the cap pass.
+  const orphans = (await Promise.all(allWorkersRoots(paths.tmpDir).map((root) => fsx.listOrphanDirs(root, nowS)))).flat();
+  const byIssue = new Map<number, AttemptDir[]>();
+  for (const o of orphans) {
+    const parsed = parseWorkerAttemptPath(o.path);
+    if (!parsed) continue;
+    // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
+    // excluded from the cap even when briefly quiet), read through the single
+    // owner so the schema + legacy-key shim apply here too.
+    const live = readWorkerState(join(o.path, "afk.state.toon"))?.live ?? false;
+    const mtimeS = nowS - o.ageS;
+    const list = byIssue.get(parsed.issue) ?? [];
+    list.push({ path: o.path, mtimeS, live });
+    byIssue.set(parsed.issue, list);
+  }
+
+  // Branch namespaces for the live reapers, the unblock-candidate listing, and
+  // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
+  // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
+  // liveness at discovery so boot's orphan step stays a pure removal, #252.)
+  const [
+    remoteLiveRefs,
+    localAll,
+    checkedOut,
+    unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
+    reconcileSweepCandidates,
+    specSubIssueCandidates,
+    tmpJanitorIssueStates,
+  ] =
+    await Promise.all([
+      gitx.listRemoteBranches(gitCtx, "afk/"),
+      gitx.listLocalBranches(gitCtx, "afk/*"),
+      gitx.checkedOutBranches(gitCtx),
+      ghx.listUnblockCandidates(ghCtx),
+      fsx.listStaleClaimDirs(paths.tmpDir),
+      fsx.listLegacyWorkDirs(paths.tmpDir),
+      ghx.listParkedMechanicalCandidates(ghCtx),
+      ghx.listSpecSubIssueCandidates(ghCtx, nowS),
+      ghx.listIssueStates(ghCtx),
+    ]);
+  const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
+  const tmpJanitor = await collectTmpJanitorReport(paths.tmpDir, nowS, (issue) => {
+    const state = tmpJanitorIssueStates.get(issue)?.state;
+    return state === "CLOSED" ? "CLOSED" : state === "OPEN" ? "OPEN" : "UNKNOWN";
+  });
+
+  return {
+    precheck: facts,
+    bootstrap,
+    orphans: orphans as readonly OrphanDir[],
+    attemptCap: { byIssue },
+    branches: { remoteLiveRefs, localLiveRefs },
+    unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
+    reconcileSweepCandidates,
+    docsSweep: await collectDocsSweepInput(ctx, facts.configuredTrunk ?? "main"),
+    specSubIssueCandidates,
+    tmpJanitor,
+  };
+}
+
+export interface CollectPrecheckFactsOptions {
+  readonly includeNpmBundleCoherence?: boolean;
+}
+
+export async function collectPrecheckFacts(
+  ctx: RepoContext,
+  options: CollectPrecheckFactsOptions = {},
+): Promise<PrecheckFacts> {
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const { branchLockPath, readLockedBranch } = await import("../lock.js");
+  const lockPath = branchLockPath(ctx.root);
+  const paths = afkPaths(ctx.root);
+  const configPath = paths.configPath;
+  const configText = await fsx.readText(configPath);
+  const configAudit = auditConfigLoad(configPath);
+  const config = configAudit.values;
+  const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
+  const configTrunk = getConfig(config, "dev.trunk") || undefined;
+  const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
+  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch, lockRaw] =
+    await Promise.all([
+      ghx.ghInstalled(ghCtx),
+      ghx.ghAuthenticated(ghCtx),
+      gitx.isGitRepo(gitCtx),
+      gitx.remoteUrlFacts(gitCtx),
+      gitx.hasMainBranch(gitCtx),
+      gitx.currentBranch(gitCtx),
+      import("../exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
+      readLockedBranch(lockPath),
+      fsx.readText(lockPath),
+    ]);
+  const resolvedFocalBranch = await resolveBaseWithSource(
+    { issueBody: "" },
+    {
+      readLockedBranch: async () => lockedBranch,
+      configLockedBranch,
+      configTrunk,
+      fetchIssueBody: async () => undefined,
+    },
+  );
+  const configuredTrunk = resolvedFocalBranch.branch;
+  const baseFreshnessDivergence = await gitx.localRemoteDivergence(gitCtx, {
+    remote: ctx.remote,
+    branch: configuredTrunk,
+  });
+  const baseFreshnessGuard = await evaluateFastForwardLocalTarget(gitx.mergeExec(gitCtx), {
+    gitRepo: ctx.root,
+    remote: ctx.remote,
+    target: configuredTrunk,
+  });
+  const lockTargetExists = lockedBranch ? await gitx.branchExists(gitCtx, lockedBranch) : undefined;
+  const pnpmInstalled = pnpmProbe.code !== 127;
+  const installedBundleVersion = readBuildInfo("dev").version;
+  const bundleCache = readDevBundleCacheState(installedBundleVersion);
+  const cachedBundleVersion = bundleCache.laneNewestVersion;
+  const latestBundleVersion =
+    cachedBundleVersion && compareSemver(cachedBundleVersion, installedBundleVersion) > 0
+      ? cachedBundleVersion
+      : installedBundleVersion;
+  let npmNewestVersion: string | undefined;
+  let npmError: string | undefined;
+  if (options.includeNpmBundleCoherence) {
+    try {
+      npmNewestVersion = await fetchNpmNewestDevBundleVersion(installedBundleVersion);
+    } catch (error) {
+      npmError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const supervisorCfg = resolveSupervisorConfig();
+  const fleetTruth = await collectFleetTruthProbeInput(
+    {
+      supervisorPidPath: paths.supervisorPidPath,
+      fleetStatePath: paths.fleetStatePath,
+    },
+    {
+      heartbeatStaleMs: supervisorCfg.supervisorStaleS * 1000,
+      latestBundleVersion,
+    },
+  );
+  const workerPidState = (worker: string) => {
+    const hostPrefix = hostFingerprintPrefix();
+    if (!worker.startsWith(hostPrefix)) return "foreign" as const;
+    const workerId = worker.slice(hostPrefix.length);
+    if (!workerId) return "unknown" as const;
+    const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+    if (!existsSync(pidPath)) return "dead" as const;
+    try {
+      const pid = Number(readFileSync(pidPath, "utf8").trim());
+      if (!Number.isInteger(pid) || pid <= 0) return "dead" as const;
+      return isLivePid(pid) ? "live" as const : "dead" as const;
+    } catch {
+      return "unknown" as const;
+    }
+  };
+  return {
+    ghInstalled,
+    ghAuthenticated,
+    isGitRepo: isRepo,
+    remoteUrls,
+    hasMainBranch: hasMain,
+    currentBranch,
+    lockedBranch,
+    configuredTrunk,
+    configuredTrunkSource,
+    pnpmInstalled,
+    // CI lanes (the GHA Actions lane) check out an https remote token-authed by
+    // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
+    allowHttpsRemote:
+      process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
+    queueVisibility: ctx.repo ? ghx.queueVisibilityProbeInput(ghCtx) : undefined,
+    claimHygiene: ctx.repo
+      ? {
+          ownWorkerPrefix: hostFingerprintPrefix(),
+          listOpenQueueIssues: async () => {
+            const candidates = await ghx.listCandidates(ghCtx, LABEL_READY);
+            return Promise.all(
+              candidates.map(async (candidate) => ({
+                number: candidate.number,
+                comments: await ghx.listClaimComments(ghCtx, candidate.number),
+              })),
+            );
+          },
+          workerPidState,
+        }
+      : undefined,
+    labelBodyCoherence: ctx.repo
+      ? {
+          listOpenReadyIssues: async () => ghx.listCandidates(ghCtx, LABEL_READY),
+        }
+      : undefined,
+    focalBranch: {
+      resolved: resolvedFocalBranch,
+      configuredTrunk: normalizeConfiguredTrunk(configTrunk),
+      lock: lockRaw === null
+        ? undefined
+        : {
+            raw: lockRaw,
+            branch: lockedBranch,
+            targetExists: lockTargetExists,
+            heldByLiveSession: lockedBranch ? currentBranch === lockedBranch : false,
+          },
+    },
+    baseFreshness: {
+      trunk: configuredTrunk,
+      remote: ctx.remote,
+      ...baseFreshnessDivergence,
+      guard: baseFreshnessGuard,
+    },
+    configNamespacing: {
+      rootDevKeys: configAudit.rootAccessorCollisions
+        .filter((collision) => collision.key.startsWith("dev."))
+        .map((collision) => collision.key),
+    },
+    configCoherence: {
+      path: configPath,
+      displayPath: ".red/config.yaml",
+      fileLoaded: configAudit.fileLoaded,
+      discarded: configAudit.discarded,
+      parseFailure: configAudit.parseFailure,
+      rootAccessorCollisions: configAudit.rootAccessorCollisions,
+      resolved: {
+        trunk: normalizeConfiguredTrunk(configTrunk),
+        gate: getConfig(config, "dev.lock.primary-branch"),
+        lock: getConfig(config, "dev.lock.branch"),
+      },
+      sourceText: configText ?? undefined,
+    },
+    fleetTruth,
+    bundleCoherence: {
+      installedVersion: installedBundleVersion,
+      pointerVersion: bundleCache.pointerVersion,
+      laneNewestVersion: bundleCache.laneNewestVersion,
+      npmNewestVersion,
+      npmError,
+      lastFailureAgeMs: bundleCache.lastFailureAgeMs,
+      lastError: bundleCache.lastError,
+    },
+  };
+}
+
+function normalizeConfiguredTrunk(value: string | undefined): string {
+  const trunk = value?.trim();
+  return trunk && trunk.length > 0 ? trunk : DEFAULT_BRANCH;
+}
+
+async function resolveBranchIssueCache(
+  ghCtx: GhContext,
+  options: BootOptions,
+  states: Map<number, IssueStateRow>,
+): Promise<Map<number, IssueMeta | null | undefined>> {
+  const issues = new Set<number>();
+  for (const r of [...options.branches.remoteLiveRefs, ...options.branches.localLiveRefs]) {
+    const n = liveIssueFromBranch(r.branch);
+    if (n !== null) issues.add(n);
+  }
+  const cache = new Map<number, IssueMeta | null | undefined>();
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await issueMeta(ghCtx, n));
+  }
+  return cache;
+}
+
+/**
+ * Build the real {@link BootDeps} for a full boot run — the fs/gh/git side
+ * effects + per-issue lookups every sweep composes. ONE batched
+ * `listIssueStates` fetch backs every per-issue boot lookup (orphan state,
+ * branch state, blocker state); a map miss falls back to a live read so the
+ * classification stays exact. Used by a solo `run` (sweeps run) and by the fleet
+ * supervisor's pre-spawn boot (#623).
+ */
+export async function buildBootDeps(
+  ctx: RepoContext,
+  options: BootOptions,
+  nowS: number,
+  log?: (line: string) => void,
+): Promise<BootDeps> {
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const paths = afkPaths(ctx.root);
+  const cfg = loadConfig(paths.configPath);
+  const countCachePath = statuslineCountCachePath(ctx.root);
+  // ONE batched issue-state fetch backs every per-issue boot lookup below.
+  const issueStates = await ghx.listIssueStates(ghCtx);
+  const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
+  const liveBranchCommitByIssue = new Map<number, number>();
+  for (const ref of options.branches.remoteLiveRefs) {
+    const issue = liveIssueFromBranch(ref.branch);
+    if (issue === null || !Number.isFinite(ref.commitS)) continue;
+    const previous = liveBranchCommitByIssue.get(issue);
+    if (previous === undefined || ref.commitS! > previous) liveBranchCommitByIssue.set(issue, ref.commitS!);
+  }
+  return {
+    fs: {
+      ensureDir: fsx.ensureDir,
+      ensureGitignoreLine: fsx.ensureGitignoreLine,
+      writeWorkerPid: fsx.writeWorkerPid,
+      removeDir: fsx.removeDir,
+      workerPidLive: async (workerDir) => {
+        const raw = await fsx.readText(join(workerDir, "worker.pid"));
+        if (raw === null) return false;
+        const pid = Number(raw.trim());
+        return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
+      },
+      reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
+    },
+    gh: {
+      editLabels: async (issue, remove, add) => {
+        await editLabelsWithStatuslineCache(
+          countCachePath,
+          () => ghx.editLabels(ghCtx, issue, remove, add),
+          remove,
+          add,
+        );
+      },
+      comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
+      attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
+      issueReference: (issue) => ghx.issueReference(ghCtx, issue),
+    },
+    git: {
+      deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
+      deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+    },
+    log,
+    fastForwardLocalBase: ({ remote, target }) =>
+      fastForwardLocalTarget(gitx.mergeExec(gitCtx), { gitRepo: ctx.root, remote, target }),
+    lookups: {
+      // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
+      // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
+      // debris, not a mid-issue crash — the sweep removes it without touching
+      // the winner's `running` label.
+      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).claimsDir, String(issue))),
+      // Orphan state pairs gh issue state/label with the attempt dir's
+      // envelope.posted flag (read from the state file, not gh). Derived from
+      // the batched map, preserving ghx.orphanState's exact label/state →
+      // verdict mapping (ready-for-human > running > null). On a map MISS the
+      // issue isn't in the list window — fall back to the live read so a
+      // truncated/just-created/transient issue still classifies correctly.
+      orphanState: async (issue) => {
+        const row = issueStates.get(issue);
+        if (!row) return ghx.orphanState(ghCtx, issue);
+        const label = row.labels.includes(LABEL_HUMAN)
+          ? LABEL_HUMAN
+          : row.labels.includes(LABEL_RUNNING)
+            ? LABEL_RUNNING
+            : null;
+        return { ghOk: true, state: row.state, label, envelopePosted: false };
+      },
+      branchIssue: (issue) => branchCache.get(issue),
+      // Blocker state from the batched map: row.state ("OPEN"/"CLOSED") or
+      // undefined on a miss. undefined-on-miss exactly matches the prior
+      // 404→undefined→not-closed semantics — a missing blocker stays
+      // "open-or-unknown" and the dependent issue is NOT promoted.
+      blockerState: async (issue) => issueStates.get(issue)?.state,
+      straggler: {
+        unlabeled: () => ghx.countUnlabeled(ghCtx),
+        needsTriage: () => ghx.countNeedsTriage(ghCtx),
+        needsInfo: () => ghx.countNeedsInfo(ghCtx),
+      },
+      // Cross-host stale-claim sweep input (#627): every OPEN issue projected as
+      // `running` (a held claim) with its parsed claim marker records. Derived
+      // from the batched issue-state map; the claim comments are read per-issue.
+      // A per-issue read failure drops that issue from the sweep (best-effort).
+      claimedIssues: async () => {
+        const claimed = [];
+        const hostPrefix = hostFingerprintPrefix();
+        for (const [issue, row] of issueStates) {
+          if (row.state !== "OPEN") continue;
+          if (!row.labels.includes(LABEL_RUNNING)) continue;
+          try {
+            const comments = await ghx.listClaimComments(ghCtx, issue);
+            const records = parseClaimRecords(comments);
+            const deadOwners = records
+              .map((r) => r.worker)
+              .filter((worker, idx, workers) => workers.indexOf(worker) === idx)
+              .filter((worker) => {
+                if (!worker.startsWith(hostPrefix)) return false;
+                const workerId = worker.slice(hostPrefix.length);
+                if (!workerId) return false;
+                const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+                if (!existsSync(pidPath)) return true;
+                const pid = Number(readFileSync(pidPath, "utf8").trim());
+                return !Number.isInteger(pid) || !isLivePid(pid);
+              });
+            claimed.push({
+              issue,
+              records,
+              deadOwners,
+              attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
+            });
+          } catch {
+            // best-effort: skip an issue whose claim comments cannot be read.
+          }
+        }
+        return claimed;
+      },
+    },
+    nowS,
+    config: cfg,
+    docsSweepLander: (plan) => landDocsSweep(ctx, plan),
+  };
+}
+
+/**
+ * Build a MINIMAL {@link BootDeps} for a supervised worker whose boot skips
+ * every shared sweep (#623, `RED_AFK_SWEEPS_DONE`). `runBoot` with
+ * `skipSweeps:true` touches only `deps.fs` (the bootstrap mkdir / gitignore /
+ * worker.pid writes) and `deps.nowS` before returning, so the gh/git/lookup
+ * closures are never reached — they are present only to satisfy the type and
+ * throw if ever called, which would surface a regression that let a skip-boot
+ * fall through into a sweep. This deliberately AVOIDS the batched
+ * `listIssueStates` + branch-cache resolution {@link buildBootDeps} pays, which
+ * is the whole point: a respawned worker's boot must be cheap.
+ */
+export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
+  const unreachable = (): never => {
+    throw new Error("buildMinimalBootDeps: sweep IO invoked on a skip-sweeps boot (#623)");
+  };
+  return {
+    fs: {
+      ensureDir: fsx.ensureDir,
+      ensureGitignoreLine: fsx.ensureGitignoreLine,
+      writeWorkerPid: fsx.writeWorkerPid,
+      removeDir: fsx.removeDir,
+    },
+    gh: {
+      editLabels: async () => unreachable(),
+      comment: async () => unreachable(),
+      viewLabels: async () => unreachable(),
+      attachSubIssue: async () => unreachable(),
+    },
+    git: {
+      deleteRemoteBranch: async () => unreachable(),
+      deleteLocalBranch: async () => unreachable(),
+    },
+    lookups: {
+      orphanState: async () => unreachable(),
+      branchIssue: () => unreachable(),
+      blockerState: async () => unreachable(),
+      straggler: {
+        unlabeled: async () => unreachable(),
+        needsTriage: async () => unreachable(),
+        needsInfo: async () => unreachable(),
+      },
+    },
+    nowS,
+    docsSweepLander: async () => unreachable(),
+  };
+}
