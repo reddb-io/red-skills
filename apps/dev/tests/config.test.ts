@@ -17,7 +17,12 @@ import {
   DEFAULT_MERGE_CI_TIMEOUT_S,
   rootDevConfigCollisionsFromText,
 } from "../src/core/config.js";
-import { decideAdversarialReview, resolveAdversarialReviewConfig } from "../src/core/adversarial-review.js";
+import {
+  aggregateAdversarialReviewFindings,
+  decideAdversarialReview,
+  resolveAdversarialReviewer,
+  resolveAdversarialReviewConfig,
+} from "../src/core/adversarial-review.js";
 
 async function writeConfig(yaml: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "afk-config-"));
@@ -131,9 +136,13 @@ describe("config", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
     expect(getConfig(defaults, "review.enabled")).toBe("false");
     expect(getConfig(defaults, "review.max_iterations")).toBe("1");
+    expect(getConfig(defaults, "review.reviewer_count")).toBe("1");
+    expect(getConfig(defaults, "review.quorum")).toBe("any");
     expect(resolveAdversarialReviewConfig((key) => getConfig(defaults, key))).toEqual({
       enabled: false,
       maxIterations: 1,
+      reviewerCount: 1,
+      quorum: "any",
     });
 
     const values = loadConfig("/x/.red/config.yaml", {
@@ -145,7 +154,97 @@ describe("config", () => {
     expect(resolveAdversarialReviewConfig((key) => getConfig(values, key))).toEqual({
       enabled: true,
       maxIterations: 3,
+      reviewerCount: 1,
+      quorum: "any",
     });
+  });
+
+  it("resolves adversarial reviewer count/quorum and reviewer runner overrides (#2210)", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        [
+          "plugins:",
+          "  dev:",
+          "    review:",
+          "      enabled: true",
+          "      reviewer_count: 3",
+          "      quorum: 2",
+          "      runner: codex",
+          "      model: gpt-review",
+          "      effort: medium",
+          "",
+        ].join("\n"),
+    });
+    const config = resolveAdversarialReviewConfig((key) => getConfig(values, key));
+    expect(config).toEqual({
+      enabled: true,
+      maxIterations: 1,
+      reviewerCount: 3,
+      quorum: 2,
+      runner: "codex",
+      model: "gpt-review",
+      effort: "medium",
+    });
+    expect(
+      resolveAdversarialReviewer({
+        config,
+        implementer: { runner: "claude", model: "claude-opus-4-8", effort: "high" },
+        taskClass: "complex",
+        resolveTier: () => ({ model: "gpt-tier", effort: "low" }),
+      }),
+    ).toEqual({ runner: "codex", model: "gpt-review", effort: "medium" });
+  });
+
+  it("defaults the adversarial reviewer to the implementer's resolved runner/model/effort (#2210)", () => {
+    const config = resolveAdversarialReviewConfig((key) => getConfig(loadConfig("/missing", { warn: () => {} }), key));
+    expect(
+      resolveAdversarialReviewer({
+        config,
+        implementer: { runner: "claude", model: "claude-opus-4-8", effort: "high" },
+        taskClass: "simple",
+        resolveTier: () => ({ model: "unused", effort: "low" }),
+      }),
+    ).toEqual({ runner: "claude", model: "claude-opus-4-8", effort: "high" });
+  });
+
+  it("uses the model-tier table when only review.runner is overridden (#2210)", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    review:\n      runner: codex\n",
+    });
+    const config = resolveAdversarialReviewConfig((key) => getConfig(values, key));
+    expect(
+      resolveAdversarialReviewer({
+        config,
+        implementer: { runner: "claude", model: "claude-opus-4-8", effort: "high" },
+        taskClass: "validate",
+        resolveTier: (runner, tier) => {
+          expect(runner).toBe("codex");
+          expect(tier).toBe("validate");
+          return { model: "gpt-validate", effort: "low" };
+        },
+      }),
+    ).toEqual({ runner: "codex", model: "gpt-validate", effort: "low" });
+  });
+
+  it("aggregates adversarial blocking findings by quorum (#2210)", () => {
+    const one = {
+      summary: "one",
+      findings: [
+        { path: "src/a.ts", line: 7, body: "real bug", blocking: true },
+        { path: "src/a.ts", line: 8, body: "solo bug", blocking: true },
+      ],
+    };
+    const two = {
+      summary: "two",
+      findings: [
+        { path: "src/a.ts", line: 7, body: "real bug", blocking: true },
+        { path: "src/a.ts", line: 9, body: "nit", blocking: false },
+      ],
+    };
+    const aggregated = aggregateAdversarialReviewFindings([one, two], 2);
+    expect(aggregated.findings.filter((finding) => finding.body === "real bug").every((finding) => finding.blocking)).toBe(true);
+    expect(aggregated.findings.find((finding) => finding.body === "solo bug")?.blocking).toBe(false);
+    expect(aggregated.findings.find((finding) => finding.body === "nit")?.blocking).toBe(false);
   });
 
   it("retries only blocking adversarial review findings within the configured cap (#2208)", () => {
