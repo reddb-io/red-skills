@@ -19,6 +19,8 @@ bash -n scripts/install-opencode.sh || fail "scripts/install-opencode.sh has inv
 bash -n scripts/install-pi.sh || fail "scripts/install-pi.sh has invalid bash syntax"
 node scripts/generate-pi-manifests.mjs --root "$REPO" --check \
   || fail "plugins/<name>/package.json Pi manifests are stale; run pnpm pi:manifests"
+node scripts/build-pi-packages.mjs --root "$REPO" --check \
+  || fail "packaging/pi/<name>/ staged Pi packages are stale; run pnpm pi:packages:build"
 
 # Validate one plugin's install metadata: Claude skill list matches the SKILL.md
 # tree on disk, Claude/Codex versions agree, and the Codex plugin exposes the
@@ -134,6 +136,33 @@ validate_plugin() {
     [[ -d "$dir/${bucket#./}" ]] \
       || fail "$plugin: Pi skill bucket not found on disk: $bucket"
   done < <(jq -r '.pi.skills[]' "$pi_pkg")
+
+  # Staged npm package (ADR 0110): packaging/pi/<name>/package.json must mirror
+  # the local-path manifest with the publishConfig + files fields added.
+  local npm_pkg="packaging/pi/$plugin/package.json"
+  [ -f "$npm_pkg" ] \
+    || fail "$plugin: staged Pi npm package missing: $npm_pkg"
+  jq -e --slurp '.[0].version == .[1].version' \
+    "$dir/.claude-plugin/plugin.json" "$npm_pkg" >/dev/null \
+    || fail "$plugin: $npm_pkg version must match Claude/Codex manifests"
+  jq -e '.publishConfig.access == "public"' "$npm_pkg" >/dev/null \
+    || fail "$plugin: $npm_pkg publishConfig.access must be public"
+  jq -e --arg plugin "$plugin" \
+    '.name == "@reddb-io/red-skills-" + $plugin' "$npm_pkg" >/dev/null \
+    || fail "$plugin: $npm_pkg name must be @reddb-io/red-skills-$plugin"
+  jq -e '.files | index("skills/**/*") and index("package.json") and index("README.md")' \
+    "$npm_pkg" >/dev/null \
+    || fail "$plugin: $npm_pkg files must include skills/**/*, package.json, README.md"
+
+  # Stage tree integrity: every SKILL.md under plugins/<name>/skills/<bucket>/
+  # (skipping in-progress/ and deprecated/) must exist byte-for-byte under
+  # packaging/pi/<name>/skills/<bucket>/. The build script enforces this on
+  # --check; here we just ensure the staged tree is non-empty so a missed
+  # regeneration cannot ship a silent zero-skill package.
+  local staged_skill_count
+  staged_skill_count="$(find "packaging/pi/$plugin/skills" -name SKILL.md -print 2>/dev/null | wc -l)"
+  [ "$staged_skill_count" -gt 0 ] \
+    || fail "$plugin: staged packaging/pi/$plugin/skills has zero SKILL.md files"
 }
 
 validate_plugin dev

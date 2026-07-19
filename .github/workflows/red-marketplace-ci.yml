@@ -10,9 +10,12 @@ on:
       - "scripts/test-validate-marketplace-manifests.sh"
       - "scripts/fixtures/marketplace-manifests/**"
       - "scripts/generate-pi-manifests.mjs"
+      - "scripts/build-pi-packages.mjs"
+      - "scripts/publish-pi-packages.mjs"
       - "scripts/install-pi.sh"
       - "scripts/install.sh"
       - "scripts/validate-install-metadata.sh"
+      - "packaging/pi/**"
   push:
     branches: [main]
     paths:
@@ -23,9 +26,12 @@ on:
       - "scripts/test-validate-marketplace-manifests.sh"
       - "scripts/fixtures/marketplace-manifests/**"
       - "scripts/generate-pi-manifests.mjs"
+      - "scripts/build-pi-packages.mjs"
+      - "scripts/publish-pi-packages.mjs"
       - "scripts/install-pi.sh"
       - "scripts/install.sh"
       - "scripts/validate-install-metadata.sh"
+      - "packaging/pi/**"
 
 permissions:
   contents: read
@@ -43,5 +49,5 @@ jobs:
       - name: Test marketplace manifest validator
         run: scripts/test-validate-marketplace-manifests.sh
 
-      - name: Validate install metadata (claude/codex/pi)
+      - name: Validate install metadata (claude/codex/pi/npm)
         run: scripts/validate-install-metadata.sh

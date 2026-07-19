@@ -1,0 +1,29 @@
+{
+  "name": "@reddb-io/red-skills-brain",
+  "version": "2.75.2",
+  "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/reddb-io/red-skills.git"
+  },
+  "keywords": [
+    "pi-package",
+    "reddb-io",
+    "red-skills"
+  ],
+  "pi": {
+    "skills": [
+      "./skills/core/"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "skills/**/*",
+    "package.json",
+    "README.md"
+  ]
+}

@@ -72,6 +72,9 @@ jobs:
       - name: Check generated Pi manifests
         run: pnpm pi:manifests:check
 
+      - name: Check generated Pi npm packages
+        run: pnpm pi:packages:check
+
       - name: Typecheck workspace (apps + packages, excludes red-castle)
         run: pnpm typecheck
 

@@ -358,12 +358,18 @@ install_pi() {
   fi
 
   local args=("$SOURCE_DIR/scripts/install-pi.sh")
+  # The universal installer always installs from the local release checkout
+  # (SOURCE_DIR is the cached tarball under ~/.red-skills/versions/<tag>),
+  # which keeps paths stable across re-runs of the same release. End users
+  # who want the npm surface run `pi install npm:@reddb-io/red-skills-<plugin>`
+  # directly; this script gives them the version-pinned cache instead.
+  args+=("--source-dir" "$SOURCE_DIR")
   if [[ "$PI_SCOPE" == "project" ]]; then
     args+=("--project" "${PI_PROJECT_DIR:-$PWD}")
   else
     args+=("--user")
   fi
-  log "installing Pi packages from $SOURCE_DIR ($PI_SCOPE scope)"
+  log "installing Pi packages from $SOURCE_DIR ($PI_SCOPE scope, source-dir)"
   run "${args[@]}"
 }
 
