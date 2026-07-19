@@ -699,6 +699,43 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(fsCalls.ensureDir).toContain("/p/.red/tmp");
   });
 
+  it("does NOT halt when local main is behind and primary WIP refuses auto-FF", async () => {
+    const { deps, fsCalls } = makeDeps();
+
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        operationalProbes: {
+          remoteUrls: [],
+          baseFreshness: {
+            trunk: "main",
+            remote: "origin",
+            localSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+            remoteSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ahead: 0,
+            behind: 1,
+            remoteReachable: true,
+            guard: {
+              guard: "refused",
+              target: "main",
+              remote: "origin",
+              currentBranch: "main",
+              failed: "dirty-tree",
+              failedCondition: "clean-tree",
+              evidence: "condition failed: clean-tree (1 dirty path(s))",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.operationalProbes?.findings).toHaveLength(1);
+    expect(result.operationalProbes?.findings[0]?.evidence).toContain("guard=refused");
+    expect(fsCalls.ensureDir).toContain("/p/.red/tmp");
+  });
+
   it.each([
     [
       "off-trunk",
@@ -710,18 +747,6 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
         failed: "not-on-trunk" as const,
         failedCondition: "on-trunk" as const,
         evidence: "condition failed: on-trunk (current=feature/work expected=main)",
-      },
-    ],
-    [
-      "dirty tree",
-      {
-        guard: "refused" as const,
-        target: "main",
-        remote: "origin",
-        currentBranch: "main",
-        failed: "dirty-tree" as const,
-        failedCondition: "clean-tree" as const,
-        evidence: "condition failed: clean-tree (1 dirty path(s))",
       },
     ],
     [
