@@ -144,6 +144,8 @@ export const CONFIG_DEFAULTS = {
   // advisory verdict. Folded from `plugins.dev.review.*` to `review.*`.
   "review.enabled": "false",
   "review.max_iterations": "1",
+  "review.reviewer_count": "1",
+  "review.quorum": "any",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
   // version-pinned release (today's behaviour); `canary` tracks npm's canary
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
