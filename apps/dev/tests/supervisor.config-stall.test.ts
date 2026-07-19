@@ -699,6 +699,26 @@ describe("pollStallDetector reaper gating", () => {
     expect(state.slots[0]!.pid).toBe(4242);
   });
 
+  it("forwards the soft AND hard-silence thresholds to the liveness verdict (#2203 wiring)", async () => {
+    // Locks the backstop wiring: the reaper must pass stallKillThresholdS as
+    // laneHardIdleMs so a hung worker with a live child is still flagged stalled.
+    // A refactor that drops the 3rd arg silently disables the #2203 fix.
+    const verdict = vi.fn((): LivenessVerdict => stalledVerdict(120));
+    const { deps } = makeDeps({
+      workerLivenessVerdict: verdict,
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "vitest", cpu: 0 }]),
+    });
+    const cfg = config();
+
+    await pollStallDetector(stalledState(), deps, cfg);
+
+    expect(verdict).toHaveBeenCalledWith(
+      0,
+      cfg.stallThresholdS * 1000,
+      cfg.stallKillThresholdS * 1000,
+    );
+  });
+
   it("retries a genuinely-stalled slot UNDER the cap (kill + envelope + CLEAN re-queue)", async () => {
     const { deps, io } = makeDeps({
       workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),

@@ -296,7 +296,11 @@ export async function pollStallDetector(
 
     // Evaluator verdict: stale lane + no live descendants → stalled. Live
     // descendants → alive even when the lane is silent (wedged substrate guard).
-    const verdict = deps.fs.workerLivenessVerdict(i, config.stallThresholdS * 1000);
+    const verdict = deps.fs.workerLivenessVerdict(
+      i,
+      config.stallThresholdS * 1000,
+      config.stallKillThresholdS * 1000,
+    );
     const flagged = verdict !== null && verdict.status === "stalled";
 
     if (flagged) {
