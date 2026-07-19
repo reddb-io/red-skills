@@ -906,6 +906,46 @@ describe("codex factory", () => {
     ]);
   });
 
+  it("parseStreamLine extracts live token usage from Codex token_count events", () => {
+    const provider = codex("gpt-5.4-mini");
+    const line = JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 97687,
+            cached_input_tokens: 36480,
+            output_tokens: 1470,
+            reasoning_output_tokens: 218,
+            total_tokens: 99157,
+          },
+          last_token_usage: {
+            input_tokens: 35542,
+            cached_input_tokens: 31616,
+            output_tokens: 503,
+            reasoning_output_tokens: 15,
+            total_tokens: 36045,
+          },
+          model_context_window: 258400,
+        },
+      },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      {
+        type: "usage",
+        usage: {
+          inputTokens: 3926,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 31616,
+          outputTokens: 503,
+          reasoningTokens: 15,
+        },
+      },
+      { type: "reasoning", tokens: 15 },
+    ]);
+  });
+
   it("parseStreamLine skips turn.completed with malformed usage", () => {
     const provider = codex("gpt-5.4-mini");
     const line = JSON.stringify({
