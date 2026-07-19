@@ -885,7 +885,7 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       feedbackOk: true,
       locked: false,
       body: issueBody,
-      adversarialReview: { enabled: true, maxIterations: 2 },
+      adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
       adversarialFindings: {
         summary: "Stubbed adversarial review summary.",
         findings: [
@@ -926,7 +926,7 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       outcomes: ["done", "done"],
       feedbackOk: true,
       locked: false,
-      adversarialReview: { enabled: true, maxIterations: 1 },
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindingsSequence: [
         {
           summary: "One blocking acceptance gap.",
@@ -976,7 +976,7 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       outcome: "done",
       feedbackOk: true,
       locked: false,
-      adversarialReview: { enabled: true, maxIterations: 1 },
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindings: {
         summary: "Only suggestions.",
         findings: [
@@ -998,6 +998,58 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
   });
 
+  it("runs configured reviewer count and applies quorum with reviewer runner resolution (#2210)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: async () => "validate",
+      resolveTier: (runner, taskClass) => {
+        if (runner === "codex" && taskClass === "validate") {
+          return { model: "gpt-review", effort: "low" };
+        }
+        return { model: "claude-opus-4-8", effort: "high" };
+      },
+      adversarialReview: {
+        enabled: true,
+        maxIterations: 1,
+        reviewerCount: 2,
+        quorum: 2,
+        runner: "codex",
+      },
+      adversarialFindingsSequence: [
+        {
+          summary: "First reviewer found a bug.",
+          findings: [
+            {
+              path: "packages/x/src/a.ts",
+              line: 1,
+              body: "Quorum-only blocking defect.",
+              blocking: true,
+            },
+          ],
+        },
+        {
+          summary: "Second reviewer found no bug.",
+          findings: [],
+        },
+      ],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.adversarialReviewContexts).toHaveLength(2);
+    expect(trace.adversarialReviewContexts.map(({ runner, model, effort }) => ({ runner, model, effort }))).toEqual([
+      { runner: "codex", model: "gpt-review", effort: "low" },
+      { runner: "codex", model: "gpt-review", effort: "low" },
+    ]);
+    expect(trace.adversarialReviews).toHaveLength(1);
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
+    expect(trace.adversarialReviews[0]?.body).toContain("blocking: false");
+    expect(trace.closed).toEqual([9]);
+  });
+
   it("raised review budget parks ready-for-human when blocking findings remain at exhaustion (#2209)", async () => {
     const blocking = {
       summary: "Blocking acceptance gaps remain.",
@@ -1014,7 +1066,7 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       outcomes: ["done", "done", "done"],
       feedbackOk: true,
       locked: false,
-      adversarialReview: { enabled: true, maxIterations: 2 },
+      adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
       adversarialFindingsSequence: [blocking, blocking, blocking],
     });
     const result = await processIssue(deps, input);
