@@ -1,0 +1,384 @@
+import { doLanding, type LandingDeps, type LandingInput, type LandingHookContexts } from "../src/core/landing.js";
+import { createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs } from "../src/core/land-lock.js";
+
+export { doLanding, createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs };
+import type { ExecResult } from "../src/core/merge.js";
+
+// doLanding owns the flag-toggled landing (ADR 0030 amended by #842 / 0031):
+// push → pre_merge → integrate → land → (direct conflict self-resolve) →
+// post_merge. Before this extraction the sequence was only exercised through
+// process-issue's integration tests; here it has a direct surface. Every git/gh
+// touch is the injected mergeExec / remoteGit fake, and the merge hooks are the
+// injected fireHook.
+//
+// Landing MODE is the `openPr` flag (afk.worktree_launches_pull_request), NOT the
+// lock — the lock only resolves `base` (#842). The "lock × flag matrix" suite
+// below covers all four cells; the legacy path suites default the flag to the
+// pre-#842 coupling (locked → direct, unlocked → PR) so they keep their meaning.
+
+// The isolated landing worktree the DIRECT path runs every git op in (#572). The
+// primary checkout (`/repo`) is never `git -C`'d destructively — see the
+// "primary checkout is sacred" suite below.
+export const WT = "/wt";
+
+// The isolated worker-branch worktree the PR path's pre-merge rebase runs in
+// (#1006). Distinct from WT so a test can assert the fetch/rebase/force-push
+// never `git -C`'d the primary checkout (`/repo`).
+export const RWT = "/rwt";
+export const DEFAULT_BRANCH_TIP = "feedfacecafebeef";
+
+export interface Harness {
+  deps: LandingDeps;
+  input: LandingInput;
+  hooks: LandingHookContexts;
+  mergeCalls: string[][];
+  pushedAttempt: string[][];
+  firedHooks: string[];
+  removedWorktrees: string[];
+  removedRebaseWorktrees: string[];
+  mainRedRepairLookups: number;
+  /** cwds the conflict resolver was dispatched in. */
+  resolverCwds: string[];
+  /** dirs the post-merge gate was invoked with (#1335). */
+  postMergeGateDirs: string[];
+  /** dirs the mechanical rebase-conflict resolver was invoked with (#2072). */
+  mechanicalResolverDirs: string[];
+  /** dirs the agent rebase-conflict resolver was invoked with (#2075). */
+  agentResolverDirs: string[];
+  /** landing visibility phase transitions published for statusline (#1427). */
+  landingPhases: string[];
+}
+
+export interface Opts {
+  locked?: boolean;
+  /**
+   * Make the primary checkout's working tree DIRTY (`git status --porcelain`
+   * returns a modified path). Drives the fastForwardLocalTarget WIP guard: a
+   * dirty primary must skip the post-merge promotion (ADR 0083 §2's #1019
+   * safety intent), even though §2's literal no-write rule is relaxed.
+   */
+  dirtyPrimary?: boolean;
+  /**
+   * Landing MODE (#842), decoupled from the lock. Defaults to `!locked` so the
+   * pre-#842 coupling is preserved for the existing path tests (locked → direct,
+   * unlocked → PR); the (lock × flag) matrix suite below sets it explicitly to
+   * exercise the two newly-reachable cells.
+   */
+  openPr?: boolean;
+  /** Abort one of the merge hooks. */
+  abortHook?: "pre_merge" | "post_merge";
+  /** rc the integrate fast-forward returns (1 → integrate fails). */
+  integrateCode?: number;
+  /** rc the locked `merge --no-ff` returns (1 → conflict). */
+  mergeNoFfCode?: number;
+  /** "resolve" → resolver clears the conflict; "fail" → leaves it; undefined → no resolver. */
+  conflictResolve?: "resolve" | "fail";
+  /** rc the post-resolve `push <remote> HEAD:refs/heads/<base>` returns (1 → reject → reset). */
+  resolvePushCode?: number;
+  /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
+  waitForReview?: boolean;
+  /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  /** rc the final `gh pr merge` returns (1 → PR exists but merge is rejected). */
+  prMergeCode?: number;
+  /** Make the landing-worktree provisioner fail (returns null). */
+  noWorktree?: boolean;
+  /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
+  commitCount?: number;
+  /** Resolved origin/<branch> tip used by stale-local-ref regressions. */
+  branchTip?: string;
+  /** Enable the PR-path pre-merge rebase provisioner (#1006). Defaults true for PR landings (#1212). */
+  rebaseWorktree?: boolean;
+  /** The rebase provisioner returns null (could not provision → rebase skipped). */
+  noRebaseWorktree?: boolean;
+  /** rc the rebase in the rebase worktree returns (1 → real conflict → abort). */
+  rebaseCode?: number;
+  /** First-attempt PR-path mechanical rebase-conflict resolver result. */
+  mechanicalConflictResolve?: "resolve" | "decline";
+  /** First-attempt PR-path agent rebase-conflict resolver result. */
+  agentConflictResolve?: "resolve" | "decline";
+  /** rc the force-with-lease push returns (1 → reject on every attempt). */
+  rebasePushCode?: number;
+  /**
+   * ADR 0083 landing precondition (#1018): drive the local-trunk-vs-origin check.
+   *   - "diverged" → `merge-base --is-ancestor` exits 1 (local trunk carries
+   *     commits origin does not) → the landing aborts with `trunk-diverged`.
+   *   - "absent"   → `rev-parse --verify refs/heads/<trunk>` exits 1 (the primary
+   *     never checked the trunk out) → the precondition proceeds.
+   * Unset → the local trunk reads as an ancestor of origin → proceeds.
+   */
+  trunk?: "diverged" | "absent";
+  /**
+   * Sensitive-path guard (issue #1102): inject getDiffPaths.
+   *   - undefined → guard not wired (safe default, no-op, existing tests unaffected)
+   *   - "hit"  → getDiffPaths returns a diff that touches .github/workflows/ci.yml
+   *   - "clean"→ getDiffPaths returns a diff with no sensitive paths
+   */
+  sensitivePaths?: "hit" | "clean";
+  /**
+   * Sensitive-path guard bypass (#1171). When true, `input.sensitivePathApproved`
+   * is set so the step-0a guard is skipped even on a "hit" diff. Models the
+   * `/requeue --adopt-branch` human land of a reviewed protected diff.
+   */
+  sensitivePathApproved?: boolean;
+  /** Main-red tracking gate (#1237): set input.mainRed. */
+  mainRed?: boolean;
+  /** Main-red tracking gate (#1237): whether the open repair issue finder returns an issue. */
+  mainRedRepairIssue?: boolean;
+  /** Issue labels used to derive the landing-created conventional merge title. */
+  labels?: string[];
+  /** Changed files used for fallback conventional-title classification (#1373). */
+  changedFiles?: string[];
+  /** Force the admin PR path to create a PR instead of reusing an open one. */
+  createPr?: boolean;
+  /**
+   * Post-merge-integration gate (#1335). When true, wire `deps.postMergeGate`
+   * so the test can assert which dirs the gate was called with. When false or
+   * absent, `postMergeGate` is absent → the gate is skipped (backwards-compat).
+   */
+  postMergeGate?: boolean;
+  /** When true AND `postMergeGate` is wired, the gate returns `{ ok: false }`. */
+  postMergeGateFails?: boolean;
+  /**
+   * Global land-lock (#1337). Present → wire `deps.landLock` with this port, so a
+   * test can observe when the landing entered and left the critical section.
+   * Absent → the dep is unwired and the land runs unserialized (pre-#1337).
+   */
+  landLock?: LandLock;
+  /** Native merge queue (#1337): set `input.nativeMergeQueue`. */
+  nativeMergeQueue?: boolean;
+}
+
+export function harness(opts: Opts = {}): Harness {
+  const mergeCalls: string[][] = [];
+  const pushedAttempt: string[][] = [];
+  const firedHooks: string[] = [];
+  const removedWorktrees: string[] = [];
+  const removedRebaseWorktrees: string[] = [];
+  let mainRedRepairLookups = 0;
+  const resolverCwds: string[] = [];
+  const postMergeGateDirs: string[] = [];
+  const mechanicalResolverDirs: string[] = [];
+  const agentResolverDirs: string[] = [];
+  const landingPhases: string[] = [];
+  let mergeResolved = false;
+  let prCreated = false;
+
+  const deps: LandingDeps = {
+    mergeExec: async (argv): Promise<ExecResult> => {
+      mergeCalls.push(argv);
+      const j = argv.join(" ");
+      // Legacy primary-promotion probes. They stay here so tests can fail if a
+      // path accidentally reintroduces the old primary fast-forward.
+      if (j.includes("symbolic-ref --short HEAD")) {
+        return { code: 0, stdout: `${input.base}\n`, stderr: "" };
+      }
+      if (j.includes("status --porcelain")) {
+        return { code: 0, stdout: opts.dirtyPrimary ? " M apps/dev/src/x.ts\n" : "", stderr: "" };
+      }
+      if (j.includes("merge-base --is-ancestor origin/")) {
+        return { code: opts.branchTip ? 0 : 1, stdout: "", stderr: "" };
+      }
+      // ADR 0083 landing precondition (#1018), against the primary checkout.
+      // `merge-base --is-ancestor local origin/<trunk>` — exit 1 = diverged.
+      if (j.includes("merge-base --is-ancestor")) {
+        return { code: opts.trunk === "diverged" ? 1 : 0, stdout: "", stderr: "" };
+      }
+      // The primary's LOCAL trunk ref probe — exit 1 = absent (proceed).
+      if (j.includes("rev-parse --verify --quiet --short refs/heads/")) {
+        return opts.trunk === "absent"
+          ? { code: 1, stdout: "", stderr: "" }
+          : { code: 0, stdout: "1oca1sha\n", stderr: "" };
+      }
+      // origin/<trunk> SHA, captured for the divergence envelope.
+      if (j.includes("rev-parse --short origin/")) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j === `git -C /repo rev-parse --verify --quiet origin/${input.base}`) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
+      if (j === `git -C ${RWT} rebase origin/main`) {
+        return { code: opts.rebaseCode ?? 0, stdout: "", stderr: "" };
+      }
+      if (j.startsWith(`git -C ${RWT} push origin HEAD:refs/heads/`) && j.includes("--force-with-lease")) {
+        return { code: opts.rebasePushCode ?? 0, stdout: "", stderr: "" };
+      }
+      if (argv.includes("pr") && argv.includes("list")) {
+        if (opts.createPr && !prCreated) return { code: 0, stdout: "", stderr: "" };
+        return { code: 0, stdout: "42\n", stderr: "" };
+      }
+      if (argv.includes("pr") && argv.includes("create")) {
+        prCreated = true;
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      // The rollback anchor + landed sha the locked worktree path reads.
+      if (j.includes("rev-parse --short HEAD")) {
+        return { code: 0, stdout: "abc1234\n", stderr: "" };
+      }
+      if (j.includes("rev-list") && j.includes("--count")) {
+        return { code: 0, stdout: `${opts.commitCount ?? 3}\n`, stderr: "" };
+      }
+      if (j.includes("rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing")) {
+        return { code: 0, stdout: `${opts.branchTip ?? DEFAULT_BRANCH_TIP}\n`, stderr: "" };
+      }
+      if (opts.integrateCode !== undefined && j.includes("merge --ff-only")) {
+        return { code: opts.integrateCode, stdout: "", stderr: "" };
+      }
+      if (opts.mergeNoFfCode !== undefined && j.includes("merge --no-ff")) {
+        return { code: opts.mergeNoFfCode, stdout: "", stderr: "" };
+      }
+      // The post-resolve push of the locked branch (from the worktree HEAD).
+      if (opts.resolvePushCode !== undefined && j === `git -C ${WT} push origin HEAD:refs/heads/main`) {
+        return { code: opts.resolvePushCode, stdout: "", stderr: "" };
+      }
+      if (j.includes("diff --name-only --diff-filter=U")) {
+        const unresolved = opts.conflictResolve === "fail" || !mergeResolved;
+        return { code: 0, stdout: unresolved ? "src/x.ts\n" : "", stderr: "" };
+      }
+      if (j.includes("rev-parse -q --verify MERGE_HEAD")) {
+        const pending = opts.conflictResolve === "fail" || !mergeResolved;
+        return { code: pending ? 0 : 1, stdout: "", stderr: "" };
+      }
+      if (j.includes("pr checks")) {
+        return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
+      }
+      if (j.includes("pr view")) {
+        // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
+        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        };
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("pr merge")) {
+        return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    remoteGit: async (argv) => {
+      pushedAttempt.push(argv);
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    async fireHook(name) {
+      firedHooks.push(name);
+      return opts.abortHook !== name;
+    },
+    conflictResolver: opts.conflictResolve
+      ? async (_prompt, cwd) => {
+          resolverCwds.push(cwd);
+          if (opts.conflictResolve === "resolve") mergeResolved = true;
+        }
+      : undefined,
+    waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
+    makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
+    removeLandingWorktree: async (dir) => {
+      removedWorktrees.push(dir);
+    },
+    // #1212: PR-path fresh-base integration is mandatory, so the harness wires a
+    // working rebase worktree by default. Tests that exercise infra provisioning
+    // failures opt out explicitly.
+    makeRebaseWorktree: opts.rebaseWorktree === false ? undefined : async () => (opts.noRebaseWorktree ? null : RWT),
+    removeRebaseWorktree: opts.rebaseWorktree !== false
+      ? async (dir) => {
+          removedRebaseWorktrees.push(dir);
+        }
+      : undefined,
+    resolveMechanicalConflict: opts.mechanicalConflictResolve
+      ? async (dir) => {
+          mechanicalResolverDirs.push(dir);
+          return opts.mechanicalConflictResolve === "resolve";
+        }
+      : undefined,
+    resolveAgentConflict: opts.agentConflictResolve
+      ? async (dir) => {
+          agentResolverDirs.push(dir);
+          return opts.agentConflictResolve === "resolve";
+        }
+      : undefined,
+    // #1102/#1373: only wired when the test opts in (opt-in — absent → guard skipped).
+    getDiffPaths: opts.sensitivePaths || opts.changedFiles
+      ? async () => ({
+          changedFiles:
+            opts.changedFiles ??
+            (opts.sensitivePaths === "hit"
+              ? [".github/workflows/ci.yml", "src/index.ts"]
+              : ["src/index.ts", "apps/dev/src/core/landing.ts"]),
+          packageJsonDiff: "",
+        })
+      : undefined,
+    findMainRedRepairIssue:
+      opts.mainRed === undefined
+        ? undefined
+        : async () => {
+            mainRedRepairLookups += 1;
+            return opts.mainRedRepairIssue ? { number: 123 } : null;
+          },
+    // Post-merge-integration gate (#1335): only wired when the test opts in.
+    postMergeGate: opts.postMergeGate
+      ? async (dir) => {
+          postMergeGateDirs.push(dir);
+          return { ok: !opts.postMergeGateFails };
+        }
+      : undefined,
+    // Global land-lock (#1337): only wired when the test opts in.
+    landLock: opts.landLock,
+    landingPhase: async (phase) => {
+      landingPhases.push(phase);
+    },
+  };
+
+  const input: LandingInput = {
+    locked: opts.locked ?? false,
+    // Default the mode to the pre-#842 coupling (locked → direct, unlocked → PR)
+    // unless the test pins the flag to exercise a decoupled cell.
+    openPr: opts.openPr ?? !(opts.locked ?? false),
+    repo: "o/r",
+    repoDir: "/repo",
+    remote: "origin",
+    branch: "afk/wAAAA/9-fix-the-thing",
+    base: "main",
+    // ADR 0083 landing precondition (#1018): the configured Trunk. The default
+    // permissive mergeExec below returns code 0 for the precondition's
+    // fetch/rev-parse/is-ancestor calls, so the local trunk reads as an ancestor
+    // → the precondition proceeds and the existing path assertions are unchanged.
+    trunk: "main",
+    issue: 9,
+    title: "Fix the thing",
+    ...(opts.labels ? { labels: opts.labels } : {}),
+    // #1171: only set when the test opts in; default undefined keeps the guard
+    // armed for every existing landing assertion.
+    sensitivePathApproved: opts.sensitivePathApproved,
+    mainRed: opts.mainRed,
+    nativeMergeQueue: opts.nativeMergeQueue,
+  };
+
+  const hooks: LandingHookContexts = {
+    preMerge: () => "pre_merge-ctx",
+    postMerge: () => "post_merge-ctx",
+  };
+
+  return {
+    deps,
+    input,
+    hooks,
+    mergeCalls,
+    pushedAttempt,
+    firedHooks,
+    removedWorktrees,
+    removedRebaseWorktrees,
+    get mainRedRepairLookups() {
+      return mainRedRepairLookups;
+    },
+    resolverCwds,
+    postMergeGateDirs,
+    mechanicalResolverDirs,
+    agentResolverDirs,
+    landingPhases,
+  };
+}
+
+export const joined = (calls: string[][]): string[] => calls.map((c) => c.join(" "));
