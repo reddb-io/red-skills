@@ -6,6 +6,7 @@ import {
   options,
   runBoot,
   NOW,
+  type AttemptDir,
   type BootDeps,
   type BranchRef,
   type IssueMeta,

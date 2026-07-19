@@ -5,6 +5,7 @@ import {
   makeDeps,
   options,
   runBoot,
+  type AttemptDir,
   type BootDeps,
   type BranchRef,
   type IssueMeta,
