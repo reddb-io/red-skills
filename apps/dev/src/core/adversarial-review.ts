@@ -1,5 +1,6 @@
 import type { AgentEffort, AgentRunner } from "./execution.js";
 import type { RunOptions } from "@reddb-io/red-castle";
+import type { AfkModelTier } from "./config.js";
 import {
   reviewFindingsSchema,
   resolveMaxRetries,
@@ -8,11 +9,20 @@ import {
   type StandardSchemaLike,
 } from "./review.js";
 import type { ReviewExtractDeps } from "./review-extract.js";
+import { toAgentRunner } from "./runner-spec.js";
+import { isRunner } from "../types/runner.js";
 
 export interface AdversarialReviewConfig {
   readonly enabled: boolean;
   readonly maxIterations: number;
+  readonly reviewerCount: number;
+  readonly quorum: AdversarialReviewQuorum;
+  readonly runner?: AgentRunner;
+  readonly model?: string;
+  readonly effort?: AgentEffort;
 }
+
+export type AdversarialReviewQuorum = "any" | "all" | number;
 
 export interface AdversarialReviewFinding extends InlineComment {
   readonly blocking: boolean;
@@ -51,12 +61,107 @@ export interface AdversarialReviewExtractInput {
 
 export const ADVERSARIAL_REVIEW_OUTPUT_TAG = "output";
 
+const AGENT_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+function readPositiveInteger(raw: string, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readQuorum(raw: string): AdversarialReviewQuorum {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "all") return "all";
+  if (normalized === "any" || normalized === "") return "any";
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : "any";
+}
+
+function readEffort(raw: string): AgentEffort | undefined {
+  return (AGENT_EFFORTS as readonly string[]).includes(raw) ? (raw as AgentEffort) : undefined;
+}
+
 export function resolveAdversarialReviewConfig(get: (key: string) => string): AdversarialReviewConfig {
-  const parsed = Number(get("review.max_iterations"));
+  const runner = get("review.runner").trim();
+  const model = get("review.model").trim();
+  const effort = readEffort(get("review.effort"));
   return {
     enabled: get("review.enabled") === "true",
-    maxIterations: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,
+    maxIterations: readPositiveInteger(get("review.max_iterations"), 1),
+    reviewerCount: readPositiveInteger(get("review.reviewer_count"), 1),
+    quorum: readQuorum(get("review.quorum")),
+    ...(runner && isRunner(runner) ? { runner: toAgentRunner(runner) } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
   };
+}
+
+export interface AdversarialReviewerResolutionInput {
+  readonly config: AdversarialReviewConfig;
+  readonly implementer: {
+    readonly runner: AgentRunner;
+    readonly model: string;
+    readonly effort?: AgentEffort;
+  };
+  readonly taskClass?: AfkModelTier;
+  readonly resolveTier?: (runner: AgentRunner, taskClass?: AfkModelTier) => {
+    readonly model: string;
+    readonly effort?: AgentEffort;
+  };
+}
+
+export function resolveAdversarialReviewer(input: AdversarialReviewerResolutionInput): {
+  runner: AgentRunner;
+  model: string;
+  effort?: AgentEffort;
+} {
+  const runner = input.config.runner ?? input.implementer.runner;
+  const tier = input.config.runner ? input.resolveTier?.(runner, input.taskClass) : undefined;
+  const model = input.config.model ?? tier?.model ?? input.implementer.model;
+  const effort = input.config.effort ?? tier?.effort ?? input.implementer.effort;
+  return { runner, model, ...(effort ? { effort } : {}) };
+}
+
+function quorumThreshold(quorum: AdversarialReviewQuorum, reviewerCount: number): number {
+  if (quorum === "all") return Math.max(1, reviewerCount);
+  if (quorum === "any") return 1;
+  return Math.max(1, quorum);
+}
+
+function findingKey(finding: AdversarialReviewFinding): string {
+  return [finding.path, finding.line, finding.body.trim()].join("\0");
+}
+
+export function aggregateAdversarialReviewFindings(
+  reviews: readonly AdversarialReviewFindings[],
+  quorum: AdversarialReviewQuorum,
+): AdversarialReviewFindings {
+  if (reviews.length === 0) {
+    return { summary: "No adversarial reviewers ran.", findings: [] };
+  }
+  const threshold = quorumThreshold(quorum, reviews.length);
+  const byKey = new Map<string, AdversarialReviewFinding>();
+  const blockingVotes = new Map<string, number>();
+  for (const review of reviews) {
+    const seen = new Set<string>();
+    for (const finding of review.findings) {
+      const key = findingKey(finding);
+      if (!byKey.has(key)) byKey.set(key, finding);
+      if (!finding.blocking) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      blockingVotes.set(key, (blockingVotes.get(key) ?? 0) + 1);
+    }
+  }
+  const findings = Array.from(byKey.entries()).map(([key, finding]) => ({
+    ...finding,
+    blocking: (blockingVotes.get(key) ?? 0) >= threshold,
+  }));
+  const summary =
+    reviews.length === 1
+      ? reviews[0]!.summary
+      : `Aggregated ${reviews.length} adversarial reviewer(s) with quorum ${String(quorum)}. ` +
+        reviews.map((review, idx) => `Reviewer ${idx + 1}: ${review.summary}`).join(" ");
+  return { summary, findings };
 }
 
 export function decideAdversarialReview(
