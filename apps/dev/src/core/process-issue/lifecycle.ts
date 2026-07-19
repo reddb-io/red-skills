@@ -117,6 +117,7 @@ import {
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
 import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
+import { isPrePrPipelineActive } from "../pre-pr-pipeline.js";
 import {
   aggregateAdversarialReviewFindings,
   appendAdversarialReviewCorrectionHandoff,
@@ -952,6 +953,8 @@ export async function processIssue(
   const runAdversarialReview = async (pr: number): Promise<"abort" | void> => {
     const config = deps.adversarialReview;
     if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) return;
+    // /go direct-PR skips adversarial review; /go no-mistakes and /afk run it.
+    if (input.laneLabel === LABEL_GO_LANE && !isPrePrPipelineActive(input.runMode, input.laneLabel)) return;
     try {
       const diff = await deps.mergeExec(["gh", "-R", input.repo, "pr", "diff", String(pr)]);
       const context = {

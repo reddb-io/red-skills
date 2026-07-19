@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Exec, PackageLayout } from "../src/core/feedback.js";
-import { runPrePrPipeline, type PrePrPipelineInput } from "../src/core/pre-pr-pipeline.js";
+import { runPrePrPipeline, isPrePrPipelineActive, type PrePrPipelineInput } from "../src/core/pre-pr-pipeline.js";
+import { LABEL_GO_LANE } from "../src/core/go.js";
 
 describe("no-mistakes pre-PR pipeline (#913)", () => {
   function makeMockExec(results: Record<string, { code: number; stdout: string; stderr: string }>): Exec {
@@ -112,5 +113,27 @@ describe("no-mistakes pre-PR pipeline (#913)", () => {
     // The implementation will check the budget and abort.
     const result = await runPrePrPipeline(input);
     // Eventually: expect(result.passed).toBe(false); expect(result.reason).toMatch(/budget|timeout/i);
+  });
+});
+
+describe("isPrePrPipelineActive — /go pre-PR seam (#2211)", () => {
+  it("active for /go --mode no-mistakes (lane:go + runMode=no-mistakes)", () => {
+    expect(isPrePrPipelineActive("no-mistakes", LABEL_GO_LANE)).toBe(true);
+  });
+
+  it("inactive for /go default direct-PR (lane:go, runMode undefined)", () => {
+    expect(isPrePrPipelineActive(undefined, LABEL_GO_LANE)).toBe(false);
+  });
+
+  it("inactive for /go --mode direct-PR (explicit)", () => {
+    expect(isPrePrPipelineActive("direct-PR", LABEL_GO_LANE)).toBe(false);
+  });
+
+  it("inactive for /afk (no lane label — gates on review.enabled independently)", () => {
+    expect(isPrePrPipelineActive(undefined, undefined)).toBe(false);
+  });
+
+  it("inactive when no-mistakes mode is set outside the /go lane", () => {
+    expect(isPrePrPipelineActive("no-mistakes", undefined)).toBe(false);
   });
 });

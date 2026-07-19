@@ -455,7 +455,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
-        runMode: runModeForCandidate(candidate, flags.runMode),
+        runMode: runModeForCandidate(candidate, flags.prePr ? "no-mistakes" : flags.runMode),
         // Lane-aware claim preflight (#1045): the pre-claim state-validity recheck
         // must validate against the label this issue was SELECTED under (the
         // `--lane` value), not a hardcoded `ready-for-agent`. `flags.lane` is
