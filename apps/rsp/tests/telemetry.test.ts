@@ -26,6 +26,7 @@ import {
   RSP_TELEMETRY_INDEX_COLLECTION,
   RSP_TELEMETRY_INVOCATIONS_COLLECTION,
   runResidentServer,
+  sendResidentRequest,
   shutdownResident,
   spawnSync,
   telemetryLegacySpoolPath,
