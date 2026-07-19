@@ -12,7 +12,7 @@
 <strong>The operating system for agentic engineering work.</strong><br>
 RedSkills turns GitHub issues into reviewed PRs, remembers the operational
 evidence that prevents repeated mistakes, and gives every repo a local knowledge
-surface for Claude Code, Codex, OpenCode, and GitHub Actions.
+surface for Claude Code, Codex, OpenCode, Pi, and GitHub Actions.
 
 </div>
 
@@ -40,14 +40,15 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/inst
 
 The installer resolves the latest GitHub Release, stores it under
 `~/.red-skills/versions/<tag>`, updates `~/.red-skills/current`, detects which
-supported CLIs are present (`claude`, `codex`, `opencode`), then installs the
-right surface for each host:
+supported CLIs are present (`claude`, `codex`, `opencode`, `pi`), then installs
+the right surface for each host:
 
 | Host | What the installer does |
 | --- | --- |
 | Claude Code | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | Codex CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | OpenCode | Generates and installs OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
+| Pi | Registers one Pi package per plugin via `pi install`, exposes the same skill buckets through the standard agent skills protocol. |
 
 OpenCode installs use the published `opencode-host.bundle.min.mjs` asset when
 available, so normal installs need `node` but do not need a local workspace
@@ -62,6 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/inst
 
 # install only one host
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --only opencode
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --only pi
 
 # pin a release
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v2/scripts/install.sh | bash -s -- --version v2.6.0
@@ -162,6 +164,21 @@ pnpm codex:manifests
 CI runs `pnpm codex:manifests:check` and fails when committed Codex manifests
 drift from the generator output.
 
+### Pi Manifest Maintenance
+
+Pi packages are generated artifacts. Do not hand-edit
+`plugins/<name>/package.json`. Change the Claude-side plugin manifest or
+plugin tree, then run:
+
+```bash
+pnpm pi:manifests
+```
+
+CI runs `pnpm pi:manifests:check` and fails when committed Pi packages drift
+from the generator output. The install script runs the same generator before
+calling `pi install`, so a manual regeneration is only required when working
+on Pi support itself.
+
 ### Manual: OpenCode
 
 OpenCode support is generated from the same plugin source tree as Claude Code
@@ -199,6 +216,56 @@ opencode .
 Use `/connect` inside OpenCode or export one of `OPENAI_API_KEY`,
 `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. Generated config never stores auth
 secrets. Details live in [apps/opencode-host](./apps/opencode-host/README.md).
+
+### Manual: Pi
+
+Pi support ships one Pi package per RedSkills plugin. The packages live at
+`plugins/<name>/package.json` and are generated from the same Claude-side
+manifests the other hosts consume. Pi uses the agent skills protocol, so the
+install exposes the same skill buckets (`engineering`, `knowledge`,
+`productivity`, `misc`, `core`) Claude Code and Codex already see.
+
+```bash
+# user-scoped install into ~/.pi/agent/settings.json
+scripts/install-pi.sh
+
+# project-scoped install into <repo>/.pi/settings.json
+scripts/install-pi.sh --project /path/to/your-project
+
+# dry-run + inspect
+scripts/install-pi.sh --project . --dry-run
+
+# user-scoped uninstall
+scripts/install-pi.sh --uninstall
+```
+
+The install script regenerates every `plugins/<name>/package.json` via
+`scripts/generate-pi-manifests.mjs` so the published manifest stays in sync with
+the Claude/Codex sources of truth, then calls `pi install <plugin-dir>` once per
+published plugin (dev, memory, brain). It records the install in
+`~/.pi/agent/redskills-install-manifest.json` (or
+`<project>/.pi/redskills-install-manifest.json`) so a subsequent
+`scripts/install-pi.sh --uninstall` cleanly removes every package this script
+registered. Re-run the install script whenever you bump RedSkills to pick up new
+skill buckets.
+
+Known limitations versus the other hosts:
+
+- Pi does not run lifecycle hooks, so the Codex/Claude `SessionStart`/`Stop`
+  hooks (the rsp interception bridge, red-fetch, command-guard, branch-lock,
+  statusline wiring) are not active in Pi. Skills that depend on those hooks
+  lose telemetry but stay navigable; AFK runners and code-nav MCP servers are
+  unaffected.
+- Two plugins (`memory` and `brain`) ship a skill with the same `name: view`.
+  Pi warns on duplicate skill names and keeps the first one registered, so
+  install `memory` or `brain` last depending on which `view` you want as the
+  primary entry point.
+- Pi does not advertise the plugin display metadata Codex uses; the package
+  description is the only user-visible summary in `pi list`.
+
+After installing, restart any open Pi session so the new skills reload.
+`scripts/install-pi.sh --help` documents the user/project scope split and the
+`--uninstall` flow.
 
 ### No Marketplace
 
@@ -367,6 +434,7 @@ knowledge the human wants preserved, searched, and cited later.
 | Claude Code | Marketplace plugins, slash commands, skills, hooks, MCP servers | Primary interactive host. |
 | Codex CLI | Marketplace plugins, `$skill` invocation, MCP servers, footer integration | Namespace-qualified skill names may appear depending on client version. |
 | OpenCode | Generated `.opencode/skills`, plugin modules, MCP config, provider config, TUI attention config | Installed through `scripts/install-opencode.sh`. |
+| Pi | One Pi package per plugin (`plugins/<name>/package.json`) carrying the shared skill buckets | Installed through `scripts/install-pi.sh` (`--user` or `--project`). |
 | GitHub Actions | Reusable AFK attempt workflow and composable action | Runs one AFK attempt per issue in adopter repos. |
 
 ## Plugin Boundaries

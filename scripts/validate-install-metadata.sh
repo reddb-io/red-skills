@@ -16,6 +16,9 @@ trap 'rm -rf "$tmp"' EXIT
 
 bash -n scripts/install.sh || fail "scripts/install.sh has invalid bash syntax"
 bash -n scripts/install-opencode.sh || fail "scripts/install-opencode.sh has invalid bash syntax"
+bash -n scripts/install-pi.sh || fail "scripts/install-pi.sh has invalid bash syntax"
+node scripts/generate-pi-manifests.mjs --root "$REPO" --check \
+  || fail "plugins/<name>/package.json Pi manifests are stale; run pnpm pi:manifests"
 
 # Validate one plugin's install metadata: Claude skill list matches the SKILL.md
 # tree on disk, Claude/Codex versions agree, and the Codex plugin exposes the
@@ -107,6 +110,30 @@ validate_plugin() {
   jq -e --arg p "./$dir" '.plugins[] | select(.source == $p)' \
     .claude-plugin/marketplace.json >/dev/null \
     || fail "$plugin: Claude marketplace must expose ./$dir"
+
+  # Pi package manifest: must exist, declare the pi-package keyword, carry the
+  # same version as the Claude/Codex manifests, and enumerate only buckets
+  # that exist on disk under ./skills/.
+  local pi_pkg="$dir/package.json"
+  [ -f "$pi_pkg" ] \
+    || fail "$plugin: Pi package.json missing: $pi_pkg"
+  jq -e '.keywords | index("pi-package")' "$pi_pkg" >/dev/null \
+    || fail "$plugin: $pi_pkg must declare the pi-package keyword"
+  jq -e --arg plugin "$plugin" \
+    '(.name | startswith("@reddb-io/red-skills-" + $plugin))' "$pi_pkg" >/dev/null \
+    || fail "$plugin: $pi_pkg name must be @reddb-io/red-skills-$plugin"
+  jq -e --slurp '.[0].version == .[1].version' \
+    "$dir/.claude-plugin/plugin.json" "$pi_pkg" >/dev/null \
+    || fail "$plugin: $pi_pkg version must match Claude/Codex manifests"
+  jq -e '.pi.skills | type == "array" and length > 0' "$pi_pkg" >/dev/null \
+    || fail "$plugin: $pi_pkg pi.skills must be a non-empty array"
+  local bucket
+  while IFS= read -r bucket; do
+    [[ "$bucket" == ./skills/* ]] \
+      || fail "$plugin: Pi skill bucket must start with ./skills/: $bucket"
+    [[ -d "$dir/${bucket#./}" ]] \
+      || fail "$plugin: Pi skill bucket not found on disk: $bucket"
+  done < <(jq -r '.pi.skills[]' "$pi_pkg")
 }
 
 validate_plugin dev

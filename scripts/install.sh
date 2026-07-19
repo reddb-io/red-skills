@@ -22,6 +22,8 @@ VERSION="${RED_SKILLS_VERSION:-latest}"
 INSTALL_ROOT="${RED_SKILLS_INSTALL_ROOT:-$HOME/.red-skills}"
 ONLY="${RED_SKILLS_ONLY:-auto}"
 CLAUDE_SCOPE="${RED_SKILLS_CLAUDE_SCOPE:-user}"
+PI_SCOPE="${RED_SKILLS_PI_SCOPE:-user}"
+PI_PROJECT_DIR=""
 SOURCE_DIR="${RED_SKILLS_SOURCE_DIR:-}"
 ACTION="${RED_SKILLS_ACTION:-install}"
 FORCE="${RED_SKILLS_FORCE:-false}"
@@ -38,12 +40,15 @@ Installs RedSkills into every detected supported CLI:
   claude   -> Claude Code marketplace + dev/memory/brain plugins
   codex    -> Codex marketplace + dev/memory/brain plugins
   opencode -> generated OpenCode plugins, skills, MCP config, and TUI config
+  pi       -> per-plugin Pi packages installed via `pi install`, registered in
+              ~/.pi/agent/settings.json (or .pi/settings.json with --project)
 
 Options:
   --version <tag>       Install a specific release tag (default: latest release)
   --install-root <dir>  Install source cache here (default: ~/.red-skills)
-  --only <list>         Comma list: claude,codex,opencode (default: auto-detect)
+  --only <list>         Comma list: claude,codex,opencode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
+  --pi-scope <s>        Pi install scope: user or project (default: user)
   --source-dir <dir>    Use an existing red-skills checkout instead of downloading
   --uninstall           Remove RedSkills from detected/specified CLIs
   --force               Reinstall plugins where the host supports removal
@@ -55,8 +60,8 @@ Options:
 
 Environment:
   RED_SKILLS_VERSION, RED_SKILLS_INSTALL_ROOT, RED_SKILLS_ONLY,
-  RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_SOURCE_DIR, RED_SKILLS_ACTION,
-  RED_SKILLS_FORCE, RED_SKILLS_PURGE, RED_SKILLS_REFRESH,
+  RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_PI_SCOPE, RED_SKILLS_SOURCE_DIR,
+  RED_SKILLS_ACTION, RED_SKILLS_FORCE, RED_SKILLS_PURGE, RED_SKILLS_REFRESH,
   RED_SKILLS_OPENCODE_COPY, GITHUB_TOKEN.
 EOF
 }
@@ -116,6 +121,11 @@ has_uninstall_target() {
     opencode)
       command -v opencode >/dev/null 2>&1 && return 0
       [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]] && return 0
+      return 1
+      ;;
+    pi)
+      command -v pi >/dev/null 2>&1 && return 0
+      [[ -d "$HOME/.pi/agent" ]] && return 0
       return 1
       ;;
     *)
@@ -336,6 +346,27 @@ install_opencode() {
   run "${args[@]}"
 }
 
+install_pi() {
+  if ! command -v pi >/dev/null 2>&1; then
+    warn "pi not found; skipping Pi"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" != "true" ]]; then
+    [[ -x "$SOURCE_DIR/scripts/install-pi.sh" ]] || die "source is missing executable scripts/install-pi.sh"
+    require_cmd node
+  fi
+
+  local args=("$SOURCE_DIR/scripts/install-pi.sh")
+  if [[ "$PI_SCOPE" == "project" ]]; then
+    args+=("--project" "${PI_PROJECT_DIR:-$PWD}")
+  else
+    args+=("--user")
+  fi
+  log "installing Pi packages from $SOURCE_DIR ($PI_SCOPE scope)"
+  run "${args[@]}"
+}
+
 remove_generated_config() {
   local file="$1"
   [[ -f "$file" ]] || return 0
@@ -464,6 +495,37 @@ opencode_source_dir_for_uninstall() {
   return 1
 }
 
+uninstall_pi() {
+  local manifest_user="$HOME/.pi/agent/redskills-install-manifest.json"
+  local manifest_project=""
+  if [[ -n "$PI_PROJECT_DIR" ]]; then
+    manifest_project="$(cd "$PI_PROJECT_DIR" 2>/dev/null && pwd)/.pi/redskills-install-manifest.json"
+  fi
+
+  if ! command -v pi >/dev/null 2>&1; then
+    warn "pi not found; skipping Pi uninstall"
+    if [[ -f "$manifest_user" ]]; then
+      rm -f "$manifest_user"
+      log "removed stale manifest $manifest_user"
+    fi
+    return 0
+  fi
+
+  local source
+  if source="$(opencode_source_dir_for_uninstall)"; then
+    log "uninstalling Pi RedSkills packages via $source/scripts/install-pi.sh"
+    if [[ -f "$manifest_user" ]]; then
+      run "$source/scripts/install-pi.sh" --uninstall --user
+    fi
+    if [[ -n "$manifest_project" && -f "$manifest_project" ]]; then
+      ( cd "$PI_PROJECT_DIR" && run "$source/scripts/install-pi.sh" --uninstall --project "$PI_PROJECT_DIR" )
+    fi
+    return 0
+  fi
+
+  warn "no RedSkills source checkout found; skipped Pi uninstall"
+}
+
 uninstall_opencode() {
   local source
   if source="$(opencode_source_dir_for_uninstall)"; then
@@ -523,13 +585,17 @@ run_uninstall() {
     uninstall_opencode
     touched_any="true"
   fi
+  if has_uninstall_target pi; then
+    uninstall_pi
+    touched_any="true"
+  fi
 
   if [[ "$PURGE" == "true" ]]; then
     run rm -rf "$INSTALL_ROOT"
   fi
 
   if [[ "$touched_any" != "true" ]]; then
-    warn "no supported CLIs/configs detected (claude, codex, opencode)"
+    warn "no supported CLIs/configs detected (claude, codex, opencode, pi)"
   fi
 }
 
@@ -553,6 +619,17 @@ while [[ $# -gt 0 ]]; do
     --claude-scope)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       CLAUDE_SCOPE="$2"
+      shift 2
+      ;;
+    --pi-scope)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      PI_SCOPE="$2"
+      shift 2
+      ;;
+    --pi-project-dir)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      PI_PROJECT_DIR="$2"
+      PI_SCOPE="project"
       shift 2
       ;;
     --source-dir)
@@ -599,6 +676,11 @@ case "$CLAUDE_SCOPE" in
   *) die "--claude-scope must be user, project, or local" ;;
 esac
 
+case "$PI_SCOPE" in
+  user|project) ;;
+  *) die "--pi-scope must be user or project" ;;
+esac
+
 case "$ACTION" in
   install|uninstall) ;;
   *) die "RED_SKILLS_ACTION must be install or uninstall" ;;
@@ -610,7 +692,7 @@ case "$ONLY" in
     IFS=',' read -r -a requested_targets <<<"$ONLY"
     for target in "${requested_targets[@]}"; do
       case "$target" in
-        claude|codex|opencode) ;;
+        claude|codex|opencode|pi) ;;
         *) die "--only contains unsupported target '$target'" ;;
       esac
     done
@@ -639,9 +721,13 @@ if has_target opencode; then
   install_opencode
   installed_any="true"
 fi
+if has_target pi; then
+  install_pi
+  installed_any="true"
+fi
 
 if [[ "$installed_any" != "true" ]]; then
-  warn "no supported CLIs detected (claude, codex, opencode)"
+  warn "no supported CLIs detected (claude, codex, opencode, pi)"
 fi
 
 log "done"
