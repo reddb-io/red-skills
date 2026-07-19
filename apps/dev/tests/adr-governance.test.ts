@@ -1,44 +1,62 @@
-import { access, readdir, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  adrNumbers,
+  appendOnlyViolations,
+  archivedRecordViolations,
+  deletedArchivePaths,
+  duplicates,
+  indexNumbers,
+  undocumentedGaps,
+} from "../src/core/adr-governance.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const ADR_DIR = join(ROOT, ".red", "adr");
+const ARCHIVE_DIR = join(ADR_DIR, "archive");
+const ARCHIVE_REL = ".red/adr/archive";
 const CONTEXT_MAP = join(ROOT, ".red", "CONTEXT-MAP.md");
 
 describe("ADR governance docs", () => {
   it("keeps ADR filename numbers and index bullets unique", async () => {
-    const files = (await readdir(ADR_DIR))
-      .filter((file) => /^\d{4}-.+\.md$/.test(file))
-      .sort();
+    const active = adrNumbers(await readdir(ADR_DIR));
+    const archived = adrNumbers(await readdir(ARCHIVE_DIR));
 
-    const numbersByFilename = files.map((file) => file.slice(0, 4));
-    const duplicateFilenameNumbers = duplicates(numbersByFilename);
-    expect(duplicateFilenameNumbers).toEqual([]);
+    expect(duplicates([...active, ...archived])).toEqual([]);
 
     const index = await readFile(join(ADR_DIR, "INDEX.md"), "utf8");
-    const indexNumbers = Array.from(index.matchAll(/^- \*\*(\d{4})\*\*/gm), (match) => match[1]);
-    const duplicateIndexNumbers = duplicates(indexNumbers);
-    expect(duplicateIndexNumbers).toEqual([]);
+    expect(duplicates(indexNumbers(index))).toEqual([]);
 
-    expect(new Set(indexNumbers)).toEqual(new Set(numbersByFilename));
+    expect(new Set(indexNumbers(index))).toEqual(new Set([...active, ...archived]));
   });
 
   it("documents any missing ADR numbers in the index", async () => {
-    const files = (await readdir(ADR_DIR))
-      .filter((file) => /^\d{4}-.+\.md$/.test(file))
-      .sort();
-    const numbers = files.map((file) => Number(file.slice(0, 4)));
-    const present = new Set(numbers);
-    const missing: string[] = [];
+    const active = adrNumbers(await readdir(ADR_DIR));
+    const archived = adrNumbers(await readdir(ARCHIVE_DIR));
+    const index = await readFile(join(ADR_DIR, "INDEX.md"), "utf8");
 
-    for (let number = Math.min(...numbers); number <= Math.max(...numbers); number += 1) {
-      if (!present.has(number)) missing.push(String(number).padStart(4, "0"));
+    expect(undocumentedGaps([...active, ...archived], index)).toEqual([]);
+  });
+
+  it("keeps every archived ADR statused with a successor pointer", async () => {
+    const files = (await readdir(ARCHIVE_DIR)).filter((file) => /^\d{4}-.+\.md$/.test(file));
+    const violations: string[] = [];
+
+    for (const file of files) {
+      const text = await readFile(join(ARCHIVE_DIR, file), "utf8");
+      violations.push(...archivedRecordViolations({ file, text }));
     }
 
-    const index = await readFile(join(ADR_DIR, "INDEX.md"), "utf8");
-    const undocumented = missing.filter((number) => !index.includes(`**${number}**`));
-    expect(undocumented).toEqual([]);
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps the archive lane append-only", async () => {
+    const present = (await readdir(ARCHIVE_DIR)).map((file) => `${ARCHIVE_REL}/${file}`);
+    const deleted = deletedArchivePaths(ROOT, ARCHIVE_REL);
+
+    expect(appendOnlyViolations(present, deleted)).toEqual([]);
   });
 
   it("keeps context map local markdown links resolvable", async () => {
@@ -59,11 +77,124 @@ describe("ADR governance docs", () => {
   });
 });
 
-function duplicates(values: string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
-  return Array.from(counts.entries())
-    .filter(([, count]) => count > 1)
-    .map(([value]) => value)
-    .sort();
-}
+describe("ADR bijection over active ∪ archived", () => {
+  const INDEX = ["- **0001** Live decision", "- **0002** Retired decision"].join("\n");
+
+  it("stays green when an ADR moves from the active set to the archive", () => {
+    const before = new Set([...adrNumbers(["0001-live.md", "0002-retired.md"]), ...adrNumbers([])]);
+    const after = new Set([...adrNumbers(["0001-live.md"]), ...adrNumbers(["0002-retired.md"])]);
+
+    expect(after).toEqual(before);
+    expect(after).toEqual(new Set(indexNumbers(INDEX)));
+  });
+
+  it("fails when an archived number disappears from the tree", () => {
+    const after = new Set(adrNumbers(["0001-live.md"]));
+
+    expect(after).not.toEqual(new Set(indexNumbers(INDEX)));
+  });
+});
+
+describe("archivedRecordViolations", () => {
+  const archived = (status: string, pointer: string) =>
+    ["# Retired decision", "", "## Status", "", status, "", pointer, ""].join("\n");
+
+  it("accepts a superseded record that names its successor", () => {
+    const text = archived("Superseded by ADR 0113.", "superseded-by: 0113");
+    expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([]);
+  });
+
+  it("accepts an inert record that declares it has no successor", () => {
+    const text = archived("Inert — fully shipped, no longer guidance.", "superseded-by: none (inert)");
+    expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([]);
+  });
+
+  it("rejects an archived record without a successor pointer", () => {
+    const text = ["# Retired decision", "", "## Status", "", "Superseded.", ""].join("\n");
+    expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([
+      "0002-retired.md: missing a `superseded-by:` successor pointer",
+    ]);
+  });
+
+  it("rejects a superseded record whose pointer names no successor ADR", () => {
+    const text = archived("Superseded.", "superseded-by: none (inert)");
+    expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([
+      "0002-retired.md: `superseded-by:` must name a successor ADR number for status `superseded`",
+    ]);
+  });
+
+  it("rejects an archived record with no terminal status", () => {
+    const text = archived("Accepted.", "superseded-by: 0113");
+    expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([
+      "0002-retired.md: `## Status` must declare one of superseded, deprecated, inert",
+    ]);
+  });
+});
+
+describe("archive append-only guard", () => {
+  it("reports an archived file that history added and the tree no longer has", () => {
+    const present = [`${ARCHIVE_REL}/0002-retired.md`];
+    const deleted = [`${ARCHIVE_REL}/0003-erased.md`];
+
+    expect(appendOnlyViolations(present, deleted)).toEqual([`${ARCHIVE_REL}/0003-erased.md`]);
+  });
+
+  it("ignores a deleted path that was restored to the tree", () => {
+    const path = `${ARCHIVE_REL}/0003-restored.md`;
+    expect(appendOnlyViolations([path], [path])).toEqual([]);
+  });
+
+  it("detects a deleted archived ADR in a real repository", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "adr-archive-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "Test");
+
+      await mkdir(join(repo, ARCHIVE_REL), { recursive: true });
+      await writeFile(join(repo, ARCHIVE_REL, "0002-retired.md"), "# Retired\n");
+      await writeFile(join(repo, ARCHIVE_REL, "0003-erased.md"), "# Erased\n");
+      git("add", "-A");
+      git("commit", "-qm", "archive two records");
+
+      expect(deletedArchivePaths(repo, ARCHIVE_REL)).toEqual([]);
+
+      await rm(join(repo, ARCHIVE_REL, "0003-erased.md"));
+      git("add", "-A");
+      git("commit", "-qm", "erase history");
+
+      const deleted = deletedArchivePaths(repo, ARCHIVE_REL);
+      expect(deleted).toEqual([`${ARCHIVE_REL}/0003-erased.md`]);
+
+      const present = [`${ARCHIVE_REL}/0002-retired.md`];
+      expect(appendOnlyViolations(present, deleted)).toEqual([`${ARCHIVE_REL}/0003-erased.md`]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("stays green when an ADR is moved into the archive lane", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "adr-archive-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "Test");
+
+      await mkdir(join(repo, ARCHIVE_REL), { recursive: true });
+      await writeFile(join(repo, ".red/adr/0002-retired.md"), "# Retired\n");
+      await writeFile(join(repo, ARCHIVE_REL, ".gitkeep"), "");
+      git("add", "-A");
+      git("commit", "-qm", "seed");
+
+      git("mv", ".red/adr/0002-retired.md", `${ARCHIVE_REL}/0002-retired.md`);
+      git("commit", "-qm", "archive the record");
+
+      const present = (await readdir(join(repo, ARCHIVE_REL))).map((file) => `${ARCHIVE_REL}/${file}`);
+      expect(appendOnlyViolations(present, deletedArchivePaths(repo, ARCHIVE_REL))).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
