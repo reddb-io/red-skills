@@ -753,7 +753,20 @@ export function buildProcessDeps(
           computeUncommitted: () =>
             gitx.diffstatUncommitted({ cwd: worktree }).catch(() => ({ added: 0, removed: 0 })),
           readMemo: () => {
-            return decodeLocMemoSnapshot(readFileSync(memoPath, "utf8"));
+            // The memo file is ABSENT on the first heartbeat of every attempt,
+            // and a codex worker (no incremental commits) never creates one at
+            // all — so `readFileSync` throws ENOENT here on EVERY tick. The
+            // `resolveAttemptLoc` contract is that `readMemo` returns null when
+            // "absent/unreadable"; an uncaught throw instead propagated out of
+            // the heartbeat's async body BEFORE it stamped loc or wrote its
+            // record, leaving codex vitals a permanent `+0 -0` (0 heartbeat
+            // records). Fail closed to null so a missing/corrupt memo just forces
+            // a recompute (the committed delta), never a lost stamp.
+            try {
+              return decodeLocMemoSnapshot(readFileSync(memoPath, "utf8"));
+            } catch {
+              return null;
+            }
           },
           writeMemo: (m) => {
             try {

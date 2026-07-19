@@ -20,6 +20,7 @@ import {
   DEFAULT_IDLE_TIMEOUT_S,
   DEFAULT_REMOTE,
   DEFAULT_MAX_ITERATIONS,
+  DEFAULT_VITALS_SAMPLE_MS,
   CODEX_EFFORTS,
   CLAUDE_EFFORTS,
   MINIMAX_EFFORTS,
@@ -116,6 +117,95 @@ describe("runAgent — structured-output gate (ADR 0090, #932)", () => {
       model: "gpt-5.4",
     });
     expect(r.outcome).toBe("done");
+  });
+});
+
+describe("runAgent — independent worker-vitals sampler (ADR 0103)", () => {
+  // Captures the single scheduled fn so the test pumps ticks by hand.
+  function manualScheduler() {
+    let fn: (() => void) | undefined;
+    return {
+      schedule: (f: () => void, _ms: number) => {
+        fn = f;
+        return () => {
+          fn = undefined;
+        };
+      },
+      tick: () => fn?.(),
+      armed: () => fn !== undefined,
+    };
+  }
+  function fakeClock(start = 1_000_000) {
+    let t = start;
+    return { now: () => t, advance: (ms: number) => (t += ms) };
+  }
+  const flush = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  it("stamps vitals on its own cadence for a codex run even with the attempt-guard un-armed and the stream quiet", async () => {
+    // The exact fleet repro: a codex worker with no attempt timeout (guard never
+    // arms) that emits no stream events (blocked waiting on a test suite). Before
+    // the ADR 0103 sampler, BOTH heartbeat paths hung off headProbe + guard
+    // arming, so `emitHeartbeat` never fired and loc/tokens sat at +0 -0.
+    const heartbeats: AttemptProgressInfo[] = [];
+    const sched = manualScheduler();
+    const clock = fakeClock();
+    let releaseRun: () => void = () => {};
+    const runGate = new Promise<void>((res) => {
+      releaseRun = res;
+    });
+    const deps = {
+      ...makeDeps(async () => {
+        await runGate;
+        return fakeResult();
+      }),
+      schedule: sched.schedule,
+      now: clock.now,
+    };
+    const runP = runAgent(deps, {
+      ...baseInput,
+      runner: "codex",
+      model: "gpt-5.4",
+      headProbe: async () => "deadbeef",
+      onHeartbeat: (info) => heartbeats.push(info),
+      // deliberately NO attemptTimeoutSeconds → the attempt-guard does not arm.
+    });
+    await flush();
+    expect(sched.armed()).toBe(true); // the sampler armed itself, guard did not
+    expect(heartbeats).toHaveLength(0); // nothing before the first sample window
+
+    clock.advance(DEFAULT_VITALS_SAMPLE_MS);
+    sched.tick();
+    await flush();
+
+    expect(heartbeats.length).toBeGreaterThan(0);
+    expect(heartbeats[0]?.head).toBe("deadbeef");
+
+    releaseRun();
+    await runP;
+  });
+
+  it("does not arm the sampler when there is no heartbeat sink", async () => {
+    const sched = manualScheduler();
+    const deps = { ...makeDeps(async () => fakeResult()), schedule: sched.schedule, now: fakeClock().now };
+    await runAgent(deps, { ...baseInput, runner: "codex", model: "gpt-5.4" });
+    expect(sched.armed()).toBe(false);
+  });
+
+  it("cancels the sampler once the run completes", async () => {
+    const sched = manualScheduler();
+    const deps = { ...makeDeps(async () => fakeResult()), schedule: sched.schedule, now: fakeClock().now };
+    await runAgent(deps, {
+      ...baseInput,
+      runner: "codex",
+      model: "gpt-5.4",
+      headProbe: async () => "sha",
+      onHeartbeat: () => {},
+    });
+    // The finally block called the sampler's cancel, clearing the captured fn.
+    expect(sched.armed()).toBe(false);
   });
 });
 
