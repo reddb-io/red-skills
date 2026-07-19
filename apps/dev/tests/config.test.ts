@@ -148,7 +148,7 @@ describe("config", () => {
     });
   });
 
-  it("keeps adversarial review advisory for this slice (#2207)", () => {
+  it("retries only blocking adversarial review findings within the configured cap (#2208)", () => {
     expect(
       decideAdversarialReview(
         {
@@ -156,6 +156,26 @@ describe("config", () => {
           findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
         },
         1,
+        1,
+      ),
+    ).toBe("correct");
+    expect(
+      decideAdversarialReview(
+        {
+          summary: "nit only",
+          findings: [{ path: "src/a.ts", line: 1, body: "style", blocking: false }],
+        },
+        1,
+        1,
+      ),
+    ).toBe("pass");
+    expect(
+      decideAdversarialReview(
+        {
+          summary: "cap exhausted",
+          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
+        },
+        2,
         1,
       ),
     ).toBe("pass");

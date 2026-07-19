@@ -886,6 +886,17 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       locked: false,
       body: issueBody,
       adversarialReview: { enabled: true, maxIterations: 2 },
+      adversarialFindings: {
+        summary: "Stubbed adversarial review summary.",
+        findings: [
+          {
+            path: "packages/x/src/a.ts",
+            line: 1,
+            body: "Acceptance criteria conformance finding.",
+            blocking: false,
+          },
+        ],
+      },
     });
     const result = await processIssue(deps, input);
 
@@ -904,10 +915,87 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     const body = trace.adversarialReviews[0]?.body ?? "";
     expect(body).toContain("AFK adversarial review");
     expect(body).toContain("Decision: pass (advisory)");
-    expect(body).toContain("blocking: true");
+    expect(body).toContain("blocking: false");
     expect(body).toContain("Acceptance criteria conformance finding.");
     expect(trace.comments).toContainEqual({ issue: 42, body });
     expect(trace.comments).toContainEqual({ issue: 9, body });
+  });
+
+  it("blocking finding re-seeds the implementer with diff plus critiques, then clean review lands (#2208)", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["done", "done"],
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1 },
+      adversarialFindingsSequence: [
+        {
+          summary: "One blocking acceptance gap.",
+          findings: [
+            {
+              path: "packages/x/src/a.ts",
+              line: 1,
+              body: "The implementation does not satisfy the acceptance criterion.",
+              blocking: true,
+            },
+            {
+              path: "packages/x/src/a.ts",
+              line: 1,
+              body: "Prefer a clearer name.",
+              blocking: false,
+            },
+          ],
+        },
+        {
+          summary: "Clean after correction.",
+          findings: [],
+        },
+      ],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.adversarialReviewContexts).toHaveLength(2);
+    expect(trace.closed).toEqual([9]);
+
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<adversarial-review-correction>");
+    expect(retryHandoff).toContain("bounded correction retry 1/1");
+    expect(retryHandoff).toContain("The implementation does not satisfy the acceptance criterion.");
+    expect(retryHandoff).not.toContain("Prefer a clearer name.");
+    expect(retryHandoff).toContain("<pr-diff data-untrusted=\"true\">");
+    expect(retryHandoff).toContain("diff --git");
+
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: correct (blocking)");
+    expect(trace.adversarialReviews[1]?.body).toContain("Decision: pass (advisory)");
+    expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
+  });
+
+  it("non-blocking findings stay advisory and do not re-seed the implementer (#2208)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1 },
+      adversarialFindings: {
+        summary: "Only suggestions.",
+        findings: [
+          {
+            path: "packages/x/src/a.ts",
+            line: 1,
+            body: "Consider shorter wording.",
+            blocking: false,
+          },
+        ],
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.adversarialReviewContexts).toHaveLength(1);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
   });
 });
 
