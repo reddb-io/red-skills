@@ -201,12 +201,96 @@ An agent-loadable behavior package rooted at a `SKILL.md` plus optional support 
 _Avoid_: command, plugin
 
 **Manager**:
-The single operator-facing `dev` **Skill** that acts as liaison over RedSkills' existing execution and control surfaces: it routes work through the appropriate workflow, supervises the resulting fleet, escalates only genuine operator decisions, and reports outcomes without replacing the underlying workers, queues, or landing contracts. It may persist a local inbox and continuity metadata before work is published; once an intent is materialised as a **Ticket** hierarchy, the **Issue tracker** is canonical and any local projection must be reconstructible from it.
+The single operator-facing `dev` **Skill** that acts as liaison over RedSkills' existing execution and control surfaces: it routes work through the appropriate workflow, supervises the resulting fleet, escalates only genuine operator decisions, and reports outcomes without replacing the underlying workers, queues, or landing contracts. The operator explicitly starts or resumes it; once activated, it remains the liaison for the session until the managed effort completes or the operator ends management. Its local **Manager portfolio** is authoritative for portfolio membership, unmaterialised intent, and coordination across repositories; each published artifact remains authoritative for its own work state, decisions, and delivery evidence.
 _Avoid_: FirstMate (the external reference), second fleet, parallel orchestrator
 
+**Manager runtime**:
+The deterministic support surface behind the **Manager** Skill for portfolio records, effort leases, checkpoints, Manager-map publication and reconciliation, event consumption, and Manager-brief rendering. It enables a functional end-to-end liaison but never claims work, runs agents, validates changes, or lands delivery in place of the existing owner workflows.
+_Avoid_: SKILL.md-only implementation, execution engine, fleet scheduler
+
+**Manager host parity**:
+The first-slice contract that Claude Code, Codex, and OpenCode expose the same **Manager** Skill and deterministic runtime behavior. A host uses its event adapter when it supports meaningful wakes and otherwise reconciles on `resume` and `status`; event capability may change responsiveness but never portfolio correctness.
+_Avoid_: Codex-only Manager, host-specific semantics, wake required for correctness
+
+**Manager acceptance journey**:
+The first-slice dogfood that proves RedSkills-native FirstMate equivalence: one intent spans two repositories, materialises their **Manager maps**, routes through existing owner workflows, pauses and resumes after restart, exports and imports a checkpoint, crosses HITL or failure, reconciles delivery, and reaches **Manager effort completion** without lost or duplicated work. Contract and integration tests plus Claude Code, Codex, and OpenCode parity smokes bind the journey.
+_Avoid_: feature-count parity, SKILL.md review only, store unit tests only
+
+**Manager portfolio**:
+The durable authority in one operator-and-host-scoped local store independent of any repository, covering the set of efforts managed by the **Manager**, intent that has not yet become a published artifact, and coordination relationships spanning **Issue trackers**. It binds an effort's repository-owned **Manager maps** into one cross-repository whole, but never overrides the work state, decisions, or delivery evidence owned by those maps and their child artifacts.
+_Avoid_: repository-scoped portfolio, federated portfolio stores, global task database, issue mirror, replacement tracker
+
+**Manager portfolio record**:
+The minimal structured state retained for one managed effort: stable identity and destination, lifecycle state, repository and **Manager map** references, cross-repository coordination relationships, summaries of unmaterialised intent, reconciliation cursors, and checkpoint metadata. Credentials, raw conversations, source code, diffs, worker logs, and execution evidence never belong in the record; published artifacts retain their own detail.
+_Avoid_: transcript archive, source snapshot, execution log, freeform document store
+
+**Manager effort boundary**:
+The membership rule for a managed effort: new intent joins an active effort only when it shares that effort's destination and acceptance boundary. Intent with a different destination becomes a separate effort; ambiguity is an HITL decision rather than silent scope expansion.
+_Avoid_: session equals effort, similarity-only grouping, implicit scope growth
+
+**Manager effort ID**:
+The opaque immutable identifier generated locally for one managed effort, distinct from its mutable human name. Every repository-owned **Manager map** publishes the ID in a structured marker so checkpoint import and reconciliation can join the maps without using a title, repository, or first-map URL as identity.
+_Avoid_: title key, coordinator-Issue identity, repository-scoped identifier
+
+**Manager checkpoint**:
+A portable point-in-time export of the **Manager portfolio** to an operator-controlled destination for recovery or transfer to another host. Import establishes the destination host's store as the single active writer; checkpoints are never a bidirectional synchronization channel or a second live authority.
+_Avoid_: live sync, multi-writer portfolio, cloud control plane
+
+**Manager effort lease**:
+The single-writer claim over one effort in the **Manager portfolio**. Separate sessions may manage different efforts concurrently, and read-only status remains available, but a generation check prevents two sessions from writing the same effort or silently overwriting a newer transition.
+_Avoid_: whole-portfolio lock, last-write-wins, parallel writers on one effort
+
+**Manager trusted directive**:
+Operator guidance received through the active **Manager** liaison or an owning HITL workflow from an identity authorised to change an effort's intent, authority, or dispatch. Tracker state and evidence participate in **Manager reconciliation**, but untrusted Issue, comment, PR, or other external content can never become an executable directive by itself.
+_Avoid_: issue body as command, public comment as authority, ignoring tracker evidence
+
+**Manager routing**:
+The selection and invocation of an existing owner workflow through `ask-red`'s canonical routing inventory. The **Manager** adds portfolio membership, continuity, supervision, and completion around the selected route; it neither copies the route classifier nor asks the operator to choose a Skill when the inventory already determines one.
+_Avoid_: second router, copied Skill rules, tool-choice prompt
+
+**Manager lifecycle surface**:
+The conversation-first operator interface for management: `$dev:manager <intent>` starts or continues an effort, while only `resume`, `status`, `end`, `checkpoint export`, and `checkpoint import` are explicit lifecycle operations. Owner-workflow names remain routing internals rather than Manager subcommands.
+_Avoid_: one subcommand per Skill, ambient auto-activation, hidden end or transfer
+
+**Manager session focus**:
+The one managed effort used as the default referent in a session that may supervise several efforts concurrently. Events and mutations remain keyed by **Manager effort ID**; when human language does not identify its target unambiguously, the Manager asks before writing instead of guessing from the current focus.
+_Avoid_: one effort per session, whole-portfolio implicit target, ambiguous write
+
+**Manager effort lifecycle**:
+The five-state lifecycle owned by a **Manager portfolio record**: `inbox` for intent that remains local, `active`, `paused`, `completed`, and `abandoned`. `end` releases the **Manager effort lease** and pauses a non-terminal effort; `resume` reactivates it. HITL, dependency blocking, failure, and underway work are reconciled projections from owner workflows, never duplicate effort states.
+_Avoid_: issue-state mirror, end means delete, HITL as portfolio lifecycle
+
+**Manager pause**:
+The cessation of Manager-initiated action for a non-terminal effort after `end`. Already-dispatched owner workflows continue under their own contracts, and their events remain available for later **Manager reconciliation**; stopping or parking that work requires a separate trusted directive to its owning workflow.
+_Avoid_: implicit worker cancellation, wait-until-idle exit, lost completion events
+
+**Manager durability boundary**:
+The earliest point at which locally held intent must be materialised in the relevant **Issue tracker**: before work is dispatched, management crosses a session boundary, another collaborator or HITL decision is involved, or persistent coordination depends on it. The operator may also request materialisation earlier. Purely exploratory conversation may remain local until one of these conditions occurs.
+_Avoid_: publish every message, approval gate for every Issue, invisible dispatched work
+
+**Manager authority envelope**:
+The Manager's authority to materialise, route, dispatch, reconcile, and report autonomously while acting within published intent and the policies of the **Skills** that own each workflow. It must enter HITL when a choice changes the destination, scope, or requirements, requires authority not already granted, or the owning workflow itself requires a human decision.
+_Avoid_: confirmation for every routine transition, autonomous product decisions, bypassing owner Skills
+
+**Manager reconciliation**:
+The deterministic refresh of a managed effort from its **Manager portfolio**, repository-owned **Manager maps**, published artifacts, and existing execution-state projections. It runs when management starts or resumes and before the Manager reports or ends; while supervision is active, only meaningful transitions such as completion, failure, HITL, dependency release, or frontier change wake the liaison. Unchanged state never wakes an LLM merely to poll.
+_Avoid_: periodic agent polling, invocation-only snapshot, second fleet monitor
+
+**Manager brief**:
+The stable bounded projection shown when the **Manager** starts, resumes, or reports status: destination and overall state; repository-owned **Manager maps**; actionable frontier; work underway; pending human decisions; risks; and recently delivered outcomes. Each actionable section shows at most five named items linked to their owning artifacts plus the count omitted, never a full graph dump or a fresh unstructured narrative.
+_Avoid_: issue dump, fleet log, freeform status essay
+
+**Manager effort completion**:
+The terminal state of a managed effort after its destination has acceptance evidence, no work or HITL remains active, and every in-scope artifact has an explicit terminal disposition: delivered, cancelled, superseded, or removed from scope. Any artifact intended to remain active is detached into another effort before the current effort and its repository-owned **Manager maps** complete.
+_Avoid_: all Issues closed mechanically, operator-declared done with live work, closed map with stranded children
+
 **Manager map**:
-The canonical parent **Ticket** for one effort conducted by the **Manager** from initial intent through final delivery. It is an umbrella index over existing child artifacts — research and decision **Tickets**, Wayfinder maps, **Specs**, executable **Tickets**, and validation or landing outcomes — while native hierarchy and dependency relationships expose the actionable frontier. It does not replace those artifacts or restate the detail they own. Unlike a Wayfinder map, it continues after the route becomes clear; unlike a **Spec**, it may begin before the solution is sufficiently defined. Its local projection is reconstructible from the **Issue tracker**.
+The repository-facing parent **Ticket** that projects one effort from the **Manager portfolio** into an **Issue tracker** from initial intent through final delivery. An effort has at most one Manager map in each participating repository, created only once that repository receives its first published artifact. Its direct children are only roots of existing work subgraphs — Wayfinder maps, **Specs**, and independent **Tickets** — whose own children remain under the artifact that owns their semantics. Validation and landing evidence remains with the artifact that produced it rather than becoming a Manager-map child. Native hierarchy and dependency relationships expose the actionable frontier. The map does not replace its artifacts or restate the detail they own. Unlike a Wayfinder map, it continues after the route becomes clear; unlike a **Spec**, it may begin before the solution is sufficiently defined. Its local projection of published work is reconstructible from the **Issue tracker**.
 _Avoid_: Wayfinder map (decision-only), Spec (solution contract), task list, universal task format
+
+**Manager map body**:
+The stable low-resolution contract published in a **Manager map**: a structured **Manager effort ID** marker, destination, that repository's role, applicable acceptance criteria, standing notes, and pointers to the final outcome or disposition. Native children and dependencies provide live state; the body never mirrors their frontier, workers, blockers, or decision detail.
+_Avoid_: dynamic dashboard, copied child status, identifier-only stub
 
 **Codebase understanding surface**:
 A `dev` workflow surface for explaining repository architecture and change impact from graph-backed project knowledge.
