@@ -963,7 +963,7 @@ async function ensurePr(
       "--title",
       scrubOutbound(prTitle),
       "--body",
-      scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`),
+      scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
     ]);
     if (create.code !== 0) return undefined;
     prNumber = await listOpenPr(exec, repo, branch, target);

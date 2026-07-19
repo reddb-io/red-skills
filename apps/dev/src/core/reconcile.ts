@@ -37,10 +37,8 @@ import {
 import { doLanding } from "./landing.js";
 import { type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import {
-  buildRefFromSlug,
   deleteRemote,
   pushAttempt,
-  slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
 import { type LandLock } from "./land-lock.js";
@@ -821,7 +819,6 @@ async function emitFailure(
   startedEpoch: number,
   sections: { validation?: string; log?: string },
 ): Promise<boolean> {
-  const remoteName = buildRefFromSlug("afk-attempts", input.workerId, input.issue, slugifyRef(input.title)) ?? "";
   const result = await emitEnvelope(deps.envelope, {
     status,
     issue: input.issue,
@@ -830,7 +827,6 @@ async function emitFailure(
     branch: input.branch,
     attempt: input.attempt,
     diff: "not-landed",
-    remoteName,
     repo: input.repo,
     repoDir: input.repoDir,
     worktreeRel: input.attemptDir,

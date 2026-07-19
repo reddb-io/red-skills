@@ -235,7 +235,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         bootstrap,
         orphans: [],
         attemptCap: { byIssue: new Map() },
-        branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
+        branches: { remoteLiveRefs: [], localLiveRefs: [] },
         unblockCandidates: [],
         skipSweeps: true,
       };

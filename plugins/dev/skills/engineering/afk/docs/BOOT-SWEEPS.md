@@ -36,25 +36,15 @@ The *Completion sweep* (close step 11) only fires when an issue completes. Issue
 
 Both caps share the completion sweep's invariant: a **live** worker's active attempt (state file carrying a live `pid`) is never counted toward the cap nor removed.
 
-## Snapshot Branch Grace Cleanup (boot-time, issue #258)
-
-The *Completion sweep* and *Attempt Cap* reclaim **local** attempt dirs; the failure-push `afk-attempts/{wid}/{N}-slug` **snapshot branches** live on origin and are the canonical record a terminal-failure envelope links to. After *Attempt Cap*, `prune_completed_attempt_branches` reaps those remote branches for issues that have **completed**: it lists `afk-attempts/*` on origin, groups branches by the issue number in the ref, classifies each issue with `gh issue view`, and:
-
-- **still-open** issues — every branch is left untouched;
-- **closed within the grace window** — kept, so a reopened issue can still recover its prior attempts from origin;
-- **closed longer than the grace window ago** — every snapshot branch for that issue is deleted from origin (cross-worker).
-
-The grace window is fixed at 7 days, measured from the issue's GitHub `closedAt`. The pass is best-effort and runs at boot, **never** on the close path — a slow or failing `gh`/`git` can never block a completion, and an issue it cannot classify is left strictly in place.
-
 ## On-Demand Branch Reaper (issue #275)
 
 Run `/afk reap` (the bundle's `reap` command) to perform branch hygiene without starting a worker, claiming an issue, or firing lifecycle hooks. The command first prints one line:
 
 ```text
-afk branch counts: remote-afk=N remote-afk-attempts=N local-afk=N
+afk branch counts: remote-afk=N local-afk=N
 ```
 
-It then applies the same three namespace reapers used during `/afk` boot: remote `afk-attempts/*`, remote `afk/*`, and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone. Snapshot grace uses the fixed 7-day window; live `afk/*` cleanup keeps the existing closed-vs-open policy.
+It then applies the same live-branch reapers used during `/afk` boot: remote `afk/*` and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone.
 
 ## Docs Sweep (boot-time)
 
@@ -84,7 +74,7 @@ maintainer can land or remove the stranded docs deliberately.
 
 ## Fleet mode: the supervisor owns the boot (issue #623)
 
-The sweeps above (*Orphan Cleanup*, *Attempt Cap*, *Snapshot Branch Grace Cleanup*, *Docs Sweep*, the *Unblock Sweep*, and the *Straggler Check*) all read and mutate **shared** `.red/tmp` / branch / `gh` state. When several workers boot at once they would race over that state — the observed failure mode was a fleet collapsing to a single live worker because peers fast-died in their boot sweeps.
+The sweeps above (*Orphan Cleanup*, *Attempt Cap*, live branch cleanup, *Docs Sweep*, the *Unblock Sweep*, and the *Straggler Check*) all read and mutate **shared** `.red/tmp` / branch / `gh` state. When several workers boot at once they would race over that state — the observed failure mode was a fleet collapsing to a single live worker because peers fast-died in their boot sweeps.
 
 So in **fleet mode** the **supervisor** runs the full sweep suite **exactly once, before it spawns any worker**, and logs the result to `.red/tmp/supervisors/default/supervisor.log.toonl` (`boot sweeps complete: orphans … | attempt-cap … | branches … | docs-sweep … | unblocked … | stragglers …`). Every worker the supervisor spawns carries a `RED_AFK_SWEEPS_DONE=1` marker; a marked worker's boot is **bootstrap + claim only** — it ensures its dirs/gitignore/`worker.pid` and goes straight to claiming an issue, skipping every shared sweep. This makes respawns cheap and keeps workers from racing each other over boot state. The supervisor runs the sweeps a single time per lifetime: a worker that exits and is respawned does **not** re-trigger them.
 

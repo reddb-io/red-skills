@@ -269,13 +269,10 @@ export async function appendLine(path: string, line: string): Promise<void> {
 }
 
 /** Persist the terminal failure marker files into an iteration dir
- * (record_failure_markers): snapshot-branch.ref + failure.reason. Each value
- * already carries its trailing newline; an absent field writes no file. */
+ * (record_failure_markers): failure.reason. Each value already carries its
+ * trailing newline; an absent field writes no file. */
 export async function writeFailureMarkers(attemptDir: string, markers: FailureMarkers): Promise<void> {
   await mkdir(attemptDir, { recursive: true });
-  if (markers.snapshotBranchRef !== undefined) {
-    await writeFile(join(attemptDir, "snapshot-branch.ref"), markers.snapshotBranchRef, "utf8");
-  }
   if (markers.failureReason !== undefined) {
     await writeFile(join(attemptDir, "failure.reason"), markers.failureReason, "utf8");
   }

@@ -5,13 +5,9 @@
 // remote-branch.ts (deleteRemote / deleteRemoteArgs) — no git argv is rebuilt
 // here.
 //
-// Three reapers, each grouping branches by the issue number parsed from the ref
+// Two reapers, each grouping branches by the issue number parsed from the ref
 // and classifying via an injected issue-state lookup:
 //
-//   - snapshot reaper  (remote afk-attempts/{wid}/{N}-slug): forensic snapshots.
-//       Deleted only once the issue has been CLOSED longer than the grace window
-//       (measured from closedAt), or when the issue 404s and the branch's last
-//       commit predates the grace window. Open / within-grace / transient kept.
 //   - remote live reaper (remote afk/{wid}/{N}-slug): live-iteration branches.
 //       Deleted as soon as the issue is CLOSED — the merge base already has the
 //       work, so the live branch is residue. No grace. Open / not-found /
@@ -20,13 +16,9 @@
 //       the remote live reaper; the caller separately skips checked-out branches
 //       before handing refs here.
 //
-// Mirrors lib/remote-branch.sh: _branch_cleanup_plan, the per-namespace policies,
-// _attempt_snapshot_issue_state_from_gh, and _attempt_snapshot_grace_s. The
-// classification is PURE: the issue-state lookup and `now` are injected so the
-// deciders perform no git/gh/date I/O.
-
-/** Default snapshot grace window: 7 days, in seconds. */
-export const DEFAULT_SNAPSHOT_GRACE_S = 7 * 86400;
+// Mirrors lib/remote-branch.sh: _branch_cleanup_plan and the live namespace
+// policy. The classification is PURE: the issue-state lookup and `now` are
+// injected so the deciders perform no git/gh/date I/O.
 
 /** The S1 issue-state vocabulary the deciders consume. Mirrors the strings
  * echoed by _attempt_snapshot_issue_state_from_gh. */
@@ -75,18 +67,8 @@ export interface BranchRef {
   commitS?: number;
 }
 
-const NUMERIC_RE = /^[0-9]+$/;
 const LIVE_REF_RE = /^afk\/[^/]+\/([0-9]+)-[a-z0-9-]+$/;
 const ATTEMPT_REF_RE = /^afk-attempts\/[^/]+\/([0-9]+)-/;
-
-function isFiniteEpoch(value: number | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-/** Fixed legacy snapshot cleanup grace. */
-export function resolveSnapshotGraceS(): number {
-  return DEFAULT_SNAPSHOT_GRACE_S;
-}
 
 /** Issue number from a local/remote live ref afk/{worker}/{N}-slug. Returns null
  * for malformed or non-live refs (e.g. afk-attempts/*), so cleanup never acts on
@@ -136,22 +118,6 @@ export function classifyIssueState(
 
 // ---------- per-namespace policies (pure) ----------
 
-/** Snapshot policy: reap a closed-past-grace issue's branches, or a 404 issue's
- * branch once its last commit predates the grace window; keep everything else.
- * Mirrors _attempt_snapshot_cleanup_policy. */
-function attemptPolicy(
-  state: IssueState,
-  nowS: number,
-  graceS: number,
-  commitS: number | undefined,
-): "keep" | "reap" {
-  if (state === "closed-past-grace") return "reap";
-  if (state === "not-found") {
-    return isFiniteEpoch(commitS) && nowS - commitS > graceS ? "reap" : "keep";
-  }
-  return "keep";
-}
-
 /** Live policy: reap once the issue is CLOSED (within or past grace), keep
  * everything else. No grace window. Mirrors _live_branch_cleanup_policy. */
 function livePolicy(state: IssueState): "keep" | "reap" {
@@ -172,7 +138,7 @@ function plan(
   graceS: number,
   policy: (state: IssueState, nowS: number, graceS: number, commitS: number | undefined) => "keep" | "reap",
 ): BranchDecision[] {
-  const grace = NUMERIC_RE.test(String(graceS)) && graceS >= 0 ? graceS : DEFAULT_SNAPSHOT_GRACE_S;
+  const grace = Number.isFinite(graceS) && graceS >= 0 ? graceS : 0;
   const now = Number.isFinite(nowS) ? nowS : 0;
   const stateCache = new Map<number, IssueState>();
   const decisions: BranchDecision[] = [];
@@ -193,18 +159,6 @@ function plan(
   }
 
   return decisions;
-}
-
-/** Plan the snapshot (afk-attempts/*) reaper. Open / within-grace / transient
- * issues are kept; closed-past-grace issues and stale 404 branches are reaped.
- * Mirrors attempt_snapshot_cleanup_plan + prune_completed_attempt_branches. */
-export function planAttemptSnapshotCleanup(
-  refs: readonly BranchRef[],
-  lookup: IssueLookup,
-  nowS: number,
-  graceS: number,
-): BranchDecision[] {
-  return plan(refs, attemptIssueFromBranch, lookup, nowS, graceS, attemptPolicy);
 }
 
 /** Plan the remote live (afk/*) reaper. Reaps closed-issue branches; keeps

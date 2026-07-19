@@ -127,8 +127,8 @@ Read the focused reference before touching that concern:
 - `blocked:ci` leaves the completed PR open and escalates to `ready-for-human`;
   AFK does not re-run the inner agent for already-complete work waiting on CI.
 - On DONE, completion sweep reclaims all attempt directories for that issue
-  across workers; failure paths retain cheap artifacts and push the
-  `afk-attempts/*` snapshot.
+  across workers; failure paths retain cheap artifacts and the pushed
+  `afk/*` worker branch.
 
 ## Parallelization
 

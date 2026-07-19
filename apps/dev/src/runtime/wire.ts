@@ -1536,7 +1536,6 @@ import { issueMeta, listIssueStates, type GhContext } from "./gh.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 
 export interface ReapInputs {
-  snapshotRefs: BranchRef[];
   remoteLiveRefs: BranchRef[];
   localLiveRefs: BranchRef[];
   /** Synchronous issue-state lookup (pre-resolved gh metadata cache). */
@@ -1547,7 +1546,7 @@ export interface ReapInputs {
 }
 
 /**
- * List the three branch namespaces and pre-resolve every referenced issue's gh
+ * List the live branch namespaces and pre-resolve every referenced issue's gh
  * state into a synchronous cache (branch-cleanup's IssueLookup is sync). Local
  * checked-out branches are excluded from the local live set.
  */
@@ -1555,7 +1554,6 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
 
-  const snapshotRefs = await gitx.listRemoteBranches(gitCtx, "afk-attempts/");
   const remoteLiveRefs = await gitx.listRemoteBranches(gitCtx, "afk/");
   const localAll = await gitx.listLocalBranches(gitCtx, "afk/*");
   const checkedOut = await gitx.checkedOutBranches(gitCtx);
@@ -1563,13 +1561,9 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
     .filter((b) => !checkedOut.has(b))
     .map((b) => ({ branch: b }));
 
-  // Pre-resolve every issue referenced across the three sets.
-  const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
+  // Pre-resolve every issue referenced across the live branch sets.
+  const { liveIssueFromBranch } = await import("../core/branch-cleanup.js");
   const issues = new Set<number>();
-  for (const r of snapshotRefs) {
-    const n = attemptIssueFromBranch(r.branch);
-    if (n !== null) issues.add(n);
-  }
   for (const r of [...remoteLiveRefs, ...localLiveRefs]) {
     const n = liveIssueFromBranch(r.branch);
     if (n !== null) issues.add(n);
@@ -1586,7 +1580,6 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
   }
 
   return {
-    snapshotRefs,
     remoteLiveRefs,
     localLiveRefs,
     lookup: (issue) => cache.get(issue),
@@ -1610,8 +1603,8 @@ import { parseClaimRecords } from "../core/claim.js";
  *   - orphans: every attempt dir under every worker namespace with its age + issue.
  *   - attemptCap: those same dirs grouped by issue, each stat'd for mtime +
  *     liveness (live attempts are excluded from the cap).
- *   - branches: the three afk/* / afk-attempts/* ref namespaces (snapshot
- *     remote, live remote, live local minus checked-out) the reapers prune.
+ *   - branches: the live afk/* ref namespaces (remote, local minus
+ *     checked-out) the reapers prune.
  *   - unblockCandidates: the `blocked:dependency` issues the unblock sweep scans.
  * The straggler counts + per-issue gh state lookups are resolved lazily in the
  * boot deps (buildBootDeps), so this only gathers the disk/branch facts.
@@ -1642,12 +1635,11 @@ export async function collectBootOptions(
     byIssue.set(parsed.issue, list);
   }
 
-  // Branch namespaces for the three reapers, the unblock-candidate listing, and
+  // Branch namespaces for the live reapers, the unblock-candidate listing, and
   // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
   // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
   // liveness at discovery so boot's orphan step stays a pure removal, #252.)
   const [
-    snapshotRefs,
     remoteLiveRefs,
     localAll,
     checkedOut,
@@ -1659,7 +1651,6 @@ export async function collectBootOptions(
     tmpJanitorIssueStates,
   ] =
     await Promise.all([
-      gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
       gitx.listRemoteBranches(gitCtx, "afk/"),
       gitx.listLocalBranches(gitCtx, "afk/*"),
       gitx.checkedOutBranches(gitCtx),
@@ -1681,7 +1672,7 @@ export async function collectBootOptions(
     bootstrap,
     orphans: orphans as readonly OrphanDir[],
     attemptCap: { byIssue },
-    branches: { snapshotRefs, remoteLiveRefs, localLiveRefs },
+    branches: { remoteLiveRefs, localLiveRefs },
     unblockCandidates,
     staleClaimDirs,
     legacyWorkDirs,
@@ -2019,12 +2010,8 @@ async function resolveBranchIssueCache(
   options: BootOptions,
   states: Map<number, IssueStateRow>,
 ): Promise<Map<number, IssueMeta | null | undefined>> {
-  const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
+  const { liveIssueFromBranch } = await import("../core/branch-cleanup.js");
   const issues = new Set<number>();
-  for (const r of options.branches.snapshotRefs) {
-    const n = attemptIssueFromBranch(r.branch);
-    if (n !== null) issues.add(n);
-  }
   for (const r of [...options.branches.remoteLiveRefs, ...options.branches.localLiveRefs]) {
     const n = liveIssueFromBranch(r.branch);
     if (n !== null) issues.add(n);

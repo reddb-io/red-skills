@@ -1,9 +1,7 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
 import {
-  buildRefFromSlug,
   deleteRemote,
   pushAttempt,
-  slugifyRef,
   type GitExec,
 } from "../remote-branch.js";
 import { buildHandoff, exitProtocolFor, type HandoffComment } from "../handoff.js";
@@ -237,7 +235,6 @@ export async function emitFailure(
   sections: SectionBodies,
 ): Promise<boolean> {
   const { deps, input } = c;
-  const remoteName = buildRefFromSlug("afk-attempts", input.workerId, input.issue, c.slug) ?? "";
   const durationS = deps.nowEpoch() - c.startedEpoch;
   const result = await emitEnvelope(deps.envelope, {
     status,
@@ -247,7 +244,6 @@ export async function emitFailure(
     branch: c.branch,
     attempt: input.attempt,
     diff: diffLabel,
-    remoteName,
     repo: input.repo,
     repoDir: input.repoDir,
     worktreeRel: input.attemptDir,

@@ -9,10 +9,8 @@
 //   - the per-status section set (blocked→notes; no-sentinel→notes+log;
 //     merge-conflict→log; done→validation; blocked→notes+optional validation;
 //     + a trailing hooks block #215),
-//   - the diff section (compare-link on a successful afk-attempts push, else a
-//     local-worktree fallback line),
-//   - the failure-only afk-attempts push, the `envelope.posted` signal, and the
-//     history-event append.
+//   - the diff section (live worker branch + local-worktree fallback),
+//   - the `envelope.posted` signal and the history-event append.
 //
 // PURE assembly with injected gh/git/fs (no real network/disk in tests). Body
 // composition reuses buildEnvelope from envelope.ts so the wire schema is
@@ -21,7 +19,7 @@
 // filesystem except through the injected marker writer.
 
 import { buildEnvelope, type AttemptStatus, type EnvelopeSection } from "./envelope.js";
-import { pushAttempt, type GitExec } from "./remote-branch.js";
+import type { GitExec } from "./remote-branch.js";
 import { historyAppend, type HistoryAppendFields, type HistoryClock, type HistoryEvent, type HistoryIO } from "./history.js";
 import { enrichIssueReferences, type IssueReferenceLookup } from "./issue-reference.js";
 import { parseLane } from "./jsonl-log.js";
@@ -48,13 +46,13 @@ export function buildEnvelopeSummary(input: {
   return `worker \`${input.worker}\` · status: ${input.status} · duration: ${fmtDuration(input.durationS)} · diff: ${input.diff} · attempt: ${input.attempt}${mergePart}`;
 }
 
-/** Body of the `data-section="diff"` block. When the attempt branch was pushed
- * (`remoteBranch` non-empty) the content is a compare-link to the pushed ref;
- * otherwise it embeds the local worktree path so a human can still find the
- * work. The diffstat line is always appended. Mirrors
+/** Body of the `data-section="diff"` block. Terminal failures use the live
+ * worker branch as the durable forensic ref; no separate snapshot branch is
+ * pushed or linked. The diffstat line is always appended. Mirrors
  * envelope_build_diff_section. */
 export function buildDiffSection(input: {
   repo: string;
+  /** Legacy field retained for callers/tests that predate ADR 0103. Ignored. */
   remoteBranch: string;
   worktreeRel: string;
   diffstat: string;
@@ -67,19 +65,14 @@ export function buildDiffSection(input: {
     input.liveBranch && input.repo
       ? `live branch: <a href="https://github.com/${input.repo}/tree/${input.liveBranch}">${input.liveBranch}</a>\n`
       : "";
-  if (input.remoteBranch) {
-    const url = `https://github.com/${input.repo}/compare/main...${input.remoteBranch}`;
-    return `${liveLink}<a href="${url}">compare/main...${input.remoteBranch}</a>\n\n${input.diffstat}\n`;
-  }
-  return `${liveLink}push to \`afk-attempts/\` failed — local worktree: \`${input.worktreeRel}\`\n\n${input.diffstat}\n`;
+  return `${liveLink}local worktree: \`${input.worktreeRel}\`\n\n${input.diffstat}\n`;
 }
 
-/** The two attempt-ledger marker file paths a terminal FAILURE persists into
- * the iteration dir so the NEXT attempt can fetch the prior snapshot branch and
- * surface the recorded failure reason (issue #255). */
+/** The attempt-ledger marker file a terminal FAILURE persists into the
+ * iteration dir so the NEXT attempt can surface the recorded failure reason. */
 export interface FailureMarkers {
-  /** `<iter_dir>/snapshot-branch.ref` — the afk-attempts/* ref the failed
-   * attempt was pushed to. Omitted when `remoteRef` is empty. */
+  /** Legacy marker retained for readers of old attempt dirs; new failures never
+   * write it. */
   snapshotBranchRef?: string;
   /** `<iter_dir>/failure.reason` — free-text reason (the envelope summary).
    * Omitted when empty. */
@@ -87,11 +80,11 @@ export interface FailureMarkers {
 }
 
 /** Build the marker-file content map for a terminal failure. Mirrors
- * record_failure_markers: each file carries a single trailing-newline line; an
- * empty value omits the file entirely. */
+ * record_failure_markers: failure.reason carries a single trailing-newline
+ * line; snapshot-branch.ref is no longer written. */
 export function buildFailureMarkers(remoteRef: string, reason: string): FailureMarkers {
+  void remoteRef;
   const markers: FailureMarkers = {};
-  if (remoteRef) markers.snapshotBranchRef = `${remoteRef}\n`;
   if (reason) markers.failureReason = `${reason}\n`;
   return markers;
 }
@@ -213,7 +206,7 @@ export interface EmitEnvelopeInput {
   mergeSha?: string;
   /** `+N -M` (or `merged`) for the summary line. */
   diff: string;
-  /** afk-attempts/{worker}/{issue}-{slug} target ref (failure family). */
+  /** Legacy ADR 0103 field; ignored. */
   remoteName?: string;
   /** owner/name, for the diff compare-link. */
   repo?: string;
@@ -244,9 +237,9 @@ export interface EmitEnvelopeResult {
   summary: string;
   /** True when the poster reported a successful post. */
   posted: boolean;
-  /** True when the afk-attempts push was attempted and succeeded. */
+  /** Always false; ADR 0103 removed failure snapshot pushes. */
   pushed: boolean;
-  /** The afk-attempts ref the diff section links to ("" when no/failed push). */
+  /** Always empty; ADR 0103 removed failure snapshot refs. */
   remoteBranch: string;
   /** The marker files written on a terminal failure (empty on done). */
   markers: FailureMarkers;
@@ -258,10 +251,8 @@ export interface EmitEnvelopeResult {
  * Orchestrate a single terminal-envelope emission, mirroring emit_envelope:
  *
  *   1. Build the summary line.
- *   2. On a terminal FAILURE: push the afk-attempts branch (best-effort —
- *      a failed push degrades the diff section to the fallback body) and write
- *      the snapshot-branch.ref / failure.reason markers regardless of the post
- *      outcome (they feed the next attempt, not the issue thread).
+ *   2. On a terminal FAILURE: write the failure.reason marker regardless of the
+ *      post outcome (it feeds the next attempt, not the issue thread).
  *   3. Compose the per-status sections + body through buildEnvelope.
  *   4. POST via the injected poster.
  *   5. On a successful post: write `envelope.posted:=true` and append the
@@ -285,25 +276,12 @@ export async function emitEnvelope(
 
   const isFailure = input.status !== "done" && input.status !== "discarded";
 
-  // --- failure-only afk-attempts push + markers (steps 2) ---
+  // --- failure marker (step 2) ---
   let remoteBranch = "";
   let pushed = false;
   let markers: FailureMarkers = {};
   if (isFailure) {
-    const remoteName = input.remoteName ?? "";
-    if (input.repoDir && input.branch && remoteName) {
-      const outcome = await pushAttempt(deps.git, input.repoDir, input.branch, remoteName);
-      if (outcome.ok && outcome.ran) {
-        remoteBranch = remoteName;
-        pushed = true;
-      } else if (outcome.warn) {
-        warnings.push(outcome.warn);
-      }
-    }
-    // The markers feed the next attempt regardless of whether the push or the
-    // post below succeeds. The snapshot ref is the intended remote_name even
-    // when the push fell through — mirrors emit_envelope recording snapshot_ref.
-    markers = buildFailureMarkers(remoteName, summary);
+    markers = buildFailureMarkers("", summary);
     await deps.writeMarkers(markers);
   }
 

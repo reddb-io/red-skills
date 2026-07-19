@@ -295,7 +295,7 @@ function options(over: Partial<BootOptions> = {}): BootOptions {
     },
     orphans: [],
     attemptCap: { byIssue: new Map() },
-    branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
+    branches: { remoteLiveRefs: [], localLiveRefs: [] },
     unblockCandidates: [],
     ...over,
   };
@@ -619,7 +619,7 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
         skipSweeps: true,
         orphans: [{ path: "/d/orphan", issue: 7, ageS: 999_999 }],
         attemptCap: { byIssue: new Map([[7, [attempt(7, 1, 999_999)]]]) },
-        branches: { snapshotRefs: [{ branch: "afk-attempts/7-x" }], remoteLiveRefs: [], localLiveRefs: [] },
+        branches: { remoteLiveRefs: [], localLiveRefs: [] },
         unblockCandidates: [{ number: 9, body: "", labels: ["blocked:dependency", "req:1"] }],
       }),
     );
@@ -1106,15 +1106,11 @@ describe("runBoot attempt cap reclaims the right dirs", () => {
 });
 
 describe("runBoot branch cleanup deletes the planned refs", () => {
-  it("reaps closed snapshot/remote-live remotely and local-live locally", async () => {
+  it("reaps closed remote-live remotely and local-live locally", async () => {
     const closed: IssueMeta = { state: "CLOSED", closedAt: "2000-01-01T00:00:00Z" };
     const branchIssue: BootDeps["lookups"]["branchIssue"] = (issue) =>
       issue === 9 ? closed : ({ state: "OPEN" } as IssueMeta);
     const { deps, gitCalls } = makeDeps({ branchIssue });
-    const snapshotRefs: BranchRef[] = [
-      { branch: "afk-attempts/wAAA/9-slug", commitS: NOW - 30 * DAY },
-      { branch: "afk-attempts/wAAA/3-open" }, // open → kept
-    ];
     const remoteLiveRefs: BranchRef[] = [
       { branch: "afk/wAAA/9-slug" },
       { branch: "afk/wAAA/3-open" }, // open → kept
@@ -1122,12 +1118,11 @@ describe("runBoot branch cleanup deletes the planned refs", () => {
     const localLiveRefs: BranchRef[] = [{ branch: "afk/wAAA/9-local" }];
     const r = await runBoot(
       deps,
-      options({ branches: { snapshotRefs, remoteLiveRefs, localLiveRefs } }),
+      options({ branches: { remoteLiveRefs, localLiveRefs } }),
     );
-    expect(gitCalls.deleteRemote).toEqual(["afk-attempts/wAAA/9-slug", "afk/wAAA/9-slug"]);
+    expect(gitCalls.deleteRemote).toEqual(["afk/wAAA/9-slug"]);
     expect(gitCalls.deleteLocal).toEqual(["afk/wAAA/9-local"]);
     expect(r.branchCleanup).toEqual({
-      snapshotReaped: ["afk-attempts/wAAA/9-slug"],
       remoteLiveReaped: ["afk/wAAA/9-slug"],
       localLiveReaped: ["afk/wAAA/9-local"],
     });
@@ -1442,7 +1437,7 @@ describe("runBoot reconcile sweep", () => {
     const { deps } = makeDeps();
     const r = await runBoot(
       deps,
-      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+      options({ reconcileSweepCandidates: [stalled], branches: { remoteLiveRefs, localLiveRefs: [] } }),
     );
     expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [] });
   });
@@ -1452,7 +1447,7 @@ describe("runBoot reconcile sweep", () => {
     const { deps } = makeDeps({ reconcileRunner });
     const r = await runBoot(
       deps,
-      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+      options({ reconcileSweepCandidates: [stalled], branches: { remoteLiveRefs, localLiveRefs: [] } }),
     );
     expect(r.reconcileSweep).toEqual({ landed: [50], parked: [], skipped: [] });
   });
@@ -1462,7 +1457,7 @@ describe("runBoot reconcile sweep", () => {
     const { deps } = makeDeps({ reconcileRunner });
     const r = await runBoot(
       deps,
-      options({ reconcileSweepCandidates: [crashed], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+      options({ reconcileSweepCandidates: [crashed], branches: { remoteLiveRefs, localLiveRefs: [] } }),
     );
     expect(r.reconcileSweep).toEqual({ landed: [], parked: [51], skipped: [] });
   });
@@ -1476,7 +1471,7 @@ describe("runBoot reconcile sweep", () => {
     const { deps } = makeDeps({ reconcileRunner });
     const r = await runBoot(
       deps,
-      options({ reconcileSweepCandidates: [noBranch], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+      options({ reconcileSweepCandidates: [noBranch], branches: { remoteLiveRefs, localLiveRefs: [] } }),
     );
     expect(runnerCalled).toBe(false);
     expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [] });
@@ -1489,7 +1484,7 @@ describe("runBoot reconcile sweep", () => {
     const { deps } = makeDeps({ reconcileRunner });
     const r = await runBoot(
       deps,
-      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+      options({ reconcileSweepCandidates: [stalled], branches: { remoteLiveRefs, localLiveRefs: [] } }),
     );
     expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [50] });
   });
@@ -1505,7 +1500,7 @@ describe("runBoot reconcile sweep", () => {
       deps,
       options({
         reconcileSweepCandidates: [stalled, crashed, noBranch],
-        branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] },
+        branches: { remoteLiveRefs, localLiveRefs: [] },
       }),
     );
     expect(r.reconcileSweep).toEqual({ landed: [50], parked: [51], skipped: [] });
@@ -1556,7 +1551,6 @@ describe("runBoot step ORDER", () => {
       orphans: [{ path: "/d/orphan", issue: 1, ageS: 0 }],
       attemptCap: { byIssue },
       branches: {
-        snapshotRefs: [{ branch: "afk-attempts/wAAA/9-s", commitS: NOW - 30 * DAY }],
         remoteLiveRefs: [{ branch: "afk/wAAA/9-r" }],
         localLiveRefs: [{ branch: "afk/wAAA/9-l" }],
       },
@@ -1572,7 +1566,6 @@ describe("runBoot step ORDER", () => {
       "fs.ensureDir:/p/.red/tmp", // bootstrap
       "fs.removeDir:/d/orphan", // orphan cleanup
       "fs.removeDir:/p/.red/tmp/workers/wAAA/42-a1", // attempt cap
-      "git.deleteRemote:afk-attempts/wAAA/9-s", // snapshot cleanup
       "git.deleteRemote:afk/wAAA/9-r", // remote live cleanup
       "git.deleteLocal:afk/wAAA/9-l", // local live cleanup
       "gh.editLabels:100", // unblock sweep

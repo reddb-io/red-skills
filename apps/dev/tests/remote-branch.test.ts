@@ -25,10 +25,12 @@ function fakeGit(result: Partial<GitExecResult> = {}): { git: GitExec; calls: st
 }
 
 describe("remote-branch ref construction", () => {
-  it("builds and validates both namespaces from a slug", () => {
+  it("builds and validates only the live namespace from a slug", () => {
     expect(buildRefFromSlug("afk", "wABC", 42, "fix-thing")).toBe("afk/wABC/42-fix-thing");
-    expect(buildRefFromSlug("afk-attempts", "wABC", "42", "fix-thing")).toBe("afk-attempts/wABC/42-fix-thing");
+    // @ts-expect-error namespace narrowed to the one valid value
+    expect(buildRefFromSlug("afk-attempts", "wABC", "42", "fix-thing")).toBeNull();
     expect(isValidRef("afk/wABC/42-fix-thing")).toBe(true);
+    expect(isValidRef("afk-attempts/wABC/42-fix-thing")).toBe(false);
     expect(isValidRef("afk/wABC/42-fix/thing")).toBe(false);
   });
 
@@ -37,7 +39,7 @@ describe("remote-branch ref construction", () => {
     expect(buildRefFromSlug("afk", "wOK", "1x", "slug")).toBeNull(); // non-numeric issue
     expect(buildRefFromSlug("afk", "wOK", 1, "Bad Slug")).toBeNull(); // un-slugified
     expect(buildRefFromSlug("afk", "wOK", 1, "nested/slug")).toBeNull(); // slug with slash
-    // @ts-expect-error namespace narrowed to the two valid values
+    // @ts-expect-error namespace narrowed to the valid value
     expect(buildRefFromSlug("personal", "wOK", 1, "slug")).toBeNull();
   });
 
@@ -105,12 +107,9 @@ describe("deleteRemote (live namespace only)", () => {
 
   it("never targets the afk-attempts forensic namespace", async () => {
     const { git, calls } = fakeGit();
-    await deleteRemote(git, "/repo", "afk-attempts/wABC/42-slug");
-    // The orchestrator only ever passes live refs here; the delete argv is a
-    // plain `--delete <branch>` with no namespace rewriting, so a forensic ref
-    // would be deleted verbatim — guard at the call site keeps that from
-    // happening. Assert the argv carries exactly the branch handed in.
-    expect(calls[0]).toEqual(["-C", "/repo", "push", "origin", "--delete", "afk-attempts/wABC/42-slug"]);
+    const out = await deleteRemote(git, "/repo", "afk-attempts/wABC/42-slug");
+    expect(out).toMatchObject({ ok: true, ran: false });
+    expect(calls).toEqual([]);
   });
 
   it("is best-effort: a non-zero exec warns and does not throw", async () => {
@@ -129,13 +128,13 @@ describe("deleteRemote (live namespace only)", () => {
   });
 });
 
-describe("pushAttempt (afk-attempts forensic namespace)", () => {
-  it("pushes a plain refspec into the afk-attempts namespace (no --force-with-lease, no -u)", async () => {
+describe("pushAttempt (live branch safety push)", () => {
+  it("pushes a plain refspec into the live namespace (no --force-with-lease, no -u)", async () => {
     const { git, calls } = fakeGit();
-    const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk-attempts/wABC/9-slug");
+    const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk/wABC/9-slug");
     expect(out).toEqual({ ok: true, ran: true });
     expect(calls).toEqual([
-      ["-C", "/repo", "push", "origin", "afk/wABC/9-slug:refs/heads/afk-attempts/wABC/9-slug"],
+      ["-C", "/repo", "push", "origin", "afk/wABC/9-slug:refs/heads/afk/wABC/9-slug"],
     ]);
     expect(calls[0]).not.toContain("--force-with-lease");
     expect(calls[0]).not.toContain("-u");
@@ -143,15 +142,22 @@ describe("pushAttempt (afk-attempts forensic namespace)", () => {
 
   it("is best-effort: a non-zero exec returns ok:false (caller warns) without throwing", async () => {
     const { git } = fakeGit({ code: 1 });
-    const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk-attempts/wABC/9-slug");
+    const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk/wABC/9-slug");
     expect(out.ok).toBe(false);
     expect(out.ran).toBe(true);
-    expect(out.warn).toMatch(/failed to push attempt branch to origin\/afk-attempts\/wABC\/9-slug/);
+    expect(out.warn).toMatch(/failed to push attempt branch to origin\/afk\/wABC\/9-slug/);
+  });
+
+  it("skips git entirely for afk-attempts refs", async () => {
+    const { git, calls } = fakeGit();
+    const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk-attempts/wABC/9-slug");
+    expect(out).toMatchObject({ ok: false, ran: false });
+    expect(calls).toEqual([]);
   });
 
   it("skips git entirely on an empty branch or remote", async () => {
     const { git, calls } = fakeGit();
-    expect((await pushAttempt(git, "/repo", "", "afk-attempts/wABC/9-slug")).ran).toBe(false);
+    expect((await pushAttempt(git, "/repo", "", "afk/wABC/9-slug")).ran).toBe(false);
     expect((await pushAttempt(git, "/repo", "afk/wABC/9-slug", "")).ran).toBe(false);
     expect(calls).toEqual([]);
   });

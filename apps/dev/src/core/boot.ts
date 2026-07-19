@@ -1,9 +1,9 @@
 // boot — the AFK boot-time sequence, ported from afk.sh's top-level startup
 // (lines ~3344-3395: precheck → bootstrap → prune_orphans → cap_issue_attempts
-// → prune_completed_attempt_branches → prune_completed_remote_live_branches →
-// prune_completed_local_branches → sweep_unblocked → straggler_check), plus the
+// → prune_completed_remote_live_branches → prune_completed_local_branches →
+// sweep_unblocked → straggler_check), plus the
 // SKILL.md "Bootstrap / Hard Preconditions / Orphan Cleanup / Attempt Cap /
-// Snapshot Branch Grace Cleanup / Unblock Sweep / Straggler Check" sections.
+// Branch Cleanup / Unblock Sweep / Straggler Check" sections.
 //
 // This module is PURE SEQUENCING. It owns only the ORDER of the boot steps and
 // the compose-decider-then-apply pattern: every step composes one of the already
@@ -22,11 +22,9 @@ import {
   type IssueOpenState,
 } from "./reclaim.js";
 import {
-  planAttemptSnapshotCleanup,
   planLiveBranchCleanup,
   planLocalBranchCleanup,
   branchesToReap,
-  resolveSnapshotGraceS,
   type BranchRef,
   type IssueLookup,
 } from "./branch-cleanup.js";
@@ -413,10 +411,9 @@ export interface AttemptCapInput {
   byIssue: ReadonlyMap<number, readonly AttemptDir[]>;
 }
 
-/** Branch refs for the three branch-cleanup reapers, pre-listed by the caller
+/** Branch refs for the live branch-cleanup reapers, pre-listed by the caller
  * (ls-remote / git branch). Local refs already exclude checked-out branches. */
 export interface BranchCleanupInput {
-  snapshotRefs: readonly BranchRef[];
   remoteLiveRefs: readonly BranchRef[];
   localLiveRefs: readonly BranchRef[];
 }
@@ -500,7 +497,6 @@ export interface AttemptCapResult {
 }
 
 export interface BranchCleanupResult {
-  snapshotReaped: string[];
   remoteLiveReaped: string[];
   localLiveReaped: string[];
 }
@@ -584,8 +580,8 @@ export interface BootResult {
  *   3. orphan cleanup       — decideOrphanFate per dead-worker attempt dir, then
  *                             apply remove / restore-and-remove / keep (gh + fs).
  *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
- *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
- *                             planLocalBranchCleanup; delete reaped refs (git).
+ *   5. branch cleanup       — planLiveBranchCleanup, planLocalBranchCleanup;
+ *                             delete reaped refs (git).
  *   5a. tmp janitor         — reclaim expired ADR 0098 lanes, dead closed-issue
  *                             worker dirs, and audited unknown tmp-root entries.
  *   6. docs sweep           — planDocsSweep; land stranded .red docs or halt.
@@ -956,27 +952,12 @@ async function runAttemptCap(deps: BootDeps, input: AttemptCapInput): Promise<At
 }
 
 /** Step 5: the three branch-cleanup planners, deleting only the reaped refs.
- * Snapshot refs delete remotely (afk-attempts/*), remote-live refs delete
- * remotely (afk/*), local-live refs delete locally. Order mirrors afk.sh:
- * prune_completed_attempt_branches → _remote_live → _local. */
+ * Remote-live refs delete remotely (afk/*), local-live refs delete locally.
+ * Order mirrors afk.sh: _remote_live → _local. */
 async function runBranchCleanup(
   deps: BootDeps,
   input: BranchCleanupInput,
 ): Promise<BranchCleanupResult> {
-  const graceS = resolveSnapshotGraceS();
-
-  const snapshotPlan = planAttemptSnapshotCleanup(
-    input.snapshotRefs,
-    deps.lookups.branchIssue,
-    deps.nowS,
-    graceS,
-  );
-  const snapshotReaped: string[] = [];
-  for (const d of branchesToReap(snapshotPlan)) {
-    await deps.git.deleteRemoteBranch(d.branch);
-    snapshotReaped.push(d.branch);
-  }
-
   const remoteLivePlan = planLiveBranchCleanup(
     input.remoteLiveRefs,
     deps.lookups.branchIssue,
@@ -999,7 +980,7 @@ async function runBranchCleanup(
     localLiveReaped.push(d.branch);
   }
 
-  return { snapshotReaped, remoteLiveReaped, localLiveReaped };
+  return { remoteLiveReaped, localLiveReaped };
 }
 
 /** Step 6: planUnblockSweep, then promote each planned issue (remove its holding
