@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SNAPSHOT_GRACE_S,
   attemptIssueFromBranch,
   branchesToKeep,
   branchesToReap,
   classifyIssueState,
   liveIssueFromBranch,
-  planAttemptSnapshotCleanup,
   planLiveBranchCleanup,
   planLocalBranchCleanup,
   type BranchRef,
@@ -40,7 +38,7 @@ describe("ref parsing", () => {
     expect(liveIssueFromBranch("afk/wAAA/notanumber-slug")).toBeNull();
   });
 
-  it("parses the issue from a snapshot ref and rejects the live namespace", () => {
+  it("keeps legacy snapshot ref parsing available for old attempt ledgers only", () => {
     expect(attemptIssueFromBranch("afk-attempts/wAAA/300-old-completed")).toBe(300);
     expect(attemptIssueFromBranch("afk/wAAA/300-live")).toBeNull();
     expect(attemptIssueFromBranch("afk-attempts/wAAA/bad-slug")).toBeNull();
@@ -63,90 +61,6 @@ describe("classifyIssueState", () => {
     expect(classifyIssueState(closedAgo(1), NOW, 0)).toBe("closed-past-grace");
     // Boundary: exactly at the window is still within grace (strict > , mirrors bash).
     expect(classifyIssueState(closedAgo(0), NOW, 0)).toBe("closed-within-grace");
-  });
-});
-
-describe("snapshot reaper (afk-attempts/*)", () => {
-  // Six issues mirroring snapshot-grace-cleanup.test.sh decider cases.
-  const refs: BranchRef[] = [
-    { branch: "afk-attempts/wAAA/400-open", commitS: NOW - 30 * DAY },
-    { branch: "afk-attempts/wAAA/401-fresh-closed", commitS: NOW - 30 * DAY },
-    { branch: "afk-attempts/wAAA/402-old-closed", commitS: NOW - 30 * DAY },
-    { branch: "afk-attempts/wAAA/403-old-missing", commitS: NOW - 30 * DAY },
-    { branch: "afk-attempts/wAAA/404-fresh-missing", commitS: NOW - 1 * DAY },
-    { branch: "afk-attempts/wAAA/405-rate-limited", commitS: NOW - 30 * DAY },
-  ];
-  const lookup = lookupFrom({
-    400: { state: "OPEN" },
-    401: closedAgo(1 * DAY),
-    402: closedAgo(30 * DAY),
-    403: null, // 404
-    404: null, // 404
-    405: undefined, // transient
-  });
-
-  it("keeps open, within-grace, fresh-404 and transient; reaps past-grace and stale-404", () => {
-    const decisions = planAttemptSnapshotCleanup(refs, lookup, NOW, 7 * DAY);
-    const byBranch = Object.fromEntries(decisions.map((d) => [d.branch, d]));
-
-    expect(byBranch["afk-attempts/wAAA/400-open"]).toMatchObject({ action: "keep", state: "open" });
-    expect(byBranch["afk-attempts/wAAA/401-fresh-closed"]).toMatchObject({
-      action: "keep",
-      state: "closed-within-grace",
-    });
-    expect(byBranch["afk-attempts/wAAA/402-old-closed"]).toMatchObject({
-      action: "reap",
-      state: "closed-past-grace",
-    });
-    expect(byBranch["afk-attempts/wAAA/403-old-missing"]).toMatchObject({
-      action: "reap",
-      state: "not-found",
-    });
-    expect(byBranch["afk-attempts/wAAA/404-fresh-missing"]).toMatchObject({
-      action: "keep",
-      state: "not-found",
-    });
-    expect(byBranch["afk-attempts/wAAA/405-rate-limited"]).toMatchObject({
-      action: "keep",
-      state: "unresolved-transient",
-    });
-  });
-
-  it("reaps every snapshot of a past-grace issue across workers", () => {
-    const crossWorker: BranchRef[] = [
-      { branch: "afk-attempts/wAAA/300-old-completed", commitS: NOW - 30 * DAY },
-      { branch: "afk-attempts/wBBB/300-old-completed", commitS: NOW - 30 * DAY },
-    ];
-    const reaped = branchesToReap(
-      planAttemptSnapshotCleanup(crossWorker, lookupFrom({ 300: closedAgo(30 * DAY) }), NOW, 7 * DAY),
-    ).map((d) => d.branch);
-    expect(reaped).toEqual(["afk-attempts/wAAA/300-old-completed", "afk-attempts/wBBB/300-old-completed"]);
-  });
-
-  it("a huge grace keeps everything; grace 0 reaps on close (open still spared)", () => {
-    const big = planAttemptSnapshotCleanup(refs, lookup, NOW, 365 * DAY);
-    expect(branchesToReap(big)).toEqual([]);
-
-    const zero = planAttemptSnapshotCleanup(refs, lookup, NOW, 0);
-    const reaped = branchesToReap(zero).map((d) => d.branch);
-    expect(reaped).toContain("afk-attempts/wAAA/401-fresh-closed"); // completed, immediate
-    expect(reaped).toContain("afk-attempts/wAAA/404-fresh-missing"); // 404, immediate
-    expect(reaped).not.toContain("afk-attempts/wAAA/400-open"); // open spared
-  });
-
-  it("keeps a 404 branch whose commit date is unknown", () => {
-    const noDate: BranchRef[] = [{ branch: "afk-attempts/wAAA/777-missing" }];
-    const decisions = planAttemptSnapshotCleanup(noDate, lookupFrom({ 777: null }), NOW, 7 * DAY);
-    expect(decisions[0]).toMatchObject({ action: "keep", state: "not-found" });
-  });
-
-  it("leaves unparseable / unknown-namespace refs out of the plan", () => {
-    const junk: BranchRef[] = [
-      { branch: "afk-attempts/wAAA/bad-slug" },
-      { branch: "afk/wAAA/402-live-not-snapshot" },
-      { branch: "totally-unrelated" },
-    ];
-    expect(planAttemptSnapshotCleanup(junk, lookup, NOW, 7 * DAY)).toEqual([]);
   });
 });
 
@@ -224,14 +138,13 @@ describe("issue-state caching", () => {
       calls.push(issue);
       return closedAgo(30 * DAY);
     };
-    planAttemptSnapshotCleanup(
+    planLiveBranchCleanup(
       [
-        { branch: "afk-attempts/wAAA/300-x", commitS: NOW - 30 * DAY },
-        { branch: "afk-attempts/wBBB/300-y", commitS: NOW - 30 * DAY },
+        { branch: "afk/wAAA/300-x", commitS: NOW - 30 * DAY },
+        { branch: "afk/wBBB/300-y", commitS: NOW - 30 * DAY },
       ],
       lookup,
       NOW,
-      7 * DAY,
     );
     expect(calls).toEqual([300]);
   });
