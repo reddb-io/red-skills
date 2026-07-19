@@ -95,51 +95,42 @@ describe("buildEnvelopeSummary", () => {
 });
 
 describe("buildDiffSection", () => {
-  it("renders a compare link on a successful push", () => {
-    const body = buildDiffSection({ repo: "reddb-io/red-skills", remoteBranch: "afk-attempts/wTEST/9-foo", worktreeRel: ".red/tmp/w", diffstat: "+12 -3 files=2" });
-    expect(body).toContain("https://github.com/reddb-io/red-skills/compare/main...afk-attempts/wTEST/9-foo");
-    expect(body).toContain("compare/main...afk-attempts/wTEST/9-foo");
-    expect(body).toContain("+12 -3 files=2");
-    expect(body).not.toContain("push to `afk-attempts/` failed");
-  });
-
-  it("falls back to the worktree path when the push failed", () => {
+  it("uses the live worker branch as the failure forensic ref", () => {
     const body = buildDiffSection({ repo: "reddb-io/red-skills", remoteBranch: "", worktreeRel: ".red/tmp/work-wTEST-i9/worktree", diffstat: "+12 -3 files=2" });
-    expect(body).toContain("push to `afk-attempts/` failed");
-    expect(body).toContain(".red/tmp/work-wTEST-i9/worktree");
+    expect(body).toContain("local worktree: `.red/tmp/work-wTEST-i9/worktree`");
     expect(body).toContain("+12 -3 files=2");
     expect(body).not.toContain("compare/main...");
+    expect(body).not.toContain("afk-attempts");
   });
 
   it("renders a clickable live-branch tree link when liveBranch is set (#443)", () => {
     const body = buildDiffSection({
       repo: "reddb-io/red-skills",
-      remoteBranch: "afk-attempts/wTEST/9-foo",
+      remoteBranch: "",
       worktreeRel: ".red/tmp/w",
       diffstat: "+12 -3 files=2",
       liveBranch: "afk/wTEST/9-foo",
     });
     expect(body).toContain("live branch:");
     expect(body).toContain("https://github.com/reddb-io/red-skills/tree/afk/wTEST/9-foo");
-    // both links present: the live tree link AND the afk-attempts compare link
-    expect(body).toContain("compare/main...afk-attempts/wTEST/9-foo");
+    expect(body).not.toContain("compare/main...");
+    expect(body).not.toContain("afk-attempts");
   });
 
   it("omits the live-branch link when liveBranch is absent", () => {
-    const body = buildDiffSection({ repo: "reddb-io/red-skills", remoteBranch: "afk-attempts/wTEST/9-foo", worktreeRel: ".red/tmp/w", diffstat: "+0 -0" });
+    const body = buildDiffSection({ repo: "reddb-io/red-skills", remoteBranch: "", worktreeRel: ".red/tmp/w", diffstat: "+0 -0" });
     expect(body).not.toContain("live branch:");
   });
 });
 
 describe("buildFailureMarkers", () => {
-  it("writes both files with trailing newlines", () => {
+  it("writes only the failure reason with a trailing newline", () => {
     expect(buildFailureMarkers("afk-attempts/wTEST/9-foo", "the reason")).toEqual({
-      snapshotBranchRef: "afk-attempts/wTEST/9-foo\n",
       failureReason: "the reason\n",
     });
   });
 
-  it("omits the snapshot ref when empty", () => {
+  it("does not write a snapshot ref marker", () => {
     expect(buildFailureMarkers("", "r")).toEqual({ failureReason: "r\n" });
   });
 });
@@ -418,8 +409,8 @@ describe("emitEnvelope — done", () => {
 // failure flow: push happens + markers written + posted flag
 // ===========================================================================
 
-describe("emitEnvelope — failure push/markers/posted flow", () => {
-  it("pushes the afk-attempts branch, writes markers, sets posted=true", async () => {
+describe("emitEnvelope — failure markers/posted flow", () => {
+  it("does not push an afk-attempts branch and writes only the failure reason", async () => {
     const { deps, git, markers, posted } = makeDeps({ gitCode: 0, posterOk: true });
     const res = await emitEnvelope(deps, {
       status: "blocked",
@@ -436,25 +427,21 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
       diffstat: "+12 -3 files=2",
       sections: { notes: "halted" },
     });
-    // push happened with the afk-attempts refspec
-    expect(git.calls).toHaveLength(1);
-    expect(git.calls[0]).toEqual(["-C", "/tmp/x", "push", "origin", "afk/wTEST/11-foo:refs/heads/afk-attempts/wTEST/11-foo"]);
-    expect(res.pushed).toBe(true);
-    expect(res.remoteBranch).toBe("afk-attempts/wTEST/11-foo");
-    // markers persisted with the snapshot ref + reason
+    expect(git.calls).toHaveLength(0);
+    expect(res.pushed).toBe(false);
+    expect(res.remoteBranch).toBe("");
     expect(markers.written).toHaveLength(1);
     expect(markers.written[0]).toEqual({
-      snapshotBranchRef: "afk-attempts/wTEST/11-foo\n",
       failureReason: `${res.summary}\n`,
     });
-    // posted signal true; diff section carries the compare link
     expect(res.posted).toBe(true);
     expect(posted.writes).toEqual([true]);
-    expect(res.body).toContain("compare/main...afk-attempts/wTEST/11-foo");
+    expect(res.body).toContain("live branch:");
+    expect(res.body).not.toContain("afk-attempts");
   });
 
-  it("degrades to the fallback diff body and still writes markers when the push fails", async () => {
-    const { deps, markers } = makeDeps({ gitCode: 1, posterOk: true });
+  it("ignores legacy remoteName inputs instead of attempting a snapshot push", async () => {
+    const { deps, git, markers } = makeDeps({ gitCode: 1, posterOk: true });
     const res = await emitEnvelope(deps, {
       status: "merge-conflict",
       issue: 13,
@@ -470,13 +457,13 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
       diffstat: "+12 -3 files=2",
       sections: { log: "CONFLICT" },
     });
+    expect(git.calls).toHaveLength(0);
     expect(res.pushed).toBe(false);
     expect(res.remoteBranch).toBe("");
-    expect(res.body).toContain("push to `afk-attempts/` failed");
+    expect(res.body).toContain("live branch:");
     expect(res.body).not.toContain("compare/main...");
-    // the snapshot ref is still recorded for the next attempt even though the push fell through
-    expect(markers.written[0]?.snapshotBranchRef).toBe("afk-attempts/wTEST/13-foo\n");
-    expect(res.warnings.length).toBeGreaterThan(0);
+    expect(markers.written[0]?.snapshotBranchRef).toBeUndefined();
+    expect(res.warnings).toEqual([]);
   });
 
   it("sets posted=false but still appends the history event when the post fails (#625)", async () => {
