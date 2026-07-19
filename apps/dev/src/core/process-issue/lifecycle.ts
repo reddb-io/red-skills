@@ -118,6 +118,7 @@ import {
 } from "../issue-lifecycle.js";
 import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 import {
+  appendAdversarialReviewCorrectionHandoff,
   decideAdversarialReview,
   renderAdversarialReviewComment,
   type AdversarialReviewFindings,
@@ -384,6 +385,10 @@ export async function processIssue(
   let mainRedRepairSyncFailure: string | null = null;
   let currentHandoff = handoff;
   let goVerifyRetriesUsed = 0;
+  let adversarialReviewCorrectionsUsed = 0;
+  let pendingAdversarialCorrection:
+    | { diff: string; findings: AdversarialReviewFindings; retry: number; cap: number }
+    | undefined;
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
   let salvagedRunCommitCount = 0;
@@ -919,8 +924,7 @@ export async function processIssue(
       backpressure_records: backpressureSidecar.length,
       scope: feedback.validationScope?.type ?? "",
     });
-    break;
-  }
+
   markProcessSafetyStep("post-barrier:landing-start");
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
@@ -939,7 +943,7 @@ export async function processIssue(
     });
     deps.markPhase?.(phase);
   };
-  const runAdversarialReview = async (pr: number): Promise<void> => {
+  const runAdversarialReview = async (pr: number): Promise<"abort" | void> => {
     const config = deps.adversarialReview;
     if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) return;
     try {
@@ -957,13 +961,23 @@ export async function processIssue(
         effort: deps.effort,
         maxIterations: config.maxIterations,
       });
-      const decision = decideAdversarialReview(findings, 1, config.maxIterations);
+      const retry = adversarialReviewCorrectionsUsed + 1;
+      const decision = decideAdversarialReview(findings, retry, config.maxIterations);
       await deps.postAdversarialReview({
         pr,
         issue: input.issue,
         findings,
         body: renderAdversarialReviewComment(findings, decision),
       });
+      if (decision === "correct") {
+        pendingAdversarialCorrection = {
+          diff: diff.code === 0 ? diff.stdout : "",
+          findings,
+          retry,
+          cap: config.maxIterations,
+        };
+        return "abort";
+      }
     } catch (error) {
       deps.appendIterLog(`[adversarial-review] advisory pass failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -988,7 +1002,7 @@ export async function processIssue(
       landLock: deps.landLock,
       onPrResolved: async (pr) => {
         await emitBackpressureReview(common, pr);
-        await runAdversarialReview(pr);
+        return await runAdversarialReview(pr);
       },
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await runFeedback(deps.pnpm, {
@@ -1079,6 +1093,28 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
+    if (landing.reason === "adversarial-correction") {
+      const correction = pendingAdversarialCorrection;
+      pendingAdversarialCorrection = undefined;
+      if (!correction) {
+        return await mergeFailed(common, "adversarial correction requested without captured findings", landing.locked);
+      }
+      adversarialReviewCorrectionsUsed = correction.retry;
+      attemptN += 1;
+      currentHandoff = appendAdversarialReviewCorrectionHandoff(handoff, correction);
+      deps.appendIterLog(
+        `🤖 /afk: adversarial review found blocking issue(s); correction retry ${correction.retry}/${correction.cap}.`,
+      );
+      if (
+        !(await fireHook(
+          "pre_attempt",
+          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+        ))
+      ) {
+        return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+      }
+      continue;
+    }
     if (landing.reason === "trunk-diverged") {
       return await trunkDivergedBlocked(
         common,
@@ -1166,4 +1202,5 @@ export async function processIssue(
     preserved: true,
     swept: true,
   };
+  }
 }
