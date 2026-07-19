@@ -285,8 +285,10 @@ describe("buildRunOptions", () => {
   it("injects the no-leak commit-msg host hook when continuous push is not requested (#1366)", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     const hooks = opts.hooks?.host?.onWorktreeReady;
-    expect(hooks).toHaveLength(1);
-    const command = hooks?.[0]?.command ?? "";
+    // Two host hooks now: [0] worktree-path capture (ADR 0103), [1] no-leak commit-msg.
+    expect(hooks).toHaveLength(2);
+    expect(hooks?.[0]?.command ?? "").toContain(".worktree-path");
+    const command = hooks?.[1]?.command ?? "";
     expect(command.startsWith("sh -c ")).toBe(true);
     // It must NOT carry the continuous-push behaviour when push is off.
     expect(command).not.toContain("--force-with-lease");
@@ -304,10 +306,12 @@ describe("buildRunOptions", () => {
       { ...baseInput, continuousPush: true },
     );
     const hooks = opts.hooks?.host?.onWorktreeReady;
-    // Two host hooks now: [0] no-leak commit-msg, [1] continuous push (#1224).
-    expect(hooks).toHaveLength(2);
-    expect(hooks?.[0]?.command ?? "").toContain('"$hd/commit-msg"');
-    const command = hooks?.[1]?.command ?? "";
+    // Three host hooks now: [0] worktree-path capture (ADR 0103), [1] no-leak
+    // commit-msg, [2] continuous push (#1224).
+    expect(hooks).toHaveLength(3);
+    expect(hooks?.[0]?.command ?? "").toContain(".worktree-path");
+    expect(hooks?.[1]?.command ?? "").toContain('"$hd/commit-msg"');
+    const command = hooks?.[2]?.command ?? "";
     // It is a single portable `sh -c '...'` host command.
     expect(command.startsWith("sh -c ")).toBe(true);
     // (a) initial force-with-lease push of the worker branch up-front.
@@ -402,8 +406,9 @@ describe("buildRunOptions", () => {
       makeDeps(async () => fakeResult()),
       { ...baseInput, continuousPush: true, remote: "backup" },
     );
-    // Index [1]: the continuous-push hook rides behind the no-leak commit-msg hook.
-    const command = opts.hooks?.host?.onWorktreeReady?.[1]?.command ?? "";
+    // Index [2]: the continuous-push hook rides behind the worktree-path capture
+    // ([0]) and no-leak commit-msg ([1]) hooks.
+    const command = opts.hooks?.host?.onWorktreeReady?.[2]?.command ?? "";
     expect(command).toContain("git push backup -u");
     expect(command).toContain("git push backup HEAD --force-with-lease");
   });

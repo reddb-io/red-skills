@@ -100,7 +100,12 @@ import { renderClaimComment } from "../../core/claim.js";
 
 import { deriveActivity } from "./activity.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
-import { castleWorktreeUnder, decodeLocMemoSnapshot, encodeLocMemoSnapshot } from "./state.js";
+import {
+  castleWorktreeUnder,
+  decodeLocMemoSnapshot,
+  encodeLocMemoSnapshot,
+  readCapturedWorktreePath,
+} from "./state.js";
 
 export function parseSlot(val: string | undefined): number | undefined {
   if (val === undefined) return undefined;
@@ -707,16 +712,19 @@ export function buildProcessDeps(
       const lastProgressAt = new Date(info.lastProgressMs).toISOString();
       const head = info.head ?? "";
       void (async () => {
-        // sandcastle creates the agent's worktree at
-        // `{attemptDir}/.red-castle/worktrees/{slug}`, NOT the legacy
-        // `{attemptDir}/worktree` the state seeds — diffing the latter fails
-        // (it never exists) and every tick read a permanent `+0 -0` even with a
-        // dirty worktree, which also starved the attempt-progress guard's
-        // proof-of-life. Resolve the real worktree from `git worktree list`,
-        // and persist it into `current.worktree` so the monitor (which reads
-        // that field for its own diffstat) gets the live path too. Fall back to
-        // the legacy path only when no worktree is registered yet.
+        // The castle creates the agent's worktree at
+        // `{attemptDir}/.red-castle/worktrees/{slug}` (keyed workerId-issueId,
+        // ADR 0103 — no attempt level), NOT the legacy `{attemptDir}/worktree`
+        // the state seeds. Source of truth = the path the castle RECORDS from its
+        // `onWorktreeReady` hook (its `pwd` in the real worktree); reconstructing
+        // it from `attemptDir` (a `git worktree list` probe on the primary + a
+        // filesystem walk) returned the dead legacy path at runtime for
+        // mirror-owned worktrees, so every codex tick read a permanent `+0 -0`.
+        // The probe/legacy fallbacks stay only for the window before the hook
+        // runs. Persist the resolved path into `current.worktree` so the monitor
+        // (which reads that field for its own diffstat) gets the live path too.
         const worktree =
+          readCapturedWorktreePath(current.attemptDir) ??
           (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
           castleWorktreeUnder(current.attemptDir) ??
           join(current.attemptDir, "worktree");

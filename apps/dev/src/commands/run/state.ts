@@ -229,6 +229,25 @@ export function castleWorktreeUnder(attemptDir: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Read the worktree path the castle recorded from its `onWorktreeReady` hook.
+ *
+ * That hook runs ON THE HOST with cwd = the real worktree, so its `pwd` is the
+ * ground-truth absolute path; it writes it to `{attemptDir}/.worktree-path`
+ * (buildWorktreePathCaptureHook). This is the single source of truth for the
+ * heartbeat loc diff — no reconstruction from `attemptDir`, which returned the
+ * dead legacy `{attemptDir}/worktree` at runtime and read a permanent `+0 -0`.
+ * Returns undefined until the hook has run (falls back to the probe chain).
+ */
+export function readCapturedWorktreePath(attemptDir: string): string | undefined {
+  try {
+    const recorded = readFileSync(join(attemptDir, ".worktree-path"), "utf8").trim();
+    return recorded || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
  * can run inside the synchronous `buildProcessInput`. Namespace-blind: walks
  * every worker-lane namespace (`workers`, `go-workers`, `scout-workers`) with
