@@ -60,11 +60,13 @@ export function resolveAdversarialReviewConfig(get: (key: string) => string): Ad
 }
 
 export function decideAdversarialReview(
-  _findings: AdversarialReviewFindings,
-  _iteration: number,
-  _cap: number,
+  findings: AdversarialReviewFindings,
+  iteration: number,
+  cap: number,
 ): AdversarialReviewDecision {
-  return "pass";
+  const hasBlocking = findings.findings.some((finding) => finding.blocking);
+  if (!hasBlocking) return "pass";
+  return iteration <= cap ? "correct" : "pass";
 }
 
 export function buildAdversarialReviewPrompt(context: AdversarialReviewContext): string {
@@ -125,10 +127,16 @@ export function renderAdversarialReviewComment(
   findings: AdversarialReviewFindings,
   decision: AdversarialReviewDecision,
 ): string {
+  const decisionText =
+    decision === "correct"
+      ? "correct (blocking)"
+      : decision === "park"
+        ? "park (blocking)"
+        : "pass (advisory)";
   const lines = [
     "## AFK adversarial review",
     "",
-    `Decision: ${decision} (advisory)`,
+    `Decision: ${decisionText}`,
     "",
     findings.summary,
     "",
@@ -147,6 +155,47 @@ export function renderAdversarialReviewComment(
     });
   }
   return lines.join("\n");
+}
+
+function tailLines(text: string, maxLines: number): string {
+  const lines = text.split("\n");
+  return lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
+}
+
+export function appendAdversarialReviewCorrectionHandoff(
+  handoff: string,
+  opts: {
+    diff: string;
+    findings: AdversarialReviewFindings;
+    retry: number;
+    cap: number;
+  },
+): string {
+  const blocking = opts.findings.findings.filter((finding) => finding.blocking);
+  return [
+    handoff.replace(/\n+$/, ""),
+    "",
+    "<adversarial-review-correction>",
+    `A blocking adversarial review found confirmed defects or acceptance-criteria gaps. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
+    "Fix only the blocking findings below on the existing branch, keep unrelated nits/style/suggestions out of scope, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    "",
+    "<review-critiques>",
+    opts.findings.summary,
+    ...blocking.flatMap((finding, idx) => [
+      "",
+      `${idx + 1}. ${finding.path}:${finding.line}`,
+      finding.body,
+    ]),
+    "</review-critiques>",
+    "",
+    '<pr-diff data-untrusted="true">',
+    "```diff",
+    tailLines(opts.diff, 200),
+    "```",
+    "</pr-diff>",
+    "</adversarial-review-correction>",
+    "",
+  ].join("\n");
 }
 
 export function makeExtractAdversarialReview(
