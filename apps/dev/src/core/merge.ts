@@ -588,7 +588,7 @@ export interface LandPrInput {
    * a rejection is swallowed here so it can never fail or alter the landing.
    * Absent (the default) → never called.
    */
-  onPrResolved?: (prNumber: number) => Promise<void>;
+  onPrResolved?: (prNumber: number) => Promise<void | "abort">;
   /**
    * Native merge queue (#1337). True when `<target>` has the forge's merge queue
    * configured, so the merge is ENQUEUED (`gh pr merge --auto`) instead of merged
@@ -607,6 +607,7 @@ export interface LandPrInput {
 export type LandPrFailReason =
   | "push-failed"
   | "no-pr"
+  | "pr-resolved-abort"
   | "conflict"
   | "ci-failed"
   | "ci-pending"
@@ -885,7 +886,9 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // decoupled: a rejection is swallowed so it can never fail or alter the landing.
   if (onPrResolved) {
     try {
-      await onPrResolved(prNumber);
+      if ((await onPrResolved(prNumber)) === "abort") {
+        return { ok: false, reason: "pr-resolved-abort", prNumber };
+      }
     } catch {
       // observability only — never let a failed review post block the merge.
     }
