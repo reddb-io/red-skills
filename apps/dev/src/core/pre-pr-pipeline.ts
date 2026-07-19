@@ -8,6 +8,20 @@
 // are either mechanical-applied or human-approved.
 
 import type { Exec, PackageLayout } from "./feedback.js";
+import { LABEL_GO_LANE } from "./go.js";
+
+/**
+ * Returns true when the /go --mode no-mistakes adversarial review pipeline is
+ * active for this dispatch. Active only for /go lane issues running in
+ * no-mistakes mode; /afk and other lanes use the review.enabled config gate
+ * independently and return false here.
+ */
+export function isPrePrPipelineActive(
+  runMode: string | undefined,
+  laneLabel: string | undefined,
+): boolean {
+  return laneLabel === LABEL_GO_LANE && runMode === "no-mistakes";
+}
 
 /**
  * Input to the pre-PR pipeline. Wraps the concrete worktree state and the
