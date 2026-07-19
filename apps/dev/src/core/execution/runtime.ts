@@ -137,6 +137,28 @@ export const DEFAULT_IDLE_TIMEOUT_S = 600;
 export const DEFAULT_ATTEMPT_TIMEOUT_S = 2700;
 
 /**
+ * Cadence of the independent worker-vitals sampler (ADR 0103). The heartbeat's
+ * loc/tokens/tool stamp fires at least this often for EVERY run, independent of
+ * the attempt-guard and of inner-agent stream activity, so a codex worker that
+ * edits and then blocks on a long test suite still reports its live worktree
+ * churn instead of a frozen `+0 -0`. Capped by `heartbeatIntervalMs` so an armed
+ * guard's tighter cadence still wins when it is shorter.
+ */
+export const DEFAULT_VITALS_SAMPLE_MS = 20_000;
+
+/**
+ * Dedup window shared by the three heartbeat drivers (guard poll `onTick`, codex
+ * stream pulse, and the {@link DEFAULT_VITALS_SAMPLE_MS} sampler). Two emits
+ * landing within this window collapse to one, so an armed guard plus the sampler
+ * never double-stamp the same instant. Kept well below the sampler interval so a
+ * legitimate next sample is never suppressed — it only absorbs near-simultaneous
+ * ticks. Sits below the SMALLEST real heartbeat cadence (a 1s attempt cap →
+ * 1000ms poll) so consecutive polls always emit, while two drivers landing on
+ * the same instant collapse to one.
+ */
+export const HEARTBEAT_DEDUP_MS = 500;
+
+/**
  * Commit-anchored HARD cap on the attempt guard (issue #637): the edit-signal
  * (ADR 0051) may extend the soft deadline only this many seconds past the last
  * commit (or spawn). A busy-but-unproductive agent that re-validates in a loop
@@ -858,7 +880,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   let controller: AbortController | undefined;
   let heartbeatIntervalMs = 60_000;
   let lastHeartbeatEmitMs: number | undefined;
+  let vitalsSampler: (() => void) | undefined;
   const emitHeartbeat = (info: AttemptProgressInfo): void => {
+    // Single throttle shared by all three heartbeat drivers — the attempt-guard
+    // poll (`onTick`), the codex stream pulse, and the independent vitals sampler
+    // (ADR 0103). Any two that land within {@link HEARTBEAT_DEDUP_MS} of each
+    // other (e.g. the sampler and a guard poll ticking on the same instant) emit
+    // ONCE, so an armed guard + the sampler never double-stamp the same window.
+    if (lastHeartbeatEmitMs !== undefined && info.nowMs - lastHeartbeatEmitMs < HEARTBEAT_DEDUP_MS) return;
     lastHeartbeatEmitMs = info.nowMs;
     input.onHeartbeat?.(info);
   };
@@ -959,6 +988,39 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
           new Error(`afk: attempt reaped — agent lane idle past ${input.laneIdleKillThresholdSeconds}s with no active build/test (stalled)`),
         ),
     });
+  }
+
+  // Independent worker-vitals sampler (ADR 0103). Vitals telemetry — loc,
+  // tokens, tool/text/reasoning counters — must SURVIVE the attempt model on its
+  // OWN cadence, decoupled from the attempt-guard. Before this, the only two
+  // paths that fired `emitHeartbeat` (the loc/vitals stamp) were the guard's
+  // `onTick` and the codex stream-pulse, and BOTH hang off `headProbe` + guard
+  // arming: a codex worker in a single long iteration — especially one blocked
+  // WAITING on a test suite, emitting no stream events — never stamped anything,
+  // so `loc`/`tokens` sat at a permanent `+0 -0` for the whole run even though
+  // the worktree carried a real diff. This timer fires the same stamp every
+  // ~20s regardless of runner, guard, or stream activity, so the heartbeat
+  // reflects the LIVE worktree. It shares `lastHeartbeatEmitMs` with the other
+  // two paths, so an armed guard / active stream never double-stamps within the
+  // window. Best-effort head probe: the loc diff is computed from the worktree
+  // (uncommitted delta needs no head), so a codex worker with no commits still
+  // reports its real churn. Armed whenever a heartbeat sink exists.
+  if (input.onHeartbeat) {
+    const sampleMs = Math.min(heartbeatIntervalMs, DEFAULT_VITALS_SAMPLE_MS);
+    vitalsSampler = schedule(() => {
+      const nowMs = now();
+      void (async () => {
+        let head: string | undefined;
+        try {
+          head = await input.headProbe?.();
+        } catch {
+          head = undefined;
+        }
+        // `emitHeartbeat` owns the dedup window, so the sampler, an armed guard
+        // poll, and the stream pulse never double-stamp the same instant.
+        emitHeartbeat({ head, lastProgressMs: nowMs, nowMs });
+      })();
+    }, sampleMs);
   }
 
   let result: RunResult;
@@ -1065,6 +1127,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   } finally {
     guard?.stop();
     laneReaper?.stop();
+    vitalsSampler?.();
   }
   // A run that completed but surfaced exhaustion text on stdout (rather than
   // throwing) is also exhaustion — match the stdout the same way run_inner does.

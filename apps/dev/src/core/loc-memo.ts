@@ -72,7 +72,18 @@ export async function resolveAttemptLoc(
   const { headSha, compute, readMemo, writeMemo, computeUncommitted } = input;
   let committed: { added: number; removed: number } | null = null;
   if (headSha) {
-    const memo = readMemo();
+    // The `readMemo` contract is "null when absent/unreadable", but a writer that
+    // backs it with a raw `readFileSync` throws ENOENT on the ALWAYS-absent first
+    // tick (and a codex worker, which never commits, has no memo at all). A memo
+    // read must never kill the loc stamp: fail closed to a miss and recompute.
+    // This is the codex permanent `+0 -0` fix — the heartbeat's async body used to
+    // die on this throw before it ever stamped loc or wrote its record.
+    let memo: LocMemo | null;
+    try {
+      memo = readMemo();
+    } catch {
+      memo = null;
+    }
     if (memo && memo.sha === headSha) {
       committed = { added: memo.added, removed: memo.removed };
     }

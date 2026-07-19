@@ -29,6 +29,31 @@ describe("resolveAttemptLoc — commit-anchored LOC memo (#1210)", () => {
     expect(computeCalls).toBe(1); // still 1 — no extra git subprocess
   });
 
+  it("recomputes (never throws) when readMemo throws — the codex first-tick / no-memo case", async () => {
+    // The real writer's readMemo is `decodeLocMemoSnapshot(readFileSync(path))`,
+    // which throws ENOENT on the ALWAYS-absent first-tick memo (and a codex
+    // worker never commits, so it has no memo at all). An uncaught throw here
+    // propagated out of the heartbeat's async body BEFORE it stamped loc — the
+    // permanent codex `+0 -0`. resolveAttemptLoc must treat a throwing memo read
+    // as a miss and recompute.
+    let computeCalls = 0;
+    const result = await resolveAttemptLoc({
+      headSha: "sha-first-tick",
+      compute: async () => {
+        computeCalls += 1;
+        return { added: 7, removed: 4 };
+      },
+      computeUncommitted: async () => ({ added: 3, removed: 0 }),
+      readMemo: () => {
+        throw new Error("ENOENT: no such file or directory, open '.loc-memo.json'");
+      },
+      writeMemo: () => {},
+    });
+    // committed (7/4) + uncommitted (3/0) — it recomputed rather than dying.
+    expect(result).toEqual({ added: 10, removed: 4 });
+    expect(computeCalls).toBe(1);
+  });
+
   it("recomputes when HEAD advances (a new commit invalidates the memo)", async () => {
     let computeCalls = 0;
     let stored: LocMemo | null = { sha: "old", added: 10, removed: 1 };
