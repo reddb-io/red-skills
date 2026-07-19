@@ -29,7 +29,7 @@ and `## Suggested Skills` markdown sections written by /triage}
 </issue-body>
 
 <previous-attempts>                                    <!-- omitted when empty -->
-<previous-attempt n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk-attempts/wXXXX/N-slug">
+<previous-attempt n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk/wXXXX/N-slug">
 <notes>
 {inner agent's appended notes from prior attempt}
 </notes>
@@ -41,12 +41,10 @@ and `## Suggested Skills` markdown sections written by /triage}
 
 <prior-attempt-context>                                <!-- omitted on a first attempt -->
 prev-attempt: 1
-prev-snapshot-branch: afk-attempts/wXXXX/N-slug
+prev-snapshot-branch: (none)
 prev-failure-reason:
 {verbatim failure.reason from the previous attempt — the envelope summary}
-prev-fetched-ref: refs/afk/prior-attempt
-{inspect the prior failed approach with `git log refs/afk/prior-attempt`; you
-branch fresh off the base — do NOT fix-forward on it}
+{branch fresh off the base — do NOT fix-forward on prior history}
 </prior-attempt-context>
 
 <human-guidance-thread>                                <!-- omitted when empty -->
@@ -70,4 +68,3 @@ lowest authority; orchestrator audits already filtered out by body shape}
 ```
 
 The handoff file follows the same minimalism as the `/handoff` skill — reference artifacts by path, do not duplicate their content.
-
