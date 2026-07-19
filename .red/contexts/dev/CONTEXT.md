@@ -364,6 +364,10 @@ _Avoid_: compact mode (names the flag, not the contract), lossy output
 An autonomous review→correct loop that runs after a pull request is built: one or more reviewer agents inspect the diff for defects and for conformance to the originating **Issue** (was what the Issue asked for actually implemented?), post their findings to the pull request and the Issue, and — when findings are confirmed — force a mandatory correction round back to the implementer with a context narrowed to the diff and the critiques. One reviewer by default (any finding triggers correction), configurable to a voting quorum; bounded by a configurable iteration budget (default one review pass); model, effort, and runner are configurable.
 _Avoid_: code review (the advisory human-facing clarity pass), gate (machine validation — tests/lint/typecheck), lint
 
+**Archived ADR**:
+An ADR moved to `.red/adr/archive/` (via history-preserving `git mv`) once its decision reaches a terminal state — superseded by a newer ADR, deprecated, or fully shipped and inert. The original Decision is never rewritten: ADRs are immutable records, and only status, `Related`/`superseded-by` links, and stale-path prose are edited in place. Merge and split are supersede-and-replace — new ADRs carry the current decision while the originals are archived with a successor pointer, never combined or divided in place. Every archived number stays documented in the ADR **INDEX**, and a governance guard fails CI if any ADR number disappears or an archived ADR loses its successor pointer: archiving never deletes history.
+_Avoid_: deleted ADR, rewritten decision, superseded (the status/pointer, not the physical relocation)
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
