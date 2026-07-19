@@ -1,11 +1,10 @@
 // Continuous remote-branch push for AFK workers (issue #191).
 //
-// Two remote namespaces, never overlapping:
+// Remote namespace:
 //   - afk/{worker}/{issue}-{slug}          live-iteration namespace.
 //       push_initial at worktree-create, post-commit hook syncs every commit,
-//       delete_remote on DONE. Mirrors HEAD so a SIGKILL preserves the diff.
-//   - afk-attempts/{worker}/{issue}-{slug} failure-only forensic namespace.
-//       pushed by the terminal-failure path, never deleted by the orchestrator.
+//       delete_remote on DONE. Mirrors HEAD so a SIGKILL preserves the diff and
+//       terminal failures have a durable forensic ref without a snapshot branch.
 //
 // This is a PURE command-construction + decision layer. Every real git call is
 // routed through an injected GitExec so the exact argv is observable in tests
@@ -28,12 +27,12 @@ export interface RemoteBranchOutcome {
   warn?: string;
 }
 
-export type RemoteNamespace = "afk" | "afk-attempts";
+export type RemoteNamespace = "afk";
 
 const SLUG_RE = /^[a-z0-9-]+$/;
 const WORKER_RE = /^[A-Za-z0-9._-]+$/;
 const ISSUE_RE = /^[0-9]+$/;
-const REF_RE = /^afk(-attempts)?\/[A-Za-z0-9._-]+\/[0-9]+-[a-z0-9-]+$/;
+const REF_RE = /^afk\/[A-Za-z0-9._-]+\/[0-9]+-[a-z0-9-]+$/;
 
 /** Lowercase / collapse-to-dash / trim-dashes / cap-40 title slug. Mirrors
  * afk_ref_slugify in lib/branch-ref.sh. */
@@ -53,7 +52,7 @@ export function slugifyRef(title: string): string {
   );
 }
 
-/** True for a well-formed live or attempt ref. Mirrors afk_ref_validate. */
+/** True for a well-formed live worker ref. Mirrors afk_ref_validate. */
 export function isValidRef(ref: string): boolean {
   return REF_RE.test(ref);
 }
@@ -67,7 +66,7 @@ export function buildRefFromSlug(
   issue: string | number,
   slug: string,
 ): string | null {
-  if (namespace !== "afk" && namespace !== "afk-attempts") return null;
+  if (namespace !== "afk") return null;
   if (!WORKER_RE.test(worker)) return null;
   // ISSUE_RE matches branch-ref.sh's `^[0-9]+$` exactly — it intentionally
   // accepts a leading-zero token (e.g. "01"), unlike worker-paths.ts.
@@ -106,7 +105,7 @@ export function deleteRemoteArgs(repoDir: string, branch: string): string[] {
   return ["-C", repoDir, "push", "origin", "--delete", branch];
 }
 
-/** argv for the failure-only afk-attempts push. Mirrors envelope_push_attempt:
+/** argv for the direct live-branch push used by landing/reconcile handoffs:
  * a plain `<branch>:refs/heads/<remote>` refspec — no -u, no --force-with-lease. */
 export function pushAttemptArgs(repoDir: string, branch: string, remoteName: string): string[] {
   return ["-C", repoDir, "push", "origin", `${branch}:refs/heads/${remoteName}`];
@@ -156,6 +155,9 @@ export async function deleteRemote(
   if (!branch) {
     return { ok: true, ran: false, warn: "delete_remote called with empty branch — skipping" };
   }
+  if (!isValidRef(branch)) {
+    return { ok: true, ran: false, warn: `delete_remote called with non-live branch ${branch} — skipping` };
+  }
   const { code } = await git(deleteRemoteArgs(repoDir, branch));
   if (code !== 0) {
     return {
@@ -167,9 +169,9 @@ export async function deleteRemote(
   return { ok: true, ran: true };
 }
 
-/** Failure-only push to the afk-attempts namespace. Mirrors envelope_push_attempt:
- * returns ok:false (caller warns) on a non-zero exec, never throws. An empty
- * branch or remote skips the git call (ran:false). */
+/** Push a live worker branch to another live worker ref. Returns ok:false
+ * (caller warns) on a non-zero exec, never throws. Empty or non-live refs skip
+ * the git call (ran:false). */
 export async function pushAttempt(
   git: GitExec,
   repoDir: string,
@@ -178,6 +180,9 @@ export async function pushAttempt(
 ): Promise<RemoteBranchOutcome> {
   if (!branch || !remoteName) {
     return { ok: false, ran: false, warn: "push_attempt called with empty branch or remote — skipping" };
+  }
+  if (!isValidRef(branch) || !isValidRef(remoteName)) {
+    return { ok: false, ran: false, warn: "push_attempt called with non-live branch or remote — skipping" };
   }
   const { code } = await git(pushAttemptArgs(repoDir, branch, remoteName));
   if (code !== 0) {
