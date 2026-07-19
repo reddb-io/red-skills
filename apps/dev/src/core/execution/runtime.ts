@@ -30,7 +30,12 @@ import {
   parseAgentOutput,
   type AgentOutput,
 } from "../agent-output.js";
-import { buildContinuousPushHook, buildNoLeakCommitMsgHook, type HostHookCommand } from "./host-hooks.js";
+import {
+  buildContinuousPushHook,
+  buildNoLeakCommitMsgHook,
+  buildWorktreePathCaptureHook,
+  type HostHookCommand,
+} from "./host-hooks.js";
 import {
   startAttemptGuard,
   type AttemptBudget,
@@ -659,7 +664,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   // sandcastle only runs these for host-visible worktrees (noSandbox / bind-mount
   // worktree mode); for fully-isolated providers the agent works in a synced copy
   // the hooks can't see (final sync only).
-  const worktreeReady: HostHookCommand[] = [buildNoLeakCommitMsgHook()];
+  const worktreeReady: HostHookCommand[] = [buildWorktreePathCaptureHook(), buildNoLeakCommitMsgHook()];
   if (input.continuousPush) {
     worktreeReady.push(buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE));
   }
