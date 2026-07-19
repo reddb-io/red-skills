@@ -117,6 +117,11 @@ import {
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
 import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
+import {
+  decideAdversarialReview,
+  renderAdversarialReviewComment,
+  type AdversarialReviewFindings,
+} from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier, timeoutNotes, timeoutReasonForEnvelope } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom, syncMainRedRepairIssue } from "./recovery.js";
@@ -934,6 +939,35 @@ export async function processIssue(
     });
     deps.markPhase?.(phase);
   };
+  const runAdversarialReview = async (pr: number): Promise<void> => {
+    const config = deps.adversarialReview;
+    if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) return;
+    try {
+      const diff = await deps.mergeExec(["gh", "-R", input.repo, "pr", "diff", String(pr)]);
+      const findings: AdversarialReviewFindings = await deps.extractAdversarialReview({
+        context: {
+          issueNumber: input.issue,
+          issueTitle: input.title,
+          issueBody: input.body,
+          prNumber: pr,
+          diff: diff.code === 0 ? diff.stdout : "",
+        },
+        runner: input.runner,
+        model: deps.model,
+        effort: deps.effort,
+        maxIterations: config.maxIterations,
+      });
+      const decision = decideAdversarialReview(findings, 1, config.maxIterations);
+      await deps.postAdversarialReview({
+        pr,
+        issue: input.issue,
+        findings,
+        body: renderAdversarialReviewComment(findings, decision),
+      });
+    } catch (error) {
+      deps.appendIterLog(`[adversarial-review] advisory pass failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   markLandingPhase("gate");
   const landing = await doLanding(
     {
@@ -952,7 +986,10 @@ export async function processIssue(
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
       landLock: deps.landLock,
-      onPrResolved: (pr) => emitBackpressureReview(common, pr),
+      onPrResolved: async (pr) => {
+        await emitBackpressureReview(common, pr);
+        await runAdversarialReview(pr);
+      },
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await runFeedback(deps.pnpm, {
           worktree: mergedTreeDir,

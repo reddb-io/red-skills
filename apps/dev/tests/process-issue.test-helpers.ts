@@ -15,6 +15,7 @@ import type { TrustProvenance } from "../src/core/trust-gate.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import type { AttemptProgressInfo } from "../src/core/execution.js";
 import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safety.js";
+import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -54,6 +55,16 @@ export interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Non-blocking backpressure evidence reviews posted via the #1279 seam. */
   backpressureReviews: Array<{ pr: number; body: string }>;
+  /** Advisory adversarial reviews posted after the machine gate and before merge. */
+  adversarialReviews: Array<{ pr: number; issue: number; body: string; findings: AdversarialReviewFindings }>;
+  adversarialReviewContexts: Array<{
+    issueNumber: number;
+    issueTitle: string;
+    issueBody: string;
+    prNumber: number;
+    diff: string;
+    maxIterations: number;
+  }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
   recordedAttempts: AttemptRecordPayload[];
   /** Brain outcome events fired after terminal attempt completion. */
@@ -224,6 +235,9 @@ export interface HarnessOptions {
   /** PR review gate (ADR 0064 §10, #749). When set, processIssue may hand the
    * unlocked landing off for a fresh-agent review instead of fast-merging. */
   reviewGate?: ProcessIssueDeps["reviewGate"];
+  /** Advisory adversarial review tracer (#2207). */
+  adversarialReview?: ProcessIssueDeps["adversarialReview"];
+  adversarialFindings?: AdversarialReviewFindings;
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
@@ -260,6 +274,8 @@ export function harness(opts: HarnessOptions = {}): {
     ensuredLabels: [],
     sidecarWrites: [],
     backpressureReviews: [],
+    adversarialReviews: [],
+    adversarialReviewContexts: [],
     recordedAttempts: [],
     outcomeEvents: [],
     salvageCalls: [],
@@ -441,6 +457,13 @@ export function harness(opts: HarnessOptions = {}): {
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
+      if (argv.includes("pr") && argv.includes("diff")) {
+        return {
+          code: 0,
+          stdout: "diff --git a/packages/x/src/a.ts b/packages/x/src/a.ts\n+++ b/packages/x/src/a.ts\n@@ -0,0 +1 @@\n+export const ok = true;\n",
+          stderr: "",
+        };
+      }
       // Locked merge --no-ff conflict injection.
       if (opts.mergeNoFfCode !== undefined && j.includes("merge --no-ff")) {
         return { code: opts.mergeNoFfCode, stdout: "", stderr: "" };
@@ -524,6 +547,30 @@ export function harness(opts: HarnessOptions = {}): {
     postBackpressureReview: async (pr, body) => {
       trace.backpressureReviews.push({ pr, body });
     },
+    adversarialReview: opts.adversarialReview,
+    extractAdversarialReview: opts.adversarialReview
+      ? async ({ context, maxIterations }) => {
+          trace.adversarialReviewContexts.push({ ...context, maxIterations });
+          return opts.adversarialFindings ?? {
+            summary: "Stubbed adversarial review summary.",
+            findings: [
+              {
+                path: "packages/x/src/a.ts",
+                line: 1,
+                body: "Acceptance criteria conformance finding.",
+                blocking: true,
+              },
+            ],
+          };
+        }
+      : undefined,
+    postAdversarialReview: opts.adversarialReview
+      ? async (review) => {
+          trace.adversarialReviews.push(review);
+          trace.comments.push({ issue: review.pr, body: review.body });
+          trace.comments.push({ issue: review.issue, body: review.body });
+        }
+      : undefined,
     goVerifyRetries: opts.goVerifyRetries,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),

@@ -43,6 +43,7 @@ import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-pat
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
+import { Output } from "@reddb-io/red-castle";
 import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
@@ -53,6 +54,13 @@ import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
+import {
+  makeExtractAdversarialReview,
+  resolveAdversarialReviewConfig,
+  type AdversarialReviewFindings,
+} from "../../core/adversarial-review.js";
+import { reviewFindingsSchema } from "../../core/review-extract.js";
+import { defaultSandcastleDeps } from "../../core/execution.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
@@ -61,6 +69,7 @@ import {
   resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../../core/issue-classifier.js";
+import { toAgentRunner } from "../../core/runner-spec.js";
 import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
@@ -205,6 +214,27 @@ export function buildProcessDeps(
   // `afk.review_gate.threshold`) gets `ready-for-review` on its PR and holds the
   // merge for a fresh-agent review; mechanical/trivial work fast-merges as today.
   const reviewGate = resolveReviewGate(config);
+  const adversarialReview = resolveAdversarialReviewConfig((key) => getConfig(config, key));
+  const extractAdversarialReview =
+    adversarialReview.enabled
+      ? async (input: {
+          context: Parameters<ReturnType<typeof makeExtractAdversarialReview>>[0]["context"];
+          runner: Runner;
+          model: string;
+          effort?: ProcessIssueDeps["effort"];
+          maxIterations: number;
+        }): Promise<AdversarialReviewFindings> => {
+          const sandcastle = await defaultSandcastleDeps();
+          const extract = makeExtractAdversarialReview({
+            run: sandcastle.run as Parameters<typeof makeExtractAdversarialReview>[0]["run"],
+            agentFor: sandcastle.agentFor,
+            sandboxFor: (mode) => sandcastle.sandboxFor(mode),
+            output: ({ tag, schema, maxRetries }) => Output.object({ tag, schema, maxRetries }),
+            cwd: ctx.root,
+          });
+          return extract({ ...input, runner: toAgentRunner(input.runner) });
+        }
+      : undefined;
 
   // Landing-mode flag (ADR 0030 amended, #842), decoupled from the lock. Default
   // true → the attempt lands via an admin-merged PR into the resolved base; false
@@ -403,6 +433,12 @@ export function buildProcessDeps(
     // it never touches the merge/park decision.
     postBackpressureReview: (pr, body) =>
       buildReviewGh(ghCtx).postReview(pr, { summary: body, comments: [] }),
+    adversarialReview,
+    extractAdversarialReview,
+    postAdversarialReview: async ({ pr, issue, body }) => {
+      await buildReviewGh(ghCtx).comment(pr, body);
+      await ghx.comment(ghCtx, issue, body);
+    },
     goVerifyRetries,
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.

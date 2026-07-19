@@ -137,6 +137,13 @@ export const CONFIG_DEFAULTS = {
   // cheapest tier counted as non-mechanical (validate|simple|complex|think).
   "afk.review_gate.enabled": "false",
   "afk.review_gate.threshold": "complex",
+  // Advisory adversarial review (ADR 0110, #2207). Default off: validated AFK
+  // attempts land exactly as before. When enabled, AFK opens/resolves the PR,
+  // runs one isolated reviewer pass over ONLY the Issue + diff, posts the full
+  // findings to both the PR and Issue, then continues landing regardless of the
+  // advisory verdict. Folded from `plugins.dev.review.*` to `review.*`.
+  "review.enabled": "false",
+  "review.max_iterations": "1",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
   // version-pinned release (today's behaviour); `canary` tracks npm's canary
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
@@ -620,7 +627,12 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     const m = /^plugins\.dev\.(.+)$/.exec(key);
     if (!m) continue;
     const rest = m[1]!;
-    const accessorKey = rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`;
+    const accessorKey =
+      rest === "afk" || rest.startsWith("afk.")
+        ? rest
+        : rest === "review" || rest.startsWith("review.")
+          ? rest
+          : `dev.${rest}`;
     values[accessorKey] = value;
     explicitAccessorKeys.add(accessorKey);
   }

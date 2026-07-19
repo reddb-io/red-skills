@@ -17,6 +17,7 @@ import {
   DEFAULT_MERGE_CI_TIMEOUT_S,
   rootDevConfigCollisionsFromText,
 } from "../src/core/config.js";
+import { decideAdversarialReview, resolveAdversarialReviewConfig } from "../src/core/adversarial-review.js";
 
 async function writeConfig(yaml: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "afk-config-"));
@@ -124,6 +125,40 @@ describe("config", () => {
     });
     expect(getConfig(values, "afk.review_gate.enabled")).toBe("true");
     expect(getConfig(values, "afk.review_gate.threshold")).toBe("simple");
+  });
+
+  it("reads plugins.dev.review.* as the advisory review accessor (#2207)", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "review.enabled")).toBe("false");
+    expect(getConfig(defaults, "review.max_iterations")).toBe("1");
+    expect(resolveAdversarialReviewConfig((key) => getConfig(defaults, key))).toEqual({
+      enabled: false,
+      maxIterations: 1,
+    });
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    review:\n      enabled: true\n      max_iterations: 3\n",
+    });
+    expect(getConfig(values, "review.enabled")).toBe("true");
+    expect(getConfig(values, "review.max_iterations")).toBe("3");
+    expect(resolveAdversarialReviewConfig((key) => getConfig(values, key))).toEqual({
+      enabled: true,
+      maxIterations: 3,
+    });
+  });
+
+  it("keeps adversarial review advisory for this slice (#2207)", () => {
+    expect(
+      decideAdversarialReview(
+        {
+          summary: "blocking issue found",
+          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
+        },
+        1,
+        1,
+      ),
+    ).toBe("pass");
   });
 
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
