@@ -147,6 +147,8 @@ export interface Opts {
   landLock?: LandLock;
   /** Native merge queue (#1337): set `input.nativeMergeQueue`. */
   nativeMergeQueue?: boolean;
+  /** Explicit PR-resolved callback abort used by adversarial correction before merge. */
+  onPrResolvedAbort?: boolean;
 }
 
 export function harness(opts: Opts = {}): Harness {
@@ -317,6 +319,7 @@ export function harness(opts: Opts = {}): Harness {
             mainRedRepairLookups += 1;
             return opts.mainRedRepairIssue ? { number: 123 } : null;
           },
+    onPrResolved: opts.onPrResolvedAbort ? async () => "abort" : undefined,
     // Post-merge-integration gate (#1335): only wired when the test opts in.
     postMergeGate: opts.postMergeGate
       ? async (dir) => {
