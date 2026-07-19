@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { LivenessVerdict, RunResult } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
   buildContinuousPushHook,
@@ -14,6 +15,7 @@ import {
   buildAgent,
   OPENROUTER_API_KEY_ENV,
   type AgentFactories,
+  type SandcastleDeps,
   DONE_SIGNAL,
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
@@ -1040,4 +1042,3 @@ describe("runAgent — forwards onHeartbeat to the guard tick", () => {
     expect(res.outcome).toBe("done");
   });
 });
-
