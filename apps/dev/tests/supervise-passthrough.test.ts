@@ -155,13 +155,13 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
       bootstrap: { ok: true },
       orphanCleanup: { removed: ["a", "b"], restored: [7], kept: ["c"], legacyWiped: [], claimsReleased: [] },
       attemptCap: { reclaimed: ["x"] },
-      branchCleanup: { snapshotReaped: ["s1"], remoteLiveReaped: [], localLiveReaped: ["l1", "l2"] },
+      branchCleanup: { remoteLiveReaped: [], localLiveReaped: ["l1", "l2"] },
       unblockSweep: { promoted: [9] },
       straggler: { counts: { unlabeled: 2, needsTriage: 1, needsInfo: 0 }, warn: true },
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
-        "branches snapshot=1 remote=0 local=2 | tmp-janitor expired=0 workers=0 unknown=0 protected=0 | " +
+        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 unknown=0 protected=0 | " +
         "docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
     );
   });
