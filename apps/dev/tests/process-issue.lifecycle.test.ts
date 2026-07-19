@@ -857,6 +857,61 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 });
 
 
+describe("processIssue — advisory adversarial review (#2207)", () => {
+  it("default-off path lands without running the adversarial reviewer", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.adversarialReviewContexts).toEqual([]);
+    expect(trace.adversarialReviews).toEqual([]);
+  });
+
+  it("enabled path reviews diff plus Issue only, comments on PR and Issue, then still lands", async () => {
+    const issueBody = [
+      "## Agent brief",
+      "Implement the tracer.",
+      "",
+      "## Acceptance criteria",
+      "- [ ] Post review findings to the PR and Issue.",
+    ].join("\n");
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      body: issueBody,
+      adversarialReview: { enabled: true, maxIterations: 2 },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.adversarialReviewContexts).toHaveLength(1);
+    expect(trace.adversarialReviewContexts[0]).toMatchObject({
+      issueNumber: 9,
+      issueTitle: "Fix the thing",
+      issueBody,
+      prNumber: 42,
+      maxIterations: 2,
+    });
+    expect(trace.adversarialReviewContexts[0]?.diff).toContain("diff --git");
+    expect(trace.adversarialReviews).toHaveLength(1);
+    const body = trace.adversarialReviews[0]?.body ?? "";
+    expect(body).toContain("AFK adversarial review");
+    expect(body).toContain("Decision: pass (advisory)");
+    expect(body).toContain("blocking: true");
+    expect(body).toContain("Acceptance criteria conformance finding.");
+    expect(trace.comments).toContainEqual({ issue: 42, body });
+    expect(trace.comments).toContainEqual({ issue: 9, body });
+  });
+});
+
+
 describe("processIssue — commit-leftovers salvage (codex DONE-without-commit)", () => {
   it("DONE but zero commits → salvages the dirty worktree, then lands + closes like a normal DONE", async () => {
     // The codex symptom: the inner agent edits, passes the gates, emits DONE, but
