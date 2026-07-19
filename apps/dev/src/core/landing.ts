@@ -146,7 +146,7 @@ export interface LandingDeps {
    * never affects whether/how the PR merges. Absent (the default) or on the
    * direct path (no PR) → never called.
    */
-  onPrResolved?: (prNumber: number) => Promise<void>;
+  onPrResolved?: (prNumber: number) => Promise<void | "abort">;
   /**
    * Opt-in post-merge-integration gate (#1335). When present, the landing re-runs
    * the package-scoped feedback gate against the INTEGRATED tree (the worker branch
@@ -346,6 +346,7 @@ export type LandingResult =
         | "pr-merge-failed"
         | "infra"
         | "main-red-untracked"
+        | "adversarial-correction"
         // Legacy ADR 0083 landing-precondition route. New trunk freshness uses
         // the fleet-owned `red-trunk` mirror and no longer emits this from
         // landing, but older callers/tests may still reference the result shape.
@@ -556,6 +557,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   // longer unlocked-only — lock=X + openPr=true also lands through here.
   if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: r.prNumber };
   if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: r.prNumber };
+  if (r.reason === "pr-resolved-abort") {
+    return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: r.prNumber };
+  }
   if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
   if (r.reason === "merge-failed" && r.prNumber !== undefined) {
     return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
