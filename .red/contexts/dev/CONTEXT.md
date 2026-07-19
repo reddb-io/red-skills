@@ -200,6 +200,14 @@ _Avoid_: GHA, reusable workflow (when referring to the lane), CI job
 An agent-loadable behavior package rooted at a `SKILL.md` plus optional support files.
 _Avoid_: command, plugin
 
+**Manager**:
+The single operator-facing `dev` **Skill** that acts as liaison over RedSkills' existing execution and control surfaces: it routes work through the appropriate workflow, supervises the resulting fleet, escalates only genuine operator decisions, and reports outcomes without replacing the underlying workers, queues, or landing contracts. It may persist a local inbox and continuity metadata before work is published; once an intent is materialised as a **Ticket** hierarchy, the **Issue tracker** is canonical and any local projection must be reconstructible from it.
+_Avoid_: FirstMate (the external reference), second fleet, parallel orchestrator
+
+**Manager map**:
+The canonical parent **Ticket** for one effort conducted by the **Manager** from initial intent through final delivery. It is an umbrella index over existing child artifacts — research and decision **Tickets**, Wayfinder maps, **Specs**, executable **Tickets**, and validation or landing outcomes — while native hierarchy and dependency relationships expose the actionable frontier. It does not replace those artifacts or restate the detail they own. Unlike a Wayfinder map, it continues after the route becomes clear; unlike a **Spec**, it may begin before the solution is sufficiently defined. Its local projection is reconstructible from the **Issue tracker**.
+_Avoid_: Wayfinder map (decision-only), Spec (solution contract), task list, universal task format
+
 **Codebase understanding surface**:
 A `dev` workflow surface for explaining repository architecture and change impact from graph-backed project knowledge.
 _Avoid_: wiki graph, understand plugin
