@@ -773,13 +773,15 @@ export const pi = (
 // ---------------------------------------------------------------------------
 
 /**
- * Map a Codex `turn.completed` usage object to the Claude-shaped IterationUsage.
+ * Map a Codex token-usage object to the Claude-shaped IterationUsage.
  *
- * OpenAI/Codex usage is `{ input_tokens, cached_input_tokens, output_tokens }`,
- * where `input_tokens` is the *total* prompt tokens and `cached_input_tokens` is
- * a subset already included in that total. There is no cache-creation concept.
- * To avoid double-counting cached tokens in the context-window display (which
- * sums input + cacheCreation + cacheRead), the cached portion maps to
+ * OpenAI/Codex usage is `{ input_tokens, cached_input_tokens, output_tokens }`.
+ * `turn.completed.usage` and the newer `token_count.info.last_token_usage`
+ * carry the same counters: `input_tokens` is the *total* prompt tokens and
+ * `cached_input_tokens` is a subset already included in that total. There is no
+ * cache-creation concept. To avoid double-counting cached tokens in the
+ * context-window display (which sums input + cacheCreation + cacheRead), the
+ * cached portion maps to
  * `cacheReadInputTokens` and the remainder to `inputTokens`.
  */
 const parseCodexUsage = (usage: unknown): IterationUsage | undefined => {
@@ -803,6 +805,15 @@ const parseCodexUsage = (usage: unknown): IterationUsage | undefined => {
     outputTokens: u.output_tokens,
     ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
   };
+};
+
+const codexUsageEvents = (usageInput: unknown): ParsedStreamEvent[] => {
+  const usage = parseCodexUsage(usageInput);
+  const events: ParsedStreamEvent[] = usage ? [{ type: "usage", usage }] : [];
+  if (usage?.reasoningTokens !== undefined && usage.reasoningTokens > 0) {
+    events.push({ type: "reasoning", tokens: usage.reasoningTokens });
+  }
+  return events;
 };
 
 const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
@@ -844,20 +855,19 @@ const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
       return msg ? [{ type: "result", result: msg }] : [];
     }
 
-    // turn.completed carries token usage for the turn. codex does NOT stream a
-    // discrete reasoning item — reasoning surfaces only as the per-turn
+    // Current Codex CLI JSONL reports token usage as an `event_msg` wrapper
+    // around `payload.type = "token_count"`. Use `last_token_usage`, not the
+    // cumulative `total_token_usage`, because AFK's activity meter sums events.
+    if (obj.type === "event_msg" && obj.payload?.type === "token_count") {
+      return codexUsageEvents(obj.payload.info?.last_token_usage);
+    }
+
+    // Older Codex JSONL carries token usage on turn.completed. Codex does NOT
+    // stream a discrete reasoning item — reasoning surfaces only as the per-turn
     // `reasoning_output_tokens` count, so emit a token-bearing reasoning event
     // (alongside the usage event) when the turn did any reasoning.
     if (obj.type === "turn.completed") {
-      const usage = parseCodexUsage(obj.usage);
-      const events: ParsedStreamEvent[] = usage
-        ? [{ type: "usage", usage }]
-        : [];
-      const rtok = obj.usage?.reasoning_output_tokens;
-      if (typeof rtok === "number" && rtok > 0) {
-        events.push({ type: "reasoning", tokens: rtok });
-      }
-      return events;
+      return codexUsageEvents(obj.usage);
     }
   } catch {
     // Not valid JSON — skip
