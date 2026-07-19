@@ -179,6 +179,16 @@ describe("config", () => {
         1,
       ),
     ).toBe("pass");
+    expect(
+      decideAdversarialReview(
+        {
+          summary: "raised cap exhausted",
+          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
+        },
+        3,
+        2,
+      ),
+    ).toBe("park");
   });
 
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
