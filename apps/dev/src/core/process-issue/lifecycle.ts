@@ -118,10 +118,12 @@ import {
 } from "../issue-lifecycle.js";
 import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 import {
+  aggregateAdversarialReviewFindings,
   appendAdversarialReviewCorrectionHandoff,
   decideAdversarialReview,
   renderAdversarialReviewBlockerSummary,
   renderAdversarialReviewComment,
+  resolveAdversarialReviewer,
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
@@ -952,19 +954,37 @@ export async function processIssue(
     if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) return;
     try {
       const diff = await deps.mergeExec(["gh", "-R", input.repo, "pr", "diff", String(pr)]);
-      const findings: AdversarialReviewFindings = await deps.extractAdversarialReview({
-        context: {
-          issueNumber: input.issue,
-          issueTitle: input.title,
-          issueBody: input.body,
-          prNumber: pr,
-          diff: diff.code === 0 ? diff.stdout : "",
+      const context = {
+        issueNumber: input.issue,
+        issueTitle: input.title,
+        issueBody: input.body,
+        prNumber: pr,
+        diff: diff.code === 0 ? diff.stdout : "",
+      };
+      const implementerTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
+      const reviewer = resolveAdversarialReviewer({
+        config,
+        implementer: {
+          runner: toAgentRunner(activeRunner),
+          model: implementerTier.model,
+          effort: implementerTier.effort,
         },
-        runner: input.runner,
-        model: deps.model,
-        effort: deps.effort,
-        maxIterations: config.maxIterations,
+        taskClass: activeTaskClass,
+        resolveTier: deps.resolveTier,
       });
+      const reviews: AdversarialReviewFindings[] = [];
+      for (let i = 0; i < config.reviewerCount; i++) {
+        reviews.push(
+          await deps.extractAdversarialReview({
+            context,
+            runner: reviewer.runner,
+            model: reviewer.model,
+            effort: reviewer.effort,
+            maxIterations: config.maxIterations,
+          }),
+        );
+      }
+      const findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
       const retry = adversarialReviewCorrectionsUsed + 1;
       const decision = decideAdversarialReview(findings, retry, config.maxIterations);
       await deps.postAdversarialReview({
