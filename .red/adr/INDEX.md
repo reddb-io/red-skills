@@ -96,6 +96,9 @@ stale notes inline.
 - **0107** Engine relocation migrates by waves and proves drain before deletion — Wave 0 enablers, Wave 1 unused castle engine expansion, Wave 2 command-by-command flips (`monitor`, `go --once`, `afk run`, `fleet`) with revert-PR rollback and no engine-select flag, then Wave 3 legacy deletion only after at least 20 real Tickets drain under catches-and-heals evidence.
 - **0108** AFK trunk freshness uses a fleet-owned `red-trunk` mirror — base resolution still yields the semantic target branch, but `resolveFreshBase` fetches `origin/<base>`, updates `refs/heads/red-trunk`, and passes `red-trunk` as the worker birth base; post-land promotion updates the mirror with `update-ref`, never the primary checkout, and history rewrites reset the mirror because it carries no unique commits *(refines 0008/0031/0083; reuses 0071 landing serialization)*
 
+## Manager orchestration
+- **0109** Manager is a local portfolio liaison with repository-owned projections — `dev:manager` composes existing owner workflows rather than creating an engine; one operator-and-host-scoped portfolio owns unmaterialised intent and cross-repository coordination, each tracker artifact owns its work facts, and lazily-created per-repository Manager maps join through an immutable effort ID. Deterministic reconciliation, effort leases, checkpoints, a bounded brief, trusted directives, semantic completion, and Claude/Codex/OpenCode parity form the first functional slice.
+
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal
 - *(see also 0030, 0031)*
