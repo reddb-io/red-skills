@@ -16,5 +16,6 @@ export {
   decodeRunnerCircuitSnapshot,
   encodeBootErrorPayload,
   castleWorktreeUnder,
+  readCapturedWorktreePath,
 } from "./run/state.js";
 export { runCommand } from "./run/command.js";
