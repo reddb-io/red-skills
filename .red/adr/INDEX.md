@@ -182,3 +182,24 @@ stale notes inline.
 - **0093** Vocabulary big bang: Spec and Ticket replace PRD and Issue — upstream v1.1.0's rename adopted at total scope (skill names `/to-spec`+`/to-tickets`, labels `type:spec`/`spec:N`, `--spec` flag, glossary canonical terms) via one atomic release with a relabel sweep and the fleet stopped, not expand–contract; closed Tickets and historical ADRs/envelopes keep the old vocabulary — history is never rewritten.
 - **0094** Native dependency edges are the human surface; `req:N` labels remain the runtime's source of truth — publishers write GitHub's native sub-issue + blocked-by relations *in addition to* the `req:N` labels the AFK close cascade/boot sweep parse; the controlled redundancy is deliberate (do not "clean up" either side) and `/doctor` guards divergence; full-native is a possible future contract that can supersede this ADR without reopening ADR 0093.
 - **0112** ADR lifecycle — immutable records, physical archive, gated curation. ADRs are immutable-hybrid (the Decision is never rewritten; only status, `Related`/`superseded-by` links, and stale-path prose are edited in place; "update" mints a superseding ADR); a terminal ADR (superseded/deprecated/inert) is `git mv`'d to `.red/adr/archive/` with history preserved; merge and split are supersede-and-replace (new ADRs carry the decision, the originals archived with a successor pointer), never in-place rewrites. `/review-adrs` evolves in place into the lifecycle skill: a cheap hybrid triage over every ADR (or an optional subject filter) buckets by status/age/inbound-links/stale-refs/supersession; mechanical reversible ops (git mv, status, INDEX resync, stale-path prose) apply in-session behind a confirmation gate; judgment ops (merge/split/supersede-a-live-decision/incoherent) go interview → Spec → `/afk`. `adr-governance.test.ts` evolves so archived is first-class (`Set(active ∪ archived) === Set(INDEX)`, successor-pointer required, `archive/` append-only) — history cannot be destroyed by a careless operation.
+
+## Archived
+
+Retired records live in `.red/adr/archive/` (ADR **0112**). Archiving is a
+`git mv`, never a delete — the lane is **append-only** and CI fails if any file
+in it disappears. Every archived number stays documented as a bullet in this
+section, so the governance bijection
+`Set(active ∪ archived numbers) === Set(INDEX numbers)` holds.
+
+Each archived record must carry, in its `## Status` section, one terminal
+status — `superseded`, `deprecated`, or `inert` — plus a successor pointer line:
+
+```
+superseded-by: 0113
+```
+
+`superseded` and `deprecated` records must name at least one successor ADR
+number; only an `inert` record (shipped and no longer guidance) may write
+`superseded-by: none (inert)`.
+
+_The archive is empty — no ADR has been retired yet._
