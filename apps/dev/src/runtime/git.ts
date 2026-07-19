@@ -465,7 +465,7 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
-/** The GitExec executor for remote-branch.ts (pushAttempt / deleteRemote). */
+/** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
     const r = await runGit(ctx, args);
@@ -691,7 +691,7 @@ export async function pushBranch(
 }
 
 /**
- * List origin refs under a namespace ("afk/" | "afk-attempts/") via ls-remote,
+ * List origin refs under a namespace (for example "afk/") via ls-remote,
  * shaped as BranchRef[]. Best-effort fills the last-commit epoch when the commit
  * object is present locally; callers that need it must degrade safely when it is
  * absent.
