@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { RunOptions } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
   buildContinuousPushHook,
@@ -18,6 +19,7 @@ import {
   buildAgent,
   OPENROUTER_API_KEY_ENV,
   type AgentFactories,
+  type SandcastleDeps,
   DONE_SIGNAL,
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
