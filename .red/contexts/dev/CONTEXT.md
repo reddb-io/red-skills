@@ -360,6 +360,10 @@ _Avoid_: submodule, pointer bump, two-repo flow
 The two-regime output contract every TOON/TOONL producer obeys (ADR 0089 Amendment 2): by default output is lossless (`decode(encode(x)) === x`; cell safety is encoder quoting, never pre-encode mutation); reduction — projection, capping, truncation — happens only behind an explicit opt-in flag and is marked in-band with what was reduced and how to recover it (an **Elision handle** where bytes are stored; re-run without the flag where re-derivable). Silent lossy normalization on the default path is the forbidden pattern.
 _Avoid_: compact mode (names the flag, not the contract), lossy output
 
+**Adversarial Review**:
+An autonomous review→correct loop that runs after a pull request is built: one or more reviewer agents inspect the diff for defects and for conformance to the originating **Issue** (was what the Issue asked for actually implemented?), post their findings to the pull request and the Issue, and — when findings are confirmed — force a mandatory correction round back to the implementer with a context narrowed to the diff and the critiques. One reviewer by default (any finding triggers correction), configurable to a voting quorum; bounded by a configurable iteration budget (default one review pass); model, effort, and runner are configurable.
+_Avoid_: code review (the advisory human-facing clarity pass), gate (machine validation — tests/lint/typecheck), lint
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
