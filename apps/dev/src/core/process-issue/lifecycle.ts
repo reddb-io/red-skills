@@ -120,6 +120,7 @@ import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 import {
   appendAdversarialReviewCorrectionHandoff,
   decideAdversarialReview,
+  renderAdversarialReviewBlockerSummary,
   renderAdversarialReviewComment,
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
@@ -388,6 +389,9 @@ export async function processIssue(
   let adversarialReviewCorrectionsUsed = 0;
   let pendingAdversarialCorrection:
     | { diff: string; findings: AdversarialReviewFindings; retry: number; cap: number }
+    | undefined;
+  let pendingAdversarialPark:
+    | { findings: AdversarialReviewFindings; cap: number }
     | undefined;
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
@@ -978,6 +982,10 @@ export async function processIssue(
         };
         return "abort";
       }
+      if (decision === "park") {
+        pendingAdversarialPark = { findings, cap: config.maxIterations };
+        return "abort";
+      }
     } catch (error) {
       deps.appendIterLog(`[adversarial-review] advisory pass failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1094,6 +1102,22 @@ export async function processIssue(
   );
   if (!landing.ok) {
     if (landing.reason === "adversarial-correction") {
+      const park = pendingAdversarialPark;
+      pendingAdversarialPark = undefined;
+      if (park) {
+        const validation = renderAdversarialReviewBlockerSummary(park.findings, park.cap);
+        deps.appendIterLog(`🤖 /afk: ${validation} Parked to ready-for-human.`);
+        return await terminalFailure(
+          common,
+          "feedback-failed",
+          "feedback",
+          {
+            notes: "Blocking adversarial review findings remained after the configured correction budget. The worker branch was not merged.",
+            validation,
+          },
+          { validationSummary: validation },
+        );
+      }
       const correction = pendingAdversarialCorrection;
       pendingAdversarialCorrection = undefined;
       if (!correction) {

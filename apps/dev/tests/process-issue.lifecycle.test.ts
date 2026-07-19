@@ -997,6 +997,47 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(trace.closed).toEqual([9]);
     expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
   });
+
+  it("raised review budget parks ready-for-human when blocking findings remain at exhaustion (#2209)", async () => {
+    const blocking = {
+      summary: "Blocking acceptance gaps remain.",
+      findings: [
+        {
+          path: "packages/x/src/a.ts",
+          line: 1,
+          body: "The implementation still omits the required audit trail.",
+          blocking: true,
+        },
+      ],
+    };
+    const { deps, input, trace } = harness({
+      outcomes: ["done", "done", "done"],
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 2 },
+      adversarialFindingsSequence: [blocking, blocking, blocking],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.adversarialReviewContexts).toHaveLength(3);
+    expect(trace.closed).toEqual([]);
+    expect(labelTrace(trace)).toContain("-running|+ready-for-human+blocked:validation");
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: correct (blocking)");
+    expect(trace.adversarialReviews[1]?.body).toContain("Decision: correct (blocking)");
+    expect(trace.adversarialReviews[2]?.body).toContain("Decision: park (blocking)");
+
+    const blocker = parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "");
+    expect(blocker).toMatchObject({
+      status: "blocked",
+      kind: "validation",
+      summary: expect.stringContaining("packages/x/src/a.ts:1"),
+      next: expect.stringContaining("Decide whether to fix forward"),
+    });
+    expect(blocker?.summary).toContain("The implementation still omits the required audit trail.");
+    expect(trace.envelopeBodies.at(-1)).toContain("Adversarial review budget exhausted");
+  });
 });
 
 

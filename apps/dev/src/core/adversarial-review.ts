@@ -66,7 +66,8 @@ export function decideAdversarialReview(
 ): AdversarialReviewDecision {
   const hasBlocking = findings.findings.some((finding) => finding.blocking);
   if (!hasBlocking) return "pass";
-  return iteration <= cap ? "correct" : "pass";
+  if (iteration <= cap) return "correct";
+  return cap >= 2 ? "park" : "pass";
 }
 
 export function buildAdversarialReviewPrompt(context: AdversarialReviewContext): string {
@@ -155,6 +156,22 @@ export function renderAdversarialReviewComment(
     });
   }
   return lines.join("\n");
+}
+
+export function renderAdversarialReviewBlockerSummary(
+  findings: AdversarialReviewFindings,
+  cap: number,
+): string {
+  const blocking = findings.findings.filter((finding) => finding.blocking);
+  const renderedFindings = blocking
+    .map((finding, idx) => `${idx + 1}. ${finding.path}:${finding.line} ${finding.body}`)
+    .join("; ");
+  const retryWord = cap === 1 ? "retry" : "retries";
+  return [
+    `Adversarial review budget exhausted after ${cap} correction ${retryWord}`,
+    `with ${blocking.length} blocking finding(s):`,
+    renderedFindings || findings.summary || "Blocking adversarial review findings remain.",
+  ].join(" ");
 }
 
 function tailLines(text: string, maxLines: number): string {
