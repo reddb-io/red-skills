@@ -682,6 +682,29 @@ describe("waitForMergeReady (#812 poll loop)", () => {
 });
 
 describe("landPr CI-aware wiring (#812)", () => {
+  it("returns the forge merge commit SHA after a synchronous PR merge", async () => {
+    const exec: Exec = async (argv) => {
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (cmd.includes("pr view 42 --json mergeCommit --jq .mergeCommit.oid")) {
+        return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await landPr(exec, {
+      repo: "o/r",
+      gitRepo: "/repo",
+      remote: "origin",
+      branch: "afk/wX/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+    });
+
+    expect(result).toEqual({ ok: true, prNumber: 42, mergeSha: "forge-merge-sha" });
+  });
+
   it("polls merge state then admin-merges once CLEAN", async () => {
     let viewed = false;
     let mergedAfterView = false;
