@@ -77,6 +77,15 @@ export interface EvaluateLivenessInput {
    * fresh. Injected so tests supply a fake probe.
    */
   readonly hasLiveDescendants?: () => boolean;
+  /**
+   * Hard-silence backstop (#2203): once the lane has been idle for at least
+   * this many ms, the verdict is `stalled` regardless of live descendants or
+   * cross-check arming — a wedged agent (a hung child at flat cpu that keeps
+   * the process alive but never advances the lane) must never hold a slot
+   * forever. `undefined` disables the backstop (the pre-#2203 behaviour). Must
+   * be well above `laneIdleMs`.
+   */
+  readonly laneHardIdleMs?: number;
 }
 
 /**
@@ -111,6 +120,27 @@ export function evaluateLiveness(
     laneAgeMs === undefined
       ? "lane empty"
       : `lane idle (${laneAgeMs}ms > ${laneIdleMs}ms)`;
+
+  // Hard-silence backstop (#2203): once the liveness lane has been silent past
+  // the hard cap, the attempt is stalled regardless of live descendants or
+  // cross-check arming — a wedged agent (a live child at flat cpu that stops
+  // advancing the lane) must never hold a slot forever. Placed before the
+  // arming/descendant checks so neither can veto it; the reaper's kill
+  // predicate still gates the irreversible kill on a flat-cpu / no-build tree,
+  // and genuine work keeps its lane fresh, so this never fires for real work.
+  if (
+    laneAgeMs !== undefined &&
+    input.laneHardIdleMs !== undefined &&
+    laneAgeMs >= input.laneHardIdleMs
+  ) {
+    return {
+      status: "stalled",
+      laneFresh: false,
+      laneAgeMs,
+      crossCheckArmed,
+      reason: `${ageDesc} past hard-silence cap (${input.laneHardIdleMs}ms) — descendant/cross-check overridden`,
+    };
+  }
 
   // Lane is idle or empty. The lane alone would call this stalled, but a wedged
   // substrate can stop writing the lane while the agent keeps working — the

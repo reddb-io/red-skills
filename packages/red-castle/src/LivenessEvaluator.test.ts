@@ -121,6 +121,63 @@ describe("evaluateLiveness — lane idle, cross-check armed", () => {
   });
 });
 
+describe("evaluateLiveness — hard-silence backstop (#2203)", () => {
+  it("lane silent past the hard cap → stalled even with live descendants", () => {
+    // A wedged agent (a live child at flat cpu that stops advancing the lane)
+    // must never hold a slot forever: past laneHardIdleMs the descendant check
+    // is overridden, and the probe is not even consulted.
+    let probed = false;
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_000,
+      now: 2_000_000, // laneAgeMs = 1_999_000ms, well past the hard cap
+      laneIdleMs: 5_000,
+      laneHardIdleMs: 1_800_000, // 30 min
+      crossCheckArmed: true,
+      hasLiveDescendants: () => {
+        probed = true;
+        return true;
+      },
+    });
+    expect(verdict.status).toBe("stalled");
+    expect(verdict.reason).toContain("hard-silence");
+    expect(probed).toBe(false);
+  });
+
+  it("fires under a disarmed cross-check too (container silent past the hard cap)", () => {
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      laneHardIdleMs: 1_800_000,
+      crossCheckArmed: false,
+    });
+    expect(verdict.status).toBe("stalled");
+  });
+
+  it("does not fire before the hard cap — live descendants still read alive", () => {
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_000,
+      now: 100_000, // laneAgeMs = 99_000ms: past soft idle, under the hard cap
+      laneIdleMs: 5_000,
+      laneHardIdleMs: 1_800_000,
+      crossCheckArmed: true,
+      hasLiveDescendants: () => true,
+    });
+    expect(verdict.status).toBe("alive");
+  });
+
+  it("undefined laneHardIdleMs preserves the pre-#2203 behaviour", () => {
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      crossCheckArmed: true,
+      hasLiveDescendants: () => true,
+    });
+    expect(verdict.status).toBe("alive");
+  });
+});
+
 describe("evaluateLiveness — lane idle, cross-check disarmed (container)", () => {
   it("cannot corroborate without the host tree → unknown, probe never called", () => {
     let probed = false;

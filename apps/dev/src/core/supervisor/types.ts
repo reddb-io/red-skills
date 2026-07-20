@@ -80,7 +80,11 @@ export interface SupervisorFs {
    * Returns null when no iter dir is found (worker between iterations or died
    * pre-claim). Replaces the old `agentLaneMtime` firehose-mtime check.
    */
-  workerLivenessVerdict(slot: number, laneIdleMs: number): LivenessVerdict | null;
+  workerLivenessVerdict(
+    slot: number,
+    laneIdleMs: number,
+    laneHardIdleMs?: number,
+  ): LivenessVerdict | null;
   /** Resolve the slot's current iteration dir + the state it carries, or null
    * when the worker is between iterations / died pre-claim. Mirrors
    * find_slot_iter_dir + the jq reads in reap_stalled_slot. */

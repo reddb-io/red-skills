@@ -618,8 +618,8 @@ function buildSupervisorDeps(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     },
     fs: {
-      workerLivenessVerdict: (slot, laneIdleMs) =>
-        workerLivenessFor(tmpDir, slotPids.get(slot) ?? null, laneIdleMs),
+      workerLivenessVerdict: (slot, laneIdleMs, laneHardIdleMs) =>
+        workerLivenessFor(tmpDir, slotPids.get(slot) ?? null, laneIdleMs, laneHardIdleMs),
       resolveIterDir: (slot) => resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, now()),
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
