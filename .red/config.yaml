@@ -39,8 +39,10 @@ plugins:
       max_iterations: 1
       reviewer_count: 1
       quorum: any
-      model: gpt-5.5           # review lane on 5.5, matching the validate tier
-      effort: high
+      model: gpt-5.6-sol       # adversarial reviewer runs on the newer model...
+      effort: medium           # ...at medium effort — the review pass is bounded
+                               # to one iteration, so depth matters less than the
+                               # implementer tiers that run at high.
   internal:
     enabled: true                # maintainer-only repo operations plugin (ADR 0067)
 
