@@ -3,7 +3,8 @@ import {
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
 import {
-  MAIN_RED_REPAIR_TITLE,
+  MAIN_RED_REPAIR_MARKER,
+  selectMainRedRepairIssue,
   type MainRedRepairIssue,
 } from "../../core/main-red-repair.js";
 import { scrubOutbound } from "../outbound-redaction.js";
@@ -281,8 +282,11 @@ export async function listSpecSubIssueCandidates(
   return candidates;
 }
 
-/** Find the single open auto-filed main-red repair issue by its stable title. */
-export async function findMainRedRepairIssue(ctx: GhContext): Promise<MainRedRepairIssue | null> {
+/** Find an open marked main-red repair issue, optionally matching a failing-check set. */
+export async function findMainRedRepairIssue(
+  ctx: GhContext,
+  failures?: readonly string[],
+): Promise<MainRedRepairIssue | null> {
   const r = await runGh(ctx, [
     "issue",
     "list",
@@ -292,7 +296,7 @@ export async function findMainRedRepairIssue(ctx: GhContext): Promise<MainRedRep
     "--limit",
     "50",
     "--search",
-    `"${MAIN_RED_REPAIR_TITLE}" in:title`,
+    `"red-skills:main-red-repair v1" in:body`,
     "--json",
     "number,title,body,labels",
   ]);
@@ -305,16 +309,17 @@ export async function findMainRedRepairIssue(ctx: GhContext): Promise<MainRedRep
       labels?: Array<{ name?: string }>;
     }>;
     if (!Array.isArray(rows)) return null;
-    const row = rows
-      .filter((item) => String(item.title ?? "") === MAIN_RED_REPAIR_TITLE)
-      .sort((a, b) => Number(a.number ?? 0) - Number(b.number ?? 0))[0];
-    if (!row || !Number(row.number)) return null;
-    return {
-      number: Number(row.number),
-      title: String(row.title ?? ""),
-      body: String(row.body ?? ""),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
-    };
+    const issues = rows
+      .filter((item) => String(item.body ?? "").includes(MAIN_RED_REPAIR_MARKER))
+      .map((row) => ({
+        number: Number(row.number),
+        title: String(row.title ?? ""),
+        body: String(row.body ?? ""),
+        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      }))
+      .filter((issue) => Number.isInteger(issue.number) && issue.number > 0)
+      .sort((a, b) => a.number - b.number);
+    return failures === undefined ? issues[0] ?? null : selectMainRedRepairIssue(issues, failures);
   } catch {
     return null;
   }
