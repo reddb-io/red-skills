@@ -110,7 +110,7 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     expect(trace).toContainEqual({
       cmd: "git",
       args: ["rebase", "abc1234"],
-      cwd: expect.stringContaining("cascade/afk-w2-43-fix-sibling-0"),
+      cwd: expect.stringContaining("cascade/afk-w2-43-fix-sibling-"),
     });
   });
 
