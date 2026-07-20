@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -89,5 +89,25 @@ describe("memory CLI argument binding", () => {
       "review the first source",
       "review the second source",
     ]);
+  });
+
+  test("passes repeated array flags through the operation registry", async () => {
+    const root = await initRoot();
+    const out = join(root, "pre-pr-review.html");
+    const result = runMemory([
+      "pre-pr-review-viewer",
+      "--root",
+      root,
+      "--changed-files=src/first.ts",
+      "--changed-files",
+      "src/second.ts",
+      "--out",
+      out,
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    const html = await readFile(out, "utf8");
+    expect(html).toContain("src/first.ts");
+    expect(html).toContain("src/second.ts");
   });
 });
