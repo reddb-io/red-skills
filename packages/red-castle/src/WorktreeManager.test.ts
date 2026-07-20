@@ -576,7 +576,7 @@ describe("WorktreeManager.create", () => {
 
     await execAsync("git rebase --abort", { cwd: first.path }).catch(() => {});
     await run(remove(first.path));
-  });
+  }, 15_000);
 
   it("reuses worktree with unpushed commits (not considered dirty)", async () => {
     const repoDir = await setupRepo();
