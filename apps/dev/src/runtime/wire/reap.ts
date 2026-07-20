@@ -52,6 +52,8 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
     localLiveRefs,
     lookup: (issue) => cache.get(issue),
     deleteRemote: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
-    deleteLocal: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+    deleteLocal: async (branch) => {
+      await gitx.deleteLocalBranch(gitCtx, branch);
+    },
   };
 }
