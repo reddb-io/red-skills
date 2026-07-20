@@ -21,7 +21,12 @@ import { HOOK_EVENTS, parseComplementaryMapKind, readStdin, resolveBootstrapPath
 
 const MEMORY_CLI_FLAG_SCHEMA = {
   change: { kind: "value", type: "array", coerce: (raw: string) => raw },
-  "changed-files": { kind: "value", type: "array", coerce: (raw: string) => raw },
+  "changed-files": {
+    kind: "value",
+    type: "array",
+    aliases: ["changed-file"],
+    coerce: (raw: string) => raw,
+  },
   citation: { kind: "value", type: "array", coerce: (raw: string) => raw },
   "privacy-note": { kind: "value", type: "array", coerce: (raw: string) => raw },
   tag: { kind: "value", type: "array", coerce: (raw: string) => raw },
