@@ -135,7 +135,10 @@ export function operationNeedsGraphStore(operation: ReadOnlyMemoryOperation): bo
 }
 
 export function flagsForRegistryTransport(args: ParsedArgs): Record<string, unknown> {
-  const flags: Record<string, unknown> = { ...args.flags };
+  const flags: Record<string, unknown> = {
+    ...args.flags,
+    ...(args.repeatedFlags ?? {}),
+  };
   const operation = registryCliOperationFor(args.command, args.positional);
   if (
     operation &&
