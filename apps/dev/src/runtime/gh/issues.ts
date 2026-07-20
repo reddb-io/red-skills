@@ -3,7 +3,8 @@ import {
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
 import {
-  MAIN_RED_REPAIR_TITLE,
+  MAIN_RED_REPAIR_MARKER,
+  selectMainRedRepairIssue,
   type MainRedRepairIssue,
 } from "../../core/main-red-repair.js";
 import { scrubOutbound } from "../outbound-redaction.js";
@@ -281,43 +282,49 @@ export async function listSpecSubIssueCandidates(
   return candidates;
 }
 
-/** Find the single open auto-filed main-red repair issue by its stable title. */
-export async function findMainRedRepairIssue(ctx: GhContext): Promise<MainRedRepairIssue | null> {
+/** List every open marked main-red repair issue across all GitHub result pages. */
+export async function listMainRedRepairIssues(ctx: GhContext): Promise<MainRedRepairIssue[]> {
   const r = await runGh(ctx, [
-    "issue",
-    "list",
-    ...repoArgs(ctx),
-    "--state",
-    "open",
-    "--limit",
-    "50",
-    "--search",
-    `"${MAIN_RED_REPAIR_TITLE}" in:title`,
-    "--json",
-    "number,title,body,labels",
+    "api",
+    "--paginate",
+    "--slurp",
+    apiPath(ctx, "issues?state=open&per_page=100"),
   ]);
-  if (r.code !== 0) return null;
+  if (r.code !== 0) {
+    throw new Error(`gh: failed to list main-red repair issues (code ${r.code}): ${(r.stderr || r.stdout).trim()}`);
+  }
   try {
-    const rows = JSON.parse(r.stdout || "[]") as Array<{
+    const parsed = JSON.parse(r.stdout || "[]") as unknown;
+    if (!Array.isArray(parsed)) throw new Error("expected an array");
+    const rows = parsed.flatMap((page) => Array.isArray(page) ? page : [page]) as Array<{
       number?: number;
       title?: string;
       body?: string;
       labels?: Array<{ name?: string }>;
     }>;
-    if (!Array.isArray(rows)) return null;
-    const row = rows
-      .filter((item) => String(item.title ?? "") === MAIN_RED_REPAIR_TITLE)
-      .sort((a, b) => Number(a.number ?? 0) - Number(b.number ?? 0))[0];
-    if (!row || !Number(row.number)) return null;
-    return {
-      number: Number(row.number),
-      title: String(row.title ?? ""),
-      body: String(row.body ?? ""),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
-    };
-  } catch {
-    return null;
+    return rows
+      .filter((item) => String(item.body ?? "").includes(MAIN_RED_REPAIR_MARKER))
+      .map((row) => ({
+        number: Number(row.number),
+        title: String(row.title ?? ""),
+        body: String(row.body ?? ""),
+        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      }))
+      .filter((issue) => Number.isInteger(issue.number) && issue.number > 0)
+      .sort((a, b) => a.number - b.number);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`gh: invalid main-red repair issue response: ${message}`);
   }
+}
+
+/** Find an open marked main-red repair issue, optionally matching a failing-check set. */
+export async function findMainRedRepairIssue(
+  ctx: GhContext,
+  failures?: readonly string[],
+): Promise<MainRedRepairIssue | null> {
+  const issues = await listMainRedRepairIssues(ctx);
+  return failures === undefined ? issues[0] ?? null : selectMainRedRepairIssue(issues, failures);
 }
 
 /** Create the auto-filed main-red repair issue. */

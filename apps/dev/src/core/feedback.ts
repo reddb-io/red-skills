@@ -526,6 +526,8 @@ export interface RunFeedbackResult {
    * about the baseline's state, not the worker reclassification mechanism.
    */
   baselineFailures?: readonly string[];
+  /** Actionable evidence retained from each failed baseline command. */
+  baselineFailureEvidence?: readonly BaselineFailureEvidence[];
   /**
    * Quarantine entries that were active for this gate run — the full validated
    * list from `RunFeedbackInput.quarantine`. Always empty when no quarantine
@@ -550,6 +552,27 @@ export interface BaselineCheckRef {
   scope: string;
 }
 
+export interface BaselineFailureEvidence {
+  check: string;
+  summary: string;
+  outputTail: string;
+}
+
+interface BaselineCheckResult {
+  status: "passed" | "failed";
+  evidence?: BaselineFailureEvidence;
+}
+
+function boundedFailureOutputTail(output: string): string {
+  return output.replace(/\n+$/, "").split("\n").slice(-20).join("\n").slice(-4_000);
+}
+
+function joinCommandOutput(stdout: string, stderr: string): string {
+  if (stdout === "") return stderr;
+  if (stderr === "") return stdout;
+  return stdout.endsWith("\n") || stderr.startsWith("\n") ? `${stdout}${stderr}` : `${stdout}\n${stderr}`;
+}
+
 /**
  * Internal: run a list of FEEDBACK_SCRIPTS over a list of scopes against a
  * concrete worktree path, using the same per-check shape `runFeedback` emits.
@@ -570,13 +593,25 @@ async function runChecksForBaseline(
   layout: PackageLayout,
   now: () => number,
   env: NodeJS.ProcessEnv,
-): Promise<Map<string, "passed" | "failed">> {
-  const out = new Map<string, "passed" | "failed">();
+): Promise<Map<string, BaselineCheckResult>> {
+  const out = new Map<string, BaselineCheckResult>();
   for (const { name, script, scope } of refs) {
     if (!layout.hasScript(scope, script)) continue;
     const dir = scopeDir(baselineWorktree, scope);
     const result = await exec(["pnpm", "-C", dir, script], { env });
-    out.set(name, result.code === 0 ? "passed" : "failed");
+    if (result.code === 0) {
+      out.set(name, { status: "passed" });
+      continue;
+    }
+    const output = joinCommandOutput(result.stdout, result.stderr);
+    out.set(name, {
+      status: "failed",
+      evidence: {
+        check: name,
+        summary: outputSummary("failed", output),
+        outputTail: boundedFailureOutputTail(output),
+      },
+    });
   }
   // `now` is part of the signature for symmetry with the main run; the
   // baseline probe is intentionally cheaper (no per-check timing emitted
@@ -700,7 +735,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
-      const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
+      const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
       const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
       push({ name, script, label, scope, status, record });
     }
@@ -725,7 +760,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
-    const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
+    const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
     const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     push({ name, script: "typecheck", label, scope, status, record });
   }
@@ -738,13 +773,17 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
     const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
     const baselineFailing = [...baselineResults.entries()]
-      .filter(([, status]) => status === "failed")
+      .filter(([, result]) => result.status === "failed")
       .map(([name]) => name);
     const gateDecision = decideBaselineDiffGate(
       failing.map((check) => check.name),
       baselineFailing,
     );
     const preExisting = new Set(gateDecision.preExistingFailures);
+    const baselineFailureEvidence = gateDecision.preExistingFailures.flatMap((name) => {
+      const evidence = baselineResults.get(name)?.evidence;
+      return evidence ? [evidence] : [];
+    });
 
     // Re-classify any check that ALSO failed on the baseline as
     // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
@@ -775,6 +814,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       baselineDowngraded: downgraded,
       baselineProbeRan: true,
       baselineFailures: gateDecision.preExistingFailures,
+      baselineFailureEvidence,
       quarantined: quarantine,
       validationScope,
     };

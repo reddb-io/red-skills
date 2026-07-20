@@ -349,6 +349,10 @@ export function harness(opts: HarnessOptions = {}): {
             inCodeowners: false,
           })
         : undefined,
+      listMainRedRepairIssues:
+        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
+          ? async () => currentMainRedRepairIssue ? [currentMainRedRepairIssue] : []
+          : undefined,
       findMainRedRepairIssue:
         opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
           ? async () => currentMainRedRepairIssue

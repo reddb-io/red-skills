@@ -14,6 +14,7 @@ export {
   createIssue,
   attachSubIssue,
   listSpecSubIssueCandidates,
+  listMainRedRepairIssues,
   findMainRedRepairIssue,
   createMainRedRepairIssue,
   updateMainRedRepairIssue,
