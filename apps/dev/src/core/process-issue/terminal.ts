@@ -833,7 +833,7 @@ export async function runCascadeRebase(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
   closedIssue: number,
-  base: string,
+  trunkTip: string,
   labels: string[],
 ): Promise<void> {
   if (!deps.cascadeRebase) return;
@@ -866,12 +866,12 @@ export async function runCascadeRebase(
         );
         continue;
       }
-      const r = await deps.cascadeRebase.rebaseAndPush(input.repoDir, branch, base);
+      const r = await deps.cascadeRebase.rebaseAndPush(input.repoDir, branch, trunkTip);
       if (r.ok) {
-        deps.appendIterLog(`🤖 /afk cascade-rebase: rebased ${branch} onto ${base}`);
+        deps.appendIterLog(`🤖 /afk cascade-rebase: rebased ${branch} onto ${trunkTip}`);
       } else {
         deps.appendIterLog(
-          `🤖 /afk cascade-rebase warning: ${r.warn ?? `failed to rebase ${branch} onto ${base}`}`,
+          `🤖 /afk cascade-rebase warning: ${r.warn ?? `failed to rebase ${branch} onto ${trunkTip}`}`,
         );
       }
     }
