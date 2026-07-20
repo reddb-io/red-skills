@@ -9,17 +9,32 @@ import {
   exportCheckpoint,
   importCheckpoint,
   type ManagerActor,
+  type ManagerAction,
   type ManagerCheckpoint,
   type ManagerPortfolio,
+  type TransitionResult,
 } from "./manager-portfolio-machine.js";
+
+type ShellWriteAction = Extract<ManagerAction, { effortId: string }> extends infer Action
+  ? Action extends ManagerAction
+    ? Omit<Action, "actor" | "expectedGeneration">
+    : never
+  : never;
 
 const bold = "\x1b[1m";
 const dim = "\x1b[2m";
 const reset = "\x1b[0m";
 
 let state = createPrototypePortfolio();
-let actor: ManagerActor = { hostId: "host-a", sessionId: "session-a" };
+let actor: ManagerActor = {
+  hostId: "host-a",
+  sessionId: "session-a",
+  authorityEpoch: 1,
+  leaseToken: null,
+};
 let checkpoint: ManagerCheckpoint | null = null;
+let sourceReplica: ManagerPortfolio | null = null;
+let lastSourceResult: TransitionResult | null = null;
 
 function focusedEffort() {
   return state.efforts[state.focusEffortId]!;
@@ -48,11 +63,12 @@ function render(): void {
     .join(", ");
 
   console.log(`${bold}Manager portfolio transition explorer${reset} ${dim}(PROTOTYPE — in memory)${reset}`);
-  console.log(`${bold}authority${reset}: ${state.authority.hostId}@epoch-${state.authority.epoch}`);
+  console.log(`${bold}authority${reset}: ${state.authority.hostId}@epoch-${state.authority.epoch} replica=${state.replicaStatus}`);
   console.log(`${bold}portfolio generation${reset}: ${state.portfolioGeneration}`);
-  console.log(`${bold}current actor${reset}: ${actor.hostId}/${actor.sessionId}`);
+  console.log(`${bold}current actor${reset}: ${actor.hostId}/${actor.sessionId}@epoch-${actor.authorityEpoch} lease-token=${actor.leaseToken ?? "-"}`);
   console.log(`${bold}sessions${reset}: ${JSON.stringify(state.sessions)}`);
   console.log(`${bold}checkpoint slot${reset}: ${checkpoint ? `exported@g${checkpoint.portfolioGeneration}` : "empty"}`);
+  console.log(`${bold}source replica${reset}: ${sourceReplica ? `${sourceReplica.replicaStatus}; last-write=${lastSourceResult?.code ?? "not-tried"}` : "not transferred"}`);
   console.log(`${bold}other efforts${reset}: ${otherEfforts || "none"}`);
   console.log();
   console.log(`${bold}focused effort${reset}: ${effort.id} — ${effort.name}`);
@@ -78,10 +94,18 @@ function render(): void {
 
 function act(action: Parameters<typeof applyManagerAction>[1]): void {
   state = applyManagerAction(state, action);
+  if (action.actor.hostId === actor.hostId && action.actor.sessionId === actor.sessionId) {
+    const lease = focusedEffort().lease;
+    actor = {
+      ...actor,
+      authorityEpoch: state.authority.epoch,
+      leaseToken: lease?.sessionId === actor.sessionId ? lease.token : null,
+    };
+  }
 }
 
 function writeAction(
-  action: Omit<Extract<Parameters<typeof applyManagerAction>[1], { effortId: string }>, "actor" | "expectedGeneration">,
+  action: ShellWriteAction,
 ): void {
   act({ ...action, actor, expectedGeneration: generation() } as Parameters<typeof applyManagerAction>[1]);
 }
@@ -109,7 +133,7 @@ async function main(): Promise<void> {
           act({ type: "crash-session", actor });
           break;
         case "v": {
-          actor = { ...actor, sessionId: "recovery-session" };
+          actor = { ...actor, sessionId: "recovery-session", leaseToken: null };
           writeAction({ type: "recover-lease", effortId: state.focusEffortId });
           break;
         }
@@ -158,17 +182,33 @@ async function main(): Promise<void> {
           break;
         case "i":
           if (checkpoint) {
-            state = importCheckpoint(checkpoint, "host-b");
-            actor = { hostId: "host-b", sessionId: "imported-session" };
+            const transfer = importCheckpoint(state, checkpoint, "host-b");
+            sourceReplica = transfer.source;
+            state = transfer.destination;
+            actor = {
+              hostId: "host-b",
+              sessionId: "imported-session",
+              authorityEpoch: state.authority.epoch,
+              leaseToken: null,
+            };
+            lastSourceResult = null;
           }
           break;
         case "o":
-          act({
-            type: "resume",
-            effortId: state.focusEffortId,
-            actor: { hostId: "host-a", sessionId: "source-session" },
-            expectedGeneration: generation(),
-          });
+          if (sourceReplica && checkpoint) {
+            sourceReplica = applyManagerAction(sourceReplica, {
+              type: "resume",
+              effortId: sourceReplica.focusEffortId,
+              actor: {
+                hostId: checkpoint.sourceAuthority.hostId,
+                sessionId: "source-session",
+                authorityEpoch: checkpoint.sourceAuthority.epoch,
+                leaseToken: checkpoint.efforts[sourceReplica.focusEffortId]!.lease?.token ?? null,
+              },
+              expectedGeneration: sourceReplica.efforts[sourceReplica.focusEffortId]!.generation,
+            });
+            lastSourceResult = sourceReplica.lastResult;
+          }
           break;
         case "m":
           writeAction({ type: "complete", effortId: state.focusEffortId });
@@ -182,12 +222,21 @@ async function main(): Promise<void> {
           actor = {
             hostId: state.authority.hostId,
             sessionId: state.focusEffortId === "effort-alpha" ? "session-a" : "session-b",
+            authorityEpoch: state.authority.epoch,
+            leaseToken: null,
           };
           break;
         case "z":
           state = createPrototypePortfolio();
-          actor = { hostId: "host-a", sessionId: "session-a" };
+          actor = {
+            hostId: "host-a",
+            sessionId: "session-a",
+            authorityEpoch: 1,
+            leaseToken: null,
+          };
           checkpoint = null;
+          sourceReplica = null;
+          lastSourceResult = null;
           break;
       }
     }
