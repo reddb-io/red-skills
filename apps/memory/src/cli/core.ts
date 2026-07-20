@@ -857,9 +857,8 @@ export function evidenceCardInputFromFlags(args: ParsedArgs): CreateEvidenceCard
 }
 
 export function collectEvidenceFlagValues(args: ParsedArgs, key: string): string[] {
-  const values = collectRepeatedFlag(process.argv.slice(2), key);
-  const single = stringFlag(args.flags, key);
-  if (values.length === 0 && single) values.push(single);
+  const flag = args.flags[key];
+  const values = Array.isArray(flag) ? flag : typeof flag === "string" ? [flag] : [];
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
