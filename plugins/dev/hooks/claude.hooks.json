@@ -9,7 +9,7 @@
           },
           {
             "type": "command",
-            "command": "sh -c 'hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" prime || printf \"{}\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" prime <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           },
           {
             "type": "command",
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-pre-exec || true; else exit 0; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-pre-exec <\"$tmp\" || true; else exit 0; fi'"
           },
           {
             "type": "command",
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-post-exec || true; else exit 0; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/hooks/rsp-hook.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" claude-post-exec <\"$tmp\" || true; else exit 0; fi'"
           }
         ]
       }

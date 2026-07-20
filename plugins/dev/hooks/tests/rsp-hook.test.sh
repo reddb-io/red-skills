@@ -108,6 +108,122 @@ CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$tmp/missing-cache" RED_SKILLS
   "$plugin/hooks/rsp-hook.sh" prime >"$out" 2>"$err"
 expect_eq "missing bundle: prime fail-open JSON" "{}" "$(<"$out")"
 
+# --- stdin-drain regression -------------------------------------------------
+# The host writes the payload AFTER spawning the hook. A fail-open path that
+# returns without reading stdin leaves the pipe without a reader, so the host's
+# write dies with EPIPE. Every exit path must drain stdin first.
+epipe_seq=0
+expect_no_epipe() {
+  local label="$1" mode="$2"; shift 2
+  local fifo werr rc pid
+  epipe_seq=$((epipe_seq + 1))
+  fifo="$tmp/epipe-fifo.$epipe_seq"
+  werr="$tmp/epipe-werr.$epipe_seq"
+  mkfifo "$fifo"
+
+  ( env "$@" "$plugin/hooks/rsp-hook.sh" "$mode" <"$fifo" >/dev/null 2>&1 ) &
+  pid=$!
+  exec 9>"$fifo"
+  # Let the hook reach (and take) its fail-open exit before we write.
+  sleep 0.5
+  rc=0
+  ( printf '%s' "$payload" >&9 ) 2>"$werr" || rc=$?
+  exec 9>&-
+  wait "$pid" 2>/dev/null || true
+  rm -f "$fifo"
+
+  if [[ "$rc" -eq 0 ]]; then
+    ok "$label"
+  else
+    bad "$label"
+    printf '  write failed rc=%s: %s\n' "$rc" "$(<"$werr")"
+  fi
+}
+
+# Restore a healthy bundle + fresh cache so each case isolates one fail-open path.
+write_bundle "$bundle"
+printf '{"version":"9.9.9"}\n' >"$plugin/.codex-plugin/plugin.json"
+rm -rf "$hook_cache"
+CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" \
+  "$plugin/hooks/rsp-hook.sh" prime >"$out" 2>"$err" </dev/null
+
+# run_hook: plugin root unset
+expect_no_epipe "drain: run_hook plugin root unset" codex-pre-exec \
+  RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache"
+
+# run_hook: cache missing
+expect_no_epipe "drain: run_hook cache missing" codex-pre-exec \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$tmp/absent-hook-cache"
+
+# run_hook: cache root mismatch. Without RED_SKILLS_RSP_HOOK_CACHE_DIR the cache
+# lives inside the plugin root, so a cache recording a different PLUGIN_ROOT is
+# found but rejected.
+mkdir -p "$tmp/other-root"
+{
+  printf 'PLUGIN_ROOT=%s\n' "$plugin"
+  printf 'PLUGIN_MANIFEST=\n'
+  printf 'RSP_BUNDLE=%s\n' "$bundle"
+  printf 'REDDB_BIN=\n'
+} >"$tmp/other-root/.red-skills-rsp-hook.cache"
+expect_no_epipe "drain: run_hook cache root mismatch" codex-pre-exec \
+  CODEX_PLUGIN_ROOT="$tmp/other-root" RED_SKILLS_CACHE_DIR="$cache"
+
+# run_hook: stale cache (manifest newer than the cache file)
+touch -d "@$(( $(date +%s) + 5 ))" "$plugin/.codex-plugin/plugin.json" 2>/dev/null \
+  || touch "$plugin/.codex-plugin/plugin.json"
+expect_no_epipe "drain: run_hook stale cache" codex-pre-exec \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache"
+printf '{"version":"9.9.9"}\n' >"$plugin/.codex-plugin/plugin.json"
+
+# run_hook: cached bundle missing
+rm -rf "$hook_cache"
+CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" \
+  "$plugin/hooks/rsp-hook.sh" prime >"$out" 2>"$err" </dev/null
+mv "$bundle" "$bundle.parked"
+expect_no_epipe "drain: run_hook cached bundle missing" codex-pre-exec \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache"
+mv "$bundle.parked" "$bundle"
+
+# run_hook: happy path still drains (bundle consumes the payload)
+rm -rf "$hook_cache" "$log"
+CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" \
+  "$plugin/hooks/rsp-hook.sh" prime >"$out" 2>"$err" </dev/null
+expect_no_epipe "drain: run_hook hot path" codex-pre-exec \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache" RSP_HOOK_LOG="$log"
+expect_contains "drain: hot path still forwards the payload" "echo ok" "$(<"$log")"
+
+# prime_cache: plugin root unset
+expect_no_epipe "drain: prime plugin root unset" prime \
+  RED_SKILLS_CACHE_DIR="$cache" RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache"
+
+# prime_cache: bundle not found
+expect_no_epipe "drain: prime bundle missing" prime \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$tmp/absent-bundle-cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$tmp/absent-hook-cache-2"
+
+# prime_cache: cache directory not writable
+if [[ "$(id -u)" -ne 0 ]]; then
+  unwritable="$tmp/unwritable"
+  mkdir -p "$unwritable"
+  chmod 0500 "$unwritable"
+  expect_no_epipe "drain: prime cache dir unwritable" prime \
+    CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+    RED_SKILLS_RSP_HOOK_CACHE_DIR="$unwritable/nested"
+  expect_no_epipe "drain: prime cache write fails" prime \
+    CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+    RED_SKILLS_RSP_HOOK_CACHE_DIR="$unwritable"
+  chmod 0700 "$unwritable"
+fi
+
+# unknown mode
+expect_no_epipe "drain: unknown hook mode" not-a-real-mode \
+  CODEX_PLUGIN_ROOT="$plugin" RED_SKILLS_CACHE_DIR="$cache" \
+  RED_SKILLS_RSP_HOOK_CACHE_DIR="$hook_cache"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
