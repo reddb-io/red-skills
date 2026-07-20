@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -u
+
+# Path of the drained stdin payload. The host writes the hook payload to our
+# stdin *after* spawning us, so every exit path — including the fail-open ones —
+# must drain stdin first; exiting with the pipe still unread makes the host's
+# write fail with EPIPE.
+STDIN_PAYLOAD=""
 tmp=""
+cleanup() {
+  [ -n "$STDIN_PAYLOAD" ] && rm -f "$STDIN_PAYLOAD" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
 debug_enabled() {
   case "${RED_SKILLS_HOOK_DEBUG:-}" in
@@ -84,12 +95,33 @@ with_timeout() {
 }
 
 read_stdin_to() {
-  local target="$1"
+  local target="$1" budget line
   if command -v timeout >/dev/null 2>&1; then
     timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat >"$target" 2>/dev/null || true
-  else
-    cat >"$target" 2>/dev/null || true
+    return 0
   fi
+  # No `timeout(1)` on this box: bound the drain with bash's own read timeout
+  # so a host that never closes the pipe cannot hang the hook.
+  budget="${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}"
+  budget="${budget%s}"
+  : >"$target" 2>/dev/null || return 0
+  while IFS= read -r -t "$budget" line || [ -n "$line" ]; do
+    printf '%s\n' "$line" >>"$target" 2>/dev/null || break
+    line=""
+  done
+  return 0
+}
+
+# Drain stdin BEFORE any fail-open decision. Idempotent: the first call wins.
+drain_stdin() {
+  [ -z "$STDIN_PAYLOAD" ] || return 0
+  STDIN_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/red-skills-rsp-hook.XXXXXX" 2>/dev/null)" || STDIN_PAYLOAD=""
+  if [ -z "$STDIN_PAYLOAD" ]; then
+    # No temp file: still drain, so the writer never sees EPIPE.
+    read_stdin_to /dev/null
+    return 0
+  fi
+  read_stdin_to "$STDIN_PAYLOAD"
 }
 
 find_rsp_bundle() {
@@ -169,6 +201,7 @@ find_red_binary() {
 
 prime_cache() {
   local root cache bundle red tmp manifest dir
+  drain_stdin
   root="$(plugin_root || true)"
   if [ -z "$root" ]; then
     debug "prime skipped: plugin root is unset"
@@ -234,8 +267,18 @@ load_cache() {
   done <"$cache"
 }
 
+run_bundle() {
+  local hook_name="$1"
+  if [ -n "$STDIN_PAYLOAD" ]; then
+    with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name" <"$STDIN_PAYLOAD"
+  else
+    with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name"
+  fi
+}
+
 run_hook() {
   local hook_name="$1" root cache manifest rc
+  drain_stdin
   root="$(plugin_root || true)"
   if [ -z "$root" ]; then
     debug "$hook_name fail-open: plugin root is unset"
@@ -270,10 +313,10 @@ run_hook() {
   fi
 
   if [ -n "$RSP_HOOK_CACHED_REDDB_BIN" ]; then
-    REDDB_BIN="$RSP_HOOK_CACHED_REDDB_BIN" with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name"
+    REDDB_BIN="$RSP_HOOK_CACHED_REDDB_BIN" run_bundle "$hook_name"
     rc=$?
   else
-    with_timeout node "$RSP_HOOK_CACHED_BUNDLE" hook "$hook_name"
+    run_bundle "$hook_name"
     rc=$?
   fi
 
@@ -292,6 +335,7 @@ case "${1:-}" in
     run_hook "$1"
     ;;
   *)
+    drain_stdin
     debug "fail-open: unknown rsp hook mode '${1:-}'"
     ;;
 esac
