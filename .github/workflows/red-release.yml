@@ -587,6 +587,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NEXT: ${{ steps.version.outputs.next }}
+          # Stamp the resolved NEXT onto the built Pi packages: the plugin
+          # manifest sync/bump runs AFTER this step, so build-pi-packages must
+          # publish NEXT rather than the still-previous manifest version, or the
+          # registry smoke below fails on the missing NEXT tag.
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
           version="${NEXT#v}"
