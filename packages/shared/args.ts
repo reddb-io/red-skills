@@ -203,23 +203,23 @@ export function parseLooseArgs(
       continue;
     }
 
+    const canonical = aliasIndex.get(key) ?? key;
+    const spec = schema[canonical];
     let value: string | boolean | undefined = tok.value;
     if (value === undefined) {
       const next = args[tok.index + 1];
-      if (next !== undefined && !next.startsWith("-")) {
+      const acceptsSingleDashValue = spec?.kind === "value" && !next?.startsWith("--");
+      if (next !== undefined && (!next.startsWith("-") || acceptsSingleDashValue)) {
         value = next;
-        for (let j = i + 1; j < tokens.length; j += 1) {
+        for (let j = tokens.length - 1; j > i; j -= 1) {
           if (tokens[j]!.index === tok.index + 1) {
             tokens.splice(j, 1);
-            break;
           }
         }
       } else {
         value = true;
       }
     }
-    const canonical = aliasIndex.get(key) ?? key;
-    const spec = schema[canonical];
     if (spec?.kind === "value" && spec.type === "array") {
       if (value === true) {
         const display = key.length === 1 ? `-${key}` : `--${key}`;
