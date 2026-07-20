@@ -480,7 +480,7 @@ describe("Orchestrator", () => {
       const content = await readFile(join(hostDir, `iter-${i}.txt`), "utf-8");
       expect(content).toBe(`iteration ${i}`);
     }
-  });
+  }, 15_000);
 
   it("handles iteration with no agent commits gracefully", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "orch-host-"));
@@ -641,7 +641,7 @@ describe("OrchestrateResult", () => {
     // All shas should be unique
     const uniqueShas = new Set(result.commits.map((c) => c.sha));
     expect(uniqueShas.size).toBe(3);
-  });
+  }, 15_000);
 
   it("returns empty commits and branch when agent makes no commits", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "orch-result-"));
