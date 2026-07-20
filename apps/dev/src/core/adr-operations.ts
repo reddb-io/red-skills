@@ -26,8 +26,10 @@ export interface ArchiveMoveInput extends StatusAndSuccessorInput {
 export interface ArchiveMovePlan {
   from: string;
   to: string;
+  originalAdrText: string;
   adrText: string;
   indexPath: string;
+  originalIndexText: string;
   indexText: string;
 }
 
@@ -54,6 +56,8 @@ export interface AdrOperationIo {
 
 /** Set an ADR's terminal status and successor pointer without editing its Decision. */
 export function planStatusAndSuccessor(input: StatusAndSuccessorInput): AdrTextPlan {
+  const invalidSuccessor = input.successors.find((number) => !/^\d{4}$/.test(number));
+  if (invalidSuccessor) throw new Error(`Invalid ADR successor: ${invalidSuccessor}`);
   const successor = input.successors[0];
   if (!successor && input.status !== "inert") {
     throw new Error(`A ${input.status} ADR must name a successor`);
@@ -66,22 +70,30 @@ export function planStatusAndSuccessor(input: StatusAndSuccessorInput): AdrTextP
       : `Superseded by ADR ${successor}.`;
   const pointer = input.successors.length > 0 ? input.successors.join(", ") : "none (inert)";
 
-  const status = [
-    "## Status",
-    "",
-    statusLine,
-    "",
-    `superseded-by: ${pointer}`,
-    "",
-    "",
-  ].join("\n");
+  const pointerLine = `superseded-by: ${pointer}`;
+  const status = ["## Status", "", statusLine, "", pointerLine, "", ""].join("\n");
   const heading = /^##\s+Status\s*$/m.exec(input.text);
   let text: string;
   if (heading) {
     const bodyStart = heading.index + heading[0].length;
     const nextHeading = /^##\s+/m.exec(input.text.slice(bodyStart));
     const sectionEnd = nextHeading ? bodyStart + nextHeading.index : input.text.length;
-    text = input.text.slice(0, heading.index) + status + input.text.slice(sectionEnd);
+    const originalBody = input.text.slice(bodyStart, sectionEnd);
+    const declaration = /^([ \t]*)(\S.*)$/m.exec(originalBody);
+    if (!declaration) throw new Error(`ADR Status has no declaration: ${input.path}`);
+    const declarationStart = declaration.index + declaration[1]!.length;
+    let body = originalBody.slice(0, declarationStart)
+      + statusLine
+      + originalBody.slice(declarationStart + declaration[2]!.length);
+    const existingPointer = /^[ \t]*superseded-by:.*$/m.exec(body);
+    if (existingPointer) {
+      body = body.slice(0, existingPointer.index) + pointerLine + body.slice(existingPointer.index + existingPointer[0].length);
+    } else {
+      body = body.slice(0, declarationStart + statusLine.length)
+        + `\n\n${pointerLine}`
+        + body.slice(declarationStart + statusLine.length);
+    }
+    text = input.text.slice(0, bodyStart) + body + input.text.slice(sectionEnd);
   } else {
     const title = /^#\s+.+$/m.exec(input.text);
     if (!title) throw new Error(`ADR has no title: ${input.path}`);
@@ -147,17 +159,36 @@ export function planArchiveMove(input: ArchiveMoveInput): ArchiveMovePlan {
   return {
     from: input.path,
     to: `.red/adr/archive/${file}`,
+    originalAdrText: input.text,
     adrText: status.text,
     indexPath: index.path,
+    originalIndexText: input.indexText,
     indexText: index.text,
   };
 }
 
 /** Apply an archive plan with a real git move between the two planned writes. */
 export async function applyArchiveMove(plan: ArchiveMovePlan, io: AdrOperationIo): Promise<void> {
-  await io.fs.writeFile(plan.from, plan.adrText);
-  await io.git.mv(plan.from, plan.to);
-  await io.fs.writeFile(plan.indexPath, plan.indexText);
+  try {
+    await io.fs.writeFile(plan.from, plan.adrText);
+  } catch (error) {
+    await io.fs.writeFile(plan.from, plan.originalAdrText);
+    throw error;
+  }
+  try {
+    await io.git.mv(plan.from, plan.to);
+  } catch (error) {
+    await io.fs.writeFile(plan.from, plan.originalAdrText);
+    throw error;
+  }
+  try {
+    await io.fs.writeFile(plan.indexPath, plan.indexText);
+  } catch (error) {
+    await io.fs.writeFile(plan.indexPath, plan.originalIndexText);
+    await io.git.mv(plan.to, plan.from);
+    await io.fs.writeFile(plan.from, plan.originalAdrText);
+    throw error;
+  }
 }
 
 /** Replace a backticked stale path outside `## Decision`, recording why it moved. */
