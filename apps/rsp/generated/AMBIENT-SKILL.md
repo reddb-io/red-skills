@@ -112,7 +112,15 @@ Examples:
 - `rsp wait ls` lists active waits from `.red/tmp/waits/`.
 
 Exit codes: `0` = success verdict, `1` = failure verdict, `2` = timeout/indeterminate.
-Every wait writes a live registry entry under `.red/tmp/waits/` with its target, reason, pid, started time, poll tier, and status, then removes that entry on every exit path.
+Every wait emits an `rsp.wait.result` v1 envelope as TOON by default or JSON with `--json`; `--result-file <path>` persists it atomically before signaling another process.
+The verdict is sealed to disk with `delivery: pending` BEFORE any wake, so a signaled process always reads a complete, stable result; the receipt is stamped afterwards and never downgrades a provisional success.
+The envelope separates `target_exit_code` from delivery failure. `--signal-pid` validates the PID and pins its start time, so a recycled PID fails delivery instead of signaling a stranger; `--notify-cmd` receives stable `RSP_WAIT_*` context and is bounded by `--notify-timeout`.
+Command stdout/stderr capture holds at most `--capture-bytes` in memory and spools the rest; elided streams carry reversible `el:<id>` handles, binary heads are labeled base64, and an unavailable store keeps the spooled bytes instead of truncating.
+Timeout or interruption sends TERM to the whole process group, waits a grace period, then sends KILL, and VERIFIES the pids are gone; a wait that cannot prove cleanup exits 2 rather than reporting success.
+`--probe-timeout` (default 60s) bounds one GitHub probe, so a hung `gh` call cannot outlive `--timeout`.
+Every wait writes an atomic v1 live registry entry under `.red/tmp/waits/` with kind, target, reason, PID/start time, deadline, attempts, last observation, last poll, poll tier, and status, then removes it on every exit path.
+Linked git worktrees share the main checkout's registry, so a wait started in a worktree is visible to `rsp wait ls` anywhere in the repo.
+GitHub waits retain their last observation; conflicting PRs fail, and `run --branch <branch> --latest` pins the resolved run ID before polling.
 
 ## Loss levels
 
