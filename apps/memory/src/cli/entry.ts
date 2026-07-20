@@ -24,7 +24,7 @@ const MEMORY_CLI_FLAG_SCHEMA = {
   "changed-files": {
     kind: "value",
     type: "array",
-    aliases: ["changed-file"],
+    aliases: ["changed-file"] as string[],
     coerce: (raw: string) => raw,
   },
   citation: { kind: "value", type: "array", coerce: (raw: string) => raw },
