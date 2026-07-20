@@ -25,8 +25,11 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
   files pass through unchanged.
 - `rsp exec -- "<command>"` runs a shell command, summarizes structured or large
   stdout, and preserves the command's stderr and exit status.
-- `rsp wait ...` standardizes long waits for commands, GitHub PRs, workflow
-  runs, and releases without handwritten polling loops.
+- `rsp wait ...` is the standalone coordination primitive for commands, GitHub
+  PRs, workflow runs, and releases. It emits a versioned TOON/JSON result that
+  is durable before it wakes anyone, keeps the target verdict separate from the
+  delivery receipt, bounds every command and GitHub probe by timeout and
+  cancellation, and verifies that no descendant survives.
 - `rsp show el:<id>` writes the original bytes for an elided handle.
 - `rsp`, `rsp stats`, and `rsp gains` report elision-store and telemetry gains.
 - `rsp mcp` exposes the resident-backed compression surface for MCP clients.
