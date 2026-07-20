@@ -84,12 +84,13 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
-  it("rejects a failed local branch deletion through the runtime git boundary", async () => {
+  it("returns a failed local branch deletion through the runtime git boundary", async () => {
     const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
 
-    await expect(
-      deleteLocalBranch({ cwd: "/repo", exec }, "afk/w1/42-fix-thing"),
-    ).rejects.toThrow("git branch -D failed for afk/w1/42-fix-thing: branch is checked out");
+    await expect(deleteLocalBranch({ cwd: "/repo", exec }, "afk/w1/42-fix-thing")).resolves.toEqual({
+      ok: false,
+      error: "git branch -D failed for afk/w1/42-fix-thing: branch is checked out",
+    });
   });
 
   it("rebases a cascade branch directly onto the pinned landing SHA", async () => {
