@@ -355,6 +355,7 @@ export interface ProcessIssueResult {
   base?: string;
   locked?: boolean;
   mergeSha?: string;
+  cleanupError?: string;
   exitReceipt?: ExitReceipt;
   hooksFired: HookName[];
   envelopePosted?: boolean;
