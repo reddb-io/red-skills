@@ -237,6 +237,9 @@ export async function main(): Promise<void> {
     case "export":
     case "graph":
       return runExport(args);
+    case "map-contract":
+      if (!registryOperation) throw new Error("map-contract operation is not registered");
+      return runRegistryCliOperation(registryOperation, args);
     case "architecture-overview":
       return runArchitectureOverview(args);
     case "hook":
