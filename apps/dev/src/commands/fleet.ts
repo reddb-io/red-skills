@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
+import { readBuildInfo } from "@reddb-io/build-info";
 import {
   castleLanePath,
   createEnginePaths,
@@ -466,6 +467,7 @@ export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableS
   const repo = await resolveRepoSlug(root).catch(() => "");
   const inputs = await collectMonitorInputs(root, repo);
   const fleet = inputs.fleet;
+  const latestBundleVersion = fleet?.latestBundleVersion || readBuildInfo("dev").version;
   const liveWorkers = inputs.workers.filter((w) => w.pidLive === true || w.live);
   const heartbeatAgeS = liveness.lastHeartbeatEpoch !== null ? now - liveness.lastHeartbeatEpoch : -1;
 
@@ -485,11 +487,11 @@ export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableS
       runner: fleet?.runner ?? "",
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
-      bundle_latest: fleet?.latestBundleVersion ?? "",
+      bundle_latest: latestBundleVersion,
       version_skew: Number(Boolean(
         fleet?.bundleVersion &&
-        fleet.latestBundleVersion &&
-        fleet.bundleVersion !== fleet.latestBundleVersion
+        latestBundleVersion &&
+        fleet.bundleVersion !== latestBundleVersion
       )),
       heartbeat_age_s: heartbeatAgeS,
       would_respawn: wouldRespawn,
