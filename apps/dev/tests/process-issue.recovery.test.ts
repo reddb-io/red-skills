@@ -284,7 +284,7 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(p.outcome).toBe("success");
     expect(p.issueTitle).toBe("Fix the thing");
     expect(p.branch).toBe("afk/wAAAA/9-fix-the-thing");
-    expect(p.mergeCommit).toBe("abc1234");
+    expect(p.mergeCommit).toBe("forge-merge-sha");
     expect(p.workerId).toBe("wAAAA");
     expect(p.validationSummary).toBeTruthy();
   });
@@ -482,7 +482,7 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(result.mergeSha).toBe("abc1234");
+    expect(result.mergeSha).toBe("forge-merge-sha");
     expect(result.swept).toBe(true);
     expect(trace.closed).toEqual([9]);
     // The agent ran exactly once — reconcile NEVER re-spawns it.

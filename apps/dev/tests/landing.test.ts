@@ -5,7 +5,7 @@ describe("doLanding — happy paths", () => {
   it("unlocked → pushes, fires both hooks, lands via admin PR", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     // worker branch pushed before landing.
     expect(h.pushedAttempt.length).toBe(1);
     // both merge hooks fired, in order.
@@ -21,7 +21,7 @@ describe("doLanding — happy paths", () => {
   it("unlocked + wait_for_review → polls the review check before the admin-merge", async () => {
     const h = harness({ locked: false, waitForReview: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     const checksIdx = j.findIndex((c) => c.includes("pr checks"));
     const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
@@ -39,7 +39,7 @@ describe("doLanding — happy paths", () => {
   it("unlocked, default (no wait_for_review) → never polls review checks", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
   });
 
@@ -47,7 +47,7 @@ describe("doLanding — happy paths", () => {
     const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.mainRedRepairLookups).toBe(1);
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
@@ -67,7 +67,7 @@ describe("doLanding — happy paths", () => {
   it("default unlocked landing → merge runs without --admin (branch protection is honored, #1103)", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const mergeCall = h.mergeCalls.find((c) => c.join(" ").includes("pr merge"));
     expect(mergeCall).toBeDefined();
     expect(mergeCall!.join(" ")).not.toContain("--admin");
@@ -130,7 +130,7 @@ describe("doLanding — conventional landing titles (#1267)", () => {
     const h = harness({ locked: false, createPr: true, labels: ["type:feature"] });
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j).toContain(
       "gh -R o/r pr create --base main --head afk/wAAAA/9-fix-the-thing --title feat: #9 Fix the thing --body Automated AFK landing for #9. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #9",
@@ -143,7 +143,7 @@ describe("doLanding — fleet mirror decouples landing from the primary checkout
   it("diverged local trunk no longer gates PR landing or reads primary local trunk refs", async () => {
     const h = harness({ locked: false, trunk: "diverged" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.pushedAttempt.length).toBe(1);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
     const j = joined(h.mergeCalls);
@@ -182,7 +182,7 @@ describe("doLanding — fleet mirror decouples landing from the primary checkout
   it("absent local trunk → still lands and promotes the mirror", async () => {
     const h = harness({ locked: false, trunk: "absent" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(joined(h.mergeCalls)).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
   });
@@ -190,7 +190,7 @@ describe("doLanding — fleet mirror decouples landing from the primary checkout
   it("ancestor local trunk (default) → lands without primary fast-forward", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
@@ -234,7 +234,7 @@ describe("doLanding — sensitive-path guard (issue #1102)", () => {
   it("clean diff with no sensitive paths proceeds to a normal landing", async () => {
     const h = harness({ locked: false, sensitivePaths: "clean" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.pushedAttempt).toHaveLength(1);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -243,7 +243,7 @@ describe("doLanding — sensitive-path guard (issue #1102)", () => {
     // sensitivePaths: undefined → getDiffPaths not wired → guard is a no-op.
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
   });
 
   it("sensitivePathApproved=true → guard bypassed, a hit diff lands normally (#1171 adopt path)", async () => {
@@ -252,7 +252,7 @@ describe("doLanding — sensitive-path guard (issue #1102)", () => {
     // reviewed branch lands.
     const h = harness({ locked: false, sensitivePaths: "hit", sensitivePathApproved: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.pushedAttempt).toHaveLength(1);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -313,7 +313,7 @@ describe("doLanding — abort / failure short-circuits", () => {
     // there is no longer a pre-merge integrate gating the unlocked path.
     const h = harness({ locked: false, integrateCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     // It still admin-merged the PR.
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     // The primary checkout was never touched by a destructive op (no reset/abort).
@@ -461,7 +461,7 @@ describe("doLanding — CI-aware merge (#812)", () => {
   it("unlocked + ciAwait, CLEAN → polls merge state then admin-merges", async () => {
     const h = harness({ locked: false, ciAware: "merge" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     const viewIdx = j.findIndex((c) => c.includes("pr view"));
     const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
@@ -502,7 +502,7 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
   it("branch diverged by one unrelated commit is rebased in the worktree, force-pushed, then merged cleanly", async () => {
     const h = harness({ locked: false, rebaseWorktree: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     // The rebase ran in the isolated worker-branch worktree, before the merge.
     const fetchIdx = j.findIndex((c) => c === `git -C ${RWT} fetch origin main --quiet`);
@@ -612,7 +612,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
     const h = harness({ locked: false, openPr: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(prMerged(j)).toBe(true);
     expect(directMerged(j)).toBe(false);
@@ -664,7 +664,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
     // PR path → no captured sha; locked echoes input.locked=true.
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(prMerged(j)).toBe(true);
     // The PR targeted the lock branch as its base (PR #42 reused via pr list).
@@ -693,7 +693,7 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     // The flag only decides whether a PR opens; HOW it merges stays afk.merge.*.
     const h = harness({ locked: true, openPr: true, waitForReview: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     const checksIdx = j.findIndex((c) => c.includes("pr checks"));
     const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
@@ -718,7 +718,7 @@ describe("doLanding — post-land promotion advances red-trunk, not the primary 
     const h = harness({ locked: true, openPr: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
@@ -730,7 +730,7 @@ describe("doLanding — post-land promotion advances red-trunk, not the primary 
     const h = harness({ locked: true, openPr: true, dirtyPrimary: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
     expect(j).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
@@ -762,7 +762,7 @@ describe("doLanding — post-land promotion advances red-trunk, not the primary 
   it("UNLOCKED PR landing also promotes red-trunk instead of local main", async () => {
     const h = harness({ locked: false, openPr: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(joined(h.mergeCalls)).toContain("git -C /repo update-ref refs/heads/red-trunk 0r1g1nsha");
     expect(joined(h.mergeCalls).some((c) => c.includes("git -C /repo merge --ff-only origin/main"))).toBe(false);
   });
@@ -782,7 +782,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
   it("PR path: gate absent → proceeds unchanged (backwards-compat)", async () => {
     const h = harness({ locked: false, openPr: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.postMergeGateDirs).toEqual([]);
   });
 
@@ -800,7 +800,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
   it("PR path: gate wired + passes → lands successfully, gate called with the rebase worktree", async () => {
     const h = harness({ locked: false, openPr: true, postMergeGate: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     // Gate was called exactly once with the rebase worktree (RWT), not the primary.
     expect(h.postMergeGateDirs).toEqual([RWT]);
     // The admin-merge still happened.

@@ -82,7 +82,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(result.base).toBe("main");
     expect(result.locked).toBe(false);
-    expect(result.mergeSha).toBe("abc1234");
+    expect(result.mergeSha).toBe("forge-merge-sha");
     expect(result.swept).toBe(true);
 
     // sandcastle ran once, on the worker branch, with the handoff as promptFile.
@@ -702,7 +702,7 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done"); // salvaged → lands exactly like a DONE attempt
-    expect(result.mergeSha).toBe("abc1234");
+    expect(result.mergeSha).toBe("forge-merge-sha");
     expect(result.swept).toBe(true);
     expect(trace.closed).toEqual([9]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
