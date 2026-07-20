@@ -109,6 +109,39 @@ describe("planStatusAndSuccessor", () => {
     expect(decision(plan.text)).toBe(decision(compact));
   });
 
+  it("preserves compact ADR history and related links inside Status", () => {
+    const compact = ADR.replace(
+      "Accepted.",
+      "Accepted.\n\nShipped incrementally after the original rollout.\n\nRelated: ADR 0001 and issue #42.",
+    );
+    const plan = planStatusAndSuccessor({
+      path: ".red/adr/0002-retired.md",
+      text: compact,
+      status: "superseded",
+      successors: ["0113"],
+    });
+
+    expect(plan.text).toBe(compact.replace(
+      "Accepted.",
+      "Superseded by ADR 0113.\n\nsuperseded-by: 0113",
+    ));
+    expect(plan.text).toContain("Shipped incrementally after the original rollout.");
+    expect(plan.text).toContain("Related: ADR 0001 and issue #42.");
+    expect(decision(plan.text)).toBe(decision(compact));
+  });
+
+  it.each([
+    ["a non-numeric successor", ["next"]],
+    ["an invalid later successor", ["0113", "next"]],
+  ])("rejects %s", (_case, successors) => {
+    expect(() => planStatusAndSuccessor({
+      path: ".red/adr/0002-retired.md",
+      text: ADR,
+      status: "superseded",
+      successors,
+    })).toThrow("Invalid ADR successor: next");
+  });
+
   it("applies the planned ADR text through the injected filesystem", async () => {
     const writes: Array<[string, string]> = [];
     const plan = planStatusAndSuccessor({
@@ -190,11 +223,13 @@ describe("planArchiveMove", () => {
     expect(plan).toEqual({
       from: ".red/adr/0002-retired.md",
       to: ".red/adr/archive/0002-retired.md",
+      originalAdrText: ADR,
       adrText: ADR.replace(
         "## Status\n\nAccepted.",
         "## Status\n\nSuperseded by ADR 0113.\n\nsuperseded-by: 0113",
       ),
       indexPath: ".red/adr/INDEX.md",
+      originalIndexText: INDEX,
       indexText: INDEX.replace("- **0002** Retired decision\n", "").replace(
         "_The archive is empty — no ADR has been retired yet._",
         "- **0002** Retired decision",
@@ -231,6 +266,108 @@ describe("planArchiveMove", () => {
       "write:.red/adr/0002-retired.md:adr",
       "git-mv:.red/adr/0002-retired.md:.red/adr/archive/0002-retired.md",
       "write:.red/adr/INDEX.md:index",
+    ]);
+  });
+
+  it("restores the original ADR when the terminal metadata write fails", async () => {
+    const events: string[] = [];
+    const plan = planArchiveMove({
+      path: ".red/adr/0002-retired.md",
+      text: ADR,
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+      status: "superseded",
+      successors: ["0113"],
+    });
+    let writes = 0;
+
+    await expect(applyArchiveMove(plan, {
+      fs: {
+        writeFile: async (path, text) => {
+          events.push(`write:${path}:${text === ADR ? "original" : "planned"}`);
+          if (writes++ === 0) throw new Error("ADR write failed");
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          events.push(`git-mv:${from}:${to}`);
+        },
+      },
+    })).rejects.toThrow("ADR write failed");
+
+    expect(events).toEqual([
+      "write:.red/adr/0002-retired.md:planned",
+      "write:.red/adr/0002-retired.md:original",
+    ]);
+  });
+
+  it("restores the original ADR when git mv fails", async () => {
+    const events: string[] = [];
+    const plan = planArchiveMove({
+      path: ".red/adr/0002-retired.md",
+      text: ADR,
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+      status: "superseded",
+      successors: ["0113"],
+    });
+
+    await expect(applyArchiveMove(plan, {
+      fs: {
+        writeFile: async (path, text) => {
+          events.push(`write:${path}:${text === ADR ? "original" : "planned"}`);
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          events.push(`git-mv:${from}:${to}`);
+          throw new Error("git mv failed");
+        },
+      },
+    })).rejects.toThrow("git mv failed");
+
+    expect(events).toEqual([
+      "write:.red/adr/0002-retired.md:planned",
+      "git-mv:.red/adr/0002-retired.md:.red/adr/archive/0002-retired.md",
+      "write:.red/adr/0002-retired.md:original",
+    ]);
+  });
+
+  it("restores the INDEX, move, and ADR when the INDEX write fails", async () => {
+    const events: string[] = [];
+    const plan = planArchiveMove({
+      path: ".red/adr/0002-retired.md",
+      text: ADR,
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+      status: "superseded",
+      successors: ["0113"],
+    });
+
+    await expect(applyArchiveMove(plan, {
+      fs: {
+        writeFile: async (path, text) => {
+          const version = text === ADR || text === INDEX ? "original" : "planned";
+          events.push(`write:${path}:${version}`);
+          if (path === plan.indexPath && text === plan.indexText) {
+            throw new Error("INDEX write failed");
+          }
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          events.push(`git-mv:${from}:${to}`);
+        },
+      },
+    })).rejects.toThrow("INDEX write failed");
+
+    expect(events).toEqual([
+      "write:.red/adr/0002-retired.md:planned",
+      "git-mv:.red/adr/0002-retired.md:.red/adr/archive/0002-retired.md",
+      "write:.red/adr/INDEX.md:planned",
+      "write:.red/adr/INDEX.md:original",
+      "git-mv:.red/adr/archive/0002-retired.md:.red/adr/0002-retired.md",
+      "write:.red/adr/0002-retired.md:original",
     ]);
   });
 });
