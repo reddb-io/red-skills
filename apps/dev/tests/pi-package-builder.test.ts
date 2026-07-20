@@ -171,4 +171,47 @@ description: afk
   it("matches the builder output for the repo's committed plugin manifests", async () => {
     await execFileAsync("node", [builder, "--root", ROOT, "--check"]);
   });
+
+  it("stamps RED_BUILD_VERSION over the plugin manifest version (release build)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-skills-pi-ver-"));
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/dev/.claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/dev/skills/engineering/afk"), {
+      recursive: true,
+    });
+    await writeJson(join(root, ".claude-plugin/marketplace.json"), {
+      name: "red-skills",
+      plugins: [
+        { name: "dev", source: "./plugins/dev", description: "Dev plugin." },
+      ],
+    });
+    await writeJson(join(root, "plugins/dev/.claude-plugin/plugin.json"), {
+      name: "dev",
+      version: "9.9.9", // stale committed manifest version at Pi-build time
+      description: "Dev plugin.",
+      skills: ["./skills/engineering/afk"],
+    });
+    await writeFile(
+      join(root, "plugins/dev/skills/engineering/afk/SKILL.md"),
+      `---
+name: afk
+description: Test afk skill.
+---
+
+# afk
+`,
+      "utf8",
+    );
+
+    await execFileAsync("node", [builder, "--root", root], {
+      env: { ...process.env, RED_BUILD_VERSION: "v1.2.3" },
+    });
+
+    const pkg = JSON.parse(
+      await readFile(join(root, "packaging/pi/dev/package.json"), "utf8"),
+    );
+    // The resolved NEXT (RED_BUILD_VERSION) wins over the stale 9.9.9 manifest,
+    // so the published package matches what the registry smoke expects.
+    expect(pkg.version).toBe("1.2.3");
+  });
 });
