@@ -452,8 +452,14 @@ export async function logsFleet(
  * watchdog respawn would fire, so "why is nothing running?" is answerable.
  */
 export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetStatusResult> {
+  const paths = afkPaths(root);
   const io = buildWatchdogIO(root, stdout);
   const liveness = await io.liveness();
+  const liveSupervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid);
+  if (liveSupervisor) {
+    liveness.pid = liveSupervisor.pid;
+    liveness.pidAlive = true;
+  }
   const cfg = resolveSupervisorConfig();
   const now = Math.floor(Date.now() / 1000);
   const health = classifySupervisor(liveness, now, cfg.supervisorStaleS, cfg.progressStaleS);
@@ -480,6 +486,11 @@ export async function statusFleet(root = process.cwd(), stdout: NodeJS.WritableS
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
       bundle_latest: fleet?.latestBundleVersion ?? "",
+      version_skew: Number(Boolean(
+        fleet?.bundleVersion &&
+        fleet.latestBundleVersion &&
+        fleet.bundleVersion !== fleet.latestBundleVersion
+      )),
       heartbeat_age_s: heartbeatAgeS,
       would_respawn: wouldRespawn,
     },
