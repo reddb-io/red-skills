@@ -173,6 +173,66 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("statusFleet discovers a live supervisor from the structured lane and calls out bundle skew (#2204)", async () => {
+    const root = scratch();
+    const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
+    try {
+      const paths = afkPaths(root);
+      const epoch = Math.floor(Date.now() / 1000);
+      mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+      mkdirSync(join(dirname(paths.supervisorRuntimeDir), "s12345"), { recursive: true });
+      writeFileSync(
+        paths.fleetStatePath,
+        JSON.stringify({
+          epoch,
+          last_progress_epoch: epoch,
+          runner: "codex",
+          bundle_version: "2.75.0",
+          ready_for_agent: 0,
+          slots: { busy: 0, free: 2, total: 2, parked: 0 },
+        }),
+        "utf8",
+      );
+      const cacheDir = join(root, "bundle-cache");
+      mkdirSync(cacheDir, { recursive: true });
+      writeFileSync(join(cacheDir, "dev-2.75.2.bundle.min.mjs"), "", "utf8");
+      process.env.RED_SKILLS_CACHE_DIR = cacheDir;
+      vi.mocked(isLivePid).mockImplementation((pid) => pid === 12345);
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
+
+      await statusFleet(root, out);
+
+      const report = decode(writes.join("")) as {
+        supervisor: {
+          pid: number;
+          alive: boolean;
+          health: string;
+          bundle_version: string;
+          bundle_latest: string;
+          version_skew: number;
+        };
+      };
+      expect(report.supervisor).toMatchObject({
+        pid: 12345,
+        alive: true,
+        health: "healthy",
+        bundle_version: "2.75.0",
+        bundle_latest: "2.75.2",
+        version_skew: 1,
+      });
+    } finally {
+      if (priorCacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
+      else process.env.RED_SKILLS_CACHE_DIR = priorCacheDir;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("stopFleet leaves live supervisor files untouched", async () => {
     const root = scratch();
     try {
