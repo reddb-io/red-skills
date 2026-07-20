@@ -863,6 +863,24 @@ describe("Spec cascade rebase after DONE landing", () => {
     expect(trace.listByLabelCalls).toContain("spec:42");
   });
 
+  it("does not cascade before a native merge queue has produced a merge SHA", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "spec:42"],
+      dependentsByLabel: {
+        "spec:42": [{ number: 20, labels: ["spec:42", "ready-for-agent"] }],
+      },
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+    });
+    deps.nativeMergeQueue = true;
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.cascadeRebaseAttempts).toEqual([]);
+  });
+
   it("skips a sibling branch whose worker is still alive", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
