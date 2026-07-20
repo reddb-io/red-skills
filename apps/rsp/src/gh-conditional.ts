@@ -13,6 +13,12 @@ export interface GhConditionalRequest {
   telemetryRoot?: string;
   env?: NodeJS.ProcessEnv;
   command?: string;
+  /**
+   * Cancels the underlying `gh` call. Without it a hung GitHub request has no
+   * upper bound, so every caller that owns a deadline (notably `rsp wait`) must
+   * be able to reclaim the process rather than wait on it forever.
+   */
+  signal?: AbortSignal;
 }
 
 export interface GhConditionalResult {
@@ -52,7 +58,7 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
   }
   if (cached?.etag) args.push("-H", `If-None-Match: ${cached.etag}`);
 
-  const result = await runGh(args, cwd, request.env);
+  const result = await runGh(args, cwd, request.env, request.signal);
   const parsed = parseIncludedResponse(result.stdout);
   const quotaFree = parsed.statusCode === 304 && !!cached;
   if (quotaFree) {
@@ -111,20 +117,43 @@ function cacheKey(identity: string): string {
   return createHash("sha256").update(`rsp-gh-etag-v1\0${identity}`).digest("hex");
 }
 
-async function runGh(args: readonly string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<{ status: number; stdout: string; stderr: string }> {
+async function runGh(
+  args: readonly string[],
+  cwd: string,
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  if (signal?.aborted) return { status: 1, stdout: "", stderr: "gh call cancelled" };
   return await new Promise((resolveResult) => {
+    let settled = false;
+    const finish = (value: { status: number; stdout: string; stderr: string }) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolveResult(value);
+    };
     const child = spawn("gh", args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    // Cancellation must reclaim the process, not just stop awaiting it: a
+    // detached `gh` that outlives its caller keeps a network socket and a
+    // rate-limit slot for as long as GitHub keeps the connection open.
+    function onAbort(): void {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      finish({ status: 1, stdout: "", stderr: "gh call cancelled" });
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    child.once("error", (err) => resolveResult({ status: 1, stdout: "", stderr: err.message }));
+    child.once("error", (err) => finish({ status: 1, stdout: "", stderr: err.message }));
     child.once("close", (status) => {
-      resolveResult({
+      finish({
         status: status ?? 1,
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8").trim(),

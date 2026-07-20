@@ -12,7 +12,7 @@ export async function readDashboardSnapshot(config: RspRuntimeConfig): Promise<D
   const { stats, telemetry } = await readStatsSnapshot(config, 30);
   const [recoveryHandles, waits] = await Promise.all([
     readRecoveryHandles(config),
-    import("../wait.js").then((module) => module.listWaits(process.cwd()), () => [] as JsonObject[]),
+    import("../wait/index.js").then((module) => module.listWaits(process.cwd()), () => [] as JsonObject[]),
   ]);
   return { stats, telemetry, recoveryHandles, waits };
 }

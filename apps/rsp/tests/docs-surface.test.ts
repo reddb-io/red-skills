@@ -85,6 +85,20 @@ describe("rsp docs surface", () => {
       "accounting lane",
       "physical cap",
       "compressed content-hash blobs",
+      "rsp.wait.result",
+      "--result-file",
+      "--notify-timeout",
+      "TERM",
+      "KILL",
+      "target_exit_code",
+      "pins that run ID",
+      "--probe-timeout",
+      "delivery.status: pending",
+      "recycled during a long wait",
+      "stops at the repository boundary",
+      "MAIN worktree",
+      "the spool file is KEPT",
+      "cannot prove cleanup",
     ]) {
       expect(architecture).toContain(required);
     }

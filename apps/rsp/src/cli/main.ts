@@ -68,7 +68,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
   if (args.command === "wait") {
-    const { runWait } = await import("../wait.js");
+    const { runWait } = await import("../wait/index.js");
     return await runWait(args.positional);
   }
   if (args.command === "shell-init") {

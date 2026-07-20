@@ -22,7 +22,7 @@ dispatches to wrapper modules:
 - `test-wrapper.ts` for `vitest` and `cargo test`.
 - `cat-wrapper.ts` for bounded file reads and code outlines.
 - `exec-wrapper.ts` for arbitrary shell commands.
-- `wait.ts` for standardized wait operations.
+- `wait/` for standardized wait operations.
 
 Each wrapper returns stdout, stderr, status, signal, and optional raw output
 metadata. `emitWrappedResult()` writes the wrapper output first, then appends
@@ -229,17 +229,96 @@ The wait registry is the repo-local record of active `rsp wait` processes.
 - `rsp wait release --tag "<glob>"`
 - `rsp wait ls`
 
-Every active wait writes a registry entry under `.red/tmp/waits/`. Entries
-record the wait kind, target, reason, PID, started time, poll tier, timeout,
-and current status. The process exit code is the signal:
+The implementation is the `src/wait/` module. Each concern owns one file:
+`paths` resolves repo identity, `registry` owns the live-wait records,
+`lifecycle` runs the deadline and cancellation, `github`/`probes` observe
+GitHub, `capture` bounds command output, and `completion`/`delivery` seal the
+result and wake the sleeper. `index` owns only the sequence.
+
+### Repo identity
+
+`paths` is the single authority for where a wait's state lives. It walks up for
+a `.red`, but stops at the repository boundary so an unrelated ancestor `.red`
+cannot capture the registry. A linked git worktree resolves through its `.git`
+FILE (`gitdir: <main>/.git/worktrees/<name>`) back to the MAIN worktree, so a
+wait started in a worktree and a `rsp wait ls` run from the main checkout share
+one registry rather than growing two.
+
+### Registry
+
+Every active wait atomically writes a TOON registry entry under
+`.red/tmp/waits/`. The `rsp.wait.registry` v1 schema records kind, target,
+reason, PID and PID start time, started time, deadline, timeout, poll tier,
+attempt count, last poll, last observation, and current status. Writes land by
+rename, so a concurrent reader sees the old record or the new one and never a
+partial one. `rsp wait ls` also reads legacy JSON entries, rejects reused PIDs
+through start-time validation, treats a corrupted record as stale rather than
+fatal, and removes what it rejects.
+
+### Completion transaction
+
+Every completion emits a versioned `rsp.wait.result` v1 envelope, as TOON by
+default or JSON with `--json`.
+
+Completion is monotonic and has three states. The verdict is SEALED to disk
+first, with `delivery.status: pending`; then hooks run; then the receipt is
+stamped `success` or `failure`. Because the durable record is never written as
+provisionally successful, a process awakened by `--signal-pid` or `--notify-cmd`
+always observes a complete, stable target verdict and an honest delivery state.
+`--result-file <path>` persists that envelope by atomic rename before any wake.
+
+The envelope keeps `target_exit_code` separate from the final `exit_code`, so a
+successful target followed by a delivery failure is never reported as a target
+failure or as an ambiguous green. The process exit code is the coordination
+semaphore:
 
 - `0`: success verdict.
 - `1`: failure verdict.
-- `2`: timeout or indeterminate verdict.
+- `2`: timeout, indeterminate, or unresolved delivery.
 
-The registry entry is updated while the wait runs and removed on every exit
-path. `rsp wait ls` reads the registry, filters out dead PIDs, and reports the
-live waits.
+`--signal-pid` is validated when the wait starts and its PID start time is
+pinned. The identity is re-checked immediately before the signal fires, so a PID
+recycled during a long wait produces a delivery failure instead of a signal
+delivered to an unrelated process.
+
+### Bounded capture
+
+For `cmd`, stdout and stderr are captured with a fixed memory ceiling: at most
+`--capture-bytes` stays resident as the inline head, and everything past it
+streams to a spool file before being handed to the elision store through a
+store-adapter seam. Elided output always carries an `el:<id>` handle for
+byte-exact recovery; if the store is unavailable the spool file is KEPT and its
+path reported, so store loss costs recoverability but never bytes. A head that
+is not printable text is emitted as labeled base64, so binary output survives
+the envelope intact.
+
+### Cancellation and cleanup
+
+Timeout, SIGINT, and SIGTERM terminate the detached command process group with
+TERM, wait the grace period, re-enumerate descendants, then use KILL, and finally
+VERIFY that the pids are gone. A wait that cannot prove cleanup reports exit 2
+rather than an ambiguous success. Notify hooks receive the stable result through
+`RSP_WAIT_RESULT_JSON`, `RSP_WAIT_RESULT_FILE`, `RSP_WAIT_STATUS`,
+`RSP_WAIT_EXIT_CODE`, `RSP_WAIT_TARGET`, and `RSP_WAIT_RESULT_SCHEMA`;
+`--notify-timeout` bounds hook delivery and reports failures explicitly.
+
+### GitHub bounds
+
+Each GitHub probe is bounded by `--probe-timeout` (default 60s) in addition to
+the wait's own cancellation signal, and the `gh` process is killed when either
+fires. Without that second bound a hung `gh` call would outlive `--timeout`
+entirely, because the deadline is only checked between probes. A bounded-out
+probe is indeterminate, so the loop simply retries until the real deadline.
+
+GitHub polling preserves its last observation on timeout or interruption. A
+conflicting PR is a failure even when checks pass. `run --branch <branch>
+--latest` resolves once and pins that run ID before polling, so a newer run
+cannot silently change the target. Registry entries are removed on every exit
+path after the result has been persisted.
+
+JSON appears in this scope only at external boundaries — GitHub payloads, the
+explicit `--json` presentation option, and the `RSP_WAIT_RESULT_JSON` hook
+variable. All RedSkills-owned state is TOON.
 
 ## Hook Interception
 
