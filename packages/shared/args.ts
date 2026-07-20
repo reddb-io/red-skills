@@ -10,9 +10,10 @@
  *    typed `{ values, positionals }` result. Each flag declares its kind
  *    (`boolean` / `value`), its aliases, and an optional `coerce` mapping the
  *    raw string to the value the caller wants. Built on the library's
- *    `tokenize` primitive so `--flag`, `--flag=value`, `--flag value`, `-f`,
- *    and `-f value` are all recognised consistently, with a single, shared
- *    "<flag> requires a value" error for value flags missing their argument.
+ *    schema-aware `createParser` surface so `--flag`, `--flag=value`,
+ *    `--flag value`, `-f`, and `-f value` are all recognised consistently,
+ *    with a single, shared "<flag> requires a value" error for value flags
+ *    missing their argument.
  *
  *  - `routeCommand(argv, commands)` — a minimal command router: it peels the
  *    leading token, matches it (or an alias) against the known command set, and
@@ -22,7 +23,7 @@
  *
  * Dependency-light by design: the only import is `cli-args-parser`.
  */
-import { tokenize, type Token } from "cli-args-parser";
+import { createParser, tokenize, type OptionDefinition, type Token } from "cli-args-parser";
 
 /** A flag that is present-or-absent, e.g. `--once`. */
 export interface BooleanFlagSpec {
@@ -34,6 +35,8 @@ export interface BooleanFlagSpec {
 /** A flag that consumes a value, e.g. `--spec 42` / `--spec=42`. */
 export interface ValueFlagSpec<T> {
   kind: "value";
+  /** Accumulate repeated occurrences in order instead of keeping the last. */
+  type?: "array";
   /** Alternate spellings (long or short), without leading dashes. */
   aliases?: string[];
   /** Map the raw string value to the typed value the caller wants. */
@@ -47,7 +50,9 @@ export type FlagSchema = Record<string, FlagSpec>;
 
 /** Infer the value type produced by a single flag spec. */
 type FlagValue<S> = S extends ValueFlagSpec<infer T>
-  ? T
+  ? S extends { type: "array" }
+    ? T[]
+    : T
   : S extends BooleanFlagSpec
     ? boolean
     : never;
@@ -64,94 +69,65 @@ export interface LooseParsedArgs {
   flags: Record<string, string | boolean>;
 }
 
-function buildAliasIndex(schema: FlagSchema): Map<string, string> {
-  const index = new Map<string, string>();
+function buildParserOptions(schema: FlagSchema): Record<string, OptionDefinition> {
+  const options: Record<string, OptionDefinition> = {};
   for (const [name, spec] of Object.entries(schema)) {
-    index.set(name, name);
-    for (const alias of spec.aliases ?? []) index.set(alias, name);
+    options[name] = {
+      type: spec.kind === "boolean" ? "boolean" : spec.type ?? "string",
+      ...(spec.aliases === undefined ? {} : { aliases: spec.aliases }),
+    };
   }
-  return index;
+  return options;
 }
 
 /**
  * Parse `argv` against a flag `schema`, returning typed values and positionals.
  *
- * Tokenisation is delegated to `cli-args-parser`'s `tokenize`, so the supported
- * surface — `--flag`, `--no-flag`, `--opt=value`, `-f`, `-o value`, combined
- * short flags — is the library's, shared across the whole monorepo. The wrapper
- * then folds those tokens into the declared schema:
+ * Parsing is delegated to `cli-args-parser`'s schema-aware `createParser`, so
+ * the supported surface — `--flag`, `--no-flag`, `--opt=value`, `-f`,
+ * `-o value`, combined short flags — is the library's, shared across the whole
+ * monorepo. The wrapper then maps the parsed values into the declared schema:
  *
  *  - boolean flag present → `true`
  *  - value flag with `=value` or a following token → `coerce(value)`
  *  - value flag with no available value → throws `"<flag> requires a value"`
  *
- * Last occurrence wins for repeated flags. Unknown flags are ignored (left for
+ * Last occurrence wins unless a value flag opts into `type: "array"`, which
+ * accumulates occurrences in input order. Unknown flags are ignored (left for
  * the caller to handle elsewhere), matching the permissive scan dev relied on.
  */
 export function parseFlags<Schema extends FlagSchema>(
   argv: readonly string[],
   schema: Schema,
 ): ParseFlagsResult<Schema> {
-  const aliasIndex = buildAliasIndex(schema);
-  const args = [...argv];
-  const tokens: Token[] = tokenize(args);
-
+  const parser = createParser({
+    options: buildParserOptions(schema),
+    separators: {},
+    allowUnknown: true,
+  });
+  const parsed = parser.parse([...argv]);
   const values: Record<string, unknown> = {};
-  const positionals: string[] = [];
-
-  for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i]!;
-    const key = tok.key;
-
-    if ((tok.type === "positional" || tok.type === "separator") && key === undefined) {
-      positionals.push(tok.raw);
-      continue;
-    }
-
-    // Tokens carrying a key are flag-long / flag-short / option-long /
-    // option-short / negation. Resolve to a canonical schema name.
-    if (key === undefined) {
-      positionals.push(tok.raw);
-      continue;
-    }
-
-    const canonical = aliasIndex.get(key);
-    if (canonical === undefined) {
-      // Unknown flag — preserve permissive behaviour, ignore it.
-      continue;
-    }
-    const spec = schema[canonical]!;
-
-    if (spec.kind === "boolean") {
-      values[canonical] = true;
-      continue;
-    }
-
-    // Value flag. The token may already carry an inline value (--flag=value or
-    // -f=value). Otherwise consume the next argv token as the value.
-    let raw: string | undefined = tok.value;
-    if (raw === undefined) {
-      const next = args[tok.index + 1];
-      if (next !== undefined) {
-        raw = next;
-        // Skip the token we just consumed as a value so it is not re-read as a
-        // positional / flag on a later iteration.
-        for (let j = i + 1; j < tokens.length; j += 1) {
-          if (tokens[j]!.index === tok.index + 1) {
-            tokens.splice(j, 1);
-            break;
-          }
-        }
-      }
-    }
-    if (raw === undefined) {
-      const display = key.length === 1 ? `-${key}` : `--${key}`;
-      throw new Error(`${display} requires a value`);
-    }
-    values[canonical] = spec.coerce(raw);
+  const missingValue = parsed.errors.find((error) => /^Option --?\S+ requires a value$/.test(error));
+  if (missingValue !== undefined) {
+    throw new Error(missingValue.replace(/^Option /, ""));
   }
 
-  return { values, positionals } as ParseFlagsResult<Schema>;
+  if (parsed.errors.length > 0) throw new Error(parsed.errors[0]);
+
+  for (const [name, spec] of Object.entries(schema)) {
+    const raw = parsed.options[name];
+    if (raw === undefined) continue;
+    if (spec.kind === "boolean") {
+      values[name] = raw;
+    } else if (spec.type === "array") {
+      const items = Array.isArray(raw) ? raw : [raw];
+      values[name] = items.map((item) => spec.coerce(String(item)));
+    } else {
+      values[name] = spec.coerce(String(raw));
+    }
+  }
+
+  return { values, positionals: parsed.rest } as ParseFlagsResult<Schema>;
 }
 
 /**
