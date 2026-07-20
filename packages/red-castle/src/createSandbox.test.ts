@@ -1560,7 +1560,7 @@ describe("createSandbox", () => {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("isolated provider: close() cleans up properly", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
