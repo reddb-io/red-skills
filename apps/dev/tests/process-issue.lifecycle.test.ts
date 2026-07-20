@@ -110,15 +110,13 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
   it("keeps a successful landing done and surfaces a local branch cleanup failure", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
-    deps.git.deleteLocalBranch = async () => {
-      throw new Error("cleanup failed");
-    };
+    deps.git.deleteLocalBranch = async () => ({ ok: false, error: "cleanup failed" }) as never;
 
     const result = await processIssue(deps, input);
 
     expect(result).toMatchObject({
       outcome: "done",
-      mergeSha: "abc1234",
+      mergeSha: "forge-merge-sha",
       cleanupError: "cleanup failed",
     });
     expect(trace.closed).toEqual([9]);
