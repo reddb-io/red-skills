@@ -858,7 +858,7 @@ describe("Spec cascade rebase after DONE landing", () => {
       "afk/wBBBB/20-fix-sibling-a",
       "afk/wCCCC/21-fix-sibling-b",
     ]);
-    expect(rebaseTargets).toEqual(["abc1234", "abc1234"]);
+    expect(rebaseTargets).toEqual(["forge-merge-sha", "forge-merge-sha"]);
     // The spec:42 label lookup fired.
     expect(trace.listByLabelCalls).toContain("spec:42");
   });
