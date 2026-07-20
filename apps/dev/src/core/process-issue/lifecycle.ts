@@ -1232,9 +1232,12 @@ export async function processIssue(
   await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
   let cleanupError: string | undefined;
   try {
-    await deps.git.deleteLocalBranch(workerBranch);
+    const cleanup = await deps.git.deleteLocalBranch(workerBranch);
+    if (cleanup && !cleanup.ok) cleanupError = cleanup.error;
   } catch (error) {
     cleanupError = error instanceof Error ? error.message : String(error);
+  }
+  if (cleanupError) {
     deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
   }
   await deps.fs.completionSweep(issue);
