@@ -283,6 +283,47 @@ async function fakeGhPath(root: string, responses: Array<Record<string, unknown>
   return { path: `${bin}:${process.env.PATH ?? ""}`, responsesDir, countFile: join(responsesDir, "count") };
 }
 
+/**
+ * A `gh` that never answers, recording each invocation's PID.
+ *
+ * This is how the "timeout is a real upper bound" guarantee is exercised: with
+ * an unbounded probe the wait would hang here forever instead of honoring its
+ * own deadline, and any leaked PID proves cancellation failed to reclaim it.
+ */
+async function hangingGhPath(root: string): Promise<{ path: string; pidsFile: string; livePids: () => Promise<number[]> }> {
+  const bin = join(root, "hanging-bin");
+  await mkdir(bin, { recursive: true });
+  const pidsFile = join(root, "hanging-gh-pids");
+  const gh = join(bin, "gh");
+  await writeFile(
+    gh,
+    [
+      "#!/usr/bin/env bash",
+      `printf "%s\\n" "$$" >> ${shellQuote(pidsFile)}`,
+      "sleep 600",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(gh, 0o755);
+  return {
+    path: `${bin}:${process.env.PATH ?? ""}`,
+    pidsFile,
+    async livePids() {
+      const raw = await readFile(pidsFile, "utf8").catch(() => "");
+      const pids = raw.split("\n").map((line) => Number(line.trim())).filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+      return pids.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    },
+  };
+}
+
 async function runMcpRequests(
   cwd: string,
   requests: Array<Record<string, unknown>>,
@@ -735,6 +776,7 @@ export {
   commitMany,
   shellQuote,
   fakeGhPath,
+  hangingGhPath,
   runMcpRequests,
   seedWarmRedCache,
   waitForGone,
