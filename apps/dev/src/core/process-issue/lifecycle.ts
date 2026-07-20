@@ -1241,7 +1241,9 @@ export async function processIssue(
   await deps.claimLock.release(issue);
   markTerminalState(deps, "done");
   await runCloseCascade(deps, issue);
-  await runCascadeRebase(deps, input, issue, mergeSha, labels);
+  if (landing.mergeSha) {
+    await runCascadeRebase(deps, input, issue, landing.mergeSha, labels);
+  }
   return {
     outcome: "done",
     issue,
