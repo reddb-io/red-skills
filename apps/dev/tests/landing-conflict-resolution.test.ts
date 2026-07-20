@@ -39,7 +39,7 @@ describe("doLanding — first-attempt mechanical conflict resolution (#2072)", (
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);
     expect(joined(h.mergeCalls).some((c) => c === `git -C ${RWT} rebase --abort`)).toBe(false);
@@ -111,7 +111,7 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);

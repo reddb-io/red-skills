@@ -245,6 +245,13 @@ export function harness(opts: Opts = {}): Harness {
       if (j.includes("pr checks")) {
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
       }
+      if (j.includes("pr view") && j.includes("mergeCommit")) {
+        // #2261: doLanding reads the landed commit SHA via
+        // `gh pr view <n> --json mergeCommit --jq .mergeCommit.oid`. Return the
+        // canonical fixture SHA so the unlocked admin-PR path reports the real
+        // merge commit, matching the locked path's rev-parse fixture.
+        return { code: 0, stdout: "abc1234\n", stderr: "" };
+      }
       if (j.includes("pr view")) {
         // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
         const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {

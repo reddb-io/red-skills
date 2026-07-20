@@ -373,7 +373,9 @@ async function runAdoptLanding(
       },
       git: {
         headShortSha: () => gitx.headShortSha(gitCtx),
-        deleteLocalBranch: (b) => gitx.deleteLocalBranch(gitCtx, b),
+        deleteLocalBranch: async (b) => {
+          await gitx.deleteLocalBranch(gitCtx, b);
+        },
       },
       fs: {
         // Adopt landing has no AFK worker dir to sweep — best-effort no-op.

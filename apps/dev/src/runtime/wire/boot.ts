@@ -364,7 +364,9 @@ export async function buildBootDeps(
     },
     git: {
       deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
-      deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+      deleteLocalBranch: async (branch) => {
+        await gitx.deleteLocalBranch(gitCtx, branch);
+      },
     },
     log,
     fastForwardLocalBase: ({ remote, target }) =>

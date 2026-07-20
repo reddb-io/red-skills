@@ -548,7 +548,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     // not a local primary branch. `locked` is observability only.
     locked: input.locked,
   });
-  if (r.ok) return { ok: true, locked: input.locked };
+  if (r.ok) return { ok: true, locked: input.locked, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}) };
   // Route the CI-aware failure modes (#812) distinctly. A failed required check
   // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
   // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything

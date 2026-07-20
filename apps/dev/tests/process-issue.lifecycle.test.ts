@@ -82,7 +82,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(result.base).toBe("main");
     expect(result.locked).toBe(false);
-    expect(result.mergeSha).toBe("abc1234");
+    expect(result.mergeSha).toBe("forge-merge-sha");
     expect(result.swept).toBe(true);
 
     // sandcastle ran once, on the worker branch, with the handoff as promptFile.
@@ -105,6 +105,22 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.deletedRemote.length).toBe(1);
     // worker branch pushed before landing; claim released.
     expect(trace.pushedAttempt.length).toBe(1);
+    expect(trace.released).toEqual([9]);
+  });
+
+  it("keeps a successful landing done and surfaces a local branch cleanup failure", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    deps.git.deleteLocalBranch = async () => ({ ok: false, error: "cleanup failed" }) as never;
+
+    const result = await processIssue(deps, input);
+
+    expect(result).toMatchObject({
+      outcome: "done",
+      mergeSha: "forge-merge-sha",
+      cleanupError: "cleanup failed",
+    });
+    expect(trace.closed).toEqual([9]);
+    expect(trace.swept).toEqual([9]);
     expect(trace.released).toEqual([9]);
   });
 
@@ -686,7 +702,7 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done"); // salvaged → lands exactly like a DONE attempt
-    expect(result.mergeSha).toBe("abc1234");
+    expect(result.mergeSha).toBe("forge-merge-sha");
     expect(result.swept).toBe(true);
     expect(trace.closed).toEqual([9]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);

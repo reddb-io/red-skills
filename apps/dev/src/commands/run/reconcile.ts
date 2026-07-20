@@ -245,7 +245,9 @@ export function makeBootReconcileRunner(
       },
       git: {
         headShortSha: () => gitx.headShortSha(gitCtx),
-        deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+        deleteLocalBranch: async (branch) => {
+          await gitx.deleteLocalBranch(gitCtx, branch);
+        },
       },
       fs: {
         completionSweep: (issue) => fsx.completionSweep(paths.workersRoot, issue),

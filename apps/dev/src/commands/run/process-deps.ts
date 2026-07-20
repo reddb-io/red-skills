@@ -917,7 +917,7 @@ export function buildProcessDeps(
     recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
     // Spec cascade rebase (issue #1007): after a successful DONE landing, rebase
     // every open sibling branch (same spec:N, not held by a live worker) onto the
-    // new base HEAD. Best-effort — failures log a warning, never fail the close.
+    // pinned landing commit. Best-effort — failures log a warning, never fail the close.
     // Gated by `afk.landing.cascade_rebase` (default "true", checked in core).
     cascadeRebase: {
       async listAFKBranches() {
@@ -935,7 +935,7 @@ export function buildProcessDeps(
           return (err as NodeJS.ErrnoException).code === "EPERM";
         }
       },
-      async rebaseAndPush(repoDir: string, branch: string, newBase: string) {
+      async rebaseAndPush(repoDir: string, branch: string, trunkTip: string) {
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
         const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
         const dest = join(paths.cascadeWorktreesDir, `${slug}-${slot}`);
@@ -946,12 +946,12 @@ export function buildProcessDeps(
             return { ok: false, warn: `failed to create worktree for ${branch}` };
           }
           const run = exec ?? (await import("../../runtime/exec.js")).execTool;
-          const rebaseR = await run("git", ["rebase", `origin/${newBase}`], { cwd: dest });
+          const rebaseR = await run("git", ["rebase", trunkTip], { cwd: dest });
           if (rebaseR.code !== 0) {
             await run("git", ["rebase", "--abort"], { cwd: dest }).catch(() => {});
             return {
               ok: false,
-              warn: `rebase of ${branch} onto ${newBase} conflicted: ${rebaseR.stderr.slice(0, 200)}`,
+              warn: `rebase of ${branch} onto ${trunkTip} conflicted: ${rebaseR.stderr.slice(0, 200)}`,
             };
           }
           const pushR = await run(

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProcessDeps } from "../src/commands/run.js";
 import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
+import { deleteLocalBranch } from "../src/runtime/git.js";
 import type { RepoContext } from "../src/runtime/wire.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 
@@ -83,6 +84,37 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("returns a failed local branch deletion through the runtime git boundary", async () => {
+    const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
+
+    await expect(deleteLocalBranch({ cwd: "/repo", exec }, "afk/w1/42-fix-thing")).resolves.toEqual({
+      ok: false,
+      error: "git branch -D failed for afk/w1/42-fix-thing: branch is checked out",
+    });
+  });
+
+  it("rebases a cascade branch directly onto the pinned landing SHA", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-cascade-"));
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec, trace } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude", exec);
+
+    const result = await deps.cascadeRebase!.rebaseAndPush(
+      root,
+      "afk/w2/43-fix-sibling",
+      "abc1234",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(trace).toContainEqual({
+      cmd: "git",
+      args: ["rebase", "abc1234"],
+      cwd: expect.stringContaining("cascade/afk-w2-43-fix-sibling-"),
+    });
+  });
+
   /**
    * Build the REAL assembly with the fake exec injected, then drive the gh/git
    * closures in DONE-close-path order and assert the exact OS-command trace.

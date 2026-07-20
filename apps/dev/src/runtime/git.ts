@@ -103,10 +103,17 @@ export async function headSha(ctx: GitContext): Promise<string | undefined> {
   return r.code === 0 && sha !== "" ? sha : undefined;
 }
 
-/** Delete a local branch (git branch -D). Best-effort. */
-export async function deleteLocalBranch(ctx: GitContext, branch: string): Promise<void> {
-  if (!branch) return;
-  await runGit(ctx, ["branch", "-D", branch]);
+export type DeleteLocalBranchResult = { ok: true } | { ok: false; error: string };
+
+/** Delete a local branch (git branch -D), returning a best-effort cleanup result. */
+export async function deleteLocalBranch(ctx: GitContext, branch: string): Promise<DeleteLocalBranchResult> {
+  if (!branch) return { ok: true };
+  const result = await runGit(ctx, ["branch", "-D", branch]);
+  if (result.code !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
+    return { ok: false, error: `git branch -D failed for ${branch}: ${detail}` };
+  }
+  return { ok: true };
 }
 
 /** Delete an origin branch (git push origin --delete). Best-effort. */

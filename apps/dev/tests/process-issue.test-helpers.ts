@@ -491,6 +491,9 @@ export function harness(opts: HarnessOptions = {}): {
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: "3\n", stderr: "" };
       }
+      if (j.includes("pr view") && j.includes("--json mergeCommit")) {
+        return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
+      }
       // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
       if (j.includes("pr view")) {
         const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {

@@ -108,7 +108,7 @@ export interface ReconcileGit {
   /** git -C primary rev-parse --short HEAD after a successful merge. */
   headShortSha(): Promise<string>;
   /** git -C primary branch -d <branch> after landing (best-effort). */
-  deleteLocalBranch(branch: string): Promise<void>;
+  deleteLocalBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string } | void>;
 }
 
 /** filesystem side effects: completion sweep + the optional validation sidecar. */
