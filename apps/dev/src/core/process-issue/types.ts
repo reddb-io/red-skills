@@ -157,7 +157,7 @@ export interface ProcessFs {
 }
 export interface ProcessGit {
   headShortSha(): Promise<string>;
-  deleteLocalBranch(branch: string): Promise<void>;
+  deleteLocalBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string } | void>;
   fetchBase?(base: string): Promise<void>;
   resolveFreshBase?(input: { base: string; remote: string }): Promise<WorkerBaseResolution>;
   prepareFreshWorkerBranch?(input: { branch: string; baseRef: string; force: boolean }): Promise<boolean | void>;
