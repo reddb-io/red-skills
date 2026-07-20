@@ -9,8 +9,14 @@ const SCHEMA = {
   },
   n: { kind: "value", coerce: (raw: string) => Number(raw) },
   once: { kind: "boolean" },
+  verbose: { kind: "boolean", aliases: ["v"] },
+  offset: { kind: "value", coerce: (raw: string) => Number(raw) },
   runner: { kind: "value", coerce: (raw: string) => raw },
   request: { kind: "value", aliases: ["r"], coerce: (raw: string) => raw },
+} satisfies FlagSchema;
+
+const REPEATED_SCHEMA = {
+  change: { kind: "value", type: "array", aliases: ["c"], coerce: (raw: string) => raw },
 } satisfies FlagSchema;
 
 describe("parseFlags", () => {
@@ -48,8 +54,16 @@ describe("parseFlags", () => {
     expect(() => parseFlags(["--prd"], SCHEMA)).toThrow("--prd requires a value");
   });
 
-  it("lets the last occurrence of a flag win", () => {
+  it("lets the last occurrence of a scalar flag win", () => {
     expect(parseFlags(["--runner", "claude", "--runner", "codex"], SCHEMA).values.runner).toBe("codex");
+  });
+
+  it("accumulates repeated value flags when the schema opts into an array", () => {
+    expect(parseFlags(["--change", "alpha", "-c", "beta", "--change=gamma"], REPEATED_SCHEMA).values.change).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
   });
 
   it("ignores unknown flags rather than throwing", () => {
@@ -63,6 +77,28 @@ describe("parseFlags", () => {
 
   it("collects positionals not matched by a flag", () => {
     expect(parseFlags(["alpha", "--once", "beta"], SCHEMA).positionals).toEqual(["alpha", "beta"]);
+  });
+
+  it("does not let a boolean short flag consume the following positional", () => {
+    expect(parseFlags(["-v", "mycommand"], SCHEMA)).toEqual({
+      values: { verbose: true },
+      positionals: ["mycommand"],
+    });
+  });
+
+  it("preserves a positional containing an equals sign", () => {
+    expect(parseFlags(["foo=bar", "--once"], SCHEMA)).toEqual({
+      values: { once: true },
+      positionals: ["foo=bar"],
+    });
+  });
+
+  it("does not consume a following flag as a value", () => {
+    expect(() => parseFlags(["--offset", "--once"], SCHEMA)).toThrow("--offset requires a value");
+  });
+
+  it("accepts a negative number as a value", () => {
+    expect(parseFlags(["-n", "-5"], SCHEMA).values.n).toBe(-5);
   });
 });
 
