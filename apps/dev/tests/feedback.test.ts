@@ -673,8 +673,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     expect(result.baselineFailureEvidence).toEqual([
       {
         check: "test:apps/dev",
-        summary: "FAILexpected 1 to equal 2",
-        outputTail: "FAILexpected 1 to equal 2",
+        summary: "FAIL\nexpected 1 to equal 2",
+        outputTail: "FAIL\nexpected 1 to equal 2",
       },
     ]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
