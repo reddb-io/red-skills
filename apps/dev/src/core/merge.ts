@@ -617,6 +617,8 @@ export interface LandPrResult {
   ok: boolean;
   /** PR number that was admin-merged (or held), when one resolved. */
   prNumber?: number;
+  /** Forge-reported merge commit for a completed synchronous merge. */
+  mergeSha?: string;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
 }
@@ -931,11 +933,16 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // the local fast-forward rather than pulling a tip that does not carry this work.
   if (mergeQueue) return { ok: true, prNumber };
 
+  const mergedCommit = await exec([
+    "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
+  ]);
+  const mergeSha = mergedCommit.code === 0 ? mergedCommit.stdout.trim() : "";
+
   // 4. Promote the fleet-owned mirror to the freshly merged origin tip. This is
   // ref-only and decoupled from the primary checkout's branch and working tree.
   await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
 
-  return { ok: true, prNumber };
+  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}) };
 }
 
 /**
