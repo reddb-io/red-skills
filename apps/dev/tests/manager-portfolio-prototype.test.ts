@@ -207,6 +207,17 @@ describe("Manager portfolio transition prototype", () => {
     expect(rejected.portfolioGeneration).toBe(source.portfolioGeneration);
     expect(rejected.lastResult).toMatchObject({ kind: "rejected", code: "not-authority" });
 
+    const splitBrainWrite = applyManagerAction(source, {
+      type: "resume",
+      effortId: "effort-alpha",
+      actor: actor(source, "session-b"),
+      expectedGeneration: effortGeneration(source),
+    });
+    expect(splitBrainWrite.lastResult).toMatchObject({
+      kind: "rejected",
+      code: "replica-retired",
+    });
+
     const resumed = applyManagerAction(imported, {
       type: "resume",
       effortId: "effort-alpha",
