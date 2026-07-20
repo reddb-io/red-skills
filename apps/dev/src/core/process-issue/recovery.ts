@@ -396,20 +396,26 @@ async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInpu
 export async function syncMainRedRepairIssue(
   deps: ProcessIssueDeps,
   feedback: RunFeedbackResult,
+  evaluatedSha: string,
 ): Promise<string | null> {
   if (!feedback.baselineProbeRan) return null;
   const {
     findMainRedRepairIssue,
     createMainRedRepairIssue,
-    updateMainRedRepairIssue,
     closeMainRedRepairIssue,
   } = deps.gh;
-  if (!findMainRedRepairIssue || !createMainRedRepairIssue || !updateMainRedRepairIssue || !closeMainRedRepairIssue) {
+  if (!findMainRedRepairIssue || !createMainRedRepairIssue || !closeMainRedRepairIssue) {
     return null;
   }
   try {
-    const current = await findMainRedRepairIssue();
-    const plan = planMainRedRepair(feedback.baselineFailures ?? [], current);
+    const fallbackEvidence = (feedback.baselineFailures ?? []).map((check) => ({
+      check,
+      summary: "command exited non-zero",
+      outputTail: "",
+    }));
+    const failures = feedback.baselineFailureEvidence ?? fallbackEvidence;
+    const current = await findMainRedRepairIssue(failures.map((failure) => failure.check));
+    const plan = planMainRedRepair({ sha: evaluatedSha, failures }, current);
     switch (plan.action) {
       case "noop":
         return null;
@@ -422,13 +428,9 @@ export async function syncMainRedRepairIssue(
         deps.appendIterLog(`🤖 /afk baseline probe: opened main-red repair issue #${created}.`);
         return null;
       }
-      case "update":
-        await updateMainRedRepairIssue(plan.issue, {
-          title: plan.title,
-          body: plan.body,
-          labels: plan.labels,
-        });
-        deps.appendIterLog(`🤖 /afk baseline probe: updated main-red repair issue #${plan.issue}.`);
+      case "comment":
+        await deps.gh.comment(plan.issue, plan.comment);
+        deps.appendIterLog(`🤖 /afk baseline probe: added an observation to main-red repair issue #${plan.issue}.`);
         return null;
       case "close":
         await closeMainRedRepairIssue(plan.issue, plan.comment);
