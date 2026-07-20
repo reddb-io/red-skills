@@ -124,7 +124,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
 - An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
   promotes it ahead of every `--spec` / `--issues` filter.
-- `/review-adrs` audits the decision record and usually feeds `/to-spec`.
+- `/review-adrs` runs read-only triage, applies only confirmed mechanical cleanup
+  in-session, and sends judgment findings to `/to-spec`.
 - `/model-tier-policy` answers runner/model tier choices.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
