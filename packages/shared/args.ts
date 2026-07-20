@@ -23,7 +23,7 @@
  *
  * Dependency-light by design: the only import is `cli-args-parser`.
  */
-import { createParser, tokenize, type OptionDefinition, type Token } from "cli-args-parser";
+import { createParser, looksLikeValue, tokenize, type OptionDefinition, type Token } from "cli-args-parser";
 
 /** A flag that is present-or-absent, e.g. `--once`. */
 export interface BooleanFlagSpec {
@@ -73,11 +73,45 @@ function buildParserOptions(schema: FlagSchema): Record<string, OptionDefinition
   const options: Record<string, OptionDefinition> = {};
   for (const [name, spec] of Object.entries(schema)) {
     options[name] = {
-      type: spec.kind === "boolean" ? "boolean" : spec.type ?? "string",
+      type: spec.kind === "boolean" ? "boolean" : "string",
+      ...(name.length === 1 ? { short: name } : {}),
       ...(spec.aliases === undefined ? {} : { aliases: spec.aliases }),
     };
   }
   return options;
+}
+
+function collectArrayValues(argv: readonly string[], schema: FlagSchema): Map<string, string[]> {
+  const names = new Map<string, string>();
+  for (const [name, spec] of Object.entries(schema)) {
+    if (spec.kind !== "value" || spec.type !== "array") continue;
+    names.set(name, name);
+    for (const alias of spec.aliases ?? []) names.set(alias, name);
+  }
+
+  const values = new Map<string, string[]>();
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === "--") break;
+
+    const match = arg.match(/^--([^=]+)(?:=(.*))?$/) ?? arg.match(/^-([^=])(?:=(.*))?$/);
+    if (match === null) continue;
+
+    const canonical = names.get(match[1]!);
+    if (canonical === undefined) continue;
+
+    let raw = match[2];
+    if (raw === undefined && looksLikeValue(argv[index + 1])) {
+      raw = argv[index + 1];
+      index += 1;
+    }
+    if (raw === undefined) continue;
+
+    const accumulated = values.get(canonical) ?? [];
+    accumulated.push(raw);
+    values.set(canonical, accumulated);
+  }
+  return values;
 }
 
 /**
@@ -107,6 +141,7 @@ export function parseFlags<Schema extends FlagSchema>(
   });
   const parsed = parser.parse([...argv]);
   const values: Record<string, unknown> = {};
+  const arrayValues = collectArrayValues(argv, schema);
   const missingValue = parsed.errors.find((error) => /^Option --?\S+ requires a value$/.test(error));
   if (missingValue !== undefined) {
     throw new Error(missingValue.replace(/^Option /, ""));
@@ -120,8 +155,7 @@ export function parseFlags<Schema extends FlagSchema>(
     if (spec.kind === "boolean") {
       values[name] = raw;
     } else if (spec.type === "array") {
-      const items = Array.isArray(raw) ? raw : [raw];
-      values[name] = items.map((item) => spec.coerce(String(item)));
+      values[name] = (arrayValues.get(name) ?? []).map((item) => spec.coerce(item));
     } else {
       values[name] = spec.coerce(String(raw));
     }
