@@ -233,6 +233,61 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("statusFleet reports reverse skew against the current dev bundle without cached bundles (#2204)", async () => {
+    const root = scratch();
+    const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
+    const priorBuildVersion = process.env.RED_BUILD_VERSION;
+    try {
+      const paths = afkPaths(root);
+      const epoch = Math.floor(Date.now() / 1000);
+      mkdirSync(dirname(paths.fleetStatePath), { recursive: true });
+      writeFileSync(
+        paths.fleetStatePath,
+        JSON.stringify({
+          epoch,
+          last_progress_epoch: epoch,
+          runner: "codex",
+          bundle_version: "2.76.0",
+          ready_for_agent: 0,
+          slots: { busy: 0, free: 2, total: 2, parked: 0 },
+        }),
+        "utf8",
+      );
+      const emptyCacheDir = join(root, "empty-bundle-cache");
+      mkdirSync(emptyCacheDir, { recursive: true });
+      process.env.RED_SKILLS_CACHE_DIR = emptyCacheDir;
+      process.env.RED_BUILD_VERSION = "2.75.2";
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
+
+      await statusFleet(root, out);
+
+      const report = decode(writes.join("")) as {
+        supervisor: {
+          bundle_version: string;
+          bundle_latest: string;
+          version_skew: number;
+        };
+      };
+      expect(report.supervisor).toMatchObject({
+        bundle_version: "2.76.0",
+        bundle_latest: "2.75.2",
+        version_skew: 1,
+      });
+    } finally {
+      if (priorCacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
+      else process.env.RED_SKILLS_CACHE_DIR = priorCacheDir;
+      if (priorBuildVersion === undefined) delete process.env.RED_BUILD_VERSION;
+      else process.env.RED_BUILD_VERSION = priorBuildVersion;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("stopFleet leaves live supervisor files untouched", async () => {
     const root = scratch();
     try {
