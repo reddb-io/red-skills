@@ -110,4 +110,24 @@ describe("memory CLI argument binding", () => {
     expect(html).toContain("src/first.ts");
     expect(html).toContain("src/second.ts");
   });
+
+  test("preserves repeated changed-file aliases", async () => {
+    const root = await initRoot();
+    const out = join(root, "pre-pr-review-alias.html");
+    const result = runMemory([
+      "pre-pr-review-viewer",
+      "--root",
+      root,
+      "--changed-file=src/first.ts",
+      "--changed-file",
+      "src/second.ts",
+      "--out",
+      out,
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    const html = await readFile(out, "utf8");
+    expect(html).toContain("src/first.ts");
+    expect(html).toContain("src/second.ts");
+  });
 });
