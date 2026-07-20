@@ -35,4 +35,62 @@ describe("review-adrs docs contract", () => {
       expect(skill).toContain("DOC-LANDING-FINALIZER.md");
     }
   });
+
+  it("runs ADR triage and scopes only the presented buckets with the optional subject filter", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("apps/dev/src/core/adr-triage.ts");
+    expect(skill).toContain("`triageAdrs`");
+    expect(skill).toContain('`numbers`');
+    expect(skill).toContain('`text`');
+    expect(skill).toContain('`index-section`');
+    expect(skill).toContain("Classification still uses the whole ADR tree");
+    for (const bucket of [
+      "keep",
+      "stale-reference",
+      "missing-supersession",
+      "merge-candidate",
+      "split-candidate",
+      "archive-candidate",
+    ]) {
+      expect(skill).toContain(`\`${bucket}\``);
+    }
+  });
+
+  it("gates every mechanical apply helper behind an explicit in-session confirmation", async () => {
+    const skill = await readReviewAdrsSkill();
+    const gate = skill.indexOf("Explicit confirmation gate");
+
+    expect(gate).toBeGreaterThan(-1);
+    for (const helper of [
+      "applyArchiveMove",
+      "applyStatusAndSuccessor",
+      "applyIndexArchive",
+      "applyStalePathFix",
+    ]) {
+      expect(skill.indexOf(`\`${helper}\``)).toBeGreaterThan(gate);
+    }
+    expect(skill).toContain("Anything except an explicit confirmation keeps the run read-only");
+    expect(skill).toContain("apply the confirmed mechanical operations in-session");
+  });
+
+  it("keeps detection read-only by default and routes judgment operations to a Spec", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("Read-only is the default");
+    expect(skill).toContain("No confirmation means no write");
+    expect(skill).toContain("Judgment route: interview → Spec → `/afk`");
+  });
+
+  it("keeps the router and engineering index aligned with gated mechanical apply", async () => {
+    const askRed = await readSkill("plugins/dev/skills/engineering/ask-red/SKILL.md");
+    const engineering = await readSkill("plugins/dev/skills/engineering/README.md");
+
+    for (const summary of [askRed, engineering]) {
+      expect(summary).toContain("read-only triage");
+      expect(summary).toContain("confirmed mechanical cleanup");
+      expect(summary).toContain("judgment findings");
+      expect(summary).toContain("`/to-spec`");
+    }
+  });
 });
