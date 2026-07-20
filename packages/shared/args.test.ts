@@ -156,6 +156,20 @@ describe("parseLooseArgs", () => {
       repeatedFlags: { change: ["edit src/a.ts", "delete src/b.ts"] },
     });
   });
+
+  it("accepts a single-dash value for schema-declared array flags", () => {
+    expect(
+      parseLooseArgs(
+        ["evidence", "--privacy-note", "- internal-only"],
+        { "privacy-note": { kind: "value", type: "array", coerce: (raw) => raw } },
+      ),
+    ).toEqual({
+      command: "evidence",
+      positional: [],
+      flags: { "privacy-note": "- internal-only" },
+      repeatedFlags: { "privacy-note": ["- internal-only"] },
+    });
+  });
 });
 
 type Cmd = "run" | "monitor" | "fleet" | "reap";
