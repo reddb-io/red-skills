@@ -695,6 +695,9 @@ jobs:
             apps/code-nav/package.json
             packages/shared/package.json
             packages/build-info/package.json
+            plugins/dev/package.json
+            plugins/memory/package.json
+            plugins/brain/package.json
           )
           # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
           # `pnpm build` above. Stage both so a source change ships; they carry no
