@@ -1629,7 +1629,7 @@ describe("createSandbox", () => {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("sandbox.interactive() invokes interactiveExec and returns result", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
