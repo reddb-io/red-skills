@@ -67,6 +67,8 @@ export interface LooseParsedArgs {
   command: string | undefined;
   positional: string[];
   flags: Record<string, string | boolean>;
+  /** Full ordered values for schema-declared array options. */
+  repeatedFlags?: Record<string, string[]>;
 }
 
 function buildParserOptions(schema: FlagSchema): Record<string, OptionDefinition> {
@@ -170,13 +172,24 @@ export function parseFlags<Schema extends FlagSchema>(
  * This keeps the familiar `{ command, positional, flags }` shape used by the
  * Memory CLIs while delegating tokenisation to `cli-args-parser`, so long/short
  * flags and `--flag=value` behave consistently with the schema-driven parser.
+ * Callers may declare value options with `type: "array"` to accumulate their
+ * occurrences in input order while unknown options retain loose parsing.
  */
-export function parseLooseArgs(argv: readonly string[]): LooseParsedArgs {
+export function parseLooseArgs(
+  argv: readonly string[],
+  schema: FlagSchema = {},
+): LooseParsedArgs {
   const [command, ...rest] = argv;
   const flags: Record<string, string | boolean> = {};
+  const repeatedFlags: Record<string, string[]> = {};
   const positional: string[] = [];
   const args = [...rest];
   const tokens: Token[] = tokenize(args);
+  const aliasIndex = new Map<string, string>();
+  for (const [name, spec] of Object.entries(schema)) {
+    aliasIndex.set(name, name);
+    for (const alias of spec.aliases ?? []) aliasIndex.set(alias, name);
+  }
 
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i]!;
@@ -190,25 +203,41 @@ export function parseLooseArgs(argv: readonly string[]): LooseParsedArgs {
       continue;
     }
 
+    const canonical = aliasIndex.get(key) ?? key;
+    const spec = schema[canonical];
     let value: string | boolean | undefined = tok.value;
     if (value === undefined) {
       const next = args[tok.index + 1];
-      if (next !== undefined && !next.startsWith("-")) {
+      const acceptsSingleDashValue = spec?.kind === "value" && !next?.startsWith("--");
+      if (next !== undefined && (!next.startsWith("-") || acceptsSingleDashValue)) {
         value = next;
-        for (let j = i + 1; j < tokens.length; j += 1) {
+        for (let j = tokens.length - 1; j > i; j -= 1) {
           if (tokens[j]!.index === tok.index + 1) {
             tokens.splice(j, 1);
-            break;
           }
         }
       } else {
         value = true;
       }
     }
-    flags[key] = value;
+    if (spec?.kind === "value" && spec.type === "array") {
+      if (value === true) {
+        const display = key.length === 1 ? `-${key}` : `--${key}`;
+        throw new Error(`${display} requires a value`);
+      }
+      (repeatedFlags[canonical] ??= []).push(value);
+      flags[canonical] = value;
+    } else {
+      flags[canonical] = value;
+    }
   }
 
-  return { command, positional, flags };
+  return {
+    command,
+    positional,
+    flags,
+    ...(Object.keys(repeatedFlags).length > 0 ? { repeatedFlags } : {}),
+  };
 }
 
 /** Result of `routeCommand`. */

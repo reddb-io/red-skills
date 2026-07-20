@@ -371,9 +371,9 @@ export async function runReasoningReplay(args: ParsedArgs): Promise<void> {
 }
 
 export async function runWhatif(args: ParsedArgs): Promise<void> {
-  // Collect every `--change <value>` from process.argv since the shared
-  // parser only keeps the last value per flag.
-  const rawChanges = collectRepeatedFlag(process.argv.slice(2), "change");
+  const changeFlag = args.flags.change;
+  const rawChanges =
+    args.repeatedFlags?.change ?? (typeof changeFlag === "string" ? [changeFlag] : []);
   const positionalChanges = args.positional.filter((p) => p.length > 0);
   const sources = [...rawChanges, ...positionalChanges];
   if (sources.length === 0) {

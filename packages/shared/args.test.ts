@@ -142,6 +142,34 @@ describe("parseLooseArgs", () => {
       flags: { j: true, iterations: "10" },
     });
   });
+
+  it("retains ordered values for schema-declared array flags", () => {
+    expect(
+      parseLooseArgs(
+        ["whatif", "rename alpha to beta", "--change=edit src/a.ts", "--change", "delete src/b.ts"],
+        { change: { kind: "value", type: "array", coerce: (raw) => raw } },
+      ),
+    ).toEqual({
+      command: "whatif",
+      positional: ["rename alpha to beta"],
+      flags: { change: "delete src/b.ts" },
+      repeatedFlags: { change: ["edit src/a.ts", "delete src/b.ts"] },
+    });
+  });
+
+  it("accepts a single-dash value for schema-declared array flags", () => {
+    expect(
+      parseLooseArgs(
+        ["evidence", "--privacy-note", "- internal-only"],
+        { "privacy-note": { kind: "value", type: "array", coerce: (raw) => raw } },
+      ),
+    ).toEqual({
+      command: "evidence",
+      positional: [],
+      flags: { "privacy-note": "- internal-only" },
+      repeatedFlags: { "privacy-note": ["- internal-only"] },
+    });
+  });
 });
 
 type Cmd = "run" | "monitor" | "fleet" | "reap";
