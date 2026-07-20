@@ -837,7 +837,7 @@ export async function processIssue(
       );
     }
     mainRed = feedback.baselineProbeRan === true && (feedback.baselineFailures?.length ?? 0) > 0;
-    mainRedRepairSyncFailure = await syncMainRedRepairIssue(deps, feedback);
+    mainRedRepairSyncFailure = await syncMainRedRepairIssue(deps, feedback, baseResolution.sha);
     await fireHook(
       "post_feedback",
       hookContext({
