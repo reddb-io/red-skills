@@ -826,7 +826,8 @@ describe("processIssue — scout mode (runMode: 'scout')", () => {
 
 
 describe("Spec cascade rebase after DONE landing", () => {
-  it("rebases two sibling branches onto main after merge of issue A (spec:42)", async () => {
+  it("rebases two sibling branches onto the exact landing merge SHA (spec:42)", async () => {
+    const rebaseTargets: string[] = [];
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -845,6 +846,11 @@ describe("Spec cascade rebase after DONE landing", () => {
         "afk/wCCCC/21-fix-sibling-b",
       ],
     });
+    const rebaseAndPush = deps.cascadeRebase!.rebaseAndPush;
+    deps.cascadeRebase!.rebaseAndPush = async (repoDir, branch, target) => {
+      rebaseTargets.push(target);
+      return await rebaseAndPush(repoDir, branch, target);
+    };
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("done");
     // Both sibling branches were rebased.
@@ -852,6 +858,7 @@ describe("Spec cascade rebase after DONE landing", () => {
       "afk/wBBBB/20-fix-sibling-a",
       "afk/wCCCC/21-fix-sibling-b",
     ]);
+    expect(rebaseTargets).toEqual(["abc1234", "abc1234"]);
     // The spec:42 label lookup fired.
     expect(trace.listByLabelCalls).toContain("spec:42");
   });
