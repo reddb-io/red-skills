@@ -567,6 +567,12 @@ function boundedFailureOutputTail(output: string): string {
   return output.replace(/\n+$/, "").split("\n").slice(-20).join("\n").slice(-4_000);
 }
 
+function joinCommandOutput(stdout: string, stderr: string): string {
+  if (stdout === "") return stderr;
+  if (stderr === "") return stdout;
+  return stdout.endsWith("\n") || stderr.startsWith("\n") ? `${stdout}${stderr}` : `${stdout}\n${stderr}`;
+}
+
 /**
  * Internal: run a list of FEEDBACK_SCRIPTS over a list of scopes against a
  * concrete worktree path, using the same per-check shape `runFeedback` emits.
@@ -597,7 +603,7 @@ async function runChecksForBaseline(
       out.set(name, { status: "passed" });
       continue;
     }
-    const output = `${result.stdout}${result.stderr}`;
+    const output = joinCommandOutput(result.stdout, result.stderr);
     out.set(name, {
       status: "failed",
       evidence: {
@@ -729,7 +735,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
-      const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
+      const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
       const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
       push({ name, script, label, scope, status, record });
     }
@@ -754,7 +760,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
-    const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
+    const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
     const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     push({ name, script: "typecheck", label, scope, status, record });
   }
