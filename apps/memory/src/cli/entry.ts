@@ -19,8 +19,16 @@ import { parseChangedFiles, parseHubRankBy, parseRid, printConflicts, printPrePr
 import type { TimelineToonEntry } from './graph-reports.js';
 import { HOOK_EVENTS, parseComplementaryMapKind, readStdin, resolveBootstrapPath, resolveHooksDir, resolveOverviewContract, runAfkFinalize, runArchitectureOverview, runAttempt, runAttemptLearn, runAttemptLearnApply, runDoctor, runExport, runGlobalSearch, runHook, runImport, runPromoteCmd, runStats, runVcs, runVcsInstallHooks, runVcsRefresh, runVcsUninstallHooks, runVector, VCS_EVENTS } from './operations.js';
 
+const MEMORY_CLI_FLAG_SCHEMA = {
+  change: { kind: "value", type: "array", coerce: (raw: string) => raw },
+  "changed-files": { kind: "value", type: "array", coerce: (raw: string) => raw },
+  citation: { kind: "value", type: "array", coerce: (raw: string) => raw },
+  "privacy-note": { kind: "value", type: "array", coerce: (raw: string) => raw },
+  tag: { kind: "value", type: "array", coerce: (raw: string) => raw },
+} as const;
+
 export async function main(): Promise<void> {
-  const args = parseLooseArgs(process.argv.slice(2));
+  const args = parseLooseArgs(process.argv.slice(2), MEMORY_CLI_FLAG_SCHEMA);
   if (args.command === "--version" || args.command === "-v" || args.command === "version" || args.flags.version === true || args.flags.v === true) {
     const info = readBuildInfo("memory");
     process.stdout.write(args.flags.json ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
