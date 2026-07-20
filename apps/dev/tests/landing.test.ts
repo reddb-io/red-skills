@@ -592,6 +592,23 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
   const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --merge"));
   const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify"));
 
+  it("returns the forge merge SHA from a completed PR landing", async () => {
+    const h = harness({ locked: false, openPr: true });
+    const mergeExec = h.deps.mergeExec;
+    h.deps.mergeExec = async (argv) => {
+      if (argv.join(" ").includes("pr view 42 --json mergeCommit --jq .mergeCommit.oid")) {
+        return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
+      }
+      return await mergeExec(argv);
+    };
+
+    expect(await doLanding(h.deps, h.input, h.hooks)).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "forge-merge-sha",
+    });
+  });
+
   it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
     const h = harness({ locked: false, openPr: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
