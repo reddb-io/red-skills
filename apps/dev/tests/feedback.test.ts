@@ -670,6 +670,13 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
     expect(result.baselineProbeRan).toBe(true);
     expect(result.baselineFailures).toEqual(["test:apps/dev"]);
+    expect(result.baselineFailureEvidence).toEqual([
+      {
+        check: "test:apps/dev",
+        summary: "FAIL expected 1 to equal 2",
+        outputTail: "FAIL\nexpected 1 to equal 2",
+      },
+    ]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("skipped");
     expect(testCheck.record.summary).toBe("pre-existing failure on baseline");

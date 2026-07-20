@@ -28,6 +28,7 @@ import {
 } from "../feedback.js";
 import {
   planMainRedRepair,
+  selectMainRedRepairIssue,
   type MainRedRepairIssue,
 } from "../main-red-repair.js";
 import {
@@ -396,20 +397,38 @@ async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInpu
 export async function syncMainRedRepairIssue(
   deps: ProcessIssueDeps,
   feedback: RunFeedbackResult,
+  evaluatedSha: string,
 ): Promise<string | null> {
   if (!feedback.baselineProbeRan) return null;
   const {
-    findMainRedRepairIssue,
+    listMainRedRepairIssues,
     createMainRedRepairIssue,
-    updateMainRedRepairIssue,
     closeMainRedRepairIssue,
   } = deps.gh;
-  if (!findMainRedRepairIssue || !createMainRedRepairIssue || !updateMainRedRepairIssue || !closeMainRedRepairIssue) {
+  if (!listMainRedRepairIssues || !createMainRedRepairIssue || !closeMainRedRepairIssue) {
     return null;
   }
   try {
-    const current = await findMainRedRepairIssue();
-    const plan = planMainRedRepair(feedback.baselineFailures ?? [], current);
+    const fallbackEvidence = (feedback.baselineFailures ?? []).map((check) => ({
+      check,
+      summary: "command exited non-zero",
+      outputTail: "",
+    }));
+    const failures = feedback.baselineFailureEvidence ?? fallbackEvidence;
+    const observation = { sha: evaluatedSha, failures };
+    const issues = [...await listMainRedRepairIssues()];
+    if (failures.length === 0) {
+      for (const issue of issues) {
+        const closePlan = planMainRedRepair(observation, issue);
+        if (closePlan.action !== "close") continue;
+        await closeMainRedRepairIssue(closePlan.issue, closePlan.comment);
+        deps.appendIterLog(`🤖 /afk baseline probe: closed main-red repair issue #${closePlan.issue}.`);
+      }
+      return null;
+    }
+    const failureChecks = failures.map((failure) => failure.check);
+    const current = selectMainRedRepairIssue(issues, failureChecks);
+    const plan = planMainRedRepair({ sha: evaluatedSha, failures }, current);
     switch (plan.action) {
       case "noop":
         return null;
@@ -419,20 +438,42 @@ export async function syncMainRedRepairIssue(
           body: plan.body,
           labels: plan.labels,
         });
-        deps.appendIterLog(`🤖 /afk baseline probe: opened main-red repair issue #${created}.`);
+        const refreshed = [...await listMainRedRepairIssues()].map((issue) => issue.number === created
+          ? { ...issue, title: issue.title ?? plan.title, body: issue.body ?? plan.body, labels: issue.labels ?? plan.labels }
+          : issue);
+        if (!refreshed.some((issue) => issue.number === created)) {
+          refreshed.push({ number: created, title: plan.title, body: plan.body, labels: plan.labels });
+        }
+        const canonical = selectMainRedRepairIssue(refreshed, failureChecks);
+        if (!canonical) throw new Error("created main-red repair issue could not be reconciled");
+        if (canonical.number !== created) {
+          const commentPlan = planMainRedRepair(observation, canonical);
+          if (commentPlan.action === "comment") await deps.gh.comment(commentPlan.issue, commentPlan.comment);
+        }
+        for (const duplicate of refreshed) {
+          if (duplicate.number === canonical.number) continue;
+          if (selectMainRedRepairIssue([duplicate], failureChecks)?.number !== duplicate.number) continue;
+          await closeMainRedRepairIssue(
+            duplicate.number,
+            `🤖 /afk baseline probe: closing duplicate of canonical main-red repair issue #${canonical.number}.`,
+          );
+        }
+        deps.appendIterLog(`🤖 /afk baseline probe: synchronized main-red repair issue #${canonical.number}.`);
         return null;
       }
-      case "update":
-        await updateMainRedRepairIssue(plan.issue, {
-          title: plan.title,
-          body: plan.body,
-          labels: plan.labels,
-        });
-        deps.appendIterLog(`🤖 /afk baseline probe: updated main-red repair issue #${plan.issue}.`);
+      case "comment":
+        await deps.gh.comment(plan.issue, plan.comment);
+        for (const duplicate of issues) {
+          if (duplicate.number === plan.issue) continue;
+          if (selectMainRedRepairIssue([duplicate], failureChecks)?.number !== duplicate.number) continue;
+          await closeMainRedRepairIssue(
+            duplicate.number,
+            `🤖 /afk baseline probe: closing duplicate of canonical main-red repair issue #${plan.issue}.`,
+          );
+        }
+        deps.appendIterLog(`🤖 /afk baseline probe: added an observation to main-red repair issue #${plan.issue}.`);
         return null;
       case "close":
-        await closeMainRedRepairIssue(plan.issue, plan.comment);
-        deps.appendIterLog(`🤖 /afk baseline probe: closed main-red repair issue #${plan.issue}.`);
         return null;
     }
   } catch (err) {

@@ -6,12 +6,30 @@ import {
   MAIN_RED_REPAIR_TITLE,
   planMainRedRepair,
   renderMainRedRepairBody,
+  selectMainRedRepairIssue,
 } from "../src/core/main-red-repair.js";
 import { LABEL_BUG, LABEL_READY, LABEL_URGENT } from "../src/core/triage-labels.js";
 
 describe("planMainRedRepair", () => {
   it("creates one urgent tracked repair issue when baseline failures exist and none is open", () => {
-    const plan = planMainRedRepair(["test:apps/dev", "typecheck:workspace"], null);
+    const plan = planMainRedRepair(
+      {
+        sha: "0123456789abcdef0123456789abcdef01234567",
+        failures: [
+          {
+            check: "test:apps/dev",
+            summary: "failing: FAIL tests/pi-package-builder.test.ts > builds the package",
+            outputTail: "AssertionError: expected stale manifest to equal generated manifest",
+          },
+          {
+            check: "typecheck:workspace",
+            summary: "error TS2322 in src/index.ts",
+            outputTail: "src/index.ts(4,2): error TS2322: Type 'number' is not assignable to type 'string'",
+          },
+        ],
+      },
+      null,
+    );
 
     expect(plan.action).toBe("create");
     if (plan.action !== "create") throw new Error("unreachable");
@@ -19,23 +37,49 @@ describe("planMainRedRepair", () => {
     expect(plan.labels).toEqual([LABEL_READY, LABEL_URGENT, LABEL_BUG]);
     expect(plan.body).toContain("- test:apps/dev");
     expect(plan.body).toContain("- typecheck:workspace");
+    expect(plan.body).toContain("`0123456789abcdef0123456789abcdef01234567`");
+    expect(plan.body).toContain("FAIL tests/pi-package-builder.test.ts > builds the package");
+    expect(plan.body).toContain("AssertionError: expected stale manifest to equal generated manifest");
   });
 
-  it("updates the existing repair issue instead of creating a duplicate for same or overlapping failures", () => {
-    const plan = planMainRedRepair(["test:apps/dev", "test:apps/dev", "lint:apps/dev"], {
-      number: 123,
-      labels: [LABEL_URGENT],
+  it("comments on the matching issue instead of creating a duplicate", () => {
+    const previous = renderMainRedRepairBody({
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      failures: [{ check: "test:apps/dev", summary: "old failure", outputTail: "old tail" }],
     });
+    const plan = planMainRedRepair(
+      {
+        sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        failures: [{ check: "test:apps/dev", summary: "new failure", outputTail: "new tail" }],
+      },
+      { number: 123, body: previous, labels: [LABEL_URGENT] },
+    );
 
-    expect(plan.action).toBe("update");
-    if (plan.action !== "update") throw new Error("unreachable");
+    expect(plan.action).toBe("comment");
+    if (plan.action !== "comment") throw new Error("unreachable");
     expect(plan.issue).toBe(123);
-    expect(plan.body.match(/test:apps\/dev/g)).toHaveLength(1);
-    expect(plan.body).toContain("- lint:apps/dev");
+    expect(plan.comment).toContain("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    expect(plan.comment).toContain("new failure");
+  });
+
+  it("creates a separate issue when the open repair issue has a different failing set", () => {
+    const previous = renderMainRedRepairBody({
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      failures: [{ check: "lint:apps/dev", summary: "lint failed", outputTail: "lint tail" }],
+    });
+    const plan = planMainRedRepair(
+      {
+        sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        failures: [{ check: "test:apps/dev", summary: "tests failed", outputTail: "test tail" }],
+      },
+      { number: 123, body: previous },
+    );
+
+    expect(plan.action).toBe("create");
   });
 
   it("closes the open repair issue when the next baseline probe is green", () => {
-    const plan = planMainRedRepair([], { number: 55 });
+    const plan = planMainRedRepair({ sha: "feedface", failures: [] }, { number: 55 });
 
     expect(plan).toEqual({
       action: "close",
@@ -45,17 +89,56 @@ describe("planMainRedRepair", () => {
   });
 
   it("does nothing when main is green and no repair issue exists", () => {
-    expect(planMainRedRepair([], null)).toEqual({ action: "noop" });
+    expect(planMainRedRepair({ sha: "feedface", failures: [] }, null)).toEqual({ action: "noop" });
   });
 });
 
 describe("renderMainRedRepairBody", () => {
-  it("names each failing baseline check in a stable body", () => {
-    const body = renderMainRedRepairBody([" typecheck:workspace ", "test:apps/dev"]);
+  it("bounds the captured output tail while preserving failure identity", () => {
+    const outputTail = Array.from({ length: 30 }, (_, i) => `diagnostic line ${i + 1}`).join("\n");
+    const body = renderMainRedRepairBody({
+      sha: "feedface",
+      failures: [
+        {
+          check: " test:apps/dev ",
+          summary: "failing: FAIL tests/createSandbox.test.ts > creates a sandbox",
+          outputTail,
+        },
+      ],
+    });
 
     expect(body).toContain("## Failing checks");
     expect(body).toContain("- test:apps/dev");
-    expect(body).toContain("- typecheck:workspace");
+    expect(body).toContain("FAIL tests/createSandbox.test.ts > creates a sandbox");
+    expect(body).toContain("diagnostic line 30");
+    expect(body).not.toContain("diagnostic line 10\n");
+  });
+});
+
+describe("selectMainRedRepairIssue", () => {
+  it("selects the marked open issue with the same normalized failing-check set", () => {
+    const matchingBody = renderMainRedRepairBody({
+      sha: "aaaaaaaa",
+      failures: [
+        { check: "test:apps/dev", summary: "tests failed", outputTail: "tail" },
+        { check: "lint:apps/dev", summary: "lint failed", outputTail: "tail" },
+      ],
+    });
+    const otherBody = renderMainRedRepairBody({
+      sha: "bbbbbbbb",
+      failures: [{ check: "typecheck:workspace", summary: "types failed", outputTail: "tail" }],
+    });
+
+    expect(
+      selectMainRedRepairIssue(
+        [
+          { number: 10, body: otherBody },
+          { number: 11, body: matchingBody },
+          { number: 12, body: matchingBody.replace("red-skills:main-red-repair", "not-the-marker") },
+        ],
+        [" lint:apps/dev", "test:apps/dev", "test:apps/dev"],
+      )?.number,
+    ).toBe(11);
   });
 });
 

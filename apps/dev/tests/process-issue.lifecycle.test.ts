@@ -252,6 +252,10 @@ describe("processIssue — main-red-untracked landing park (#1473)", () => {
     expect(result.preserved).toBe(true);
     expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(trace.mainRedRepairCreates).toHaveLength(1);
+    expect(trace.mainRedRepairCreates[0]?.body).toContain("Evaluated commit: `origin/main-tip`");
+    expect(trace.mainRedRepairCreates[0]?.body).toContain("## Observation at origin/main-tip");
+    expect(trace.mainRedRepairCreates[0]?.body).toContain("### test:root");
+    expect(trace.mainRedRepairCreates[0]?.body).toContain("Bounded output tail:");
     expect(trace.iterLogs).toContain("warn: main-red repair issue sync failed: gh issue create failed");
     expect(trace.ensuredLabels).toContain("blocked:main-red-untracked");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:main-red-untracked"))).toBe(
