@@ -137,6 +137,7 @@ export interface ProcessGh {
   repoVisibility?(): Promise<RepoVisibility | undefined>;
   actorTrustSignals?(actor: string): Promise<ActorTrustSignals>;
   renderDecisionCard?(issue: number): Promise<void>;
+  listMainRedRepairIssues?(): Promise<readonly MainRedRepairIssue[]>;
   findMainRedRepairIssue?(failures?: readonly string[]): Promise<MainRedRepairIssue | null>;
   createMainRedRepairIssue?(spec: { title: string; body: string; labels: readonly string[] }): Promise<number>;
   updateMainRedRepairIssue?(
