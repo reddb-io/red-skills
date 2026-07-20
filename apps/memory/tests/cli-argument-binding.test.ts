@@ -52,4 +52,42 @@ describe("memory CLI argument binding", () => {
       "rename alpha to beta",
     ]);
   });
+
+  test("binds repeated Evidence citations and privacy notes in order", async () => {
+    const root = await initRoot();
+    const result = runMemory([
+      "evidence",
+      "create",
+      "--root",
+      root,
+      "--summary",
+      "The CLI binds every repeated Evidence value.",
+      "--source-ref",
+      "issue 2251",
+      "--citation=first|https://example.invalid/first|first quote",
+      "--citation",
+      "second|https://example.invalid/second|second quote",
+      "--lesson",
+      "Parse repeated values once at the CLI boundary.",
+      "--privacy-note= review the first source ",
+      "--privacy-note",
+      "review the second source",
+      "--privacy-note",
+      " review the second source ",
+      "--json",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      card: {
+        citations: Array<{ label: string }>;
+        privacy: { notes: string[] };
+      };
+    };
+    expect(body.card.citations.map((citation) => citation.label)).toEqual(["first", "second"]);
+    expect(body.card.privacy.notes).toEqual([
+      "review the first source",
+      "review the second source",
+    ]);
+  });
 });
