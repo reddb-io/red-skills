@@ -673,7 +673,7 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     expect(result.baselineFailureEvidence).toEqual([
       {
         check: "test:apps/dev",
-        summary: "FAIL\nexpected 1 to equal 2",
+        summary: "FAIL expected 1 to equal 2",
         outputTail: "FAIL\nexpected 1 to equal 2",
       },
     ]);
