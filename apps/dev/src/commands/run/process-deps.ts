@@ -305,7 +305,7 @@ export function buildProcessDeps(
         const { hitlCardCommand } = await import("../hitl-card.js");
         await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
       },
-      findMainRedRepairIssue: () => ghx.findMainRedRepairIssue(ghCtx),
+      findMainRedRepairIssue: (failures) => ghx.findMainRedRepairIssue(ghCtx, failures),
       createMainRedRepairIssue: (spec) => ghx.createMainRedRepairIssue(ghCtx, spec),
       updateMainRedRepairIssue: (issue, spec) => ghx.updateMainRedRepairIssue(ghCtx, issue, spec),
       closeMainRedRepairIssue: (issue, closeComment) => ghx.closeMainRedRepairIssue(ghCtx, issue, closeComment),
