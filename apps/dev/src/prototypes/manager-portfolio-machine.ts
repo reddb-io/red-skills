@@ -16,6 +16,8 @@ export type ProjectionStatus = "unpublished" | "failed" | "published";
 export interface ManagerActor {
   hostId: string;
   sessionId: string;
+  authorityEpoch: number;
+  leaseToken: string | null;
 }
 
 export interface EffortLease {
@@ -68,6 +70,11 @@ export interface ManagerCheckpoint {
   portfolioGeneration: number;
   focusEffortId: string;
   efforts: Record<string, ManagerEffort>;
+}
+
+export interface ManagerCheckpointTransfer {
+  source: ManagerPortfolio;
+  destination: ManagerPortfolio;
 }
 
 type EffortMutation = {
@@ -195,6 +202,14 @@ function guardMutation(
       ),
     };
   }
+  if (action.actor.authorityEpoch !== state.authority.epoch) {
+    return {
+      result: rejected(
+        "authority-epoch-conflict",
+        `Actor epoch ${action.actor.authorityEpoch} is fenced; durable authority epoch is ${state.authority.epoch}.`,
+      ),
+    };
+  }
   const current = state.efforts[action.effortId];
   if (!current) {
     return { result: rejected("effort-not-found", `Unknown effort ${action.effortId}.`) };
@@ -223,6 +238,12 @@ function requireLease(
       `Effort ${effortRecord.id} is leased by ${effortRecord.lease.sessionId}.`,
     );
   }
+  if (effortRecord.lease.token !== actor.leaseToken) {
+    return rejected(
+      "lease-token-conflict",
+      `The supplied lease token is fenced for effort ${effortRecord.id}.`,
+    );
+  }
   return null;
 }
 
@@ -241,6 +262,18 @@ function applyResume(
     return withResult(
       state,
       rejected("lease-held", `Effort ${effortRecord.id} is leased by ${effortRecord.lease.sessionId}.`),
+    );
+  }
+  if (effortRecord.lease && effortRecord.lease.token !== actor.leaseToken) {
+    return withResult(
+      state,
+      rejected("lease-token-conflict", `The supplied lease token is fenced for effort ${effortRecord.id}.`),
+    );
+  }
+  if (!effortRecord.lease && actor.leaseToken !== null) {
+    return withResult(
+      state,
+      rejected("lease-token-conflict", `The supplied lease token no longer owns effort ${effortRecord.id}.`),
     );
   }
   if (effortRecord.lease?.sessionId === actor.sessionId && effortRecord.lifecycle === "active") {
@@ -342,6 +375,12 @@ function applyRecovery(
   effortRecord: ManagerEffort,
   actor: ManagerActor,
 ): ManagerPortfolio {
+  if (actor.leaseToken !== null) {
+    return withResult(
+      state,
+      rejected("lease-token-conflict", "Lease recovery must acquire a fresh fencing token."),
+    );
+  }
   if (!effortRecord.lease) {
     return withResult(state, rejected("no-orphaned-lease", "There is no lease to recover."));
   }
@@ -405,6 +444,15 @@ export function applyManagerAction(
     if (action.actor.hostId !== state.authority.hostId) {
       return withResult(state, rejected("not-authority", "Only the active host has this session."));
     }
+    if (action.actor.authorityEpoch !== state.authority.epoch) {
+      return withResult(
+        state,
+        rejected(
+          "authority-epoch-conflict",
+          `Actor epoch ${action.actor.authorityEpoch} is fenced; durable authority epoch is ${state.authority.epoch}.`,
+        ),
+      );
+    }
     return {
       ...state,
       sessions: { ...state.sessions, [sessionKey(action.actor)]: "crashed" },
@@ -447,9 +495,10 @@ export function exportCheckpoint(state: ManagerPortfolio): ManagerCheckpoint {
 }
 
 export function importCheckpoint(
+  source: ManagerPortfolio,
   checkpoint: ManagerCheckpoint,
   destinationHostId: string,
-): ManagerPortfolio {
+): ManagerCheckpointTransfer {
   const efforts = Object.fromEntries(
     Object.entries(cloneEfforts(checkpoint.efforts)).map(([id, record]) => [
       id,
@@ -461,16 +510,30 @@ export function importCheckpoint(
       },
     ]),
   );
-  return {
+  const authority = { hostId: destinationHostId, epoch: checkpoint.sourceAuthority.epoch + 1 };
+  const portfolioGeneration = checkpoint.portfolioGeneration + 1;
+  const sourceReplica: ManagerPortfolio = {
+    ...source,
+    authority,
+    portfolioGeneration,
+    focusEffortId: checkpoint.focusEffortId,
+    efforts: cloneEfforts(efforts),
+    lastResult: applied(
+      "checkpoint-source-retired",
+      `${source.authority.hostId} retired at authority epoch ${authority.epoch}; its prior credentials are fenced.`,
+    ),
+  };
+  const destination: ManagerPortfolio = {
     prototype: true,
-    authority: { hostId: destinationHostId, epoch: checkpoint.sourceAuthority.epoch + 1 },
-    portfolioGeneration: checkpoint.portfolioGeneration + 1,
+    authority,
+    portfolioGeneration,
     focusEffortId: checkpoint.focusEffortId,
     sessions: {},
-    efforts,
+    efforts: cloneEfforts(efforts),
     lastResult: applied(
       "checkpoint-imported",
       `${destinationHostId} is the sole writer; source leases cannot mutate this generation.`,
     ),
   };
+  return { source: sourceReplica, destination };
 }
