@@ -66,7 +66,9 @@ export interface ParseFlagsResult<Schema extends FlagSchema> {
 export interface LooseParsedArgs {
   command: string | undefined;
   positional: string[];
-  flags: Record<string, string | boolean | string[]>;
+  flags: Record<string, string | boolean>;
+  /** Full ordered values for schema-declared array options. */
+  repeatedFlags?: Record<string, string[]>;
 }
 
 function buildParserOptions(schema: FlagSchema): Record<string, OptionDefinition> {
@@ -178,7 +180,8 @@ export function parseLooseArgs(
   schema: FlagSchema = {},
 ): LooseParsedArgs {
   const [command, ...rest] = argv;
-  const flags: Record<string, string | boolean | string[]> = {};
+  const flags: Record<string, string | boolean> = {};
+  const repeatedFlags: Record<string, string[]> = {};
   const positional: string[] = [];
   const args = [...rest];
   const tokens: Token[] = tokenize(args);
@@ -222,14 +225,19 @@ export function parseLooseArgs(
         const display = key.length === 1 ? `-${key}` : `--${key}`;
         throw new Error(`${display} requires a value`);
       }
-      const existing = flags[canonical];
-      flags[canonical] = Array.isArray(existing) ? [...existing, value] : [value];
+      (repeatedFlags[canonical] ??= []).push(value);
+      flags[canonical] = value;
     } else {
       flags[canonical] = value;
     }
   }
 
-  return { command, positional, flags };
+  return {
+    command,
+    positional,
+    flags,
+    ...(Object.keys(repeatedFlags).length > 0 ? { repeatedFlags } : {}),
+  };
 }
 
 /** Result of `routeCommand`. */
