@@ -791,7 +791,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
     });
     expect(r.ok).toBe(true);
-    expect(joined(calls).some((c) => c.includes("pr view"))).toBe(false);
+    expect(joined(calls).some((c) => c.includes("mergeStateStatus"))).toBe(false);
     expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 });
