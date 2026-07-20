@@ -4,13 +4,34 @@ import {
   createPrototypePortfolio,
   exportCheckpoint,
   importCheckpoint,
+  type ManagerActor,
 } from "../src/prototypes/manager-portfolio-machine.js";
 
+type Portfolio = ReturnType<typeof createPrototypePortfolio>;
+
 function effortGeneration(
-  state: ReturnType<typeof createPrototypePortfolio>,
+  state: Portfolio,
   effortId = "effort-alpha",
 ): number {
   return state.efforts[effortId]!.generation;
+}
+
+function actor(
+  state: Portfolio,
+  sessionId: string,
+  leaseToken: string | null = null,
+  hostId = state.authority.hostId,
+  authorityEpoch = state.authority.epoch,
+): ManagerActor {
+  return { hostId, sessionId, authorityEpoch, leaseToken };
+}
+
+function leaseActor(
+  state: Portfolio,
+  sessionId: string,
+  effortId = "effort-alpha",
+): ManagerActor {
+  return actor(state, sessionId, state.efforts[effortId]!.lease!.token);
 }
 
 describe("Manager portfolio transition prototype", () => {
@@ -20,13 +41,13 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-beta",
-      actor: { hostId: "host-a", sessionId: "session-b" },
+      actor: actor(state, "session-b"),
       expectedGeneration: effortGeneration(state, "effort-beta"),
     });
 
@@ -36,7 +57,7 @@ describe("Manager portfolio transition prototype", () => {
     const rejected = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-b" },
+      actor: actor(state, "session-b"),
       expectedGeneration: effortGeneration(state),
     });
 
@@ -51,7 +72,7 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: staleGeneration,
     });
 
@@ -60,7 +81,7 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-red",
       outcome: "published",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: staleGeneration,
     });
 
@@ -75,7 +96,7 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
@@ -83,13 +104,13 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-red",
       outcome: "published",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
       type: "end",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
 
@@ -102,7 +123,7 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-b" },
+      actor: actor(state, "session-b"),
       expectedGeneration: effortGeneration(state),
     });
     expect(state.efforts["effort-alpha"]).toMatchObject({ lifecycle: "active" });
@@ -114,26 +135,50 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
       type: "crash-session",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
     });
 
     expect(state.efforts["effort-alpha"]!.lease?.sessionId).toBe("session-a");
     expect(state.sessions["host-a/session-a"]).toBe("crashed");
 
+    const abandonedToken = state.efforts["effort-alpha"]!.lease!.token;
     state = applyManagerAction(state, {
       type: "recover-lease",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "recovery-session" },
+      actor: actor(state, "recovery-session"),
       expectedGeneration: effortGeneration(state),
     });
 
     expect(state.efforts["effort-alpha"]!.lease?.sessionId).toBe("recovery-session");
     expect(state.lastResult).toMatchObject({ kind: "applied", code: "lease-recovered" });
+
+    const staleWriter = applyManagerAction(state, {
+      type: "publish-map",
+      effortId: "effort-alpha",
+      repository: "repo-red",
+      outcome: "published",
+      actor: actor(state, "recovery-session", abandonedToken),
+      expectedGeneration: effortGeneration(state),
+    });
+    expect(staleWriter.lastResult).toMatchObject({
+      kind: "rejected",
+      code: "lease-token-conflict",
+    });
+
+    state = applyManagerAction(state, {
+      type: "publish-map",
+      effortId: "effort-alpha",
+      repository: "repo-red",
+      outcome: "published",
+      actor: leaseActor(state, "recovery-session"),
+      expectedGeneration: effortGeneration(state),
+    });
+    expect(state.lastResult).toMatchObject({ kind: "applied", code: "map-published" });
   });
 
   it("transfers write authority on checkpoint import and invalidates source leases", () => {
@@ -141,32 +186,53 @@ describe("Manager portfolio transition prototype", () => {
     source = applyManagerAction(source, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(source, "session-a"),
       expectedGeneration: effortGeneration(source),
     });
     const checkpoint = exportCheckpoint(source);
-    const imported = importCheckpoint(checkpoint, "host-b");
+    const transfer = importCheckpoint(source, checkpoint, "host-b");
+    source = transfer.source;
+    const imported = transfer.destination;
 
     expect(imported.authority).toEqual({ hostId: "host-b", epoch: 2 });
     expect(imported.efforts["effort-alpha"]!.lease).toBeNull();
 
-    const rejected = applyManagerAction(imported, {
+    const rejected = applyManagerAction(source, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
-      expectedGeneration: effortGeneration(imported),
+      actor: actor(source, "session-a", null, "host-a", 1),
+      expectedGeneration: effortGeneration(source),
     });
-    expect(rejected.efforts).toBe(imported.efforts);
-    expect(rejected.portfolioGeneration).toBe(imported.portfolioGeneration);
+    expect(rejected.efforts).toBe(source.efforts);
+    expect(rejected.portfolioGeneration).toBe(source.portfolioGeneration);
     expect(rejected.lastResult).toMatchObject({ kind: "rejected", code: "not-authority" });
 
     const resumed = applyManagerAction(imported, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-b", sessionId: "session-b" },
+      actor: actor(imported, "session-b"),
       expectedGeneration: effortGeneration(imported),
     });
     expect(resumed.efforts["effort-alpha"]!.lease?.sessionId).toBe("session-b");
+  });
+
+  it("fences a stale same-host writer after checkpoint authority advances", () => {
+    const original = createPrototypePortfolio();
+    const checkpoint = exportCheckpoint(original);
+    const transfer = importCheckpoint(original, checkpoint, "host-a");
+
+    const rejected = applyManagerAction(transfer.source, {
+      type: "resume",
+      effortId: "effort-alpha",
+      actor: actor(transfer.source, "reused-session", null, "host-a", 1),
+      expectedGeneration: effortGeneration(transfer.source),
+    });
+
+    expect(transfer.source.authority).toEqual({ hostId: "host-a", epoch: 2 });
+    expect(rejected.lastResult).toMatchObject({
+      kind: "rejected",
+      code: "authority-epoch-conflict",
+    });
   });
 
   it("keeps partial publication explicit and retries idempotently", () => {
@@ -174,7 +240,7 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
@@ -182,7 +248,7 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-red",
       outcome: "published",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     state = applyManagerAction(state, {
@@ -190,7 +256,7 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-blue",
       outcome: "failed",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
 
@@ -204,7 +270,7 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-blue",
       outcome: "published",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     const afterRetry = state;
@@ -213,7 +279,7 @@ describe("Manager portfolio transition prototype", () => {
       effortId: "effort-alpha",
       repository: "repo-blue",
       outcome: "published",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
 
@@ -232,13 +298,13 @@ describe("Manager portfolio transition prototype", () => {
     state = applyManagerAction(state, {
       type: "resume",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: actor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
     const rejected = applyManagerAction(state, {
       type: "complete",
       effortId: "effort-alpha",
-      actor: { hostId: "host-a", sessionId: "session-a" },
+      actor: leaseActor(state, "session-a"),
       expectedGeneration: effortGeneration(state),
     });
 
