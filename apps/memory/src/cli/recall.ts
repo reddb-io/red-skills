@@ -372,11 +372,8 @@ export async function runReasoningReplay(args: ParsedArgs): Promise<void> {
 
 export async function runWhatif(args: ParsedArgs): Promise<void> {
   const changeFlag = args.flags.change;
-  const rawChanges = Array.isArray(changeFlag)
-    ? changeFlag
-    : typeof changeFlag === "string"
-      ? [changeFlag]
-      : [];
+  const rawChanges =
+    args.repeatedFlags?.change ?? (typeof changeFlag === "string" ? [changeFlag] : []);
   const positionalChanges = args.positional.filter((p) => p.length > 0);
   const sources = [...rawChanges, ...positionalChanges];
   if (sources.length === 0) {
