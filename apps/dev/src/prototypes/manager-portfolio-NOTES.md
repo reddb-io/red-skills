@@ -17,26 +17,31 @@ pnpm --dir apps/dev prototype:manager-portfolio
 ```
 
 The useful walkthrough is `r`, `1`, `2`, `g`, `e`, `r`, `c`, `v`, `3`, `x`,
-`i`, `o`, `m`. The explorer redraws the complete focused effort and portfolio
-authority after every action. Use `f` to show that another effort can carry an
-independent lease.
+`i`, `o`, `r`, `m`. After import, `o` shows the old host rejected by the retired
+source replica; the following `r` acquires a fresh destination lease before
+completion. The explorer redraws the complete focused effort, actor fencing
+credentials, and portfolio authority after every action. Use `f` to show that
+another effort can carry an independent lease.
 
 ## Answer exposed by the prototype
 
 - Keep the five-state effort lifecycle small: `inbox`, `active`, `paused`,
   `completed`, and `abandoned`. Publication failure, crash, and generation
   conflict are transition results or projections, not extra lifecycle states.
-- Put the writer lease and generation on each effort record. Different sessions
-  can write different efforts, while every same-effort mutation is a compare-and-
-  swap against the expected generation.
+- Put the writer lease and generation on each effort record. Every mutation
+  presents the current authority epoch, and lease-owning mutations also present
+  the exact lease token. Different sessions can write different efforts, while
+  stale epochs, reused session IDs, stale tokens, and stale generations are all
+  fenced independently.
 - `end` is a local Manager transition: it pauses the effort and releases its
   lease without rolling back maps or cancelling owner work already published.
 - A process crash does not get to rewrite durable state. It leaves an orphaned
   lease that a later session can recover only after liveness evidence identifies
   the old session as crashed; recovery itself advances the generation.
-- Checkpoint import is an authority transfer, not synchronization. It advances
-  the authority epoch and effort generations, invalidates source leases, and
-  lets the destination acquire fresh leases without changing published facts.
+- Checkpoint import is an authority transfer, not synchronization. The transfer
+  advances the authority epoch and effort generations, explicitly retires the
+  source replica, invalidates source leases, and lets the destination acquire
+  fresh leases without changing published facts.
 - Cross-repository publication needs one durable projection per repository with
   a stable idempotency key. A later repository failure must not roll back an
   earlier successful map; retry fills the missing projection without duplicating
