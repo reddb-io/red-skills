@@ -619,11 +619,14 @@ jobs:
           # (same budget as the @reddb-io/red-skills smoke above).
           for plugin in dev memory brain; do
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if output="$(npm view "@reddb-io/red-skills-${plugin}@${version}" name version 2>&1)"; then
-                if grep -qF "@reddb-io/red-skills-${plugin} ${version}" <<<"$output"; then
-                  echo "registry smoke returned @reddb-io/red-skills-${plugin}@${version}"
-                  continue 2
-                fi
+              # `npm view <pkg>@<version> version` prints just the resolved
+              # version string (e.g. `2.76.0`); compare it exactly. The prior
+              # `name version` + grep for "<name> <version>" never matched npm's
+              # multi-field `field = 'value'` output, so the smoke always failed
+              # even after the packages were published.
+              if resolved="$(npm view "@reddb-io/red-skills-${plugin}@${version}" version 2>/dev/null)" && [ "$resolved" = "${version}" ]; then
+                echo "registry smoke returned @reddb-io/red-skills-${plugin}@${version}"
+                continue 2
               fi
               echo "registry smoke attempt ${attempt}/10 for @reddb-io/red-skills-${plugin}@${version} not yet resolvable; sleeping ${attempt}*15s"
               sleep "$((attempt * 15))"
