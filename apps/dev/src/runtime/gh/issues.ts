@@ -294,9 +294,7 @@ export async function findMainRedRepairIssue(
     "--state",
     "open",
     "--limit",
-    "50",
-    "--search",
-    `"red-skills:main-red-repair v1" in:body`,
+    "200",
     "--json",
     "number,title,body,labels",
   ]);
