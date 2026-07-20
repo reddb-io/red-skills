@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProcessDeps } from "../src/commands/run.js";
 import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
+import { deleteLocalBranch } from "../src/runtime/git.js";
 import type { RepoContext } from "../src/runtime/wire.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 
@@ -83,6 +84,14 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("rejects a failed local branch deletion through the runtime git boundary", async () => {
+    const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
+
+    await expect(
+      deleteLocalBranch({ cwd: "/repo", exec }, "afk/w1/42-fix-thing"),
+    ).rejects.toThrow("git branch -D failed for afk/w1/42-fix-thing: branch is checked out");
+  });
+
   /**
    * Build the REAL assembly with the fake exec injected, then drive the gh/git
    * closures in DONE-close-path order and assert the exact OS-command trace.
