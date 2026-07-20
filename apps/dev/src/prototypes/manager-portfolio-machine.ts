@@ -56,6 +56,7 @@ export interface TransitionResult {
 
 export interface ManagerPortfolio {
   prototype: true;
+  replicaStatus: "active" | "retired";
   authority: { hostId: string; epoch: number };
   portfolioGeneration: number;
   focusEffortId: string;
@@ -141,6 +142,7 @@ function effort(
 export function createPrototypePortfolio(): ManagerPortfolio {
   return {
     prototype: true,
+    replicaStatus: "active",
     authority: { hostId: "host-a", epoch: 1 },
     portfolioGeneration: 0,
     focusEffortId: "effort-alpha",
@@ -207,6 +209,14 @@ function guardMutation(
       result: rejected(
         "authority-epoch-conflict",
         `Actor epoch ${action.actor.authorityEpoch} is fenced; durable authority epoch is ${state.authority.epoch}.`,
+      ),
+    };
+  }
+  if (state.replicaStatus === "retired") {
+    return {
+      result: rejected(
+        "replica-retired",
+        "Checkpoint transfer retired this replica; only the destination replica may mutate.",
       ),
     };
   }
@@ -453,6 +463,15 @@ export function applyManagerAction(
         ),
       );
     }
+    if (state.replicaStatus === "retired") {
+      return withResult(
+        state,
+        rejected(
+          "replica-retired",
+          "Checkpoint transfer retired this replica; only the destination replica may mutate.",
+        ),
+      );
+    }
     return {
       ...state,
       sessions: { ...state.sessions, [sessionKey(action.actor)]: "crashed" },
@@ -514,6 +533,7 @@ export function importCheckpoint(
   const portfolioGeneration = checkpoint.portfolioGeneration + 1;
   const sourceReplica: ManagerPortfolio = {
     ...source,
+    replicaStatus: "retired",
     authority,
     portfolioGeneration,
     focusEffortId: checkpoint.focusEffortId,
@@ -525,6 +545,7 @@ export function importCheckpoint(
   };
   const destination: ManagerPortfolio = {
     prototype: true,
+    replicaStatus: "active",
     authority,
     portfolioGeneration,
     focusEffortId: checkpoint.focusEffortId,
