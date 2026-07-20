@@ -10,6 +10,7 @@ const OPTED_OUT_CONFIGS = [
   "apps/dev/tsconfig.json",
   "apps/memory/tsconfig.json",
   "apps/rsp/tsconfig.json",
+  "packages/red-castle/tsconfig.json",
 ];
 
 type TsConfig = {
