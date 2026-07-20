@@ -7,7 +7,6 @@ const BASE_CONFIG = join(ROOT, "tsconfig.base.json");
 const OPTED_OUT_CONFIGS = [
   "apps/benchmark-memory/tsconfig.json",
   "apps/brain/tsconfig.json",
-  "apps/dev/tsconfig.json",
   "apps/memory/tsconfig.json",
   "apps/rsp/tsconfig.json",
   "packages/red-castle/tsconfig.json",
