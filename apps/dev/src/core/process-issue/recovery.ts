@@ -414,7 +414,9 @@ export async function syncMainRedRepairIssue(
       outputTail: "",
     }));
     const failures = feedback.baselineFailureEvidence ?? fallbackEvidence;
-    const current = await findMainRedRepairIssue(failures.map((failure) => failure.check));
+    const current = failures.length === 0
+      ? await findMainRedRepairIssue()
+      : await findMainRedRepairIssue(failures.map((failure) => failure.check));
     const plan = planMainRedRepair({ sha: evaluatedSha, failures }, current);
     switch (plan.action) {
       case "noop":
