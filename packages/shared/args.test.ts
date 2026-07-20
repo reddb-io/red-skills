@@ -66,6 +66,10 @@ describe("parseFlags", () => {
     ]);
   });
 
+  it("preserves each raw array occurrence without splitting or coercing it", () => {
+    expect(parseFlags(["--change=a,b", "--change=001"], REPEATED_SCHEMA).values.change).toEqual(["a,b", "001"]);
+  });
+
   it("ignores unknown flags rather than throwing", () => {
     expect(parseFlags(["--unknown", "x", "--once"], SCHEMA).values.once).toBe(true);
   });
@@ -84,6 +88,18 @@ describe("parseFlags", () => {
       values: { verbose: true },
       positionals: ["mycommand"],
     });
+  });
+
+  it("does not let a canonical one-character boolean consume the following positional", () => {
+    const schema = { v: { kind: "boolean" } } satisfies FlagSchema;
+    expect(parseFlags(["-v", "mycommand"], schema)).toEqual({
+      values: { v: true },
+      positionals: ["mycommand"],
+    });
+  });
+
+  it("throws when a canonical one-character value flag is followed by another flag", () => {
+    expect(() => parseFlags(["-n", "--once"], SCHEMA)).toThrow("-n requires a value");
   });
 
   it("preserves a positional containing an equals sign", () => {
