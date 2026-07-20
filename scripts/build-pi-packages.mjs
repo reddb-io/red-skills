@@ -82,8 +82,17 @@ function buildNpmPackageJson(claudePlugin) {
   // - tighten files to just skills + package.json (no source tree leakage)
   const base = buildPiPackage(claudePlugin);
   const { private: _private, ...publishable } = base;
+  // During a release, RED_BUILD_VERSION (the resolved NEXT) is the source of
+  // truth for the published Pi version. At Pi-build time the committed plugin
+  // manifests still carry the PREVIOUS release's version — red-release.yml runs
+  // the manifest-version sync + bump commit AFTER this build — so reading
+  // claudePlugin.version would publish a stale version and fail the "Smoke
+  // published Pi packages" step. Absent the env (local build / --check), fall
+  // back to the manifest version.
+  const releaseVersion = process.env.RED_BUILD_VERSION?.replace(/^v/, "").trim();
   return {
     ...publishable,
+    ...(releaseVersion ? { version: releaseVersion } : {}),
     publishConfig: { access: "public" },
     files: ["skills/**/*", "package.json", "README.md"],
   };

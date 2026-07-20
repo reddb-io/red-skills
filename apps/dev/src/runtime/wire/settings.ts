@@ -133,6 +133,7 @@ export function resolveRunSettings(
 export function agentLivenessVerdictSync(
   attemptDir: string,
   laneIdleMs: number,
+  laneHardIdleMs?: number,
 ): LivenessVerdict | null {
   const lanePath = join(attemptDir, LIVENESS_LANE_FILENAME);
   let laneRecencyMs: number | undefined;
@@ -150,7 +151,7 @@ export function agentLivenessVerdictSync(
     ? createProcessDescendantProbe({ agentPid: process.pid })
     : undefined;
   try {
-    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, crossCheckArmed, hasLiveDescendants });
+    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, laneHardIdleMs, crossCheckArmed, hasLiveDescendants });
   } catch {
     return null;
   }
@@ -307,7 +308,11 @@ export function makeRunAgent(
             // Clean liveness signal: the evaluator over the attempt's
             // liveness.lane.jsonl — the un-poisonable lane (#1022, ADR 0083 §3).
             livenessVerdictProbe: () =>
-              agentLivenessVerdictSync(laneAttemptDir, laneIdleCfg.stallThresholdS * 1000),
+              agentLivenessVerdictSync(
+                laneAttemptDir,
+                laneIdleCfg.stallThresholdS * 1000,
+                laneIdleCfg.stallKillThresholdS * 1000,
+              ),
             // Inner-agent tree is a descendant of this worker process; the native
             // inspector is safe-by-default (a failed ps reports busy, never reaps).
             inspectTree: () => inspectProcessTreeNative(process.pid),

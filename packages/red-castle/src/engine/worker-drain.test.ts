@@ -4,17 +4,103 @@ import {
   runCastleWorkerDrain,
   selectCastleIssues,
   type CastleIssueCandidate,
+  type CastleSessionHookName,
+  type CastleWorkerDrainPolicy,
+  type CastleWorkerOutcome,
 } from "./worker-drain.js";
+import type { Runner } from "./runner-types.js";
 
 const boot = { precheck: { ok: true } };
 const processDeps = {};
 
-function candidate(number: number, labels: string[] = ["ready-for-agent"]): CastleIssueCandidate {
+function candidate(
+  number: number,
+  labels: string[] = ["ready-for-agent"],
+): CastleIssueCandidate {
   return {
     number,
     title: `Issue ${number}`,
     body: "",
     labels,
+  };
+}
+
+interface DrainHarnessOptions {
+  candidates?: CastleIssueCandidate[];
+  runner?: Runner;
+  once?: boolean;
+  alternate?: boolean;
+  iterCap?: number;
+  outcomeFor?: (issue: number) => CastleWorkerOutcome;
+  policy?: CastleWorkerDrainPolicy;
+  circuitOpenFor?: Runner[];
+  processError?: Error;
+  onProcess?: () => void;
+  dispatchSessionHook?: (
+    name: CastleSessionHookName,
+    context: string,
+  ) => Promise<{ aborted: boolean }>;
+}
+
+function makeDrainHarness(options: DrainHarnessOptions = {}) {
+  const emitted: string[] = [];
+  const builtInputs: number[] = [];
+  const processedIssues: number[] = [];
+  const processedRunners: Runner[] = [];
+  const processIssue = vi.fn(
+    async (_deps: object, input: { issue: number; runner: Runner }) => {
+      processedIssues.push(input.issue);
+      processedRunners.push(input.runner);
+      options.onProcess?.();
+      if (options.processError) throw options.processError;
+      return { outcome: options.outcomeFor?.(input.issue) ?? "done" };
+    },
+  );
+
+  const run = () =>
+    runCastleWorkerDrain(
+      {
+        gh: {
+          listCandidates: async () =>
+            options.candidates ?? [candidate(1), candidate(2), candidate(3)],
+        },
+        runBoot: async () => boot,
+        bootDeps: {},
+        bootOptions: {},
+        processIssue,
+        processDeps,
+        buildProcessInput: (row, ctx) => {
+          builtInputs.push(row.number);
+          return { issue: row.number, runner: ctx.runner };
+        },
+        runnerCircuit: options.circuitOpenFor
+          ? {
+              isOpen: async (runner) =>
+                options.circuitOpenFor!.includes(runner),
+            }
+          : undefined,
+        emit: (line) => emitted.push(line),
+        dispatchSessionHook: options.dispatchSessionHook,
+      },
+      {
+        runner: options.runner ?? "claude",
+        workerId: "wTEST",
+        filter: { kind: "all" },
+        once: options.once,
+        alternate: options.alternate,
+        iterCap: options.iterCap,
+        issueTemplate: {},
+        policy: options.policy,
+      },
+    );
+
+  return {
+    run,
+    emitted,
+    builtInputs,
+    processedIssues,
+    processedRunners,
+    processIssue,
   };
 }
 
@@ -27,8 +113,14 @@ describe("castle worker drain", () => {
       candidate(7, ["ready-for-agent", "type:spec"]),
     ];
 
-    expect(selectCastleIssues(candidates, { kind: "all" }).map((row) => row.number)).toEqual([10, 20, 30]);
-    expect(selectCastleIssues(candidates, { kind: "issues", numbers: [30, 10] }).map((row) => row.number)).toEqual([10, 30]);
+    expect(
+      selectCastleIssues(candidates, { kind: "all" }).map((row) => row.number),
+    ).toEqual([10, 20, 30]);
+    expect(
+      selectCastleIssues(candidates, { kind: "issues", numbers: [30, 10] }).map(
+        (row) => row.number,
+      ),
+    ).toEqual([10, 30]);
   });
 
   it("runs the castle-owned drain loop through claim/work and preserves progress output", async () => {
@@ -38,22 +130,28 @@ describe("castle worker drain", () => {
       .mockResolvedValueOnce({ outcome: "claim-lost" })
       .mockResolvedValueOnce({ outcome: "done" });
 
-    const result = await runCastleWorkerDrain({
-      gh: { listCandidates: async () => [candidate(1), candidate(2)] },
-      runBoot: async () => boot,
-      bootDeps: {},
-      bootOptions: {},
-      processIssue,
-      processDeps,
-      buildProcessInput: (row, ctx) => ({ issue: row.number, runner: ctx.runner }),
-      emit: (line) => emitted.push(line),
-    }, {
-      runner: "codex",
-      workerId: "wAB12",
-      filter: { kind: "all" },
-      once: true,
-      issueTemplate: {},
-    });
+    const result = await runCastleWorkerDrain(
+      {
+        gh: { listCandidates: async () => [candidate(1), candidate(2)] },
+        runBoot: async () => boot,
+        bootDeps: {},
+        bootOptions: {},
+        processIssue,
+        processDeps,
+        buildProcessInput: (row, ctx) => ({
+          issue: row.number,
+          runner: ctx.runner,
+        }),
+        emit: (line) => emitted.push(line),
+      },
+      {
+        runner: "codex",
+        workerId: "wAB12",
+        filter: { kind: "all" },
+        once: true,
+        issueTemplate: {},
+      },
+    );
 
     expect(processIssue).toHaveBeenCalledTimes(2);
     expect(processIssue.mock.calls.map((call) => call[1])).toEqual([
@@ -76,24 +174,304 @@ describe("castle worker drain", () => {
 
   it("emits the frozen no-more-tasks sentinel on an empty queue", async () => {
     const emitted: string[] = [];
-    const result = await runCastleWorkerDrain({
-      gh: { listCandidates: async () => [] },
-      runBoot: async () => boot,
-      bootDeps: {},
-      bootOptions: {},
-      processIssue: async () => ({ outcome: "done" }),
-      processDeps,
-      buildProcessInput: (row, ctx) => ({ issue: row.number, runner: ctx.runner }),
-      emit: (line) => emitted.push(line),
-    }, {
-      runner: "claude",
-      workerId: "wZZ99",
-      filter: { kind: "all" },
-      issueTemplate: {},
-    });
+    const result = await runCastleWorkerDrain(
+      {
+        gh: { listCandidates: async () => [] },
+        runBoot: async () => boot,
+        bootDeps: {},
+        bootOptions: {},
+        processIssue: async () => ({ outcome: "done" }),
+        processDeps,
+        buildProcessInput: (row, ctx) => ({
+          issue: row.number,
+          runner: ctx.runner,
+        }),
+        emit: (line) => emitted.push(line),
+      },
+      {
+        runner: "claude",
+        workerId: "wZZ99",
+        filter: { kind: "all" },
+        issueTemplate: {},
+      },
+    );
 
     expect(result.drained).toBe(true);
     expect(result.stopReason).toBe("drain-empty");
     expect(emitted).toEqual([CASTLE_NO_MORE_TASKS]);
+  });
+
+  it.each([
+    {
+      name: "supervisor kill before budget, lifetime, and iteration caps",
+      expected: "supervisor-kill",
+      active: {
+        supervisor: true,
+        budget: true,
+        lifetime: true,
+        maxIssues: true,
+        iterCap: true,
+      },
+      checks: ["now:start", "supervisor"],
+      processed: 0,
+    },
+    {
+      name: "budget before lifetime and iteration caps",
+      expected: "budget-cap",
+      active: {
+        supervisor: false,
+        budget: true,
+        lifetime: true,
+        maxIssues: true,
+        iterCap: true,
+      },
+      checks: ["now:start", "supervisor", "budget"],
+      processed: 0,
+    },
+    {
+      name: "runtime lifetime before issue and iteration caps",
+      expected: "lifetime-cap",
+      active: {
+        supervisor: false,
+        budget: false,
+        lifetime: true,
+        maxIssues: true,
+        iterCap: true,
+      },
+      checks: ["now:start", "supervisor", "budget", "now:loop"],
+      processed: 0,
+    },
+    {
+      name: "issue lifetime before the iteration cap",
+      expected: "lifetime-cap",
+      active: {
+        supervisor: false,
+        budget: false,
+        lifetime: false,
+        maxIssues: true,
+        iterCap: true,
+      },
+      checks: ["now:start", "supervisor", "budget", "now:loop"],
+      processed: 0,
+    },
+    {
+      name: "iteration cap after every lifetime check",
+      expected: "iter-cap",
+      active: {
+        supervisor: false,
+        budget: false,
+        lifetime: false,
+        maxIssues: false,
+        iterCap: true,
+      },
+      checks: [
+        "now:start",
+        "supervisor",
+        "budget",
+        "now:loop",
+        "supervisor",
+        "budget",
+        "now:loop",
+      ],
+      processed: 1,
+    },
+  ])(
+    "checks $name",
+    async ({ expected, active, checks: expectedChecks, processed }) => {
+      const checks: string[] = [];
+      let nowCalls = 0;
+      const harness = makeDrainHarness({
+        iterCap: active.iterCap ? 1 : undefined,
+        policy: {
+          supervisorKilled: () => {
+            checks.push("supervisor");
+            return active.supervisor;
+          },
+          budget: () => {
+            checks.push("budget");
+            return active.budget ? { used: 1, cap: 1 } : { used: 0, cap: 1 };
+          },
+          nowMs: () => {
+            checks.push(nowCalls++ === 0 ? "now:start" : "now:loop");
+            return active.lifetime && nowCalls > 1 ? 1 : 0;
+          },
+          maxRuntimeMs: 1,
+          maxIssues: active.maxIssues ? 0 : undefined,
+        },
+      });
+
+      const result = await harness.run();
+
+      expect(result.stopReason).toBe(expected);
+      expect(harness.processIssue).toHaveBeenCalledTimes(processed);
+      expect(checks).toEqual(expectedChecks);
+    },
+  );
+
+  it.each([
+    {
+      outcome: "exhausted" as const,
+      expected: "exhausted",
+      exhausted: true,
+      runnerTransient: false,
+      retirementChecks: 0,
+    },
+    {
+      outcome: "runner-transient" as const,
+      expected: "runner-unavailable",
+      exhausted: false,
+      runnerTransient: true,
+      retirementChecks: 0,
+    },
+    {
+      outcome: "done" as const,
+      expected: "once",
+      exhausted: false,
+      runnerTransient: false,
+      retirementChecks: 0,
+    },
+    {
+      outcome: "claim-lost" as const,
+      expected: "graceful-retirement",
+      exhausted: false,
+      runnerTransient: false,
+      retirementChecks: 1,
+    },
+  ])(
+    "orders the $outcome result before lower-priority post-process stops",
+    async ({
+      outcome,
+      expected,
+      exhausted,
+      runnerTransient,
+      retirementChecks,
+    }) => {
+      const shouldRetire = vi.fn(() => true);
+      const harness = makeDrainHarness({
+        once: true,
+        alternate: true,
+        outcomeFor: () => outcome,
+        policy: { shouldRetire },
+      });
+
+      const result = await harness.run();
+
+      expect(result).toMatchObject({
+        stopReason: expected,
+        exhausted,
+        runnerTransient,
+      });
+      expect(shouldRetire).toHaveBeenCalledTimes(retirementChecks);
+      expect(harness.processedRunners).toEqual(["claude"]);
+    },
+  );
+
+  it("keeps --once draining lost claims until a real attempt is processed", async () => {
+    const harness = makeDrainHarness({
+      candidates: [candidate(1), candidate(2), candidate(3)],
+      once: true,
+      outcomeFor: () => "claim-lost",
+    });
+
+    const result = await harness.run();
+
+    expect(harness.processedIssues).toEqual([1, 2, 3]);
+    expect(result).toMatchObject({ done: 0, blocked: 0, failed: 3 });
+    expect(result.stopReason).toBeUndefined();
+  });
+
+  it("stops at an open runner circuit before building or claiming the next issue", async () => {
+    const harness = makeDrainHarness({ circuitOpenFor: ["claude"] });
+
+    const result = await harness.run();
+
+    expect(harness.builtInputs).toEqual([]);
+    expect(harness.processIssue).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      blocked: 0,
+      failed: 0,
+      runnerTransient: true,
+      stopReason: "runner-unavailable",
+    });
+    expect(harness.emitted).toEqual([
+      "runner claude circuit open — stopping before claiming more issues",
+      "worker stop: runner-unavailable",
+    ]);
+  });
+
+  it.each<[Runner, Runner[]]>([
+    ["claude", ["claude", "codex", "claude"]],
+    ["claude-minimax", ["claude-minimax", "claude", "claude-minimax"]],
+    ["codex", ["codex", "claude", "codex"]],
+    ["hermes", ["hermes", "claude", "hermes"]],
+    ["opencode", ["opencode", "claude", "opencode"]],
+  ])(
+    "alternates the %s session through its runner ladder",
+    async (runner, expected) => {
+      const harness = makeDrainHarness({ runner, alternate: true });
+
+      await harness.run();
+
+      expect(harness.processedRunners).toEqual(expected);
+    },
+  );
+
+  it("classifies drain outcomes into done, blocked, and failed summary buckets", async () => {
+    const outcomes: CastleWorkerOutcome[] = [
+      "done",
+      "claim-lost",
+      "hook-aborted",
+      "parked-for-review",
+    ];
+    const harness = makeDrainHarness({
+      candidates: outcomes.map((_, index) => candidate(index + 1)),
+      outcomeFor: (issue) => outcomes[issue - 1]!,
+    });
+
+    const result = await harness.run();
+
+    expect(result).toMatchObject({ done: 1, blocked: 1, failed: 2, total: 4 });
+    expect(result.processed).toEqual([
+      { issue: 1, outcome: "done" },
+      { issue: 2, outcome: "claim-lost" },
+      { issue: 3, outcome: "hook-aborted" },
+      { issue: 4, outcome: "parked-for-review" },
+    ]);
+  });
+
+  it("fires on_session_error before rethrowing the original process failure", async () => {
+    const failure = new Error("worker process crashed");
+    const events: string[] = [];
+    const hookNames: string[] = [];
+    const harness = makeDrainHarness({
+      processError: failure,
+      onProcess: () => events.push("process"),
+      dispatchSessionHook: async (name, context) => {
+        hookNames.push(name);
+        if (name === "on_session_error") {
+          events.push("error-hook");
+          expect(JSON.parse(context)).toEqual({
+            runner: "claude",
+            worker_id: "wTEST",
+            error: { message: "worker process crashed" },
+          });
+        }
+        return { aborted: false };
+      },
+    });
+
+    const rejection = harness.run().catch((error: unknown) => {
+      events.push("rethrow");
+      throw error;
+    });
+
+    await expect(rejection).rejects.toBe(failure);
+    expect(events).toEqual(["process", "error-hook", "rethrow"]);
+    expect(hookNames).toEqual([
+      "pre_session",
+      "pre_pick",
+      "post_pick",
+      "on_session_error",
+    ]);
   });
 });

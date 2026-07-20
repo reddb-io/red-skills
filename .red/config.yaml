@@ -7,6 +7,42 @@ plugins:
     enabled: true                # opt this directory into the dev plugin (ADR 0067)
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
+    afk:
+      models:
+        # GPT-5.6 (released 2026-07-09) for coding tiers; `validate` — the
+        # fuzzy-validation / contract-review tier — deliberately stays on 5.5.
+        # `gpt-5.6-sol` is the flagship of the sol/terra/luna family and is
+        # verified working on this host (codex-cli 0.144.6), despite the still-open
+        # Linux report at openai/codex#31869 against 0.144.0.
+        codex:
+          validate:
+            model: gpt-5.5       # review lane — held on 5.5 by maintainer choice
+            effort: high         # raised from the `low` default
+          simple:
+            model: gpt-5.6-sol   # coding
+            effort: high
+          complex:
+            model: gpt-5.6-sol   # coding
+            effort: high         # raised from the `medium` default
+          think:
+            model: gpt-5.6-sol   # design/routing — grouped with coding
+            effort: high
+    # Adversarial review (ADR 0110, Spec #2205 — all slices landed 2026-07-19).
+    # Folds to `review.*`. Bounded by design at this setting:
+    #   decideAdversarialReview -> no blocking findings = "pass";
+    #   blocking + iteration <= cap = "correct" (one re-seed);
+    #   exhausted + cap < 2 = "pass". With max_iterations 1 it can NEVER park,
+    #   so the worst case is one extra correction round and the PR still lands.
+    #   Raising max_iterations to 2+ enables parking to ready-for-human.
+    review:
+      enabled: true
+      max_iterations: 1
+      reviewer_count: 1
+      quorum: any
+      model: gpt-5.6-sol       # adversarial reviewer runs on the newer model...
+      effort: medium           # ...at medium effort — the review pass is bounded
+                               # to one iteration, so depth matters less than the
+                               # implementer tiers that run at high.
   internal:
     enabled: true                # maintainer-only repo operations plugin (ADR 0067)
 

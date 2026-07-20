@@ -1,5 +1,7 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "noUnusedLocals": false,
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",

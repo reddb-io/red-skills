@@ -205,6 +205,7 @@ export function workerLivenessFor(
   tmpDir: string,
   slotPid: number | null,
   laneIdleMs: number,
+  laneHardIdleMs?: number,
 ): LivenessVerdict | null {
   const dir = findSlotIterDir(tmpDir, slotPid);
   if (dir === null) return null;
@@ -244,6 +245,7 @@ export function workerLivenessFor(
       laneRecencyMs,
       now: Date.now(),
       laneIdleMs,
+      laneHardIdleMs,
       crossCheckArmed,
       hasLiveDescendants,
     });
