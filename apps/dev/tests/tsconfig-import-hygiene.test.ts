@@ -1,9 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "..", "..", "..");
 const BASE_CONFIG = join(ROOT, "tsconfig.base.json");
+const DEV_ROOT = join(ROOT, "apps", "dev");
 const OPTED_OUT_CONFIGS = [
   "apps/benchmark-memory/tsconfig.json",
   "apps/brain/tsconfig.json",
@@ -11,6 +13,34 @@ const OPTED_OUT_CONFIGS = [
   "apps/rsp/tsconfig.json",
   "packages/red-castle/tsconfig.json",
 ];
+const RATCHETED_CONFIGS = ["apps/dev/tsconfig.json"];
+const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
+  "src/commands/activity-review.ts": 1,
+  "src/commands/requeue.ts": 1,
+  "src/commands/retake.ts": 1,
+  "src/commands/route-model-tier.ts": 1,
+  "src/commands/run/activity.ts": 143,
+  "src/commands/run/command.ts": 87,
+  "src/commands/run/flags.ts": 133,
+  "src/commands/run/process-deps.ts": 74,
+  "src/commands/run/reconcile.ts": 110,
+  "src/commands/run/state.ts": 129,
+  "src/commands/statusline.ts": 1,
+  "src/commands/stop.ts": 5,
+  "src/core/dashboard.ts": 1,
+  "src/core/process-issue/lifecycle.ts": 69,
+  "src/core/process-issue/recovery.ts": 102,
+  "src/core/process-issue/terminal.ts": 86,
+  "src/core/process-issue/types.ts": 79,
+  "src/core/review-extract.ts": 1,
+  "src/core/session.ts": 3,
+  "src/core/skill-audit-extract.ts": 1,
+  "src/core/supervisor/budget.ts": 1,
+  "src/core/supervisor/config.ts": 1,
+  "src/core/supervisor/envelopes.ts": 1,
+  "src/core/supervisor/slot-actions.ts": 2,
+  "src/runtime/review-gh.ts": 1,
+};
 
 type TsConfig = {
   extends?: string;
@@ -44,6 +74,77 @@ async function resolvesToSharedBase(path: string): Promise<boolean> {
   return resolvesToSharedBase(resolve(dirname(path), config.extends));
 }
 
+async function listTypeScriptSources(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const paths = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return listTypeScriptSources(path);
+      return entry.isFile() && /\.tsx?$/.test(entry.name) ? [path] : [];
+    }),
+  );
+  return paths.flat().sort();
+}
+
+function importedIdentifiers(sourceFile: ts.SourceFile): ts.Identifier[] {
+  const identifiers: ts.Identifier[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportEqualsDeclaration(statement)) {
+      identifiers.push(statement.name);
+      continue;
+    }
+    if (!ts.isImportDeclaration(statement) || !statement.importClause) continue;
+
+    if (statement.importClause.name) identifiers.push(statement.importClause.name);
+    const bindings = statement.importClause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) identifiers.push(bindings.name);
+    if (bindings && ts.isNamedImports(bindings)) {
+      identifiers.push(...bindings.elements.map((element) => element.name));
+    }
+  }
+
+  return identifiers;
+}
+
+async function unusedImportDebt(): Promise<Record<string, number>> {
+  const paths = await listTypeScriptSources(join(DEV_ROOT, "src"));
+  const program = ts.createProgram(paths, {
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    noResolve: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022,
+  });
+  const checker = program.getTypeChecker();
+  const debt: Record<string, number> = {};
+
+  for (const sourceFile of program.getSourceFiles()) {
+    if (!paths.includes(sourceFile.fileName)) continue;
+
+    const imported = importedIdentifiers(sourceFile).flatMap((identifier) => {
+      const symbol = checker.getSymbolAtLocation(identifier);
+      return symbol ? [{ identifier, symbol }] : [];
+    });
+    const referenced = new Set<ts.Symbol>();
+
+    const visit = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node)) return;
+      if (ts.isIdentifier(node)) {
+        const symbol = checker.getSymbolAtLocation(node);
+        if (symbol) referenced.add(symbol);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+
+    const count = imported.filter(({ symbol }) => !referenced.has(symbol)).length;
+    if (count > 0) debt[relative(DEV_ROOT, sourceFile.fileName)] = count;
+  }
+
+  return debt;
+}
+
 describe("workspace TypeScript import hygiene", () => {
   it("enables noUnusedLocals from one shared base with a bounded package opt-out list", async () => {
     const base = await readTsConfig(BASE_CONFIG);
@@ -57,7 +158,7 @@ describe("workspace TypeScript import hygiene", () => {
       expect(await resolvesToSharedBase(path), relative(ROOT, path)).toBe(true);
     }
 
-    const optedOut = (
+    const disabled = (
       await Promise.all(
         configs.map(async (path) => ({
           path: relative(ROOT, path),
@@ -66,9 +167,17 @@ describe("workspace TypeScript import hygiene", () => {
       )
     )
       .filter(({ disabled }) => disabled)
-      .map(({ path }) => path)
-      .sort();
+      .map(({ path }) => path);
+
+    const optedOut = disabled.filter((path) => !RATCHETED_CONFIGS.includes(path)).sort();
 
     expect(optedOut).toEqual(OPTED_OUT_CONFIGS);
+    expect(disabled.filter((path) => RATCHETED_CONFIGS.includes(path))).toEqual(
+      RATCHETED_CONFIGS,
+    );
+  });
+
+  it("rejects new unused imports in the ratcheted dev package", async () => {
+    expect(await unusedImportDebt()).toEqual(DEV_UNUSED_IMPORT_DEBT);
   });
 });
