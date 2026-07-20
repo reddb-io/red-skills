@@ -1230,7 +1230,13 @@ export async function processIssue(
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
   await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
-  await deps.git.deleteLocalBranch(workerBranch);
+  let cleanupError: string | undefined;
+  try {
+    await deps.git.deleteLocalBranch(workerBranch);
+  } catch (error) {
+    cleanupError = error instanceof Error ? error.message : String(error);
+    deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
+  }
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
   markTerminalState(deps, "done");
@@ -1243,6 +1249,7 @@ export async function processIssue(
     base,
     locked,
     mergeSha,
+    ...(cleanupError ? { cleanupError } : {}),
     hooksFired,
     envelopePosted: posted,
     exitReceipt,
