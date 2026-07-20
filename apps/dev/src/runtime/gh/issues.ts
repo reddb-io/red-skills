@@ -8,7 +8,7 @@ import {
   type MainRedRepairIssue,
 } from "../../core/main-red-repair.js";
 import { scrubOutbound } from "../outbound-redaction.js";
-import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
+import { repoArgs, runGh, type GhContext } from "./common.js";
 
 export async function viewLabels(ctx: GhContext, issue: number): Promise<string[]> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"]);
