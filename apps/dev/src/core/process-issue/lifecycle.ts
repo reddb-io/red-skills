@@ -50,7 +50,6 @@ import {
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
-import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -396,10 +395,6 @@ export async function processIssue(
   let pendingAdversarialPark:
     | { findings: AdversarialReviewFindings; cap: number }
     | undefined;
-  let salvagedUncommittedFiles = 0;
-  let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
-  let salvagedRunCommitCount = 0;
-  let exitReceipt: ExitReceipt | undefined;
   const scoutTextChunks: string[] = [];
   const agentEventSink: typeof deps.recordAgentEvent =
     input.runMode === "scout"
@@ -408,17 +403,6 @@ export async function processIssue(
           deps.recordAgentEvent?.(event);
         }
       : deps.recordAgentEvent;
-  const salvagedUncommittedNotes = (gate: "feedback" | "backpressure"): string => {
-    const prefix =
-      salvagedRunCommitCount === 0
-        ? `Inner agent emitted ${salvagedUncommittedOutcome} with zero commits`
-        : `Inner agent emitted ${salvagedUncommittedOutcome} after ${salvagedRunCommitCount} commit(s) and left dirty worktree paths`;
-    const gateText =
-      gate === "feedback"
-        ? "feedback validation failed"
-        : "backpressure validation failed after the feedback gate passed";
-    return `${prefix}; AFK salvaged ${salvagedUncommittedFiles} uncommitted file(s), but ${gateText}. The worker branch was not merged.`;
-  };
   const goVerifyRetryCap = resolveGoVerifyRetries(deps);
   const retryGoMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
     if (input.laneLabel !== LABEL_GO_LANE) return false;
@@ -570,53 +554,10 @@ export async function processIssue(
       );
       run = { ...run, outcome: "done", completionSignal: run.completionSignal ?? DONE_SIGNAL };
     }
-    if (deps.exitBarrier && run.outcome === "done") {
-      try {
-        markProcessSafetyStep("exit-barrier:start");
-        exitReceipt = await deps.exitBarrier(workerBranch);
-        markProcessSafetyStep("exit-barrier:pushed");
-      } catch (err) {
-        markProcessSafetyStep("exit-barrier:failed");
-        if (err instanceof ExitBarrierError) {
-          await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "merge-conflict", current.attempt));
-          return await terminalFailure(common, "merge-conflict", "merge-conflict", {
-            notes: `_(exit barrier: could not push the attempt branch \`${workerBranch}\` to origin after retry — work is NOT confirmed saved, so the attempt is not reported as cleanly done)_`,
-            log: String(err),
-          });
-        }
-        throw err;
-      }
-      if (exitReceipt.salvagedFiles > 0) {
-        salvagedUncommittedFiles = exitReceipt.salvagedFiles;
-        salvagedUncommittedOutcome = run.outcome;
-        salvagedRunCommitCount = run.commits.length;
-        const commitFact =
-          run.commits.length === 0
-            ? "committed nothing"
-            : `left dirty worktree paths after ${run.commits.length} commit(s)`;
-        deps.appendIterLog(
-          `🤖 /afk: inner agent emitted done but ${commitFact} — exit barrier salvaged ${exitReceipt.salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` and pushed to origin (receipt head ${exitReceipt.head || "?"}).`,
-        );
-      } else {
-        deps.appendIterLog(
-          `🤖 /afk: exit barrier pushed \`${workerBranch}\` to origin (clean worktree; receipt head ${exitReceipt.head || "?"}).`,
-        );
-      }
-    } else if (deps.salvageUncommitted && (run.outcome === "done" || run.outcome === "no-sentinel")) {
-      const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
-      if (salvagedFiles > 0) {
-        salvagedUncommittedFiles = salvagedFiles;
-        salvagedUncommittedOutcome = run.outcome;
-        salvagedRunCommitCount = run.commits.length;
-        const commitFact =
-          run.commits.length === 0
-            ? "committed nothing"
-            : `left dirty worktree paths after ${run.commits.length} commit(s)`;
-        deps.appendIterLog(
-          `🤖 /afk: inner agent emitted ${run.outcome} but ${commitFact} — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
-        );
-      }
-    }
+    // ADR 0103: uncommitted worktree state is DISPOSABLE. The engine never
+    // salvage-commits dirty paths on exit and never assembles an exit receipt —
+    // work is saved by the continuous-push hook as the agent commits, and the
+    // terminal Envelope plus those pushed commits are the only forensics.
     let salvaged = false;
     if (run.outcome === "no-sentinel") {
       const branchHasWork =
@@ -687,7 +628,7 @@ export async function processIssue(
       };
     }
     if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(workerBranch))) {
-      markProcessSafetyStep("post-barrier:branch-present-failed");
+      markProcessSafetyStep("post-agent:branch-present-failed");
       deps.appendIterLog(
         `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
       );
@@ -695,7 +636,7 @@ export async function processIssue(
     }
     const postAttemptFormatCommands = deps.postAttemptFormatCommands ?? [];
     if (deps.postAttemptFormat && postAttemptFormatCommands.length > 0) {
-      markProcessSafetyStep("post-barrier:post-attempt-format");
+      markProcessSafetyStep("post-agent:post-attempt-format");
       const pfmt = await runPostAttemptFormat(deps.postAttemptFormat, {
         worktree: workerBranch,
         commands: postAttemptFormatCommands,
@@ -707,7 +648,7 @@ export async function processIssue(
       }
     }
     deps.markPhase?.("validating");
-    markProcessSafetyStep("post-barrier:feedback-start");
+    markProcessSafetyStep("post-agent:feedback-start");
 
     /**
      * Read the branch diff the trust checks scan: changed paths, the
@@ -833,7 +774,7 @@ export async function processIssue(
       validationScope,
       resourceBudget: deps.validationResourceBudget,
     });
-    markProcessSafetyStep("post-barrier:feedback-done");
+    markProcessSafetyStep("post-agent:feedback-done");
     gateStages.push({ stage: "feedback", ok: feedback.ok });
     if (!feedback.ok) {
       await fireHook(
@@ -886,8 +827,6 @@ export async function processIssue(
       let notes: string;
       if (isInfra) {
         notes = `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`;
-      } else if (salvagedUncommittedFiles > 0) {
-        notes = salvagedUncommittedNotes("feedback");
       } else if (salvaged) {
         notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
       } else {
@@ -908,22 +847,19 @@ export async function processIssue(
     const backpressureCommands = deps.backpressureCommands ?? [];
     let backpressureSidecar: string[] = [];
     if (deps.backpressure && backpressureCommands.length > 0) {
-      markProcessSafetyStep("post-barrier:backpressure-start");
+      markProcessSafetyStep("post-agent:backpressure-start");
       const backpressure = await runBackpressure(deps.backpressure, {
         worktree: workerBranch,
         commands: backpressureCommands,
         now: deps.nowEpoch,
       });
       backpressureSidecar = backpressure.sidecar;
-      markProcessSafetyStep("post-barrier:backpressure-done");
+      markProcessSafetyStep("post-agent:backpressure-done");
       common.backpressureChecks = backpressure.checks;
       gateStages.push({ stage: "backpressure", ok: backpressure.ok });
       if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
-        const notes =
-          salvagedUncommittedFiles > 0
-            ? salvagedUncommittedNotes("backpressure")
-            : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        const notes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         const validationText = backpressure.sidecar.join("\n");
         if (await retryGoMachineGate("backpressure", validationText)) {
           continue;
@@ -948,7 +884,7 @@ export async function processIssue(
       gate_ok: gateOk,
     });
 
-  markProcessSafetyStep("post-barrier:landing-start");
+  markProcessSafetyStep("post-agent:landing-start");
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
   if (labels.includes(LABEL_LANDING_MANUAL)) {
@@ -1244,9 +1180,6 @@ export async function processIssue(
     durationS,
     mergeSha,
     validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
-    notes: exitReceipt
-      ? `exit-barrier receipt: branch \`${exitReceipt.branch}\` pushed to origin at ${exitReceipt.pushedAt} (head ${exitReceipt.head || "?"}, salvaged ${exitReceipt.salvagedFiles} file(s)).`
-      : undefined,
   });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
@@ -1278,7 +1211,6 @@ export async function processIssue(
     ...(cleanupError ? { cleanupError } : {}),
     hooksFired,
     envelopePosted: posted,
-    exitReceipt,
     preserved: true,
     swept: true,
   };
