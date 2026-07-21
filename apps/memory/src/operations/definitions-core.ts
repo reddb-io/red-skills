@@ -432,7 +432,7 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<OperationSchemas.Context
   sideEffectClass: "cache-write",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "context-pack", supportsJson: true },
+    cli: { command: "context-pack", supportsJson: true, dispatch: "legacy" },
     mcp: {
       toolName: "memory_context_pack",
       description:
