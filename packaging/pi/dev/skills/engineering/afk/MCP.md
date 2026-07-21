@@ -156,6 +156,21 @@ with a non-empty open backlog is a flow bug to census, not a clean stop.
 `reason` are optional. The returned `id` is the stable handle for `wait_status`.
 Finished waits are distinguished by a populated `result` field carrying the
 `rsp.wait.result` envelope; running waits carry `waits` with the active registry.
+### Review and Triage — activity reporting and issue routing
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `daily_review` | read | Structured daily activity review report for the local window. |
+| `weekly_review` | read | Structured weekly activity review report for the local window. |
+| `triage` | mutating | Apply the decided triage transition to one issue, gated by the per-repo trust policy. |
+| `respond` | mutating | Parse a `/dev` comment summon, authorize the commenter, and route the advisory or mutation verb. |
+
+`daily_review` and `weekly_review` are always rooted at the server's cwd — they
+auto-resolve the repo and the time window, so no parameters are required.
+`triage` requires `issue` and `decision` (`ready-for-agent` / `needs-info` /
+`ready-for-human` / `wontfix`); pass `summon: true` to release an untrusted
+author's issue. `respond` requires `body` and `number`; pass `is_pr: true` when
+the comment is on a pull request.
 
 ## Refs
 
