@@ -411,32 +411,44 @@ describe("pure shaping helpers", () => {
 });
 
 describe("decideBaselineDiffGate", () => {
-  it("blocks branch-only failures and records no pre-existing failures", () => {
+  it("a branch-only failure is BRANCH-FAULT", () => {
     expect(decideBaselineDiffGate(["test:apps/dev"], [])).toEqual({
+      verdict: "branch-fault",
       shouldBlock: true,
       blockingFailures: ["test:apps/dev"],
-      preExistingFailures: [],
+      inconclusiveFailures: [],
     });
   });
 
-  it("does not block pre-existing failures and records them for main-red repair", () => {
+  it("a failure reproduced on the baseline is INCONCLUSIVE — and still blocks the branch (#2380)", () => {
     expect(decideBaselineDiffGate(["test:apps/dev"], ["test:apps/dev"])).toEqual({
-      shouldBlock: false,
+      verdict: "inconclusive",
+      shouldBlock: true,
       blockingFailures: [],
-      preExistingFailures: ["test:apps/dev"],
+      inconclusiveFailures: ["test:apps/dev"],
     });
   });
 
-  it("blocks mixed branch-only failures while recording pre-existing failures", () => {
+  it("a mix is BRANCH-FAULT: one real new failure outranks any number of inconclusive ones", () => {
     expect(
       decideBaselineDiffGate(
         ["test:apps/dev", "typecheck:apps/dev", "test:apps/dev"],
         ["test:apps/dev", "lint:apps/dev"],
       ),
     ).toEqual({
+      verdict: "branch-fault",
       shouldBlock: true,
       blockingFailures: ["typecheck:apps/dev"],
-      preExistingFailures: ["test:apps/dev"],
+      inconclusiveFailures: ["test:apps/dev"],
+    });
+  });
+
+  it("no branch failures at all is CLEAN — the probe never invents a block", () => {
+    expect(decideBaselineDiffGate([], ["test:apps/dev"])).toEqual({
+      verdict: "clean",
+      shouldBlock: false,
+      blockingFailures: [],
+      inconclusiveFailures: [],
     });
   });
 });
@@ -450,7 +462,7 @@ describe("decideBaselineDiffGate", () => {
 // minor message drift.
 describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
   function green(): RunFeedbackResult {
-    return { ok: true, checks: [], sidecar: [], baselineDowngraded: [], quarantined: [] };
+    return { ok: true, checks: [], sidecar: [], baselineInconclusive: [], quarantined: [] };
   }
   function failedCheck(
     name: string,
@@ -463,7 +475,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       ok: false,
       checks: [check],
       sidecar: [JSON.stringify(record)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
   }
@@ -533,7 +545,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
         { name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record },
       ],
       sidecar: [JSON.stringify(record)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
 
@@ -567,21 +579,20 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
         { name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record: failRecord },
       ],
       sidecar: [JSON.stringify(passRecord), JSON.stringify(failRecord)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(false);
   });
 });
 
-// AFK runner improvement: when `runFeedback` is called with a `baselineWorktree`
-// and the gate fails, the failing checks are re-run against the baseline and
-// any check that also fails there is downgraded from `failed` to
-// `skipped (pre-existing failure on baseline)`. The happy path is unchanged
-// (the probe is gated on the gate failing). This is the cause of the
-// #791/#792/#793/#794 false-positive `blocked:validation` cases: a pre-existing
-// test failure on main that the worker's branch had nothing to do with.
-describe("runFeedback — baseline probe downgrades pre-existing failures", () => {
+// Baseline COMPARISON only (#2380). When `runFeedback` is called with a
+// `baselineWorktree` and the gate fails, the failing checks are re-run against
+// the baseline SOLELY to classify the branch verdict: `branch-fault` when a
+// failure is green on the baseline, `inconclusive` when every failure also
+// reproduces there. Both block THIS branch and nothing else — the probe files
+// no repair issue, downgrades no check, and never gates anyone else's landing.
+describe("runFeedback — baseline comparison classifies the branch verdict", () => {
   function makeLayout(): PackageLayout {
     return {
       hasPackage: (scope) => scope === "." || scope === "apps/dev",
@@ -641,13 +652,13 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     const baselineCalls = Object.entries(counts).filter(([k]) => k.includes("main"));
     expect(baselineCalls).toEqual([]);
     expect(result.baselineProbeRan).toBeUndefined();
-    expect(result.baselineFailures).toBeUndefined();
+    expect(result.baselineVerdict).toBeUndefined();
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(5);
   });
 
-  it("a failing check is downgraded when the baseline also fails (pre-existing flake)", async () => {
+  it("a failing check that ALSO fails on the baseline is INCONCLUSIVE — it still blocks the branch, it is never downgraded", async () => {
     // The test runner does typecheck=0, test=1, etc. The worker's branch fails
-    // test on apps/dev; the baseline also fails test on apps/dev → downgraded.
+    // test on apps/dev; the baseline also fails test on apps/dev → inconclusive.
     const calls: Array<{ dir: string; script: string; code: number }> = [];
     const exec: Exec = async (args) => {
       const cIdx = args.indexOf("-C");
@@ -665,24 +676,22 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       now: () => 0,
       baselineWorktree: "main",
     });
-    // test:apps/dev failed on worker AND on baseline → downgraded; gate passes.
-    expect(result.ok).toBe(true);
-    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    // test:apps/dev failed on worker AND on baseline → inconclusive; the gate
+    // still FAILS so the branch parks `blocked:validation` with the evidence.
+    expect(result.ok).toBe(false);
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
     expect(result.baselineProbeRan).toBe(true);
-    expect(result.baselineFailures).toEqual(["test:apps/dev"]);
-    expect(result.baselineFailureEvidence).toEqual([
-      {
-        check: "test:apps/dev",
-        summary: "FAIL expected 1 to equal 2",
-        outputTail: "FAIL\nexpected 1 to equal 2",
-      },
-    ]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
-    expect(testCheck.status).toBe("skipped");
-    expect(testCheck.record.summary).toBe("pre-existing failure on baseline");
+    expect(testCheck.status).toBe("failed");
+    // The comparison evidence rides on the sidecar summary — that IS the park's
+    // explanation; nothing is filed anywhere else.
+    expect(testCheck.record.summary).toBe(
+      "inconclusive: also fails on the baseline — FAIL expected 1 to equal 2",
+    );
   });
 
-  it("a failing check that does NOT also fail on the baseline stays `failed` (real worker bug)", async () => {
+  it("a failing check that does NOT also fail on the baseline is BRANCH-FAULT (real worker bug)", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
       const dir = args[args.indexOf("-C") + 1] ?? "";
@@ -698,14 +707,14 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
-    expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).toEqual([]);
     expect(result.baselineProbeRan).toBe(true);
-    expect(result.baselineFailures).toEqual([]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
   });
 
-  it("a baseline check that OOMs/crashes is INCONCLUSIVE — never a pre-existing main-red (a fleet-host OOM must not manufacture a main-red CI never saw)", async () => {
+  it("probe-infrastructure failure (OOM/crash on the baseline) is inconclusive for the PROBE and silently ignored — it never claims the baseline is red", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
       const dir = args[args.indexOf("-C") + 1] ?? "";
@@ -729,18 +738,18 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       now: () => 0,
       baselineWorktree: "main",
     });
-    // The baseline OOM is inconclusive: it is NOT added to the baseline-failing
-    // set, so no main-red is filed and the worker's failure is not downgraded to
-    // "pre-existing". The worker's own clean failure still blocks that one worker.
+    // The baseline OOM is a probe-infrastructure failure: it is NOT added to the
+    // baseline-failing set, so the branch failure stays attributed to the branch.
+    // Nothing is filed; the worker's own clean failure blocks that one worker.
     expect(result.baselineProbeRan).toBe(true);
-    expect(result.baselineFailures).toEqual([]);
-    expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).toEqual([]);
     expect(result.ok).toBe(false);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
   });
 
-  it("a mix: one baseline-failing, one worker-only-failing → only the second blocks the gate", async () => {
+  it("a mix: one reproduced on the baseline, one worker-only → verdict is BRANCH-FAULT (a real new failure outranks an inconclusive one)", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
       const dir = args[args.indexOf("-C") + 1] ?? "";
@@ -758,14 +767,15 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
-    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
-    expect(testCheck.status).toBe("skipped");
+    expect(testCheck.status).toBe("failed");
     const typecheckCheck = result.checks.find((c) => c.name === "typecheck:apps/dev")!;
     expect(typecheckCheck.status).toBe("failed");
   });
 
-  it("without `baselineWorktree`, the gate behaves exactly as before (no probe, no downgrades)", async () => {
+  it("without `baselineWorktree`, the gate behaves exactly as before (no probe, no comparison)", async () => {
     const calls: string[] = [];
     const exec: Exec = async (args) => {
       calls.push(args.slice(1).join(" "));
@@ -779,7 +789,8 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       // no baselineWorktree
     });
     expect(result.ok).toBe(false);
-    expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineInconclusive).toEqual([]);
+    expect(result.baselineVerdict).toBeUndefined();
     // 4 scripts × 1 scope + 1 workspace typecheck = 5 invocations, no probe.
     expect(calls.length).toBe(5);
   });
@@ -915,11 +926,11 @@ describe("runFeedback — workspace typecheck", () => {
     expect(calls).toEqual([]);
   });
 
-  it("downgrades workspace typecheck failure when baseline also fails (pre-existing break)", async () => {
+  it("marks workspace typecheck INCONCLUSIVE when the baseline also fails — and still fails the gate", async () => {
     const exec: Exec = async (args) => {
       const dir = args[args.indexOf("-C") + 1] ?? "";
       const script = args[args.length - 1] ?? "";
-      // typecheck fails everywhere (worker AND baseline) — pre-existing.
+      // typecheck fails everywhere (worker AND baseline) — inconclusive.
       if (script === "typecheck") return { code: 1, stdout: "tsc: error TS2304", stderr: "" };
       return { code: 0, stdout: "ok", stderr: "" };
     };
@@ -932,14 +943,15 @@ describe("runFeedback — workspace typecheck", () => {
     });
 
     // typecheck:apps/dev and typecheck:workspace both fail on worker AND baseline.
-    expect(result.ok).toBe(true);
-    expect(result.baselineDowngraded).toContain("typecheck:workspace");
+    expect(result.ok).toBe(false);
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toContain("typecheck:workspace");
     const ws = result.checks.find((c) => c.name === "typecheck:workspace")!;
-    expect(ws.status).toBe("skipped");
-    expect(ws.record.summary).toBe("pre-existing failure on baseline");
+    expect(ws.status).toBe("failed");
+    expect(ws.record.summary).toContain("inconclusive: also fails on the baseline");
   });
 
-  it("does NOT downgrade workspace typecheck when only the worker's branch fails it", async () => {
+  it("attributes workspace typecheck to the BRANCH when only the worker's branch fails it", async () => {
     const exec: Exec = async (args) => {
       const dir = args[args.indexOf("-C") + 1] ?? "";
       const script = args[args.length - 1] ?? "";
@@ -956,7 +968,8 @@ describe("runFeedback — workspace typecheck", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.baselineDowngraded).not.toContain("typecheck:workspace");
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).not.toContain("typecheck:workspace");
     const ws = result.checks.find((c) => c.name === "typecheck:workspace")!;
     expect(ws.status).toBe("failed");
   });
