@@ -13,6 +13,7 @@ import { buildSkillImprovementProposals, buildSkillTelemetryEvidenceCard, countS
 import type { ExistingSkillTelemetryEvidenceCardRef, SkillImprovementBuildResult, SkillImprovementProposalSummary, SkillTelemetryEvidenceCard, SkillTelemetryEvidenceCardArtifact, SkillTelemetryEvidenceCardStatus } from './improve-build.js';
 import { contextRecommendations, contextStatusReport, countMarkdownFiles, enabledHookNames, entryLooksLikeCache, exists, formatOutcomes, graphFreshnessStatus, healthRecommendations, healthReport, healthState, newestMtimeMs, plural, printGovernance, printLintReport, printPrivacyReport, reportStatusState, runContextStatus, runGovernance, runGovernanceViewer, runHealth, runHealthViewer, runLint, runPrivacy, runRecallTelemetry, runStatus, scanProjectFreshness, shouldSkipFreshnessPath, skillEventFromFlags, storeExists, toPosix, yesNo } from './status.js';
 import type { CheckName, ContextCheck } from './status.js';
+import { renderToonDocument } from '../toon-output.js';
 import { applyConfiguredProviderEnv, codeCurationOutput, commaIntegerFlag, intFlag, isIntegerText, mapContextModeFlag, numberFlag, openGraphStore, renderCodeDriftGroups, runCodeCurate, runCodeDrift, runExtract, runExtraction, runExtractionStatusViewer, runMap, runMapContext, runNeighbors, runPath, runPathExplain, runPathExplainViewer, runSearch, runTraverse, strFlag, stringFlag } from './extract-map.js';
 import { parseChangedFiles, parseHubRankBy, parseRid, printConflicts, printPrePrReview, printPrePrSection, printReadinessEnvelope, printStructuralImpact, printTimeline, printTimelineToon, readChangedFiles, renderCommunitiesToon, renderHubReportToon, renderSuggestedQuestionsToon, runCommunities, runCommunitiesViewer, runCommunityDigest, runConfidence, runConflicts, runHubReport, runPrePrReview, runPrePrReviewViewer, runResolveConflict, runStructuralImpact, runStructuralImpactViewer, runSuggestedQuestions, runSupersede, runTimeline } from './graph-reports.js';
 import type { TimelineToonEntry } from './graph-reports.js';
@@ -109,11 +110,7 @@ export async function runRegistryCliOperation(
       console.log(JSON.stringify(output, null, 2));
       return;
     }
-    if (isRecord(output) && typeof output.markdown === "string") {
-      process.stdout.write(output.markdown);
-      return;
-    }
-    console.log(JSON.stringify(output, null, 2));
+    process.stdout.write(renderToonDocument(output));
   } finally {
     if (operationNeedsGraphStore(operation)) await graphContext.store.close();
     if (args.flags.local === true && operation.id.startsWith("memory.vector-")) {
