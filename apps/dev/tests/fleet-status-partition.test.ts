@@ -65,8 +65,8 @@ describe("fleet_status worker partition (#2345)", () => {
     roots.push(root);
 
     const enginePaths = createEnginePaths(join(root, ".red"));
-    // No fixed clock: liveness records land at the real current time so the
-    // 180-second idle window in readCastleMonitorWorkers sees them as fresh.
+    // Liveness records use real wall-clock time so the 180-second idle window in
+    // readCastleMonitorWorkers sees them as fresh (no fixed clock injected).
     const lanes = createCastleLaneWriters(enginePaths);
 
     // Write castle state snapshots — each stamped with their owning fleet.
@@ -115,27 +115,28 @@ describe("fleet_status worker partition (#2345)", () => {
     await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState);
     await writeFile(join(betaSupervisorDir, "state.toon"), fleetState);
 
-    // Use a fixed nowMs so liveness records (written at NOW_ISO) are within the
-    // 180-second idle window — they appear as NOW_MS which equals nowMs exactly.
     const mcp = createDevAfkMcpDependencies(root);
 
-    const alphaStatus = await mcp.fleetStatus({ name: "alpha" });
-    const betaStatus = await mcp.fleetStatus({ name: "beta" });
+    // fleetStatus returns Promise<unknown> — cast through any to access fields.
+    const alphaStatus = (await mcp.fleetStatus({ name: "alpha" })) as {
+      live_workers: Array<{ id: string }>;
+      unattributed_workers: Array<{ id: string }>;
+    };
+    const betaStatus = (await mcp.fleetStatus({ name: "beta" })) as {
+      live_workers: Array<{ id: string }>;
+      unattributed_workers: Array<{ id: string }>;
+    };
 
     // Alpha fleet: sees its own worker, not beta's.
-    const alphaLive = alphaStatus.live_workers.map((w: { id: string }) => w.id);
-    const alphaUnattributed = alphaStatus.unattributed_workers.map(
-      (w: { id: string }) => w.id,
-    );
+    const alphaLive = alphaStatus.live_workers.map((w) => w.id);
+    const alphaUnattributed = alphaStatus.unattributed_workers.map((w) => w.id);
     expect(alphaLive).toContain("w_alpha");
     expect(alphaLive).not.toContain("w_beta");
     expect(alphaUnattributed).not.toContain("w_alpha");
 
     // Beta fleet: sees its own worker, not alpha's.
-    const betaLive = betaStatus.live_workers.map((w: { id: string }) => w.id);
-    const betaUnattributed = betaStatus.unattributed_workers.map(
-      (w: { id: string }) => w.id,
-    );
+    const betaLive = betaStatus.live_workers.map((w) => w.id);
+    const betaUnattributed = betaStatus.unattributed_workers.map((w) => w.id);
     expect(betaLive).toContain("w_beta");
     expect(betaLive).not.toContain("w_alpha");
     expect(betaUnattributed).not.toContain("w_beta");
