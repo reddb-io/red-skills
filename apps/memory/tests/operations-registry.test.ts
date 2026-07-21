@@ -381,6 +381,7 @@ describe("read-only Memory operations registry", () => {
       safetyClass: "mutating",
       sideEffectClass: "writes-memory",
       capabilities: ["graph-store"],
+      transports: ["cli", "mcp"],
       renderer: {
         cli: { command: "store", supportsJson: false },
         mcp: { toolName: "memory_store", description: "Store memory" },
