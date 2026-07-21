@@ -269,6 +269,14 @@ export interface RunAgentInput {
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
   sandboxMode?: SandboxMode;
   /**
+   * Container image the docker/podman provider runs (issue #2340). AFK always
+   * resolves this itself (`resolveSandboxImageName`, off the REPO ROOT) rather
+   * than letting red-castle derive a tag from its cwd — which is the
+   * per-attempt worktree, yielding an unbuildable `sandcastle:<issue>` tag.
+   * Ignored by the `none` provider.
+   */
+  sandboxImage?: string;
+  /**
    * Absolute host anchor for sandcastle's `.red-castle/` dir + git operations.
    * AFK sets this to the attempt dir so nothing lands at the repo root
    * (everything under .red/). Defaults to process.cwd() in sandcastle when
@@ -484,7 +492,7 @@ export interface SandcastleDeps {
    * for arming the progress guard + heartbeat under isolation. Ignored for the
    * host-native `none` mode (no container to mount into).
    */
-  sandboxFor: (mode: SandboxMode, opts?: { mountPath?: string }) => RunOptions["sandbox"];
+  sandboxFor: (mode: SandboxMode, opts?: { mountPath?: string; imageName?: string }) => RunOptions["sandbox"];
   /**
    * Optional warn sink for degrade-safe diagnostics (FIX D effort drop, FIX F
    * continuous-push-under-isolation notice). Defaults to `console.warn` in the
@@ -724,7 +732,13 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     // (issue #405) so the proof-of-life lane + the worktree sandcastle creates
     // under it are host-visible mid-run — the precondition for arming the guard +
     // heartbeat under docker/podman. `none` ignores `mountPath` (no container).
-    sandbox: deps.sandboxFor(input.sandboxMode ?? "none", input.cwd ? { mountPath: input.cwd } : undefined),
+    // The image name is resolved by AFK off the repo root (#2340) and passed
+    // explicitly, so the container provider never falls back to tagging by its
+    // own cwd — the per-attempt worktree, whose tag can never be prebuilt.
+    sandbox: deps.sandboxFor(input.sandboxMode ?? "none", {
+      ...(input.cwd ? { mountPath: input.cwd } : {}),
+      ...(input.sandboxImage ? { imageName: input.sandboxImage } : {}),
+    }),
     // Re-anchor sandcastle's `.red-castle/` dir + git ops at the caller's cwd
     // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
     // root. Omitted → sandcastle defaults to process.cwd().
@@ -1216,8 +1230,16 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     // writes. hostPath must exist (process-issue creates the attempt dir before
     // the run), else sandcastle fails fast with a clear error.
     const mounts = opts?.mountPath ? [{ hostPath: opts.mountPath, sandboxPath: opts.mountPath }] : undefined;
-    if (mode === "docker") return dockerMod.docker(mounts ? { mounts } : undefined);
-    if (mode === "podman") return podmanMod.podman(mounts ? { mounts } : undefined);
+    // Issue #2340: pass the caller-resolved image name through. Without it the
+    // provider tags the image off its own cwd — the per-attempt worktree — so
+    // every containerized attempt looked for an image nobody could prebuild.
+    const containerOptions = {
+      ...(mounts ? { mounts } : {}),
+      ...(opts?.imageName ? { imageName: opts.imageName } : {}),
+    };
+    const hasContainerOptions = Object.keys(containerOptions).length > 0;
+    if (mode === "docker") return dockerMod.docker(hasContainerOptions ? containerOptions : undefined);
+    if (mode === "podman") return podmanMod.podman(hasContainerOptions ? containerOptions : undefined);
     // Host-env minimization (issue #1368): the agent process inherits only the
     // allowlisted host env (shell basics, ssh/git/gh, agent auth, RED_*, the
     // language toolchains) — never the full process.env with unrelated host

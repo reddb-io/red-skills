@@ -597,6 +597,47 @@ describe("processIssue — untrusted-author sandbox policy (#1112)", () => {
     expect(trace.released).toEqual([9]);
   });
 
+  it("parks with the exact build command when the forced backend has no image (#2340)", async () => {
+    const { deps, input, trace } = harness({
+      sandboxMode: "none",
+      availableSandboxes: ["docker"],
+      sandboxImage: "sandcastle:red-skills",
+      sandboxesWithImage: [],
+      trust: { author: "stranger", authorSourceTrust: "dubious", readyForAgentActor: "alice" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("blocked");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+ready-for-human"]);
+    expect(
+      trace.comments.some((c) =>
+        /sandbox image 'sandcastle:red-skills' is missing for docker — build it first with: sandcastle docker build-image --image-name sandcastle:red-skills/.test(
+          c.body,
+        ),
+      ),
+    ).toBe(true);
+    expect(trace.released).toEqual([9]);
+  });
+
+  it("prefers the backend that already has the image (#2340)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      sandboxMode: "none",
+      availableSandboxes: ["docker", "podman"],
+      sandboxImage: "sandcastle:red-skills",
+      sandboxesWithImage: ["podman"],
+      trust: { author: "stranger", authorSourceTrust: "dubious", readyForAgentActor: "alice" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls[0]?.sandboxMode).toBe("podman");
+  });
+
   it("keeps trusted-author sandbox resolution unchanged", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",

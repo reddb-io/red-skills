@@ -149,6 +149,11 @@ export interface HarnessOptions {
   sandboxMode?: SandboxMode;
   /** Container backends considered present by the fail-closed sandbox policy. */
   availableSandboxes?: SandboxMode[];
+  /** Repo-level sandbox image (#2340) threaded into processIssue. */
+  sandboxImage?: string;
+  /** Backends whose sandbox image already exists. When set, the image-readiness
+   * probe is registered and a missing image parks instead of crashing. */
+  sandboxesWithImage?: SandboxMode[];
   /** Repository visibility (#1101) returned by gh.repoVisibility. When set, the
    * port is registered and the no-allowlist default becomes visibility-aware. */
   visibility?: "public" | "private" | "internal";
@@ -598,6 +603,10 @@ export function harness(opts: HarnessOptions = {}): {
     goVerifyRetries: opts.goVerifyRetries,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
+    sandboxImage: opts.sandboxImage,
+    sandboxImageAvailable: opts.sandboxesWithImage
+      ? async (mode) => opts.sandboxesWithImage!.includes(mode)
+      : undefined,
     // The sandcastle execution port: a fake returning a scripted outcome on the
     // worker branch sandcastle "committed" to. When `outcomes` is set, each call
     // pops the next scripted outcome (for fallback-swap sequences).

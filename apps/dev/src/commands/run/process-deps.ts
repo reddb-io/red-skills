@@ -61,6 +61,7 @@ import {
 } from "../../core/adversarial-review.js";
 import { reviewFindingsSchema } from "../../core/review-extract.js";
 import { defaultSandcastleDeps } from "../../core/execution.js";
+import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
@@ -174,6 +175,13 @@ export function buildProcessDeps(
   const config = loadConfig(paths.configPath, { warn: () => undefined });
   // Trust policy for the guidance-channel source-trust projection (issue #1100).
   const trustPolicy = parseTrustPolicy(config);
+  // Repo-level container image for the isolation path (#2340) — resolved off the
+  // repo root, never off the per-attempt worktree, so the tag is prebuildable.
+  const sandboxImage = resolveSandboxImageName({
+    repoRoot: ctx.root,
+    configured: getConfig(config, "afk.sandbox_image"),
+    envOverride: process.env.RED_AFK_SANDBOX_IMAGE,
+  });
   const resolveOptions = makeHookResolveOptions(ctx.root);
   // resolveHooks runs once here to surface a malformed-hook-name error early;
   // process-issue re-resolves per run from the same config + options.
@@ -451,7 +459,14 @@ export function buildProcessDeps(
     // (runner_steer) can write a pending directive that the Orchestrator picks
     // up between iterations without AFK knowing about the file at claim time.
     runAgent: (() => {
-      const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, () => activityMeter.peek());
+      const inner = makeRunAgent(
+        sandbox,
+        process.env,
+        maxIterations,
+        laneIdle,
+        () => activityMeter.peek(),
+        sandboxImage,
+      );
       const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
       return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
     })(),
@@ -459,6 +474,14 @@ export function buildProcessDeps(
     sandboxAvailable: async (mode) => {
       const run = exec ?? execTool;
       return (await run("sh", ["-c", `command -v ${mode}`], { cwd: ctx.root })).code === 0;
+    },
+    sandboxImage,
+    // Preflight image probe (#2340): `<mode> image inspect` is cheap and local,
+    // so the forced-isolation policy can park with a build command instead of
+    // letting the provider crash the attempt on a missing image.
+    sandboxImageAvailable: async (mode, image) => {
+      const run = exec ?? execTool;
+      return (await run(mode, ["image", "inspect", image], { cwd: ctx.root })).code === 0;
     },
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
