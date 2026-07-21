@@ -676,6 +676,8 @@ async function editFleet(root: string, input: FleetEditInput) {
   return { status: "edited", profile, directive };
 }
 
+const LOGS_DEFAULT_LIMIT = 200;
+
 async function laneLogs(root: string, input: LogsInput) {
   const paths = createEnginePaths(join(root, ".red"));
   const laneRoot =
@@ -689,7 +691,13 @@ async function laneLogs(root: string, input: LogsInput) {
   if (rel.startsWith("..") || resolve(laneRoot) === path) {
     throw new Error("log lane id escapes its Castle lane root");
   }
-  return readCastleLaneRecords(path);
+  const records = await readCastleLaneRecords(path);
+  const filtered =
+    input.kind !== undefined
+      ? records.filter((r) => r.kind === input.kind)
+      : records;
+  const limit = input.limit ?? LOGS_DEFAULT_LIMIT;
+  return filtered.length <= limit ? filtered : filtered.slice(-limit);
 }
 
 async function workerVitals(root: string) {
