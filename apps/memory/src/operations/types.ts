@@ -80,7 +80,8 @@ export interface MemoryOperationRendererMetadata {
   };
   mcp: {
     toolName: string;
-    description: string;
+    /** @deprecated Use the operation-owned description. */
+    description?: string;
   };
   http?: {
     route?: string;
