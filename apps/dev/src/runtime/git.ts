@@ -348,7 +348,7 @@ export async function prepareFreshWorkerBranch(
 
 /**
  * Has the worker branch ALREADY landed in `<base>`? — the own-merge signal for
- * the goal predicate (ADR 0057). When the attempt-guard poll observes the claimed
+ * the goal predicate (ADR 0057). When the goal-predicate poll observes the claimed
  * issue CLOSED, this distinguishes "the close carries THIS attempt's own merge"
  * (`done`) from "a foreign lander closed it" (`claim-lost`): true iff the worker
  * branch's tip commit is an ancestor of `origin/<base>` (i.e. its commits are

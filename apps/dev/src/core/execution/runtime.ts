@@ -18,7 +18,6 @@ import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "../host-env-allowlist.js";
 import { isRunnerExhausted } from "../runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "../lane-idle-reaper.js";
-import { deriveSnapshot } from "../reaper-signal.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "../runner-spec.js";
 import {
   BLOCKED_SIGNAL,
@@ -36,13 +35,24 @@ import {
   buildWorktreePathCaptureHook,
   type HostHookCommand,
 } from "./host-hooks.js";
-import {
-  startAttemptGuard,
-  type AttemptBudget,
-  type AttemptBudgetUsage,
-  type AttemptProgressInfo,
-  type AttemptTimeoutReason,
-} from "./attempt-guard.js";
+import { startGoalWatch } from "./goal-watch.js";
+
+/**
+ * Payload of the worker-vitals heartbeat sink ({@link RunAgentInput.onHeartbeat}).
+ * Opaque to execution.ts — process-issue turns it into the firehose heartbeat
+ * record, the `current.*` state stamp, and the `on_heartbeat` hook context.
+ */
+export interface AttemptProgressInfo {
+  /** The worker branch HEAD observed this tick (undefined when unresolved). */
+  head: string | undefined;
+  /** Epoch ms of the last observed progress (this tick, for the sampler). */
+  lastProgressMs: number;
+  /** The sampler's clock (epoch ms) at this tick. */
+  nowMs: number;
+  /** Resolved base branch (lock > pin > main) for this run — populated by
+   * processIssue so the emitHeartbeat sink can diff against the correct ref. */
+  base?: string;
+}
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -70,13 +80,13 @@ export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // example Codex websocket 502 / thread-start failures). Both ride the same
 // outcome union so process-issue can branch on them without treating the worker
 // as crashed.
-// `timeout` is surfaced when AFK's attempt wall-clock guard aborts a run that is
-// alive but making no progress (no new commit within the cap) — the "productive
-// infinite loop" the idle / max-iteration / stall guards all miss. It maps to the
-// `stalled` terminal outcome downstream (→ blocked:stalled, ready-for-human),
-// preserving the worktree/PR.
-// `goal-moot` (ADR 0057): the attempt-guard poll observed the claimed issue
-// already CLOSED, so the attempt's goal is already reflected in the world. The
+// There is deliberately NO stall/timeout outcome here (ADR 0103): the attempt
+// wall-clock progress guard is gone and stall detection is the fleet
+// supervisor's exclusive job, driven by the castle liveness lane + evaluator
+// (`reapStalledSlot` owns the `blocked:stalled` disposition). The in-run
+// lane-idle reaper stays as the solo-path idle cut and reports `no-sentinel`.
+// `goal-moot` (ADR 0057): the goal-predicate poll observed the claimed issue
+// already CLOSED, so the run's goal is already reflected in the world. The
 // inner agent is aborted and process-issue maps it to a deterministic terminal
 // outcome (own-merge → done, foreign close → claim-lost) without envelope spam.
 export type AgentOutcome =
@@ -90,8 +100,6 @@ export type AgentOutcome =
   | "signal-killed"
   | "exhausted"
   | "runner-transient"
-  | "timeout"
-  | "budget-exceeded"
   | "goal-moot";
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
@@ -124,52 +132,32 @@ export function extractSignalKill(error: unknown): { signal: string; exitCode: n
 export const DEFAULT_IDLE_TIMEOUT_S = 600;
 
 /**
- * Attempt wall-clock guard (proof-of-PROGRESS): the inner agent is aborted when
- * no NEW commit or other productive signal has landed on the worker branch
- * within this many seconds.
- * `idleTimeoutSeconds` catches *silence* (no output) and `maxIterations` caps
- * *re-invocations*, but a single iteration that stays busy — re-exploring,
- * re-running tests — without ever committing or signalling slips past both and
- * burns cycle indefinitely (the 1h41m #834 hang). The clock resets on every new
- * commit, so a steadily-committing agent is never killed; only one that spins
- * without producing work is.
+ * Cadence of the goal-predicate poll (ADR 0057) and of the codex stream-pulse
+ * heartbeat throttle. It used to be derived from the attempt wall-clock cap;
+ * with the guard gone (ADR 0103) it is a plain constant — one issue-state read
+ * a minute is cheap and bounds how long a mooted run keeps burning.
  */
-export const DEFAULT_ATTEMPT_TIMEOUT_S = 2700;
+export const DEFAULT_GOAL_POLL_MS = 60_000;
 
 /**
  * Cadence of the independent worker-vitals sampler (ADR 0103). The heartbeat's
  * loc/tokens/tool stamp fires at least this often for EVERY run, independent of
- * the attempt-guard and of inner-agent stream activity, so a codex worker that
- * edits and then blocks on a long test suite still reports its live worktree
- * churn instead of a frozen `+0 -0`. Capped by `heartbeatIntervalMs` so an armed
- * guard's tighter cadence still wins when it is shorter.
+ * inner-agent stream activity, so a codex worker that edits and then blocks on a
+ * long test suite still reports its live worktree churn instead of a frozen
+ * `+0 -0`. With the attempt guard gone this sampler is the ONLY unconditional
+ * vitals driver — the codex stream pulse only fires while the stream is talking.
  */
 export const DEFAULT_VITALS_SAMPLE_MS = 20_000;
 
 /**
- * Dedup window shared by the three heartbeat drivers (guard poll `onTick`, codex
- * stream pulse, and the {@link DEFAULT_VITALS_SAMPLE_MS} sampler). Two emits
- * landing within this window collapse to one, so an armed guard plus the sampler
- * never double-stamp the same instant. Kept well below the sampler interval so a
+ * Dedup window shared by the two heartbeat drivers (the codex stream pulse and
+ * the {@link DEFAULT_VITALS_SAMPLE_MS} sampler). Two emits landing within this
+ * window collapse to one, so an active stream plus the sampler never
+ * double-stamp the same instant. Kept well below the sampler interval so a
  * legitimate next sample is never suppressed — it only absorbs near-simultaneous
- * ticks. Sits below the SMALLEST real heartbeat cadence (a 1s attempt cap →
- * 1000ms poll) so consecutive polls always emit, while two drivers landing on
- * the same instant collapse to one.
+ * ticks.
  */
 export const HEARTBEAT_DEDUP_MS = 500;
-
-/**
- * Commit-anchored HARD cap on the attempt guard (issue #637): the edit-signal
- * (ADR 0051) may extend the soft deadline only this many seconds past the last
- * commit (or spawn). A busy-but-unproductive agent that re-validates in a loop
- * while occasionally touching a file resets the soft deadline forever — the
- * observed #579 worker burned 5h+ that way. Past the hard cap with no NEW
- * commit, the guard aborts even if worktree/activity signals keep extending the
- * soft deadline, which routes the attempt to the `timeout` terminal where the
- * ADR 0055 reconcile can land an already-committed green branch without
- * re-running the agent.
- */
-export const DEFAULT_ATTEMPT_HARD_CAP_S = 5400;
 
 /**
  * The re-invocation ceiling handed to sandcastle's Orchestrator (issue #322).
@@ -356,61 +344,25 @@ export interface RunAgentInput {
    */
   onAgentEvent?: (event: AgentStreamEvent) => void;
   /**
-   * Attempt wall-clock guard cap in seconds (proof-of-progress). When set,
-   * `runAgent` aborts the sandcastle run if no NEW commit appears on the worker
-   * branch within this window, resetting on each commit. Omitted → no guard
-   * (back-compat for callers/tests that don't opt in). See
-   * {@link DEFAULT_ATTEMPT_TIMEOUT_S}.
-   */
-  attemptTimeoutSeconds?: number;
-  /**
-   * Commit-anchored HARD cap in seconds (issue #637): bounds how long the
-   * edit-signal (`progressProbe`) may keep extending the soft deadline past the
-   * last commit. Only meaningful when the guard is armed. Omitted → soft cap
-   * only (back-compat). See {@link DEFAULT_ATTEMPT_HARD_CAP_S}.
-   */
-  attemptHardCapSeconds?: number;
-  /**
-   * Returns the current HEAD sha of the worker branch (the progress signal the
-   * guard watches). Best-effort: resolves `undefined` on any git failure, which
-   * the guard treats as "no progress observed". Required for the guard to arm.
+   * Returns the current HEAD sha of the worker branch, stamped onto each vitals
+   * heartbeat so the loc memo can key off the commit. Best-effort: resolves
+   * `undefined` on any git failure, which the heartbeat records as "no head".
+   * Optional — the sampler still stamps the uncommitted worktree delta without it.
    */
   headProbe?: () => Promise<string | undefined>;
   /**
-   * Returns a monotone-ish "work volume" for the worker's worktree — the total
-   * changed lines (added + removed) vs the merge-base, committed AND uncommitted.
-   * The guard treats a CHANGE in this value between polls as progress and resets
-   * the deadline, so a runner that edits without committing (codex emits DONE
-   * only at the end) is not falsely stalled while it is actively producing code.
-   * Best-effort: resolves `undefined` on any failure (no edit signal → the guard
-   * falls back to the commit-anchored `headProbe` alone — the prior behaviour).
-   * Optional: when absent, the guard is purely commit-anchored (ADR 0044).
-   */
-  progressProbe?: () => Promise<number | undefined>;
-  /**
-   * Externalized proof-of-life sink (PR-B): invoked once per attempt-guard poll
-   * with the progress signal. Opaque to execution.ts — the caller (processIssue)
-   * uses it to fire the `on_heartbeat` hook + emit the heartbeat record/state.
-   * Only fires when the guard is armed (cap + headProbe present).
+   * Worker-vitals heartbeat sink (ADR 0065/0103): invoked on the independent
+   * sampler's cadence ({@link DEFAULT_VITALS_SAMPLE_MS}) and on the codex stream
+   * pulse. Opaque to execution.ts — the caller (processIssue) uses it to fire the
+   * `on_heartbeat` hook + emit the heartbeat record/state. Armed whenever it is
+   * supplied; it no longer depends on any guard.
    */
   onHeartbeat?: (info: AttemptProgressInfo) => void;
   /**
-   * Per-attempt resource budget (#908). When supplied alongside `budgetUsage`,
-   * the attempt guard aborts with the `budget-exceeded` outcome once any ceiling
-   * is breached. Rides the existing guard poll, so it is active whenever the
-   * progress guard is armed (cap + headProbe). Omitted → no budget cap.
-   */
-  budget?: AttemptBudget;
-  /** Sync probe returning the attempt's cumulative usage (the activity meter's
-   * `peek()`), read each guard poll to evaluate `budget` and to treat live
-   * tool/text activity as productive progress for the soft timeout. */
-  budgetUsage?: () => AttemptBudgetUsage;
-  /**
-   * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on the
-   * existing attempt-guard poll (one issue-state read per tick). When it resolves
-   * `true` the attempt is aborted as moot and `runAgent` returns the `goal-moot`
-   * outcome (process-issue maps it: own-merge → done, foreign → claim-lost). Only
-   * fires when the guard is armed (cap + headProbe present). Omitted → disabled.
+   * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state once per
+   * {@link DEFAULT_GOAL_POLL_MS}. When it resolves `true` the run is aborted as
+   * moot and `runAgent` returns the `goal-moot` outcome (process-issue maps it:
+   * own-merge → done, foreign → claim-lost). Omitted → disabled.
    */
   goalProbe?: () => Promise<boolean | undefined>;
   /**
@@ -421,10 +373,9 @@ export interface RunAgentInput {
   steerFile?: string;
   /**
    * Lane-idle stall reaper (issue #363) — the solo-path port of the fleet's
-   * passive stall detector + hard stall reaper. COMPLEMENTARY to the #400
-   * attempt PROGRESS guard above (which is commit-anchored and caps the whole
-   * attempt): this cuts an *idle* hang at the stall threshold (minutes) rather
-   * than only at the progress cap, gated on the same busy-predicate so a worker
+   * passive stall detector + hard stall reaper, and (with the attempt-progress
+   * guard removed, ADR 0103) the ONLY in-run stall authority. It cuts an *idle*
+   * hang at the stall threshold, gated on the busy-predicate so a worker
    * mid-build/test is never killed. Armed only when all of `laneIdleThresholdSeconds`,
    * `laneIdleKillThresholdSeconds`, `laneMtimeProbe`, and `inspectTree` are
    * supplied (no-sandbox only — see `makeRunAgent`). On a kill verdict the run is
@@ -464,7 +415,6 @@ export interface RunAgentResult {
   branch: string;
   commits: readonly { sha: string }[];
   completionSignal?: string;
-  timeoutReason?: AttemptTimeoutReason;
   /**
    * The validated structured completion (ADR 0082) when the agent emitted a
    * well-formed `<agent-output>` block. Carries `summary`, `key_changes_made`,
@@ -876,10 +826,11 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
  * propagating — so an unrecognized runner failure never kills the drain or
  * orphans the issue in `running` (#767).
  *
- * When `attemptTimeoutSeconds` + `headProbe` are supplied, an attempt progress
- * guard runs alongside: if no new commit lands within the cap, the run is
- * aborted (sandcastle kills the in-flight agent, preserving the worktree) and
- * the result is the `timeout` outcome.
+ * No attempt wall-clock progress guard runs alongside (ADR 0103): stall
+ * detection belongs to the fleet supervisor's castle-liveness evaluator, and the
+ * lane-idle reaper below is the solo-path idle cut. What still rides along is the
+ * goal predicate (abort a run whose issue is already CLOSED) and the independent
+ * worker-vitals sampler.
  */
 export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Promise<RunAgentResult> {
   const warn = deps.warn ?? ((m: string) => console.warn(m));
@@ -903,27 +854,20 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // must enter the container instead (sandbox env lane) — out of scope (#284).
   for (const [k, v] of Object.entries(input.env ?? {})) process.env[k] = v;
 
-  // Attempt progress guard (proof-of-progress): abort the run if no new commit
-  // lands within the cap. Armed only when both the cap and a headProbe are
-  // supplied; otherwise behaviour is unchanged.
   const now = deps.now ?? (() => Date.now());
   const makeController = deps.makeAbortController ?? (() => new AbortController());
   const schedule = deps.schedule ?? defaultSchedule;
-  let guard:
-    | { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean; firedBudget: () => boolean }
-    | undefined;
-  let timeoutReason: AttemptTimeoutReason | undefined;
+  let goalWatch: { stop: () => void; firedGoalMoot: () => boolean } | undefined;
   let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
-  let heartbeatIntervalMs = 60_000;
+  const heartbeatIntervalMs = DEFAULT_GOAL_POLL_MS;
   let lastHeartbeatEmitMs: number | undefined;
   let vitalsSampler: (() => void) | undefined;
   const emitHeartbeat = (info: AttemptProgressInfo): void => {
-    // Single throttle shared by all three heartbeat drivers — the attempt-guard
-    // poll (`onTick`), the codex stream pulse, and the independent vitals sampler
-    // (ADR 0103). Any two that land within {@link HEARTBEAT_DEDUP_MS} of each
-    // other (e.g. the sampler and a guard poll ticking on the same instant) emit
-    // ONCE, so an armed guard + the sampler never double-stamp the same window.
+    // Single throttle shared by both heartbeat drivers — the codex stream pulse
+    // and the independent vitals sampler (ADR 0103). Two that land within
+    // {@link HEARTBEAT_DEDUP_MS} of each other emit ONCE, so a talkative stream
+    // plus the sampler never double-stamp the same window.
     if (lastHeartbeatEmitMs !== undefined && info.nowMs - lastHeartbeatEmitMs < HEARTBEAT_DEDUP_MS) return;
     lastHeartbeatEmitMs = info.nowMs;
     input.onHeartbeat?.(info);
@@ -950,55 +894,33 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
           pulseCodexHeartbeatFromStream(event);
         }
       : undefined;
-  if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
-    const capMs = input.attemptTimeoutSeconds * 1000;
-    heartbeatIntervalMs = Math.min(capMs, 60_000);
+  // Goal predicate (ADR 0057) — the sole survivor of the removed attempt guard.
+  // Polls the claimed issue's CLOSED state; a definite CLOSED aborts the run as
+  // moot. Armed purely on the probe's presence: it no longer rides a wall-clock
+  // cap, so it works for every runner and sandbox mode.
+  if (input.goalProbe) {
     controller = makeController();
-    const cap = input.attemptTimeoutSeconds;
-    const hardCap = input.attemptHardCapSeconds;
-    guard = startAttemptGuard({
-      capMs,
-      intervalMs: Math.min(capMs, 60_000),
-      headProbe: input.headProbe,
-      ...(input.progressProbe ? { progressProbe: input.progressProbe } : {}),
-      ...(hardCap && hardCap > 0 ? { hardCapMs: hardCap * 1000 } : {}),
-      now,
+    const abortController = controller;
+    goalWatch = startGoalWatch({
+      intervalMs: DEFAULT_GOAL_POLL_MS,
       schedule,
-      ...(input.goalProbe ? { goalProbe: input.goalProbe } : {}),
-      ...(input.budget && input.budgetUsage ? { budget: input.budget, budgetUsage: input.budgetUsage } : {}),
-      ...(input.budgetUsage ? { activityUsage: input.budgetUsage } : {}),
-      ...(input.inspectTree ? { activeDescendantProbe: () => deriveSnapshot(input.inspectTree!()).activeDescendant } : {}),
-      abort: (reason) => {
-        if (reason === "stalled" || reason === "edit-loop-stall" || reason === "hard-cap") timeoutReason = reason;
-        controller?.abort(
-          new Error(
-            reason === "goal-moot"
-              ? "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)"
-              : reason === "budget"
-                ? "afk: attempt aborted — per-attempt resource budget exceeded (#908)"
-                : reason === "hard-cap"
-                  ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
-                  : reason === "edit-loop-stall"
-                    ? `afk: attempt aborted — worktree diff kept changing without new high-water progress within ${cap}s (edit-loop-stall)`
-                    : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
-          ),
-        );
-      },
-      // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
-      // heartbeat sink (firehose record + state.last_progress_at + on_heartbeat
-      // hook). execution.ts stays ignorant of what it does.
-      ...(input.onHeartbeat ? { onTick: emitHeartbeat } : {}),
+      goalProbe: input.goalProbe,
+      abort: () =>
+        abortController.abort(
+          new Error("afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)"),
+        ),
     });
   }
 
   // Lane-idle stall reaper (issue #363): the solo-path port of the fleet's
-  // passive stall detector + hard stall reaper. COMPLEMENTARY to the progress
-  // guard above (commit-anchored) — this cuts an *idle* hang at the stall
-  // threshold, gated on the same busy-predicate. Armed when both thresholds plus
-  // the lane probe + tree inspector are supplied. Shares the run's
-  // AbortController so a kill tears down the same inner tree; runs on its own
-  // side-channel poll (independent of the inner-agent stream) so a fully-hung
-  // runner is still observed.
+  // passive stall detector + hard stall reaper, driven by the SAME castle
+  // liveness verdict the supervisor's evaluator reads (ADR 0083 §3). With the
+  // attempt-progress guard removed (ADR 0103) this is the only in-run stall cut,
+  // gated on the busy-predicate. Armed when both thresholds plus the liveness
+  // probe + tree inspector are supplied. It constructs its OWN AbortController
+  // when the goal watch above did not (`if (!controller)`), so a run with no
+  // goalProbe is still killable; runs on its own side-channel poll (independent
+  // of the inner-agent stream) so a fully-hung runner is still observed.
   if (
     input.laneIdleThresholdSeconds &&
     input.laneIdleThresholdSeconds > 0 &&
@@ -1028,18 +950,18 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   }
 
   // Independent worker-vitals sampler (ADR 0103). Vitals telemetry — loc,
-  // tokens, tool/text/reasoning counters — must SURVIVE the attempt model on its
-  // OWN cadence, decoupled from the attempt-guard. Before this, the only two
-  // paths that fired `emitHeartbeat` (the loc/vitals stamp) were the guard's
-  // `onTick` and the codex stream-pulse, and BOTH hang off `headProbe` + guard
-  // arming: a codex worker in a single long iteration — especially one blocked
-  // WAITING on a test suite, emitting no stream events — never stamped anything,
-  // so `loc`/`tokens` sat at a permanent `+0 -0` for the whole run even though
-  // the worktree carried a real diff. This timer fires the same stamp every
-  // ~20s regardless of runner, guard, or stream activity, so the heartbeat
-  // reflects the LIVE worktree. It shares `lastHeartbeatEmitMs` with the other
-  // two paths, so an armed guard / active stream never double-stamps within the
-  // window. Best-effort head probe: the loc diff is computed from the worktree
+  // tokens, tool/text/reasoning counters — SURVIVES the removal of the attempt
+  // model on its OWN cadence. It always did the moment PR #2168 landed it; now
+  // that the guard's `onTick` is gone this timer is the ONLY unconditional
+  // driver, with the codex stream-pulse as an opportunistic second. Before the
+  // sampler, both drivers hung off `headProbe` + guard arming: a codex worker in
+  // a single long iteration — especially one blocked WAITING on a test suite,
+  // emitting no stream events — never stamped anything, so `loc`/`tokens` sat at
+  // a permanent `+0 -0` even though the worktree carried a real diff. This timer
+  // fires the same stamp every ~20s regardless of runner or stream activity, so
+  // the heartbeat reflects the LIVE worktree. It shares `lastHeartbeatEmitMs`
+  // with the stream pulse, so the two never double-stamp within the window.
+  // Best-effort head probe: the loc diff is computed from the worktree
   // (uncommitted delta needs no head), so a codex worker with no commits still
   // reports its real churn. Armed whenever a heartbeat sink exists.
   if (input.onHeartbeat) {
@@ -1068,8 +990,6 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     // The lane-idle reaper aborted: agent lane silent past the kill threshold
     // with no active build/test descendant + flat cpu → genuinely stuck. Map to
     // no-sentinel so it flows through the existing no-sentinel terminal policy.
-    // Checked before the progress guard: an idle hang trips the faster lane layer
-    // first, and "no-sentinel" is the issue-mandated outcome for a lane-idle reap.
     if (laneReaper?.firedReap()) {
       return {
         outcome: "no-sentinel",
@@ -1081,43 +1001,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     // The goal predicate fired (ADR 0057): the claimed issue is already CLOSED,
     // so the attempt is moot. Surface the dedicated outcome — process-issue maps
     // it deterministically (own-merge → done, foreign close → claim-lost) without
-    // a terminal envelope. Checked before the stall guard: a goal-moot abort sets
-    // its own flag and firedTimeout() excludes it, so they never collide.
-    if (guard?.firedGoalMoot()) {
+    // a terminal envelope. Checked after the lane reap: both share the run's
+    // AbortController, and an idle reap is the more specific diagnosis.
+    if (goalWatch?.firedGoalMoot()) {
       return {
         outcome: "goal-moot",
         branch: input.branch,
         commits: [],
         stdout: "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)",
-      };
-    }
-    // The budget guard aborted: the attempt breached a resource ceiling (#908)
-    // — distinct from a stall (it may have been actively working, just too
-    // expensively). Surface the dedicated `budget-exceeded` outcome so
-    // process-issue salvages the partial work and parks it for a human rather
-    // than blind-retrying a runaway. Checked before firedTimeout (firedTimeout
-    // already excludes the budget abort, but order keeps intent explicit).
-    if (guard?.firedBudget()) {
-      return {
-        outcome: "budget-exceeded",
-        branch: input.branch,
-        commits: [],
-        stdout: "afk: attempt aborted — per-attempt resource budget exceeded (#908)",
-      };
-    }
-    // The progress guard aborted: alive but not committing → stalled.
-    if (guard?.firedTimeout()) {
-      return {
-        outcome: "timeout",
-        branch: input.branch,
-        commits: [],
-        timeoutReason: timeoutReason ?? "stalled",
-        stdout:
-          timeoutReason === "edit-loop-stall"
-            ? `afk: attempt aborted — worktree diff kept changing without new high-water progress within ${input.attemptTimeoutSeconds}s (edit-loop-stall)`
-            : timeoutReason === "hard-cap"
-              ? `afk: attempt aborted — no new commit within ${input.attemptHardCapSeconds}s despite worktree edits (hard cap, stalled)`
-              : `afk: attempt aborted — no new commit within ${input.attemptTimeoutSeconds}s (stalled)`,
       };
     }
     if (isExhaustionError(error)) {
@@ -1162,7 +1053,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       stdout: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    guard?.stop();
+    goalWatch?.stop();
     laneReaper?.stop();
     vitalsSampler?.();
   }

@@ -425,153 +425,6 @@ describe("processIssue — AFK→Brain outcome-event recording", () => {
 });
 
 
-describe("processIssue — timeout (attempt progress guard fired)", () => {
-  it("reconcile skip (no commits) → on_attempt_error → ready-for-human + blocked:stalled, no post_attempt", async () => {
-    // No commits on the branch → the ADR 0055 reconcile skips (nothing to land)
-    // and the original stalled escalation fires unchanged.
-    const { deps, input, trace } = harness({ outcome: "timeout", changedFiles: [] });
-    const result = await processIssue(deps, input);
-
-    // The execution-layer `timeout` maps to the `stalled` terminal outcome.
-    expect(result.outcome).toBe("stalled");
-    expect(result.preserved).toBe(true);
-    // Escalates to a human (non-recoverable) with the typed blocked:stalled tag.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:stalled"]);
-    const edit = trace.labelEdits.at(-1)!;
-    expect(edit.add).toContain("ready-for-human");
-    expect(edit.add).toContain("blocked:stalled");
-    expect(trace.ensuredLabels).toContain("blocked:stalled");
-    // The failure envelope rides the generic `blocked` status bucket.
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    expect(trace.statePatches).toContainEqual({
-      "current.phase": "terminal",
-      "current.outcome": "stalled",
-      "current.last_exit_code": 124,
-      "current.failure_kind": "timeout",
-    });
-    // on_attempt_timeout fires when the guard trips; on_reconcile reports the
-    // ADR 0055 skip; then on_attempt_error escalates. post_attempt does NOT fire.
-    expect(result.hooksFired).toEqual([
-      "pre_worktree",
-      "pre_attempt",
-      "on_attempt_timeout",
-      "on_reconcile",
-      "on_attempt_error",
-    ]);
-  });
-
-  it("records edit-loop-stall distinctly in the blocked envelope when oscillating edits trip the guard", async () => {
-    const { deps, input, trace } = harness({
-      outcome: "timeout",
-      timeoutReason: "edit-loop-stall",
-      changedFiles: [],
-    });
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("stalled");
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    expect(trace.envelopeBodies.at(-1)).toContain("edit-loop-stall");
-    expect(result.hooksFired).toContain("on_attempt_timeout");
-  });
-
-  it("reconcile lands the stalled-but-green branch WITHOUT re-running the agent (no escalation)", async () => {
-    // ADR 0055: the agent stalled on a final non-committing step, but its branch
-    // carries complete, green work. reconcile re-validates through the same gate
-    // and lands it — the issue closes as `done`, never reaching the escalation.
-    const { deps, input, trace } = harness({ outcome: "timeout", feedbackOk: true, locked: false });
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("done");
-    expect(result.mergeSha).toBe("forge-merge-sha");
-    expect(result.swept).toBe(true);
-    expect(trace.closed).toEqual([9]);
-    // The agent ran exactly once — reconcile NEVER re-spawns it.
-    expect(trace.runAgentCalls.length).toBe(1);
-    // Closed cleanly: running shed, no blocked:stalled escalation label.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
-  });
-
-  it("reconcile parks the stalled branch to ready-for-human when re-validation fails", async () => {
-    // The branch carries work but the scoped gate fails on re-validation → park
-    // to ready-for-human with blocked:validation (the real reason), not landed.
-    const { deps, input, trace } = harness({ outcome: "timeout", feedbackOk: false });
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("feedback-failed");
-    expect(result.preserved).toBe(true);
-    expect(trace.closed).toEqual([]);
-    expect(trace.runAgentCalls.length).toBe(1);
-    const edit = trace.labelEdits.at(-1)!;
-    expect(edit.add).toContain("ready-for-human");
-    expect(edit.add).toContain("blocked:validation");
-    // The park envelope rides the generic `blocked` status bucket.
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-  });
-});
-
-
-describe("processIssue — budget-exceeded (per-attempt resource guard fired, #908)", () => {
-  it("salvages partial work, then parks ready-for-human + blocked:budget without crashing", async () => {
-    // The attempt guard aborted on a resource ceiling: the inner agent returns
-    // the `budget-exceeded` outcome with dirty worktree paths. Salvage commits
-    // the partial work onto the branch ("never empty-handed"), then the issue
-    // parks for a human — a runaway is never auto-retried (recovery key null).
-    const { deps, input, trace } = harness({
-      outcome: "budget-exceeded",
-      commits: [],
-      salvage: 3,
-      changedFiles: ["packages/x/src/a.ts"],
-    });
-    const result = await processIssue(deps, input);
-
-    // Salvage ran against the live worker branch and committed the partial work.
-    expect(trace.salvageCalls).toHaveLength(1);
-    expect(trace.salvageCalls[0]).toBe(result.branch);
-    expect(trace.iterLogs.some((line) => line.includes("salvaged 3 uncommitted file(s)"))).toBe(true);
-
-    // Terminal budget-exceeded: preserved, never landed/closed.
-    expect(result.outcome).toBe("budget-exceeded");
-    expect(result.preserved).toBe(true);
-    expect(trace.closed).toEqual([]);
-    // The orchestrator did not leave the issue in `running` — it shed running and
-    // escalated to a human with the typed blocked:budget tag.
-    expect(labelTrace(trace)).toEqual([
-      "-ready-for-agent|+running",
-      "-running|+ready-for-human+blocked:budget",
-    ]);
-    const edit = trace.labelEdits.at(-1)!;
-    expect(edit.add).toContain("ready-for-human");
-    expect(edit.add).toContain("blocked:budget");
-    expect(trace.ensuredLabels).toContain("blocked:budget");
-    // The failure envelope rides the generic `blocked` status bucket.
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // on_attempt_error escalates (no auto-recovery); post_attempt never fires on
-    // a budget abort (the attempt did not reach a sentinel-bearing terminal).
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
-  });
-
-  it("a clean worktree (0 salvaged files) still parks ready-for-human + blocked:budget", async () => {
-    // Nothing to salvage (the runaway committed everything or edited nothing),
-    // but the budget abort still parks for a human — no auto-retry, no crash.
-    const { deps, input, trace } = harness({
-      outcome: "budget-exceeded",
-      commits: [],
-      salvage: 0,
-      changedFiles: [],
-    });
-    const result = await processIssue(deps, input);
-
-    expect(trace.salvageCalls).toHaveLength(1);
-    expect(result.outcome).toBe("budget-exceeded");
-    expect(trace.closed).toEqual([]);
-    const edit = trace.labelEdits.at(-1)!;
-    expect(edit.add).toContain("ready-for-human");
-    expect(edit.add).toContain("blocked:budget");
-  });
-});
-
-
 describe("processIssue — emitHeartbeat receives resolved base (issue #570)", () => {
   it("passes the resolved non-main base to emitHeartbeat when the issue body pins a branch", async () => {
     const heartbeatInfos: AttemptProgressInfo[] = [];
@@ -1012,33 +865,33 @@ describe("Spec cascade rebase after DONE landing", () => {
 describe("processIssue — exit barrier on every terminal path (#1021)", () => {
   const BRANCH = "afk/wAAAA/9-fix-the-thing";
 
-  it("guard abort (budget-exceeded) crosses the barrier — branch pushed, receipt on the result", async () => {
-    const { deps, input, trace } = harness({ outcome: "budget-exceeded", terminalBarrier: { pushed: true } });
+  it("BLOCKED sentinel crosses the barrier — branch pushed, receipt on the result", async () => {
+    const { deps, input, trace } = harness({ outcome: "blocked", terminalBarrier: { pushed: true } });
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("budget-exceeded");
+    expect(result.outcome).toBe("blocked");
     // (1) barrier ran, (2) branch pushed, (3) receipt on the terminal result.
     expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
     expect(result.exitReceipt?.pushed).toBe(true);
     expect(result.exitReceipt?.branch).toBe(BRANCH);
   });
 
-  it("stall-kill (attempt-guard timeout → stalled) crosses the barrier with a dirty worktree salvaged and pushed", async () => {
-    // changedFiles:[] → the ADR 0055 reconcile skips (no commits), falling to the
-    // stalled terminalFailure. The worker was killed with a dirty worktree, so the
-    // barrier salvage-commits it (2 files) and pushes before the terminal reports.
+  it("stall-kill (lane-idle reap → no-sentinel) crosses the barrier with a dirty worktree salvaged and pushed", async () => {
+    // With the attempt-progress guard gone (ADR 0103) an in-run stall arrives as
+    // the lane-idle reaper's `no-sentinel`; changedFiles:[] means the branch
+    // carries no work, so it falls straight to the no-sentinel terminalFailure.
+    // The worker was killed with a dirty worktree, so the barrier salvage-commits
+    // it (2 files) and pushes before the terminal reports.
     const { deps, input, trace } = harness({
-      outcome: "timeout",
+      outcome: "no-sentinel",
       changedFiles: [],
       terminalBarrier: { salvagedFiles: 2, pushed: true },
     });
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("stalled");
-    // The timeout path crosses the barrier twice — once for reconcile's pre-fetch
-    // push, once for the stalled terminal — both on the worker branch.
+    expect(result.outcome).toBe("no-sentinel");
     expect(trace.terminalBarrierCalls.length).toBeGreaterThanOrEqual(1);
     expect(trace.terminalBarrierCalls.every((b) => b === BRANCH)).toBe(true);
     // dirty-at-kill: the salvage commit exists and was pushed (receipt truthful).
@@ -1087,11 +940,11 @@ describe("processIssue — exit barrier on every terminal path (#1021)", () => {
     // The barrier port itself throwing must NOT convert the terminal into an
     // uncaught crash: crossTerminalBarrier degrades to a not-pushed receipt so the
     // terminal is still reported (with a receipt — the required input is present).
-    const { deps, input, trace } = harness({ outcome: "budget-exceeded", terminalBarrier: { fault: true } });
+    const { deps, input, trace } = harness({ outcome: "blocked", terminalBarrier: { fault: true } });
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("budget-exceeded");
+    expect(result.outcome).toBe("blocked");
     expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
     expect(result.exitReceipt).toBeDefined();
     expect(result.exitReceipt?.pushed).toBe(false);

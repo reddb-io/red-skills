@@ -104,7 +104,6 @@ export interface HarnessOptions {
    * the verdict for the test (self worker is "h:w"). */
   claim?: { winner: "self" | "other" };
   outcome?: RunAgentResult["outcome"];
-  timeoutReason?: RunAgentResult["timeoutReason"];
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
   /** Test hook invoked inside the fake runner while the issue claim is active. */
@@ -631,7 +630,6 @@ export function harness(opts: HarnessOptions = {}): {
             : thisOutcome === "blocked"
               ? "<promise>BLOCKED</promise>"
               : undefined),
-        timeoutReason: thisOutcome === "timeout" ? opts.timeoutReason : undefined,
         stdout: thisOutcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
       };
     },

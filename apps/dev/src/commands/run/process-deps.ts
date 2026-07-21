@@ -453,20 +453,11 @@ export function buildProcessDeps(
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
     postAttemptFormatCommands: readPostAttemptFormat(config),
-    // Thread a live activity probe off this attempt's activity meter. The
-    // progress guard uses it as a soft progress signal when armed.
     // Inject the worker's steer-file path so the live-steer MCP surface
     // (runner_steer) can write a pending directive that the Orchestrator picks
     // up between iterations without AFK knowing about the file at claim time.
     runAgent: (() => {
-      const inner = makeRunAgent(
-        sandbox,
-        process.env,
-        maxIterations,
-        laneIdle,
-        () => activityMeter.peek(),
-        sandboxImage,
-      );
+      const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, sandboxImage);
       const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
       return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
     })(),
@@ -763,8 +754,9 @@ export function buildProcessDeps(
         }).catch(() => {});
       }
     },
-    // Externalized proof-of-life sink (PR-B): the attempt-guard fires this each
-    // poll (~60s) with the progress signal. Append an enriched `type=heartbeat`
+    // Worker-vitals heartbeat sink (ADR 0065/0103): the independent vitals
+    // sampler fires this every ~20s (and the codex stream pulse opportunistically
+    // in between) with the live progress signal. Append an enriched `type=heartbeat`
     // firehose record carrying the live LINE-DIFF (+A -R) AND mirror
     // `current.{last_progress_at,diff_added,diff_removed}` into the state file, so
     // each tick shows how the attempt is evolving and the monitor's +A -R stays
@@ -869,7 +861,7 @@ export function buildProcessDeps(
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
         await castleBridge.record("worker.heartbeat", {
-          signal: "attempt-guard",
+          signal: "vitals-sampler",
           seconds_since_progress: secs,
           head,
         }).catch(() => {});
@@ -878,7 +870,7 @@ export function buildProcessDeps(
     // Worker-vitals provider for the on_heartbeat hook context (ADR 0065/#832):
     // the live cumulative activity counters from the attempt's meter plus the
     // last-observed diff volume, under their canonical WorkerVitals names. Read
-    // each attempt-guard poll right before the on_heartbeat hook fires.
+    // each vitals sample right before the on_heartbeat hook fires.
     heartbeatVitals: () => {
       const a = activityMeter.peek();
       return {

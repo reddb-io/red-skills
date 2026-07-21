@@ -6,11 +6,11 @@
 export type { RepoContext, AfkPaths } from "./wire/paths.js";
 export { resolveRepoSlug, resolveRepoContext, afkPaths } from "./wire/paths.js";
 
-export type { RunSettings, AttemptGuardArming } from "./wire/settings.js";
+export type { RunSettings, AttemptProbeArming } from "./wire/settings.js";
 export {
   resolveRunSettings,
   agentLivenessVerdictSync,
-  resolveAttemptGuardArming,
+  resolveAttemptProbeArming,
   resolveAttemptHead,
   makeRunAgent,
 } from "./wire/settings.js";
