@@ -55,8 +55,8 @@ const SURFACE: ReadonlyArray<{
     name: "logs",
     title: "Read Castle logs",
     description:
-      "Return raw CastleLaneRecord entries from one structured lane.",
-    schema: ["lane", "id"],
+      "Return the newest CastleLaneRecord entries from one structured lane; bounded by `limit` (default 200, max 10 000). Pass `kind` to filter before the limit.",
+    schema: ["lane", "id", "limit", "kind"],
   },
   {
     name: "worker_vitals",
