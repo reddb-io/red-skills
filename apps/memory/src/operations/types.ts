@@ -6,6 +6,7 @@ import type { MemoryStore } from "../graph-store.js";
 export type MemoryOperationSafetyClass = "read-only" | "mutating";
 export type MemoryOperationSideEffectClass = "none" | "cache-write" | "writes-memory";
 export type MemoryOperationCapability = "graph-store";
+export type MemoryOperationTransport = "cli" | "mcp" | "http";
 export type MemoryOperationInputSource = "positional" | "flag" | "query";
 export type MemoryOperationInputType =
   | "string"
@@ -101,12 +102,18 @@ export interface MemoryOperationDefinition<Input, Output> {
   safetyClass: MemoryOperationSafetyClass;
   sideEffectClass: MemoryOperationSideEffectClass;
   capabilities: readonly MemoryOperationCapability[];
+  transports?: readonly MemoryOperationTransport[];
   renderer: MemoryOperationRendererMetadata;
   execute: (ctx: MemoryOperationContext, input: Input) => Promise<Output>;
 }
 
-export type MemoryOperation<Input, Output> = MemoryOperationDefinition<Input, Output> &
-  MemoryOperationFacets;
+export type MemoryOperation<Input, Output> = Omit<
+  MemoryOperationDefinition<Input, Output>,
+  "transports"
+> &
+  MemoryOperationFacets & {
+    transports: readonly MemoryOperationTransport[];
+  };
 
 export type ReadOnlyMemoryOperation<Input = unknown, Output = unknown> = MemoryOperation<
   Input,
