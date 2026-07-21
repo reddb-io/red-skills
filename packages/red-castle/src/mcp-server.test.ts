@@ -61,7 +61,6 @@ function deps(): CastleMcpDependencies {
     reap: vi.fn(async () => ({ remote: [], local: [] })),
     unblockSweep: vi.fn(async () => ({ promoted: [] })),
     gateRun: vi.fn(async (input) => ({ branch: input.branch, ok: true, checks: [] })),
-    gateBaselineStatus: vi.fn(async () => ({ main_red: false, repair_issues: [] })),
     landBranch: vi.fn(async (input) => ({
       issue: input.issue,
       branch: input.branch,
@@ -122,7 +121,6 @@ describe("dev:afk MCP tools", () => {
       "reap",
       "unblock_sweep",
       "gate_run",
-      "gate_baseline_status",
       "land_branch",
       "cascade_status",
       "claim_status",
@@ -277,10 +275,6 @@ describe("dev:afk MCP tools", () => {
     expect(d.gateRun).toHaveBeenCalledWith({
       branch: "afk/w80UR/2307-castle-mcp-s4",
     });
-
-    await expect(
-      tools.find((tool) => tool.name === "gate_baseline_status")!.invoke({}),
-    ).resolves.toEqual({ main_red: false, repair_issues: [] });
   });
 
   it("lands a validated branch and reports the close cascade", async () => {
