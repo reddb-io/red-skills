@@ -130,6 +130,23 @@ export function managerLeaseFile(root: string, effortId: string): string {
   return join(managerLeasesDir(root), `${effortId}.toonl`);
 }
 
+/** Checkpoint lane: `<root>/.red/manager/checkpoints`. */
+export function managerCheckpointsDir(root: string): string {
+  return join(managerDir(root), "checkpoints");
+}
+
+/**
+ * One exported checkpoint: `<root>/.red/manager/checkpoints/<stamp>.toonl`.
+ *
+ * The stamp is a filename-safe instant (`20260721T000000Z`), so checkpoints
+ * sort chronologically in a plain directory listing and never collide across
+ * exports taken in different seconds.
+ */
+export function managerCheckpointFile(root: string, stamp: string): string {
+  if (!stamp) throw new Error("stamp is required");
+  return join(managerCheckpointsDir(root), `${stamp}.toonl`);
+}
+
 // ── State-tier lanes (ADR 0098 §2) ──────────────────────────────────────────
 
 /** Castle engine state lane: `.red/state/castle`. */

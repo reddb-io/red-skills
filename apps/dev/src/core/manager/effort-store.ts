@@ -151,14 +151,15 @@ export function assertSecretFree(record: Record<string, unknown>): void {
   }
 }
 
-/** Serialize one effort as a TOONL document: schema header, then the effort. */
-export function encodeEffortDocument(effort: EffortRecord): string {
+/**
+ * Serialize one effort as a single flat TOONL record.
+ *
+ * Exported because a checkpoint document (slice #2296) carries MANY efforts in
+ * one file: the row shape is the unit both the per-effort document and the
+ * checkpoint share, so the two can never drift into different field sets.
+ */
+export function encodeEffortRow(effort: EffortRecord): ToonlRecord {
   assertSecretFree(effort as unknown as Record<string, unknown>);
-  const header: ToonlRecord = {
-    kind: "manager.effort.schema",
-    schema: MANAGER_EFFORT_SCHEMA,
-    version: MANAGER_EFFORT_SCHEMA_VERSION,
-  };
   const body: ToonlRecord = {
     kind: "manager.effort",
     effort_id: effort.effort_id,
@@ -176,7 +177,17 @@ export function encodeEffortDocument(effort: EffortRecord): string {
   if (effort.artifact_refs !== undefined && effort.artifact_refs.length > 0) {
     body.artifact_refs = effort.artifact_refs.join("\n");
   }
-  return encodeRecords([header, body]);
+  return body;
+}
+
+/** Serialize one effort as a TOONL document: schema header, then the effort. */
+export function encodeEffortDocument(effort: EffortRecord): string {
+  const header: ToonlRecord = {
+    kind: "manager.effort.schema",
+    schema: MANAGER_EFFORT_SCHEMA,
+    version: MANAGER_EFFORT_SCHEMA_VERSION,
+  };
+  return encodeRecords([header, encodeEffortRow(effort)]);
 }
 
 function requireString(row: ToonlRecord, field: string): string {
@@ -194,6 +205,41 @@ function requireLifecycle(row: ToonlRecord): EffortLifecycle {
     throw new ManagerSchemaError(`manager effort document has unknown lifecycle "${value}"`);
   }
   return value as EffortLifecycle;
+}
+
+/**
+ * Parse one flat effort record, refusing an unknown lifecycle, a non-integer
+ * generation, or a missing field. Shared with the checkpoint decoder (slice
+ * #2296), so an imported effort is validated exactly as a stored one is.
+ */
+export function decodeEffortRow(body: ToonlRecord): EffortRecord {
+  const generation = body.generation;
+  if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
+    throw new ManagerSchemaError("manager effort document has a non-integer generation");
+  }
+  const route = typeof body["route"] === "string" ? body["route"] : undefined;
+  // artifact_refs is stored as a newline-separated string (ToonlRecord is flat).
+  const rawRefs = body["artifact_refs"];
+  const artifact_refs =
+    typeof rawRefs === "string" && rawRefs.length > 0 ? rawRefs.split("\n") : undefined;
+
+  const record: EffortRecord = {
+    effort_id: requireString(body, "effort_id"),
+    name: requireString(body, "name"),
+    intent: requireString(body, "intent"),
+    lifecycle: requireLifecycle(body),
+    generation,
+    created_at: requireString(body, "created_at"),
+    updated_at: requireString(body, "updated_at"),
+    ...(route !== undefined ? { route } : {}),
+    ...(artifact_refs !== undefined ? { artifact_refs } : {}),
+  };
+  // dispatch_issue is optional — absent in efforts that predate slice #2295.
+  const rawDispatch = body.dispatch_issue;
+  if (typeof rawDispatch === "number" && Number.isInteger(rawDispatch) && rawDispatch > 0) {
+    record.dispatch_issue = rawDispatch;
+  }
+  return record;
 }
 
 /**
@@ -223,35 +269,7 @@ export function decodeEffortDocument(text: string): EffortRecord {
   }
   const body = rows.find((row) => row.kind === "manager.effort");
   if (!body) throw new ManagerSchemaError("manager effort document has no effort record");
-  const generation = body.generation;
-  if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
-    throw new ManagerSchemaError("manager effort document has a non-integer generation");
-  }
-  const route = typeof body["route"] === "string" ? body["route"] : undefined;
-  // artifact_refs is stored as a newline-separated string (ToonlRecord is flat).
-  const rawRefs = body["artifact_refs"];
-  const artifact_refs =
-    typeof rawRefs === "string" && rawRefs.length > 0
-      ? rawRefs.split("\n")
-      : undefined;
-
-  const record: EffortRecord = {
-    effort_id: requireString(body, "effort_id"),
-    name: requireString(body, "name"),
-    intent: requireString(body, "intent"),
-    lifecycle: requireLifecycle(body),
-    generation,
-    created_at: requireString(body, "created_at"),
-    updated_at: requireString(body, "updated_at"),
-    ...(route !== undefined ? { route } : {}),
-    ...(artifact_refs !== undefined ? { artifact_refs } : {}),
-  };
-  // dispatch_issue is optional — absent in efforts that predate slice #2295.
-  const rawDispatch = body.dispatch_issue;
-  if (typeof rawDispatch === "number" && Number.isInteger(rawDispatch) && rawDispatch > 0) {
-    record.dispatch_issue = rawDispatch;
-  }
-  return record;
+  return decodeEffortRow(body);
 }
 
 /** Temp-write + rename, so a concurrent reader never observes a partial file. */
@@ -337,6 +355,24 @@ export async function listEfforts(root: string): Promise<EffortRecord[]> {
 /** The effort the operator most recently started — `status`'s default subject. */
 export async function latestEffort(root: string): Promise<EffortRecord | null> {
   return (await listEfforts(root))[0] ?? null;
+}
+
+/**
+ * Write an effort at an explicit generation, BYPASSING the compare-and-set
+ * guard `saveEffort` enforces.
+ *
+ * Reserved for checkpoint import (slice #2296), which is a declared TAKEOVER
+ * rather than a concurrent write: the operator is asserting that this host is
+ * now the single active writer. The caller is responsible for choosing a
+ * generation strictly greater than both the imported and the stored one, which
+ * is what makes every other host's writer fail closed on its next save.
+ */
+export async function writeEffortTakeover(
+  root: string,
+  effort: EffortRecord,
+): Promise<EffortRecord> {
+  await writeEffortAtomic(managerEffortFile(root, effort.effort_id), effort);
+  return effort;
 }
 
 export interface SaveEffortOptions {

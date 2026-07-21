@@ -1,21 +1,29 @@
 // commands/manager.ts — the operator front door of the Manager (Spec #2290,
-// slices #2291, #2292, #2293, #2295; architecture in ADR 0109).
+// slices #2291, #2292, #2293, #2295, #2296; architecture in ADR 0109).
 //
 // Lifecycle operations understood by this command:
-//   `manager <intent>`              — mint an effort from the intent and persist it.
-//   `manager status [id]`           — render the brief for one effort (newest by default).
-//   `manager resume [id]`           — transition inbox/paused effort → active, acquire lease.
-//   `manager end [id]`              — transition active effort → completed, release lease.
-//   `manager dispatch [id]`         — dispatch an autonomous execution for the effort and
-//                                     record the tracker issue number (slice #2295).
-//   `manager route <id> <skill>`    — record the ask-red route for an effort.
-//   `manager artifact <id> <ref>`   — capture an artifact reference from an
-//                                     inline session-bound skill run.
+//   `manager <intent>`                    — mint an effort from the intent and persist it.
+//   `manager status [id]`                 — render the brief for one effort (newest by default).
+//   `manager resume [id]`                 — transition inbox/paused effort → active, acquire lease.
+//   `manager end [id]`                    — transition active effort → completed, release lease.
+//   `manager dispatch [id]`               — dispatch an autonomous execution for the effort and
+//                                           record the tracker issue number (slice #2295).
+//   `manager route <id> <skill>`          — record the ask-red route for an effort.
+//   `manager artifact <id> <ref>`         — capture an artifact reference from an
+//                                           inline session-bound skill run.
+//   `manager checkpoint export [path]`    — write the secret-free portfolio (slice #2296).
+//   `manager checkpoint import <path>`    — adopt a checkpoint; this host becomes the
+//                                           single active writer (slice #2296).
 //
 // The command is conversation-first: anything that is not a lifecycle keyword IS
 // the intent. Routing classification (intent → skill) is ask-red's job at the
 // SKILL.md/agent layer; this command only stores the route that ask-red returned
 // and the artifact references that inline skills produce.
+//
+// Every MUTATION passes the trust boundary first (slice #2296): a directive is
+// only accepted from the local operator session or an owning HITL workflow.
+// Reads stay open, because rendering a brief for tracker-originated content
+// reports state without acting on it.
 
 import { homedir } from "node:os";
 import { resolveManagerRoot } from "@reddb-io/shared/red-paths.js";
@@ -33,6 +41,15 @@ import {
 } from "../core/manager/effort-store.js";
 import { endEffort, manageEffort } from "../core/manager/effort-lease.js";
 import {
+  importCheckpointFile,
+  writeCheckpointFile,
+} from "../core/manager/checkpoint.js";
+import {
+  assertTrustedDirective,
+  type DirectiveOrigin,
+} from "../core/manager/trust-boundary.js";
+import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
+import {
   dispatchExecutionIssue,
   readExecutionArtifact,
 } from "../runtime/gh/manager-map.js";
@@ -47,6 +64,13 @@ export interface ManagerCommandDeps {
   now?: () => Date;
   /** Injected host name, so tests can pin it without touching `os.hostname()`. */
   host?: string;
+  /**
+   * Where this invocation reached the Manager from (slice #2296). Defaults to
+   * the local operator session — the only origin a terminal invocation can
+   * have. A host that relays tracker content MUST pass the tracker origin, and
+   * every mutation is then refused.
+   */
+  origin?: DirectiveOrigin;
   /**
    * GH context for dispatch and reconcile (slice #2295).
    * When present, `dispatch` creates a tracker issue and `status` reconciles the
@@ -67,9 +91,19 @@ const USAGE = [
   "       afk manager dispatch [effort]         dispatch autonomous execution for the effort",
   "       afk manager route <effort> <skill>    record the ask-red route",
   "       afk manager artifact <effort> <ref>   capture an artifact reference",
+  "       afk manager checkpoint export [path]  write the secret-free portfolio checkpoint",
+  "       afk manager checkpoint import <path>  adopt a checkpoint on this host",
 ].join("\n");
 
-const LIFECYCLE_WORDS = new Set(["status", "resume", "end", "dispatch", "route", "artifact"]);
+const LIFECYCLE_WORDS = new Set([
+  "status",
+  "resume",
+  "end",
+  "dispatch",
+  "route",
+  "artifact",
+  "checkpoint",
+]);
 
 function resolveRoot(deps: ManagerCommandDeps): string {
   return deps.root ?? resolveManagerRoot({ homeDir: homedir(), env: process.env });
@@ -234,6 +268,64 @@ async function artifactCommand(
   return 0;
 }
 
+/**
+ * `checkpoint export [path]` / `checkpoint import <path>`.
+ *
+ * Export is a read and stays open to any origin; import is a takeover and is
+ * gated by the caller's trust check before this function runs.
+ */
+async function checkpointCommand(
+  operation: string | undefined,
+  path: string | undefined,
+  root: string,
+  write: (text: string) => void,
+  fail: (text: string) => void,
+  deps: ManagerCommandDeps,
+): Promise<number> {
+  if (operation === "export") {
+    const result = await writeCheckpointFile(root, {
+      ...(deps.now !== undefined ? { now: deps.now } : {}),
+      ...(deps.host !== undefined ? { host: deps.host } : {}),
+      ...(path !== undefined ? { path } : {}),
+    });
+    write(
+      `${encodeDevSnapshotToon({
+        kind: "manager.checkpoint",
+        operation: "export",
+        path: result.path,
+        effort_count: result.checkpoint.meta.effort_count,
+        source_host: result.checkpoint.meta.source_host,
+        exported_at: result.checkpoint.meta.exported_at,
+      })}\n`,
+    );
+    return 0;
+  }
+  if (operation === "import") {
+    if (!path) {
+      fail(`${USAGE}\n`);
+      return 2;
+    }
+    const result = await importCheckpointFile(root, path, {
+      ...(deps.now !== undefined ? { now: deps.now } : {}),
+      ...(deps.host !== undefined ? { host: deps.host } : {}),
+    });
+    write(
+      `${encodeDevSnapshotToon({
+        kind: "manager.checkpoint",
+        operation: "import",
+        path,
+        effort_count: result.imported.length,
+        source_host: result.meta.source_host,
+        active_writer: result.host,
+        efforts: result.imported.map((effort) => effort.effort_id),
+      })}\n`,
+    );
+    return 0;
+  }
+  fail(`${USAGE}\n`);
+  return 2;
+}
+
 export async function managerCommand(
   args: readonly string[],
   deps: ManagerCommandDeps = {},
@@ -247,8 +339,16 @@ export async function managerCommand(
     return empty ? 2 : 0;
   }
   const root = resolveRoot(deps);
+  const origin = deps.origin ?? "operator-session";
   try {
     if (words[0] === "status") return await statusCommand(words[1], root, write, fail, deps);
+    // `checkpoint export` is a read; `checkpoint import` is a takeover.
+    if (words[0] === "checkpoint") {
+      if (words[1] === "import") assertTrustedDirective(origin, "checkpoint import");
+      return await checkpointCommand(words[1], words[2], root, write, fail, deps);
+    }
+    // Everything below mutates the portfolio, so it needs a trusted directive.
+    assertTrustedDirective(origin, LIFECYCLE_WORDS.has(words[0]!) ? words[0]! : "start");
     if (words[0] === "resume") return await resumeCommand(words[1], root, write, fail, deps);
     if (words[0] === "end") return await endCommand(words[1], root, write, fail, deps);
     if (words[0] === "dispatch") return await dispatchCommand(words[1], root, write, fail, deps);

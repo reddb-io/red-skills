@@ -129,6 +129,19 @@ async function writeLeaseAtomic(path: string, lease: EffortLease): Promise<void>
 
 // ── Lease I/O ──────────────────────────────────────────────────────────────
 
+/**
+ * Write a lease unconditionally.
+ *
+ * Reserved for checkpoint import (slice #2296): an import is a declared
+ * takeover, so it STAMPS the destination host as holder rather than negotiating
+ * with an existing lease — the imported portfolio has no live writer to conflict
+ * with, only a source host that has handed the cursor over.
+ */
+export async function writeLease(root: string, lease: EffortLease): Promise<EffortLease> {
+  await writeLeaseAtomic(managerLeaseFile(root, lease.effort_id), lease);
+  return lease;
+}
+
 /** Read the lease for an effort, or `null` when none exists. */
 export async function readLease(root: string, effortId: string): Promise<EffortLease | null> {
   let text: string;
