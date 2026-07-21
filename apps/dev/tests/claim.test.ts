@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acquireClaim,
+  ClaimVerificationError,
   parseClaimRecords,
   reconcileClaim,
   renderClaimComment,
@@ -305,5 +306,98 @@ describe("acquireClaim orchestration", () => {
     const d = await acquireClaim(gh, { worker: "h:me" }, 5);
     expect(d.verdict).toBe("won");
     expect(gh.audited).toHaveLength(0);
+  });
+});
+
+// ---- sole claimant on a freshly minted issue (#2385) ----
+//
+// Three `/go` dispatches in a row claimed the issue the engine had just minted,
+// immediately conceded it with no other claimant present, and reported success
+// over zero work. The claim substrate must make that verdict unreachable: a sole
+// claimant always wins its own mint, and an unverifiable claim fails loudly.
+describe("sole-claimant verification (#2385)", () => {
+  it("wins its own freshly minted issue even when the staleness predicate rejects everything", () => {
+    // A clock-skew or timestamp-parse defect that marks EVERY record stale used
+    // to drop self too, leaving zero contenders → `lost` → self-concede.
+    const d = reconcileClaim([], self("h:me", 10), { isStale: () => true });
+    expect(d.verdict).toBe("won");
+    expect(d.winner).toBe("h:me");
+  });
+
+  it("still loses to a live earlier claimant while self is stale-exempt", () => {
+    const d = reconcileClaim([rec(5, "other:host")], self("h:me", 10), {
+      isStale: (r) => r.worker === "h:me",
+    });
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("other:host");
+  });
+
+  it("throws instead of conceding when our own claim id is unusable", () => {
+    expect(() => reconcileClaim([], self("h:me", Number.NaN))).toThrow(ClaimVerificationError);
+  });
+
+  it("retries the read-back until our claim marker is visible", async () => {
+    const gh = fakeGh([]);
+    const real = gh.listClaims.bind(gh);
+    let calls = 0;
+    gh.listClaims = async (issue: number) => {
+      calls += 1;
+      return calls < 3 ? [] : real(issue); // eventual consistency after the POST
+    };
+    const slept: number[] = [];
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      sleep: async (ms) => void slept.push(ms),
+    });
+    expect(d.verdict).toBe("won");
+    expect(calls).toBe(3);
+    expect(slept).toHaveLength(2);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("fails loudly — never 'lost' — when the read-back never shows our claim", async () => {
+    const gh = fakeGh([]);
+    gh.listClaims = async () => []; // e.g. every `gh api` list call failed
+    await expect(
+      acquireClaim(gh, { worker: "h:me" }, 5, { sleep: async () => undefined }),
+    ).rejects.toBeInstanceOf(ClaimVerificationError);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("fails loudly when every read-back attempt throws", async () => {
+    const gh = fakeGh([]);
+    gh.listClaims = async () => {
+      throw new Error("gh api: network unreachable");
+    };
+    await expect(
+      acquireClaim(gh, { worker: "h:me" }, 5, { sleep: async () => undefined }),
+    ).rejects.toThrow(/network unreachable/);
+    expect(gh.conceded).toHaveLength(0);
+  });
+});
+
+// ---- concede wording (#2385) ----
+describe("concede reason wording", () => {
+  it("names the lost race distinctly from a voluntary release", () => {
+    const lost = renderClaimComment({ worker: "h:me" }, "concede", "lost");
+    const released = renderClaimComment({ worker: "h:me" }, "concede", "released");
+    expect(lost).toContain("reason=lost");
+    expect(lost).toContain("lost the claim race to an earlier claimant");
+    expect(released).toContain("reason=released");
+    expect(released).toContain("released the claim it held");
+    expect(released).not.toContain("lost the claim race");
+  });
+
+  it("keeps the legacy ambiguous wording when no reason is supplied", () => {
+    const legacy = renderClaimComment({ worker: "h:me" }, "concede");
+    expect(legacy).toContain("lost the claim race or released");
+    expect(legacy).not.toContain("reason=");
+  });
+
+  it("parses a reason-bearing concede marker as a concede", () => {
+    const [record] = parseClaimRecords([
+      { id: 7, body: renderClaimComment({ worker: "h:me" }, "concede", "released") },
+    ]);
+    expect(record?.kind).toBe("concede");
+    expect(record?.worker).toBe("h:me");
   });
 });
