@@ -1,0 +1,251 @@
+import { describe, expect, it } from "vitest";
+import {
+  createCastleMcpTools,
+  type CastleMcpDependencies,
+} from "./mcp-server.js";
+
+/**
+ * Frozen snapshot of the aggregated dev:afk MCP tool surface.
+ *
+ * Domain modules may be split, merged, or reordered internally; this table is
+ * the contract that the composed surface — order, names, titles, descriptions,
+ * MUTATING prefixes, and input-schema keys — stays byte-identical. Changing an
+ * entry here is a deliberate protocol change, never a refactor side effect.
+ */
+const SURFACE: ReadonlyArray<{
+  name: string;
+  title: string;
+  description: string;
+  schema: string[];
+}> = [
+  {
+    name: "fleet_list",
+    title: "List AFK fleets",
+    description: "List every registered named AFK fleet profile.",
+    schema: [],
+  },
+  {
+    name: "fleet_status",
+    title: "Get AFK fleet status",
+    description:
+      "Return structured supervisor, slots, churn, and live-worker status for a named fleet.",
+    schema: ["fleet"],
+  },
+  {
+    name: "fleet_create",
+    title: "Create AFK fleet",
+    description:
+      "MUTATING: persist a named fleet profile and spawn its supervisor.",
+    schema: ["name", "runner", "target", "selector", "config", "base"],
+  },
+  {
+    name: "fleet_edit",
+    title: "Edit AFK fleet",
+    description:
+      "MUTATING: update a named fleet profile and send a live resize directive when requested.",
+    schema: ["name", "runner", "target", "selector", "config", "base"],
+  },
+  {
+    name: "fleet_stop",
+    title: "Stop AFK fleet",
+    description: "MUTATING: stop one named fleet and its detached workers.",
+    schema: ["fleet"],
+  },
+  {
+    name: "logs",
+    title: "Read Castle logs",
+    description:
+      "Return raw CastleLaneRecord entries from one structured lane.",
+    schema: ["lane", "id"],
+  },
+  {
+    name: "worker_vitals",
+    title: "Read worker vitals",
+    description: "Return the liveness-qualified state of all local workers.",
+    schema: [],
+  },
+  {
+    name: "dashboard",
+    title: "Build AFK dashboard",
+    description:
+      "Build the structured operational dashboard from GitHub and local state.",
+    schema: ["periodDays"],
+  },
+  {
+    name: "monitor",
+    title: "Read AFK monitor",
+    description:
+      "Return the current workers, history events, and fleet monitor inputs.",
+    schema: [],
+  },
+  {
+    name: "history",
+    title: "Read Castle history",
+    description:
+      "Return structured Castle history records, newest records last.",
+    schema: ["limit"],
+  },
+  {
+    name: "queue_status",
+    title: "Read AFK queues",
+    description: "Return ready-for-agent and ready-for-human queue candidates.",
+    schema: [],
+  },
+  {
+    name: "worker_dispatch",
+    title: "Dispatch AFK worker",
+    description:
+      "MUTATING: run one tracked issue or mint and run one disposable demand through the AFK worker lifecycle.",
+    schema: ["issue", "demand", "runner", "mode"],
+  },
+  {
+    name: "worker_status",
+    title: "Read worker status",
+    description:
+      "Return normalized, liveness-qualified state for one worker or every local worker.",
+    schema: ["worker"],
+  },
+  {
+    name: "worker_stop",
+    title: "Stop AFK worker",
+    description: "MUTATING: terminate one worker process tree.",
+    schema: ["worker"],
+  },
+  {
+    name: "worker_recycle",
+    title: "Recycle AFK worker",
+    description:
+      "MUTATING: terminate one fleet worker so its supervisor can replace the slot.",
+    schema: ["worker"],
+  },
+  {
+    name: "runner_list",
+    title: "List AFK runners",
+    description: "Return the canonical runner specification registry.",
+    schema: [],
+  },
+  {
+    name: "runner_detect",
+    title: "Detect AFK runner",
+    description:
+      "Resolve the runner selected by an explicit override or the current host environment.",
+    schema: ["runner"],
+  },
+  {
+    name: "runner_steer",
+    title: "Steer live AFK worker",
+    description:
+      "MUTATING: write a live-steer request into a running worker's next iteration.",
+    schema: ["worker", "text"],
+  },
+  {
+    name: "worker_request",
+    title: "Dispatch worker with request",
+    description:
+      "MUTATING: dispatch a new worker and inject a special request into its spawn-time handoff.",
+    schema: ["issue", "demand", "runner", "mode", "text"],
+  },
+  {
+    name: "requeue",
+    title: "Requeue AFK issue",
+    description:
+      "MUTATING: apply the complete parked-issue requeue transition and record human guidance.",
+    schema: ["issue", "guidance", "repo", "dryRun", "adoptBranch"],
+  },
+  {
+    name: "retake",
+    title: "Recommend AFK retake",
+    description:
+      "Return the structured issue, PR, branch, worktree, worker-state, and recommended-next-action report.",
+    schema: ["issue", "repo", "prLimit"],
+  },
+  {
+    name: "reap",
+    title: "Reap AFK branches",
+    description:
+      "MUTATING: classify and delete stale local and remote AFK branches.",
+    schema: [],
+  },
+  {
+    name: "unblock_sweep",
+    title: "Sweep dependency blocks",
+    description:
+      "MUTATING: promote dependency-blocked issues whose requirements are all closed.",
+    schema: [],
+  },
+  {
+    name: "gate_run",
+    title: "Run the AFK gate",
+    description:
+      "MUTATING: materialize the branch's feedback worktree and run the package-scoped validation gate against it.",
+    schema: ["branch", "base"],
+  },
+  {
+    name: "gate_baseline_status",
+    title: "Read gate baseline status",
+    description:
+      "Return whether the base branch is tracked-red and the open main-red repair issues that track it.",
+    schema: ["base"],
+  },
+  {
+    name: "land_branch",
+    title: "Land AFK branch",
+    description:
+      "MUTATING: land one validated worker branch into its base through the complete landing sequence.",
+    schema: ["issue", "branch", "base", "title", "openPr"],
+  },
+  {
+    name: "cascade_status",
+    title: "Read close cascade",
+    description:
+      "Return the dependents of one issue and which of them the close cascade would promote.",
+    schema: ["issue"],
+  },
+  {
+    name: "claim_status",
+    title: "Read AFK claim",
+    description:
+      "Return the parsed claim marker records for one issue and the worker currently holding it.",
+    schema: ["issue"],
+  },
+  {
+    name: "claim_release",
+    title: "Release AFK claim",
+    description:
+      "MUTATING: post a concede marker for every un-conceded claim holder so the issue becomes claimable again.",
+    schema: ["issue"],
+  },
+  {
+    name: "worktree_list",
+    title: "List disposable worktrees",
+    description:
+      "Enumerate every checkout under the disposable `.red/tmp/worktrees/*` lanes.",
+    schema: [],
+  },
+  {
+    name: "worktree_remove",
+    title: "Remove disposable worktree",
+    description:
+      "MUTATING: remove one checkout under the disposable `.red/tmp/worktrees/*` lanes.",
+    schema: ["path"],
+  },
+];
+
+describe("aggregated dev:afk MCP tool surface", () => {
+  const tools = createCastleMcpTools({} as CastleMcpDependencies);
+
+  it("composes the frozen tool surface in order", () => {
+    expect(
+      tools.map((tool) => ({
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        schema: Object.keys(tool.inputSchema),
+      })),
+    ).toEqual(SURFACE);
+  });
+
+  it("publishes every tool name exactly once", () => {
+    expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
+  });
+});
