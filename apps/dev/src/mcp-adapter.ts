@@ -61,6 +61,12 @@ import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
 import {
   afkPaths,
   collectMonitorInputs,
+  collectStatuslineAfk,
+  collectStatuslineDocs,
+  collectStatuslineFleet,
+  collectStatuslineRepo,
+  collectStatuslineWorkers,
+  inferGitHubRepoSlug,
   readFleetState,
   resolveRepoContext,
 } from "./runtime/wire.js";
@@ -894,6 +900,8 @@ async function workerVitals(root: string) {
         number: state.current.number,
         runner: state.current.runner,
         retries: state.current.retries,
+        model: state.current.model,
+        effort: state.current.effort,
         phase: state.current.phase,
         iteration: state.current.iteration,
         activity: state.current.activity,
@@ -952,6 +960,47 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
   }
   await gitx.worktreeRemove({ cwd: root }, target);
   return { path: relative(root, target), removed: !existsSync(target) };
+}
+
+async function collectStatuslineAggregate(root: string) {
+  const repoCtx = {
+    root,
+    repo: inferGitHubRepoSlug(root),
+    remote: "origin",
+  };
+  const gitCtx: gitx.GitContext = { cwd: root };
+  const version = readBuildInfo("dev").version;
+
+  const [branch, repoStats, docs, afkBlock, fleet, workers] = await Promise.all([
+    gitx.currentBranch(gitCtx).catch(() => ""),
+    collectStatuslineRepo(repoCtx),
+    collectStatuslineDocs(repoCtx).catch(() => undefined),
+    collectStatuslineAfk(repoCtx).catch(() => null),
+    fleetStatus(root, {}).catch(() => null),
+    workerVitals(root),
+  ]);
+
+  return {
+    project: {
+      basename: basename(root),
+      branch: branch || null,
+      version,
+      docs_unlanded: docs?.count ?? 0,
+    },
+    repo: {
+      open_prs: repoStats.openPrs ?? 0,
+      today_prs: repoStats.todayPrs ?? 0,
+      open_issues: repoStats.openIssues ?? 0,
+      cache_age_s: repoStats.cacheAgeS ?? null,
+    },
+    fleet,
+    workers,
+    queue: {
+      ready_for_agent: afkBlock?.queue ?? 0,
+      ready_for_human: afkBlock?.human ?? 0,
+      cache_age_s: afkBlock?.cacheAgeS ?? null,
+    },
+  };
 }
 
 export function createDevAfkMcpDependencies(
@@ -1091,5 +1140,6 @@ export function createDevAfkMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    statuslineAggregate: () => collectStatuslineAggregate(root),
   };
 }
