@@ -76,16 +76,16 @@ const T = DEFAULT_COMPANION_THRESHOLDS;
 
 describe("resolveCompanionThresholds (#921)", () => {
   it("defaults when config is empty", () => {
-    expect(resolveCompanionThresholds(loadConfig("/nope"))).toEqual(T);
+    expect(resolveCompanionThresholds(loadConfig("/nope", { ignoreActivationGate: true }))).toEqual(T);
   });
   it("reads the namespaced plugins.dev.afk.companion.* block", () => {
-    const cfg = loadConfig("/x", {
+    const cfg = loadConfig("/x", { ignoreActivationGate: true,
       read: () => "plugins:\n  dev:\n    afk:\n      companion:\n        iteration_churn: 3\n",
     });
     expect(resolveCompanionThresholds(cfg).iterationChurn).toBe(3);
   });
   it("a non-positive override falls back to the default (no 0-threshold footgun)", () => {
-    const cfg = loadConfig("/x", { read: () => "afk:\n  companion:\n    waiting_windows: 0\n" });
+    const cfg = loadConfig("/x", { ignoreActivationGate: true, read: () => "afk:\n  companion:\n    waiting_windows: 0\n" });
     expect(resolveCompanionThresholds(cfg).waitingWindows).toBe(T.waitingWindows);
   });
 });

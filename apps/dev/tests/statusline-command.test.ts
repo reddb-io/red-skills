@@ -298,7 +298,7 @@ describe("statusline command — pure helpers", () => {
         dirs.push(dir);
         await mkdir(join(dir, ".red"), { recursive: true });
         await writeFile(join(dir, ".red", "config.yaml"), yaml, "utf8");
-        const cfg = loadConfig(join(dir, ".red", "config.yaml"), { warn: () => undefined });
+        const cfg = loadConfig(join(dir, ".red", "config.yaml"), { ignoreActivationGate: true, warn: () => undefined });
         expect(resolveStatuslinePreset(cfg)).toBe(expected);
       }
     } finally {
@@ -619,7 +619,13 @@ describe("statusline command — rendered line", () => {
   it("uses the configured trunk as the repo-wide loc= diff base", async () => {
     await initRepoWithDevelopTrunk(root);
     await mkdir(join(root, ".red"), { recursive: true });
-    await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: develop\n", "utf8");
+    // `enabled: true` is load-bearing: the loader is fail-closed (ADR 0116), so a
+    // directory that never opted into the dev plugin gets defaults, not `develop`.
+    await writeFile(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    trunk: develop\n",
+      "utf8",
+    );
     await seedFreshCache(root, 0, 0);
 
     const out = sink();

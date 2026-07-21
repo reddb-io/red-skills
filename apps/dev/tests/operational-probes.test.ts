@@ -688,7 +688,7 @@ async function makeGitRepo(): Promise<{ root: string; lockPath: string }> {
   git(root, "branch", "develop");
   await mkdir(join(root, ".red", "state"), { recursive: true });
   await mkdir(join(root, ".red"), { recursive: true });
-  await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: develop\n", "utf8");
+  await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n    trunk: develop\n", "utf8");
   return { root, lockPath: join(root, ".red", "state", "branch-lock.yaml") };
 }
 
@@ -702,7 +702,7 @@ async function makeBaseFreshnessRepo(): Promise<{ root: string; repo: string; or
   git(repo, "init", "-b", "main");
   configureGit(repo);
   await mkdir(join(repo, ".red"), { recursive: true });
-  await writeFile(join(repo, ".red", "config.yaml"), "plugins:\n  dev:\n    trunk: main\n", "utf8");
+  await writeFile(join(repo, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n    trunk: main\n", "utf8");
   await writeFile(join(repo, "README.md"), "fixture\n", "utf8");
   git(repo, "add", ".red/config.yaml", "README.md");
   git(repo, "commit", "-m", "initial");
