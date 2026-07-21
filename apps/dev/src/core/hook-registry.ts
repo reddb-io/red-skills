@@ -84,7 +84,7 @@ export const HOOK_REGISTRY: Record<HookName, HookSpec> = {
     exit: "abort",
   },
   on_baseline_probe: {
-    context: [ro("issue"), ro("workspace"), ro("ok"), ro("downgraded[]")],
+    context: [ro("issue"), ro("workspace"), ro("ok"), ro("inconclusive[]")],
     exit: "continue",
   },
   on_feedback_classify: {
