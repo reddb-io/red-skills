@@ -361,6 +361,14 @@ describe("read-only Memory operations registry", () => {
     expect(getReadOnlyMemoryOperation("memory.workbench").transports).toEqual(["cli", "mcp"]);
   });
 
+  test("does not preserve a legacy CLI dispatch escape hatch", () => {
+    expect(
+      listReadOnlyMemoryOperations().filter(
+        (operation) => operation.renderer.cli.dispatch === "legacy",
+      ),
+    ).toEqual([]);
+  });
+
   test("validates operation input before execution", async () => {
     await expect(
       executeReadOnlyMemoryOperation(
