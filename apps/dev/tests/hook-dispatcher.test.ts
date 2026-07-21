@@ -70,7 +70,6 @@ describe("hook-dispatcher exit-code policy table", () => {
       pre_merge: "abort",
       post_merge: "continue",
       on_attempt_error: "continue",
-      on_attempt_timeout: "continue",
       on_recovery_decision: "continue",
       on_blocked: "continue",
       on_reconcile: "continue",

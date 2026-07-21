@@ -28,7 +28,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/statusline.ts": 1,
   "src/commands/stop.ts": 5,
   "src/core/dashboard.ts": 1,
-  "src/core/process-issue/lifecycle.ts": 69,
+  "src/core/process-issue/lifecycle.ts": 68,
   "src/core/process-issue/recovery.ts": 102,
   "src/core/process-issue/terminal.ts": 86,
   "src/core/process-issue/types.ts": 79,

@@ -90,10 +90,12 @@ export type AttemptOutcome =
   | "exhausted"
   | "runner-transient"
   | "stalled"
-  // AFK runner improvement (#908): the per-attempt resource budget guard aborted
-  // the attempt (token / cost / tool-call / waiting-window ceiling). Partial work
-  // is salvaged through the same feedback gate, then parked for a human — NOT
-  // auto-recovered (a runaway is not a transient flake to blind-retry).
+  // AFK runner improvement (#908): a per-attempt resource ceiling aborted the
+  // attempt (token / cost / tool-call / waiting-window). Parked for a human —
+  // NOT auto-recovered (a runaway is not a transient flake to blind-retry). The
+  // guard that produced it died with the attempt model (ADR 0103); the terminal
+  // name + `blocked:budget` label survive until the disposition vocabulary is
+  // contracted alongside the worker-state schema.
   | "budget-exceeded"
   // ADR 0083 landing precondition (#1018): the Landing aborted because the
   // primary checkout's LOCAL trunk ref has DIVERGED from `origin/<trunk>` (it

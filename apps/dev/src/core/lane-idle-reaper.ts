@@ -150,7 +150,7 @@ export interface LaneIdleReaperOptions {
  * (active descendant or non-trivial cpu) is left alone.
  *
  * Pure over its injected clock / scheduler / probes — no real timers, fs, or ps —
- * so it is fully unit-testable against fixed inputs, mirroring `startAttemptGuard`.
+ * so it is fully unit-testable against fixed inputs.
  */
 export function startLaneIdleReaper(opts: LaneIdleReaperOptions): {
   stop: () => void;

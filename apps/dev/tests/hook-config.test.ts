@@ -142,7 +142,6 @@ describe("hook-config resolution", () => {
       "on_baseline_probe",
       "on_feedback_classify",
       "post_feedback",
-      "on_attempt_timeout",
       "on_recovery_decision",
       "on_blocked",
       "on_reconcile",

@@ -52,10 +52,6 @@ export const CANONICAL_HOOK_NAMES = [
   "pre_merge",
   "post_merge",
   "on_attempt_error",
-  // Commit-anchored progress guard fired (ADR 0044/0045 + #832): the attempt was
-  // alive but produced no new commit within the cap. Fires before the no-agent
-  // reconcile / escalation routing decides what to do with the parked branch.
-  "on_attempt_timeout",
   // Recovery disposition (#832). `on_recovery_decision` is MUTABLE — fired with
   // the composer's proposed retry-vs-escalate decision (core/disposition); a
   // hook can override it via stdout JSON before the labels are applied.
@@ -66,8 +62,9 @@ export const CANONICAL_HOOK_NAMES = [
   "on_blocked",
   "on_reconcile",
   "on_idle",
-  // Periodic proof-of-life (PR-B): fired once per attempt-guard poll (~60s)
-  // during an inner-agent run, NOT a once-per-lifecycle point. A user shell
+  // Periodic worker-vitals stamp (ADR 0065/0103): fired on the independent
+  // vitals sampler's cadence (~20s) during an inner-agent run, NOT a
+  // once-per-lifecycle point. A user shell
   // command here receives the heartbeat context (issue/branch/runner + the full
   // worker vitals, ADR 0065/#832) so an external monitor can be pinged or drive
   // custom live alerting. No built-in default; absent config → no-op.
