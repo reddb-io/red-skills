@@ -3,7 +3,12 @@ import { Writable } from "node:stream";
 import { formatCurrentBlocker } from "../src/core/blocker-state.js";
 import { renderClaimComment } from "../src/core/claim.js";
 import { isRequeueComplete } from "../src/core/requeue.js";
-import { requeueCommand, type RequeueGh, type RequeueAdoptRunner } from "../src/commands/requeue.js";
+import {
+  executeRequeue,
+  requeueCommand,
+  type RequeueGh,
+  type RequeueAdoptRunner,
+} from "../src/commands/requeue.js";
 
 function capture(): { stream: Writable; text: () => string; stderr: () => string } {
   let buf = "";
@@ -87,6 +92,28 @@ const specBodyMismatch = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCu
 const sensitivePathBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(sensitivePathBlocker)}\n`;
 
 describe("requeue command — happy path", () => {
+  it("returns a stable structured result for a non-parked no-op", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: "## Summary\nNothing.\n",
+      labels: ["ready-for-agent"],
+    });
+
+    await expect(
+      executeRequeue(
+        { issue: 42, guidance: "Retry." },
+        { cwd: "/tmp", gh },
+      ),
+    ).resolves.toMatchObject({
+      issue: 42,
+      applied: false,
+      outcome: "no-op",
+      exitCode: 0,
+      plan: { requeueable: false },
+    });
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
   it("applies the full transition so a label flip alone is never the requeue", async () => {
     const { gh, calls, state } = fakeGh({
       state: "OPEN",
