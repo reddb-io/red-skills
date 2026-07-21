@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
   listMemoryHttpRegistryRoutes,
+  memoryHttpMethodAllowed,
   memoryOpenApiPathsForOperations,
 } from "../src/http-server.js";
 import {
@@ -93,6 +94,79 @@ describe("Memory operation transport adapter", () => {
     await expect(
       operationStructuredContent("memory.map-contract", output, {} as MemoryStore),
     ).resolves.toEqual(output);
+  });
+
+  test("enforces registered HTTP methods and only treats HEAD as a GET alias", () => {
+    const operation = getReadOnlyMemoryOperation("memory.whatif");
+    const postOnly = {
+      ...operation,
+      renderer: {
+        ...operation.renderer,
+        http: { ...operation.renderer.http, methods: ["POST"] as const },
+      },
+    };
+
+    expect(memoryHttpMethodAllowed(postOnly, "POST")).toBe(true);
+    expect(memoryHttpMethodAllowed(postOnly, "GET")).toBe(false);
+    expect(memoryHttpMethodAllowed(postOnly, "HEAD")).toBe(false);
+    expect(memoryHttpMethodAllowed(operation, "HEAD")).toBe(true);
+  });
+
+  test("publishes registered POST input types and required fields in OpenAPI", () => {
+    const definition = {
+      id: "memory.test-post-registration",
+      title: "Test POST registration",
+      description: "Proves POST schema ownership.",
+      inputSchema: z.object({
+        changes: z.array(z.object({ kind: z.string() })),
+        limit: z.number().optional(),
+      }),
+      outputSchema: z.object({ status: z.literal("ok") }),
+      safetyClass: "read-only",
+      sideEffectClass: "none",
+      capabilities: ["graph-store"],
+      transports: ["http"],
+      inputBinding: {
+        fields: [
+          { field: "changes", sources: ["query"], type: "object-array", required: true },
+          { field: "limit", sources: ["query"], type: "number" },
+        ],
+      },
+      outputKind: { kind: "report", format: "json" },
+      renderer: {
+        cli: { command: "test-post-registration", supportsJson: true },
+        mcp: { toolName: "memory_test_post_registration" },
+        http: { route: "/api/registered-post-test", methods: ["POST"] },
+      },
+      execute: async () => ({ status: "ok" as const }),
+    } satisfies MemoryOperationDefinition<
+      { changes: Array<{ kind: string }>; limit?: number },
+      { status: "ok" }
+    >;
+    const operation = createReadOnlyMemoryOperationRegistry([definition]).get(definition.id);
+
+    expect(memoryOpenApiPathsForOperations([operation])).toMatchObject({
+      "/api/registered-post-test": {
+        post: {
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    changes: { type: "array", items: { type: "object" } },
+                    limit: { type: "number" },
+                  },
+                  required: ["changes"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   test("binds doc brief CLI argv from registry input facets", () => {
