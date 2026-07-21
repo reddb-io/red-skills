@@ -11,9 +11,31 @@ operandi; `/go` is the ad-hoc-only exception. Drain the agent-ready backlog by
 letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
-The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host
-runner (`codex` from Codex, `claude` from Claude Code). Resolve the
-`red-skills-dev` runtime through the shared contract in
+## Operate the castle through the `dev:afk` MCP
+
+**The `dev:afk` MCP is the interface; `/afk` is one of its clients.** Every
+castle capability this skill needs — queue, dispatch, fleet, runners, gate,
+landing, claim, worktrees, hygiene, observability — is an MCP tool returning
+structured TOON. Drive those tools; do not shell out to reimplement what a tool
+already does. The complete tool surface, the host tool-name prefix rule, and the
+mutation-mode contract live in [`MCP.md`](./MCP.md) — read it before the first
+call and do not restate the tool list here.
+
+The usual shape of a drain:
+
+1. `queue_status` — what is drainable now, before anything is claimed.
+2. `runner_detect` — confirm the runner this host resolves to.
+3. `worker_dispatch` (one issue) or `fleet_create` (a named fleet) to start work.
+4. `monitor`, `worker_vitals`, `fleet_status` — read progress; never poll a
+   mutating tool for status.
+5. `gate_run` → `land_branch` when a worker branch needs validation and landing
+   outside the normal in-worker path.
+
+**When the MCP is unreachable, name that and fall back to the `red-skills-dev`
+CLI** — the same engine over the same cores, so the fallback changes transport,
+not behavior. The invoking LLM is responsible for setting `RED_AFK_RUNNER` to
+its own host runner (`codex` from Codex, `claude` from Claude Code). Resolve the
+runtime through the shared contract in
 [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
 installed `red-skills-dev` shim on `PATH` first, otherwise use the ADR 0091 npm
 direct-run fallback
@@ -36,42 +58,56 @@ contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
 
-- `/afk` - drain every open issue labelled `ready-for-agent`.
+Each verb below names the `dev:afk` tool that serves it; the flag form is the
+CLI fallback for the same operation.
+
+- `/afk` - drain every open issue labelled `ready-for-agent`. Read the queue
+  with `queue_status`, then dispatch with `worker_dispatch` or `fleet_create`.
 - `/afk --spec 42` - drain only tickets linked to Spec #42; the Spec issue
-  itself is excluded.
-- `/afk --issues 356,359,362` - drain an explicit issue list in that order.
+  itself is excluded. As a fleet this is the `selector.spec` profile field.
+- `/afk --issues 356,359,362` - drain an explicit issue list in that order; as a
+  fleet, `selector.issues`.
 - `/afk --runner codex` - pin a backend. This disables detection cascade and is
-  mutually exclusive with `--alternate`.
+  mutually exclusive with `--alternate`. `runner_list` and `runner_detect`
+  answer which backends exist and which one this host resolves to.
 - `/afk --alternate` - opt into round-robin runner rotation between issues.
 - `/afk --fallback-runner` - opt into one mid-issue runner swap on
   `RUNNER_EXHAUSTED`; otherwise exhaustion uses bounded `blocked:quota`
   recovery and exits 75.
 - `/afk --request "..."` or `/afk -r "..."` - add a special user request block
-  to every inner-agent prompt in this run.
+  to every inner-agent prompt in this run. For a single worker this is
+  `worker_request` at spawn time, or `runner_steer` to reach a worker already
+  running.
 - `/afk -n 5` - cap the run at five issues; `-n 0` and omitted `-n` mean
   unlimited queue drain.
 - `/afk --once` - single supervised iteration for debugging the prompt.
 - `/afk --boot-only` - run boot sweeps and prechecks without claiming work.
-- `/afk monitor` - read-only status board; read [`monitor.md`](./monitor.md)
-  for the dashboard and native-task mirror contract.
+- `/afk monitor` - read-only status board over `monitor`, `worker_vitals`, and
+  `queue_status`; read [`monitor.md`](./monitor.md) for the dashboard and
+  native-task mirror contract.
 - `/afk dashboard [--period 30d] [--json]` - process dashboard for open work,
-  local workers, flow metrics, and DORA proxies.
+  local workers, flow metrics, and DORA proxies (`dashboard`, `periodDays`).
 - `/afk daily-review [--json]` / `/afk weekly-review [--json]` - operational
-  review for the local daily or six-day window.
-- `/afk retake 123 [--apply] [--json]` - issue resumption report; safe local
-  setup only with `--apply`.
-- `/afk fleet [N]` - supervise `N` concurrent workers; read
-  [`fleet.md`](./fleet.md) before launch or stop operations.
-- `/afk fleet stop` - gracefully stop the fleet supervisor and auto-monitor.
-- `/afk fleet status` - read-only fleet ground truth: supervisor pid, health
-  verdict, runner, slot occupancy, bundle version/skew, churn, live workers, and
-  whether a watchdog respawn would fire. Answers "what is actually running?"
-  without cross-referencing pid files and snapshots by hand.
-- `/afk fleet logs --supervisor|--worker <id>|--all [--follow]` - read-only
-  local log view over the structured castle lanes. Supervisor logs render the
-  supervisor lane; worker logs render a single worker lane; `--all` merges all
-  worker lanes and prefixes every line with the worker id.
-- `/afk reap` - run branch hygiene without starting a worker.
+  review for the local daily or six-day window, over `history` + `dashboard`.
+- `/afk retake 123 [--apply] [--json]` - issue resumption report (`retake`, a
+  read tool that only recommends); safe local setup only with `--apply`.
+- `/afk fleet [N]` - supervise `N` concurrent workers via `fleet_create`, or
+  resize a running one via `fleet_edit`; read [`fleet.md`](./fleet.md) before
+  launch or stop operations.
+- `/afk fleet stop` - `fleet_stop`: gracefully stop the named fleet supervisor
+  and auto-monitor.
+- `/afk fleet status` - `fleet_status`, plus `fleet_list` for the registered
+  profiles: read-only fleet ground truth — supervisor pid, health verdict,
+  runner, slot occupancy, bundle version/skew, churn, live workers, and whether
+  a watchdog respawn would fire. Answers "what is actually running?" without
+  cross-referencing pid files and snapshots by hand.
+- `/afk fleet logs --supervisor|--worker <id>|--all [--follow]` - the `logs`
+  tool, one lane per call. Read-only local view over the structured castle
+  lanes: supervisor logs render the supervisor lane; worker logs render a single
+  worker lane; `--all` merges all worker lanes and prefixes every line with the
+  worker id.
+- `/afk reap` - `reap`: run branch hygiene without starting a worker.
+  `unblock_sweep` is its dependency-gate counterpart.
 
 For GitHub Actions adoption, use [`actions-lane.md`](./actions-lane.md). The
 same `/afk --issues N --runner opencode --once` lane runs as reusable workflow,
@@ -81,6 +117,8 @@ composite action, or local bundle invocation.
 
 Read the focused reference before touching that concern:
 
+- The `dev:afk` MCP tool surface, host prefixing, mutation modes, and the CLI
+  fallback rule: [`MCP.md`](./MCP.md).
 - Runtime, sandcastle substrate, CLI forwarding, bootstrap, hard preconditions,
   issue selection, lifecycle, failure labels, per-issue loop, merge/close,
   runner fallback, completion bounds, stop conditions, and reporting:
@@ -107,6 +145,9 @@ Read the focused reference before touching that concern:
 
 ## Load-Bearing Rules
 
+- The `dev:afk` MCP is the canonical castle interface (ADR 0120). `/afk` is a
+  client of it, so a capability missing from the tools is a gap to file against
+  the MCP, never a reason to hand-roll the operation in shell.
 - Tracked work belongs in `/afk`. An empty `ready-for-agent` queue with a
   non-empty open backlog is a flow bug to surface with a gate census, not a
   clean "nothing to do" stop.
@@ -115,7 +156,10 @@ Read the focused reference before touching that concern:
 - Worktrees live under `.red/tmp/workers/{id}/{N}-a{n}/worktree`; the worker
   liveness anchor is `.red/tmp/workers/{id}/worker.pid`.
 - Claiming uses the three-layer scheme: local `mkdir` lock, GitHub label
-  pre-check, and stale-lock boot sweep.
+  pre-check, and stale-lock boot sweep — the same scheme that keeps two named
+  fleets on one backlog from double-claiming an issue. Inspect it with
+  `claim_status`; cure a ghost claim with `claim_release`, never by editing
+  labels by hand.
 - The inner agent's canonical completion signals are
   `<promise>DONE</promise>` and `<promise>BLOCKED</promise>`.
 - The gate command is canonical. Feedback plus the operator's
@@ -134,8 +178,11 @@ Read the focused reference before touching that concern:
 
 `/afk` is trivially parallel: run another `/afk` in another terminal. Each run
 gets a worker ID (`w` + 4 random `[A-Z0-9]` chars), separate worker files, and
-the same claim safety. Choose fleet width by disjointness; read
-[`fleet.md`](./fleet.md) for the full rule.
+the same claim safety. **Named fleets are the structured form of the same
+parallelism** — `fleet_create` registers a profile (runner + selector + config +
+base), so several fleets partitioned by runner or work scope drain one checkout
+concurrently. Choose fleet width by disjointness; read [`fleet.md`](./fleet.md)
+for the full rule.
 
 ## Stop Conditions
 
