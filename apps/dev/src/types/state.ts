@@ -157,6 +157,8 @@ export interface WorkerVitals {
   number: number | string;
   runner: string;
   retries: number;
+  model: string;
+  effort: string;
   // lifecycle
   phase: string;
   iteration: number | string;
