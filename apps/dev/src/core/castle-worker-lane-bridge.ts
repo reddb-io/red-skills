@@ -32,6 +32,10 @@ export interface CastleWorkerLaneBridgeOptions {
   attemptDir: () => string;
   nowIso?: () => string;
   nowMs?: () => number;
+  /** Named fleet this worker belongs to. When set, stamped as `supervisor_id`
+   * in every castle state snapshot so `fleet_status` can partition workers by
+   * fleet without relying solely on the supervisor's slot-pid map. */
+  fleetName?: string;
 }
 
 function currentIssue(state: AfkState): number | undefined {
@@ -52,6 +56,7 @@ function snapshotFromState(
   workerId: string,
   state: AfkState,
   updatedAt: string,
+  fleetName?: string,
 ): CastleStateSnapshot {
   return {
     kind: "worker",
@@ -64,6 +69,7 @@ function snapshotFromState(
     started_at: state.started_at || state.current.started_at || updatedAt,
     current: compactCurrent(state),
     envelope: state.envelope,
+    ...(fleetName ? { supervisor_id: fleetName } : {}),
   };
 }
 
@@ -89,7 +95,7 @@ export function createCastleWorkerLaneBridge(
     if (!state) return;
     await writeCastleStateSnapshot(
       castleStateSnapshotPath(paths, "worker", options.workerId),
-      snapshotFromState(options.workerId, state, nowIso()),
+      snapshotFromState(options.workerId, state, nowIso(), options.fleetName),
     );
   }
 
