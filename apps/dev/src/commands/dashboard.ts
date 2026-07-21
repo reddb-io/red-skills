@@ -149,6 +149,24 @@ export async function dashboardCommand(
   exec: ExecFn = execTool,
 ): Promise<number> {
   const flags = parseDashboardFlags(args);
+  const report = await collectDashboardReport(flags.periodDays, cwd, exec);
+
+  const rendered =
+    flags.format === "json"
+      ? JSON.stringify(report, null, 2)
+      : flags.format === "human"
+        ? renderDashboardReport(report)
+        : renderDashboardReportToon(report);
+  stdout.write(`${rendered}\n`);
+  return 0;
+}
+
+/** Value-returning dashboard primitive shared by the CLI and MCP surfaces. */
+export async function collectDashboardReport(
+  periodDays: number,
+  cwd = process.cwd(),
+  exec: ExecFn = execTool,
+) {
   const ctx = await resolveRepoContext(cwd);
   const repoArgs = ctx.repo ? ["--repo", ctx.repo] : [];
 
@@ -192,19 +210,12 @@ export async function dashboardCommand(
       total: monitor.workers.length,
     },
     now: new Date(),
-    periodDays: flags.periodDays,
+    periodDays,
   });
 
   if (!ctx.repo) {
     report.warnings.push("Could not resolve GitHub repo; GitHub-derived metrics are empty.");
   }
 
-  const rendered =
-    flags.format === "json"
-      ? JSON.stringify(report, null, 2)
-      : flags.format === "human"
-        ? renderDashboardReport(report)
-        : renderDashboardReportToon(report);
-  stdout.write(`${rendered}\n`);
-  return 0;
+  return report;
 }
