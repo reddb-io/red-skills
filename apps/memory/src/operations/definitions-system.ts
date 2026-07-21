@@ -924,6 +924,7 @@ const WHATIF_OPERATION: MemoryOperationDefinition<OperationSchemas.WhatifInput, 
       description:
         "Read-only what-if surface (memory.whatif.v1). Accepts a list of proposed changes (rename/delete/edit, each with file/symbol/with/description) and returns predicted blast radius: affected.files, affected.symbols, affected.tests, historical_attempts from reasoning-replay, breakage_likelihood in [0,1], and self_confidence in [0,1]. Never mutates state.",
     },
+    http: { methods: ["GET", "POST"] },
   },
   execute: (ctx, input) =>
     buildWhatifReport(ctx.store, input.changes, { limit: input.limit, now: ctx.now }),
