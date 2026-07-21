@@ -12,6 +12,7 @@ import {
 import {
   createDefaultDevAfkMcpOperations,
   createDevAfkMcpDependencies,
+  resolveDevCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
 
@@ -30,6 +31,17 @@ async function root(): Promise<string> {
 }
 
 describe("dev:afk MCP host adapter", () => {
+  it("resolves the sibling dev CLI bundle from local and cached MCP assets", () => {
+    expect(
+      resolveDevCliBundle(join("dist", "afk-mcp.bundle.min.mjs")),
+    ).toBe(join("dist", "dev.bundle.min.mjs"));
+    expect(
+      resolveDevCliBundle(
+        join("cache", "afk-mcp-2.76.1.bundle.min.mjs"),
+      ),
+    ).toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
+  });
+
   it("lists registered fleets through the Castle registry primitive", async () => {
     const cwd = await root();
     const paths = createEnginePaths(join(cwd, ".red"));
