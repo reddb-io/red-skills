@@ -80,6 +80,8 @@ export interface Trace {
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
+  /** Attempt-ledger records emitted through deps.recordWorkerEvent. */
+  workerEvents: Array<{ kind: string; payload?: Record<string, unknown> }>;
   /** Main-red repair issue create attempts from the baseline probe sync path. */
   /** Compact state patches written to afk.state.toon. */
   statePatches: Array<Record<string, unknown>>;
@@ -253,6 +255,8 @@ export interface HarnessOptions {
   adversarialReview?: ProcessIssueDeps["adversarialReview"];
   adversarialFindings?: AdversarialReviewFindings;
   adversarialFindingsSequence?: AdversarialReviewFindings[];
+  /** Reviewer CLI failure (#2352): the extract port rejects with this message. */
+  adversarialExtractError?: string;
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
@@ -297,6 +301,7 @@ export function harness(opts: HarnessOptions = {}): {
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
+    workerEvents: [],
     statePatches: [],
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
@@ -549,6 +554,7 @@ export function harness(opts: HarnessOptions = {}): {
     extractAdversarialReview: opts.adversarialReview
       ? async ({ context, runner, model, effort, maxIterations }) => {
           trace.adversarialReviewContexts.push({ ...context, runner, model, effort, maxIterations });
+          if (opts.adversarialExtractError) throw new Error(opts.adversarialExtractError);
           return opts.adversarialFindingsSequence?.[trace.adversarialReviewContexts.length - 1] ?? opts.adversarialFindings ?? {
             summary: "Stubbed adversarial review summary.",
             findings: [
@@ -707,6 +713,9 @@ export function harness(opts: HarnessOptions = {}): {
     nowIso: () => "2026-05-30T00:00:00Z",
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
+    },
+    recordWorkerEvent: (kind, payload) => {
+      trace.workerEvents.push({ kind, ...(payload ? { payload } : {}) });
     },
     markState: (patch) => {
       trace.statePatches.push(patch);

@@ -879,6 +879,23 @@ export function resolveTier(
 }
 
 /**
+ * The tier table's OWN default model/effort for a runner — the shipped pair,
+ * with no file overrides, no legacy scalars, and no env applied. Every runner
+ * ships a full table, so this pair is always runnable on that runner: it is the
+ * last-resort substitute when an operator pins a model the runner's CLI cannot
+ * dispatch (#2352). An unknown runner folds onto the claude table via
+ * `toAgentRunner`, exactly as {@link resolveTier} does.
+ */
+export function defaultTier(runner: string, taskClass: AfkModelTier = "think"): ResolvedTier {
+  const tierRunner = toAgentRunner(runner as Runner);
+  const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  return {
+    model: CONFIG_DEFAULTS[defaultTierKey(tierRunner, tier, "model")!],
+    effort: CONFIG_DEFAULTS[defaultTierKey(tierRunner, tier, "effort")!] as AgentEffort,
+  };
+}
+
+/**
  * Read the operator-declared backpressure command list (`afk.backpressure`),
  * in declaration order (issue #430). The list form
  *

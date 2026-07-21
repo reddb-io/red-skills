@@ -56,6 +56,21 @@ implementer's** — context isolation, not model diversity, is what the pattern
 proved — with cross-model as a configurable upgrade. **Model, effort, and runner
 are all configurable** under `plugins.dev.review.*`.
 
+**Amendment (#2352, 2026-07-21).** Two properties the first implementation
+lacked, learned from a fleet-wide landing outage:
+
+- **The reviewer is one coherent (runner, model, effort) tuple, not three
+  independent knobs.** A configured model is honoured only on a runner whose CLI
+  can dispatch it — the runner spec registry owns that answer — and an
+  unsupported pin is substituted with that runner's review-tier default under a
+  logged notice. A codex model pinned repo-wide and spawned through the claude
+  CLI is not a degraded review; it is an immediate non-zero exit.
+- **Advisory failure is never fatal.** The pass has exactly three legal verdicts
+  — pass, correct, park. Infrastructure failure of the reviewer itself is none of
+  them: the attempt is already machine-validated when the pass runs, so a
+  crashed reviewer degrades to "pass with a logged warning" plus an attempt-ledger
+  record, and the landing proceeds.
+
 ## Considered options
 
 - **Advisory-only** (keep `review.ts`'s shape): rejected — advisory findings do

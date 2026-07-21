@@ -347,6 +347,50 @@ describe("config", () => {
     ).toEqual({ runner: "codex", model: "gpt-validate", effort: "low" });
   });
 
+  it("keeps a configured reviewer model the runner CAN dispatch (#2352)", () => {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
+      read: () => "plugins:\n  dev:\n    review:\n      runner: codex\n      model: gpt-5.6-sol\n      effort: high\n",
+    });
+    const config = resolveAdversarialReviewConfig((key) => getConfig(values, key));
+    expect(
+      resolveAdversarialReviewer({
+        config,
+        implementer: { runner: "claude", model: "claude-opus-4-8", effort: "high" },
+        taskClass: "complex",
+        resolveTier: () => ({ model: "gpt-5.5", effort: "medium" }),
+      }),
+    ).toEqual({ runner: "codex", model: "gpt-5.6-sol", effort: "high" });
+  });
+
+  it("substitutes a cross-runner model pin with the runner's review-tier default (#2352)", () => {
+    // The #2352 outage: a codex model pinned repo-wide, run through the claude CLI.
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
+      read: () => "plugins:\n  dev:\n    review:\n      enabled: true\n      model: gpt-5.6-sol\n      effort: medium\n",
+    });
+    const config = resolveAdversarialReviewConfig((key) => getConfig(values, key));
+    const resolved = resolveAdversarialReviewer({
+      config,
+      implementer: { runner: "claude", model: "claude-opus-4-8", effort: "high" },
+      taskClass: "complex",
+      resolveTier: () => ({ model: "claude-opus-4-8", effort: "medium" }),
+    });
+    expect(resolved).toMatchObject({ runner: "claude", model: "claude-opus-4-8", effort: "medium" });
+    expect(resolved.notices?.[0]).toContain("cannot run model 'gpt-5.6-sol'");
+    expect(resolved.notices?.[0]).toContain("claude-opus-4-8");
+  });
+
+  it("falls back to the shipped tier table when no tier resolver can supply a runnable model (#2352)", () => {
+    const resolved = resolveAdversarialReviewer({
+      config: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any", runner: "codex" },
+      implementer: { runner: "claude", model: "claude-opus-4-8", effort: "max" },
+      taskClass: "complex",
+    });
+    // codex can run neither the implementer's claude model nor its `max` effort.
+    expect(resolved).toMatchObject({ runner: "codex", model: "gpt-5.5", effort: "medium" });
+    expect(resolved.notices).toHaveLength(2);
+    expect(resolved.notices?.[1]).toContain("does not accept effort 'max'");
+  });
+
   it("aggregates adversarial blocking findings by quorum (#2210)", () => {
     const one = {
       summary: "one",
