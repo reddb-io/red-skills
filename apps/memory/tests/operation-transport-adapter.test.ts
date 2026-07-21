@@ -16,6 +16,7 @@ import {
 import type { MemoryOperationDefinition } from "../src/operations.js";
 import type { MemoryStore } from "../src/graph-store.js";
 import { operationStructuredContent } from "../src/mcp-server/structured-content.js";
+import { renderRegistryCliReport } from "../src/cli/docs.js";
 import {
   bindMemoryOperationInput,
   listMemoryOperationsForTransport,
@@ -167,6 +168,17 @@ describe("Memory operation transport adapter", () => {
         },
       },
     });
+  });
+
+  test("renders a registered markdown report from its typed output", () => {
+    const operation = {
+      ...getReadOnlyMemoryOperation("memory.structural-impact"),
+      outputKind: { kind: "report", format: "markdown" } as const,
+    };
+
+    expect(renderRegistryCliReport(operation, { markdown: "# Impact\n\nSafe.\n" }, false)).toBe(
+      "# Impact\n\nSafe.\n",
+    );
   });
 
   test("binds doc brief CLI argv from registry input facets", () => {
