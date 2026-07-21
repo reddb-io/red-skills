@@ -28,6 +28,10 @@ export function renderEffortBrief(effort: EffortRecord): string {
     intent: effort.intent,
     created_at: effort.created_at,
     updated_at: effort.updated_at,
+    ...(effort.route !== undefined ? { route: effort.route } : {}),
+    ...(effort.artifact_refs !== undefined && effort.artifact_refs.length > 0
+      ? { artifact_refs: [...effort.artifact_refs] }
+      : {}),
   });
 }
 
