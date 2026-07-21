@@ -98,7 +98,7 @@ export interface MemoryOperationContext {
   transportSurface?: string;
 }
 
-export interface MemoryOperationDefinition<Input, Output> {
+export interface MemoryOperationDefinition<Input, Output> extends Partial<MemoryOperationFacets> {
   id: string;
   title: string;
   description: string;
@@ -114,7 +114,7 @@ export interface MemoryOperationDefinition<Input, Output> {
 
 export type MemoryOperation<Input, Output> = Omit<
   MemoryOperationDefinition<Input, Output>,
-  "transports"
+  "transports" | "inputBinding" | "outputKind"
 > &
   MemoryOperationFacets & {
     transports: readonly MemoryOperationTransport[];
