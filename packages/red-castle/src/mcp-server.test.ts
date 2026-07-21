@@ -38,7 +38,9 @@ function deps(): CastleMcpDependencies {
     gateBaselineStatus: vi.fn(async () => ({ red: false, issue: null })),
     landBranch: vi.fn(async () => ({ ok: true, mergeSha: "abc123" })),
     cascadeStatus: vi.fn(async () => []),
-    claimStatus: vi.fn(async () => [{ worker: "host:worker-1", kind: "claim" }]),
+    claimStatus: vi.fn(async () => [
+      { worker: "host:worker-1", kind: "claim" },
+    ]),
     claimRelease: vi.fn(async () => ({ released: true })),
     worktreeList: vi.fn(async () => [{ lane: "landing", name: "main-0" }]),
     worktreeRemove: vi.fn(async () => ({ removed: true })),
@@ -109,23 +111,27 @@ describe("dev:afk MCP tools", () => {
     const tools = createCastleMcpTools(d);
 
     await expect(
-      tools.find((tool) => tool.name === "gate_run")!.invoke({
-        branch: "afk/wAAAA/2307-sensitive-tools",
-        base: "main",
-      }),
+      tools
+        .find((tool) => tool.name === "gate_run")!
+        .invoke({
+          branch: "afk/wAAAA/2307-sensitive-tools",
+          base: "main",
+        }),
     ).resolves.toMatchObject({ ok: true });
     expect(d.gateRun).toHaveBeenCalledWith({
       branch: "afk/wAAAA/2307-sensitive-tools",
       base: "main",
     });
 
-    await tools.find((tool) => tool.name === "land_branch")!.invoke({
-      issue: 2307,
-      title: "Sensitive tools",
-      branch: "afk/wAAAA/2307-sensitive-tools",
-      base: "main",
-      gatePassed: true,
-    });
+    await tools
+      .find((tool) => tool.name === "land_branch")!
+      .invoke({
+        issue: 2307,
+        title: "Sensitive tools",
+        branch: "afk/wAAAA/2307-sensitive-tools",
+        base: "main",
+        gatePassed: true,
+      });
     expect(d.landBranch).toHaveBeenCalledWith(
       expect.objectContaining({ issue: 2307, gatePassed: true }),
     );
@@ -133,7 +139,12 @@ describe("dev:afk MCP tools", () => {
 
   it("publishes mutating claim and worktree operations with explicit warnings", () => {
     const tools = createCastleMcpTools(deps());
-    for (const name of ["gate_run", "land_branch", "claim_release", "worktree_remove"]) {
+    for (const name of [
+      "gate_run",
+      "land_branch",
+      "claim_release",
+      "worktree_remove",
+    ]) {
       expect(tools.find((tool) => tool.name === name)!.description).toMatch(
         /^MUTATING:/,
       );
