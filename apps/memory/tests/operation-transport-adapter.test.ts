@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import { listMemoryHttpRegistryRoutes } from "../src/http-server.js";
+import {
+  listMemoryHttpRegistryRoutes,
+  memoryOpenApiPathsForOperations,
+} from "../src/http-server.js";
 import {
   getReadOnlyMemoryOperation,
   createReadOnlyMemoryOperationRegistry,
@@ -50,6 +53,20 @@ describe("Memory operation transport adapter", () => {
     expect(listMemoryHttpRegistryRoutes([operation])).toEqual([
       { route: "/api/test-registration", operationId: definition.id },
     ]);
+    expect(memoryOpenApiPathsForOperations([operation])).toEqual({
+      "/api/test-registration": {
+        get: {
+          summary: definition.description,
+          parameters: [],
+          responses: {
+            "200": {
+              description: definition.description,
+              content: { "application/json": { schema: { type: "object" } } },
+            },
+          },
+        },
+      },
+    });
   });
 
   test("uses a report's typed output as MCP structured content", async () => {
