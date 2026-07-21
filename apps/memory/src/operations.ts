@@ -2,6 +2,7 @@ export type {
   MemoryOperationSafetyClass,
   MemoryOperationSideEffectClass,
   MemoryOperationCapability,
+  MemoryOperationTransport,
   MemoryOperationInputSource,
   MemoryOperationInputType,
   MemoryOperationReportFormat,

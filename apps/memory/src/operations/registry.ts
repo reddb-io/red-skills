@@ -5,12 +5,14 @@ import type {
   MemoryOperationFacets,
   MemoryOperationInputBinding,
   MemoryOperationOutputKind,
+  MemoryOperationTransport,
   ReadOnlyMemoryOperation,
   ReadOnlyMemoryOperationRegistry,
 } from "./types.js";
 import { MEMORY_OPERATION_FACETS } from "./facets.js";
 import { READ_ONLY_MEMORY_OPERATION_DEFINITIONS } from "./definitions.js";
 
+const DEFAULT_READ_ONLY_TRANSPORTS = ["cli", "mcp", "http"] as const;
 const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry(
   READ_ONLY_MEMORY_OPERATION_DEFINITIONS,
 );
@@ -21,9 +23,13 @@ export function createReadOnlyMemoryOperationRegistry(
 ): ReadOnlyMemoryOperationRegistry {
   const byId = new Map<string, ReadOnlyMemoryOperation>();
   for (const operation of operations) {
+    const inlineFacets =
+      operation.inputBinding && operation.outputKind
+        ? { inputBinding: operation.inputBinding, outputKind: operation.outputKind }
+        : undefined;
     const operationWithFacets = attachMemoryOperationFacets(
       operation,
-      facetsByOperationId[operation.id],
+      inlineFacets ?? facetsByOperationId[operation.id],
     );
     assertReadOnlyOperation(operationWithFacets);
     if (byId.has(operation.id)) throw new Error(`duplicate Memory operation: ${operation.id}`);
@@ -82,9 +88,29 @@ function attachMemoryOperationFacets<Input, Output>(
   assertMemoryOperationFacets(operation.id, facets);
   return {
     ...operation,
+    transports: validatedTransports(operation.id, operation.transports),
     inputBinding: facets.inputBinding,
     outputKind: facets.outputKind,
   };
+}
+
+function validatedTransports(
+  operationId: string,
+  transports: readonly MemoryOperationTransport[] | undefined,
+): readonly MemoryOperationTransport[] {
+  const declared = transports ?? DEFAULT_READ_ONLY_TRANSPORTS;
+  if (declared.length === 0) {
+    throw new Error(`Memory operation ${operationId} has no visible transports`);
+  }
+  if (new Set(declared).size !== declared.length) {
+    throw new Error(`Memory operation ${operationId} has duplicate transports`);
+  }
+  for (const transport of declared) {
+    if (!DEFAULT_READ_ONLY_TRANSPORTS.includes(transport)) {
+      throw new Error(`Memory operation ${operationId} has invalid transport ${transport}`);
+    }
+  }
+  return [...declared];
 }
 
 function assertMemoryOperationFacets(

@@ -6,6 +6,7 @@ import type { MemoryStore } from "../graph-store.js";
 export type MemoryOperationSafetyClass = "read-only" | "mutating";
 export type MemoryOperationSideEffectClass = "none" | "cache-write" | "writes-memory";
 export type MemoryOperationCapability = "graph-store";
+export type MemoryOperationTransport = "cli" | "mcp" | "http";
 export type MemoryOperationInputSource = "positional" | "flag" | "query";
 export type MemoryOperationInputType =
   | "string"
@@ -76,10 +77,23 @@ export interface MemoryOperationRendererMetadata {
   cli: {
     command: string;
     supportsJson: boolean;
+    defaultFormat?: "json" | "toon";
+    reservedSubcommands?: readonly string[];
+    presentation?: {
+      render: (output: unknown, input: MemoryOperationTransportInput) => string;
+      jsonOutput?: (output: unknown) => unknown;
+      viewerSink?: "default" | "explicit";
+    };
   };
   mcp: {
     toolName: string;
-    description: string;
+    /** @deprecated Use the operation-owned description. */
+    description?: string;
+  };
+  http?: {
+    route?: string;
+    aliases?: readonly string[];
+    methods?: readonly ("GET" | "POST")[];
   };
 }
 
@@ -92,7 +106,7 @@ export interface MemoryOperationContext {
   transportSurface?: string;
 }
 
-export interface MemoryOperationDefinition<Input, Output> {
+export interface MemoryOperationDefinition<Input, Output> extends Partial<MemoryOperationFacets> {
   id: string;
   title: string;
   description: string;
@@ -101,12 +115,18 @@ export interface MemoryOperationDefinition<Input, Output> {
   safetyClass: MemoryOperationSafetyClass;
   sideEffectClass: MemoryOperationSideEffectClass;
   capabilities: readonly MemoryOperationCapability[];
+  transports?: readonly MemoryOperationTransport[];
   renderer: MemoryOperationRendererMetadata;
   execute: (ctx: MemoryOperationContext, input: Input) => Promise<Output>;
 }
 
-export type MemoryOperation<Input, Output> = MemoryOperationDefinition<Input, Output> &
-  MemoryOperationFacets;
+export type MemoryOperation<Input, Output> = Omit<
+  MemoryOperationDefinition<Input, Output>,
+  "transports" | "inputBinding" | "outputKind"
+> &
+  MemoryOperationFacets & {
+    transports: readonly MemoryOperationTransport[];
+  };
 
 export type ReadOnlyMemoryOperation<Input = unknown, Output = unknown> = MemoryOperation<
   Input,

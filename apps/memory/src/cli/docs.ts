@@ -13,6 +13,7 @@ import { buildSkillImprovementProposals, buildSkillTelemetryEvidenceCard, countS
 import type { ExistingSkillTelemetryEvidenceCardRef, SkillImprovementBuildResult, SkillImprovementProposalSummary, SkillTelemetryEvidenceCard, SkillTelemetryEvidenceCardArtifact, SkillTelemetryEvidenceCardStatus } from './improve-build.js';
 import { contextRecommendations, contextStatusReport, countMarkdownFiles, enabledHookNames, entryLooksLikeCache, exists, formatOutcomes, graphFreshnessStatus, healthRecommendations, healthReport, healthState, newestMtimeMs, plural, printGovernance, printLintReport, printPrivacyReport, reportStatusState, runContextStatus, runGovernance, runGovernanceViewer, runHealth, runHealthViewer, runLint, runPrivacy, runRecallTelemetry, runStatus, scanProjectFreshness, shouldSkipFreshnessPath, skillEventFromFlags, storeExists, toPosix, yesNo } from './status.js';
 import type { CheckName, ContextCheck } from './status.js';
+import { renderToonDocument } from '../toon-output.js';
 import { applyConfiguredProviderEnv, codeCurationOutput, commaIntegerFlag, intFlag, isIntegerText, mapContextModeFlag, numberFlag, openGraphStore, renderCodeDriftGroups, runCodeCurate, runCodeDrift, runExtract, runExtraction, runExtractionStatusViewer, runMap, runMapContext, runNeighbors, runPath, runPathExplain, runPathExplainViewer, runSearch, runTraverse, strFlag, stringFlag } from './extract-map.js';
 import { parseChangedFiles, parseHubRankBy, parseRid, printConflicts, printPrePrReview, printPrePrSection, printReadinessEnvelope, printStructuralImpact, printTimeline, printTimelineToon, readChangedFiles, renderCommunitiesToon, renderHubReportToon, renderSuggestedQuestionsToon, runCommunities, runCommunitiesViewer, runCommunityDigest, runConfidence, runConflicts, runHubReport, runPrePrReview, runPrePrReviewViewer, runResolveConflict, runStructuralImpact, runStructuralImpactViewer, runSuggestedQuestions, runSupersede, runTimeline } from './graph-reports.js';
 import type { TimelineToonEntry } from './graph-reports.js';
@@ -100,20 +101,31 @@ export async function runRegistryCliOperation(
       },
       transportInput,
     );
+    const jsonRequested =
+      args.flags.json === true || operation.renderer.cli.defaultFormat === "json";
     if (operation.outputKind.kind === "viewer") {
+      const presentation = operation.renderer.cli.presentation;
+      if (jsonRequested && operation.renderer.cli.supportsJson) {
+        const jsonOutput = presentation?.jsonOutput?.(output) ?? output;
+        process.stdout.write(`${JSON.stringify(jsonOutput, null, 2)}\n`);
+        return;
+      }
+      if (presentation?.viewerSink === "explicit" && args.flags.out === undefined) {
+        process.stdout.write(presentation.render(output, transportInput));
+        return;
+      }
       const outPath = await writeViewerArtifact(operation, output, transportInput);
       process.stdout.write(viewerCliSummary(operation, output, outPath));
       return;
     }
-    if (args.flags.json === true) {
-      console.log(JSON.stringify(output, null, 2));
-      return;
-    }
-    if (isRecord(output) && typeof output.markdown === "string") {
-      process.stdout.write(output.markdown);
-      return;
-    }
-    console.log(JSON.stringify(output, null, 2));
+    process.stdout.write(
+      renderRegistryCliReport(
+        operation,
+        output,
+        jsonRequested,
+        transportInput,
+      ),
+    );
   } finally {
     if (operationNeedsGraphStore(operation)) await graphContext.store.close();
     if (args.flags.local === true && operation.id.startsWith("memory.vector-")) {
@@ -121,6 +133,33 @@ export async function runRegistryCliOperation(
       else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
     }
   }
+}
+
+export function renderRegistryCliReport(
+  operation: ReadOnlyMemoryOperation,
+  output: unknown,
+  jsonRequested: boolean,
+  transportInput: Parameters<
+    NonNullable<ReadOnlyMemoryOperation["renderer"]["cli"]["presentation"]>["render"]
+  >[1] = { positional: [], flags: {}, query: {} },
+): string {
+  if (jsonRequested) return `${JSON.stringify(output, null, 2)}\n`;
+  if (operation.outputKind.kind === "report" && operation.outputKind.format === "markdown") {
+    if (typeof output === "string") return output;
+    if (
+      output !== null &&
+      typeof output === "object" &&
+      "markdown" in output &&
+      typeof output.markdown === "string"
+    ) {
+      return output.markdown;
+    }
+    throw new Error(`${operation.id} declared markdown output without a markdown field`);
+  }
+  if (operation.renderer.cli.presentation) {
+    return operation.renderer.cli.presentation.render(output, transportInput);
+  }
+  return renderToonDocument(output);
 }
 
 export function operationNeedsGraphStore(operation: ReadOnlyMemoryOperation): boolean {
@@ -182,8 +221,7 @@ export function registryCliOperationFor(
     if (parts[0] !== command) continue;
     const rest = parts.slice(1);
     if (rest.length === 0) {
-      const legacySubcommands = LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND[registeredCommand] ?? [];
-      if (legacySubcommands.includes(positional[0] ?? "")) continue;
+      if (operation.renderer.cli.reservedSubcommands?.includes(positional[0] ?? "")) continue;
       return operation;
     }
     if (rest.every((part, index) => positional[index] === part)) return operation;

@@ -339,7 +339,6 @@ import {
 } from "./helpers.js";
 
 const JSON_REPORT_OUTPUT = { kind: "report", format: "json" } as const;
-const MARKDOWN_REPORT_OUTPUT = { kind: "report", format: "markdown" } as const;
 const DEFAULT_VIEWER_FILE_SINK: MemoryOperationFileSinkBinding = {
   field: "out",
   sources: ["flag", "query"],
@@ -764,7 +763,7 @@ export const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ...operationFacets(
     ["memory.structural-impact"],
     inputBinding([flagField("file", "path"), flagField("symbol", "string")]),
-    MARKDOWN_REPORT_OUTPUT,
+    JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
     ["memory.structural-impact-viewer"],

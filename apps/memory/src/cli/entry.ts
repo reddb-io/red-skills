@@ -14,7 +14,7 @@ import { buildSkillImprovementProposals, buildSkillTelemetryEvidenceCard, countS
 import type { ExistingSkillTelemetryEvidenceCardRef, SkillImprovementBuildResult, SkillImprovementProposalSummary, SkillTelemetryEvidenceCard, SkillTelemetryEvidenceCardArtifact, SkillTelemetryEvidenceCardStatus } from './improve-build.js';
 import { contextRecommendations, contextStatusReport, countMarkdownFiles, enabledHookNames, entryLooksLikeCache, exists, formatOutcomes, graphFreshnessStatus, healthRecommendations, healthReport, healthState, newestMtimeMs, plural, printGovernance, printLintReport, printPrivacyReport, reportStatusState, runContextStatus, runGovernance, runGovernanceViewer, runHealth, runHealthViewer, runLint, runPrivacy, runRecallTelemetry, runStatus, scanProjectFreshness, shouldSkipFreshnessPath, skillEventFromFlags, storeExists, toPosix, yesNo } from './status.js';
 import type { CheckName, ContextCheck } from './status.js';
-import { applyConfiguredProviderEnv, codeCurationOutput, commaIntegerFlag, intFlag, isIntegerText, mapContextModeFlag, numberFlag, openGraphStore, renderCodeDriftGroups, runCodeCurate, runCodeDrift, runExtract, runExtraction, runExtractionStatusViewer, runMap, runMapContext, runNeighbors, runPath, runPathExplain, runPathExplainViewer, runSearch, runTraverse, strFlag, stringFlag } from './extract-map.js';
+import { applyConfiguredProviderEnv, codeCurationOutput, commaIntegerFlag, intFlag, isIntegerText, mapContextModeFlag, numberFlag, openGraphStore, renderCodeDriftGroups, runCodeCurate, runCodeDrift, runExtract, runExtraction, runExtractionStatusViewer, runMap, runMapContext, runNeighbors, runPath, runPathExplain, runPathExplainViewer, runSearch, runTraverse, strFlag } from './extract-map.js';
 import { parseChangedFiles, parseHubRankBy, parseRid, printConflicts, printPrePrReview, printPrePrSection, printReadinessEnvelope, printStructuralImpact, printTimeline, printTimelineToon, readChangedFiles, renderCommunitiesToon, renderHubReportToon, renderSuggestedQuestionsToon, runCommunities, runCommunitiesViewer, runCommunityDigest, runConfidence, runConflicts, runHubReport, runPrePrReview, runPrePrReviewViewer, runResolveConflict, runStructuralImpact, runStructuralImpactViewer, runSuggestedQuestions, runSupersede, runTimeline } from './graph-reports.js';
 import type { TimelineToonEntry } from './graph-reports.js';
 import { HOOK_EVENTS, parseComplementaryMapKind, readStdin, resolveBootstrapPath, resolveHooksDir, resolveOverviewContract, runAfkFinalize, runArchitectureOverview, runAttempt, runAttemptLearn, runAttemptLearnApply, runDoctor, runExport, runGlobalSearch, runHook, runImport, runPromoteCmd, runStats, runVcs, runVcsInstallHooks, runVcsRefresh, runVcsUninstallHooks, runVector, VCS_EVENTS } from './operations.js';
@@ -40,14 +40,7 @@ export async function main(): Promise<void> {
     return;
   }
   const registryOperation = registryCliOperationFor(args.command, args.positional);
-  if (
-    registryOperation &&
-    registryOperation.outputKind.kind === "viewer" &&
-    (registryOperation.id !== "memory.dashboard" || stringFlag(args.flags, "out") !== undefined) &&
-    args.flags.json !== true
-  ) {
-    return runRegistryCliOperation(registryOperation, args);
-  }
+  if (registryOperation) return runRegistryCliOperation(registryOperation, args);
   switch (args.command) {
     case "init":
       return runInit(args);
@@ -79,8 +72,6 @@ export async function main(): Promise<void> {
       return runSmartSearchViewer(args);
     case "capsule":
       return runCapsule(args);
-    case "context-pack":
-      return runContextPack(args);
     case "context-pack-viewer":
       return runContextPackViewer(args);
     case "recommend":
@@ -121,8 +112,6 @@ export async function main(): Promise<void> {
       return runMemoryMergePass(args);
     case "tidy-review":
       return runTidyReview(args);
-    case "dashboard":
-      return runDashboard(args);
     case "workbench":
       return runWorkbench(args);
     case "session":
@@ -227,10 +216,6 @@ export async function main(): Promise<void> {
       return runCommunitiesViewer(args);
     case "community-digest":
       return runCommunityDigest(args);
-    case "hub-report":
-      return runHubReport(args);
-    case "suggested-questions":
-      return runSuggestedQuestions(args);
     case "global-search":
       return runGlobalSearch(args);
     case "structural-impact":
@@ -250,9 +235,6 @@ export async function main(): Promise<void> {
     case "export":
     case "graph":
       return runExport(args);
-    case "map-contract":
-      if (!registryOperation) throw new Error("map-contract operation is not registered");
-      return runRegistryCliOperation(registryOperation, args);
     case "architecture-overview":
       return runArchitectureOverview(args);
     case "hook":

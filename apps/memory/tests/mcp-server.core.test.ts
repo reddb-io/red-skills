@@ -222,11 +222,11 @@ describe("MCP server over stdio", () => {
       expect(names).not.toContain("memory_commit");
       const communities = tools.find((tool) => tool.name === "memory_communities");
       expect(communities?.description).toBe(
-        getReadOnlyMemoryOperation("memory.communities").renderer.mcp.description,
+        getReadOnlyMemoryOperation("memory.communities").description,
       );
       for (const operation of listReadOnlyMemoryOperations()) {
         const tool = tools.find((item) => item.name === operation.renderer.mcp.toolName);
-        expect(tool?.description).toBe(operation.renderer.mcp.description);
+        expect(tool?.description).toBe(operation.description);
         expect(tool?.inputSchema).toEqual(expect.objectContaining({ type: "object" }));
       }
       const storeTool = tools.find((tool) => tool.name === "memory_store");

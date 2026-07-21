@@ -59,6 +59,7 @@ import {
   listEvents as workingListEvents,
 } from "../working-memory.js";
 import { applyProviderEnv } from "../provider-client.js";
+import { listMemoryOperationsForTransport } from "../operation-transport-adapter.js";
 import { operationStructuredContent } from "./structured-content.js";
 
 // ---------- tool input schemas ----------
@@ -600,9 +601,11 @@ function compactRecalledNodes(nodes: Array<{
   }));
 }
 
-const OPERATION_TOOLS = listReadOnlyMemoryOperations().map((operation) => ({
+const MCP_OPERATIONS = listMemoryOperationsForTransport(listReadOnlyMemoryOperations(), "mcp");
+
+const OPERATION_TOOLS = MCP_OPERATIONS.map((operation) => ({
   name: operation.renderer.mcp.toolName,
-  description: operation.renderer.mcp.description,
+  description: operation.description,
   inputSchema: zodToSchema(operation.inputSchema),
 }));
 
@@ -721,7 +724,7 @@ const MANUAL_TOOLS = [
 const TOOLS = [...OPERATION_TOOLS, ...MANUAL_TOOLS];
 
 const OPERATION_BY_TOOL_NAME = new Map<string, ReadOnlyMemoryOperation>(
-  listReadOnlyMemoryOperations().map((operation) => [
+  MCP_OPERATIONS.map((operation) => [
     operation.renderer.mcp.toolName,
     operation,
   ]),

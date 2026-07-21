@@ -222,24 +222,33 @@ Usage:
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
 one, then use /memory:store and /memory:recall (or the CLI verbs) — they route
-to whichever mode init configured.`;
+to whichever mode init configured.
+
+Registered read-only operations:
+${registryCliHelp()}`;
+
+function registryCliHelp(): string {
+  return listReadOnlyMemoryOperations()
+    .filter((operation) => operation.transports.includes("cli"))
+    .sort((a, b) => a.renderer.cli.command.localeCompare(b.renderer.cli.command))
+    .map((operation) => `  memory ${operation.renderer.cli.command}\n      ${operation.description}`)
+    .join("\n");
+}
 
 export type ParsedArgs = LooseParsedArgs;
 
 export const execFileAsync = promisify(execFile);
 
-export const LEGACY_CLI_OPERATION_IDS = new Set(["memory.health"]);
+export const LEGACY_CLI_OPERATION_IDS = new Set<string>();
 
 export const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
-  "merge-pass": ["execute", "unmerge"],
-  "onboarding-map": ["export"],
-  "tidy-review": ["refresh", "accept", "dismiss"],
 };
 
-export const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-viewer"]);
+export const PROOF_REGISTRY_CLI_COMMANDS = new Set<string>();
 
 export const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
   listReadOnlyMemoryOperations()
+    .filter((operation) => operation.transports.includes("cli"))
     .filter((operation) => !LEGACY_CLI_OPERATION_IDS.has(operation.id))
     .map((operation) => [operation.renderer.cli.command, operation]),
 );

@@ -21,6 +21,7 @@ import {
 } from "./operations.js";
 import {
   executeMemoryOperationFromTransport,
+  listMemoryOperationsForTransport,
   MemoryOperationTransportError,
   queryObjectFromSearchParams,
   viewerHtml,
@@ -63,7 +64,7 @@ export interface MemoryOpenApiDocument {
   };
 }
 
-const ENDPOINTS = [
+const LEGACY_ENDPOINTS = [
   "GET /",
   "GET /workbench",
   "GET /assets?kind=<kind>",
@@ -139,13 +140,96 @@ const ENDPOINTS = [
   "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
 
-const REGISTRY_HTTP_EXCLUDED_OPERATION_IDS = new Set(["memory.workbench"]);
 const REGISTRY_HTTP_ROUTES = buildRegistryHttpRoutes();
+const ENDPOINTS = [
+  ...new Set([
+    ...LEGACY_ENDPOINTS,
+    ...[...REGISTRY_HTTP_ROUTES.entries()].flatMap(([route, operation]) =>
+      (operation.renderer.http?.methods ?? ["GET"]).map((method) => `${method} ${route}`),
+    ),
+  ]),
+].sort();
 
-export function listMemoryHttpRegistryRoutes(): Array<{ route: string; operationId: string }> {
-  return [...REGISTRY_HTTP_ROUTES.entries()]
+export function listMemoryHttpRegistryRoutes(
+  operations?: readonly ReadOnlyMemoryOperation[],
+): Array<{ route: string; operationId: string }> {
+  const routes = operations ? buildRegistryHttpRoutes(operations) : REGISTRY_HTTP_ROUTES;
+  return [...routes.entries()]
     .map(([route, operation]) => ({ route, operationId: operation.id }))
     .sort((a, b) => a.route.localeCompare(b.route));
+}
+
+export function memoryOpenApiPathsForOperations(
+  operations: readonly ReadOnlyMemoryOperation[],
+): Record<string, unknown> {
+  const paths: Record<string, unknown> = {};
+  for (const operation of listMemoryOperationsForTransport(operations, "http")) {
+    const contentType = operation.outputKind.kind === "viewer" ? "text/html" : "application/json";
+    const parameters = operation.inputBinding.fields
+      .filter((field) => field.sources.includes("query"))
+      .map((field) => ({
+        name: field.field,
+        in: "query",
+        required: field.required === true,
+        schema: openApiSchemaForInputField(field.type),
+      }));
+    const methods = operation.renderer.http?.methods ?? ["GET"];
+    for (const route of httpRoutesForOperation(operation)) {
+      paths[route] = Object.fromEntries(
+        methods.map((method) => [
+          method.toLowerCase(),
+          {
+          summary: operation.description,
+          ...(method === "GET" ? { parameters } : {}),
+          ...(method === "POST"
+            ? {
+                requestBody: {
+                  required: true,
+                  content: { "application/json": { schema: openApiInputSchema(operation) } },
+                },
+              }
+            : {}),
+          responses: {
+            "200": {
+              description: operation.description,
+              content: { [contentType]: { schema: { type: operation.outputKind.kind === "viewer" ? "string" : "object" } } },
+            },
+          },
+          },
+        ]),
+      );
+    }
+  }
+  return paths;
+}
+
+function openApiInputSchema(operation: ReadOnlyMemoryOperation): Record<string, unknown> {
+  const properties = Object.fromEntries(
+    operation.inputBinding.fields.map((field) => [
+      field.field,
+      openApiSchemaForInputField(field.type),
+    ]),
+  );
+  const required = operation.inputBinding.fields
+    .filter((field) => field.required === true)
+    .map((field) => field.field);
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    additionalProperties: false,
+  };
+}
+
+function openApiSchemaForInputField(
+  type: ReadOnlyMemoryOperation["inputBinding"]["fields"][number]["type"],
+): Record<string, unknown> {
+  if (type === "number") return { type: "number" };
+  if (type === "boolean") return { type: "boolean" };
+  if (type === "string-array" || type === "object-array") {
+    return { type: "array", items: { type: type === "string-array" ? "string" : "object" } };
+  }
+  return { type: "string" };
 }
 
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
@@ -167,8 +251,11 @@ async function handleRequest(
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
   const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
-  const isRegistryPost = req.method === "POST" && registryOperation?.id === "memory.whatif";
-  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isRegistryPost) {
+  if (registryOperation && !memoryHttpMethodAllowed(registryOperation, req.method)) {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  if (!registryOperation && req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
   }
@@ -244,6 +331,15 @@ async function handleRequest(
   sendJson(res, 404, { error: "not found", endpoints: ENDPOINTS });
 }
 
+/** HEAD is transport-mechanical shorthand for a declared GET, never an implicit operation method. */
+export function memoryHttpMethodAllowed(
+  operation: ReadOnlyMemoryOperation,
+  method: string | undefined,
+): boolean {
+  const declared = operation.renderer.http?.methods ?? ["GET"];
+  return method === "HEAD" ? declared.includes("GET") : declared.includes(method as "GET" | "POST");
+}
+
 async function handleRegistryHttpOperation(
   operation: ReadOnlyMemoryOperation,
   req: IncomingMessage,
@@ -289,10 +385,11 @@ async function handleRegistryHttpOperation(
   }
 }
 
-function buildRegistryHttpRoutes(): Map<string, ReadOnlyMemoryOperation> {
+function buildRegistryHttpRoutes(
+  operations: readonly ReadOnlyMemoryOperation[] = listReadOnlyMemoryOperations(),
+): Map<string, ReadOnlyMemoryOperation> {
   const routes = new Map<string, ReadOnlyMemoryOperation>();
-  for (const operation of listReadOnlyMemoryOperations()) {
-    if (REGISTRY_HTTP_EXCLUDED_OPERATION_IDS.has(operation.id)) continue;
+  for (const operation of listMemoryOperationsForTransport(operations, "http")) {
     for (const route of httpRoutesForOperation(operation)) {
       const existing = routes.get(route);
       if (existing && existing.id !== operation.id) {
@@ -307,18 +404,13 @@ function buildRegistryHttpRoutes(): Map<string, ReadOnlyMemoryOperation> {
 }
 
 function httpRoutesForOperation(operation: ReadOnlyMemoryOperation): string[] {
-  const routes = [defaultHttpRouteForOperation(operation)];
-  if (operation.id === "memory.context-pack") routes.push("/api/context-pack");
-  if (operation.id === "memory.context-pack-viewer") routes.push("/context-pack");
-  if (operation.id === "memory.smart-search") routes.push("/api/search");
-  if (operation.id === "memory.smart-search-viewer") routes.push("/search");
-  return routes;
+  return [
+    operation.renderer.http?.route ?? defaultHttpRouteForOperation(operation),
+    ...(operation.renderer.http?.aliases ?? []),
+  ];
 }
 
 function defaultHttpRouteForOperation(operation: ReadOnlyMemoryOperation): string {
-  if (operation.id === "memory.health") return "/api/memory/health";
-  if (operation.id === "memory.health-viewer") return "/memory/health";
-
   const parts = operation.renderer.cli.command.split(" ");
   if (operation.outputKind.kind === "viewer") {
     const routeParts = [...parts];
@@ -328,7 +420,8 @@ function defaultHttpRouteForOperation(operation: ReadOnlyMemoryOperation): strin
     );
     return `/${routeParts.join("/")}`;
   }
-  return `/api/${parts.join("/")}`;
+  const route = `/api/${parts.join("/")}`;
+  return route === "/api/health" ? `/api/memory/${parts.join("/")}` : route;
 }
 
 function health(opts: MemoryHttpServerOptions): MemoryHttpHealth {
@@ -920,6 +1013,7 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           responses: { "200": jsonResponse("Reasoning replay result") },
         },
       },
+      ...memoryOpenApiPathsForOperations(listReadOnlyMemoryOperations()),
     },
     components: {
       securitySchemes: {
