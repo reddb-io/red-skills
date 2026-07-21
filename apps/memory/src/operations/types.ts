@@ -82,6 +82,11 @@ export interface MemoryOperationRendererMetadata {
     toolName: string;
     description: string;
   };
+  http?: {
+    route?: string;
+    aliases?: readonly string[];
+    methods?: readonly ("GET" | "POST")[];
+  };
 }
 
 export interface MemoryOperationContext {
