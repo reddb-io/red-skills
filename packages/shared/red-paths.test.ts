@@ -29,8 +29,13 @@ import {
   legacyAfkStateDir,
   logsDir,
   manualWorktreesDir,
+  MANAGER_ROOT_ENV,
+  managerDir,
+  managerEffortFile,
+  managerEffortsDir,
   memoryDir,
   rebaseWorktreesDir,
+  resolveManagerRoot,
   reconcileWorktreesDir,
   redDir,
   researchesDir,
@@ -70,6 +75,30 @@ describe("tier directories", () => {
     expect(memoryDir(ROOT)).toBe("/repo/.red/memory");
     expect(brainDir(ROOT)).toBe("/repo/.red/brain");
     expect(wikiDir(ROOT)).toBe("/repo/.red/wiki");
+  });
+});
+
+describe("manager portfolio store", () => {
+  it("derives the operator-scoped effort lane from a home root", () => {
+    expect(managerDir("/home/op")).toBe("/home/op/.red/manager");
+    expect(managerEffortsDir("/home/op")).toBe("/home/op/.red/manager/efforts");
+    expect(managerEffortFile("/home/op", "eff_abc")).toBe(
+      "/home/op/.red/manager/efforts/eff_abc.toonl",
+    );
+  });
+
+  it("rejects an empty effort id instead of writing the lane directory itself", () => {
+    expect(() => managerEffortFile("/home/op", "")).toThrow(/effortId is required/);
+  });
+
+  it("defaults the manager root to the operator home and honors the override", () => {
+    expect(resolveManagerRoot({ homeDir: "/home/op", env: {} })).toBe("/home/op");
+    expect(
+      resolveManagerRoot({ homeDir: "/home/op", env: { [MANAGER_ROOT_ENV]: "/tmp/portfolio" } }),
+    ).toBe("/tmp/portfolio");
+    expect(
+      resolveManagerRoot({ homeDir: "/home/op", env: { [MANAGER_ROOT_ENV]: "profiles/two" } }),
+    ).toBe("/home/op/profiles/two");
   });
 });
 
