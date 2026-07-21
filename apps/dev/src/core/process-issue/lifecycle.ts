@@ -991,6 +991,9 @@ export async function processIssue(
         taskClass: activeTaskClass,
         resolveTier: deps.resolveTier,
       });
+      // An incoherent (runner, model, effort) pin is corrected, never spawned:
+      // log every substitution so the operator sees which knob was overridden.
+      for (const notice of reviewer.notices ?? []) deps.appendIterLog(notice);
       const reviews: AdversarialReviewFindings[] = [];
       for (let i = 0; i < config.reviewerCount; i++) {
         reviews.push(
@@ -1026,7 +1029,20 @@ export async function processIssue(
         return "abort";
       }
     } catch (error) {
-      deps.appendIterLog(`[adversarial-review] advisory pass failed: ${error instanceof Error ? error.message : String(error)}`);
+      // An advisory pass has exactly three legal verdicts — pass, correct, park.
+      // Infrastructure failure of the reviewer itself is NONE of them: the
+      // attempt is already machine-validated here, so a crashed/non-zero
+      // reviewer CLI degrades to "pass with a logged warning" and the landing
+      // proceeds. Killing the run instead stranded three pushed branches and
+      // took every claude fleet worker down at landing (#2352).
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.appendIterLog(`[adversarial-review] advisory pass failed, degraded to pass: ${reason}`);
+      deps.recordWorkerEvent?.("worker.review_degraded", {
+        issue: input.issue,
+        pr,
+        decision: "pass",
+        reason,
+      });
     }
   };
   markLandingPhase("gate");
