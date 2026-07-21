@@ -97,6 +97,14 @@ export interface HandoffInput {
    * the steered arm and carries phrasing constraints, never task semantics.
    */
   outputShaping?: OutputShapingAssignment;
+  /**
+   * Branch from a prior attempt to resume from (issue #2397). When set, a
+   * `<resume-from-branch>` section is emitted immediately after `<issue-body>`,
+   * instructing the agent to checkout this branch instead of starting fresh.
+   * Gate-green fast path: the orchestrator skips the agent entirely when it
+   * detects the branch's prior gate already passed.
+   */
+  resumeFromBranch?: string;
 }
 
 /** Trimmed-of-all-whitespace emptiness test (bash `[[ -n "$x" ]]` after capture). */
@@ -327,6 +335,13 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push('<issue-body data-untrusted="true">');
   lines.push(input.body);
   lines.push("</issue-body>");
+
+  if (isPresent(input.resumeFromBranch)) {
+    lines.push("");
+    lines.push("<resume-from-branch>");
+    lines.push(input.resumeFromBranch);
+    lines.push("</resume-from-branch>");
+  }
 
   const mergeGate = buildMergeGate(input.mergeGateCommands);
   if (isPresent(mergeGate)) {
