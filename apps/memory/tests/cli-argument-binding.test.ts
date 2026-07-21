@@ -130,4 +130,12 @@ describe("memory CLI argument binding", () => {
     expect(html).toContain("src/first.ts");
     expect(html).toContain("src/second.ts");
   });
+
+  test("dispatches a registered report without a per-command CLI case", async () => {
+    const root = await initRoot();
+    const result = runMemory(["recall-ranked", "jwt rotation", "--root", root, "--json"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ query: "jwt rotation" });
+  });
 });
