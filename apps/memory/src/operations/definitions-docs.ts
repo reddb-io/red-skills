@@ -921,7 +921,11 @@ const MEMORY_MERGE_PASS_OPERATION: MemoryOperationDefinition<
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "merge-pass", supportsJson: true },
+    cli: {
+      command: "merge-pass",
+      supportsJson: true,
+      reservedSubcommands: ["execute", "unmerge"],
+    },
     mcp: {
       toolName: "memory_merge_pass",
       description:
