@@ -121,6 +121,8 @@ import {
   ALLOWLIST_PATH,
   checkSensitivePaths,
   gateVerdict,
+  type GateStageOutcome,
+  type SensitivePathHit,
 } from "../shared-gate.js";
 import { isPrePrPipelineActive } from "../pre-pr-pipeline.js";
 import {
@@ -855,35 +857,42 @@ export async function processIssue(
     const feedbackScopes = scopesForValidationScope(validationScope);
     landingFeedbackScopes = feedbackScopes;
 
-    // TRUST BEFORE THE SUITE (ADR 0119). A diff that touches a CI workflow, a
-    // git hook, a lifecycle script, or `.red/` trust config can NEVER auto-land,
-    // so deciding that here — a handful of regexes over a diff we already have —
-    // costs seconds and saves the whole package suite. The landing keeps its own
+    // The gate's stages accumulate here in GATE_STAGE_ORDER (ADR 0119) and fold
+    // into ONE verdict: `gateVerdict(gateStages)` is what decides whether the
+    // attempt may proceed, so "which stage blocked this" is read off the fold
+    // rather than reassembled from control flow.
+    const gateStages: GateStageOutcome[] = [];
+
+    // TRUST BEFORE THE SUITE. A diff that touches a CI workflow, a git hook, a
+    // lifecycle script, or `.red/` trust config can NEVER auto-land, so deciding
+    // that here — a handful of regexes over a diff we already have — costs
+    // seconds and saves the whole package suite. The landing keeps its own
     // step-0a scan as the backstop for the other callers (and for a diff that
     // grows between here and the merge), so this is an early exit, not a move.
-    // A diff lookup that fails is NOT a verdict: log it and let the landing-time
-    // guard decide, rather than parking on a git error.
+    // A diff lookup that fails is NOT a verdict: log it, record the stage as
+    // skipped, and let the landing-time guard decide instead of parking on a
+    // git error.
+    let trustHits: SensitivePathHit[] = [];
     try {
       const trustDiff = await resolveDiffPaths();
-      const trustHits = checkSensitivePaths(
+      trustHits = checkSensitivePaths(
         trustDiff.changedFiles,
         trustDiff.packageJsonDiff,
         trustDiff.allowlistExemption,
       );
-      const trustVerdict = gateVerdict([
-        { stage: "trust", ok: trustHits.length === 0, sensitivePaths: trustHits },
-      ]);
-      if (!trustVerdict.ok) {
-        deps.appendIterLog(
-          `🤖 /afk: sensitive-path guard tripped BEFORE validation — skipping the suite for #${issue}.`,
-        );
-        return await sensitivePathGuarded(common, trustHits, await deps.lookups.isLocked());
-      }
+      gateStages.push({ stage: "trust", ok: trustHits.length === 0, sensitivePaths: trustHits });
     } catch (error) {
+      gateStages.push({ stage: "trust", ok: false, skipped: true });
       deps.appendIterLog(
         `🤖 /afk: pre-validation sensitive-path scan could not read the diff ` +
           `(${error instanceof Error ? error.message : String(error)}); the landing-time guard still applies.`,
       );
+    }
+    if (gateVerdict(gateStages).failedStage === "trust") {
+      deps.appendIterLog(
+        `🤖 /afk: sensitive-path guard tripped BEFORE validation — skipping the suite for #${issue}.`,
+      );
+      return await sensitivePathGuarded(common, trustHits, await deps.lookups.isLocked());
     }
 
     if (
@@ -904,6 +913,7 @@ export async function processIssue(
       resourceBudget: deps.validationResourceBudget,
     });
     markProcessSafetyStep("post-barrier:feedback-done");
+    gateStages.push({ stage: "feedback", ok: feedback.ok });
     if (!feedback.ok) {
       await fireHook(
         "on_baseline_probe",
@@ -927,7 +937,7 @@ export async function processIssue(
         result: { status: feedback.ok ? "pass" : "fail" },
       }),
     );
-    if (!feedback.ok) {
+    if (gateVerdict(gateStages).failedStage === "feedback") {
       await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
       let isInfra = isInfraFeedbackFailure(feedback);
       const classResult = await fireHookCtx(
@@ -988,7 +998,8 @@ export async function processIssue(
       backpressureSidecar = backpressure.sidecar;
       markProcessSafetyStep("post-barrier:backpressure-done");
       common.backpressureChecks = backpressure.checks;
-      if (!backpressure.ok) {
+      gateStages.push({ stage: "backpressure", ok: backpressure.ok });
+      if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
         const notes =
           salvagedUncommittedFiles > 0
@@ -1006,20 +1017,11 @@ export async function processIssue(
     }
     validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
     lastValidationScope = feedback.validationScope;
-    // ONE verdict for the whole gate (ADR 0119): trust, feedback and backpressure
-    // fold into a single `ok` rather than three independent booleans a reader has
-    // to reassemble. Reaching here means every stage that ran came back green;
-    // recording the fold makes that a stated fact instead of an inference from
-    // "no early return fired".
-    const gateOk = gateVerdict([
-      { stage: "trust", ok: true },
-      { stage: "feedback", ok: feedback.ok },
-      {
-        stage: "backpressure",
-        ok: true,
-        skipped: !(deps.backpressure && backpressureCommands.length > 0),
-      },
-    ]).ok;
+    // ONE verdict for the whole gate (ADR 0119): the stages accumulated above
+    // fold into a single `ok` instead of three independent booleans a reader has
+    // to reassemble. A backpressure stage that never ran is simply absent from
+    // the fold, and an absent stage cannot block.
+    const gateOk = gateVerdict(gateStages).ok;
     deps.recordWorkerEvent?.("worker.validated", {
       feedback_records: feedback.sidecar.length,
       backpressure_records: backpressureSidecar.length,
