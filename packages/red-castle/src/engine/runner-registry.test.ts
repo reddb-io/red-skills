@@ -17,6 +17,7 @@ import {
   parseRunnerFlag,
   resolveMiniMaxClaudeEnv,
   resolveOpenCodeAuth,
+  runnerSupportsModel,
   runnerSupportsStructuredOutput,
   toAgentRunner,
   type AgentRunner,
@@ -55,6 +56,23 @@ describe("engine runner registry", () => {
     expect(openCodeAuthEnv(resolveOpenCodeAuth({ MINIMAX_API_KEY: "mm" }))).toEqual({ MINIMAX_API_KEY: "mm" });
     expect(runnerSupportsStructuredOutput("claude")).toBe(true);
     expect(runnerSupportsStructuredOutput("codex")).toBe(false);
+  });
+
+  it("answers whether a runner's CLI can dispatch a model slug (#2352)", () => {
+    expect(runnerSupportsModel("claude", "claude-opus-4-8")).toBe(true);
+    expect(runnerSupportsModel("claude", "sonnet")).toBe(true);
+    expect(runnerSupportsModel("claude", "us.anthropic.claude-opus-4-8-v1:0")).toBe(true);
+    expect(runnerSupportsModel("claude", "gpt-5.6-sol")).toBe(false);
+    expect(runnerSupportsModel("codex", "gpt-5.6-sol")).toBe(true);
+    expect(runnerSupportsModel("codex", "o3")).toBe(true);
+    expect(runnerSupportsModel("codex", "claude-opus-4-8")).toBe(false);
+    expect(runnerSupportsModel("opencode", "openrouter/anthropic/claude-opus-4")).toBe(true);
+    expect(runnerSupportsModel("opencode", "claude-opus-4-8")).toBe(false);
+    // A forcedModel runner accepts exactly its forced slug.
+    expect(runnerSupportsModel("claude-minimax", MINIMAX_M3_MODEL)).toBe(true);
+    expect(runnerSupportsModel("claude-minimax", "claude-opus-4-8")).toBe(false);
+    // A blank slug is never runnable.
+    expect(runnerSupportsModel("claude", "  ")).toBe(false);
   });
 
   it("keeps runner detection and spawn argv parity in the engine unit", () => {
