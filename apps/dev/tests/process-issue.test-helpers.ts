@@ -81,7 +81,6 @@ export interface Trace {
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
   /** Main-red repair issue create attempts from the baseline probe sync path. */
-  mainRedRepairCreates: Array<{ title: string; body: string; labels: readonly string[] }>;
   /** Compact state patches written to afk.state.toon. */
   statePatches: Array<Record<string, unknown>>;
   /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
@@ -109,7 +108,11 @@ export interface HarnessOptions {
   /** Test hook invoked inside the fake runner while the issue claim is active. */
   onRunAgent?: () => void | Promise<void>;
   feedbackOk?: boolean;
-  /** When true, the feedback baseline probe fails the same check as the worker. */
+  /**
+   * When true, the feedback baseline probe fails the SAME check as the worker,
+   * making the comparison verdict `inconclusive` (#2380). The branch still
+   * parks on its own gate failure; nothing is filed anywhere.
+   */
   baselineFails?: boolean;
   /**
    * When false, the POST-MERGE integration gate (#1335) fails while the
@@ -119,10 +122,6 @@ export interface HarnessOptions {
    * could not even materialise a worktree in that dir.
    */
   postMergeGateOk?: boolean;
-  /** Existing main-red repair issue returned by the finder. false/null means missing. */
-  mainRedRepairIssue?: boolean;
-  /** When set, creating the main-red repair issue throws this message. */
-  mainRedRepairCreateError?: string;
   /** Scripted per-feedback-gate outcomes. Each feedback run executes the four
    * standard scripts; this controls the aggregate pass/fail for each run. */
   feedbackResults?: boolean[];
@@ -297,7 +296,6 @@ export function harness(opts: HarnessOptions = {}): {
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
-    mainRedRepairCreates: [],
     statePatches: [],
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
@@ -313,8 +311,6 @@ export function harness(opts: HarnessOptions = {}): {
   let mergeResolved = false;
   let pnpmCalls = 0;
   let changedFilesCalls = 0;
-  let currentMainRedRepairIssue: { number: number; title?: string; body?: string; labels?: readonly string[] } | null =
-    opts.mainRedRepairIssue ? { number: 123 } : null;
 
   const deps: ProcessIssueDeps = {
     gh: {
@@ -361,35 +357,6 @@ export function harness(opts: HarnessOptions = {}): {
             inCodeowners: false,
           })
         : undefined,
-      listMainRedRepairIssues:
-        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
-          ? async () => currentMainRedRepairIssue ? [currentMainRedRepairIssue] : []
-          : undefined,
-      findMainRedRepairIssue:
-        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
-          ? async () => currentMainRedRepairIssue
-          : undefined,
-      createMainRedRepairIssue:
-        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
-          ? async (spec) => {
-              trace.mainRedRepairCreates.push(spec);
-              if (opts.mainRedRepairCreateError) throw new Error(opts.mainRedRepairCreateError);
-              currentMainRedRepairIssue = { number: 124 };
-              return 124;
-            }
-          : undefined,
-      updateMainRedRepairIssue:
-        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
-          ? async (issue, spec) => {
-              currentMainRedRepairIssue = { number: issue, ...spec };
-            }
-          : undefined,
-      closeMainRedRepairIssue:
-        opts.baselineFails || opts.mainRedRepairIssue !== undefined || opts.mainRedRepairCreateError
-          ? async () => {
-              currentMainRedRepairIssue = null;
-            }
-          : undefined,
     },
     claimGh: opts.claim
       ? {
@@ -536,8 +503,7 @@ export function harness(opts: HarnessOptions = {}): {
       // baseline probe always passes (a fake probe — the real harness isn't
       // trying to model a pre-existing main failure). This way a test that
       // intends "worker fails, no baseline probe would have helped" still
-      // lands the issue as `feedback-failed` and isn't accidentally downgraded
-      // by the new baseline-probe logic. The detection is by dir path: the
+      // lands the issue as `feedback-failed`. The detection is by dir path: the
       // base resolves to "main" in the test, so the baseline invocation's
       // -C dir is "main" or "main/<scope>".
       const cIdx = Array.isArray(args) ? args.indexOf("-C") : -1;
