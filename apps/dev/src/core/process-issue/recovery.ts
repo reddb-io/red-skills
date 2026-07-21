@@ -50,7 +50,6 @@ import {
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
-import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
