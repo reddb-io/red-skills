@@ -129,5 +129,10 @@ export const LABEL_BUDGET = "blocked:budget";
 // WITHOUT this label are dispatched as normal ship tasks (unaffected).
 export const LABEL_TYPE_SCOUT = "type:scout";
 
+// Manager map label (ADR 0109, Spec #2290, slice #2294).
+// Applied to the umbrella parent issue that carries the effort-ID marker.
+// Never applied to Specs, Tickets, or any other child artifact.
+export const LABEL_MANAGER_MAP = "type:manager-map";
+
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";
