@@ -88,6 +88,46 @@ describe("dev:afk MCP host adapter", () => {
     ).rejects.toThrow("escapes its Castle lane root");
   });
 
+  it("bounds logs reads by limit and filters by kind before the limit", async () => {
+    const cwd = await root();
+    const paths = createEnginePaths(join(cwd, ".red"));
+    const lanePath = castleLanePath(paths, "worker", "worker-2");
+
+    // Write 6 records alternating heartbeat / completed so we have a lane
+    // larger than the limit used in assertions below.
+    for (let i = 0; i < 6; i++) {
+      await appendCastleLaneRecord(lanePath, {
+        at: `2026-07-21T00:00:0${i}.000Z`,
+        kind: i % 2 === 0 ? "worker.heartbeat" : "worker.completed",
+      });
+    }
+
+    const deps = createDevAfkMcpDependencies(cwd);
+
+    // limit=2 returns the NEWEST 2 records
+    await expect(
+      deps.logs({ lane: "worker", id: "worker-2", limit: 2 }),
+    ).resolves.toEqual([
+      { at: "2026-07-21T00:00:04.000Z", kind: "worker.heartbeat" },
+      { at: "2026-07-21T00:00:05.000Z", kind: "worker.completed" },
+    ]);
+
+    // kind filter applied before limit: 3 heartbeats (indices 0, 2, 4)
+    const heartbeats = await deps.logs({
+      lane: "worker",
+      id: "worker-2",
+      kind: "worker.heartbeat",
+    }) as unknown[];
+    expect(heartbeats).toHaveLength(3);
+
+    // kind + limit: newest 1 heartbeat
+    await expect(
+      deps.logs({ lane: "worker", id: "worker-2", kind: "worker.heartbeat", limit: 1 }),
+    ).resolves.toEqual([
+      { at: "2026-07-21T00:00:04.000Z", kind: "worker.heartbeat" },
+    ]);
+  });
+
   it("routes issue and demand dispatches through their value operations", async () => {
     const cwd = await root();
     const operations = fakeOperations();
