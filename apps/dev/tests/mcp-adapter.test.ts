@@ -150,7 +150,7 @@ describe("dev:afk MCP host adapter", () => {
       labels: ["lane:go"],
     });
     expect(createIssue.mock.calls[0]?.[1].body).toContain("--repair release");
-    expect(launchRun.mock.calls[1]?.[2]).not.toContain("--repair release");
+    expect(launchRun.mock.calls[1]?.[1]).not.toContain("--repair release");
     expect(stdout).not.toHaveBeenCalled();
   });
 
