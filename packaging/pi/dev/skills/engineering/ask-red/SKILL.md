@@ -48,6 +48,11 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
+- **Operating the castle itself** -> the `dev:afk` MCP, not a shell command.
+  Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
+  claim, worktrees, hygiene, and observability are all tools on one canonical
+  interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
+  `plugins/dev/skills/engineering/afk/MCP.md`.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
 - **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
@@ -91,6 +96,10 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
+Capability references registered by owner:
+`dev:afk` MCP (the canonical castle interface) ->
+`plugins/dev/skills/engineering/afk/MCP.md`.
+
 Troubleshooting references registered by owner:
 `/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
 `/go` -> `plugins/dev/skills/engineering/go/TROUBLESHOOTING.md`;
@@ -128,7 +137,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   confirmed mechanical ADR maintenance, and feeds judgment findings to `/to-spec`.
   Merge, split, and supersede-a-live-decision never apply in-session — they become
   supersede-and-replace Spec work items for `/to-tickets` + `/afk`.
-- `/model-tier-policy` answers runner/model tier choices.
+- `/model-tier-policy` answers runner/model tier choices; `runner_list` and
+  `runner_detect` on the `dev:afk` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and
