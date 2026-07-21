@@ -8,6 +8,10 @@ import {
   createObservabilityTools,
   type ObservabilityDependencies,
 } from "./mcp/observability.js";
+import {
+  createReviewTools,
+  type ReviewDependencies,
+} from "./mcp/review.js";
 import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
 import type { CastleMcpTool } from "./mcp/tool.js";
 import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
@@ -41,6 +45,12 @@ export type { LandBranchInput, CascadeStatusInput } from "./mcp/landing.js";
 export type { ClaimIssueInput } from "./mcp/claim.js";
 export type { WorktreeRemoveInput } from "./mcp/worktree.js";
 export type { WaitStartInput, WaitStatusInput } from "./mcp/wait.js";
+export type {
+  DailyReviewInput,
+  WeeklyReviewInput,
+  TriageToolInput,
+  RespondToolInput,
+} from "./mcp/review.js";
 
 /**
  * The host adapter implements every capability domain at once, so the
@@ -58,7 +68,8 @@ export interface CastleMcpDependencies
     LandingDependencies,
     ClaimDependencies,
     WorktreeDependencies,
-    WaitDependencies {}
+    WaitDependencies,
+    ReviewDependencies {}
 
 /**
  * Compose the published dev:afk tool surface from the per-domain registries.
@@ -79,5 +90,6 @@ export function createCastleMcpTools(
     ...createClaimTools(deps),
     ...createWorktreeTools(deps),
     ...createWaitTools(deps),
+    ...createReviewTools(deps),
   ];
 }
