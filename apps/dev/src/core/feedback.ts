@@ -602,6 +602,17 @@ function isCrashOrOom(code: number, output: string): boolean {
 }
 
 /**
+ * A baseline probe run that failed because the worktree itself could not be
+ * materialised (stale detached worktree, git lock, missing ref) must never
+ * claim that main is red — it is an infra failure of the probe, not a real
+ * test signal. Detect the sentinel stderr the feedback worktree manager writes
+ * when pathFor returns null and treat it as inconclusive (#2379).
+ */
+function isWorktreeSetupFailure(output: string): boolean {
+  return output.includes("feedback worktree setup failed");
+}
+
+/**
  * The sidecar summary for an `inconclusive` check — the comparison evidence a
  * human needs to read the `blocked:validation` park without re-running anything.
  */
@@ -662,6 +673,23 @@ async function runChecksForBaseline(
         evidence: {
           check: name,
           summary: "baseline probe inconclusive (crash/OOM) — not a confirmed baseline failure",
+          outputTail: boundedFailureOutputTail(output),
+        },
+      });
+      continue;
+    }
+    if (isWorktreeSetupFailure(output)) {
+      // The baseline probe's worktree materialisation failed (stale detached
+      // worktree, lock, missing ref — infra, not a test result). Treat as
+      // inconclusive so the failure is NOT counted as a pre-existing baseline
+      // failure. Without this, a setup failure makes every check appear to also
+      // fail on the baseline, falsely attributing the block to a baseline flake
+      // rather than the branch's code (#2379).
+      out.set(name, {
+        status: "inconclusive",
+        evidence: {
+          check: name,
+          summary: "baseline probe inconclusive (worktree setup failed) — not a confirmed baseline failure",
           outputTail: boundedFailureOutputTail(output),
         },
       });
