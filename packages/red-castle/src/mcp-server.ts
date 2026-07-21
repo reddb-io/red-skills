@@ -55,6 +55,11 @@ export interface RunnerDetectInput {
   runner?: string;
 }
 
+export interface WorkerSteerInput {
+  worker: string;
+  text: string;
+}
+
 export interface WorkerRequestInput extends WorkerDispatchInput {
   text: string;
 }
@@ -90,6 +95,7 @@ export interface CastleMcpDependencies {
   workerStop(input: WorkerStopInput): Promise<unknown>;
   runnerList(): Promise<unknown>;
   runnerDetect(input: RunnerDetectInput): Promise<unknown>;
+  runnerSteer(input: WorkerSteerInput): Promise<unknown>;
   workerRequest(input: WorkerRequestInput): Promise<unknown>;
   requeue(input: RequeueToolInput): Promise<unknown>;
   retake(input: RetakeToolInput): Promise<unknown>;
@@ -298,6 +304,17 @@ export function createCastleMcpTools(
       inputSchema: { runner: z.string().min(1).optional() },
       invoke: ({ runner }) =>
         deps.runnerDetect({ runner: runner as string | undefined }),
+    },
+    {
+      name: "runner_steer",
+      title: "Steer live AFK worker",
+      description:
+        "MUTATING: write a live-steer request into a running worker's next iteration.",
+      inputSchema: {
+        worker: z.string().min(1),
+        text: z.string().min(1),
+      },
+      invoke: (input) => deps.runnerSteer(input as unknown as WorkerSteerInput),
     },
     {
       name: "worker_request",
