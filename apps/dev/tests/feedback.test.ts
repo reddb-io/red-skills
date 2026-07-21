@@ -749,6 +749,35 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     expect(testCheck.status).toBe("failed");
   });
 
+  it("baseline worktree setup failure is inconclusive and never manufactures a main-red verdict (#2379)", async () => {
+    const exec: Exec = async (args) => {
+      const script = args[args.length - 1] ?? "";
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const isBaseline = dir.includes("main");
+      // Worker branch fails the test cleanly; the baseline probe's worktree
+      // setup failed (orphaned worktree blocked the add), simulated here by
+      // returning the exact sentinel the feedback-worktree pnpm exec emits.
+      if (script === "test" && !isBaseline) return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+      if (isBaseline) return { code: 1, stdout: "", stderr: "feedback worktree setup failed for main; validation blocked" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    // Setup failure must NOT count as "baseline failing": the branch failure
+    // stays attributed to the branch, the gate blocks, no main-red inference.
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).toEqual([]);
+    expect(result.ok).toBe(false);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("failed");
+  });
+
   it("a mix: one reproduced on the baseline, one worker-only → verdict is BRANCH-FAULT (a real new failure outranks an inconclusive one)", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
