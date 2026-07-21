@@ -144,6 +144,7 @@ stale notes inline.
 
 ## MCP / transport / surfaces
 - **0013** Dev owns the codebase-understanding surface; memory owns the graph — post-0041, `dev` consumes project memory through the `red-memory` MCP rather than an in-repo Memory CLI
+- **0120** red-castle is the AFK MCP; CLI and skills are clients — the `dev:afk` MCP server is the canonical **complete** interface to every castle capability (fleet, worker dispatch, runners incl. live steer, gate, landing/cascade, claim, worktree pool, hygiene, observability, queue), and the CLI, `/afk`, `/go`, and any future command-center UI are clients of it, never owners of a capability the MCP lacks. Every tool wraps a value-returning primitive (never the print-and-exit command layer) and returns TOON, so CLI and MCP share one core; mutating tools carry a `MUTATING:` prefix and are announced before use; a fleet becomes a named profile `{name, runner, selector, config, base}` so several fleets drain one checkout concurrently, with the pre-existing three-layer claim — not new machinery — preventing double-claims. The CLI stays a supported fallback (same engine, different transport), and this is deliberately the MCP-first slice: tools wrap functions where they live today, leaving the engine relocation to the #2230 program.
 - *(see also 0007, 0036, 0041)*
 
 ## Extraction / provider
