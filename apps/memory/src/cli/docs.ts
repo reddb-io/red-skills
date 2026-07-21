@@ -106,7 +106,7 @@ export async function runRegistryCliOperation(
       process.stdout.write(viewerCliSummary(operation, output, outPath));
       return;
     }
-    if (args.flags.json === true) {
+    if (args.flags.json === true || operation.renderer.cli.defaultFormat === "json") {
       console.log(JSON.stringify(output, null, 2));
       return;
     }
