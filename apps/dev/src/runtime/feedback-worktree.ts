@@ -306,7 +306,19 @@ export function makeFeedbackWorktree(
       // to a clean re-materialise.
     }
 
-    const added = await io.worktreeAdd(gitCtx, dest, branch);
+    let added = await io.worktreeAdd(gitCtx, dest, branch);
+    if (!added.ok) {
+      // Self-heal: a stale registered-but-removed (or registered-but-dirty)
+      // worktree at `dest` causes git to refuse the add with "already exists" /
+      // "not empty". Remove-force the path and retry once so a single orphaned
+      // feedback/main worktree never permanently blocks the baseline probe.
+      const isAlreadyExists =
+        /already exists|is not empty/i.test(added.stderr ?? "");
+      if (isAlreadyExists) {
+        await io.worktreeRemove(gitCtx, dest);
+        added = await io.worktreeAdd(gitCtx, dest, branch);
+      }
+    }
     if (!added.ok) {
       // Carry the underlying git stderr (#2339): the field report that opened
       // this only had "add failed", so the real cause (`fatal: couldn't find
