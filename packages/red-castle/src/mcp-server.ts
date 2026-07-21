@@ -264,8 +264,7 @@ export function createCastleMcpTools(
         trunk: z.string().min(1).optional(),
         validatedBranchTip: z.string().min(1).optional(),
       },
-      invoke: (input) =>
-        deps.landBranch(input as unknown as LandBranchInput),
+      invoke: (input) => deps.landBranch(input as unknown as LandBranchInput),
     },
     {
       name: "cascade_status",
