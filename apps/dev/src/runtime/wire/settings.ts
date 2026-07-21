@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../../core/config.js";
 import type { SandboxMode } from "../../core/execution.js";
-import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudgetUsage } from "../../core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult } from "../../core/execution.js";
 import { parseMaxIterations } from "../../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
@@ -175,28 +175,24 @@ export function agentLivenessVerdictSync(
   }
 }
 
-// ---------- attempt-guard arming policy (pure) ----------
+// ---------- attempt probe arming policy (pure) ----------
 
 /** What an attempt run arms, decided from sandbox mode + available signals. */
-export interface AttemptGuardArming {
+export interface AttemptProbeArming {
   /**
-   * Arm the attempt progress guard (ADR 0044) + externalized heartbeat
-   * (ADR 0045). True for EVERY sandbox mode once a worker branch exists
-   * (issue #405): under docker/podman sandcastle's bind-mount providers
-   * host-create the worktree and bind-mount it + the shared `.git` into the
-   * container, and #405 additionally bind-mounts the attempt dir — so the worker
-   * branch's commits + worktree edits are host-visible mid-run and the
-   * commit/volume probes no longer false-fire. (ADR 0044's "isolated copy"
-   * premise described a copy-isolated sandbox; sandcastle 0.6.x bind-mounts.)
+   * Wire the worker-branch head probe that stamps each vitals heartbeat. True
+   * for EVERY sandbox mode once a worker branch exists (issue #405): under
+   * docker/podman sandcastle's bind-mount providers host-create the worktree and
+   * bind-mount it + the shared `.git` into the container, so the worker branch's
+   * commits are host-visible mid-run. (The attempt-progress guard this flag once
+   * armed is gone — ADR 0103.)
    */
-  guardArmed: boolean;
+  headProbeArmed: boolean;
   /**
    * Arm the lane-idle stall reaper (issue #363). NO-SANDBOX only: its
    * busy-predicate inspects the HOST process tree, which cannot see the inner
    * agent inside a container — under docker/podman it would read every container
-   * as "not busy" and could reap a genuinely-busy worker. Decoupled from
-   * `guardArmed` (#405) so arming the guard under isolation never drags the
-   * host-blind reaper along with it.
+   * as "not busy" and could reap a genuinely-busy worker.
    */
   laneArmed: boolean;
 }
@@ -206,14 +202,14 @@ export interface AttemptGuardArming {
  * presence of a worker branch / attempt dir. Pure so the isolated-mode arming
  * decision is unit-testable without sandcastle or git.
  */
-export function resolveAttemptGuardArming(opts: {
+export function resolveAttemptProbeArming(opts: {
   sandbox: SandboxMode;
   branch: string | undefined;
   attemptDir: string | undefined;
-}): AttemptGuardArming {
-  const guardArmed = !!opts.branch;
-  const laneArmed = opts.sandbox === "none" && guardArmed && !!opts.attemptDir;
-  return { guardArmed, laneArmed };
+}): AttemptProbeArming {
+  const headProbeArmed = !!opts.branch;
+  const laneArmed = opts.sandbox === "none" && headProbeArmed && !!opts.attemptDir;
+  return { headProbeArmed, laneArmed };
 }
 
 export async function resolveAttemptHead(ctx: gitx.GitContext, branch: string): Promise<string | undefined> {
@@ -238,18 +234,11 @@ export function makeRunAgent(
   env: NodeJS.ProcessEnv = process.env,
   maxIterations?: number,
   laneIdle?: LaneIdleStallConfig,
-  budgetUsage?: () => AttemptBudgetUsage,
   sandboxImage?: string,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const {
-      runAgent,
-      defaultSandcastleDeps,
-      parseIdleTimeout,
-      DEFAULT_ATTEMPT_TIMEOUT_S,
-      DEFAULT_ATTEMPT_HARD_CAP_S,
-    } = await import("../../core/execution.js");
+    const { runAgent, defaultSandcastleDeps, parseIdleTimeout } = await import("../../core/execution.js");
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
     // Sandcastle re-invocation ceiling (issue #322). Precedence: per-call
@@ -262,31 +251,20 @@ export function makeRunAgent(
     // same typo-safe contract.
     const envIdleTimeout = parseIdleTimeout(env.RED_AFK_IDLE_TIMEOUT_S);
     const effectiveSandbox = input.sandboxMode ?? sandbox;
-    // Attempt progress guard (proof-of-progress) + externalized heartbeat. Armed
-    // for EVERY sandbox mode now (issue #405): under docker/podman sandcastle's
-    // bind-mount providers host-create the worktree and bind-mount it + the
-    // shared `.git` into the container, and #405 additionally bind-mounts the
-    // attempt dir (buildRunOptions), so `branchHead` sees HEAD advance and the
-    // worktree diffstat reflects in-container edits — the commit/volume probes no
-    // longer false-fire under isolation. The lane-idle reaper stays no-sandbox
-    // only (its host process-tree busy-predicate is blind to a containerized
-    // agent); resolveAttemptGuardArming decouples the two.
-    const attemptTimeout =
-      input.attemptTimeoutSeconds ??
-      DEFAULT_ATTEMPT_TIMEOUT_S;
-    // Commit-anchored hard cap (issue #637): bounds how long the edit-signal
-    // below may keep extending the soft deadline. Never below the soft cap, so
-    // a low override cannot make the hard cap fire before plain ADR 0044 would.
-    const attemptHardCap = Math.max(
-      input.attemptHardCapSeconds ?? DEFAULT_ATTEMPT_HARD_CAP_S,
-      attemptTimeout,
-    );
+    // Worker-branch head probe for the vitals heartbeat. Wired for EVERY sandbox
+    // mode (issue #405): under docker/podman sandcastle's bind-mount providers
+    // host-create the worktree and bind-mount it + the shared `.git` into the
+    // container, and #405 additionally bind-mounts the attempt dir
+    // (buildRunOptions), so `branchHead` sees HEAD advance under isolation. The
+    // lane-idle reaper stays no-sandbox only (its host process-tree
+    // busy-predicate is blind to a containerized agent);
+    // resolveAttemptProbeArming decouples the two.
     // Resolved lane-idle config is threaded from resolveRunSettings (validated at
     // boot); a caller that constructed makeRunAgent without one falls back to the
     // env-resolved config.
     const laneIdleCfg = laneIdle ?? resolveLaneIdleStallConfig(env);
     const laneAttemptDir = input.cwd;
-    const { guardArmed, laneArmed } = resolveAttemptGuardArming({
+    const { headProbeArmed, laneArmed } = resolveAttemptProbeArming({
       sandbox: effectiveSandbox,
       branch: input.branch,
       attemptDir: laneAttemptDir,
@@ -299,29 +277,9 @@ export function makeRunAgent(
       ...(input.sandboxImage ?? sandboxImage ? { sandboxImage: input.sandboxImage ?? sandboxImage } : {}),
       maxIterations: input.maxIterations ?? maxIterations ?? parseMaxIterations(env.RED_AFK_MAX_ITERATIONS),
       idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout,
-      ...(guardArmed
-        ? {
-            attemptTimeoutSeconds: attemptTimeout,
-            attemptHardCapSeconds: attemptHardCap,
-            headProbe: () => resolveAttemptHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
-            // Edit signal (ADR 0051): the changed-line volume of the agent's real
-            // worktree (committed + uncommitted). A change between polls resets
-            // the deadline, so a runner that edits without committing (codex) is
-            // not falsely stalled. Resolve the worktree off the worker branch, and
-            // return undefined on any failure (guard degrades to commit-anchored).
-            progressProbe: async () => {
-              const gitCtx = { cwd: input.cwd ?? process.cwd() };
-              const worktree = await gitx.worktreePathForBranch(gitCtx, input.branch);
-              if (!worktree) return undefined;
-              const baseRef = input.base ? `origin/${input.base}` : "origin/main";
-              const { added, removed } = await gitx.diffstatShortstat({ cwd: worktree }, baseRef);
-              return added + removed;
-            },
-          }
+      ...(headProbeArmed
+        ? { headProbe: () => resolveAttemptHead({ cwd: input.cwd ?? process.cwd() }, input.branch) }
         : {}),
-      // Live activity counters are wired whenever the progress guard is armed so
-      // tool/text progress can extend the soft stall deadline.
-      ...(guardArmed && budgetUsage ? { budgetUsage } : {}),
       ...(laneArmed && laneAttemptDir
         ? {
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
