@@ -46,6 +46,9 @@ describe("Memory operation transport adapter", () => {
     expect(listMemoryOperationsForTransport([operation], "cli")).toEqual([operation]);
     expect(listMemoryOperationsForTransport([operation], "http")).toEqual([operation]);
     expect(listMemoryOperationsForTransport([operation], "mcp")).toEqual([]);
+    expect(listMemoryHttpRegistryRoutes([operation])).toEqual([
+      { route: "/api/test-registration", operationId: definition.id },
+    ]);
   });
 
   test("binds doc brief CLI argv from registry input facets", () => {
