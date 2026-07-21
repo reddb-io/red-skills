@@ -94,7 +94,7 @@ describe("doLanding — conventional landing titles (#1267)", () => {
     { labels: ["type:task"], title: "chore: #9 Fix the thing" },
     { labels: ["lane:go"], changedFiles: ["apps/dev/src/core/go.ts"], title: "fix: #9 Fix the thing" },
     { labels: ["lane:go"], changedFiles: ["docs/OPERATIONS.md"], title: "docs: #9 Fix the thing" },
-    { labels: ["lane:go"], changedFiles: ["scripts/test-red-release-bump-kind.sh"], title: "chore: #9 Fix the thing" },
+    { labels: ["lane:go"], changedFiles: ["scripts/test-version-sync-contract.sh"], title: "chore: #9 Fix the thing" },
   ])("direct/no-agent landing maps $labels to $title", async ({ labels, changedFiles, title }) => {
     const h = harness({ locked: true, labels, changedFiles });
     const r = await doLanding(h.deps, h.input, h.hooks);
