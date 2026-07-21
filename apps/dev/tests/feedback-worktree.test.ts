@@ -232,6 +232,62 @@ describe("makeFeedbackWorktree install (#458)", () => {
     const line = written.find((l) => l.includes("feedback worktree add failed"));
     expect(line).toContain("fatal: couldn't find remote ref refs/heads/nope");
   });
+
+  it("self-heals a stale worktree registration: remove + retry on first-add failure (#2379)", async () => {
+    // A stale feedback worktree left by a dead worker causes git to refuse the
+    // first worktreeAdd ("worktree already exists"). The manager should remove
+    // the stale entry and retry once so the gate can proceed.
+    let addCalls = 0;
+    const removedPaths: string[] = [];
+    const { io: base, calls } = fakeIO(0, true, 0, { enabled: false });
+    const io: FeedbackWorktreeIO = {
+      ...base,
+      worktreeAdd: async (ctx, dest) => {
+        addCalls += 1;
+        if (addCalls === 1) return { ok: false, stderr: "fatal: worktree already registered at that path" };
+        calls.push({ op: "add", dest });
+        return { ok: true, stderr: "" };
+      },
+      worktreeRemove: async (_ctx, dest) => {
+        removedPaths.push(dest);
+      },
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+    // Self-heal succeeded: validation should proceed (install then script run).
+    expect(result.code).toBe(0);
+    // remove was called exactly once as the self-heal step.
+    expect(removedPaths).toHaveLength(1);
+    // add was attempted twice: once failed, once succeeded after remove.
+    expect(addCalls).toBe(2);
+    // install and script ran after successful add.
+    expect(calls.filter((c) => c.op === "install")).toHaveLength(1);
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(1);
+  });
+
+  it("blocks validation when both worktree-add attempts fail (self-heal exhausted, #2379)", async () => {
+    const removedPaths: string[] = [];
+    const { io: base, calls } = fakeIO(0, false, 0, { enabled: false });
+    const io: FeedbackWorktreeIO = {
+      ...base,
+      worktreeRemove: async (_ctx, dest) => {
+        removedPaths.push(dest);
+      },
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+    // Both attempts failed: gate must still block.
+    expect(result.code).toBe(1);
+    // remove was called once as part of the self-heal attempt.
+    expect(removedPaths).toHaveLength(1);
+    // No install or script after two failed adds.
+    expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
+  });
 });
 
 // #2339: the post-merge integration gate (#1335) hands the feedback executors
