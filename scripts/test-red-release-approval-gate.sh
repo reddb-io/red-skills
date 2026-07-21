@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Contract test for the red-release publishing approval gate.
+# Contract test for the red-publish publishing approval gate.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-WORKFLOW=".github/workflows/red-release.yml"
+WORKFLOW=".github/workflows/red-publish.yml"
 README="README.md"
 ENVIRONMENT_NAME="red-release"
 
@@ -28,16 +28,16 @@ assert_grep() {
 assert_release_job_environment() {
   local block
   block="$(awk '
-    /^  release:/ { in_release = 1 }
-    in_release && /^  [A-Za-z0-9_-]+:/ && !/^  release:/ { exit }
+    /^  publish:/ { in_release = 1 }
+    in_release && /^  [A-Za-z0-9_-]+:/ && !/^  publish:/ { exit }
     in_release { print }
   ' "$WORKFLOW")"
 
   if grep -qE '^    environment:' <<<"$block" &&
      grep -qE "^[[:space:]]+name: ${ENVIRONMENT_NAME}$" <<<"$block"; then
-    pass "release job uses ${ENVIRONMENT_NAME} environment"
+    pass "publish job uses ${ENVIRONMENT_NAME} environment"
   else
-    fail "release job does not use ${ENVIRONMENT_NAME} environment"
+    fail "publish job does not use ${ENVIRONMENT_NAME} environment"
   fi
 }
 
