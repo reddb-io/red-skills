@@ -509,6 +509,13 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
+/** Prune stale linked-worktree tracking entries (best-effort). Run after rm -rf
+ * on feedback worktree dirs so subsequent worktree-add calls don't see stale
+ * registrations from removed-but-not-pruned entries (#2379). */
+export async function worktreePrune(ctx: GitContext): Promise<void> {
+  await runGit(ctx, ["worktree", "prune"]);
+}
+
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
