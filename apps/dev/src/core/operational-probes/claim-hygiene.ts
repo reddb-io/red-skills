@@ -208,6 +208,21 @@ function claimHygieneData(finding: OperationalProbeResult): ClaimHygieneProbeDat
   return rec as ClaimHygieneProbeData;
 }
 
+/**
+ * The claim-hygiene finding's data when it is SAFE to auto-heal at boot: PURELY
+ * dead own-namespace danglers (this machine's own dead-pid workers), with no
+ * foreign markers and no unknown-pid own markers that a human must adjudicate.
+ * Returns null otherwise. A boot sweep may auto-concede these without an
+ * operator, so one stranded claim never throws BootHaltError and kills the
+ * whole fleet (#2321).
+ */
+export function autoHealableClaimHygiene(finding: OperationalProbeResult): ClaimHygieneProbeData | null {
+  const data = claimHygieneData(finding);
+  if (!data || data.actions.length === 0) return null;
+  if (data.foreign.length > 0 || data.unknownOwn > 0) return null;
+  return data;
+}
+
 function groupActionsByIssue(actions: readonly ClaimHygieneConcedeAction[]): ClaimHygieneConcedeAction[][] {
   const byIssue = new Map<number, ClaimHygieneConcedeAction[]>();
   for (const action of actions) {
