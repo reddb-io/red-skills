@@ -36,7 +36,7 @@ export type {
   WorkerRequestInput,
 } from "./mcp/runner.js";
 export type { RequeueToolInput, RetakeToolInput } from "./mcp/hygiene.js";
-export type { GateRunInput, GateBaselineStatusInput } from "./mcp/gate.js";
+export type { GateRunInput } from "./mcp/gate.js";
 export type { LandBranchInput, CascadeStatusInput } from "./mcp/landing.js";
 export type { ClaimIssueInput } from "./mcp/claim.js";
 export type { WorktreeRemoveInput } from "./mcp/worktree.js";
