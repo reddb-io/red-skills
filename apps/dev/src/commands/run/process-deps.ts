@@ -504,8 +504,9 @@ export function buildProcessDeps(
       const slug = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
       const dest = join(paths.landingWorktreesDir, `${slug}-${slot}`);
       await gitx.worktreeRemove(gitCtx, dest);
-      const ok = await gitx.worktreeAdd(gitCtx, dest, base);
-      return ok ? dest : null;
+      const added = await gitx.worktreeAdd(gitCtx, dest, base);
+      if (!added.ok) gitx.warnWorktreeAdd(dest, base, added.stderr);
+      return added.ok ? dest : null;
     },
     removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
     // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006):
@@ -515,8 +516,9 @@ export function buildProcessDeps(
       const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
       const dest = join(paths.rebaseWorktreesDir, `${slug}-${slot}`);
       await gitx.worktreeRemove(gitCtx, dest);
-      const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
-      return ok ? dest : null;
+      const added = await gitx.worktreeAdd(gitCtx, dest, branch);
+      if (!added.ok) gitx.warnWorktreeAdd(dest, branch, added.stderr);
+      return added.ok ? dest : null;
     },
     removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
     hooks: {
@@ -942,9 +944,12 @@ export function buildProcessDeps(
         const dest = join(paths.cascadeWorktreesDir, `${slug}-${slot}`);
         try {
           await gitx.worktreeRemove(gitCtx, dest);
-          const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
-          if (!ok) {
-            return { ok: false, warn: `failed to create worktree for ${branch}` };
+          const added = await gitx.worktreeAdd(gitCtx, dest, branch);
+          if (!added.ok) {
+            return {
+              ok: false,
+              warn: `failed to create worktree for ${branch}: ${added.stderr || "no git detail"}`,
+            };
           }
           const run = exec ?? (await import("../../runtime/exec.js")).execTool;
           const rebaseR = await run("git", ["rebase", trunkTip], { cwd: dest });

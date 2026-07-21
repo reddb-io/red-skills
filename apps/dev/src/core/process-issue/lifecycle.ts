@@ -1286,6 +1286,27 @@ export async function processIssue(
         `the open PR merge was rejected by GitHub, usually because branch protection or CI is not satisfied`,
       );
     }
+    if (landing.reason === "post-merge-gate") {
+      // The post-merge integration gate (#1335) rejected the integrated tree —
+      // a VALIDATION outcome, never a merge conflict (#2339). The rebase that
+      // precedes it already succeeded, so parking `blocked:merge-conflict` sent
+      // humans down the wrong recovery path (same class as #2096), most visibly
+      // when the gate could not even materialise its worktree and every check
+      // short-circuited with `durationMs: 0`.
+      const validation =
+        validationSidecar.join("\n") ||
+        "The post-merge integration gate failed on the rebased tree; nothing was merged.";
+      return await terminalFailure(
+        common,
+        "feedback-failed",
+        "feedback",
+        {
+          notes: "The post-merge integration gate failed; the worker branch was not merged.",
+          validation,
+        },
+        { validationSummary: validation },
+      );
+    }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());

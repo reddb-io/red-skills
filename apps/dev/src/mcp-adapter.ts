@@ -425,13 +425,13 @@ export function createDefaultDevAfkMcpOperations(
           makeLandingWorktree: async (target) => {
             const dest = join(paths.landingWorktreesDir, `${slug(target)}-mcp-${input.issue}`);
             await gitx.worktreeRemove(gitCtx, dest);
-            return (await gitx.worktreeAdd(gitCtx, dest, target)) ? dest : null;
+            return (await gitx.worktreeAdd(gitCtx, dest, target)).ok ? dest : null;
           },
           removeLandingWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
           makeRebaseWorktree: async (branch) => {
             const dest = join(paths.rebaseWorktreesDir, `${slug(branch)}-mcp-${input.issue}`);
             await gitx.worktreeRemove(gitCtx, dest);
-            return (await gitx.worktreeAdd(gitCtx, dest, branch)) ? dest : null;
+            return (await gitx.worktreeAdd(gitCtx, dest, branch)).ok ? dest : null;
           },
           removeRebaseWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
         },

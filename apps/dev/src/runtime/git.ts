@@ -454,16 +454,53 @@ export async function recentCommits(ctx: GitContext, ref = "main", count = 5): P
 }
 
 /**
+ * Outcome of {@link worktreeAdd}. `stderr` carries the UNDERLYING git failure
+ * (fetch and/or `worktree add`) so a caller's error line names the real cause
+ * (#2339). A bare boolean forced every field report to guess why the gate's
+ * worktree never materialised — keep the detail attached to the failure.
+ */
+export interface WorktreeAddResult {
+  ok: boolean;
+  /** Combined git stderr, trimmed. Empty when git said nothing. */
+  stderr: string;
+}
+
+/**
  * Add a detached worktree for `branch` under `path` (fetching origin first so a
- * sandcastle-pushed worker branch is visible locally). Returns true on success.
+ * sandcastle-pushed worker branch is visible locally). Returns `{ ok: true }` on
+ * success and `{ ok: false, stderr }` with the real git stderr otherwise.
  * Best-effort cleanup is the caller's via {@link worktreeRemove}.
  */
-export async function worktreeAdd(ctx: GitContext, path: string, branch: string): Promise<boolean> {
-  await runGit(ctx, ["fetch", "origin", branch]);
+export async function worktreeAdd(
+  ctx: GitContext,
+  path: string,
+  branch: string,
+): Promise<WorktreeAddResult> {
+  const fetched = await runGit(ctx, ["fetch", "origin", branch]);
   // Always use the freshly-fetched origin tip so validation never runs against
   // a stale local ref that diverges from what was pushed.
   const r = await runGit(ctx, ["worktree", "add", "--force", "--detach", path, `origin/${branch}`]);
-  return r.code === 0;
+  if (r.code === 0) return { ok: true, stderr: "" };
+  // A failed fetch is usually the ROOT cause (the ref does not exist, e.g. a
+  // filesystem path passed where a branch belongs), and the `worktree add` that
+  // follows only reports the missing `origin/<branch>` — carry both.
+  const stderr = [fetched.code === 0 ? "" : fetched.stderr, r.stderr]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("\n");
+  return { ok: false, stderr };
+}
+
+/**
+ * Emit the one diagnostic line a failed {@link worktreeAdd} owes the operator
+ * (#2339): dest, the ref we tried to check out, and the REAL git stderr. Every
+ * landing/rebase provisioner collapses the failure to `null`, so without this
+ * the only field evidence was a silent refusal.
+ */
+export function warnWorktreeAdd(dest: string, branch: string, stderr: string): void {
+  process.stderr.write(
+    `error: worktree add failed for ${branch} at ${dest}: ${stderr || "no git detail"}\n`,
+  );
 }
 
 /** Remove a worktree previously added by {@link worktreeAdd} (best-effort). */

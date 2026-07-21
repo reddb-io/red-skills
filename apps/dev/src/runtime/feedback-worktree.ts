@@ -29,7 +29,7 @@
 // `cacheEnabled: false` for callers that need a strict per-session manager.
 
 import { accessSync, constants, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   buildFeedbackSubprocessEnv,
   type Exec as PnpmExec,
@@ -39,6 +39,34 @@ import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostAttemptFormatExec } from "../core/post-attempt-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
+
+/**
+ * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
+ *
+ * The feedback gate's `-C` token is normally a branch, but the post-merge
+ * integration gate (#1335) passes the isolated rebase/landing worktree DIR it
+ * just provisioned. Treating that dir as a branch made `git fetch origin
+ * <dir>` fail and blocked ALL validation.
+ *
+ * The discriminator is git's own: a checkout root carries a `.git` entry (a
+ * DIR in a primary clone, a FILE in a linked worktree). Branch names never
+ * do — `afk/<worker>/<n>-<slug>` is not a directory on disk — so the check
+ * cannot mistake a branch for a path. Returns the resolved checkout path
+ * (relative tokens are tried against `root` first, then the cwd), or `null`
+ * when the token is a plain branch name.
+ */
+export function resolveCheckoutDir(token: string, root: string): string | null {
+  const candidates = isAbsolute(token) ? [token] : [join(root, token), token];
+  for (const candidate of candidates) {
+    try {
+      accessSync(join(candidate, ".git"), constants.F_OK);
+      return candidate;
+    } catch {
+      // Not a checkout at this candidate — try the next.
+    }
+  }
+  return null;
+}
 
 function slugForBranch(branch: string): string {
   return branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "wt";
@@ -90,7 +118,16 @@ export function splitBranchDir(
  * (the safe default — re-materialise from scratch).
  */
 export interface FeedbackWorktreeIO {
-  worktreeAdd(ctx: gitx.GitContext, dest: string, branch: string): Promise<boolean>;
+  /**
+   * Materialise `branch` at `dest`. Returns the real git stderr alongside the
+   * verdict (#2339) — a bare boolean forced every field report to guess why the
+   * gate never got a checkout.
+   */
+  worktreeAdd(
+    ctx: gitx.GitContext,
+    dest: string,
+    branch: string,
+  ): Promise<{ ok: boolean; stderr?: string }>;
   worktreeRemove(ctx: gitx.GitContext, dest: string): Promise<void>;
   /**
    * Resolve `branch` (local or remote) to its HEAD SHA. Returns `null` when
@@ -235,6 +272,20 @@ export function makeFeedbackWorktree(
     if (!branch) return root;
     const cached = resolved.get(branch);
     if (cached !== undefined) return cached;
+
+    // The token is ALREADY a materialised checkout (#2339). The post-merge
+    // integration gate (#1335) hands the gate the isolated rebase/landing
+    // worktree DIR, not a branch name — the caller provisioned it, so there is
+    // nothing to fetch or add. Without this seam the dir was treated as a
+    // branch: `git fetch origin .red/tmp/worktrees/rebase/<slug>-0` failed,
+    // every validation call short-circuited to code 1 with `durationMs: 0`, and
+    // the landing parked as a phantom merge-conflict.
+    const materialised = resolveCheckoutDir(branch, root);
+    if (materialised) {
+      resolved.set(branch, materialised);
+      return materialised;
+    }
+
     const dest = join(feedbackRoot, slugForBranch(branch));
 
     // AFK runner improvement — cross-session cache: a worktree already at
@@ -255,10 +306,14 @@ export function makeFeedbackWorktree(
       // to a clean re-materialise.
     }
 
-    const ok = await io.worktreeAdd(gitCtx, dest, branch);
-    if (!ok) {
+    const added = await io.worktreeAdd(gitCtx, dest, branch);
+    if (!added.ok) {
+      // Carry the underlying git stderr (#2339): the field report that opened
+      // this only had "add failed", so the real cause (`fatal: couldn't find
+      // remote ref <x>`) had to be guessed.
       process.stderr.write(
-        `error: feedback worktree add failed for ${branch}; blocking validation\n`,
+        `error: feedback worktree add failed for ${branch}; blocking validation: ` +
+          `${added.stderr?.trim() || "no git detail"}\n`,
       );
       resolved.set(branch, null);
       return null;

@@ -235,6 +235,29 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.runAgentCalls.length).toBe(1);
   });
 
+  it("a post-merge-gate failure parks blocked:validation, NEVER merge-conflict (#2339)", async () => {
+    // #2338 field report: the gate could not materialise its worktree, every
+    // check short-circuited with `durationMs: 0`, and the attempt was parked as
+    // blocked:merge-conflict — sending humans down the wrong recovery path even
+    // though the pre-merge rebase had already succeeded (same class as #2096).
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      postMergeGateOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:merge-conflict"))).toBe(false);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    // The work is preserved: nothing merged, agent not re-run.
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
   it("admin-merge rejected after PR exists parks the PR instead of re-queueing for a fresh agent", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, prMergeCode: 1 });
     const result = await processIssue(deps, input);
