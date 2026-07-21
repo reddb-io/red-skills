@@ -465,6 +465,76 @@ describe("rsp wait MCP tools", () => {
   });
 });
 
+describe("statusline_aggregate MCP tool", () => {
+  it("returns the payload shape with project, repo, fleet, workers, and queue", async () => {
+    const cwd = await root();
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+
+    const result = await deps.statuslineAggregate() as Record<string, unknown>;
+
+    const project = result.project as Record<string, unknown>;
+    expect(typeof project.basename).toBe("string");
+    expect(typeof project.version).toBe("string");
+    expect(typeof project.docs_unlanded).toBe("number");
+    expect(project.branch === null || typeof project.branch === "string").toBe(true);
+
+    const repo = result.repo as Record<string, unknown>;
+    expect(typeof repo.open_prs).toBe("number");
+    expect(typeof repo.today_prs).toBe("number");
+    expect(typeof repo.open_issues).toBe("number");
+    expect(repo.cache_age_s === null || typeof repo.cache_age_s === "number").toBe(true);
+
+    expect(Array.isArray(result.workers)).toBe(true);
+    expect("fleet" in result).toBe(true);
+
+    const queue = result.queue as Record<string, unknown>;
+    expect(typeof queue.ready_for_agent).toBe("number");
+    expect(typeof queue.ready_for_human).toBe("number");
+    expect(queue.cache_age_s === null || typeof queue.cache_age_s === "number").toBe(true);
+  });
+
+  it("exposes model and effort on each worker record when present", async () => {
+    const cwd = await root();
+    const paths = createEnginePaths(join(cwd, ".red"));
+    const attemptDir = join(paths.workersRoot, "wTST1", "2344");
+    await mkdir(attemptDir, { recursive: true });
+    await writeFile(
+      join(attemptDir, "afk.state.toon"),
+      JSON.stringify({
+        version: 1,
+        worker_id: "wTST1",
+        pid: process.pid,
+        runner: "claude",
+        origin: "afk",
+        started_at: new Date().toISOString(),
+        current: {
+          number: 2344,
+          runner: "claude",
+          model: "claude-opus-4-8",
+          effort: "high",
+          phase: "coding",
+          activity: "editing",
+          retries: 0,
+          iteration: 1,
+          loc_added: 10,
+          loc_removed: 3,
+        },
+      }),
+      "utf8",
+    );
+
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const result = await deps.statuslineAggregate() as { workers: Array<Record<string, unknown>> };
+
+    expect(result.workers).toHaveLength(1);
+    const worker = result.workers[0] as { worker: { current: Record<string, unknown> } };
+    expect(worker.worker.current).toMatchObject({
+      model: "claude-opus-4-8",
+      effort: "high",
+    });
+  });
+});
+
 describe("buildMcpLandingFireHook — lifecycle hook wiring", () => {
   async function writeHookConfig(cwd: string, hookYaml: string): Promise<void> {
     await mkdir(join(cwd, ".red"), { recursive: true });
