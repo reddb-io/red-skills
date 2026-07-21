@@ -409,19 +409,6 @@ export function recoveryOrdinalFor(input: ProcessIssueInput): number {
     ? input.recoveryOrdinal
     : input.attempt;
 }
-export function timeoutReasonForEnvelope(reason: RunAgentResult["timeoutReason"] | undefined): string {
-  return reason ?? "stalled";
-}
-export function timeoutNotes(reason: RunAgentResult["timeoutReason"] | undefined): string {
-  const typedReason = timeoutReasonForEnvelope(reason);
-  if (typedReason === "edit-loop-stall") {
-    return "_(attempt aborted by attempt guard: edit-loop-stall — worktree diff volume changed without reaching a new high-water mark)_";
-  }
-  if (typedReason === "hard-cap") {
-    return "_(attempt aborted by attempt guard: hard-cap — worktree edits continued without a fresh commit)_";
-  }
-  return "_(attempt aborted by attempt guard: stalled — no new commit or diff growth within the wall-clock guard)_";
-}
 export function markTerminalState(deps: ProcessIssueDeps, outcome: ProcessOutcome): void {
   deps.markState?.(stateExitPatch(outcome));
   if (outcome !== "done") {
