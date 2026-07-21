@@ -61,6 +61,7 @@ import {
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
+import { resolveFleetFromArgs } from "../core/fleet-name.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -454,9 +455,10 @@ export function buildSupervisorBootSweeps(
   root: string,
   repo: string,
   log: (line: string) => void,
+  fleet?: string,
 ): () => Promise<void> {
   const ctx: RepoContext = { root, repo, remote: "origin" };
-  const paths = afkPaths(root);
+  const paths = afkPaths(root, fleet);
   return async (): Promise<void> => {
     const nowS = Math.floor(Date.now() / 1000);
     const facts = await collectPrecheckFacts(ctx);
@@ -493,6 +495,7 @@ function buildSupervisorDeps(
   firehosePath: string,
   statePath: string,
   supervisorId: string,
+  fleet: string,
   runner: string,
   ghCtx: ghx.GhContext,
   trunk: string,
@@ -503,9 +506,12 @@ function buildSupervisorDeps(
   const bundle = process.argv[1];
   const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
+  // The lane lives INSIDE the fleet's runtime dir (`supervisors/<fleet>/s<pid>/`)
+  // so two named fleets never share a lane namespace and each fleet's pid
+  // discovery only ever sees its own supervisors.
   const supervisorWriter = createCastleLaneWriters(
     createEnginePaths(join(root, ".red")),
-  ).supervisor(supervisorId);
+  ).supervisor(join(fleet, supervisorId));
   const emitSupervisorEvent: NonNullable<SupervisorDeps["emitSupervisorEvent"]> = async (record) => {
     await supervisorWriter.append({
       supervisor_id: supervisorId,
@@ -711,7 +717,7 @@ function buildSupervisorDeps(
     // Fleet supervisor owns the boot (#623): runSupervisor calls this ONCE before
     // the initial spawn. Runs the full shared sweep suite over real IO and logs
     // the result; each worker then boots bootstrap+claim only.
-    bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine),
+    bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine, fleet),
     // Periodic dependency Unblock Sweep on the supervisor tick (#844). Re-uses the
     // boot sweep's executeUnblockSweep core over fresh gh reads: list open
     // blocked:dependency issues, resolve each req:* blocker, promote only the
@@ -759,7 +765,7 @@ function buildSupervisorDeps(
       };
     },
     attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
-    resizeRequest: async () => readResizeRequest(afkPaths(root).supervisorResizePath),
+    resizeRequest: async () => readResizeRequest(afkPaths(root, fleet).supervisorResizePath),
     configureRunner: (nextRunner) => {
       activeRunner = nextRunner;
       workerEnv = buildWorkerEnv(process.env, activeRunner);
@@ -856,7 +862,10 @@ function buildSupervisorDeps(
  */
 export async function superviseCommand(args: string[], cwd = process.cwd()): Promise<number> {
   const root = cwd;
-  const paths = afkPaths(root);
+  // Which named fleet this supervisor owns: the `--fleet` flag the launcher
+  // forwarded, else the inherited RED_AFK_FLEET, else the default lane.
+  const fleet = resolveFleetFromArgs(args);
+  const paths = afkPaths(root, fleet);
   const tmp = paths.tmpDir;
   const stateAfk = dirname(paths.supervisorPidPath);
   const pidFile = paths.supervisorPidPath;
@@ -886,12 +895,14 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       : ((await readFleetState(stateFile).catch(() => null))?.slotPids ?? []);
   const adoptSlotPids = envAdoptSlotPids.length > 0 ? envAdoptSlotPids : stateAdoptSlotPids;
   await reapStaleSupervisorState(stateAfk, isAlive);
-  // single-supervisor lock
+  // One supervisor PER NAMED FLEET. The lock is the fleet's own pid file inside
+  // `supervisors/<fleet>/`, so a second `alpha` supervisor is refused while
+  // `beta` boots freely alongside it.
   if (existsSync(pidFile)) {
     try {
       const prev = Number(require("node:fs").readFileSync(pidFile, "utf8").trim());
       if (prev && isAlive(prev)) {
-        process.stderr.write(`supervisor already running (pid=${prev})\n`);
+        process.stderr.write(`supervisor already running for fleet ${fleet} (pid=${prev})\n`);
         return 1;
       }
     } catch {
@@ -920,7 +931,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     RED_AFK_RUNNER: config.runner,
     ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
   };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
+  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, fleet, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 
