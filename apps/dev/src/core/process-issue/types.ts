@@ -51,7 +51,6 @@ import {
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
-import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -308,9 +307,6 @@ export interface ProcessIssueDeps {
   recoveryEnv?: RecoveryEnv;
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
-  salvageUncommitted?(branch: string): Promise<number>;
-  exitBarrier?(branch: string): Promise<ExitReceipt>;
-  terminalExitBarrier?(branch: string): Promise<TerminalReceipt>;
   cascadeRebase?: CascadeRebasePort;
 }
 export interface CascadeRebasePort {
@@ -353,7 +349,6 @@ export interface ProcessIssueResult {
   locked?: boolean;
   mergeSha?: string;
   cleanupError?: string;
-  exitReceipt?: ExitReceipt;
   hooksFired: HookName[];
   envelopePosted?: boolean;
   preserved: boolean;
