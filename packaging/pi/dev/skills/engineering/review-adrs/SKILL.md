@@ -1,125 +1,212 @@
 ---
 name: review-adrs
-description: Review the `.red/adr/` set for consistency issues, reconcile each finding with the maintainer through a one-question-at-a-time interview — reaching agreement before any write — then consolidate every agreement into a single actionable Spec on the issue tracker via `/to-spec`. Use when asked to "review the ADRs", after adding or reversing an ADR, or to turn ADR decision debt into scheduled work.
+description: Review the `.red/adr/` set with read-only lifecycle triage, optionally scoped by subject; apply explicitly confirmed mechanical maintenance in-session, then reconcile judgment findings through an interview and `/to-spec`. Use when asked to "review the ADRs", after adding or reversing an ADR, or to curate accumulated decision debt.
 ---
 
-# Review ADRs (decision-record interview → actionable Spec)
+# Review ADRs (read-only triage → gated maintenance → judgment Spec)
 
-**Lint the decision record read-only, reconcile each finding through a one-question-at-a-time interview, and package every agreement into one Spec — never edit an ADR, the wiki, or the graph directly.**
+**Triage the decision record read-only first. Apply only reversible mechanical
+maintenance after one explicit confirmation; route every judgment operation
+through a one-question-at-a-time interview and one actionable Spec.**
 
-ADRs accumulate (30–40+ per repo) and **derive**: one reverses another, a path it
-cites moves, a decision was taken controversially and never reconciled, the wiki and
-Memory graph hold claims sourced from a decision that later changed. This is the
-"doctor of decisions" — sibling to `/red-doctor` (adoption) and `memory:doctor` (graph).
-Detection is read-only; **every resolution is reached through an interview** — one
-question per turn, `/start`-style — and the agreement is captured, not applied. The
-skill never edits an ADR, the wiki, or the graph: it consolidates every agreed fix
-into **one Spec** on the tracker, which `/to-tickets` + `/afk` execute afterwards.
+ADRs accumulate and derive: one supersedes another, paths move, shipped decisions
+become inert, and records overlap or grow too broad. This skill is the doctor of
+decisions — sibling to `/red-doctor` (adoption) and `memory:doctor` (graph). It has
+one door but two resolution lanes:
+
+- mechanical maintenance: archive move, terminal status/successor, INDEX archive
+  resync, and stale-path prose repair; reversible helpers may apply in-session;
+- judgment: merge, split, supersede a live decision, or reconcile controversy;
+  interview first, then `/to-spec` → `/to-tickets` → `/afk`.
 
 <what-to-do>
 
-**First detect read-only (Pass 1). Then run the Reconcile interview (Pass 2): walk the findings as a decision tree, ask ONE question per turn with a recommended resolution, wait for the reply, and record the agreed action. Grouping (Pass 3) and propagation (Pass 4) are further branches of that same interview. Then emit ONE Spec via `/to-spec` (Pass 5) holding every agreed action. The only artefact this skill writes is the Spec.**
+Run these phases in order: **scope → fetched read-only detection → triage buckets →
+mechanical plan → explicit confirmation gate → optional apply → judgment
+interview/Spec**. Detection and planning never authorize a write.
 
-### Hard rules
+## Hard rules
 
-- ❌ Do **not** edit ADR bodies, renumber files, write the INDEX, supersede a Memory node, or re-ingest a wiki page directly. This skill ends in a **Spec on the tracker**, not in applied edits. Every agreed fix becomes a Spec work item, executed later by `/to-tickets` + `/afk` or a human.
-- ❌ Do **not** auto-resolve a finding or controversial decision. Surface it in the interview; the maintainer's answer is what gets recorded as the agreed action.
-- ❌ Do **not** stack questions. **One `Q##` per turn.** Wait for the reply, re-evaluate the tree, then ask the next. Do not preempt the next question, and do not summarise the user's answers back at them.
-- ✅ Before Pass 1, run `git fetch origin`, resolve `origin/HEAD` to the remote default branch, and lint from that Git ref (`origin/<default-branch>`). Read ADR/context files with Git plumbing such as `git ls-tree` / `git show`; do **not** inspect `.red/adr/` from the working tree. Use local `HEAD` only when no `origin` remote/ref exists, and state that fallback in the report.
-- ✅ Compose existing surfaces to detect: `/wiki lint` for wiki claims, Memory supersession/contradiction reads for graph claims. Do not reimplement them.
-- ✅ Compose `/to-spec` to publish — do not hand-roll the Spec format. Every interview agreement is a **Human Decision** in that Spec (load-bearing judgement the agent could not infer).
-- ✅ Honour ADR conventions in `start/ADR-FORMAT.md` (Status frontmatter, "superseded by ADR-NNNN", Related links).
+- ✅ **Read-only is the default. No confirmation means no writes.** An omitted,
+  declined, ambiguous, or interrupted gate ends the mechanical lane after showing
+  the plan. Do not interpret a request to review, a subject choice, or an interview
+  answer as apply consent.
+- ✅ Preserve ADR history. Never rewrite `## Decision`. Mechanical edits are limited
+  to status/successor metadata, `Related` links when supported by the helper plan,
+  stale-path prose outside `## Decision`, `.red/adr/INDEX.md`, and `git mv` into
+  `.red/adr/archive/`.
+- ❌ **Merge and split remain judgment operations.** So do renumbering, changing a
+  live decision, choosing among plausible successors/replacement paths, and
+  resolving contradictions. Never apply these through the mechanical gate.
+- ❌ Do not silently propagate to the wiki or Memory graph. Their changes remain
+  separate interview decisions and Spec items.
+- ❌ Do not stack judgment questions. Ask one `Q##` per turn, wait, then re-evaluate.
+- ✅ Before detection, run `git fetch origin`, resolve `origin/HEAD` to the remote
+  default branch, and lint from `origin/<default-branch>`. Discover and read with
+  `git ls-tree` / `git show`; do **not** inspect `.red/adr/` from the working tree.
+  Use local `HEAD` only when no `origin` remote/ref exists, and state that fallback.
+- ✅ Compose the shipped classifier and operation helpers. Do not reimplement their
+  parsing, bucketing, archive layout, compensation, or Decision-section guard.
+- ✅ Honour `start/ADR-FORMAT.md` and finish through the shared doc-landing finalizer.
 
-### Pass 1 — Lint (detect, read-only)
+## Phase 0 — Surface the optional subject filter
 
-Fetch first: `git fetch origin`. Resolve `origin/HEAD` to the remote default branch, set the lint ref to `origin/<default-branch>`, and read every `.red/adr/*.md` (and `.red/CONTEXT-MAP.md` / contexts if present) from that ref. Use `git ls-tree -r --name-only "$lint_ref" -- .red/adr .red/CONTEXT-MAP.md .red/contexts` to discover files and `git show "$lint_ref:$path"` to read them; path-existence checks for stale references must also query the same ref. Lint **against the fetched committed tree**, not a dirty or stale local working copy, so a lagging checkout is never mistaken for a real finding. If there is no `origin` remote/ref, fall back to local `HEAD` and say so before reporting findings. Report:
+At the start, state the scope: **all ADRs** by default, or the optional subject
+filter supplied by the user. Accept exactly the classifier's three subject forms:
 
-- **Contradictions** — two ADRs whose decisions oppose on the same topic (e.g. "memory lives in `src/apps`" vs "memory moves to `red-memory`"). Flag pairs that should cross-reference but don't.
-- **Missing supersession** — a later ADR reverses/supersedes an earlier one, but the earlier still reads `Status: accepted` with no "superseded by ADR-NNNN" / Related note.
-- **Stale references** — an ADR cites a path / file / command that no longer exists (grep the body for paths, check existence; e.g. an ADR naming `src/domains/` or `src/apps/` after the tree became `apps/`). Flag the prose, not the decision.
-- **Numbering** — duplicate or gap-colliding ADR numbers (two files claiming the same NNNN, e.g. when parallel branches both grab the next number).
-- **Structural / controversial decisions** — a decision that is internally incoherent, was taken under unresolved disagreement, or was never actually implemented. These are the ones that **don't** get fixed by editing markdown — they need real work, and they are the spine of the Spec.
+- ADR numbers (`{ kind: "numbers", numbers: [...] }`);
+- text appearing in ADR title/path/status/body (`{ kind: "text", query: "..." }`);
+- an INDEX theme (`{ kind: "index-section", section: "..." }`).
 
-This finding list **is the decision tree** the interview walks. Present it once, briefly, ordered by impact — then enter Pass 2.
+If the user did not supply a filter, mention these choices without blocking and
+continue over all ADRs. A filter narrows what is reported and proposed, never the
+cross-record evidence used to classify it. Show matched numbers and any unmatched
+requested numbers in the triage report.
 
-### Pass 2 — Reconcile (the interview — `/start`-style, the core of this skill)
+## Phase 1 — Detect and triage read-only
 
-Walk the Pass-1 findings as a decision tree. **The loop:**
+Fetch first. Resolve the lint ref and read every `.red/adr/**/*.md`,
+`.red/adr/INDEX.md`, `.red/CONTEXT-MAP.md`, and relevant `.red/contexts/**` from
+that ref. Path inventories and existence checks must query the same ref. Derive
+the `AdrRecord[]`, existing-path inventory, INDEX sections, and age facts, then
+call `triageAdrs` from `apps/dev/src/core/adr-triage.ts`, passing the optional
+subject filter. Classification must see the whole ADR set even when output is
+subject-scoped.
 
-1. **Pick the next unresolved finding**, highest-impact first: numbering collisions (they break references) → contradictions → missing supersession → stale references → structural/controversial decisions.
-2. **Ask ONE question** in the format below — branches for the finite resolution space, plus a recommended branch with a one-sentence reason.
-3. **Wait** for the reply. Do not stack, do not preempt.
-4. **Re-evaluate** when the answer cascades (e.g. renumbering an ADR also changes the INDEX entry and every cross-ref to it) — fold the cascade into the tree before the next question.
-5. **Record the agreed action** in the ledger (the agreement *is* the spec for a Spec item — do not apply it), then continue.
-6. **Stop** when the user says stop, or when every finding is resolved.
+Present counts and entries for all six buckets, including each entry's reason and
+useful signals:
 
-**Question format template (identical discipline to `/start`):**
+- `keep` — live guidance with no detected lifecycle debt;
+- `stale-reference` — path prose may have a mechanical repair;
+- `missing-supersession` — terminal metadata may be incomplete;
+- `merge-candidate` — judgment lane;
+- `split-candidate` — judgment lane;
+- `archive-candidate` — terminal/inert record may be mechanically archived.
 
-> **Q##:** [the decision to reconcile]
+Deep-read flagged records from the lint ref. Also detect numbering collisions,
+contradictions, unresolved controversial decisions, and unimplemented decisions;
+add those directly to the judgment ledger rather than forcing them into a
+mechanical bucket. Compose `/wiki lint` and Memory provenance/contradiction reads
+when those plugins are available; these reads do not authorize propagation.
+
+## Phase 2 — Build the mechanical plan, still read-only
+
+Only plan an operation when every input is evidenced and unambiguous. Use the
+pure planners in `apps/dev/src/core/adr-operations.ts` and show the exact ADRs,
+source/destination paths, status/successor values, stale/replacement paths, INDEX
+edits, and helper names before asking for confirmation:
+
+- terminal archive: `planArchiveMove` (status + `git mv` + INDEX archive resync);
+- status only: `planStatusAndSuccessor`;
+- standalone INDEX archive resync: `planIndexArchive`;
+- stale-path prose outside `## Decision`: `planStalePathFix`.
+
+Do not plan the standalone status or INDEX operation when `planArchiveMove`
+already owns that edit. If a successor, replacement path, archive eligibility,
+or historical meaning is uncertain, move the finding to the judgment ledger.
+Keep planner errors read-only and report them; never fall back to hand editing.
+
+If the plan is empty, skip the apply gate and continue to the judgment lane (or
+finish with the read-only report when there are no judgment findings).
+
+## Phase 3 — Explicit confirmation gate
+
+After displaying one complete mechanical plan, ask exactly one **Explicit
+confirmation gate**:
+
+> Apply all N listed mechanical operations in-session now? (`apply all` / `keep read-only`)
+
+Only an unambiguous `apply all` given after the plan authorizes those exact
+operations. `keep read-only`, no reply, a conditional reply, or any requested
+change means no writes. A requested subset or changed input invalidates the plan:
+re-plan, display the replacement in full, and ask a fresh gate. Confirmation
+never covers judgment-ledger items, wiki/Memory propagation, commits, or landing.
+
+## Phase 4 — Apply confirmed mechanics with shipped helpers
+
+Immediately before writing, verify that every target's working-tree content still
+matches the content used to produce the confirmed plan and that destinations do
+not conflict. Drift cancels confirmation: report it, re-detect, and re-plan.
+
+Apply only through the corresponding exported helpers:
+
+- `applyArchiveMove` for a `planArchiveMove` result;
+- `applyStatusAndSuccessor` for a `planStatusAndSuccessor` result;
+- `applyIndexArchive` for a `planIndexArchive` result;
+- `applyStalePathFix` for a `planStalePathFix` result.
+
+The helpers' injected filesystem and git adapters must perform real writes and
+`git mv`; preserve their compensation behavior on failure. Never continue with
+later operations after an apply failure. After success, inspect the exact diff,
+assert no `## Decision` content changed, and run the ADR governance and operation
+tests. Re-run `triageAdrs` against the resulting tree to show the post-apply
+buckets. Do not commit or publish here; the doc-landing finalizer owns landing.
+
+## Phase 5 — Reconcile judgment findings (`/start` style)
+
+Walk the judgment ledger highest-impact first: numbering collision → contradiction
+→ merge/split → ambiguous supersession/path/archive → structural or controversial
+decision. For each unresolved finding, ask one question:
+
+> **Q##:** [decision to reconcile]
 > **Branches:**
->  (a) [resolution A — e.g. "renumber the locally-authored ADR to the next free number, fix its inbound refs"]
->  (b) [resolution B — e.g. "renumber the other one"]
->  (c) [defer — leave the finding open, no Spec item]
+>  (a) [resolution A]
+>  (b) [resolution B]
+>  (c) defer — leave open, no Spec item
 > **Recommend:** (a), because [one-sentence reason].
 > *(answer, redirect, or push back — I'll wait)*
 
-Number questions `Q01`, `Q02`, … zero-padded to 2 digits, session-scoped (reset each invocation, never on a redirect). Prefer enumerated branches whenever the resolution space is finite; `(c) defer` is almost always a legitimate branch — a finding the maintainer wants to think about is simply left out of the Spec.
+Number questions `Q01`, `Q02`, … per invocation. Record the agreed action without
+applying it. Re-evaluate cascades before the next question. When relevant, ask
+separately whether to refresh thematic INDEX clustering, re-ingest affected wiki
+claims, or supersede obsolete Memory claims; each accepted action remains a Spec
+item, never an inline mutation.
 
-### Pass 3 — Group → INDEX (one agreement within the interview)
+## Phase 6 — Emit one Spec for judgment work
 
-When the lint findings are reconciled (or the user wants the map first, to reason about them), raise a question on whether to (re)generate **`.red/adr/INDEX.md`** — the decision map (the ADR analogue of `CONTEXT-MAP.md`): ADRs clustered by theme (AFK lifecycle · memory architecture · bundle/fetch/version · branch-lock · MCP/transport · licensing · repo structure · …), each entry showing theme, status, and supersession edges, reflecting the numbering/supersession just agreed. May reuse Memory graph-community clustering when graph mode is available. The agreed clustering becomes a **Spec item** ("create/refresh `.red/adr/INDEX.md` as …"), not an inline write.
+If the ledger contains agreed judgment or propagation work, hand it to `/to-spec`:
 
-### Pass 4 — Propagate to Wiki + Memory (further interview branches)
+- Problem/Solution: the decision debt and reconciliation plan;
+- User Stories: concrete merge/split/new-ADR, ambiguous metadata, INDEX clustering,
+  wiki, Memory, or implementation work;
+- Human Decisions: every `Q##` answer in Decision/Why/Alternatives shape.
 
-A changed/superseded ADR leaves derived claims dangling. For each ADR touched in Pass 2/3, raise it as its own question:
-
-- **Wiki** — `/wiki lint` (contradictions / orphans / stale claims); find pages whose `REFERENCES` point at the changed ADR. Ask whether to re-ingest that ADR — if yes, it becomes a Spec item.
-- **Memory** — ADRs are first-class graph nodes (engineering semantic graph). Find nodes whose provenance cites the changed ADR. Ask whether to `memory_supersede` the obsolete claims (reversible hide-not-delete) — if yes, it becomes a Spec item.
-
-One question per target, one agreed action per item. Never silently propagate.
-
-### Pass 5 — Emit the Spec
-
-Hand the accumulated agreed actions to `/to-spec`:
-
-- **Problem Statement / Solution** — the decision debt found and the reconciliation plan.
-- **User Stories** — one per agreed action, phrased as the concrete edit/work: "rewrite ADR-0034 Status to `superseded by 0041` and add the Related link", "renumber the locally-authored ADR and fix its inbound refs", "create `.red/adr/INDEX.md` clustering the set", "re-ingest ADR-0041 into the wiki", "implement the reconciliation of the controversial X decision".
-- **Human Decisions** — every interview answer (`Q##` → agreed branch), in `/to-spec`'s Decision/Why/Alternatives shape. These are load-bearing: once `/to-tickets` slices the Spec they must not be mistaken for agent inference.
-
-Publish with `type:spec` + `needs-slicing` (never `ready-for-agent` — `/to-spec` handles the labels). Then in chat: a short receipt of each `Q##` and the action it produced, the link to the published Spec, what was **deferred** (left out), and the single highest-impact finding to reconcile first.
+Publish with `type:spec` + `needs-slicing` (never `ready-for-agent`; `/to-spec`
+handles labels). Do not publish an empty Spec for a mechanical-only or read-only
+run. End with the scoped bucket receipt, mechanics applied or kept read-only,
+deferred judgment, and the Spec link when one exists.
 
 ### End-of-session doc-landing finalizer
 
-When the ADR review session ends, run the shared end-of-session doc-landing finalizer in [`/start`'s DOC-LANDING-FINALIZER.md](../start/DOC-LANDING-FINALIZER.md) before exiting.
+When the ADR review session ends, run the shared end-of-session doc-landing finalizer
+in [`/start`'s DOC-LANDING-FINALIZER.md](../start/DOC-LANDING-FINALIZER.md)
+before exiting. It remains silent when no docs changed.
 
 </what-to-do>
 
 <supporting-info>
 
-### Why this is an interview, not a flat list
+## Composition map
 
-ADR reconciliation decisions are exactly the kind `/start` exists for: hard to reverse (renumbering breaks inbound refs; supersession hides graph claims), surprising without context, and the product of a real trade-off (which of two colliding ADRs renumbers? does the older one get a "partially superseded" note or a full one?). A flat approval list forces all of these at once and invites a rubber-stamp. Walking them one at a time — recommend, wait, re-evaluate — is how shared agreement is actually reached, and it lets one answer reshape the rest of the tree before the next question is asked. The agreements then become a coherent Spec instead of a scattered set of edits.
-
-### Why each finding kind exists (worked examples)
-
-- **Contradiction / missing supersession:** ADR 0034 placed memory under `src/apps`; ADR 0041 moves it out to the `red-memory` repo — 0034 should carry a "partially superseded by 0041" note. The interview asks: full or partial supersession, and worded how? → Spec item to rewrite 0034's Status + Related.
-- **Stale reference:** an ADR whose body says `src/domains/{dev,memory}` after the tree became `src/apps/` is out of date even though the *decision* still stands — the interview asks whether to fix the prose (yes) without touching the decision → Spec item.
-- **Numbering collision:** two PRs each grabbed "next = 0039" (one merged as `plugin-entrypoints-share-one-source`; a second authored locally had to renumber to 0041). The interview asks which file renumbers and confirms the inbound-ref fixups → Spec item.
-- **Structural / controversial:** a decision recorded under unresolved disagreement, or one whose implementation never landed — the interview confirms whether it's still the intent; if it needs real engineering to reconcile, it becomes the load-bearing slice of the Spec.
-
-### Composition map
-
-| Pass | Reuses |
+| Phase | Reuses |
 |---|---|
-| 1 Lint | filesystem reads against `origin/HEAD` + `start/ADR-FORMAT.md` conventions; Memory contradiction reads when graph mode is on |
-| 2 Reconcile | `/start` interview discipline (one `Q##` per turn, branches + recommend) |
-| 3 Group | Memory graph communities (optional) for clustering |
-| 4 Propagate | `/wiki lint` + `/wiki ingest`; `memory_supersede` / Memory provenance reads |
-| 5 Emit Spec | `/to-spec` (format, labels, Human Decisions capture) → later `/to-tickets` + `/afk` |
+| Scope + triage | `triageAdrs` and its subject filter/report |
+| Mechanical plan/apply | `adr-operations.ts` planners + compensated apply helpers |
+| Judgment interview | `/start` one-question discipline |
+| Propagation reads | `/wiki lint` + Memory provenance/contradiction reads |
+| Judgment publication | `/to-spec` → `/to-tickets` → `/afk` |
+| Doc landing | shared `DOC-LANDING-FINALIZER.md` |
 
-### Boundaries
+## Boundary examples
 
-- The skill **reaches agreement, then packages** — it never silently rewrites a decision, the wiki, or the graph, and never applies an ADR edit directly. Execution is a separate, scheduled step driven by the Spec.
-- Pairs with `/red-doctor` (adoption/process) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **the decision record**, resolves through dialogue, and turns its debt into work.
+- A superseded ADR with an unambiguous successor can be statused and archived in
+  the confirmed mechanical batch. Deciding whether supersession is full or partial
+  is judgment and goes through `Q##`.
+- A backticked path with a verified rename can use the stale-path helper. Choosing
+  between plausible replacement paths is judgment.
+- Merge/split always mint replacement ADRs and archive originals later; they never
+  rewrite historical Decisions in-session.
+- A run stopped before or at the gate is a successful read-only review, not a
+  partially failed apply.
 
 </supporting-info>
