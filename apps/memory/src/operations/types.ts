@@ -78,8 +78,12 @@ export interface MemoryOperationRendererMetadata {
     command: string;
     supportsJson: boolean;
     defaultFormat?: "json" | "toon";
-    dispatch?: "registry" | "legacy";
     reservedSubcommands?: readonly string[];
+    presentation?: {
+      render: (output: unknown, input: MemoryOperationTransportInput) => string;
+      jsonOutput?: (output: unknown) => unknown;
+      viewerSink?: "default" | "explicit";
+    };
   };
   mcp: {
     toolName: string;
