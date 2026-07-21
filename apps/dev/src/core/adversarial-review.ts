@@ -1,6 +1,6 @@
 import type { AgentEffort, AgentRunner } from "./execution.js";
 import type { RunOptions } from "@reddb-io/red-castle";
-import type { AfkModelTier } from "./config.js";
+import { defaultTier, type AfkModelTier } from "./config.js";
 import {
   reviewFindingsSchema,
   resolveMaxRetries,
@@ -9,7 +9,7 @@ import {
   type StandardSchemaLike,
 } from "./review.js";
 import type { ReviewExtractDeps } from "./review-extract.js";
-import { toAgentRunner } from "./runner-spec.js";
+import { RUNNER_SPECS, runnerSupportsModel, toAgentRunner } from "./runner-spec.js";
 import { isRunner } from "../types/runner.js";
 
 export interface AdversarialReviewConfig {
@@ -109,16 +109,70 @@ export interface AdversarialReviewerResolutionInput {
   };
 }
 
-export function resolveAdversarialReviewer(input: AdversarialReviewerResolutionInput): {
-  runner: AgentRunner;
-  model: string;
-  effort?: AgentEffort;
-} {
+export interface AdversarialReviewerResolution {
+  readonly runner: AgentRunner;
+  readonly model: string;
+  readonly effort?: AgentEffort;
+  /**
+   * Human-readable substitution notices, present ONLY when the requested tuple
+   * was incoherent and had to be corrected. The caller logs them.
+   */
+  readonly notices?: readonly string[];
+}
+
+/**
+ * Resolve the reviewer as a COHERENT (runner, model, effort) tuple, not three
+ * independent knobs (#2352). A configured model is honoured only on a runner
+ * whose CLI can dispatch it (the runner spec registry answers that); otherwise
+ * it is substituted — first with the runner's own resolved tier, then with the
+ * runner's shipped tier-table default — and the substitution is reported in
+ * `notices`. Effort is gated the same way against the runner's accepted set.
+ * A cross-runner pin (a codex model on the claude CLI) is not a degraded review:
+ * the CLI exits non-zero immediately, which is what took the fleet down.
+ */
+export function resolveAdversarialReviewer(
+  input: AdversarialReviewerResolutionInput,
+): AdversarialReviewerResolution {
   const runner = input.config.runner ?? input.implementer.runner;
   const tier = input.config.runner ? input.resolveTier?.(runner, input.taskClass) : undefined;
-  const model = input.config.model ?? tier?.model ?? input.implementer.model;
-  const effort = input.config.effort ?? tier?.effort ?? input.implementer.effort;
-  return { runner, model, ...(effort ? { effort } : {}) };
+  const fallbackTier = tier ?? input.resolveTier?.(runner, input.taskClass);
+  const shipped = defaultTier(runner, input.taskClass);
+  const sameRunner = runner === input.implementer.runner;
+  const notices: string[] = [];
+
+  let model = input.config.model ?? tier?.model ?? input.implementer.model;
+  if (!runnerSupportsModel(runner, model)) {
+    const substitute =
+      [fallbackTier?.model, sameRunner ? input.implementer.model : undefined].find(
+        (candidate): candidate is string => !!candidate && runnerSupportsModel(runner, candidate),
+      ) ?? shipped.model;
+    notices.push(
+      `[adversarial-review] runner '${runner}' cannot run model '${model}'; ` +
+        `substituting its review-tier default '${substitute}'.`,
+    );
+    model = substitute;
+  }
+
+  const accepted = RUNNER_SPECS[runner].efforts;
+  let effort = input.config.effort ?? tier?.effort ?? input.implementer.effort;
+  if (effort && !accepted.includes(effort)) {
+    const substitute =
+      [fallbackTier?.effort, sameRunner ? input.implementer.effort : undefined, shipped.effort].find(
+        (candidate): candidate is AgentEffort => !!candidate && accepted.includes(candidate),
+      ) ?? RUNNER_SPECS[runner].defaultEffort;
+    notices.push(
+      `[adversarial-review] runner '${runner}' does not accept effort '${effort}' ` +
+        `(accepted: ${accepted.join(", ")}); substituting '${substitute ?? "provider default"}'.`,
+    );
+    effort = substitute;
+  }
+
+  return {
+    runner,
+    model,
+    ...(effort ? { effort } : {}),
+    ...(notices.length > 0 ? { notices } : {}),
+  };
 }
 
 function quorumThreshold(quorum: AdversarialReviewQuorum, reviewerCount: number): number {
