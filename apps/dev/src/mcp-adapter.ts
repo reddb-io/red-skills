@@ -72,6 +72,7 @@ import {
   dispatchGo,
   type DisposableIssueSpec,
 } from "./core/go.js";
+import { dispatchScout as dispatchScoutCore } from "./core/scout.js";
 import {
   getConfig,
   loadConfig,
@@ -114,6 +115,10 @@ export interface DevAfkMcpOperations {
   dispatchDemand(
     root: string,
     input: DispatchOperationInput & { demand: string },
+  ): Promise<unknown>;
+  dispatchScout(
+    root: string,
+    input: { demand: string; runner?: string },
   ): Promise<unknown>;
   stopWorker(root: string, input: WorkerStopInput): Promise<unknown>;
   requeue(input: RequeueToolInput): Promise<unknown>;
@@ -403,7 +408,8 @@ export function createDefaultDevAfkMcpOperations(
         input.demand,
         {
           runner: input.runner,
-          mode: input.mode,
+          // scout is routed before dispatchDemand is reached — cast to go-mode union
+          mode: input.mode as "no-mistakes" | "direct-PR" | "local-only" | undefined,
           request: input.request,
           hasHarness: configuredBackpressure.length > 0,
         },
@@ -413,6 +419,35 @@ export function createDefaultDevAfkMcpOperations(
       }
       return {
         kind: "go",
+        demand: input.demand,
+        issue: result.issue,
+        worker_pid: workerPid,
+        worker_log: workerLog,
+        status: "dispatched",
+      };
+    },
+    async dispatchScout(cwd, input) {
+      let workerPid: number | undefined;
+      let workerLog: string | undefined;
+      const result = await dispatchScoutCore(
+        {
+          ensureLabel: (name) => runtime.ensureLabel(cwd, name),
+          createIssue: (spec) => runtime.createIssue(cwd, spec),
+          runEngine: async (args) => {
+            const launch = await runtime.launchRun(cwd, args);
+            workerPid = launch.pid;
+            workerLog = launch.log;
+            return 0;
+          },
+        },
+        input.demand,
+        { runner: input.runner },
+      );
+      if (workerPid === undefined) {
+        throw new Error("cannot dispatch scout: worker was not spawned");
+      }
+      return {
+        kind: "scout",
         demand: input.demand,
         issue: result.issue,
         worker_pid: workerPid,
@@ -1008,9 +1043,17 @@ export function createDevAfkMcpDependencies(
         });
       }
       if (input.demand !== undefined) {
+        if (input.mode === "scout") {
+          return operations.dispatchScout(root, {
+            demand: input.demand,
+            runner: input.runner,
+          });
+        }
         return operations.dispatchDemand(root, {
           ...input,
           demand: input.demand,
+          // scout was handled above — narrow mode back to go-mode union
+          mode: input.mode as "no-mistakes" | "direct-PR" | "local-only" | undefined,
         });
       }
       throw new Error("worker dispatch requires an issue or demand");
@@ -1066,9 +1109,16 @@ export function createDevAfkMcpDependencies(
         });
       }
       if (dispatch.demand !== undefined) {
+        if (dispatch.mode === "scout") {
+          return operations.dispatchScout(root, {
+            demand: dispatch.demand,
+            runner: dispatch.runner,
+          });
+        }
         return operations.dispatchDemand(root, {
           ...dispatch,
           demand: dispatch.demand,
+          mode: dispatch.mode as "no-mistakes" | "direct-PR" | "local-only" | undefined,
         });
       }
       throw new Error("worker request requires an issue or demand");
