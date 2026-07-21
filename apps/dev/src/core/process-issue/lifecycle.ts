@@ -54,7 +54,6 @@ import {
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
-import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
@@ -137,7 +136,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom, syncMainRedRepairIssue } from "./recovery.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, sensitivePathGuarded, mainRedUntrackedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, reconcileInputFor, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, sensitivePathGuarded, mainRedUntrackedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
