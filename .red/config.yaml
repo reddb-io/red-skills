@@ -35,7 +35,13 @@ plugins:
     #   so the worst case is one extra correction round and the PR still lands.
     #   Raising max_iterations to 2+ enables parking to ready-for-human.
     review:
-      enabled: true
+      # TEMPORARILY disabled (2026-07-21): the reviewer pass invokes the
+      # claude-code CLI with the codex model pinned below (gpt-5.6-sol), which
+      # claude cannot run — the "advisory" pass then exits 1 and KILLS every
+      # claude worker after push, before landing (fleet-wide landing outage;
+      # three stranded branches adopted by hand). Re-enable when the fix for
+      # the advisory-fatality + per-runner reviewer-model resolution lands.
+      enabled: false
       max_iterations: 1
       reviewer_count: 1
       quorum: any
