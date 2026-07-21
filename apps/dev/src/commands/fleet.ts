@@ -5,7 +5,9 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import {
   castleLanePath,
   createEnginePaths,
+  fleetRegistryPath,
   readCastleLaneRecords,
+  readFleetProfile,
   type CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
 import { afkPaths, collectMonitorInputs, readFleetState, resolveRepoSlug } from "../runtime/wire.js";
@@ -559,6 +561,12 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   const pidFile = paths.supervisorPidPath;
   const logFile = paths.supervisorLogPath;
   const priorFleetState = await readFleetState(paths.fleetStatePath).catch(() => null);
+  // A registered fleet launches from its PROFILE: the registry supplies the
+  // runner and the work-scope selector, and explicit flags still override.
+  const profile = await readFleetProfile(
+    fleetRegistryPath(createEnginePaths(join(root, ".red"))),
+    paths.fleet,
+  ).catch(() => undefined);
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
   if (supervisor.status === "stale") {
     stdout.write(`cleaned stale supervisor files before fleet launch.\n`);
@@ -599,16 +607,24 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   const detection = detectRunner({
-    flag: parsed.runnerFlag ?? parseRunnerFlag(args),
+    flag: parsed.runnerFlag ?? parseRunnerFlag(args) ?? profile?.runner,
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
+
+  // The profile's selector reaches every slot's `run --once` as `--selector`,
+  // so this fleet only ever claims issues inside its own scope. An explicit
+  // filter flag on the command line wins over the registered scope.
+  const scoped =
+    profile?.selector && !parsed.passthrough.some((a) => a.startsWith("--spec") || a.startsWith("--issues") || a.startsWith("--selector"))
+      ? ["--selector", JSON.stringify(profile.selector)]
+      : [];
 
   const supervisorPid = await spawnSupervisor({
     root,
     target: parsed.target,
     runner: detection.runner,
-    passthrough: parsed.passthrough,
+    passthrough: [...parsed.passthrough, ...scoped],
     request: parsed.request,
     drainBudgetUsd: parsed.drainBudgetUsd,
     shrinkMode: parsed.shrinkMode,
