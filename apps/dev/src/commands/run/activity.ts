@@ -18,7 +18,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import { passExitBarrier, passTerminalBarrier } from "../../core/exit-barrier.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,

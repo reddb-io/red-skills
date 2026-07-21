@@ -49,7 +49,6 @@ import {
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
-import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -386,30 +385,23 @@ export async function writeCurrentBlockerBestEffort(
   } catch {
   }
 }
-export async function crossTerminalBarrier(deps: ProcessIssueDeps, branch: string): Promise<TerminalReceipt> {
-  if (deps.terminalExitBarrier) {
-    try {
-      return await deps.terminalExitBarrier(branch);
-    } catch {
-    }
-  }
-  return { branch, head: "", pushedAt: new Date().toISOString(), salvaged: false, salvagedFiles: 0, pushed: false };
-}
-export function preservedTerminal(
-  receipt: TerminalReceipt,
-  fields: {
-    outcome: ProcessOutcome;
-    issue: number;
-    branch: string;
-    base: string;
-    hooksFired: HookName[];
-    envelopePosted?: boolean;
-    locked?: boolean;
-  },
-): ProcessIssueResult {
+/**
+ * Shape a terminal result that PRESERVES the worker branch (never swept). ADR
+ * 0103: the terminal carries no exit receipt — whatever the agent committed is
+ * already on origin via the continuous-push hook, and the Envelope is the
+ * forensic record.
+ */
+export function preservedTerminal(fields: {
+  outcome: ProcessOutcome;
+  issue: number;
+  branch: string;
+  base: string;
+  hooksFired: HookName[];
+  envelopePosted?: boolean;
+  locked?: boolean;
+}): ProcessIssueResult {
   return {
     ...fields,
-    exitReceipt: receipt,
     preserved: true,
     swept: false,
   };
@@ -433,14 +425,8 @@ export async function terminalFailure(
     notes: record.notes,
     validationSummary: record.validationSummary,
   });
-  const receipt = await crossTerminalBarrier(deps, c.branch);
-  if (receipt.salvagedFiles > 0) {
-    deps.appendIterLog(
-      `🤖 /afk: exit barrier salvaged ${receipt.salvagedFiles} uncommitted file(s) onto \`${c.branch}\` and pushed to origin (${outcome} terminal; receipt head ${receipt.head || "?"}).`,
-    );
-  }
   await releaseOwnedClaim(deps, input);
-  return preservedTerminal(receipt, {
+  return preservedTerminal({
     outcome,
     issue: input.issue,
     branch: c.branch,
@@ -499,9 +485,8 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: _reason,
   });
-  const receipt = await crossTerminalBarrier(deps, c.branch);
   await releaseOwnedClaim(deps, input);
-  return preservedTerminal(receipt, {
+  return preservedTerminal({
     outcome: "merge-conflict",
     issue: input.issue,
     branch: c.branch,
@@ -956,9 +941,8 @@ export async function abortAfterClaim(
       `🤖 /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`,
     );
   }
-  const receipt = await crossTerminalBarrier(deps, branch);
   await releaseOwnedClaim(deps, input);
-  return preservedTerminal(receipt, {
+  return preservedTerminal({
     outcome: "hook-aborted",
     issue: input.issue,
     branch,

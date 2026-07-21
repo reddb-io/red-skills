@@ -46,7 +46,6 @@ import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
-import type { TerminalReceipt } from "./exit-barrier.js";
 import { type RecoveryEnv } from "./recovery.js";
 import { dispose } from "./disposition.js";
 import type { AttemptStatus } from "./envelope.js";
@@ -218,16 +217,6 @@ export interface ReconcileDeps {
    * never fails the reconcile.
    */
   markStage?(stage: "validating" | "landing"): Promise<void>;
-  /**
-   * ADR 0083 §4 exit barrier (every-terminal, #1021). The no-agent reconcile lane
-   * obtains its branch-preservation write through the SAME barrier every other
-   * terminal path uses: salvage-commit dirty paths + push the parked branch to
-   * origin (retry once), returning a {@link TerminalReceipt}. Threaded from
-   * process-issue's deps (structural superset). When wired it REPLACES the inline
-   * `pushAttempt` pre-fetch safety push so the barrier is the only writer; when
-   * absent (legacy caller) reconcile falls back to `pushAttempt`.
-   */
-  terminalExitBarrier?(branch: string): Promise<TerminalReceipt>;
   /** AFK→Memory reasoning-attempt recording (best-effort; optional). */
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   /** History ledger path + clock for the terminal envelope (optional). */
@@ -332,34 +321,20 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     return { outcome: "skipped", reason: disqualifier };
   }
 
-  // ---- 1b. pre-fetch safety push (ADR 0083 §4 exit barrier, #1021) ----
-  // Before checking whether the branch is present on the remote, salvage-commit any
-  // dirty paths + push any LOCAL-ONLY commits. A worker that hit a continuous-push
-  // failure may have committed work that never reached origin — the branch exists
-  // locally (in .git/refs/heads/) but the remote is at main's HEAD. Crossing the
-  // exit barrier here recovers those commits so the fetch gate and changedFiles()
-  // see them, and makes the barrier reconcile's ONLY branch-preservation writer
-  // (no inline push). Best-effort: a failed push is logged and reconcile falls
-  // through to the normal fetch gate (which then skips with "branch-absent" /
-  // "no-commits"). Legacy callers with no barrier wired fall back to `pushAttempt`.
-  if (deps.terminalExitBarrier) {
-    const receipt = await deps.terminalExitBarrier(branch).catch(() => null);
-    if (!receipt || !receipt.pushed) {
-      deps.appendIterLog(
-        `🤖 /afk reconcile #${issue}: exit-barrier pre-fetch push did not confirm \`${branch}\` on origin — continuing to fetch gate`,
-      );
-    } else if (receipt.salvagedFiles > 0) {
-      deps.appendIterLog(
-        `🤖 /afk reconcile #${issue}: exit barrier salvaged ${receipt.salvagedFiles} uncommitted file(s) onto \`${branch}\` and pushed to origin (receipt head ${receipt.head || "?"}).`,
-      );
-    }
-  } else {
-    const safetyPush = await pushAttempt(deps.remoteGit, input.repoDir, branch, branch);
-    if (!safetyPush.ok) {
-      deps.appendIterLog(
-        `🤖 /afk reconcile #${issue}: pre-fetch push failed (${safetyPush.warn ?? "unknown"}) — continuing to fetch gate`,
-      );
-    }
+  // ---- 1b. pre-fetch safety push ----
+  // Before checking whether the branch is present on the remote, push any
+  // LOCAL-ONLY commits. A worker that hit a continuous-push failure may have
+  // COMMITTED work that never reached origin — the branch exists locally (in
+  // .git/refs/heads/) but the remote is at main's HEAD; pushing here makes those
+  // commits visible to the fetch gate and changedFiles(). ADR 0103: only
+  // committed work is preserved — a dirty worktree is never salvage-committed
+  // here. Best-effort: a failed push is logged and reconcile falls through to the
+  // normal fetch gate (which then skips with "branch-absent" / "no-commits").
+  const safetyPush = await pushAttempt(deps.remoteGit, input.repoDir, branch, branch);
+  if (!safetyPush.ok) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: pre-fetch push failed (${safetyPush.warn ?? "unknown"}) — continuing to fetch gate`,
+    );
   }
 
   // ---- 2. fetch gate: materialize origin-only branches before the commits diff ----

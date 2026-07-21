@@ -7,8 +7,9 @@
 //      (the `AgentOutput` schema / `<promise>DONE</promise>` sentinel, #932/ADR
 //      0082); recovered by the `crashed` retry cap.
 //   2. commit-fail — the worker finished but left work uncommitted (the
-//      DONE-without-commit class, #788); rescued by `salvageUncommitted`, which
-//      force-pushes the dirty tree onto the worker branch.
+//      DONE-without-commit class, #788). Historically rescued by an exit-time
+//      salvage commit; ADR 0103 retired that net — uncommitted work is
+//      disposable and only the commits the agent pushed survive.
 //   3. gate-reject — the feedback / backpressure gate rejected the branch;
 //      recovered by the `validation` caps.
 // The slot-circuit breaker (core/slot-circuit.ts) layered a FOURTH counter on top
@@ -185,8 +186,8 @@ export function repairInstructionFor(kind: SelfRepairFailureKind): string {
  *
  * PURE reducer — the caller applies the returned `state` back to the attempt
  * state and acts on `action` (seed the repair instruction, or escalate). It
- * NEVER signals a discard: on both `repair` and `abort` the salvaged work stays
- * on the branch (the caller's `salvageUncommitted` already force-pushed it).
+ * NEVER signals a discard: on both `repair` and `abort` the work the agent
+ * committed stays on the branch (the continuous-push hook already pushed it).
  *
  *   - success           → `reset`  (counter → 0)
  *   - failure, strike<N  → `repair` (counter → strike, seed instruction)
