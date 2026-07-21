@@ -25,6 +25,7 @@ export function createLandingTools(deps: LandingDependencies): CastleMcpTool[] {
       title: "Land AFK branch",
       description:
         "MUTATING: land one validated worker branch into its base through the complete landing sequence.",
+      dangerClass: "mutating",
       inputSchema: {
         issue: z.number().int().positive(),
         branch: z.string().min(1),
