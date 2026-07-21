@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appendCastleLaneRecord,
   castleLanePath,
@@ -9,7 +9,10 @@ import {
   fleetRegistryPath,
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
-import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
+import {
+  createDevAfkMcpDependencies,
+  type DevAfkMcpOperations,
+} from "../src/mcp-adapter.js";
 
 const roots: string[] = [];
 
@@ -71,4 +74,121 @@ describe("dev:afk MCP host adapter", () => {
       deps.logs({ lane: "worker", id: "../../outside" }),
     ).rejects.toThrow("escapes its Castle lane root");
   });
+
+  it("routes issue and demand dispatches through their value operations", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(
+      deps.workerDispatch({ issue: 2306, runner: "codex" }),
+    ).resolves.toEqual({ kind: "afk", exit_code: 0 });
+    expect(operations.dispatchIssue).toHaveBeenCalledWith(cwd, {
+      issue: 2306,
+      runner: "codex",
+    });
+
+    await expect(
+      deps.workerDispatch({
+        demand: "repair the release gate",
+        runner: "claude",
+        mode: "no-mistakes",
+      }),
+    ).resolves.toEqual({ kind: "go", exit_code: 0 });
+    expect(operations.dispatchDemand).toHaveBeenCalledWith(cwd, {
+      demand: "repair the release gate",
+      runner: "claude",
+      mode: "no-mistakes",
+    });
+  });
+
+  it("injects worker_request only into a newly dispatched worker", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await deps.workerRequest({
+      issue: 2306,
+      runner: "codex",
+      text: "Run the focused package gate.",
+    });
+
+    expect(operations.dispatchIssue).toHaveBeenCalledWith(cwd, {
+      issue: 2306,
+      runner: "codex",
+      request: "Run the focused package gate.",
+    });
+  });
+
+  it("stops and recycles workers through the shared stop operation", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(
+      deps.workerStop({ worker: "wVM2Z", recycle: false }),
+    ).resolves.toMatchObject({ worker: "wVM2Z", worker_status: "stopped" });
+    await deps.workerStop({ worker: "wVM2Z", recycle: true });
+    expect(operations.stopWorker).toHaveBeenNthCalledWith(1, cwd, {
+      worker: "wVM2Z",
+      recycle: false,
+    });
+    expect(operations.stopWorker).toHaveBeenNthCalledWith(2, cwd, {
+      worker: "wVM2Z",
+      recycle: true,
+    });
+  });
+
+  it("returns runner specs and deterministic explicit detection", async () => {
+    const cwd = await root();
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+
+    await expect(deps.runnerList()).resolves.toMatchObject({
+      codex: { channel: "effort", factory: "codex" },
+      claude: { channel: "effort", factory: "claudeCode" },
+    });
+    await expect(deps.runnerDetect({ runner: "codex" })).resolves.toEqual({
+      runner: "codex",
+      method: "flag",
+      detail: "--runner",
+    });
+  });
+
+  it("returns structured hygiene operation results", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(
+      deps.requeue({ issue: 2306, guidance: "Retry after repair." }),
+    ).resolves.toEqual({ issue: 2306, applied: true });
+    await expect(deps.retake({ issue: 2306 })).resolves.toEqual({
+      issue: { number: 2306 },
+    });
+    await expect(deps.reap()).resolves.toEqual({
+      remote_reaped: ["afk/wOLD/1-old"],
+      local_reaped: [],
+    });
+    await expect(deps.unblockSweep()).resolves.toEqual({ promoted: [2307] });
+  });
 });
+
+function fakeOperations(): DevAfkMcpOperations {
+  return {
+    dispatchIssue: vi.fn(async () => ({ kind: "afk" as const, exit_code: 0 })),
+    dispatchDemand: vi.fn(async () => ({ kind: "go" as const, exit_code: 0 })),
+    stopWorker: vi.fn(async (_root, input) => ({
+      worker: input.worker,
+      worker_pid: 42,
+      worker_status: "stopped",
+      recycle: input.recycle,
+    })),
+    requeue: vi.fn(async (input) => ({ issue: input.issue, applied: true })),
+    retake: vi.fn(async (input) => ({ issue: { number: input.issue } })),
+    reap: vi.fn(async () => ({
+      remote_reaped: ["afk/wOLD/1-old"],
+      local_reaped: [],
+    })),
+    unblockSweep: vi.fn(async () => ({ promoted: [2307] })),
+  };
+}
