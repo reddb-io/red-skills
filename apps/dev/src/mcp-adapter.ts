@@ -37,6 +37,7 @@ import {
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
+import { createSensitiveMcpDependencies } from "./mcp-sensitive-adapter.js";
 
 function registryPath(root: string): string {
   return fleetRegistryPath(createEnginePaths(join(root, ".red")));
@@ -246,6 +247,7 @@ export function createDevAfkMcpDependencies(
   root = process.cwd(),
 ): CastleMcpDependencies {
   return {
+    ...createSensitiveMcpDependencies(root),
     fleetList: () => readFleetProfiles(registryPath(root)),
     fleetStatus: (input) => fleetStatus(root, input),
     fleetCreate: (input) => createFleet(root, input),
