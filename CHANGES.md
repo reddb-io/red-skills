@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## afk / go / ask-red (engineering) — CLI and skills become `dev:afk` MCP clients (issue #2309)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0120 makes the `dev:afk` MCP the canonical complete interface to every red-castle capability; `/afk`, `/go`, and the CLI are clients of it rather than owners of their own castle access paths.
+- **what changed**:
+  - Added `plugins/dev/skills/engineering/afk/MCP.md` — the client contract: the tool surface by domain, host tool-name prefixing, mutation modes, and the CLI-fallback rule.
+  - `/afk` SKILL.md, `fleet.md`, and `monitor.md` name the tool that serves each verb (`queue_status`, `worker_dispatch`, `fleet_create`/`fleet_edit`/`fleet_status`/`fleet_stop`, `logs`, `monitor`, `worker_vitals`) and keep the CLI form as the documented fallback; fleets are now named profiles.
+  - `/go` SKILL.md dispatches through `worker_dispatch` / `worker_request` / `runner_steer`.
+  - `ask-red` routes "operating the castle itself" to the MCP and registers `MCP.md` as the owning capability reference.
+  - `apps/dev/tests/castle-mcp-client-docs.test.ts` keeps `MCP.md` in bijection with the server's registered tools and their mutation modes.
+
 ## wayfinder (engineering) — research children stay in the AFK fleet (issue #1699)
 
 - **status**: not-adopted
