@@ -342,6 +342,25 @@ describe("read-only Memory operations registry", () => {
     expect(getReadOnlyMemoryOperation("memory.communities").inputBinding.customBind).toBeUndefined();
   });
 
+  test("owns transport visibility and help in each operation registration", () => {
+    const operations = listReadOnlyMemoryOperations();
+
+    expect(
+      operations.every(
+        (operation) =>
+          operation.description.trim().length > 0 &&
+          operation.transports.length > 0 &&
+          operation.transports.every((transport) => ["cli", "mcp", "http"].includes(transport)),
+      ),
+    ).toBe(true);
+    expect(getReadOnlyMemoryOperation("memory.map-contract").transports).toEqual([
+      "cli",
+      "mcp",
+      "http",
+    ]);
+    expect(getReadOnlyMemoryOperation("memory.workbench").transports).toEqual(["cli", "mcp"]);
+  });
+
   test("validates operation input before execution", async () => {
     await expect(
       executeReadOnlyMemoryOperation(
