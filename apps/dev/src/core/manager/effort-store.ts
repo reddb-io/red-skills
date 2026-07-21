@@ -52,6 +52,10 @@ export interface EffortRecord {
   generation: number;
   created_at: string;
   updated_at: string;
+  /** Skill name ask-red recommended for this effort (S3: routing slice). */
+  route?: string;
+  /** Artifact references captured from inline session-bound skill runs (S3). */
+  artifact_refs?: readonly string[];
 }
 
 /** Base class for every refusal this store raises. */
@@ -147,7 +151,22 @@ export function encodeEffortDocument(effort: EffortRecord): string {
     schema: MANAGER_EFFORT_SCHEMA,
     version: MANAGER_EFFORT_SCHEMA_VERSION,
   };
-  const body: ToonlRecord = { kind: "manager.effort", ...effort };
+  const body: ToonlRecord = {
+    kind: "manager.effort",
+    effort_id: effort.effort_id,
+    name: effort.name,
+    intent: effort.intent,
+    lifecycle: effort.lifecycle,
+    generation: effort.generation,
+    created_at: effort.created_at,
+    updated_at: effort.updated_at,
+  };
+  if (effort.route !== undefined) body.route = effort.route;
+  // ToonlRecord is flat (no arrays), so encode the list as newline-separated.
+  // URLs never contain newlines, so the delimiter is unambiguous.
+  if (effort.artifact_refs !== undefined && effort.artifact_refs.length > 0) {
+    body.artifact_refs = effort.artifact_refs.join("\n");
+  }
   return encodeRecords([header, body]);
 }
 
@@ -199,6 +218,14 @@ export function decodeEffortDocument(text: string): EffortRecord {
   if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
     throw new ManagerSchemaError("manager effort document has a non-integer generation");
   }
+  const route = typeof body["route"] === "string" ? body["route"] : undefined;
+  // artifact_refs is stored as a newline-separated string (ToonlRecord is flat).
+  const rawRefs = body["artifact_refs"];
+  const artifact_refs =
+    typeof rawRefs === "string" && rawRefs.length > 0
+      ? rawRefs.split("\n")
+      : undefined;
+
   return {
     effort_id: requireString(body, "effort_id"),
     name: requireString(body, "name"),
@@ -207,6 +234,8 @@ export function decodeEffortDocument(text: string): EffortRecord {
     generation,
     created_at: requireString(body, "created_at"),
     updated_at: requireString(body, "updated_at"),
+    ...(route !== undefined ? { route } : {}),
+    ...(artifact_refs !== undefined ? { artifact_refs } : {}),
   };
 }
 
