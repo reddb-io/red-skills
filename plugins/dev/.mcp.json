@@ -7,6 +7,13 @@
         "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/code-nav-mcp.sh\" \"$PWD/plugins/dev/hooks/code-nav-mcp.sh\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/code-nav-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec sh \"$launcher\"; fi; done; printf 'code-nav: could not locate code-nav MCP launcher\\n' >&2; exit 1"
       ]
     },
+    "dev:afk": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/afk-mcp.sh\" \"$PWD/plugins/dev/hooks/afk-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec sh \"$launcher\"; fi; done; printf 'dev:afk: could not locate AFK MCP launcher\\n' >&2; exit 1"
+      ]
+    },
     "rsp": {
       "command": "sh",
       "args": [
