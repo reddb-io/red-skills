@@ -85,6 +85,13 @@ function deps(): CastleMcpDependencies {
       { lane: "landing", name: "main-adopt-2307", path: ".red/tmp/worktrees/landing/main-adopt-2307" },
     ]),
     worktreeRemove: vi.fn(async (input) => ({ path: input.path, removed: true })),
+    waitStart: vi.fn(async () => ({ id: "a1b2c3d4-uuid", pid: 42, status: "spawned" })),
+    waitList: vi.fn(async () => []),
+    waitStatus: vi.fn(async () => ({
+      id: "a1b2c3d4-uuid",
+      status: "finished",
+      result: { schema: "rsp.wait.result", version: 1 },
+    })),
   };
 }
 
@@ -122,6 +129,9 @@ describe("dev:afk MCP tools", () => {
       "claim_release",
       "worktree_list",
       "worktree_remove",
+      "wait_start",
+      "wait_list",
+      "wait_status",
     ]);
   });
 
@@ -307,6 +317,37 @@ describe("dev:afk MCP tools", () => {
     expect(d.claimRelease).toHaveBeenCalledWith({ issue: 2307 });
     expect(
       tools.find((tool) => tool.name === "claim_release")!.description,
+    ).toMatch(/^MUTATING:/);
+  });
+
+  it("starts, lists, and reads wait status through the Wait domain", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "wait_start")!.invoke({
+        kind: "pr",
+        target: "2364",
+        reason: "CI check",
+      }),
+    ).resolves.toMatchObject({ id: "a1b2c3d4-uuid", pid: 42, status: "spawned" });
+    expect(d.waitStart).toHaveBeenCalledWith({
+      kind: "pr",
+      target: "2364",
+      reason: "CI check",
+    });
+
+    await expect(
+      tools.find((tool) => tool.name === "wait_list")!.invoke({}),
+    ).resolves.toEqual([]);
+
+    await expect(
+      tools.find((tool) => tool.name === "wait_status")!.invoke({ id: "a1b2c3d4-uuid" }),
+    ).resolves.toMatchObject({ status: "finished", result: { schema: "rsp.wait.result" } });
+    expect(d.waitStatus).toHaveBeenCalledWith({ id: "a1b2c3d4-uuid" });
+
+    expect(
+      tools.find((tool) => tool.name === "wait_start")!.description,
     ).toMatch(/^MUTATING:/);
   });
 

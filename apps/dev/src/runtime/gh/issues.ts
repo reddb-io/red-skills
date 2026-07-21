@@ -282,40 +282,51 @@ export async function listSpecSubIssueCandidates(
   return candidates;
 }
 
-/** List every open marked main-red repair issue across all GitHub result pages. */
+/** Hard page cap for repair-issue discovery: 20 pages × 100 = 2000 open issues. */
+const MAIN_RED_REPAIR_MAX_PAGES = 20;
+
+/**
+ * List every open marked main-red repair issue across all GitHub result pages.
+ * Pages explicitly (`page=N`) instead of `gh api --paginate --slurp`: `--slurp`
+ * only exists on gh >= 2.47, and on an older host gh the unknown flag crashed
+ * every landing at this call.
+ */
 export async function listMainRedRepairIssues(ctx: GhContext): Promise<MainRedRepairIssue[]> {
-  const r = await runGh(ctx, [
-    "api",
-    "--paginate",
-    "--slurp",
-    apiPath(ctx, "issues?state=open&per_page=100"),
-  ]);
-  if (r.code !== 0) {
-    throw new Error(`gh: failed to list main-red repair issues (code ${r.code}): ${(r.stderr || r.stdout).trim()}`);
+  const rows: Array<{
+    number?: number;
+    title?: string;
+    body?: string;
+    labels?: Array<{ name?: string }>;
+  }> = [];
+  for (let page = 1; page <= MAIN_RED_REPAIR_MAX_PAGES; page++) {
+    const r = await runGh(ctx, [
+      "api",
+      apiPath(ctx, `issues?state=open&per_page=100&page=${page}`),
+    ]);
+    if (r.code !== 0) {
+      throw new Error(`gh: failed to list main-red repair issues (code ${r.code}): ${(r.stderr || r.stdout).trim()}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.stdout || "[]");
+      if (!Array.isArray(parsed)) throw new Error("expected an array");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`gh: invalid main-red repair issue response: ${message}`);
+    }
+    rows.push(...(parsed as typeof rows));
+    if (parsed.length < 100) break;
   }
-  try {
-    const parsed = JSON.parse(r.stdout || "[]") as unknown;
-    if (!Array.isArray(parsed)) throw new Error("expected an array");
-    const rows = parsed.flatMap((page) => Array.isArray(page) ? page : [page]) as Array<{
-      number?: number;
-      title?: string;
-      body?: string;
-      labels?: Array<{ name?: string }>;
-    }>;
-    return rows
-      .filter((item) => String(item.body ?? "").includes(MAIN_RED_REPAIR_MARKER))
-      .map((row) => ({
-        number: Number(row.number),
-        title: String(row.title ?? ""),
-        body: String(row.body ?? ""),
-        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
-      }))
-      .filter((issue) => Number.isInteger(issue.number) && issue.number > 0)
-      .sort((a, b) => a.number - b.number);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`gh: invalid main-red repair issue response: ${message}`);
-  }
+  return rows
+    .filter((item) => String(item.body ?? "").includes(MAIN_RED_REPAIR_MARKER))
+    .map((row) => ({
+      number: Number(row.number),
+      title: String(row.title ?? ""),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }))
+    .filter((issue) => Number.isInteger(issue.number) && issue.number > 0)
+    .sort((a, b) => a.number - b.number);
 }
 
 /** Find an open marked main-red repair issue, optionally matching a failing-check set. */

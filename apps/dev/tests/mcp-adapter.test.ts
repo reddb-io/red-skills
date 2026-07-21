@@ -1,6 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonObject } from "@reddb-io/toon";
+import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
+import { waitsDir } from "@reddb-io/shared/red-paths.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appendCastleLaneRecord,
@@ -14,6 +17,7 @@ import {
   createDefaultDevAfkMcpOperations,
   createDevAfkMcpDependencies,
   resolveDevCliBundle,
+  resolveRspCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
@@ -338,6 +342,94 @@ describe("dev:afk MCP host adapter", () => {
   });
 });
 
+describe("rsp wait MCP tools", () => {
+  it("resolves the sibling rsp CLI bundle from local and cached MCP assets", () => {
+    expect(
+      resolveRspCliBundle(join("dist", "afk-mcp.bundle.min.mjs")),
+    ).toBe(join("dist", "rsp.bundle.min.mjs"));
+    expect(
+      resolveRspCliBundle(
+        join("cache", "afk-mcp-2.76.1.bundle.min.mjs"),
+      ),
+    ).toBe(join("cache", "rsp-2.76.1.bundle.min.mjs"));
+  });
+
+  it("spawns a detached rsp wait and returns its id without writing to stdout", async () => {
+    const cwd = await root();
+    const launchRspWait = vi.fn(async (_args: readonly string[], _cwd: string) => 73);
+    const stdout = vi.spyOn(process.stdout, "write");
+    const operations = createDefaultDevAfkMcpOperations(cwd, { launchRspWait });
+
+    try {
+      const result = await operations.waitStart({ kind: "pr", target: "2364", reason: "CI check" }) as Record<string, unknown>;
+      expect(result).toMatchObject({ pid: 73, status: "spawned" });
+      expect(typeof result.id).toBe("string");
+    } finally {
+      stdout.mockRestore();
+    }
+
+    expect(stdout).not.toHaveBeenCalled();
+    expect(launchRspWait.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["wait", "pr", "2364", "--reason", "CI check"]),
+    );
+  });
+
+  it("passes kind-specific arguments for pr, run, release, and cmd targets", async () => {
+    const cwd = await root();
+    const launchRspWait = vi.fn(async (_args: readonly string[], _cwd: string) => 99);
+    const operations = createDefaultDevAfkMcpOperations(cwd, { launchRspWait });
+
+    await operations.waitStart({ kind: "run", target: "987654321" });
+    expect(launchRspWait.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["wait", "run", "987654321"]),
+    );
+
+    await operations.waitStart({ kind: "release", target: "v2.*" });
+    expect(launchRspWait.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining(["wait", "release", "--tag", "v2.*"]),
+    );
+
+    await operations.waitStart({ kind: "cmd", target: "pnpm build" });
+    const cmdArgs = launchRspWait.mock.calls[2]?.[0] as string[] | undefined;
+    expect(cmdArgs).toContain("--");
+    expect(cmdArgs?.[cmdArgs.indexOf("--") + 1]).toBe("pnpm build");
+  });
+
+  it("lists active waits from the registry directory", async () => {
+    const cwd = await root();
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    await expect(deps.waitList()).resolves.toEqual([]);
+  });
+
+  it("reads the sealed result envelope for a finished wait", async () => {
+    const cwd = await root();
+    const id = "a1b2c3d4-finished-wait";
+    const envelope = {
+      schema: "rsp.wait.result",
+      version: 1,
+      wait: { id: "rsp-internal-uuid", status: "success" },
+    };
+    const dir = waitsDir(cwd);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, `${id}.toon`),
+      encodeSnapshotToon(envelope as unknown as JsonObject) + "\n",
+      "utf8",
+    );
+
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const result = await deps.waitStatus({ id }) as Record<string, unknown>;
+    expect(result).toMatchObject({ id, status: "finished", result: { schema: "rsp.wait.result" } });
+  });
+
+  it("returns running status with active registry when result file is absent", async () => {
+    const cwd = await root();
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const result = await deps.waitStatus({ id: "no-such-wait" }) as Record<string, unknown>;
+    expect(result).toMatchObject({ id: "no-such-wait", status: "running", waits: [] });
+  });
+});
+
 describe("buildMcpLandingFireHook — lifecycle hook wiring", () => {
   async function writeHookConfig(cwd: string, hookYaml: string): Promise<void> {
     await mkdir(join(cwd, ".red"), { recursive: true });
@@ -431,5 +523,6 @@ function fakeOperations(): DevAfkMcpOperations {
     })),
     claimStatus: vi.fn(async (input) => ({ issue: input.issue, holders: [] })),
     claimRelease: vi.fn(async (input) => ({ issue: input.issue, conceded: [] })),
+    waitStart: vi.fn(async () => ({ id: "a1b2c3d4-uuid", pid: 73, status: "spawned" })),
   };
 }
