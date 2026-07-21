@@ -253,3 +253,35 @@ export async function dispatchGo(
   );
   return { issue, engineExit };
 }
+
+// ---------- zero-attempt dispatch verdict (#2385) ----------
+//
+// A targeted dispatch (`--issues N` — every `/go`, and a hand-aimed `/afk`)
+// exists to make ONE issue progress. When that issue is claimed and immediately
+// released, or never selected at all, the engine used to still exit 0 and the
+// progress line still read `1/1 (100%)` — a false success over zero work, which
+// is exactly how three broken `/go` runs read as clean. A run that attempted
+// nothing is a FAILURE and must say so in its exit code.
+
+/** Outcomes that mean the worker never attempted the issue — it withdrew before
+ * (or instead of) doing any work. */
+export const NO_ATTEMPT_OUTCOMES: readonly string[] = ["claim-lost", "hook-aborted"];
+
+/**
+ * Decide whether a targeted dispatch ran ZERO attempts (pure). Returns the
+ * operator-facing reason when the run must exit non-zero, or null when at least
+ * one issue was genuinely attempted.
+ *
+ * `targeted` is false for an open-ended `/afk` drain, where picking up nothing
+ * (an empty queue, an issue another fleet worker won) is normal and stays exit 0.
+ */
+export function zeroAttemptDispatchFailure(
+  targeted: boolean,
+  processed: readonly { issue: number; outcome: string }[],
+): string | null {
+  if (!targeted) return null;
+  if (processed.length === 0) return "no targeted issue was selected or processed";
+  const attempted = processed.filter((p) => !NO_ATTEMPT_OUTCOMES.includes(p.outcome));
+  if (attempted.length > 0) return null;
+  return `no attempt ran (${processed.map((p) => `#${p.issue}: ${p.outcome}`).join(", ")})`;
+}
