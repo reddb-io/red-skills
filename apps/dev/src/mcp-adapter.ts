@@ -74,6 +74,9 @@ import * as gitx from "./runtime/git.js";
 import { makeFeedbackWorktree } from "./runtime/feedback-worktree.js";
 import { relevantScopes, runFeedback } from "./core/feedback.js";
 import { doLanding } from "./core/landing.js";
+import { dispatchHooks, type HookExec } from "./core/hook-dispatcher.js";
+import { resolveHooks } from "./core/hook-config.js";
+import { makeHookExec, makeHookResolveOptions } from "./runtime/hooks.js";
 import {
   parseClaimRecords,
   renderClaimComment,
@@ -123,6 +126,8 @@ export interface DevAfkMcpRuntime {
   ensureLabel(root: string, name: string): Promise<void>;
   createIssue(root: string, spec: DisposableIssueSpec): Promise<number>;
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
+  /** Injected in tests to intercept hook execution without spawning a shell. */
+  hookExec?: HookExec;
 }
 
 function captureStream(): {
@@ -235,6 +240,26 @@ function latestClaimPerWorker(
     if (!seen || record.commentId > seen.commentId) latest.set(record.worker, record);
   }
   return latest;
+}
+
+/**
+ * Build the `fireHook` closure used by MCP-initiated landings.
+ * Resolves the configured hook command list once at call time, then dispatches
+ * via `dispatchHooks` on each invocation. Exported for direct unit-testing with
+ * an injected `HookExec` fake.
+ */
+export function buildMcpLandingFireHook(
+  root: string,
+  exec: HookExec,
+): (name: "pre_merge" | "post_merge", context: string) => Promise<boolean> {
+  const paths = afkPaths(root);
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const resolveOptions = makeHookResolveOptions(root);
+  const resolved = resolveHooks(config, resolveOptions);
+  return async (name, context) => {
+    const result = await dispatchHooks(name, resolved[name], context, exec);
+    return !result.aborted;
+  };
 }
 
 export function createDefaultDevAfkMcpOperations(
@@ -417,11 +442,12 @@ export function createDefaultDevAfkMcpOperations(
       const changedFiles = await gitx.changedFiles(gitCtx, input.branch, base);
       const slug = (value: string) =>
         value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
+      const fireHook = buildMcpLandingFireHook(root, runtime.hookExec ?? makeHookExec(root));
       const result = await doLanding(
         {
           mergeExec: gitx.mergeExec(gitCtx),
           remoteGit: gitx.gitExec(gitCtx),
-          fireHook: async () => true,
+          fireHook,
           makeLandingWorktree: async (target) => {
             const dest = join(paths.landingWorktreesDir, `${slug(target)}-mcp-${input.issue}`);
             await gitx.worktreeRemove(gitCtx, dest);
@@ -449,9 +475,20 @@ export function createDefaultDevAfkMcpOperations(
           changedFiles,
         },
         {
-          preMerge: () => `pre_merge #${input.issue} (${input.branch} → ${base})`,
+          preMerge: () =>
+            JSON.stringify({
+              issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
+              workspace: root,
+              branch: input.branch,
+              merge_base: base,
+            }),
           postMerge: (mergeSha) =>
-            `post_merge #${input.issue} (${input.branch} → ${base}${mergeSha ? ` @ ${mergeSha}` : ""})`,
+            JSON.stringify({
+              issue: { number: input.issue, title: input.title ?? `Issue #${input.issue}` },
+              workspace: root,
+              branch: input.branch,
+              ...(mergeSha ? { merge_commit: { sha: mergeSha, short: mergeSha.slice(0, 7) } } : {}),
+            }),
         },
       );
       return { issue: input.issue, branch: input.branch, base, ...result };
