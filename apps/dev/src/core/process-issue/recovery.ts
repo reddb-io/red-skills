@@ -118,6 +118,7 @@ import {
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
 import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
+import { formatSandboxImageBuildCommand } from "../execution/sandbox-image.js";
 import type {
   ContainerSandboxMode,
   ProcessIssueDeps,
@@ -345,17 +346,40 @@ export async function resolveUntrustedAuthorSandbox(
   if (authorTrusted) return { sandboxMode: configured, authorTrusted: true, refused: false };
   const candidates: ContainerSandboxMode[] =
     configured === "docker" ? ["docker", "podman"] : configured === "podman" ? ["podman", "docker"] : ["docker", "podman"];
+  const who = provenance.author ? `'${provenance.author}'` : "(unknown)";
+  // Issue #2340: a present backend whose IMAGE is missing used to crash the
+  // attempt a minute in ("Image '…' not found locally"), which reads as
+  // no-sentinel and burns the retry budget. Probe the image here, prefer a
+  // backend that already has it, and remember the first backend that was
+  // present-but-imageless so the refusal can name the exact build command.
+  let imagelessMode: ContainerSandboxMode | undefined;
   for (const mode of candidates) {
-    if (!deps.sandboxAvailable || (await deps.sandboxAvailable(mode))) {
-      return { sandboxMode: mode, authorTrusted: false, refused: false };
+    if (deps.sandboxAvailable && !(await deps.sandboxAvailable(mode))) continue;
+    if (deps.sandboxImageAvailable && deps.sandboxImage) {
+      if (!(await deps.sandboxImageAvailable(mode, deps.sandboxImage))) {
+        imagelessMode ??= mode;
+        continue;
+      }
     }
+    return { sandboxMode: mode, authorTrusted: false, refused: false };
+  }
+  if (imagelessMode && deps.sandboxImage) {
+    return {
+      sandboxMode: configured,
+      authorTrusted: false,
+      refused: true,
+      reason:
+        `untrusted issue author ${who} requires container isolation, but the sandbox image ` +
+        `'${deps.sandboxImage}' is missing for ${imagelessMode} — build it first with: ` +
+        formatSandboxImageBuildCommand(imagelessMode, deps.sandboxImage),
+    };
   }
   return {
     sandboxMode: configured,
     authorTrusted: false,
     refused: true,
     reason:
-      `untrusted issue author ${provenance.author ? `'${provenance.author}'` : "(unknown)"} requires container isolation, ` +
+      `untrusted issue author ${who} requires container isolation, ` +
       "but no docker/podman sandbox backend is available",
   };
 }
