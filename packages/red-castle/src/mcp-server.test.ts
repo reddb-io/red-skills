@@ -34,6 +34,28 @@ function deps(): CastleMcpDependencies {
       ready_for_agent: [],
       ready_for_human: [],
     })),
+    workerDispatch: vi.fn(async (input) => ({
+      status: "completed",
+      target: input.issue ?? input.demand,
+    })),
+    workerStatus: vi.fn(async () => []),
+    workerStop: vi.fn(async (input) => ({
+      worker: input.worker,
+      status: "stopped",
+    })),
+    runnerList: vi.fn(async () => ({ codex: { efforts: ["low"] } })),
+    runnerDetect: vi.fn(async (input) => ({
+      runner: input.runner ?? "codex",
+      method: input.runner ? "flag" : "env-var",
+    })),
+    workerRequest: vi.fn(async (input) => ({
+      status: "completed",
+      request: input.text,
+    })),
+    requeue: vi.fn(async (input) => ({ issue: input.issue, applied: true })),
+    retake: vi.fn(async (input) => ({ issue: { number: input.issue } })),
+    reap: vi.fn(async () => ({ remote: [], local: [] })),
+    unblockSweep: vi.fn(async () => ({ promoted: [] })),
   };
 }
 
@@ -51,6 +73,17 @@ describe("dev:afk MCP tools", () => {
       "monitor",
       "history",
       "queue_status",
+      "worker_dispatch",
+      "worker_status",
+      "worker_stop",
+      "worker_recycle",
+      "runner_list",
+      "runner_detect",
+      "worker_request",
+      "requeue",
+      "retake",
+      "reap",
+      "unblock_sweep",
     ]);
   });
 
@@ -86,5 +119,83 @@ describe("dev:afk MCP tools", () => {
     ).resolves.toEqual([
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]);
+  });
+
+  it("dispatches and stops workers through mutating worker tools", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "worker_dispatch")!
+      .invoke({ issue: 2306, runner: "codex" });
+    expect(d.workerDispatch).toHaveBeenCalledWith({
+      issue: 2306,
+      runner: "codex",
+    });
+
+    await tools
+      .find((tool) => tool.name === "worker_stop")!
+      .invoke({ worker: "wVM2Z" });
+    await tools
+      .find((tool) => tool.name === "worker_recycle")!
+      .invoke({ worker: "wVM2Z" });
+    expect(d.workerStop).toHaveBeenNthCalledWith(1, {
+      worker: "wVM2Z",
+      recycle: false,
+    });
+    expect(d.workerStop).toHaveBeenNthCalledWith(2, {
+      worker: "wVM2Z",
+      recycle: true,
+    });
+
+    for (const name of ["worker_dispatch", "worker_stop", "worker_recycle"]) {
+      expect(tools.find((tool) => tool.name === name)!.description).toMatch(
+        /^MUTATING:/,
+      );
+    }
+  });
+
+  it("lists and detects runners and injects a spawn-time worker request", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "runner_list")!.invoke({}),
+    ).resolves.toEqual({ codex: { efforts: ["low"] } });
+    await tools
+      .find((tool) => tool.name === "runner_detect")!
+      .invoke({ runner: "codex" });
+    expect(d.runnerDetect).toHaveBeenCalledWith({ runner: "codex" });
+
+    await tools
+      .find((tool) => tool.name === "worker_request")!
+      .invoke({ issue: 2306, runner: "codex", text: "Use TDD." });
+    expect(d.workerRequest).toHaveBeenCalledWith({
+      issue: 2306,
+      runner: "codex",
+      text: "Use TDD.",
+    });
+  });
+
+  it("wraps structured requeue, retake, reap, and unblock-sweep cores", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "requeue")!
+      .invoke({ issue: 2306, guidance: "Retry after fixing the gate." });
+    expect(d.requeue).toHaveBeenCalledWith({
+      issue: 2306,
+      guidance: "Retry after fixing the gate.",
+    });
+
+    await tools
+      .find((tool) => tool.name === "retake")!
+      .invoke({ issue: 2306 });
+    expect(d.retake).toHaveBeenCalledWith({ issue: 2306 });
+    await tools.find((tool) => tool.name === "reap")!.invoke({});
+    expect(d.reap).toHaveBeenCalledOnce();
+    await tools.find((tool) => tool.name === "unblock_sweep")!.invoke({});
+    expect(d.unblockSweep).toHaveBeenCalledOnce();
   });
 });

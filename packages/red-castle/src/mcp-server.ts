@@ -35,6 +35,44 @@ export interface LogsInput {
   id: string;
 }
 
+export interface WorkerDispatchInput {
+  issue?: number;
+  demand?: string;
+  runner?: string;
+  mode?: "no-mistakes" | "direct-PR" | "local-only";
+}
+
+export interface WorkerStatusInput {
+  worker?: string;
+}
+
+export interface WorkerStopInput {
+  worker: string;
+  recycle: boolean;
+}
+
+export interface RunnerDetectInput {
+  runner?: string;
+}
+
+export interface WorkerRequestInput extends WorkerDispatchInput {
+  text: string;
+}
+
+export interface RequeueToolInput {
+  issue: number;
+  guidance: string;
+  repo?: string;
+  dryRun?: boolean;
+  adoptBranch?: string;
+}
+
+export interface RetakeToolInput {
+  issue: number;
+  repo?: string;
+  prLimit?: number;
+}
+
 export interface CastleMcpDependencies {
   fleetList(): Promise<unknown>;
   fleetStatus(input: FleetNameInput): Promise<unknown>;
@@ -47,6 +85,16 @@ export interface CastleMcpDependencies {
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
   queueStatus(): Promise<unknown>;
+  workerDispatch(input: WorkerDispatchInput): Promise<unknown>;
+  workerStatus(input: WorkerStatusInput): Promise<unknown>;
+  workerStop(input: WorkerStopInput): Promise<unknown>;
+  runnerList(): Promise<unknown>;
+  runnerDetect(input: RunnerDetectInput): Promise<unknown>;
+  workerRequest(input: WorkerRequestInput): Promise<unknown>;
+  requeue(input: RequeueToolInput): Promise<unknown>;
+  retake(input: RetakeToolInput): Promise<unknown>;
+  reap(): Promise<unknown>;
+  unblockSweep(): Promise<unknown>;
 }
 
 export interface CastleMcpTool {
@@ -68,6 +116,24 @@ const fleetConfig = z.record(
   z.string(),
   z.union([z.string(), z.number(), z.boolean()]),
 );
+
+const dispatchShape = {
+  issue: z.number().int().positive().optional(),
+  demand: z.string().min(1).optional(),
+  runner: z.string().min(1).optional(),
+  mode: z.enum(["no-mistakes", "direct-PR", "local-only"]).optional(),
+};
+
+function dispatchInput(input: Record<string, unknown>): WorkerDispatchInput {
+  const value = input as unknown as WorkerDispatchInput;
+  if ((value.issue === undefined) === (value.demand === undefined)) {
+    throw new Error("exactly one of issue or demand is required");
+  }
+  if (value.issue !== undefined && value.mode !== undefined) {
+    throw new Error("mode is only valid for demand dispatches");
+  }
+  return value;
+}
 
 export function createCastleMcpTools(
   deps: CastleMcpDependencies,
@@ -182,6 +248,113 @@ export function createCastleMcpTools(
         "Return ready-for-agent and ready-for-human queue candidates.",
       inputSchema: {},
       invoke: () => deps.queueStatus(),
+    },
+    {
+      name: "worker_dispatch",
+      title: "Dispatch AFK worker",
+      description:
+        "MUTATING: run one tracked issue or mint and run one disposable demand through the AFK worker lifecycle.",
+      inputSchema: dispatchShape,
+      invoke: (input) => deps.workerDispatch(dispatchInput(input)),
+    },
+    {
+      name: "worker_status",
+      title: "Read worker status",
+      description:
+        "Return normalized, liveness-qualified state for one worker or every local worker.",
+      inputSchema: { worker: z.string().min(1).optional() },
+      invoke: ({ worker }) =>
+        deps.workerStatus({ worker: worker as string | undefined }),
+    },
+    {
+      name: "worker_stop",
+      title: "Stop AFK worker",
+      description: "MUTATING: terminate one worker process tree.",
+      inputSchema: { worker: z.string().min(1) },
+      invoke: ({ worker }) =>
+        deps.workerStop({ worker: worker as string, recycle: false }),
+    },
+    {
+      name: "worker_recycle",
+      title: "Recycle AFK worker",
+      description:
+        "MUTATING: terminate one fleet worker so its supervisor can replace the slot.",
+      inputSchema: { worker: z.string().min(1) },
+      invoke: ({ worker }) =>
+        deps.workerStop({ worker: worker as string, recycle: true }),
+    },
+    {
+      name: "runner_list",
+      title: "List AFK runners",
+      description: "Return the canonical runner specification registry.",
+      inputSchema: {},
+      invoke: () => deps.runnerList(),
+    },
+    {
+      name: "runner_detect",
+      title: "Detect AFK runner",
+      description:
+        "Resolve the runner selected by an explicit override or the current host environment.",
+      inputSchema: { runner: z.string().min(1).optional() },
+      invoke: ({ runner }) =>
+        deps.runnerDetect({ runner: runner as string | undefined }),
+    },
+    {
+      name: "worker_request",
+      title: "Dispatch worker with request",
+      description:
+        "MUTATING: dispatch a new worker and inject a special request into its spawn-time handoff.",
+      inputSchema: {
+        ...dispatchShape,
+        text: z.string().min(1),
+      },
+      invoke: (input) =>
+        deps.workerRequest({
+          ...dispatchInput(input),
+          text: input.text as string,
+        }),
+    },
+    {
+      name: "requeue",
+      title: "Requeue AFK issue",
+      description:
+        "MUTATING: apply the complete parked-issue requeue transition and record human guidance.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        guidance: z.string().min(1),
+        repo: z.string().min(1).optional(),
+        dryRun: z.boolean().optional(),
+        adoptBranch: z.string().min(1).optional(),
+      },
+      invoke: (input) => deps.requeue(input as unknown as RequeueToolInput),
+    },
+    {
+      name: "retake",
+      title: "Recommend AFK retake",
+      description:
+        "Return the structured issue, PR, branch, worktree, worker-state, and recommended-next-action report.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        repo: z.string().min(1).optional(),
+        prLimit: z.number().int().positive().max(1_000).optional(),
+      },
+      invoke: (input) => deps.retake(input as unknown as RetakeToolInput),
+    },
+    {
+      name: "reap",
+      title: "Reap AFK branches",
+      description:
+        "MUTATING: classify and delete stale local and remote AFK branches.",
+      inputSchema: {},
+      invoke: () => deps.reap(),
+    },
+    {
+      name: "unblock_sweep",
+      title: "Sweep dependency blocks",
+      description:
+        "MUTATING: promote dependency-blocked issues whose requirements are all closed.",
+      inputSchema: {},
+      invoke: () => deps.unblockSweep(),
     },
   ];
 }

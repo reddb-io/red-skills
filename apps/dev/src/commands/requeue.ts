@@ -18,6 +18,7 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { Writable } from "node:stream";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import { encodeLines } from "@reddb-io/toon";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
@@ -79,6 +80,44 @@ export type RequeueAdoptRunner = (
   branch: string,
   issueData: RequeueAdoptData,
 ) => Promise<"landed" | "parked" | "skipped">;
+
+export interface RequeueExecutionInput {
+  issue: number;
+  guidance: string;
+  repo?: string;
+  dryRun?: boolean;
+  adoptBranch?: string;
+}
+
+export type RequeueExecutionOutcome =
+  | "applied"
+  | "no-op"
+  | "dry-run"
+  | "closed"
+  | "refused"
+  | "landed"
+  | "parked"
+  | "skipped";
+
+export interface RequeueExecutionResult {
+  issue: number;
+  plan: RequeuePlan | null;
+  applied: boolean;
+  outcome: RequeueExecutionOutcome;
+  exitCode: number;
+  reason?: string;
+  adoptBranch?: string;
+  removeLabels?: string[];
+  addLabels?: string[];
+}
+
+export interface RequeueExecutionOptions {
+  cwd?: string;
+  gh?: RequeueGh;
+  adoptRunner?: RequeueAdoptRunner;
+  /** Optional sink for the adopt gate's live progress. MCP callers omit it. */
+  progress?: NodeJS.WritableStream;
+}
 
 const REQUEUE_FLAG_SCHEMA = {
   guidance: { kind: "value", coerce: (raw: string): string => raw },
@@ -479,6 +518,209 @@ async function runAdoptLanding(
  * reconcile) after the requeue transition; `adoptRunnerOverride` is injectable
  * for tests.
  */
+export async function executeRequeue(
+  input: RequeueExecutionInput,
+  options: RequeueExecutionOptions = {},
+): Promise<RequeueExecutionResult> {
+  const cwd = options.cwd ?? process.cwd();
+  const guidance = input.guidance.trim();
+  const adoptBranch = input.adoptBranch?.trim() || undefined;
+  if (!Number.isSafeInteger(input.issue) || input.issue <= 0) {
+    throw new Error("requeue requires a positive issue number");
+  }
+  if (!guidance) {
+    throw new Error("requeue requires guidance with the retry decision");
+  }
+
+  const repo = options.gh ? "" : await resolveRepo(cwd, input.repo);
+  const gh = options.gh ?? ghFor(cwd, repo);
+  const issueState = await gh.view(input.issue);
+  if (issueState.state.toUpperCase() !== "OPEN") {
+    return {
+      issue: input.issue,
+      plan: null,
+      applied: false,
+      outcome: "closed",
+      exitCode: 1,
+      reason: `issue is ${issueState.state || "unknown"}, not OPEN`,
+      ...(adoptBranch ? { adoptBranch } : {}),
+    };
+  }
+
+  const wasSensitivePathPark =
+    issueState.labels.includes(LABEL_SENSITIVE_PATH) ||
+    parseCurrentBlocker(issueState.body)?.kind === "sensitive-path";
+  const plan = planRequeue({
+    body: issueState.body,
+    labels: issueState.labels,
+    guidance,
+    adoptBranch: adoptBranch !== undefined,
+  });
+  if (!plan.requeueable) {
+    if (plan.refuseForHitl) {
+      return {
+        issue: input.issue,
+        plan,
+        applied: false,
+        outcome: "refused",
+        exitCode: 1,
+        reason: plan.reason,
+        ...(adoptBranch ? { adoptBranch } : {}),
+      };
+    }
+    if (!adoptBranch) {
+      return {
+        issue: input.issue,
+        plan,
+        applied: false,
+        outcome: "no-op",
+        exitCode: 0,
+        reason: plan.reason,
+      };
+    }
+  }
+
+  if (input.dryRun) {
+    return {
+      issue: input.issue,
+      plan,
+      applied: false,
+      outcome: "dry-run",
+      exitCode: 0,
+      ...(adoptBranch ? { adoptBranch } : {}),
+    };
+  }
+
+  const withholdReady = adoptBranch !== undefined;
+  let readyWithheld = false;
+  let removeLabels: string[] | undefined;
+  let addLabels: string[] | undefined;
+  if (plan.requeueable) {
+    await sweepRequeueClaims(gh, input.issue);
+    if (plan.bodyChanged) await gh.editBody(input.issue, plan.body);
+    await gh.comment(input.issue, directiveComment(plan, guidance));
+    addLabels = withholdReady
+      ? plan.addLabels.filter((label) => label !== LABEL_READY)
+      : [...plan.addLabels];
+    removeLabels =
+      withholdReady && issueState.labels.includes(LABEL_READY)
+        ? [...plan.removeLabels, LABEL_READY]
+        : [...plan.removeLabels];
+    await gh.editLabels(input.issue, removeLabels, addLabels);
+    if (withholdReady) readyWithheld = true;
+  } else if (adoptBranch && issueState.labels.includes(LABEL_READY)) {
+    await gh.editLabels(input.issue, [LABEL_READY], []);
+    readyWithheld = true;
+  }
+
+  const baseResult = {
+    issue: input.issue,
+    plan,
+    applied: plan.requeueable,
+    ...(removeLabels ? { removeLabels } : {}),
+    ...(addLabels ? { addLabels } : {}),
+  };
+  if (!adoptBranch) {
+    return { ...baseResult, outcome: "applied", exitCode: 0 };
+  }
+
+  const restoreQueueLabel = async (): Promise<void> => {
+    if (readyWithheld) await gh.editLabels(input.issue, [], [LABEL_READY]);
+  };
+  const postLabels = plan.requeueable
+    ? issueState.labels.filter(
+        (label) => !plan.removeLabels.includes(label) && label !== LABEL_READY,
+      )
+    : issueState.labels.filter((label) => label !== LABEL_READY);
+  const adoptData: RequeueAdoptData = {
+    title: "",
+    body: plan.requeueable ? plan.body : issueState.body,
+    labels: postLabels,
+    sensitivePathApproved: wasSensitivePathPark,
+  };
+  if (wasSensitivePathPark) {
+    await gh.comment(
+      input.issue,
+      await sensitivePathAdoptAudit(cwd, adoptBranch, guidance),
+    );
+  }
+
+  const silent = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const runner =
+    options.adoptRunner ??
+    ((issue, branch, data) =>
+      runAdoptLanding(
+        issue,
+        branch,
+        data,
+        cwd,
+        repo,
+        options.progress ?? silent,
+      ));
+  let outcome: "landed" | "parked" | "skipped";
+  try {
+    outcome = await runner(input.issue, adoptBranch, adoptData);
+  } catch (error) {
+    await restoreQueueLabel().catch(() => {});
+    throw error;
+  }
+  if (outcome === "skipped") await restoreQueueLabel();
+  return {
+    ...baseResult,
+    outcome,
+    exitCode: outcome === "parked" ? 1 : 0,
+    adoptBranch,
+  };
+}
+
+function renderRequeueResult(
+  result: RequeueExecutionResult,
+  json: boolean,
+  stdout: NodeJS.WritableStream,
+): void {
+  if (json) {
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  const issue = result.issue;
+  if (result.outcome === "closed") {
+    process.stderr.write(`[afk] requeue #${issue}: ${result.reason}\n`);
+  } else if (result.outcome === "refused") {
+    process.stderr.write(`[afk] requeue #${issue}: refused — ${result.reason}\n`);
+  } else if (result.outcome === "no-op") {
+    stdout.write(`Requeue #${issue}: no-op — ${result.reason}\n`);
+  } else if (result.outcome === "dry-run") {
+    stdout.write(
+      `Requeue #${issue} (dry-run): clear blocker=${result.plan?.bodyChanged ?? false} ` +
+        `remove=[${result.plan?.removeLabels.join(",") ?? ""}] ` +
+        `add=[${result.plan?.addLabels.join(",") ?? ""}]` +
+        `${result.adoptBranch ? ` adopt-branch=${result.adoptBranch}` : ""}\n`,
+    );
+  } else if (result.outcome === "applied") {
+    stdout.write(
+      `Requeue #${issue}: cleared blocker=${result.plan?.bodyChanged ?? false}, ` +
+        `removed [${result.removeLabels?.join(",") ?? ""}], ` +
+        `added [${result.addLabels?.join(",") ?? ""}].\n`,
+    );
+  } else if (result.outcome === "landed") {
+    stdout.write(
+      `Requeue #${issue}: \`${result.adoptBranch}\` validated and landed.\n`,
+    );
+  } else if (result.outcome === "parked") {
+    process.stderr.write(
+      `[afk] requeue #${issue}: gate failed — \`${result.adoptBranch}\` was parked to ready-for-human.\n`,
+    );
+  } else {
+    stdout.write(
+      `Requeue #${issue}: adopt skipped (branch carries no work vs base or branch absent).\n`,
+    );
+  }
+}
+
 export async function requeueCommand(
   args: readonly string[],
   cwd = process.cwd(),
@@ -493,164 +735,34 @@ export async function requeueCommand(
     return 2;
   }
   const guidance = (values.guidance as string | undefined)?.trim();
-  const json = values.json === true;
-  const dryRun = values["dry-run"] === true;
-  const adoptBranch = (values["adopt-branch"] as string | undefined)?.trim() || undefined;
-
   if (!guidance) {
-    process.stderr.write("[afk] requeue requires --guidance with the retry decision so it can be recorded as Human guidance\n");
+    process.stderr.write(
+      "[afk] requeue requires --guidance with the retry decision so it can be recorded as Human guidance\n",
+    );
     return 2;
   }
-
-  const repo = ghOverride ? "" : await resolveRepo(cwd, values.repo as string | undefined);
-  const gh = ghOverride ?? ghFor(cwd, repo);
-
-  const issueState = await gh.view(issue);
-  if (issueState.state.toUpperCase() !== "OPEN") {
-    process.stderr.write(`[afk] requeue #${issue}: issue is ${issueState.state || "unknown"}, not OPEN\n`);
-    return 1;
-  }
-
-  // #1171: an active `blocked:sensitive-path` park is requeueable ONLY when the
-  // maintainer is adopting a reviewed branch (`--adopt-branch`). Detect it from
-  // the PRE-transition state so the audit comment + guard bypass fire only here.
-  const wasSensitivePathPark =
-    issueState.labels.includes(LABEL_SENSITIVE_PATH) ||
-    parseCurrentBlocker(issueState.body)?.kind === "sensitive-path";
-
-  const plan = planRequeue({
-    body: issueState.body,
-    labels: issueState.labels,
-    guidance,
-    adoptBranch: adoptBranch !== undefined,
-  });
-  if (!plan.requeueable) {
-    if (plan.refuseForHitl) {
-      process.stderr.write(`[afk] requeue #${issue}: refused — ${plan.reason}\n`);
-      return 1;
-    }
-    // Not parked — no-op for the requeue transition (may still adopt below).
-    if (!adoptBranch) {
-      stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
-      return 0;
-    }
-  }
-
-  if (dryRun) {
-    stdout.write(
-      json
-        ? `${JSON.stringify({ issue, plan, adoptBranch }, null, 2)}\n`
-        : `Requeue #${issue} (dry-run): clear blocker=${plan.bodyChanged} remove=[${plan.removeLabels.join(",")}] add=[${plan.addLabels.join(",")}]${adoptBranch ? ` adopt-branch=${adoptBranch}` : ""}\n`,
-    );
-    return 0;
-  }
-
-  // #1307: during an `--adopt-branch` gate the Ticket must never be claimable. The
-  // fleet's candidate query AND its pre-claim state-validity recheck both key on
-  // `ready-for-agent`, so applying it before the minutes-long gate opens a window
-  // where a concurrent worker claims and re-runs the same branch on the same base
-  // (double-land risk). We therefore WITHHOLD the queue label for the whole gate
-  // and restore it only when the gate neither lands nor parks the Ticket (skip /
-  // interruption) — leaving a recoverable, still-queued state. A bare requeue is
-  // unchanged: it applies `ready-for-agent` immediately.
-  const withholdReady = adoptBranch !== undefined;
-  // Whether a `ready-for-agent` we withheld must be restorable on a skip/throw.
-  let readyWithheld = false;
-
-  // Apply the requeue transition when the issue is parked and requeueable.
-  if (plan.requeueable) {
-    await sweepRequeueClaims(gh, issue);
-    if (plan.bodyChanged) await gh.editBody(issue, plan.body);
-    await gh.comment(issue, directiveComment(plan, guidance));
-    // Under `--adopt-branch`, drop `ready-for-agent` from the add set (it is the
-    // requeue's target) and also remove any pre-existing one, so the Ticket carries
-    // no queue label for the gate. The withheld label is restored on skip/throw.
-    const addLabels = withholdReady ? plan.addLabels.filter((l) => l !== LABEL_READY) : plan.addLabels;
-    const removeLabels =
-      withholdReady && issueState.labels.includes(LABEL_READY)
-        ? [...plan.removeLabels, LABEL_READY]
-        : plan.removeLabels;
-    await gh.editLabels(issue, removeLabels, addLabels);
-    if (withholdReady) readyWithheld = true;
-    stdout.write(
-      json
-        ? `${JSON.stringify({ issue, plan, applied: true }, null, 2)}\n`
-        : `Requeue #${issue}: cleared blocker=${plan.bodyChanged}, removed [${removeLabels.join(",")}], added [${addLabels.join(",")}].\n`,
-    );
-  } else if (adoptBranch) {
-    // Not parked, but adopting: if the Ticket already carries `ready-for-agent`,
-    // strip it for the gate window so a concurrent worker can't claim it mid-land.
-    if (issueState.labels.includes(LABEL_READY)) {
-      await gh.editLabels(issue, [LABEL_READY], []);
-      readyWithheld = true;
-    }
-  } else {
-    stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
-    return 0;
-  }
-
-  // Adopt mode (ADR 0081): route the branch through the no-agent landing lane.
+  const adoptBranch =
+    (values["adopt-branch"] as string | undefined)?.trim() || undefined;
   if (adoptBranch) {
-    // Restore the queue label we withheld (#1307) — used when the gate skips or is
-    // interrupted, so the Ticket returns to a recoverable, still-queued state. On a
-    // land the Ticket is closed and on a park reconcile applies `ready-for-human`,
-    // so neither restores.
-    const restoreQueueLabel = async (): Promise<void> => {
-      if (readyWithheld) await gh.editLabels(issue, [], [LABEL_READY]);
-    };
-
-    // Post-transition labels/body — pass the reconcile guard the state AFTER the
-    // requeue cleared any blocked:* labels + active blocker. `ready-for-agent` is
-    // withheld for the gate (#1307), so it is never part of the reconcile input.
-    const postLabels = plan.requeueable
-      ? issueState.labels.filter((l) => !plan.removeLabels.includes(l) && l !== LABEL_READY)
-      : issueState.labels.filter((l) => l !== LABEL_READY);
-    const postBody = plan.requeueable ? plan.body : issueState.body;
-    const adoptData: RequeueAdoptData = {
-      title: "",
-      body: postBody,
-      labels: postLabels,
-      sensitivePathApproved: wasSensitivePathPark,
-    };
-
-    // #1171 audit trail: a sensitive-path adopt is a human bypass of the landing
-    // guard — never silent. Record who approved + when, and the guidance, BEFORE
-    // the land so the approval is on the thread even if the land later parks.
-    if (wasSensitivePathPark) {
-      await gh.comment(issue, await sensitivePathAdoptAudit(cwd, adoptBranch, guidance));
-    }
-
-    stdout.write(`Requeue #${issue}: adopting branch \`${adoptBranch}\` through the no-agent landing lane (ADR 0055)…\n`);
-
-    const runner = adoptRunnerOverride
-      ?? ((n, b, d) => runAdoptLanding(n, b, d, cwd, repo, stdout));
-
-    let outcome: "landed" | "parked" | "skipped";
-    try {
-      outcome = await runner(issue, adoptBranch, adoptData);
-    } catch (err) {
-      // Interrupted mid-gate (#1307): never leave the Ticket stranded without a
-      // queue label. The claim window is already closed (the gate is no longer
-      // running), so restoring `ready-for-agent` is safe and keeps it recoverable.
-      await restoreQueueLabel().catch(() => {});
-      throw err;
-    }
-
-    if (outcome === "landed") {
-      stdout.write(`Requeue #${issue}: \`${adoptBranch}\` validated and landed.\n`);
-      return 0;
-    }
-    if (outcome === "parked") {
-      process.stderr.write(`[afk] requeue #${issue}: gate failed — \`${adoptBranch}\` was parked to ready-for-human.\n`);
-      return 1;
-    }
-    // skipped (no-commits, branch-absent, etc.) — not a failure but worth noting.
-    // The gate neither landed nor parked, so restore the withheld queue label
-    // (#1307) to return the Ticket to a recoverable, still-queued state.
-    await restoreQueueLabel();
-    stdout.write(`Requeue #${issue}: adopt skipped (branch carries no work vs base or branch absent).\n`);
-    return 0;
+    stdout.write(
+      `Requeue #${issue}: adopting branch \`${adoptBranch}\` through the no-agent landing lane (ADR 0055)…\n`,
+    );
   }
-
-  return 0;
+  const result = await executeRequeue(
+    {
+      issue,
+      guidance,
+      repo: values.repo as string | undefined,
+      dryRun: values["dry-run"] === true,
+      adoptBranch,
+    },
+    {
+      cwd,
+      gh: ghOverride,
+      adoptRunner: adoptRunnerOverride,
+      progress: stdout,
+    },
+  );
+  renderRequeueResult(result, values.json === true, stdout);
+  return result.exitCode;
 }
