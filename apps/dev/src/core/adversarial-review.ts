@@ -81,14 +81,14 @@ function readEffort(raw: string): AgentEffort | undefined {
 }
 
 export function resolveAdversarialReviewConfig(get: (key: string) => string): AdversarialReviewConfig {
-  const runner = get("review.runner").trim();
-  const model = get("review.model").trim();
-  const effort = readEffort(get("review.effort"));
+  const runner = get("dev.review.runner").trim();
+  const model = get("dev.review.model").trim();
+  const effort = readEffort(get("dev.review.effort"));
   return {
-    enabled: get("review.enabled") === "true",
-    maxIterations: readPositiveInteger(get("review.max_iterations"), 1),
-    reviewerCount: readPositiveInteger(get("review.reviewer_count"), 1),
-    quorum: readQuorum(get("review.quorum")),
+    enabled: get("dev.review.enabled") === "true",
+    maxIterations: readPositiveInteger(get("dev.review.max_iterations"), 1),
+    reviewerCount: readPositiveInteger(get("dev.review.reviewer_count"), 1),
+    quorum: readQuorum(get("dev.review.quorum")),
     ...(runner && isRunner(runner) ? { runner: toAgentRunner(runner) } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
