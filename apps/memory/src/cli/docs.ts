@@ -101,7 +101,19 @@ export async function runRegistryCliOperation(
       },
       transportInput,
     );
+    const jsonRequested =
+      args.flags.json === true || operation.renderer.cli.defaultFormat === "json";
     if (operation.outputKind.kind === "viewer") {
+      const presentation = operation.renderer.cli.presentation;
+      if (jsonRequested && operation.renderer.cli.supportsJson) {
+        const jsonOutput = presentation?.jsonOutput?.(output) ?? output;
+        process.stdout.write(`${JSON.stringify(jsonOutput, null, 2)}\n`);
+        return;
+      }
+      if (presentation?.viewerSink === "explicit" && args.flags.out === undefined) {
+        process.stdout.write(presentation.render(output, transportInput));
+        return;
+      }
       const outPath = await writeViewerArtifact(operation, output, transportInput);
       process.stdout.write(viewerCliSummary(operation, output, outPath));
       return;
@@ -110,7 +122,8 @@ export async function runRegistryCliOperation(
       renderRegistryCliReport(
         operation,
         output,
-        args.flags.json === true || operation.renderer.cli.defaultFormat === "json",
+        jsonRequested,
+        transportInput,
       ),
     );
   } finally {
@@ -126,6 +139,9 @@ export function renderRegistryCliReport(
   operation: ReadOnlyMemoryOperation,
   output: unknown,
   jsonRequested: boolean,
+  transportInput: Parameters<
+    NonNullable<ReadOnlyMemoryOperation["renderer"]["cli"]["presentation"]>["render"]
+  >[1] = { positional: [], flags: {}, query: {} },
 ): string {
   if (jsonRequested) return `${JSON.stringify(output, null, 2)}\n`;
   if (operation.outputKind.kind === "report" && operation.outputKind.format === "markdown") {
@@ -139,6 +155,9 @@ export function renderRegistryCliReport(
       return output.markdown;
     }
     throw new Error(`${operation.id} declared markdown output without a markdown field`);
+  }
+  if (operation.renderer.cli.presentation) {
+    return operation.renderer.cli.presentation.render(output, transportInput);
   }
   return renderToonDocument(output);
 }
