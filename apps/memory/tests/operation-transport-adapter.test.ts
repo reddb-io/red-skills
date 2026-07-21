@@ -11,6 +11,7 @@ import {
 } from "../src/operations.js";
 import type { MemoryOperationFacets, MemoryOperationDefinition } from "../src/operations.js";
 import type { MemoryStore } from "../src/graph-store.js";
+import { operationStructuredContent } from "../src/mcp-server/structured-content.js";
 import {
   bindMemoryOperationInput,
   listMemoryOperationsForTransport,
@@ -49,6 +50,18 @@ describe("Memory operation transport adapter", () => {
     expect(listMemoryHttpRegistryRoutes([operation])).toEqual([
       { route: "/api/test-registration", operationId: definition.id },
     ]);
+  });
+
+  test("uses a report's typed output as MCP structured content", async () => {
+    const output = {
+      version: "2.0.0",
+      stats: { node_count: 2, edge_count: 1 },
+      nodes: [{ id: 1, type: "file" }],
+    };
+
+    await expect(
+      operationStructuredContent("memory.map-contract", output, {} as MemoryStore),
+    ).resolves.toEqual(output);
   });
 
   test("binds doc brief CLI argv from registry input facets", () => {
