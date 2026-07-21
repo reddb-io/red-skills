@@ -37,7 +37,7 @@ describe("Memory operation transport adapter", () => {
       outputKind: { kind: "report", format: "json" },
       renderer: {
         cli: { command: "test-registration", supportsJson: true },
-        mcp: { toolName: "memory_test_registration", description: "legacy transport copy" },
+        mcp: { toolName: "memory_test_registration" },
         http: {
           route: "/api/registered-test",
           aliases: ["/api/registered-test-alias"],
