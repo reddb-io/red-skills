@@ -12,10 +12,10 @@ import type {
 import { MEMORY_OPERATION_FACETS } from "./facets.js";
 import { READ_ONLY_MEMORY_OPERATION_DEFINITIONS } from "./definitions.js";
 
+const DEFAULT_READ_ONLY_TRANSPORTS = ["cli", "mcp", "http"] as const;
 const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry(
   READ_ONLY_MEMORY_OPERATION_DEFINITIONS,
 );
-const DEFAULT_READ_ONLY_TRANSPORTS = ["cli", "mcp", "http"] as const;
 
 export function createReadOnlyMemoryOperationRegistry(
   operations: readonly MemoryOperationDefinition<any, any>[],
