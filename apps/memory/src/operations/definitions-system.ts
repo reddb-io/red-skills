@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { renderToonOutput } from "../toon-output.js";
 import { toEdge } from "../export.js";
 import {
   buildMemoryAssetInventory,
@@ -454,7 +455,98 @@ const DASHBOARD_OPERATION: MemoryOperationDefinition<
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "dashboard", supportsJson: false, dispatch: "legacy" },
+    cli: {
+      command: "dashboard",
+      supportsJson: true,
+      presentation: {
+        viewerSink: "explicit",
+        jsonOutput: (output) => (output as MemoryOperationalDashboardArtifact).dashboard,
+        render: (output) => {
+          const dashboard = (output as MemoryOperationalDashboardArtifact).dashboard;
+          const sections = [
+            {
+              area: "stats",
+              status: dashboard.state,
+              metric: "nodes",
+              value: dashboard.stats.nodes,
+              detail: `${dashboard.stats.docs} docs; ${dashboard.stats.edges} edges`,
+            },
+            {
+              area: "vector",
+              status: dashboard.vector.overall,
+              metric: "ready",
+              value: dashboard.vector.ready,
+              detail: `${dashboard.vector.total} total; ${dashboard.vector.unavailable} unavailable; ${dashboard.vector.failed} failed`,
+            },
+            {
+              area: "docs",
+              status: dashboard.docs.ungrounded > 0 ? "attention" : "ready",
+              metric: "grounded",
+              value: dashboard.docs.grounded,
+              detail: `${dashboard.docs.total} total; ${dashboard.docs.warnings} warning(s)`,
+            },
+            {
+              area: "hooks",
+              status: dashboard.hooks.actionable_gaps > 0 ? "attention" : "ready",
+              metric: "wired_events",
+              value: dashboard.hooks.wired_events,
+              detail: `${dashboard.hooks.enabled_events} enabled; ${dashboard.hooks.actionable_gaps} actionable gap(s)`,
+            },
+            {
+              area: "extraction",
+              status: dashboard.extraction.inferred_available ? "ready" : "unavailable",
+              metric: "inferred_facts",
+              value: dashboard.extraction.inferred_facts,
+              detail: dashboard.extraction.egress ?? "no inferred extraction egress",
+            },
+            {
+              area: "stale",
+              status: dashboard.stale.stale_nodes > 0 ? "attention" : "ready",
+              metric: "stale_nodes",
+              value: dashboard.stale.stale_nodes,
+              detail: `${dashboard.stale.total_nodes} total; ${dashboard.stale.stale_days} day policy`,
+            },
+            {
+              area: "decay",
+              status: dashboard.decay.status,
+              metric: "review",
+              value: dashboard.decay.review,
+              detail: `${dashboard.decay.keep} keep; ${dashboard.decay.deprecate} deprecate; ${dashboard.decay.expire} expire`,
+            },
+          ];
+          const empty = dashboard.stats.nodes === 0 && dashboard.stats.docs === 0;
+          return renderToonOutput({
+            rowsKey: "sections",
+            rows: sections,
+            fields: ["area", "status", "metric", "value", "detail"],
+            summary: {
+              status: empty ? "empty" : dashboard.state,
+              state: dashboard.state,
+              nodes: dashboard.stats.nodes,
+              edges: dashboard.stats.edges,
+              docs: dashboard.stats.docs,
+              warnings: dashboard.warnings.length,
+              actions: dashboard.recommended_next_actions.length + (empty ? 1 : 0),
+              schema: dashboard.schema_version,
+            },
+            extra: {
+              warnings: dashboard.warnings.map((message) => ({ message })),
+              next: [
+                ...dashboard.recommended_next_actions.map((action) => ({ action })),
+                ...(empty
+                  ? [
+                      {
+                        action:
+                          "run `memory ingest . --root <root>` to populate dashboard evidence",
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          });
+        },
+      },
+    },
     mcp: {
       toolName: "memory_dashboard",
       description:
