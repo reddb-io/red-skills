@@ -470,6 +470,12 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
    */
   readonly allowIterResume?: boolean;
   /**
+   * Live-steer provider. Called before each iteration after the first; resolves
+   * the steer text to inject as a `specialUserRequestBlock`, or `undefined` when
+   * no steer is pending.
+   */
+  readonly steerProvider?: () => Promise<string | undefined>;
+  /**
    * An `AbortSignal` that cancels the run when aborted.
    *
    * - If `signal.aborted` is already `true` at entry, `run()` rejects
@@ -832,6 +838,7 @@ export async function run(
       signal: options.signal,
       skipPromptExpansion: isInlinePrompt,
       timeouts: options.timeouts,
+      ...(options.steerProvider ? { steerProvider: options.steerProvider } : {}),
     });
 
     const completion = buildCompletionMessage(
