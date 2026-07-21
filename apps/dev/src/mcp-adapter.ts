@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
@@ -46,11 +47,14 @@ import {
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
-import { runCommand } from "./commands/run.js";
-import { goCommand } from "./commands/go.js";
 import { stopCommand } from "./commands/stop.js";
-import { requeueCommand } from "./commands/requeue.js";
+import { executeRequeue } from "./commands/requeue.js";
 import { retakeCommand } from "./commands/retake.js";
+import {
+  dispatchGo,
+  type DisposableIssueSpec,
+} from "./core/go.js";
+import { loadConfig, readBackpressure } from "./core/config.js";
 import {
   branchesToReap,
   planLiveBranchCleanup,
@@ -77,6 +81,13 @@ export interface DevAfkMcpOperations {
   retake(input: RetakeToolInput): Promise<unknown>;
   reap(): Promise<unknown>;
   unblockSweep(): Promise<unknown>;
+}
+
+export interface DevAfkMcpRuntime {
+  launchRun(root: string, args: readonly string[]): Promise<{ pid: number }>;
+  ensureLabel(root: string, name: string): Promise<void>;
+  createIssue(root: string, spec: DisposableIssueSpec): Promise<number>;
+  executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
 }
 
 function captureStream(): {
@@ -120,25 +131,91 @@ function dispatchArgs(input: DispatchOperationInput): string[] {
   return args;
 }
 
-function defaultOperations(root: string): DevAfkMcpOperations {
+async function launchDetachedRun(
+  root: string,
+  args: readonly string[],
+): Promise<{ pid: number }> {
+  const bundle = process.argv[1];
+  if (!bundle) throw new Error("cannot dispatch worker: bundle path is missing");
+  const child = spawn(process.execPath, [bundle, "run", ...args], {
+    cwd: root,
+    env: process.env,
+    detached: true,
+    stdio: "ignore",
+  });
+  const pid = child.pid;
+  if (!pid) throw new Error("cannot dispatch worker: spawn returned no pid");
+  child.unref();
+  return { pid };
+}
+
+const defaultMcpRuntime: DevAfkMcpRuntime = {
+  launchRun: launchDetachedRun,
+  async ensureLabel(root, name) {
+    const context = await resolveRepoContext(root);
+    await ghx.ensureLabel({ cwd: context.root, repo: context.repo }, name);
+  },
+  async createIssue(root, spec) {
+    const context = await resolveRepoContext(root);
+    return ghx.createIssue({ cwd: context.root, repo: context.repo }, spec);
+  },
+  executeRequeue: (root, input) => executeRequeue(input, { cwd: root }),
+};
+
+export function createDefaultDevAfkMcpOperations(
+  root: string,
+  overrides: Partial<DevAfkMcpRuntime> = {},
+): DevAfkMcpOperations {
+  const runtime: DevAfkMcpRuntime = { ...defaultMcpRuntime, ...overrides };
   return {
     async dispatchIssue(cwd, input) {
-      const exitCode = await runCommand({
-        cwd,
-        args: [
-          "--issues",
-          String(input.issue),
-          "--once",
-          ...dispatchArgs(input),
-        ],
-      });
-      return { kind: "afk", issue: input.issue, exit_code: exitCode };
+      const args = [
+        "--issues",
+        String(input.issue),
+        "--once",
+        ...dispatchArgs(input),
+      ];
+      const launch = await runtime.launchRun(cwd, args);
+      return {
+        kind: "afk",
+        issue: input.issue,
+        worker_pid: launch.pid,
+        status: "dispatched",
+      };
     },
     async dispatchDemand(cwd, input) {
-      const args = [input.demand, ...dispatchArgs(input)];
-      if (input.mode) args.push("--mode", input.mode);
-      const exitCode = await goCommand(args, cwd);
-      return { kind: "go", demand: input.demand, exit_code: exitCode };
+      let workerPid: number | undefined;
+      const configuredBackpressure = readBackpressure(
+        loadConfig(afkPaths(cwd).configPath, { warn: () => undefined }),
+      );
+      const result = await dispatchGo(
+        {
+          ensureLabel: (name) => runtime.ensureLabel(cwd, name),
+          createIssue: (spec) => runtime.createIssue(cwd, spec),
+          runEngine: async (args) => {
+            const launch = await runtime.launchRun(cwd, args);
+            workerPid = launch.pid;
+            return 0;
+          },
+        },
+        input.demand,
+        {
+          runner: input.runner,
+          mode: input.mode,
+          request: input.request,
+          hasHarness: configuredBackpressure.length > 0,
+        },
+      );
+      if (workerPid === undefined) {
+        throw new Error("cannot dispatch demand: worker was not spawned");
+      }
+      return {
+        kind: "go",
+        demand: input.demand,
+        issue: result.issue,
+        worker_pid: workerPid,
+        status: "dispatched",
+      };
     },
     async stopWorker(cwd, input) {
       const capture = captureStream();
@@ -152,20 +229,7 @@ function defaultOperations(root: string): DevAfkMcpOperations {
         recycle: input.recycle,
       };
     },
-    async requeue(input) {
-      const args = [
-        String(input.issue),
-        "--guidance",
-        input.guidance,
-        "--json",
-      ];
-      if (input.repo) args.push("--repo", input.repo);
-      if (input.dryRun) args.push("--dry-run");
-      if (input.adoptBranch) args.push("--adopt-branch", input.adoptBranch);
-      const capture = captureStream();
-      const exitCode = await requeueCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
+    requeue: (input) => runtime.executeRequeue(root, input),
     async retake(input) {
       const args = [String(input.issue), "--json"];
       if (input.repo) args.push("--repo", input.repo);
@@ -425,7 +489,7 @@ async function workerVitals(root: string) {
 
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
-  operations: DevAfkMcpOperations = defaultOperations(root),
+  operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
   return {
     fleetList: () => readFleetProfiles(registryPath(root)),
