@@ -1,7 +1,12 @@
 import { decode } from "@reddb-io/toon";
 import { describe, expect, it } from "vitest";
 import type { EffortRecord } from "../src/core/manager/effort-store.js";
-import { renderEffortBrief, renderEmptyPortfolioBrief } from "../src/core/manager/brief.js";
+import {
+  renderEffortBrief,
+  renderEffortBriefWithDerived,
+  renderEmptyPortfolioBrief,
+} from "../src/core/manager/brief.js";
+import type { ManagerMapDerivedState } from "../src/core/manager/map-reconciler.js";
 
 const EFFORT: EffortRecord = {
   effort_id: "eff_abcdefghijklmnopqrstuvwxyz",
@@ -39,5 +44,72 @@ describe("effort brief", () => {
   it("renders an explicit empty brief when the portfolio holds no effort", () => {
     const brief = decode(renderEmptyPortfolioBrief()) as Record<string, unknown>;
     expect(brief).toEqual({ kind: "manager.brief", state_source: "owned", efforts: 0 });
+  });
+});
+
+describe("effort brief with derived state (slice #2294)", () => {
+  const DERIVED_WITH_MAP: ManagerMapDerivedState = {
+    map_issue: 42,
+    child_count: 3,
+    children: [10, 20, 30],
+  };
+
+  const DERIVED_NO_MAP: ManagerMapDerivedState = {
+    map_issue: null,
+    child_count: 0,
+    children: [],
+  };
+
+  it("renders state_source as reconciled, not owned", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.state_source).toBe("reconciled");
+  });
+
+  it("carries the map issue number in map_issue", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.map_issue).toBe(42);
+  });
+
+  it("carries the child count in child_count", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.child_count).toBe(3);
+  });
+
+  it("carries null map_issue when no map has been published yet", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_NO_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.map_issue).toBeNull();
+    expect(brief.child_count).toBe(0);
+  });
+
+  it("still carries all owned lifecycle fields alongside derived state", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.effort_id).toBe(EFFORT.effort_id);
+    expect(brief.name).toBe(EFFORT.name);
+    expect(brief.lifecycle).toBe("inbox");
+    expect(brief.generation).toBe(3);
+    expect(brief.intent).toBe(EFFORT.intent);
+  });
+
+  it("does not store the children array in the brief — brief carries count only", () => {
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_MAP)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(brief)).not.toContain("children");
   });
 });
