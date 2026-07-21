@@ -5,9 +5,17 @@ import {
   executeReadOnlyMemoryOperation,
   type MemoryOperationContext,
   type MemoryOperationInputFieldBinding,
+  type MemoryOperationTransport,
   type MemoryOperationTransportInput,
   type ReadOnlyMemoryOperation,
 } from "./operations.js";
+
+export function listMemoryOperationsForTransport(
+  operations: readonly ReadOnlyMemoryOperation[],
+  transport: MemoryOperationTransport,
+): ReadOnlyMemoryOperation[] {
+  return operations.filter((operation) => operation.transports.includes(transport));
+}
 
 export class MemoryOperationTransportError extends Error {
   constructor(
