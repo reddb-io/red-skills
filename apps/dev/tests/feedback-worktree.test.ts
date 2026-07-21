@@ -1,6 +1,10 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   makeFeedbackWorktree,
+  resolveCheckoutDir,
   splitBranchDir,
   type FeedbackWorktreeIO,
 } from "../src/runtime/feedback-worktree.js";
@@ -99,7 +103,10 @@ function fakeIO(
   const io: FeedbackWorktreeIO = {
     worktreeAdd: async (_ctx, dest) => {
       calls.push({ op: "add", dest });
-      return addOk;
+      // A refused add carries the real git stderr (#2339), never a bare false.
+      return addOk
+        ? { ok: true, stderr: "" }
+        : { ok: false, stderr: "fatal: couldn't find remote ref refs/heads/nope" };
     },
     pnpm: async (args, opts) => {
       const isInstall = args[0] === "install";
@@ -203,6 +210,87 @@ describe("makeFeedbackWorktree install (#458)", () => {
     // No install or script should run after a failed worktree add.
     expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
     expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
+  });
+
+  it("surfaces the underlying git stderr on a failed worktree add (#2339)", async () => {
+    const { io } = fakeIO(0, false, 0, { enabled: false });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    const written: string[] = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+    } finally {
+      process.stderr.write = realWrite;
+    }
+
+    // Field reports had to GUESS the root cause from "add failed" alone (#2338).
+    const line = written.find((l) => l.includes("feedback worktree add failed"));
+    expect(line).toContain("fatal: couldn't find remote ref refs/heads/nope");
+  });
+});
+
+// #2339: the post-merge integration gate (#1335) hands the feedback executors
+// the isolated rebase/landing worktree DIR, not a branch name. Treating that dir
+// as a branch made `git fetch origin <dir>` fail, blocked ALL validation
+// (`durationMs: 0` on every check), and parked a phantom merge-conflict.
+describe("makeFeedbackWorktree — already-materialised checkout token (#2339)", () => {
+  /**
+   * A temp primary checkout (so the layout probe sees `apps/dev` as a real
+   * package) plus a sibling dir that looks to git like a linked worktree: a
+   * `.git` FILE at its root, exactly what `git worktree add` writes.
+   */
+  function makeFixture(): { root: string; dir: string; cleanup: () => void } {
+    const base = mkdtempSync(join(tmpdir(), "red-gate-"));
+    const root = join(base, "repo");
+    mkdirSync(join(root, "apps", "dev"), { recursive: true });
+    writeFileSync(join(root, "apps", "dev", "package.json"), JSON.stringify({ name: "dev" }));
+    const dir = join(base, "rebase-wt");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
+    return { root, dir, cleanup: () => rmSync(base, { recursive: true, force: true }) };
+  }
+
+  it("recognises a checkout dir and never fetches it as a branch", () => {
+    const { root, dir, cleanup } = makeFixture();
+    try {
+      expect(resolveCheckoutDir(dir, root)).toBe(dir);
+      // A worker branch name is never mistaken for a path.
+      expect(resolveCheckoutDir("afk/w1/42-fix", root)).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("runs the gate IN the rebase worktree instead of blocking validation", async () => {
+    const { root, dir, cleanup } = makeFixture();
+    try {
+      // addOk=false models the field failure exactly: fetching a filesystem
+      // path as a branch always fails, so any add attempt here blocks the gate.
+      const { io, calls } = fakeIO(0, false, 0, { enabled: false });
+      const fb = makeFeedbackWorktree(root, join(root, ".red/tmp/feedback"), io, {
+        cacheEnabled: false,
+      });
+
+      // The exact call shape of postMergeGate: a `-C <rebase-worktree>/<scope>`
+      // token plus a root-scoped backpressure command in the same dir.
+      const gate = await fb.pnpm(["pnpm", "-C", `${dir}/apps/dev`, "test"]);
+      const bp = await fb.backpressure({ command: "pnpm test", cwd: dir, timeoutMs: 1000 });
+
+      expect(gate.code).toBe(0);
+      expect(bp.code).toBe(0);
+      // The caller already provisioned the checkout — no add, no re-install.
+      expect(calls.filter((c) => c.op === "add")).toHaveLength(0);
+      expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
+      // And the commands ran in that dir, not the primary checkout.
+      expect(calls.filter((c) => c.op === "script").map((c) => c.dest)).toContain(dir);
+    } finally {
+      cleanup();
+    }
   });
 });
 
@@ -471,7 +559,7 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
   function captureEnvIO(): { io: FeedbackWorktreeIO; envsFor: (script: string) => NodeJS.ProcessEnv[] } {
     const seen: Array<{ script: string; env: NodeJS.ProcessEnv | undefined }> = [];
     const io: FeedbackWorktreeIO = {
-      worktreeAdd: async () => true,
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
       pnpm: async (args, opts) => {
         // The gate rewrites the token to ["-C", <path>, <script>]; "install" is
         // the materialise step, everything else is a gate check.
