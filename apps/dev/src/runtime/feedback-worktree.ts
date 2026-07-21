@@ -306,7 +306,15 @@ export function makeFeedbackWorktree(
       // to a clean re-materialise.
     }
 
-    const added = await io.worktreeAdd(gitCtx, dest, branch);
+    let added = await io.worktreeAdd(gitCtx, dest, branch);
+    if (!added.ok) {
+      // Self-heal (#2379): a stale registered entry (from a dead-worker's
+      // orphaned feedback worktree) causes git to refuse the add with
+      // "worktree already exists". Remove the stale entry and retry once so
+      // the baseline probe can materialise after the janitor runs.
+      await io.worktreeRemove(gitCtx, dest);
+      added = await io.worktreeAdd(gitCtx, dest, branch);
+    }
     if (!added.ok) {
       // Carry the underlying git stderr (#2339): the field report that opened
       // this only had "add failed", so the real cause (`fatal: couldn't find
