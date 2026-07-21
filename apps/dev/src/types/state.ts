@@ -37,10 +37,10 @@ export const AfkCurrentSchema = z.object({
   retries: z.number().default(0),
   last_stream_line: z.string().default(""),
   run_mode: z.string().default(""),
-  /** ISO timestamp of the last observed COMMIT on the worker branch (or attempt
-   * start). Written each attempt-guard poll. The guard's ABORT logic is anchored
-   * on this (commit-anchored stall detection, ADR 0044) — NOT on stream activity,
-   * so a worker streaming forever without committing is still stalled work.
+  /** ISO timestamp of the last observed COMMIT on the worker branch (or run
+   * start). Written on each worker-vitals sample. Purely observational since
+   * ADR 0103 removed the commit-anchored guard that used to abort on it — stall
+   * detection reads the castle liveness lane, never this field.
    * Renamed from `last_progress_at` (which mislabeled "commit" as "progress");
    * read-shimmed from the old key for one release. See ADR 0065. */
   last_commit_at: z.string().default(""),
