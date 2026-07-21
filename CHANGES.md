@@ -2768,3 +2768,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **why**: RedSkills has diverged completely from mattpocock/skills (own dev/memory/brain ecosystem; not a fork). All upstream additions in this range either have a RedSkills equivalent or are Matt-specific: `research` → `deep-research` / `dev:research`; `wayfinder` (renamed from `decision-mapping`) → no RedSkills equivalent needed; `claude-handoff` → `dev:handoff`; `implement` → `dev:simple-code` / `dev:complex-code`. Minor tweaks to grilling/tdd/ask-matt/setup docs are likewise not applicable.
 - **what changed**: bumped `.upstream` sha from `21f59763be7bf734cd4cf138805bb653d9ffebb7` to `272f99b22574f50e4266791c86b9302682970e23`; no skill files added, modified, or removed.
 - **what changed**: no files added, removed, or modified; upstream `codebase-design` skill recorded here as not adopted.
+
+## manager (engineering)
+
+- **status**: added
+- **upstream**: —
+- **why**: Spec #2290 slice #2291 — the Manager's first functional slice needs an operator surface for the walking skeleton (start an effort, persist it, render its status brief) per ADR 0109.
+- **what changed**: added `plugins/dev/skills/engineering/manager/SKILL.md` (wrapper over `red-skills-dev manager`); registered it in `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` skill map, and the `engineering/` bucket README; added the `/manager` route and inventory entry to `ask-red`; regenerated the Codex manifest.
