@@ -48,6 +48,7 @@ import {
   buildHubReport,
   type HubRankBy,
   type HubReport,
+  type HubReportRow,
 } from "../hub-report.js";
 import {
   buildSuggestedQuestions,
@@ -1068,7 +1069,7 @@ const HUB_REPORT_OPERATION: MemoryOperationDefinition<OperationSchemas.HubReport
       presentation: {
         render: (output, input) => {
           const report = output as HubReport;
-          const fields =
+          const fields: readonly (keyof HubReportRow & string)[] =
             input.flags.wide === true
               ? [
                   "rid",
