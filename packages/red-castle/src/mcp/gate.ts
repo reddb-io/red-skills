@@ -17,6 +17,7 @@ export function createGateTools(deps: GateDependencies): CastleMcpTool[] {
       title: "Run the AFK gate",
       description:
         "MUTATING: materialize the branch's feedback worktree and run the package-scoped validation gate against it.",
+      dangerClass: "mutating",
       inputSchema: {
         branch: z.string().min(1),
         base: z.string().min(1).optional(),
