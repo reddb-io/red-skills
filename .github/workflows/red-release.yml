@@ -679,7 +679,9 @@ jobs:
           # Optional. A repo-admin PAT / GitHub App installation token with
           # contents:write pushes the bump straight to protected main; absent,
           # the helper degrades to a side-branch PR instead of failing the cut.
-          RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN }}
+          # The org provisions this as RELEASE_PAT; a repo-level
+          # RED_RELEASE_TOKEN, when present, still wins.
+          RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN || secrets.RELEASE_PAT }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
           RED_BUILD_GIT_SHA: ${{ github.sha }}
           RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
