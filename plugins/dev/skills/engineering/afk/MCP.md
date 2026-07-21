@@ -130,10 +130,11 @@ labels by hand.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `logs` | read | Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
-| `worker_vitals` | read | Liveness-qualified state of every local worker. |
+| `worker_vitals` | read | Liveness-qualified state of every local worker (includes `model` and `effort` per worker). |
 | `dashboard` | read | The operational dashboard over a `periodDays` window. |
 | `monitor` | read | Current workers, history events, and fleet monitor inputs. |
 | `history` | read | Structured castle history records, newest last. |
+| `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, fleet, workers, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
 ### Queue — what is drainable now
 
