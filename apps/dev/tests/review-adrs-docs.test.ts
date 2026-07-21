@@ -24,6 +24,40 @@ describe("review-adrs docs contract", () => {
     expect(skill).toContain("Use local `HEAD` only when no `origin` remote/ref exists");
   });
 
+  it("triages a subject-scoped run and gates every mechanical apply", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("triageAdrs");
+    expect(skill).toContain("optional subject filter");
+    for (const bucket of [
+      "keep",
+      "stale-reference",
+      "missing-supersession",
+      "merge-candidate",
+      "split-candidate",
+      "archive-candidate",
+    ]) {
+      expect(skill).toContain(`\`${bucket}\``);
+    }
+
+    for (const helper of [
+      "planArchiveMove",
+      "applyArchiveMove",
+      "planStatusAndSuccessor",
+      "applyStatusAndSuccessor",
+      "planIndexArchive",
+      "applyIndexArchive",
+      "planStalePathFix",
+      "applyStalePathFix",
+    ]) {
+      expect(skill).toContain(`\`${helper}\``);
+    }
+
+    expect(skill).toContain("Explicit confirmation gate");
+    expect(skill).toContain("No confirmation means no writes");
+    expect(skill).toContain("Merge and split remain judgment operations");
+  });
+
   it("points doc-writing skills at the shared doc-landing finalizer", async () => {
     const start = await readSkill("plugins/dev/skills/engineering/start/SKILL.md");
     const reviewAdrs = await readSkill("plugins/dev/skills/engineering/review-adrs/SKILL.md");
