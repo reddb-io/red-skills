@@ -165,19 +165,31 @@ export function memoryOpenApiPathsForOperations(
         required: field.required === true,
         schema: openApiSchemaForInputField(field.type),
       }));
+    const methods = operation.renderer.http?.methods ?? ["GET"];
     for (const route of httpRoutesForOperation(operation)) {
-      paths[route] = {
-        get: {
+      paths[route] = Object.fromEntries(
+        methods.map((method) => [
+          method.toLowerCase(),
+          {
           summary: operation.description,
-          parameters,
+          ...(method === "GET" ? { parameters } : {}),
+          ...(method === "POST"
+            ? {
+                requestBody: {
+                  required: true,
+                  content: { "application/json": { schema: { type: "object" } } },
+                },
+              }
+            : {}),
           responses: {
             "200": {
               description: operation.description,
               content: { [contentType]: { schema: { type: operation.outputKind.kind === "viewer" ? "string" : "object" } } },
             },
           },
-        },
-      };
+          },
+        ]),
+      );
     }
   }
   return paths;
@@ -213,7 +225,8 @@ async function handleRequest(
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
   const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
-  const isRegistryPost = req.method === "POST" && registryOperation?.id === "memory.whatif";
+  const isRegistryPost =
+    req.method === "POST" && registryOperation?.renderer.http?.methods?.includes("POST") === true;
   if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isRegistryPost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
@@ -354,16 +367,13 @@ function buildRegistryHttpRoutes(
 }
 
 function httpRoutesForOperation(operation: ReadOnlyMemoryOperation): string[] {
-  const routes = [defaultHttpRouteForOperation(operation)];
-  if (operation.id === "memory.smart-search") routes.push("/api/search");
-  if (operation.id === "memory.smart-search-viewer") routes.push("/search");
-  return routes;
+  return [
+    operation.renderer.http?.route ?? defaultHttpRouteForOperation(operation),
+    ...(operation.renderer.http?.aliases ?? []),
+  ];
 }
 
 function defaultHttpRouteForOperation(operation: ReadOnlyMemoryOperation): string {
-  if (operation.id === "memory.health") return "/api/memory/health";
-  if (operation.id === "memory.health-viewer") return "/memory/health";
-
   const parts = operation.renderer.cli.command.split(" ");
   if (operation.outputKind.kind === "viewer") {
     const routeParts = [...parts];
@@ -373,7 +383,8 @@ function defaultHttpRouteForOperation(operation: ReadOnlyMemoryOperation): strin
     );
     return `/${routeParts.join("/")}`;
   }
-  return `/api/${parts.join("/")}`;
+  const route = `/api/${parts.join("/")}`;
+  return route === "/api/health" ? `/api/memory/${parts.join("/")}` : route;
 }
 
 function health(opts: MemoryHttpServerOptions): MemoryHttpHealth {
