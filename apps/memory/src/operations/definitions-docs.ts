@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { renderToonOutput } from "../toon-output.js";
 import { toEdge } from "../export.js";
 import {
   buildMemoryAssetInventory,
@@ -1061,7 +1062,65 @@ const HUB_REPORT_OPERATION: MemoryOperationDefinition<OperationSchemas.HubReport
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "hub-report", supportsJson: true, dispatch: "legacy" },
+    cli: {
+      command: "hub-report",
+      supportsJson: true,
+      presentation: {
+        render: (output, input) => {
+          const report = output as HubReport;
+          const fields =
+            input.flags.wide === true
+              ? [
+                  "rid",
+                  "label",
+                  "title",
+                  "node_type",
+                  "community_id",
+                  "total_degree",
+                  "in_degree",
+                  "out_degree",
+                  "seal_mix",
+                  "seal_count",
+                  "seals",
+                ]
+              : [
+                  "label",
+                  "title",
+                  "community_id",
+                  "total_degree",
+                  "in_degree",
+                  "out_degree",
+                  "seal_mix",
+                ];
+          return renderToonOutput({
+            rowsKey: "hubs",
+            rows: report.hubs.map((hub) => ({ ...hub })),
+            fields,
+            summary: report.summary.empty
+              ? {
+                  state: "empty_graph",
+                  message: "No graph nodes found.",
+                  nodes: report.summary.nodes,
+                  edges: report.summary.edges,
+                  next: report.next,
+                }
+              : {
+                  rank_by: report.rank_by,
+                  reported: report.summary.reported,
+                  nodes: report.summary.nodes,
+                  edges: report.summary.edges,
+                  max_total_degree: report.summary.max_total_degree,
+                  communities: report.summary.communities,
+                  next: report.next,
+                },
+            extra: {
+              schema_version: report.schema_version,
+              graph_hash: report.graph_hash,
+            },
+          });
+        },
+      },
+    },
     mcp: {
       toolName: "memory_hub_report",
       description:
@@ -1086,7 +1145,47 @@ const SUGGESTED_QUESTIONS_OPERATION: MemoryOperationDefinition<
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "suggested-questions", supportsJson: true, dispatch: "legacy" },
+    cli: {
+      command: "suggested-questions",
+      supportsJson: true,
+      presentation: {
+        render: (output) => {
+          const report = output as SuggestedQuestionsReport;
+          return renderToonOutput({
+            rowsKey: "questions",
+            rows: report.questions.map((question) => ({
+              id: question.id,
+              signal_type: question.signal_type,
+              question: question.question,
+              rationale: question.rationale,
+              references: question.references.map((ref) => ({ ...ref })),
+            })),
+            fields: ["id", "signal_type", "question", "rationale", "references"],
+            summary: {
+              status: report.summary.status,
+              nodes: report.summary.nodes,
+              edges: report.summary.edges,
+              signals: report.summary.signals,
+              questions: report.summary.questions,
+              provider_status: report.provider.status,
+              provider_error: report.provider.error ?? null,
+              next: report.summary.next,
+            },
+            extra: {
+              schema_version: report.schema_version,
+              graph_hash: report.graph_hash,
+              signals: report.signals.map((signal) => ({
+                signal_id: signal.signal_id,
+                signal_type: signal.signal_type,
+                title: signal.title,
+                score: signal.score,
+                references: signal.references.map((ref) => ({ ...ref })),
+              })),
+            },
+          });
+        },
+      },
+    },
     mcp: {
       toolName: "memory_suggested_questions",
       description:
