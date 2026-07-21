@@ -10,6 +10,8 @@ import { FleetRegistryValidationError } from "@reddb-io/red-castle/engine";
 import { afkPaths } from "../src/runtime/wire.js";
 import { discoverLiveSupervisorPid } from "../src/runtime/supervisor-state.js";
 import { parseFleetFlag, resolveFleetFromArgs, FLEET_NAME_ENV } from "../src/core/fleet-name.js";
+import { slotFilterArgs } from "../src/commands/supervise.js";
+import { parseRunFlags } from "../src/commands/run/flags.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-named-fleet-"));
@@ -128,5 +130,29 @@ describe("discoverLiveSupervisorPid — per-fleet pid locks", () => {
       source: "snapshot-dir",
     });
     expect(await discoverLiveSupervisorPid(alphaDir, alive([777]), { fleet: "alpha" })).toBeNull();
+  });
+});
+
+describe("a fleet's selector survives launch → supervise → slot", () => {
+  it("the supervisor forwards --selector into every slot's run --once", () => {
+    const selector = JSON.stringify({ spec: 2303, lane: "go" });
+    expect(slotFilterArgs(["--fleet", "alpha", "--selector", selector])).toEqual([
+      "--selector",
+      selector,
+    ]);
+    expect(slotFilterArgs([`--selector=${selector}`])).toEqual(["--selector", selector]);
+  });
+
+  it("run parses --selector back into the selector filter", () => {
+    const parsed = parseRunFlags(["--selector", '{"spec":2303,"lane":"go"}']);
+    expect(parsed.filter).toEqual({
+      kind: "selector",
+      selector: { spec: 2303, lane: "go" },
+    });
+  });
+
+  it("rejects a --selector that is not a valid selector object", () => {
+    expect(() => parseRunFlags(["--selector", "not-json"])).toThrow(/--selector requires a JSON object/);
+    expect(() => parseRunFlags(["--selector", '{"spec":-1}'])).toThrow(/--selector is invalid/);
   });
 });
