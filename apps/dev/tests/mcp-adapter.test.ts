@@ -10,6 +10,7 @@ import {
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
 import {
+  createDefaultDevAfkMcpOperations,
   createDevAfkMcpDependencies,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
@@ -100,6 +101,57 @@ describe("dev:afk MCP host adapter", () => {
       runner: "claude",
       mode: "no-mistakes",
     });
+  });
+
+  it("detaches MCP dispatches without writing progress to stdout", async () => {
+    const cwd = await root();
+    const launchRun = vi.fn(async () => ({ pid: 73 }));
+    const createIssue = vi.fn(async () => 2308);
+    const ensureLabel = vi.fn(async () => undefined);
+    const stdout = vi.spyOn(process.stdout, "write");
+    const operations = createDefaultDevAfkMcpOperations(cwd, {
+      launchRun,
+      createIssue,
+      ensureLabel,
+    });
+
+    try {
+      await expect(
+        operations.dispatchIssue(cwd, { issue: 2306, runner: "codex" }),
+      ).resolves.toMatchObject({
+        kind: "afk",
+        issue: 2306,
+        worker_pid: 73,
+        status: "dispatched",
+      });
+      await expect(
+        operations.dispatchDemand(cwd, {
+          demand: "--repair release",
+          runner: "codex",
+          mode: "direct-PR",
+        }),
+      ).resolves.toMatchObject({
+        kind: "go",
+        demand: "--repair release",
+        issue: 2308,
+        worker_pid: 73,
+        status: "dispatched",
+      });
+    } finally {
+      stdout.mockRestore();
+    }
+
+    expect(launchRun).toHaveBeenNthCalledWith(
+      1,
+      cwd,
+      ["--issues", "2306", "--once", "--runner", "codex"],
+    );
+    expect(createIssue.mock.calls[0]?.[1]).toMatchObject({
+      labels: ["lane:go"],
+    });
+    expect(createIssue.mock.calls[0]?.[1].body).toContain("--repair release");
+    expect(launchRun.mock.calls[1]?.[2]).not.toContain("--repair release");
+    expect(stdout).not.toHaveBeenCalled();
   });
 
   it("injects worker_request only into a newly dispatched worker", async () => {
