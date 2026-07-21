@@ -41,7 +41,7 @@ else
   fail "release workflow must push the bump commit via scripts/release-push-bump.sh"
 fi
 
-if grep -qF 'RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN }}' "$WORKFLOW"; then
+if grep -qF 'RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN || secrets.RELEASE_PAT }}' "$WORKFLOW"; then
   pass "release workflow passes the optional bypass-capable token"
 else
   fail "release workflow must pass RED_RELEASE_TOKEN to the bump push"
