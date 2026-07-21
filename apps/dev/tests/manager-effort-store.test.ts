@@ -72,9 +72,12 @@ describe("effort document", () => {
   });
 
   it("refuses a document whose schema version is not the one this bundle owns", () => {
+    // Spread must go through `as ToonlRecord` because EffortRecord carries
+    // optional array fields (artifact_refs) that ToonlRecord (flat) won't accept.
+    const { artifact_refs: _a, route: _r, ...flatEffort } = effort;
     const foreign = encodeRecords([
       { kind: "manager.effort.schema", schema: MANAGER_EFFORT_SCHEMA, version: 99 },
-      { kind: "manager.effort", ...effort },
+      { kind: "manager.effort", ...flatEffort },
     ]);
     expect(() => decodeEffortDocument(foreign)).toThrow(/schema version/);
   });
