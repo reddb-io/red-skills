@@ -10,7 +10,7 @@
 // caller resolves those and injects them. Attempt paths are parsed with the
 // shared worker-paths.ts parser so the nested layout stays single-sourced.
 
-import { parseWorkerAttemptPath } from "./worker-paths.js";
+import { parseReapableWorkerPath } from "./worker-paths.js";
 import { LABEL_HUMAN, LABEL_RUNNING } from "./triage-labels.js";
 
 /** Orphan TTLs (afk.sh TTL_LONG / TTL_SHORT). */
@@ -138,7 +138,8 @@ export function planAttemptCap(
   const candidates: Array<{ dir: AttemptDir; attempt: number }> = [];
   for (const dir of attemptsForIssue) {
     if (dir.live) continue;
-    const parsed = parseWorkerAttemptPath(dir.path);
+    // Hygiene parser: legacy -a{n} dirs must stay REAPABLE (ADR 0103 #2170).
+    const parsed = parseReapableWorkerPath(dir.path);
     if (!parsed) continue;
     candidates.push({ dir, attempt: parsed.attempt });
   }
