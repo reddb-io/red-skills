@@ -10,6 +10,11 @@
     "typecheck": "turbo run typecheck --filter=!@reddb-io/red-castle --only",
     "test": "turbo run test --filter=!@reddb-io/red-castle --only",
     "audit:hooks": "bash scripts/audit-hook-hardening-contract.sh",
+    "changeset": "changeset",
+    "release:version": "changeset version && node scripts/sync-version.mjs",
+    "release:tag": "changeset tag",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:sync:check": "node scripts/sync-version.mjs --check",
     "release:manifest": "node scripts/release-manifest.mjs",
     "codex:manifests": "node scripts/generate-codex-manifests.mjs",
     "codex:manifests:check": "node scripts/generate-codex-manifests.mjs --check",
@@ -20,6 +25,7 @@
     "pi:packages:publish": "node scripts/publish-pi-packages.mjs"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "turbo": "^2.5.4",
     "typescript": "^5.6.0"
   }
