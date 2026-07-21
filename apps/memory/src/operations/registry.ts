@@ -23,9 +23,13 @@ export function createReadOnlyMemoryOperationRegistry(
 ): ReadOnlyMemoryOperationRegistry {
   const byId = new Map<string, ReadOnlyMemoryOperation>();
   for (const operation of operations) {
+    const inlineFacets =
+      operation.inputBinding && operation.outputKind
+        ? { inputBinding: operation.inputBinding, outputKind: operation.outputKind }
+        : undefined;
     const operationWithFacets = attachMemoryOperationFacets(
       operation,
-      facetsByOperationId[operation.id],
+      inlineFacets ?? facetsByOperationId[operation.id],
     );
     assertReadOnlyOperation(operationWithFacets);
     if (byId.has(operation.id)) throw new Error(`duplicate Memory operation: ${operation.id}`);
