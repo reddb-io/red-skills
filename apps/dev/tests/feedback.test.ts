@@ -705,6 +705,41 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     expect(testCheck.status).toBe("failed");
   });
 
+  it("a baseline check that OOMs/crashes is INCONCLUSIVE — never a pre-existing main-red (a fleet-host OOM must not manufacture a main-red CI never saw)", async () => {
+    const exec: Exec = async (args) => {
+      const script = args[args.length - 1] ?? "";
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const isBaseline = dir.includes("main");
+      // The worker's test fails with a clean assertion; the SAME test OOMs on the
+      // baseline (SIGKILL 137 + a V8 heap-exhaustion signature) — the exact
+      // resource-constrained-host false-positive #2300 hit.
+      if (script === "test" && !isBaseline) return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+      if (script === "test" && isBaseline)
+        return {
+          code: 137,
+          stdout: "",
+          stderr: "<--- Last few GCs --->\nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+        };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    // The baseline OOM is inconclusive: it is NOT added to the baseline-failing
+    // set, so no main-red is filed and the worker's failure is not downgraded to
+    // "pre-existing". The worker's own clean failure still blocks that one worker.
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineFailures).toEqual([]);
+    expect(result.baselineDowngraded).toEqual([]);
+    expect(result.ok).toBe(false);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("failed");
+  });
+
   it("a mix: one baseline-failing, one worker-only-failing → only the second blocks the gate", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
