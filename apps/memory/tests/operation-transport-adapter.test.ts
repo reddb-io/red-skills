@@ -36,6 +36,11 @@ describe("Memory operation transport adapter", () => {
       renderer: {
         cli: { command: "test-registration", supportsJson: true },
         mcp: { toolName: "memory_test_registration", description: "legacy transport copy" },
+        http: {
+          route: "/api/registered-test",
+          aliases: ["/api/registered-test-alias"],
+          methods: ["GET"],
+        },
       },
       execute: async () => ({ status: "ok" as const }),
     } satisfies MemoryOperationDefinition<object, { status: "ok" }>;
@@ -51,10 +56,23 @@ describe("Memory operation transport adapter", () => {
     expect(listMemoryOperationsForTransport([operation], "http")).toEqual([operation]);
     expect(listMemoryOperationsForTransport([operation], "mcp")).toEqual([]);
     expect(listMemoryHttpRegistryRoutes([operation])).toEqual([
-      { route: "/api/test-registration", operationId: definition.id },
+      { route: "/api/registered-test", operationId: definition.id },
+      { route: "/api/registered-test-alias", operationId: definition.id },
     ]);
     expect(memoryOpenApiPathsForOperations([operation])).toEqual({
-      "/api/test-registration": {
+      "/api/registered-test": {
+        get: {
+          summary: definition.description,
+          parameters: [],
+          responses: {
+            "200": {
+              description: definition.description,
+              content: { "application/json": { schema: { type: "object" } } },
+            },
+          },
+        },
+      },
+      "/api/registered-test-alias": {
         get: {
           summary: definition.description,
           parameters: [],
