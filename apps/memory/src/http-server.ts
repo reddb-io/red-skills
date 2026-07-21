@@ -151,6 +151,49 @@ export function listMemoryHttpRegistryRoutes(
     .sort((a, b) => a.route.localeCompare(b.route));
 }
 
+export function memoryOpenApiPathsForOperations(
+  operations: readonly ReadOnlyMemoryOperation[],
+): Record<string, unknown> {
+  const paths: Record<string, unknown> = {};
+  for (const operation of listMemoryOperationsForTransport(operations, "http")) {
+    const contentType = operation.outputKind.kind === "viewer" ? "text/html" : "application/json";
+    const parameters = operation.inputBinding.fields
+      .filter((field) => field.sources.includes("query"))
+      .map((field) => ({
+        name: field.field,
+        in: "query",
+        required: field.required === true,
+        schema: openApiSchemaForInputField(field.type),
+      }));
+    for (const route of httpRoutesForOperation(operation)) {
+      paths[route] = {
+        get: {
+          summary: operation.description,
+          parameters,
+          responses: {
+            "200": {
+              description: operation.description,
+              content: { [contentType]: { schema: { type: operation.outputKind.kind === "viewer" ? "string" : "object" } } },
+            },
+          },
+        },
+      };
+    }
+  }
+  return paths;
+}
+
+function openApiSchemaForInputField(
+  type: ReadOnlyMemoryOperation["inputBinding"]["fields"][number]["type"],
+): Record<string, unknown> {
+  if (type === "number") return { type: "number" };
+  if (type === "boolean") return { type: "boolean" };
+  if (type === "string-array" || type === "object-array") {
+    return { type: "array", items: { type: type === "string-array" ? "string" : "object" } };
+  }
+  return { type: "string" };
+}
+
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
   return createServer(async (req, res) => {
     try {
@@ -461,6 +504,7 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
     servers: [{ url: "/" }],
     security,
     paths: {
+      ...memoryOpenApiPathsForOperations(listReadOnlyMemoryOperations()),
       "/api/health": {
         get: { summary: "Health and endpoint discovery", responses: { "200": jsonResponse("Health") } },
       },
