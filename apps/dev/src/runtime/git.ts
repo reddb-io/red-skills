@@ -211,6 +211,27 @@ async function revParse(ctx: GitContext, ref: string): Promise<string | undefine
   return r.code === 0 && sha !== "" ? sha : undefined;
 }
 
+/** Resolve any ref to its sha, or undefined when git cannot. */
+export async function resolveRef(ctx: GitContext, ref: string): Promise<string | undefined> {
+  return revParse(ctx, ref);
+}
+
+/**
+ * True when `ancestor` is reachable from `descendant` (`git merge-base
+ * --is-ancestor`). `undefined` when either object is missing locally, so a
+ * caller can report "unknown" rather than a false "needs rebase".
+ */
+export async function isAncestor(
+  ctx: GitContext,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean | undefined> {
+  if (!(await revParse(ctx, ancestor)) || !(await revParse(ctx, descendant))) return undefined;
+  const r = await runGit(ctx, ["merge-base", "--is-ancestor", ancestor, descendant]);
+  if (r.code === 0) return true;
+  return r.code === 1 ? false : undefined;
+}
+
 async function localAheadBehind(
   ctx: GitContext,
   localRef: string,
@@ -514,6 +535,42 @@ export async function checkedOutBranches(ctx: GitContext): Promise<Set<string>> 
   }
   const cur = await currentBranch(ctx);
   if (cur) out.add(cur);
+  return out;
+}
+
+/** One entry of `git worktree list --porcelain`. */
+export interface WorktreeEntry {
+  path: string;
+  head?: string;
+  branch?: string;
+  detached: boolean;
+}
+
+/**
+ * Enumerate every registered git worktree, parsed from `git worktree list
+ * --porcelain`. Returns an empty list on a non-zero exit so a caller enumerating
+ * disposable lanes degrades to "none registered" instead of throwing.
+ */
+export async function listWorktrees(ctx: GitContext): Promise<WorktreeEntry[]> {
+  const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
+  if (r.code !== 0) return [];
+  const out: WorktreeEntry[] = [];
+  let current: WorktreeEntry | undefined;
+  for (const raw of r.stdout.split("\n")) {
+    const line = raw.trim();
+    const w = /^worktree\s+(.+)$/.exec(line);
+    if (w && w[1]) {
+      current = { path: w[1], detached: false };
+      out.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const h = /^HEAD\s+(.+)$/.exec(line);
+    if (h && h[1]) current.head = h[1];
+    const b = /^branch\s+refs\/heads\/(.+)$/.exec(line);
+    if (b && b[1]) current.branch = b[1];
+    if (line === "detached") current.detached = true;
+  }
   return out;
 }
 
