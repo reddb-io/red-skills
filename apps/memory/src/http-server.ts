@@ -64,7 +64,7 @@ export interface MemoryOpenApiDocument {
   };
 }
 
-const ENDPOINTS = [
+const LEGACY_ENDPOINTS = [
   "GET /",
   "GET /workbench",
   "GET /assets?kind=<kind>",
@@ -141,6 +141,14 @@ const ENDPOINTS = [
 ];
 
 const REGISTRY_HTTP_ROUTES = buildRegistryHttpRoutes();
+const ENDPOINTS = [
+  ...new Set([
+    ...LEGACY_ENDPOINTS,
+    ...[...REGISTRY_HTTP_ROUTES.entries()].flatMap(([route, operation]) =>
+      (operation.renderer.http?.methods ?? ["GET"]).map((method) => `${method} ${route}`),
+    ),
+  ]),
+].sort();
 
 export function listMemoryHttpRegistryRoutes(
   operations?: readonly ReadOnlyMemoryOperation[],
@@ -515,7 +523,6 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
     servers: [{ url: "/" }],
     security,
     paths: {
-      ...memoryOpenApiPathsForOperations(listReadOnlyMemoryOperations()),
       "/api/health": {
         get: { summary: "Health and endpoint discovery", responses: { "200": jsonResponse("Health") } },
       },
@@ -977,6 +984,7 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           responses: { "200": jsonResponse("Reasoning replay result") },
         },
       },
+      ...memoryOpenApiPathsForOperations(listReadOnlyMemoryOperations()),
     },
     components: {
       securitySchemes: {
