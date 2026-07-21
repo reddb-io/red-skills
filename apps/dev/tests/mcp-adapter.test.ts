@@ -21,6 +21,7 @@ import {
   resolveRspCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
+import { dispatchInput } from "../../../packages/red-castle/src/mcp/worker.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
 
 const roots: string[] = [];
@@ -169,6 +170,31 @@ describe("dev:afk MCP host adapter", () => {
     });
   });
 
+  it("routes scout demand dispatches through the scout operation", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(
+      deps.workerDispatch({
+        demand: "investigate the scout dispatch flow",
+        runner: "claude",
+        mode: "scout",
+      }),
+    ).resolves.toEqual({ kind: "scout", exit_code: 0 });
+    expect(operations.dispatchScout).toHaveBeenCalledWith(cwd, {
+      demand: "investigate the scout dispatch flow",
+      runner: "claude",
+    });
+    expect(operations.dispatchDemand).not.toHaveBeenCalled();
+  });
+
+  it("rejects scout combined with issue dispatches at input validation", () => {
+    expect(() => dispatchInput({ issue: 2346, mode: "scout" })).toThrow(
+      "scout is demand-only",
+    );
+  });
+
   it("detaches MCP dispatches without writing progress to stdout", async () => {
     const cwd = await root();
     const launchRun = vi.fn(async (_cwd: string, _args: string[]) => ({ pid: 73 }));
@@ -217,6 +243,49 @@ describe("dev:afk MCP host adapter", () => {
     });
     expect(createIssue.mock.calls[0]?.[1].body).toContain("--repair release");
     expect(launchRun.mock.calls[1]?.[1]).not.toContain("--repair release");
+    expect(stdout).not.toHaveBeenCalled();
+  });
+
+  it("pins scout dispatch argv/engine wiring: lane:scout label, origin/run-mode flags, no mutation", async () => {
+    const cwd = await root();
+    const launchRun = vi.fn(async (_cwd: string, _args: string[]) => ({ pid: 91 }));
+    const createIssue = vi.fn(async (_root: string, _spec: { title: string; body: string; labels: string[] }) => 2346);
+    const ensureLabel = vi.fn(async () => undefined);
+    const stdout = vi.spyOn(process.stdout, "write");
+    const operations = createDefaultDevAfkMcpOperations(cwd, {
+      launchRun,
+      createIssue,
+      ensureLabel,
+    });
+
+    try {
+      await expect(
+        operations.dispatchScout(cwd, {
+          demand: "why does the scout lane exist?",
+          runner: "claude",
+        }),
+      ).resolves.toMatchObject({
+        kind: "scout",
+        demand: "why does the scout lane exist?",
+        issue: 2346,
+        worker_pid: 91,
+        status: "dispatched",
+      });
+    } finally {
+      stdout.mockRestore();
+    }
+
+    expect(ensureLabel).toHaveBeenCalledWith(cwd, "lane:scout");
+    expect(createIssue.mock.calls[0]?.[1]).toMatchObject({ labels: ["lane:scout"] });
+    const engineArgs = launchRun.mock.calls[0]?.[1] as string[];
+    expect(engineArgs).toContain("--origin");
+    expect(engineArgs[engineArgs.indexOf("--origin") + 1]).toBe("scout");
+    expect(engineArgs).toContain("--run-mode");
+    expect(engineArgs[engineArgs.indexOf("--run-mode") + 1]).toBe("scout");
+    expect(engineArgs).toContain("--lane");
+    expect(engineArgs[engineArgs.indexOf("--lane") + 1]).toBe("lane:scout");
+    expect(engineArgs).toContain("--runner");
+    expect(engineArgs[engineArgs.indexOf("--runner") + 1]).toBe("claude");
     expect(stdout).not.toHaveBeenCalled();
   });
 
@@ -536,6 +605,7 @@ function fakeOperations(): DevAfkMcpOperations {
   return {
     dispatchIssue: vi.fn(async () => ({ kind: "afk" as const, exit_code: 0 })),
     dispatchDemand: vi.fn(async () => ({ kind: "go" as const, exit_code: 0 })),
+    dispatchScout: vi.fn(async () => ({ kind: "scout" as const, exit_code: 0 })),
     stopWorker: vi.fn(async (_root, input) => ({
       worker: input.worker,
       worker_pid: 42,
