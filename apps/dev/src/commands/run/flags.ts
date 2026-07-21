@@ -73,6 +73,7 @@ import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
+import { parseFleetSelector } from "@reddb-io/red-castle/engine";
 import { buildWorkerAttemptPath } from "../../core/worker-paths.js";
 import { createLandLock } from "../../runtime/land-lock.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../../runtime/lock.js";
@@ -272,6 +273,26 @@ function coerceIssuesFilter(raw: string): SelectionFilter {
 }
 
 /**
+ * Coerce a `--selector` value into a NAMED FLEET's work-scope filter. The value
+ * is the selector object as compact JSON (`{"spec":2303,"lane":"go"}`) — the
+ * same encoding the supervisor forwards to each slot, so a fleet's scope survives
+ * the launch → supervise → `run --once` hop intact.
+ */
+function coerceSelectorFilter(raw: string): SelectionFilter {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new RunFlagError(`--selector requires a JSON object (got: ${JSON.stringify(raw)})`);
+  }
+  try {
+    return { kind: "selector", selector: parseFleetSelector(parsed) };
+  } catch (err) {
+    throw new RunFlagError(`--selector is invalid: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * Flag schema for the `run` command, expressed against the shared CLI layer
  * (`packages/shared/args.ts`, built over `cli-args-parser`). The coercions here
  * reproduce the exact semantics the dev suite asserts: `--spec`/`-n` map through
@@ -281,6 +302,7 @@ function coerceIssuesFilter(raw: string): SelectionFilter {
 const RUN_FLAG_SCHEMA = {
   spec: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "spec", spec: Number(raw) }) },
   issues: { kind: "value", coerce: coerceIssuesFilter },
+  selector: { kind: "value", coerce: coerceSelectorFilter },
   n: { kind: "value", coerce: (raw: string): number => Number(raw) },
   once: { kind: "boolean" },
   runner: { kind: "value", coerce: (raw: string): string => raw },
@@ -318,6 +340,9 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
       lastFilterPos = i;
     } else if ((arg === "--issues" || arg.startsWith("--issues=")) && values.issues !== undefined && i > lastFilterPos) {
       filter = values.issues as SelectionFilter;
+      lastFilterPos = i;
+    } else if ((arg === "--selector" || arg.startsWith("--selector=")) && values.selector !== undefined && i > lastFilterPos) {
+      filter = values.selector as SelectionFilter;
       lastFilterPos = i;
     }
   }

@@ -19,6 +19,18 @@ import type { Runner } from "../types/runner.js";
  *   - unknown keys parse fine (forward compatibility) but are never read by
  *     any documented accessor.
  *
+ * Two rules the loader owns on top of that, both harvested from the castle twin
+ * (issue #2245):
+ *   - FAIL-CLOSED IN-PROCESS (ADR 0116). A directory that has not opted into the
+ *     dev plugin (`plugins.dev.enabled: true`, ADR 0067) yields the defaults and
+ *     nothing else, decided HERE rather than only at process entry, so an
+ *     in-process caller that bypassed the entrypoint cannot read a disabled
+ *     directory's settings.
+ *   - RETIRED KEYS ARE TOMBSTONED (ADR 0117). {@link DELETED_CONFIG_KEYS} names
+ *     every key that USED to mean something, so a retired key is distinguishable
+ *     from an unknown forward-compat one and warns instead of silently reading
+ *     as inert.
+ *
  * The parser is the same constrained subset the shell uses (nested mappings
  * keyed by `[a-zA-Z_][a-zA-Z0-9_-]*` with 2-space indentation, scalar leaves
  * only). No yaml dependency. All values round-trip as raw strings, matching
@@ -245,6 +257,40 @@ export const CONFIG_DEFAULTS = {
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
+
+/**
+ * The RETIRED config keys — an explicit tombstone set (ADR 0117, issue #2245).
+ *
+ * Unknown keys parse fine so a newer config can be read by an older binary, but
+ * that forward-compat tolerance makes a key that USED to mean something
+ * indistinguishable from one that does not mean anything YET: both are simply
+ * carried in the map and never read. Every entry here is a key that WAS
+ * documented and has since been removed. The loader DROPS it and warns
+ * `retired`, so an operator whose `.red/config.yaml` still carries it learns the
+ * setting stopped applying instead of believing it still tunes anything.
+ *
+ * Both spellings of a retired key are listed — the canonical namespaced one
+ * (`plugins.dev.…`, ADR 0042) and the legacy top-level accessor — because either
+ * can still be sitting in a repo's config.
+ *
+ * `afk.attempt_timeout` was the wall-clock attempt cap, retired when the
+ * commit-anchored progress guard replaced it (ADR 0044/0045).
+ *
+ * To retire a key: delete its reader, add BOTH spellings here, and record the
+ * removal in the ADR that retires it.
+ */
+export const DELETED_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "afk.attempt_timeout",
+  "plugins.dev.afk.attempt_timeout",
+]);
+
+/**
+ * The ADR 0067 activation key. A directory opts into the dev plugin ONLY by
+ * setting this to the scalar `true`; anything else — absent block, absent key,
+ * `false` — leaves the plugin off. Mirrors `pluginEnabledInConfig` in
+ * `packages/shared/plugin-gate.ts`; keep the two in lockstep.
+ */
+export const PLUGIN_ENABLED_KEY = "plugins.dev.enabled";
 
 export const AFK_MODEL_TIERS = ["validate", "simple", "complex", "think"] as const;
 export type AfkModelTier = (typeof AFK_MODEL_TIERS)[number];
@@ -509,6 +555,17 @@ export type ConfigWarn = (message: string) => void;
 export interface LoadConfigOptions {
   read?: ConfigReader;
   warn?: ConfigWarn;
+  /**
+   * INSPECTION-ONLY bypass of the ADR 0067 activation gate (ADR 0116). Default
+   * (absent/false) → the loader is fail-closed: a directory without
+   * `plugins.dev.enabled: true` yields the defaults and none of its settings.
+   *
+   * Pass `true` ONLY to read a directory's configured values as DATA — a doctor
+   * reporting what a not-yet-enabled repo has written, `/red-setup` inspecting a
+   * config it is about to amend. Never pass it to decide behaviour, or the gate
+   * is back to being advisory.
+   */
+  ignoreActivationGate?: boolean;
 }
 
 export interface RootDevConfigCollision {
@@ -534,6 +591,24 @@ export interface ConfigLoadAudit {
   readonly values: ConfigValues;
   readonly parseFailure?: ConfigParseFailure;
   readonly rootAccessorCollisions: readonly RootAccessorConfigCollision[];
+  /**
+   * True when the file opted this directory into the dev plugin
+   * (`plugins.dev.enabled: true`, ADR 0067). False for a missing file, a
+   * malformed one, or one without the explicit opt-in.
+   */
+  readonly pluginEnabled: boolean;
+  /**
+   * True when the activation gate DISCARDED a well-formed file's settings
+   * because the directory is not opted in (ADR 0116). `values` is the defaults.
+   * Distinct from {@link discarded}, which means the YAML was malformed — a
+   * gate-closed load is not a broken config.
+   */
+  readonly gateClosed: boolean;
+  /**
+   * The {@link DELETED_CONFIG_KEYS} the file still carries, sorted (ADR 0117).
+   * Reported even when the gate closed, so a doctor can still name them.
+   */
+  readonly retiredKeys: readonly string[];
 }
 
 const defaultReader: ConfigReader = (path) => {
@@ -592,6 +667,9 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
       discarded: false,
       values: configDefaults(),
       rootAccessorCollisions: [],
+      pluginEnabled: false,
+      gateClosed: false,
+      retiredKeys: [],
     };
   }
 
@@ -608,16 +686,53 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
       values: configDefaults(),
       parseFailure: failure,
       rootAccessorCollisions: [],
+      pluginEnabled: false,
+      gateClosed: false,
+      retiredKeys: [],
+    };
+  }
+
+  // Retired keys are named, not silently carried (ADR 0117). Reported and warned
+  // BEFORE the activation gate so a disabled directory still learns its config
+  // is stale, and dropped below so no accessor can ever read one back.
+  const retiredKeys = Object.keys(parsed).filter((key) => DELETED_CONFIG_KEYS.has(key)).sort();
+  for (const key of retiredKeys) {
+    warn(
+      `[afk:config] warn: \`${key}\` is a RETIRED key — it no longer does anything; ` +
+        `remove it from ${path}`,
+    );
+  }
+
+  const rootAccessorCollisions = rootAccessorConfigCollisions(parsed);
+  const pluginEnabled = parsed[PLUGIN_ENABLED_KEY] === "true";
+
+  // ACTIVATION GATE, decided in the loader (ADR 0116, harvested from the castle
+  // twin). A directory that never opted into the dev plugin sees the defaults and
+  // NOTHING of its own file — not the runner, not the model table, not the
+  // backpressure commands. Deciding it here rather than only at process entry
+  // means an in-process caller that skipped the entrypoint cannot read a disabled
+  // directory's settings either. The diagnostics above are still reported: they
+  // describe the file as data, they do not steer behaviour.
+  if (!pluginEnabled && options.ignoreActivationGate !== true) {
+    return {
+      path,
+      fileLoaded: true,
+      discarded: false,
+      values: configDefaults(),
+      rootAccessorCollisions,
+      pluginEnabled,
+      gateClosed: true,
+      retiredKeys,
     };
   }
 
   const values = configDefaults();
   const explicitAccessorKeys = new Set<string>();
   for (const [key, value] of Object.entries(parsed)) {
+    if (DELETED_CONFIG_KEYS.has(key)) continue;
     values[key] = value;
     explicitAccessorKeys.add(key);
   }
-  const rootAccessorCollisions = rootAccessorConfigCollisions(parsed);
   for (const collision of rootAccessorCollisions) {
     if (!collision.key.startsWith("dev.")) continue;
     warn(
@@ -626,6 +741,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     );
   }
   for (const [key, value] of Object.entries(parsed)) {
+    if (DELETED_CONFIG_KEYS.has(key)) continue;
     const m = /^plugins\.dev\.(.+)$/.exec(key);
     if (!m) continue;
     const rest = m[1]!;
@@ -647,6 +763,9 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     discarded: false,
     values,
     rootAccessorCollisions,
+    pluginEnabled,
+    gateClosed: false,
+    retiredKeys,
   };
 }
 
@@ -656,8 +775,11 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
  * Mirrors `config_load`:
  *   - missing file → all defaults, no warning;
  *   - malformed YAML → exactly one warning mentioning the path, all defaults;
- *   - well-formed file → defaults overlaid with every parsed key (including
- *     unknown ones, for forward compatibility).
+ *   - not opted in (`plugins.dev.enabled` is not `true`) → all defaults, the
+ *     file's settings discarded (ADR 0116);
+ *   - well-formed, opted-in file → defaults overlaid with every parsed key
+ *     (including unknown ones, for forward compatibility) except the retired
+ *     ones in {@link DELETED_CONFIG_KEYS} (ADR 0117).
  */
 export function loadConfig(path: string, options: LoadConfigOptions = {}): ConfigValues {
   return auditConfigLoad(path, options).values;

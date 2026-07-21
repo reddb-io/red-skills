@@ -861,6 +861,16 @@ describe("Spec cascade rebase after DONE landing", () => {
     expect(rebaseTargets).toEqual(["forge-merge-sha", "forge-merge-sha"]);
     // The spec:42 label lookup fired.
     expect(trace.listByLabelCalls).toContain("spec:42");
+    // Each sibling learns on ITS OWN issue that its branch moved (ADR 0118) —
+    // the worker log belongs to the landing worker and is unreachable from here.
+    for (const sibling of [20, 21]) {
+      const posted = trace.comments.filter(
+        (c) => c.issue === sibling && c.body.includes("cascade-rebase"),
+      );
+      expect(posted).toHaveLength(1);
+      expect(posted[0]!.body).toContain("forge-merge-sha");
+      expect(posted[0]!.body).toContain("#9");
+    }
   });
 
   it("does not cascade before a native merge queue has produced a merge SHA", async () => {
@@ -904,6 +914,10 @@ describe("Spec cascade rebase after DONE landing", () => {
     // Only the dead-worker branch is rebased.
     expect(trace.cascadeRebaseAttempts).toEqual(["afk/wCCCC/21-fix-sibling-b"]);
     expect(trace.iterLogs.some((l) => l.includes("wBBBB is alive"))).toBe(true);
+    // The skipped sibling is told WHY its branch was left alone, on its own issue.
+    const skipped = trace.comments.find((c) => c.issue === 20 && c.body.includes("cascade-rebase"));
+    expect(skipped?.body).toContain("was NOT rebased");
+    expect(skipped?.body).toContain("wBBBB");
   });
 
   it("cascade rebase failure is logged as a warning and does not fail the primary landing", async () => {
@@ -924,6 +938,9 @@ describe("Spec cascade rebase after DONE landing", () => {
     expect(trace.cascadeRebaseAttempts).toEqual(["afk/wBBBB/20-fix-sibling-a"]);
     // A warning was logged.
     expect(trace.iterLogs.some((l) => l.includes("cascade-rebase warning"))).toBe(true);
+    // …and the sibling learns its branch is still on the pre-landing base.
+    const failed = trace.comments.find((c) => c.issue === 20 && c.body.includes("cascade-rebase"));
+    expect(failed?.body).toContain("could NOT be rebased");
   });
 
   it("does not rebase when the issue carries no spec:N label", async () => {

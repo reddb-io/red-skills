@@ -129,6 +129,78 @@ describe("selectIssues", () => {
   });
 });
 
+// ---------- named-fleet work scope ----------
+
+describe("selectIssues — a named fleet's selector scopes what it drains", () => {
+  it("narrows on each facet: spec, lane, label, issues", () => {
+    const list = [
+      cand(1, ["ready-for-agent"], { body: "spec: #44" }),
+      cand(2, ["ready-for-agent", "lane:go"]),
+      cand(3, ["ready-for-agent", "priority:high"]),
+      cand(4, ["ready-for-agent"]),
+    ];
+    expect(selectIssues(list, { kind: "selector", selector: { spec: 44 } }).map((c) => c.number)).toEqual([1]);
+    expect(selectIssues(list, { kind: "selector", selector: { lane: "go" } }).map((c) => c.number)).toEqual([2]);
+    expect(
+      selectIssues(list, { kind: "selector", selector: { label: "priority:high" } }).map((c) => c.number),
+    ).toEqual([3]);
+    expect(
+      selectIssues(list, { kind: "selector", selector: { issues: [4, 2] } }).map((c) => c.number),
+    ).toEqual([2, 4]);
+  });
+
+  it("ANDs every declared facet together", () => {
+    const list = [
+      cand(1, ["ready-for-agent", "lane:go"], { body: "spec: #44" }),
+      cand(2, ["ready-for-agent", "lane:go"]),
+      cand(3, ["ready-for-agent"], { body: "spec: #44" }),
+    ];
+    const out = selectIssues(list, { kind: "selector", selector: { spec: 44, lane: "go" } });
+    expect(out.map((c) => c.number)).toEqual([1]);
+  });
+
+  it("an empty selector drains the whole backlog, like --all", () => {
+    const list = [cand(1), cand(2)];
+    expect(selectIssues(list, { kind: "selector", selector: {} }).map((c) => c.number)).toEqual(
+      selectIssues(list, { kind: "all" }).map((c) => c.number),
+    );
+  });
+
+  it("never pulls an out-of-scope URGENT issue across the fleet boundary", () => {
+    // The urgent prepend jumps every other filter — but a fleet that grabbed an
+    // issue outside its selector would race the fleet that owns it.
+    const list = [
+      cand(9, ["ready-for-agent", "priority:urgent", "lane:go"]),
+      cand(2, ["ready-for-agent"], { body: "spec: #44" }),
+    ];
+    const out = selectIssues(list, { kind: "selector", selector: { spec: 44 } });
+    expect(out.map((c) => c.number)).toEqual([2]);
+  });
+
+  it("keeps the urgent prepend INSIDE the scope", () => {
+    const list = [
+      cand(9, ["ready-for-agent", "priority:urgent"], { body: "spec: #44" }),
+      cand(2, ["ready-for-agent"], { body: "spec: #44" }),
+    ];
+    const out = selectIssues(list, { kind: "selector", selector: { spec: 44 } });
+    expect(out.map((c) => c.number)).toEqual([9, 2]);
+  });
+
+  it("partitions one backlog between two fleets with no overlap", () => {
+    const list = [
+      cand(1, ["ready-for-agent"], { body: "spec: #44" }),
+      cand(2, ["ready-for-agent", "priority:urgent"], { body: "spec: #55" }),
+      cand(3, ["ready-for-agent"], { body: "spec: #44" }),
+      cand(4, ["ready-for-agent"], { body: "spec: #55" }),
+    ];
+    const alpha = selectIssues(list, { kind: "selector", selector: { spec: 44 } }).map((c) => c.number);
+    const beta = selectIssues(list, { kind: "selector", selector: { spec: 55 } }).map((c) => c.number);
+    expect(alpha).toEqual([1, 3]);
+    expect(beta).toEqual([2, 4]);
+    expect(alpha.filter((n) => beta.includes(n))).toEqual([]);
+  });
+});
+
 // ---------- runModeForCandidate ----------
 
 describe("runModeForCandidate (type:scout fleet routing)", () => {

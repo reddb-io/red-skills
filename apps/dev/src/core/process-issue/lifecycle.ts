@@ -116,7 +116,14 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
+import {
+  allowlistExternalWidened,
+  ALLOWLIST_PATH,
+  checkSensitivePaths,
+  gateVerdict,
+  type GateStageOutcome,
+  type SensitivePathHit,
+} from "../shared-gate.js";
 import { isPrePrPipelineActive } from "../pre-pr-pipeline.js";
 import {
   aggregateAdversarialReviewFindings,
@@ -780,6 +787,49 @@ export async function processIssue(
     }
     deps.markPhase?.("validating");
     markProcessSafetyStep("post-barrier:feedback-start");
+
+    /**
+     * Read the branch diff the trust checks scan: changed paths, the
+     * `package.json` diff (for lifecycle scripts), and the TOON-allowlist shrink
+     * exemption. Shared by the pre-validation trust scan (ADR 0119) and the
+     * landing's own step-0a guard.
+     *
+     * Deliberately NOT memoised: the landing guard is a trust boundary and must
+     * judge the diff as it stands at merge time, not a snapshot taken before
+     * validation. Two `git diff` calls are noise next to the suite this ordering
+     * saves.
+     */
+    const resolveDiffPaths = async (): Promise<{
+      changedFiles: string[];
+      packageJsonDiff: string;
+      allowlistExemption?: { path: string; safe: boolean };
+    }> => {
+      const filesRes = await deps.mergeExec([
+        "git", "-C", input.repoDir,
+        "diff", "--name-only",
+        `${input.remote}/${base}...${workerBranch}`,
+      ]);
+      const diffFiles = filesRes.stdout.trim().split("\n").filter(Boolean);
+      const diffRes = await deps.mergeExec([
+        "git", "-C", input.repoDir,
+        "diff",
+        `${input.remote}/${base}...${workerBranch}`,
+        "--",
+        "package.json", "**/package.json",
+      ]);
+      let allowlistExemption: { path: string; safe: boolean } | undefined;
+      if (diffFiles.includes(ALLOWLIST_PATH)) {
+        const oldContent = (
+          await deps.mergeExec(["git", "-C", input.repoDir, "show", `${input.remote}/${base}:${ALLOWLIST_PATH}`])
+        ).stdout;
+        const newContent = (
+          await deps.mergeExec(["git", "-C", input.repoDir, "show", `${workerBranch}:${ALLOWLIST_PATH}`])
+        ).stdout;
+        allowlistExemption = { path: ALLOWLIST_PATH, safe: !allowlistExternalWidened(oldContent, newContent) };
+      }
+      return { changedFiles: diffFiles, packageJsonDiff: diffRes.stdout, allowlistExemption };
+    };
+
     const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
     if (changedFiles.length === 0) {
       const validationText =
@@ -806,6 +856,45 @@ export async function processIssue(
     );
     const feedbackScopes = scopesForValidationScope(validationScope);
     landingFeedbackScopes = feedbackScopes;
+
+    // The gate's stages accumulate here in GATE_STAGE_ORDER (ADR 0119) and fold
+    // into ONE verdict: `gateVerdict(gateStages)` is what decides whether the
+    // attempt may proceed, so "which stage blocked this" is read off the fold
+    // rather than reassembled from control flow.
+    const gateStages: GateStageOutcome[] = [];
+
+    // TRUST BEFORE THE SUITE. A diff that touches a CI workflow, a git hook, a
+    // lifecycle script, or `.red/` trust config can NEVER auto-land, so deciding
+    // that here — a handful of regexes over a diff we already have — costs
+    // seconds and saves the whole package suite. The landing keeps its own
+    // step-0a scan as the backstop for the other callers (and for a diff that
+    // grows between here and the merge), so this is an early exit, not a move.
+    // A diff lookup that fails is NOT a verdict: log it, record the stage as
+    // skipped, and let the landing-time guard decide instead of parking on a
+    // git error.
+    let trustHits: SensitivePathHit[] = [];
+    try {
+      const trustDiff = await resolveDiffPaths();
+      trustHits = checkSensitivePaths(
+        trustDiff.changedFiles,
+        trustDiff.packageJsonDiff,
+        trustDiff.allowlistExemption,
+      );
+      gateStages.push({ stage: "trust", ok: trustHits.length === 0, sensitivePaths: trustHits });
+    } catch (error) {
+      gateStages.push({ stage: "trust", ok: false, skipped: true });
+      deps.appendIterLog(
+        `🤖 /afk: pre-validation sensitive-path scan could not read the diff ` +
+          `(${error instanceof Error ? error.message : String(error)}); the landing-time guard still applies.`,
+      );
+    }
+    if (gateVerdict(gateStages).failedStage === "trust") {
+      deps.appendIterLog(
+        `🤖 /afk: sensitive-path guard tripped BEFORE validation — skipping the suite for #${issue}.`,
+      );
+      return await sensitivePathGuarded(common, trustHits, await deps.lookups.isLocked());
+    }
+
     if (
       !(await fireHook(
         "pre_feedback",
@@ -824,6 +913,7 @@ export async function processIssue(
       resourceBudget: deps.validationResourceBudget,
     });
     markProcessSafetyStep("post-barrier:feedback-done");
+    gateStages.push({ stage: "feedback", ok: feedback.ok });
     if (!feedback.ok) {
       await fireHook(
         "on_baseline_probe",
@@ -847,7 +937,7 @@ export async function processIssue(
         result: { status: feedback.ok ? "pass" : "fail" },
       }),
     );
-    if (!feedback.ok) {
+    if (gateVerdict(gateStages).failedStage === "feedback") {
       await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
       let isInfra = isInfraFeedbackFailure(feedback);
       const classResult = await fireHookCtx(
@@ -908,7 +998,8 @@ export async function processIssue(
       backpressureSidecar = backpressure.sidecar;
       markProcessSafetyStep("post-barrier:backpressure-done");
       common.backpressureChecks = backpressure.checks;
-      if (!backpressure.ok) {
+      gateStages.push({ stage: "backpressure", ok: backpressure.ok });
+      if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
         const notes =
           salvagedUncommittedFiles > 0
@@ -926,10 +1017,16 @@ export async function processIssue(
     }
     validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
     lastValidationScope = feedback.validationScope;
+    // ONE verdict for the whole gate (ADR 0119): the stages accumulated above
+    // fold into a single `ok` instead of three independent booleans a reader has
+    // to reassemble. A backpressure stage that never ran is simply absent from
+    // the fold, and an absent stage cannot block.
+    const gateOk = gateVerdict(gateStages).ok;
     deps.recordWorkerEvent?.("worker.validated", {
       feedback_records: feedback.sidecar.length,
       backpressure_records: backpressureSidecar.length,
       scope: feedback.validationScope?.type ?? "",
+      gate_ok: gateOk,
     });
 
   markProcessSafetyStep("post-barrier:landing-start");
@@ -1067,32 +1164,10 @@ export async function processIssue(
         validationSidecar = mergedFeedback.sidecar;
         return { ok: true };
       },
-      getDiffPaths: async () => {
-        const filesRes = await deps.mergeExec([
-          "git", "-C", input.repoDir,
-          "diff", "--name-only",
-          `${input.remote}/${base}...${workerBranch}`,
-        ]);
-        const changedFiles = filesRes.stdout.trim().split("\n").filter(Boolean);
-        const diffRes = await deps.mergeExec([
-          "git", "-C", input.repoDir,
-          "diff",
-          `${input.remote}/${base}...${workerBranch}`,
-          "--",
-          "package.json", "**/package.json",
-        ]);
-        let allowlistExemption: { path: string; safe: boolean } | undefined;
-        if (changedFiles.includes(ALLOWLIST_PATH)) {
-          const oldContent = (
-            await deps.mergeExec(["git", "-C", input.repoDir, "show", `${input.remote}/${base}:${ALLOWLIST_PATH}`])
-          ).stdout;
-          const newContent = (
-            await deps.mergeExec(["git", "-C", input.repoDir, "show", `${workerBranch}:${ALLOWLIST_PATH}`])
-          ).stdout;
-          allowlistExemption = { path: ALLOWLIST_PATH, safe: !allowlistExternalWidened(oldContent, newContent) };
-        }
-        return { changedFiles, packageJsonDiff: diffRes.stdout, allowlistExemption };
-      },
+      // The same resolver the pre-validation trust scan used (ADR 0119). The
+      // landing re-reads it so its step-0a guard judges the diff as it stands at
+      // merge time, not the snapshot taken before validation.
+      getDiffPaths: resolveDiffPaths,
       landingPhase: markLandingPhase,
     },
     {

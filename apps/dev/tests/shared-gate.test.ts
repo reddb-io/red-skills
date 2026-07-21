@@ -14,6 +14,8 @@ import {
   hasLifecycleScriptInDiff,
   checkSensitivePaths,
   allowlistExternalWidened,
+  gateVerdict,
+  GATE_STAGE_ORDER,
   type EscalationOutcome,
   type GateFinding,
   type SharedGateDeps,
@@ -626,3 +628,55 @@ function extractSensitivePathTmpRootLiteral(patterns: readonly RegExp[]): string
     .replace(/\\\//g, "/")
     .replace(/\\\./g, ".");
 }
+
+// ---------- ordered gate verdict (ADR 0119, issue #2245) ----------
+
+describe("gateVerdict — one verdict, cheap stage first", () => {
+  it("orders the stages cheap → expensive", () => {
+    expect(GATE_STAGE_ORDER).toEqual(["trust", "feedback", "backpressure"]);
+  });
+
+  it("is green when every stage passed", () => {
+    expect(
+      gateVerdict([
+        { stage: "trust", ok: true },
+        { stage: "feedback", ok: true },
+        { stage: "backpressure", ok: true },
+      ]),
+    ).toEqual({ ok: true });
+  });
+
+  it("reports the EARLIEST blocking stage, not the first one evaluated", () => {
+    const verdict = gateVerdict([
+      { stage: "backpressure", ok: false },
+      { stage: "feedback", ok: false },
+      { stage: "trust", ok: false, sensitivePaths: [{ path: ".github/workflows/ci.yml", reason: "CI workflow file" }] },
+    ]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.failedStage).toBe("trust");
+    expect(verdict.sensitivePaths).toHaveLength(1);
+  });
+
+  it("carries the hits only for a failed trust stage", () => {
+    const verdict = gateVerdict([
+      { stage: "trust", ok: true, sensitivePaths: [] },
+      { stage: "feedback", ok: false },
+    ]);
+    expect(verdict).toEqual({ ok: false, failedStage: "feedback" });
+  });
+
+  it("a skipped stage never blocks", () => {
+    expect(
+      gateVerdict([
+        { stage: "trust", ok: true },
+        { stage: "feedback", ok: true },
+        { stage: "backpressure", ok: false, skipped: true },
+      ]),
+    ).toEqual({ ok: true });
+  });
+
+  it("folds the stages run so far — a partial gate is still one verdict", () => {
+    expect(gateVerdict([{ stage: "trust", ok: true }])).toEqual({ ok: true });
+    expect(gateVerdict([]).ok).toBe(true);
+  });
+});
