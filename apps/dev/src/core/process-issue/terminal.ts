@@ -829,6 +829,46 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
 }
 const SPEC_LABEL_RE = /^spec:([0-9]+)$/;
 const AFK_BRANCH_RE = /^afk\/([A-Za-z0-9._-]+)\/([0-9]+)-/;
+
+/** What the cascade did to one sibling branch after a DONE landing. */
+export type CascadeRebaseStatus = "rebased" | "skipped-active" | "failed";
+
+/**
+ * Render the cascade outcome for ONE sibling. PURE — no IO.
+ *
+ * The sibling's branch was moved (or deliberately not moved) by a landing that
+ * happened on ANOTHER issue, so the sibling's own issue is where that fact has
+ * to show up (ADR 0118): the worker log belongs to the landing worker and is
+ * unreachable from the sibling. Each line names the branch, the landed issue,
+ * and the exact merge SHA the branch was rebased onto, so the next worker to
+ * pick the sibling up can tell a moved base from a stale one.
+ */
+export function cascadeRebaseComment(input: {
+  status: CascadeRebaseStatus;
+  branch: string;
+  landedIssue: number;
+  mergeSha: string;
+  workerId?: string;
+  warn?: string;
+}): string {
+  const head = `🤖 /afk cascade-rebase (landing of #${input.landedIssue}):`;
+  if (input.status === "skipped-active") {
+    return (
+      `${head} \`${input.branch}\` was NOT rebased onto \`${input.mergeSha}\` — worker ` +
+      `\`${input.workerId ?? "unknown"}\` is still alive on it. It will rebase onto the ` +
+      `current base when it lands.`
+    );
+  }
+  if (input.status === "failed") {
+    return (
+      `${head} \`${input.branch}\` could NOT be rebased onto \`${input.mergeSha}\`` +
+      `${input.warn ? `: ${input.warn}` : ""}. The branch still sits on the pre-landing base; ` +
+      `expect a rebase or conflict resolution on the next attempt.`
+    );
+  }
+  return `${head} \`${input.branch}\` was rebased onto \`${input.mergeSha}\` and force-pushed.`;
+}
+
 export async function runCascadeRebase(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -853,6 +893,19 @@ export async function runCascadeRebase(
       }
     }
     if (siblingNums.size === 0) return;
+    // Every outcome ALSO lands on the sibling's own issue (ADR 0118). Posting is
+    // per-sibling best-effort: a failed comment is logged and the cascade moves
+    // on, so one unreachable issue never strands the remaining siblings on a
+    // stale base.
+    const notifySibling = async (issueNum: number, body: string): Promise<void> => {
+      try {
+        await deps.gh.comment(issueNum, body);
+      } catch (err) {
+        deps.appendIterLog(
+          `🤖 /afk cascade-rebase: could not comment the outcome on #${issueNum} (best-effort): ${String(err)}`,
+        );
+      }
+    };
     const remoteBranches = await deps.cascadeRebase.listAFKBranches(input.repoDir, input.remote);
     for (const branch of remoteBranches) {
       const m = AFK_BRANCH_RE.exec(branch);
@@ -864,14 +917,38 @@ export async function runCascadeRebase(
         deps.appendIterLog(
           `🤖 /afk cascade-rebase: skipping ${branch} — worker ${workerId} is alive`,
         );
+        await notifySibling(
+          issueNum,
+          cascadeRebaseComment({
+            status: "skipped-active",
+            branch,
+            landedIssue: closedIssue,
+            mergeSha: trunkTip,
+            workerId,
+          }),
+        );
         continue;
       }
       const r = await deps.cascadeRebase.rebaseAndPush(input.repoDir, branch, trunkTip);
       if (r.ok) {
         deps.appendIterLog(`🤖 /afk cascade-rebase: rebased ${branch} onto ${trunkTip}`);
+        await notifySibling(
+          issueNum,
+          cascadeRebaseComment({ status: "rebased", branch, landedIssue: closedIssue, mergeSha: trunkTip }),
+        );
       } else {
         deps.appendIterLog(
           `🤖 /afk cascade-rebase warning: ${r.warn ?? `failed to rebase ${branch} onto ${trunkTip}`}`,
+        );
+        await notifySibling(
+          issueNum,
+          cascadeRebaseComment({
+            status: "failed",
+            branch,
+            landedIssue: closedIssue,
+            mergeSha: trunkTip,
+            ...(r.warn ? { warn: r.warn } : {}),
+          }),
         );
       }
     }
