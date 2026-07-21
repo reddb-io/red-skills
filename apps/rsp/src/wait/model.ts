@@ -80,6 +80,13 @@ export interface WaitRegistryEntry {
   attempts: number;
   last_observation?: JsonObject;
   last_poll_at?: string;
+  /**
+   * Whether this wait is using webhook acceleration ("webhook") or falling back to
+   * pure polling ("polling"). Set for `pr` and `run` kinds; absent for others.
+   * Transitions from "polling" → "webhook" once the forwarder confirms live
+   * deliveries; never goes the other direction within a single wait lifetime.
+   */
+  webhook_mode?: "webhook" | "polling";
 }
 
 export interface ParsedWait {
