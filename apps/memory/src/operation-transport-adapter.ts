@@ -142,6 +142,11 @@ function bindField(
     if (value !== undefined) return coerce(value, field.type);
   }
 
+  if (isRecord(input.body)) {
+    const value = firstDefined(input.body, fieldKeyCandidates(field.field, "query"));
+    if (value !== undefined) return coerce(value, field.type);
+  }
+
   if (field.sources.includes("positional")) {
     const position = field.position ?? 0;
     const value = field.variadic
@@ -205,6 +210,7 @@ function firstDefined(
 function coerce(value: unknown, type: MemoryOperationInputFieldBinding["type"]): unknown {
   if (Array.isArray(value)) {
     if (type === "string-array") return value.map(String);
+    if (type === "object-array") return value;
     value = value[value.length - 1];
   }
   if (value === undefined || value === "") return undefined;
