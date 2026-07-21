@@ -185,7 +185,7 @@ export function memoryOpenApiPathsForOperations(
             ? {
                 requestBody: {
                   required: true,
-                  content: { "application/json": { schema: { type: "object" } } },
+                  content: { "application/json": { schema: openApiInputSchema(operation) } },
                 },
               }
             : {}),
@@ -201,6 +201,24 @@ export function memoryOpenApiPathsForOperations(
     }
   }
   return paths;
+}
+
+function openApiInputSchema(operation: ReadOnlyMemoryOperation): Record<string, unknown> {
+  const properties = Object.fromEntries(
+    operation.inputBinding.fields.map((field) => [
+      field.field,
+      openApiSchemaForInputField(field.type),
+    ]),
+  );
+  const required = operation.inputBinding.fields
+    .filter((field) => field.required === true)
+    .map((field) => field.field);
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    additionalProperties: false,
+  };
 }
 
 function openApiSchemaForInputField(
@@ -233,9 +251,11 @@ async function handleRequest(
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
   const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
-  const isRegistryPost =
-    req.method === "POST" && registryOperation?.renderer.http?.methods?.includes("POST") === true;
-  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isRegistryPost) {
+  if (registryOperation && !memoryHttpMethodAllowed(registryOperation, req.method)) {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  if (!registryOperation && req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
   }
@@ -309,6 +329,15 @@ async function handleRequest(
   }
 
   sendJson(res, 404, { error: "not found", endpoints: ENDPOINTS });
+}
+
+/** HEAD is transport-mechanical shorthand for a declared GET, never an implicit operation method. */
+export function memoryHttpMethodAllowed(
+  operation: ReadOnlyMemoryOperation,
+  method: string | undefined,
+): boolean {
+  const declared = operation.renderer.http?.methods ?? ["GET"];
+  return method === "HEAD" ? declared.includes("GET") : declared.includes(method as "GET" | "POST");
 }
 
 async function handleRegistryHttpOperation(
