@@ -214,6 +214,12 @@ export interface BootFs {
   workerPidLive?(workerDir: string): Promise<boolean>;
   /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
   reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
+  /**
+   * Best-effort `git worktree prune` after removing registered worktree dirs.
+   * Cleans stale entries from git's linked-worktree tracking so subsequent
+   * `worktree add` calls don't see stale registrations (#2379).
+   */
+  worktreePrune?(): Promise<void>;
 }
 
 /** gh side effects: label edits and audit/recovery comments. Best-effort. */
@@ -576,6 +582,8 @@ export interface DocsSweepResult {
 
 export interface TmpJanitorSweepResult {
   expiredLanes: string[];
+  /** Dead-owner feedback worktrees removed in this sweep (#2379). */
+  deadOwnerFeedback: string[];
   staleWorkers: string[];
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
@@ -747,6 +755,7 @@ async function runTmpJanitorSweep(
   const sweep = options.tmpJanitor;
   const result: TmpJanitorSweepResult = {
     expiredLanes: [],
+    deadOwnerFeedback: [],
     staleWorkers: [],
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
@@ -763,6 +772,17 @@ async function runTmpJanitorSweep(
   for (const entry of expired) {
     await deps.fs.removeDir(entry.path);
     result.expiredLanes.push(entry.path);
+  }
+
+  // Dead-owner feedback worktrees (#2379): remove before pruning git tracking.
+  for (const entry of sweep.plan.feedbackDeadOwner.reclaim) {
+    await deps.fs.removeDir(entry.path);
+    result.deadOwnerFeedback.push(entry.path);
+  }
+
+  // Prune git's linked-worktree tracking after removing dirs (#2379).
+  if (result.deadOwnerFeedback.length > 0 || result.expiredLanes.length > 0) {
+    await deps.fs.worktreePrune?.();
   }
 
   for (const worker of sweep.staleWorkers.reclaim) {
