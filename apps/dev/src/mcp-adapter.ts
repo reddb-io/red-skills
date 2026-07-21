@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
@@ -135,8 +135,11 @@ async function launchDetachedRun(
   root: string,
   args: readonly string[],
 ): Promise<{ pid: number }> {
-  const bundle = process.argv[1];
-  if (!bundle) throw new Error("cannot dispatch worker: bundle path is missing");
+  const mcpBundle = process.argv[1];
+  if (!mcpBundle) {
+    throw new Error("cannot dispatch worker: MCP bundle path is missing");
+  }
+  const bundle = resolveDevCliBundle(mcpBundle);
   const child = spawn(process.execPath, [bundle, "run", ...args], {
     cwd: root,
     env: process.env,
@@ -147,6 +150,19 @@ async function launchDetachedRun(
   if (!pid) throw new Error("cannot dispatch worker: spawn returned no pid");
   child.unref();
   return { pid };
+}
+
+export function resolveDevCliBundle(mcpBundle: string): string {
+  const file = basename(mcpBundle);
+  if (file === "afk-mcp.bundle.min.mjs") {
+    return join(dirname(mcpBundle), "dev.bundle.min.mjs");
+  }
+  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "dev-"));
+  }
+  throw new Error(
+    `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
+  );
 }
 
 const defaultMcpRuntime: DevAfkMcpRuntime = {
