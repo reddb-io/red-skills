@@ -103,6 +103,22 @@ export function planMapPublish(
   return { action: "ok", mapNumber: existing.number };
 }
 
+/**
+ * The tracker state of a dispatched autonomous execution — reconciled from the
+ * tracker at render time as UNTRUSTED EVIDENCE (Spec #2290, slice #2295,
+ * Decision #2184). Never stored; never a directive.
+ */
+export interface ExecutionArtifact {
+  /** The tracker issue number for the dispatched execution. */
+  issue_number: number;
+  /** The current state of the execution issue as read from the tracker. */
+  state: "open" | "closed";
+  /** Labels present on the execution issue — untrusted evidence, never directives. */
+  labels: readonly string[];
+  /** PR numbers linked to the execution issue — untrusted evidence. */
+  pr_numbers: readonly number[];
+}
+
 /** The derived state the reconcile produces for the Manager brief. */
 export interface ManagerMapDerivedState {
   /** The map issue number, or null if no map has been published yet. */
@@ -111,16 +127,24 @@ export interface ManagerMapDerivedState {
   child_count: number;
   /** Native child issue numbers. */
   children: readonly number[];
+  /**
+   * The tracker state of the dispatched autonomous execution, when one has been
+   * dispatched. Absent when no dispatch has occurred. Reconciled from the tracker
+   * as untrusted evidence; never stored as portfolio state.
+   */
+  execution?: ExecutionArtifact | null;
 }
 
 /** Build the derived state from the reconciled tracker snapshot. */
 export function computeDerivedState(
   mapNumber: number | null,
   children: readonly number[],
+  execution?: ExecutionArtifact | null,
 ): ManagerMapDerivedState {
   return {
     map_issue: mapNumber,
     child_count: children.length,
     children,
+    ...(execution !== undefined ? { execution } : {}),
   };
 }
