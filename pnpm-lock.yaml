@@ -171,6 +171,9 @@ importers:
 
   apps/dev:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 'catalog:'
+        version: 1.29.0(zod@3.25.76)
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info

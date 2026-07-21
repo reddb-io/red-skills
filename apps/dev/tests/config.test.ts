@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
+  auditConfigLoad,
   CONFIG_DEFAULTS,
+  DELETED_CONFIG_KEYS,
   getConfig,
   loadConfig,
   MalformedConfigError,
@@ -32,10 +34,129 @@ async function writeConfig(yaml: string): Promise<string> {
   return path;
 }
 
+// The loader is FAIL-CLOSED (ADR 0116): a config that never sets
+// `plugins.dev.enabled: true` yields the defaults and none of its own settings.
+// The parse/fold cases below are about the GRAMMAR and the ADR 0042 namespace
+// fold, not about activation, so they pass `ignoreActivationGate: true` and read
+// the file as data. The gate itself is covered by its own describe block, with
+// realistic opted-in and opted-out fixtures.
+
+describe("config — activation gate (ADR 0116)", () => {
+  const OPTED_IN = "plugins:\n  dev:\n    enabled: true\n    afk:\n      default_runner: codex\n";
+  const OPTED_OUT = "plugins:\n  dev:\n    afk:\n      default_runner: codex\n";
+
+  it("an opted-in directory reads its own settings", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", { read: () => OPTED_IN, warn: () => {} });
+    expect(audit.pluginEnabled).toBe(true);
+    expect(audit.gateClosed).toBe(false);
+    expect(getConfig(audit.values, "afk.default_runner")).toBe("codex");
+  });
+
+  it("a directory without the explicit opt-in sees the defaults, not its own settings", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", { read: () => OPTED_OUT, warn: () => {} });
+    expect(audit.pluginEnabled).toBe(false);
+    expect(audit.gateClosed).toBe(true);
+    expect(audit.discarded).toBe(false); // gate-closed is NOT malformed
+    expect(getConfig(audit.values, "afk.default_runner")).toBe("claude");
+  });
+
+  it("`enabled: false` is as closed as an absent key", () => {
+    const text = "plugins:\n  dev:\n    enabled: false\n    afk:\n      default_runner: codex\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text, warn: () => {} });
+    expect(getConfig(values, "afk.default_runner")).toBe("claude");
+  });
+
+  it("the gate closes on the legacy top-level block too — opting in is the only key that opens it", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "afk:\n  default_runner: codex\n",
+      warn: () => {},
+    });
+    expect(getConfig(values, "afk.default_runner")).toBe("claude");
+  });
+
+  it("ignoreActivationGate reads a closed directory's settings as data", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => OPTED_OUT,
+      warn: () => {},
+      ignoreActivationGate: true,
+    });
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+  });
+
+  it("a missing file is closed but not gate-closed — there is nothing to discard", () => {
+    const audit = auditConfigLoad("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(audit.fileLoaded).toBe(false);
+    expect(audit.pluginEnabled).toBe(false);
+    expect(audit.gateClosed).toBe(false);
+  });
+
+  it("still reports root-accessor collisions in a gate-closed directory", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "dev:\n  trunk: develop\n",
+      warn: () => {},
+    });
+    expect(audit.gateClosed).toBe(true);
+    expect(audit.rootAccessorCollisions.map((c) => c.key)).toContain("dev.trunk");
+  });
+});
+
+describe("config — retired-key tombstone (ADR 0117)", () => {
+  const RETIRED = "plugins:\n  dev:\n    enabled: true\n    afk:\n      attempt_timeout: 99\n";
+
+  it("names the retired key, warns, and never reads it back", () => {
+    const warnings: string[] = [];
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => RETIRED,
+      warn: (m) => warnings.push(m),
+    });
+    expect(audit.retiredKeys).toEqual(["plugins.dev.afk.attempt_timeout"]);
+    expect(warnings.join("\n")).toContain("RETIRED");
+    expect(getConfig(audit.values, "afk.attempt_timeout")).toBe("");
+    expect(getConfig(audit.values, "plugins.dev.afk.attempt_timeout")).toBe("");
+  });
+
+  it("tombstones the legacy top-level spelling too", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    enabled: true\nafk:\n  attempt_timeout: 99\n",
+      warn: () => {},
+    });
+    expect(audit.retiredKeys).toEqual(["afk.attempt_timeout"]);
+    expect(getConfig(audit.values, "afk.attempt_timeout")).toBe("");
+  });
+
+  it("reports a retired key even when the activation gate closed", () => {
+    const warnings: string[] = [];
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "afk:\n  attempt_timeout: 99\n",
+      warn: (m) => warnings.push(m),
+    });
+    expect(audit.gateClosed).toBe(true);
+    expect(audit.retiredKeys).toEqual(["afk.attempt_timeout"]);
+    expect(warnings.join("\n")).toContain("RETIRED");
+  });
+
+  it("an unknown forward-compat key is NOT a retired one — it parses silently", () => {
+    const warnings: string[] = [];
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    enabled: true\n    afk:\n      not_a_key_yet: 1\n",
+      warn: (m) => warnings.push(m),
+    });
+    expect(audit.retiredKeys).toEqual([]);
+    expect(warnings.join("\n")).not.toContain("RETIRED");
+    expect(getConfig(audit.values, "afk.not_a_key_yet")).toBe("1");
+  });
+
+  it("every tombstone is genuinely retired — none of them has a live default", () => {
+    for (const key of DELETED_CONFIG_KEYS) {
+      expect(Object.prototype.hasOwnProperty.call(CONFIG_DEFAULTS, key)).toBe(false);
+    }
+  });
+});
+
 describe("config", () => {
   it("missing file → all defaults, no warning", async () => {
     const warnings: string[] = [];
-    const values = loadConfig(join(tmpdir(), "nope", ".red", "config.yaml"), {
+    const values = loadConfig(join(tmpdir(), "nope", ".red", "config.yaml"), { ignoreActivationGate: true,
       warn: (m) => warnings.push(m),
     });
     expect(getConfig(values, "afk.default_runner")).toBe("claude");
@@ -48,7 +169,7 @@ describe("config", () => {
 
   it("partial override only touches the specified key", async () => {
     const path = await writeConfig(`afk:\n  default_runner: codex\n`);
-    const values = loadConfig(path);
+    const values = loadConfig(path, { ignoreActivationGate: true });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("true");
@@ -58,7 +179,7 @@ describe("config", () => {
   it("unknown top-level key is ignored without warning", async () => {
     const warnings: string[] = [];
     const path = await writeConfig(`zzz: foo\nafk:\n  default_runner: codex\n`);
-    const values = loadConfig(path, { warn: (m) => warnings.push(m) });
+    const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "zzz")).toBe("foo");
@@ -68,7 +189,7 @@ describe("config", () => {
   it("unknown nested key is ignored silently", async () => {
     const warnings: string[] = [];
     const path = await writeConfig(`afk:\n  default_runner: codex\n  unknown_thing: 42\n`);
-    const values = loadConfig(path, { warn: (m) => warnings.push(m) });
+    const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(warnings).toHaveLength(0);
@@ -77,7 +198,7 @@ describe("config", () => {
   it("malformed YAML (unclosed quote) → one warning, all defaults", async () => {
     const warnings: string[] = [];
     const path = await writeConfig(`afk:\n  default_runner: "codex\n`);
-    const values = loadConfig(path, { warn: (m) => warnings.push(m) });
+    const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("claude");
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(warnings).toHaveLength(1);
@@ -87,44 +208,44 @@ describe("config", () => {
   it("malformed YAML (odd indentation) → one warning, all defaults", async () => {
     const warnings: string[] = [];
     const path = await writeConfig(`afk:\n   default_runner: codex\n`);
-    const values = loadConfig(path, { warn: (m) => warnings.push(m) });
+    const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("claude");
     expect(warnings).toHaveLength(1);
   });
 
   it("every documented v1 key has a default", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     for (const key of Object.keys(CONFIG_DEFAULTS)) {
       expect(getConfig(values, key)).not.toBe("");
     }
   });
 
   it("reads afk.release.channel and defaults it to stable (ADR 0058)", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "afk.release.channel")).toBe("stable");
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "plugins:\n  dev:\n    afk:\n      release:\n        channel: canary\n",
     });
     expect(getConfig(values, "afk.release.channel")).toBe("canary");
   });
 
   it("reads dev.lock.primary-branch and defaults it off", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "dev.lock.primary-branch")).toBe("false");
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "dev:\n  lock:\n    primary-branch: true\n",
     });
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
   });
 
   it("reads afk.review_gate.* and defaults the gate off at the complex threshold (#749)", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "afk.review_gate.enabled")).toBe("false");
     expect(getConfig(defaults, "afk.review_gate.threshold")).toBe("complex");
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    afk:\n      review_gate:\n        enabled: true\n        threshold: simple\n",
     });
@@ -133,7 +254,7 @@ describe("config", () => {
   });
 
   it("folds plugins.dev.review.* to dev.review.* like every other dev accessor (#2207, #2244)", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "dev.review.enabled")).toBe("false");
     expect(getConfig(defaults, "dev.review.max_iterations")).toBe("1");
     expect(getConfig(defaults, "dev.review.reviewer_count")).toBe("1");
@@ -145,7 +266,7 @@ describe("config", () => {
       quorum: "any",
     });
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    review:\n      enabled: true\n      max_iterations: 3\n",
     });
@@ -160,7 +281,7 @@ describe("config", () => {
   });
 
   it("resolves adversarial reviewer count/quorum and reviewer runner overrides (#2210)", () => {
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         [
           "plugins:",
@@ -196,7 +317,7 @@ describe("config", () => {
   });
 
   it("defaults the adversarial reviewer to the implementer's resolved runner/model/effort (#2210)", () => {
-    const config = resolveAdversarialReviewConfig((key) => getConfig(loadConfig("/missing", { warn: () => {} }), key));
+    const config = resolveAdversarialReviewConfig((key) => getConfig(loadConfig("/missing", { ignoreActivationGate: true, warn: () => {} }), key));
     expect(
       resolveAdversarialReviewer({
         config,
@@ -208,7 +329,7 @@ describe("config", () => {
   });
 
   it("uses the model-tier table when only review.runner is overridden (#2210)", () => {
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "plugins:\n  dev:\n    review:\n      runner: codex\n",
     });
     const config = resolveAdversarialReviewConfig((key) => getConfig(values, key));
@@ -293,14 +414,14 @@ describe("config", () => {
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
     // The root-sacred convention: dev-plugin keys nest under `plugins.dev.*` and
     // fold to the `dev.*` accessor (afk keeps its bare `afk.*` accessor).
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "plugins:\n  dev:\n    lock:\n      primary-branch: true\n",
     });
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
   });
 
   it("folds `plugins.dev` dev-keys and afk-keys to their distinct accessors at once", () => {
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    lock:\n      primary-branch: true\n    afk:\n      default_runner: codex\n",
     });
@@ -312,7 +433,7 @@ describe("config", () => {
     const path = await writeConfig(
       `afk:\n  hooks:\n    defaults:\n      cargo: false\n`,
     );
-    const values = loadConfig(path);
+    const values = loadConfig(path, { ignoreActivationGate: true });
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("false");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
@@ -320,7 +441,7 @@ describe("config", () => {
 
   it("integer values round-trip as strings", async () => {
     const path = await writeConfig(`afk:\n  fleet:\n    target: 5\n`);
-    const values = loadConfig(path);
+    const values = loadConfig(path, { ignoreActivationGate: true });
     expect(getConfig(values, "afk.fleet.target")).toBe("5");
   });
 
@@ -337,7 +458,7 @@ describe("config", () => {
       "",
     ].join("\n");
     const path = await writeConfig(yaml);
-    const values = loadConfig(path, { warn: (m) => warnings.push(m) });
+    const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "afk.fleet.target")).toBe("3");
     expect(warnings).toHaveLength(0);
@@ -357,7 +478,7 @@ describe("config", () => {
       "#     - 'git stash'",
       "",
     ].join("\n");
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
     expect(getConfig(values, "dev.trunk")).toBe("develop");
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
@@ -382,7 +503,7 @@ describe("config", () => {
   it("malformed fallback warning names the first offending line", async () => {
     const warnings: string[] = [];
     const path = await writeConfig("afk:\n  default_runner: codex\n   fleet:\n    target: 3\n");
-    loadConfig(path, { warn: (m) => warnings.push(m) });
+    loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("line 3");
   });
@@ -397,7 +518,7 @@ describe("config", () => {
       .replace("  #   lock:", "    lock:")
       .replace("  #     primary-branch: true", "      primary-branch: true")
       .replace("  #     branch: my-branch", "      branch: release/train");
-    const values = loadConfig("/x/.red/config.yaml", { read: () => activated });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => activated });
 
     expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
     expect(getConfig(values, "dev.trunk")).toBe("develop");
@@ -407,7 +528,7 @@ describe("config", () => {
   });
 
   it("getConfig returns empty string for unset keys", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(values, "afk.does.not.exist")).toBe("");
   });
 
@@ -434,13 +555,13 @@ describe("config", () => {
   it("block-sequence config does not disable the primary-branch guard", () => {
     const text =
       'dev:\n  lock:\n    primary-branch: true\nafk:\n  backpressure:\n    - "npm run test" # full suite\n    - npm run lint\n';
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
     expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
   });
 
   it("injectable reader bypasses the filesystem", () => {
-    const values = loadConfig("virtual.yaml", {
+    const values = loadConfig("virtual.yaml", { ignoreActivationGate: true,
       read: () => "afk:\n  fleet:\n    target: 9\n",
     });
     expect(getConfig(values, "afk.fleet.target")).toBe("9");
@@ -450,28 +571,28 @@ describe("config", () => {
 describe("config — plugins.dev namespace (ADR 0042)", () => {
   it("folds plugins.dev.afk.* down to the bare afk.* accessor keys", () => {
     const text = "plugins:\n  dev:\n    afk:\n      default_runner: codex\n      fleet:\n        target: 4\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "afk.fleet.target")).toBe("4");
   });
 
   it("still reads the legacy top-level afk.* block (back-compat)", () => {
     const text = "afk:\n  default_runner: codex\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
   });
 
   it("lets the namespaced location win over a legacy top-level key", () => {
     const text = "afk:\n  default_runner: claude\nplugins:\n  dev:\n    afk:\n      default_runner: codex\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
   });
 
   it("defaults the external-PR triage request surface off and reads the namespaced toggle", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "dev.triage.external_pr_surface.enabled")).toBe("false");
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    triage:\n      external_pr_surface:\n        enabled: true\n",
     });
@@ -479,10 +600,10 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
   });
 
   it("defaults AFK output shaping off and reads the namespaced terse-steering toggle", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(defaults, "afk.output_shaping.terse_steering")).toBe("false");
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    afk:\n      output_shaping:\n        terse_steering: true\n",
     });
@@ -490,14 +611,14 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
   });
 
   it("defaults and reads AFK validation resource budgets (#1758)", () => {
-    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(readValidationResourceBudget(defaults)).toEqual({
       nodeMaxOldSpaceMb: 2048,
       vitestMaxWorkers: 1,
       heavyAvailableMemoryMb: 4096,
     });
 
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "plugins:\n  dev:\n    afk:\n      validation:\n        node_max_old_space_mb: 1536\n        vitest_max_workers: 2\n        heavy_available_memory_mb: 3072\n",
     });
@@ -511,20 +632,20 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
 
 describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
   it("defaults dev.trunk to main when unset", () => {
-    const values = loadConfig("/x/.red/config.yaml", { read: () => undefined });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => undefined });
     expect(getConfig(values, "dev.trunk")).toBe("main");
   });
 
   it("folds plugins.dev.trunk onto the dev.trunk accessor", () => {
     const text = "plugins:\n  dev:\n    trunk: develop\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.trunk")).toBe("develop");
   });
 
   it("warns when root-level dev.trunk is used, while preserving the current folded accessor behavior", () => {
     const warnings: string[] = [];
     const text = "dev:\n  trunk: develop\n";
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => text,
       warn: (message) => warnings.push(message),
     });
@@ -538,7 +659,7 @@ describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
   it("keeps canonical plugins.dev.trunk ahead of accidental root-level dev.trunk", () => {
     const warnings: string[] = [];
     const text = "dev:\n  trunk: wrong\nplugins:\n  dev:\n    trunk: develop\n";
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => text,
       warn: (message) => warnings.push(message),
     });
@@ -552,7 +673,7 @@ describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
 
   it("does not warn for the legacy-supported top-level afk.* block", () => {
     const warnings: string[] = [];
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "afk:\n  default_runner: codex\n",
       warn: (message) => warnings.push(message),
     });
@@ -563,7 +684,7 @@ describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
 
   it("accepts a namespaced branch value (e.g. workspace/<user>)", () => {
     const text = "plugins:\n  dev:\n    trunk: workspace/forattini\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.trunk")).toBe("workspace/forattini");
   });
 });
@@ -579,7 +700,7 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
 
   it("keeps a sibling scalar key alongside a sequence", () => {
     const text = "afk:\n  default_runner: codex\n  backpressure:\n    - npm test\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(readBackpressure(values)).toEqual(["npm test"]);
   });
@@ -602,24 +723,24 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
 
   it("readBackpressure reads the list in order", () => {
     const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n    - npm run build\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint", "npm run build"]);
   });
 
   it("readBackpressure reads the namespaced location (ADR 0042)", () => {
     const text = "plugins:\n  dev:\n    afk:\n      backpressure:\n        - npm run test\n        - npm run lint\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
   });
 
   it("readBackpressure accepts a single-line scalar as a one-command list", () => {
     const text = "afk:\n  backpressure: npm run test\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(readBackpressure(values)).toEqual(["npm run test"]);
   });
 
   it("readBackpressure returns [] when absent (the gate is a no-op)", () => {
-    const values = loadConfig("/x/.red/config.yaml", { read: () => "afk:\n  default_runner: codex\n" });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
     expect(readBackpressure(values)).toEqual([]);
   });
 });
@@ -666,7 +787,7 @@ describe("config — literal block scalars (#1998)", () => {
       "  enabled: true",
       "",
     ].join("\n");
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.trunk")).toBe("develop");
     expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
     expect(readBackpressure(values)).toEqual([
@@ -696,7 +817,7 @@ describe("config — literal block scalars (#1998)", () => {
 
   it("loader warning names the unsupported folded block scalar construct", () => {
     const warnings: string[] = [];
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "afk:\n  script: >\n    echo nope\n",
       warn: (m) => warnings.push(m),
     });
@@ -709,7 +830,7 @@ describe("config — literal block scalars (#1998)", () => {
 
 describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
   it("defaults to false (merge-without-advice) with CodeRabbit as the review check", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(values, "afk.merge.wait_for_review")).toBe("false");
     expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
   });
@@ -717,14 +838,14 @@ describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
   it("reads the namespaced plugins.dev.afk.merge.* block", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      merge:\n        wait_for_review: true\n        review_check: my-reviewer\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
     expect(getConfig(values, "afk.merge.review_check")).toBe("my-reviewer");
   });
 
   it("reads the legacy top-level afk.merge.* block (back-compat)", () => {
     const text = "afk:\n  merge:\n    wait_for_review: true\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
     // review_check keeps its default when unset.
     expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
@@ -750,32 +871,32 @@ describe("config — resolveCiTimeoutSeconds (RED_AFK_MERGE_CI_TIMEOUT_S, #812)"
 
 describe("config — afk.merge.ci_aware (#812)", () => {
   it("defaults to false (admin-merge immediately)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(values, "afk.merge.ci_aware")).toBe("false");
   });
 
   it("reads the namespaced plugins.dev.afk.merge.ci_aware block", () => {
     const text = "plugins:\n  dev:\n    afk:\n      merge:\n        ci_aware: true\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.merge.ci_aware")).toBe("true");
   });
 });
 
 describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)", () => {
   it("defaults to true (admin-PR landing) when unset", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
   });
 
   it("reads the namespaced plugins.dev.afk.* block", () => {
     const text = "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: false\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
   });
 
   it("reads the legacy top-level afk.* block (back-compat)", () => {
     const text = "afk:\n  worktree_launches_pull_request: false\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
   });
 
@@ -783,20 +904,20 @@ describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)
     const text =
       "afk:\n  worktree_launches_pull_request: false\n" +
       "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: true\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
   });
 });
 
 describe("config — AFK model tier table (ADR 0049)", () => {
   it("defaults the unclassified AFK tier to think per runner", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "claude")).toEqual({ model: "claude-opus-4-8", effort: "high" });
     expect(resolveTier(values, "codex")).toEqual({ model: "gpt-5.5", effort: "high" });
   });
 
   it("lets RED_AFK_MODEL / RED_AFK_EFFORT override every tier (flag pre-sets the env)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     // Override flattens all tiers onto one slug, beating the config/default table.
     expect(resolveTier(values, "opencode", "simple", { RED_AFK_MODEL: "minimax/MiniMax-M2" })).toEqual({
       model: "minimax/MiniMax-M2",
@@ -818,7 +939,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("downgrades one model-policy tier when RED_AFK_TASK_TIER_DOWNGRADE is set", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(downgradeAfkModelTier("think")).toBe("complex");
     expect(downgradeAfkModelTier("complex")).toBe("simple");
     expect(downgradeAfkModelTier("simple")).toBe("validate");
@@ -834,7 +955,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("resolves every Claude tier from the default table", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
     expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
     expect(resolveTier(values, "claude", "complex")).toEqual({ model: "claude-opus-4-8", effort: "medium" });
@@ -842,7 +963,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("resolves every Codex tier from the default gpt-5.x table", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "codex", "validate")).toEqual({ model: "gpt-5.5", effort: "low" });
     expect(resolveTier(values, "codex", "simple")).toEqual({ model: "gpt-5.5", effort: "high" });
     expect(resolveTier(values, "codex", "complex")).toEqual({ model: "gpt-5.5", effort: "medium" });
@@ -850,7 +971,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("resolves every OpenCode tier from the default openrouter table (ADR 0059)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "opencode", "validate")).toEqual({
       model: "openrouter/anthropic/claude-3.5-haiku",
       effort: "low",
@@ -870,7 +991,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("resolves every claude-minimax tier to MiniMax-M3/low from the default table (#792)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "claude-minimax", "validate")).toEqual({ model: "MiniMax-M3", effort: "low" });
     expect(resolveTier(values, "claude-minimax", "simple")).toEqual({ model: "MiniMax-M3", effort: "low" });
     expect(resolveTier(values, "claude-minimax", "complex")).toEqual({ model: "MiniMax-M3", effort: "low" });
@@ -878,7 +999,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("RED_AFK_MODEL still overrides the claude-minimax tier table (#792)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "claude-minimax", "think", { RED_AFK_MODEL: "MiniMax-M3-Custom" })).toEqual({
       model: "MiniMax-M3-Custom",
       effort: "low",
@@ -886,7 +1007,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("claude-minimax does not bleed into the claude table — runners stay isolated (#792)", () => {
-    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
     expect(resolveTier(values, "claude-minimax", "simple")).toEqual({ model: "MiniMax-M3", effort: "low" });
   });
@@ -894,7 +1015,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   it("honours an overridden opencode tier under plugins.dev.afk.models.opencode.*", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          simple:\n            model: openrouter/openai/gpt-4o-mini\n            effort: medium\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(resolveTier(values, "opencode", "simple")).toEqual({
       model: "openrouter/openai/gpt-4o-mini",
       effort: "medium",
@@ -904,7 +1025,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   it("auto-populates every tier from `base`, with a specialized tier overriding it", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          base:\n            model: minimax/MiniMax-M2\n            effort: medium\n          think:\n            model: minimax/MiniMax-M2-thinking\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     // base flows to every un-specialized tier (model AND effort)
     expect(resolveTier(values, "opencode", "validate")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
     expect(resolveTier(values, "opencode", "simple")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
@@ -918,7 +1039,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   it("`base.model` alone uniformly sets the model but leaves each tier's default effort", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          base:\n            model: minimax/MiniMax-M2\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     // model is uniform from base; effort stays at each tier's table default (low/high/medium/high)
     expect(resolveTier(values, "opencode", "validate")).toEqual({ model: "minimax/MiniMax-M2", effort: "low" });
     expect(resolveTier(values, "opencode", "complex")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
@@ -928,7 +1049,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   it("lets explicit tier entries override legacy scalar model keys", () => {
     const text =
       "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-tier-model", effort: "max" });
   });
 
@@ -937,7 +1058,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     // An explicit simple.model = claude-sonnet-4-6 (same as the default) must
     // still win — the old tierModel !== defaultModel guard silently dropped it.
     const text = "afk:\n  model: custom-model\n  models:\n    claude:\n      simple:\n        model: claude-sonnet-4-6\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
   });
 
@@ -946,12 +1067,12 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     // An explicit validate.effort = low (same as the default) must still win.
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        claude:\n          base:\n            effort: medium\n          validate:\n            effort: low\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
   });
 
   it("falls back to legacy per-runner and global scalar model keys", () => {
-    const values = loadConfig("/x/.red/config.yaml", {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () => "afk:\n  model: shared-model\n  models:\n    codex: gpt-custom\n",
     });
     expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-custom", effort: "high" });
@@ -961,7 +1082,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   it("lets the namespaced plugins.dev tier table win over the legacy top-level table", () => {
     const text =
       "afk:\n  models:\n    claude:\n      think:\n        model: legacy-tier\n        effort: low\nplugins:\n  dev:\n    afk:\n      models:\n        claude:\n          think:\n            model: namespaced-tier\n            effort: high\n";
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(resolveTier(values, "claude", "think")).toEqual({ model: "namespaced-tier", effort: "high" });
   });
 });

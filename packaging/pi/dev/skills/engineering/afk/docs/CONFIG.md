@@ -8,6 +8,11 @@
 
 Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside the `afk.hooks` block documented below). Each one has a matching `RED_AFK_*` env override that wins over the config value, so an E2E/CI run can pick a setting without mutating the target repo's config.
 
+**Two loader rules decide whether a key is read at all:**
+
+- **The directory must be opted in** (ADR 0116). Without an explicit `plugins.dev.enabled: true` (ADR 0067), the loader returns the documented defaults and **none** of the file's settings — every table below reads as its default. This is decided in the loader, not only at process entry, so no caller can read a disabled directory's settings.
+- **Retired keys are dropped and warned** (ADR 0117). A key on the tombstone list (`afk.attempt_timeout`, retired when the commit-anchored progress guard replaced the wall-clock cap) warns `RETIRED — it no longer does anything` and is unreadable. An **unknown** key stays silent for forward compatibility: silence means "not yet", a warning means "not any more".
+
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |

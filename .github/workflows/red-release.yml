@@ -88,6 +88,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-castle-vendor-contract.sh
 
+      - name: Test red-release bump push contract
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-red-release-bump-push-contract.sh
+
       - name: Test red-release bump-kind contract
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-red-release-bump-kind.sh
@@ -671,6 +675,11 @@ jobs:
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional. A repo-admin PAT / GitHub App installation token with
+          # contents:write pushes the bump straight to protected main; absent,
+          # the helper degrades to a side-branch PR instead of failing the cut.
+          RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
           RED_BUILD_GIT_SHA: ${{ github.sha }}
           RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
@@ -726,21 +735,11 @@ jobs:
           else
             git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
-            # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
-            # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
-            # workflow), so the bump push races it and loses on a plain push.
-            # Retry with a rebase so a concurrent push never wedges the release.
-            pushed=0
-            for attempt in 1 2 3; do
-              if git push origin HEAD:main; then pushed=1; break; fi
-              echo "push rejected (attempt $attempt) — rebasing onto origin/main"
-              git fetch origin main
-              git rebase origin/main
-            done
-            if [ "$pushed" != 1 ]; then
-              echo "::error::bump push to main failed after 3 attempts"
-              exit 1
-            fi
+            # The bump push is layered (bypass token → rebase-and-retry →
+            # side-branch PR) because main's required status checks decline any
+            # freshly created commit and npm is ALREADY published by this point.
+            # See scripts/release-push-bump.sh for the full rationale.
+            scripts/release-push-bump.sh
           fi
 
       - name: Build release manifest

@@ -120,11 +120,17 @@ export function resolveRoot(rootArg: string | undefined, payload: ClaudePayload,
  * Per-project opt-out, mirroring statusline.sh: a top-level `statusline: false`
  * OR a nested `afk.statusline: false` in `.red/config.yaml` suppresses the line.
  * Returns true when the statusline should be emitted.
+ *
+ * Reads PAST the activation gate (ADR 0116) because this is a KILL SWITCH, not a
+ * setting: fail-closed must never turn an operator's "off" into an "on". A
+ * directory that has not opted into the dev plugin gets none of its settings, but
+ * if it says "no statusline" and the host still invokes this command directly,
+ * the answer is still no.
  */
 export function statuslineEnabled(root: string): boolean {
   const configPath = configFile(root);
   if (!existsSync(configPath)) return true;
-  const cfg = loadConfig(configPath, { warn: () => undefined });
+  const cfg = loadConfig(configPath, { warn: () => undefined, ignoreActivationGate: true });
   if (getConfig(cfg, "statusline") === "false") return false;
   if (getConfig(cfg, "afk.statusline") === "false") return false;
   return true;

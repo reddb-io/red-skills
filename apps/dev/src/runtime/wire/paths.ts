@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import * as rp from "@reddb-io/shared/red-paths.js";
+import { resolveFleetName } from "@reddb-io/red-castle/engine";
 
 export interface RepoContext {
   /** Primary checkout dir. */
@@ -25,11 +26,13 @@ export async function resolveRepoContext(root = process.cwd()): Promise<RepoCont
 // ---------- standard paths ----------
 
 export interface AfkPaths {
+  /** The named fleet these paths belong to ("default" when unnamed). */
+  fleet: string;
   tmpDir: string;
   stateDir: string;
   workersRoot: string;
   historyPath: string;
-  /** Singleton native supervisor runtime lane (tmp tier, ADR 0105). */
+  /** This fleet's native supervisor runtime lane (tmp tier, ADR 0105). */
   supervisorRuntimeDir: string;
   /** Supervisor heartbeat snapshot (tmp supervisor lane, ADR 0105). */
   fleetStatePath: string;
@@ -74,13 +77,23 @@ export interface AfkPaths {
   configPath: string;
 }
 
-export function afkPaths(root: string): AfkPaths {
+/**
+ * Resolve every AFK path for ONE named fleet. Only the supervisor runtime lane
+ * is fleet-scoped — `.red/tmp/supervisors/<fleet>/` — so two named fleets get
+ * disjoint pid locks, stop sentinels, resize directives, and heartbeats while
+ * still sharing the repo-wide worker/claim/worktree lanes the 3-layer claim
+ * already coordinates across. An omitted name resolves to `"default"`, the lane
+ * the single supervisor has always used.
+ */
+export function afkPaths(root: string, fleetName?: string): AfkPaths {
+  const fleet = resolveFleetName(fleetName);
   const tmp = rp.tmpDir(root);
   const state = rp.stateDir(root);
   const afkState = rp.afkStateDir(root);
   const statusline = rp.statuslineStateDir(root);
-  const supervisorRuntime = join(tmp, "supervisors", "default");
+  const supervisorRuntime = join(tmp, "supervisors", fleet);
   return {
+    fleet,
     tmpDir: tmp,
     stateDir: state,
     workersRoot: rp.workersDir(root),

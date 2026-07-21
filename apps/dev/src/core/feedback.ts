@@ -559,12 +559,25 @@ export interface BaselineFailureEvidence {
 }
 
 interface BaselineCheckResult {
-  status: "passed" | "failed";
+  status: "passed" | "failed" | "inconclusive";
   evidence?: BaselineFailureEvidence;
 }
 
 function boundedFailureOutputTail(output: string): string {
   return output.replace(/\n+$/, "").split("\n").slice(-20).join("\n").slice(-4_000);
+}
+
+/**
+ * A baseline check that exited by SIGKILL (137, the usual OOM kill) or whose
+ * output carries a V8 heap-exhaustion / fatal-crash signature did not produce a
+ * clean test verdict — the run was killed by the environment, not by a red
+ * assertion. On the resource-constrained fleet host the full-suite baseline
+ * probe can OOM where CI (a fresh runner) passes, so a crash must NOT be read as
+ * "main is red". Treat it as inconclusive instead.
+ */
+function isCrashOrOom(code: number, output: string): boolean {
+  if (code === 137) return true;
+  return /JavaScript heap out of memory|Reached heap limit|FATAL ERROR|out of memory|\bKilled\b/i.test(output);
 }
 
 function joinCommandOutput(stdout: string, stderr: string): string {
@@ -604,6 +617,24 @@ async function runChecksForBaseline(
       continue;
     }
     const output = joinCommandOutput(result.stdout, result.stderr);
+    if (isCrashOrOom(result.code, output)) {
+      // Inconclusive, NOT a confirmed pre-existing failure. Main's CI is the
+      // validation authority; a local probe OOM/crash on the resource-constrained
+      // fleet host must not manufacture a main-red verdict CI never saw. The
+      // caller filters `status === "failed"` into the baseline-failing set, so an
+      // inconclusive result is excluded — the branch failure is attributed to the
+      // branch (a per-worker block) instead of being filed as a cross-fleet
+      // main-red repair that re-fires the whole CI/CD on a non-bug.
+      out.set(name, {
+        status: "inconclusive",
+        evidence: {
+          check: name,
+          summary: "baseline probe inconclusive (crash/OOM) — not a confirmed main-red failure",
+          outputTail: boundedFailureOutputTail(output),
+        },
+      });
+      continue;
+    }
     out.set(name, {
       status: "failed",
       evidence: {

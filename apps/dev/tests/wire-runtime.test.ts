@@ -190,7 +190,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: docker\n  default_runner: codex\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  sandbox: docker\n  default_runner: codex\n");
       const s = resolveRunSettings(root);
       expect(s.sandbox).toBe("docker");
       expect(s.defaultRunner).toBe("codex");
@@ -216,7 +216,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  feedback:\n    rebase_on_base: true\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  feedback:\n    rebase_on_base: true\n");
       expect(resolveRunSettings(root).feedbackRebaseBase).toBe("main");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -229,7 +229,7 @@ describe("resolveRunSettings", () => {
       mkdirSync(join(root, ".red"), { recursive: true });
       writeFileSync(
         join(root, ".red", "config.yaml"),
-        "dev:\n  lock:\n    branch: release-2\nafk:\n  feedback:\n    rebase_on_base: true\n",
+        "plugins:\n  dev:\n    enabled: true\ndev:\n  lock:\n    branch: release-2\nafk:\n  feedback:\n    rebase_on_base: true\n",
       );
       expect(resolveRunSettings(root).feedbackRebaseBase).toBe("release-2");
     } finally {
@@ -250,7 +250,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "dev:\n  lock:\n    branch: release-2\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\ndev:\n  lock:\n    branch: release-2\n");
       // No rebase_on_base flag → undefined even though a locked branch exists.
       expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
     } finally {
@@ -264,7 +264,7 @@ describe("resolveRunSettings", () => {
       mkdirSync(join(root, ".red"), { recursive: true });
       writeFileSync(
         join(root, ".red", "config.yaml"),
-        "afk:\n  model: shared-model\n  models:\n    codex: gpt-custom\n    claude: claude-custom\n",
+        "plugins:\n  dev:\n    enabled: true\nafk:\n  model: shared-model\n  models:\n    codex: gpt-custom\n    claude: claude-custom\n",
       );
       expect(resolveRunSettings(root, {}, "codex").model).toBe("gpt-custom");
       expect(resolveRunSettings(root, {}, "claude").model).toBe("claude-custom");
@@ -277,7 +277,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: none\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  sandbox: none\n");
       expect(resolveRunSettings(root, { RED_AFK_SANDBOX: "docker" }).sandbox).toBe("docker");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -288,7 +288,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: podman\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  sandbox: podman\n");
       expect(resolveRunSettings(root, { RED_AFK_SANDBOX: "bogus" }).sandbox).toBe("podman");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -299,7 +299,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: bogus\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  sandbox: bogus\n");
       expect(resolveRunSettings(root, {}).sandbox).toBe("none");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -319,7 +319,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 50\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  max_iterations: 50\n");
       expect(resolveRunSettings(root, {}).maxIterations).toBe(50);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -330,7 +330,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 50\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  max_iterations: 50\n");
       expect(resolveRunSettings(root, { RED_AFK_MAX_ITERATIONS: "80" }).maxIterations).toBe(80);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -341,7 +341,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 42\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  max_iterations: 42\n");
       expect(resolveRunSettings(root, { RED_AFK_MAX_ITERATIONS: "0" }).maxIterations).toBe(42);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -352,7 +352,7 @@ describe("resolveRunSettings", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: nope\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  max_iterations: nope\n");
       expect(resolveRunSettings(root, {}).maxIterations).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });

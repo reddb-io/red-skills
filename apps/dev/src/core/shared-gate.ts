@@ -344,6 +344,68 @@ function sensitivePathReason(filePath: string): string {
   return "sensitive path";
 }
 
+// ---------- ordered gate verdict (ADR 0119, issue #2245) ----------
+
+/**
+ * The gate's stages, in CHEAP → EXPENSIVE order.
+ *
+ * `trust` is a handful of regexes over a diff the attempt already computed;
+ * `feedback` is the package test/typecheck/lint suite; `backpressure` is the
+ * operator's extra commands. Ordering them this way is the whole point: a diff
+ * that touches a CI workflow or a lifecycle script can never auto-land, so
+ * running the suite first burns minutes to reach a verdict the trust scan
+ * already decided. Later stages do not run once an earlier one blocks.
+ */
+export const GATE_STAGE_ORDER = ["trust", "feedback", "backpressure"] as const;
+
+export type GateStage = (typeof GATE_STAGE_ORDER)[number];
+
+/** One stage's contribution to the gate verdict. */
+export interface GateStageOutcome {
+  stage: GateStage;
+  /** False → this stage BLOCKS the landing. */
+  ok: boolean;
+  /** True when the stage was not wired or had nothing to run; never blocks. */
+  skipped?: boolean;
+  /** The hits that blocked a failed `trust` stage. */
+  sensitivePaths?: readonly SensitivePathHit[];
+}
+
+/** ONE verdict for the whole gate: green, or the first stage that blocked it. */
+export interface GateVerdict {
+  /** True only when no stage blocked. */
+  ok: boolean;
+  /** The earliest blocking stage in {@link GATE_STAGE_ORDER}. */
+  failedStage?: GateStage;
+  /** Carried through when `failedStage` is `trust`. */
+  sensitivePaths?: readonly SensitivePathHit[];
+}
+
+/**
+ * Fold the stage outcomes into ONE verdict. PURE — no IO.
+ *
+ * The caller may pass the stages in any order and may pass only the stages it
+ * has run so far; the fold always reports the earliest blocker in
+ * {@link GATE_STAGE_ORDER}, so "which stage decided this" does not depend on the
+ * order the caller happened to evaluate them in. A skipped stage never blocks.
+ */
+export function gateVerdict(outcomes: readonly GateStageOutcome[]): GateVerdict {
+  const ordered = [...outcomes].sort(
+    (a, b) => GATE_STAGE_ORDER.indexOf(a.stage) - GATE_STAGE_ORDER.indexOf(b.stage),
+  );
+  for (const outcome of ordered) {
+    if (outcome.skipped === true || outcome.ok) continue;
+    return {
+      ok: false,
+      failedStage: outcome.stage,
+      ...(outcome.sensitivePaths && outcome.sensitivePaths.length > 0
+        ? { sensitivePaths: outcome.sensitivePaths }
+        : {}),
+    };
+  }
+  return { ok: true };
+}
+
 // ---------- built-in sink factories ----------
 
 /**

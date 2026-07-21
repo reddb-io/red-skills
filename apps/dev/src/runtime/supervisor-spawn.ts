@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
+import { FLEET_NAME_ENV } from "../core/fleet-name.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -58,6 +59,8 @@ export interface SpawnSupervisorOptions {
   shrinkMode?: ElasticShrinkMode;
   /** Prior supervisor slot -> worker pid map for takeover/adoption. */
   adoptSlotPids?: readonly HeartbeatSlotPid[];
+  /** Named fleet this supervisor owns (defaults to the `default` lane). */
+  fleet?: string;
 }
 
 /**
@@ -67,17 +70,21 @@ export interface SpawnSupervisorOptions {
  * inline spawn so launch + watchdog-relaunch stay byte-identical.
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
-  const paths = afkPaths(opts.root);
+  const paths = afkPaths(opts.root, opts.fleet);
   mkdirSync(dirname(paths.supervisorPidPath), { recursive: true });
   const pidFile = paths.supervisorPidPath;
 
   const childArgs = [...(opts.passthrough ?? [])];
   if (opts.request) childArgs.unshift("--request", opts.request);
+  // Name the fleet on BOTH channels: the flag is what the supervisor parses, the
+  // env survives a re-exec that drops argv.
+  childArgs.unshift("--fleet", paths.fleet);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     RED_AFK_TARGET: String(opts.target),
     RED_AFK_RUNNER: opts.runner,
+    [FLEET_NAME_ENV]: paths.fleet,
   };
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
   if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
