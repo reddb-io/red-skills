@@ -4,6 +4,23 @@ This file serves the `afk monitor` branch: the readonly aggregated dashboard
 across all live workers, the native-task mirror and its self-cancel teardown, and
 the Codex monitor agent. Reached from *When To Use* (`/afk monitor`).
 
+## Observability reads come from the `dev:afk` MCP
+
+**Every observability verb is a read tool — free to call, and never a reason to
+touch a mutating one.** The tools return structured TOON; the bundle's `monitor`
+command renders the same truth for a human terminal. See [`MCP.md`](./MCP.md).
+
+| Question | Tool |
+| --- | --- |
+| What are the workers, history events, and fleet inputs right now? | `monitor` |
+| Is a quiet worker actually alive? | `worker_vitals`, `worker_status` |
+| What is drainable, and what is parked for a human? | `queue_status` |
+| What happened over the last N days? | `dashboard` (`periodDays`), `history` |
+| What did one lane actually record? | `logs` |
+
+`queue_status` is the census tool: an empty `ready-for-agent` queue with a
+non-empty open backlog is a flow bug to diagnose, never a clean stop.
+
 ## The binding mirror rule (authoritative — stated once)
 
 **The mirror is binding: every monitor tick must (1) render the dashboard and (2) mirror live workers onto the host runner's native task surface, re-checking `afk.state.json` on every tick.** It is never optional and never a shortcut — skipping it because "nothing changed" or because the user "only asked for status" is a bug, not an optimization, since `monitor --mirror-plan` is idempotent and emits zero descriptors when nothing changed. Per-runner mapping:
