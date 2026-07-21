@@ -29,6 +29,15 @@ async function initRoot(): Promise<string> {
 }
 
 describe("memory CLI argument binding", () => {
+  test("renders operation-owned descriptions in CLI help", () => {
+    const result = runMemory(["help"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "Read-only governed recall through the deterministic ranking pipeline",
+    );
+  });
+
   test("preserves repeated what-if flags before positional changes", async () => {
     const root = await initRoot();
     const result = runMemory([
