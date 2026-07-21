@@ -53,6 +53,8 @@ export interface FleetProfile {
   runner: string;
   selector?: FleetSelector;
   config?: FleetConfigOverrides;
+  /** Branch this fleet's work is cut from. Stored with the profile; the
+   * launch-time hookup rides with the castle MCP surface. */
   base?: string;
 }
 
@@ -96,6 +98,16 @@ function assertNonEmptyString(value: unknown, field: string): string {
     throw new FleetRegistryValidationError(`fleet profile needs string ${field}`);
   }
   return value;
+}
+
+/**
+ * Validate an untrusted value (a decoded CLI flag, an MCP tool argument) as a
+ * selector. Unlike the registry's internal normaliser this keeps an empty
+ * selector as `{}` — "scoped to everything" is a legitimate answer a caller may
+ * have typed, and collapsing it to undefined would hide the flag entirely.
+ */
+export function parseFleetSelector(value: unknown): FleetSelector {
+  return normalizeSelector(value) ?? {};
 }
 
 function normalizeSelector(value: unknown): FleetSelector | undefined {
