@@ -274,46 +274,26 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
 });
 
 
-describe("processIssue — main-red-untracked landing park (#1473)", () => {
-  it("red main + missing repair issue parks ready-for-human, preserves the branch, and surfaces auto-file failure", async () => {
+describe("processIssue — baseline comparison is comparison-only (#2380)", () => {
+  it("a branch failure reproduced on the baseline parks blocked:validation and files NO repair issue", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: false,
       baselineFails: true,
       locked: false,
-      mainRedRepairIssue: false,
-      mainRedRepairCreateError: "gh issue create failed",
     });
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("main-red-untracked");
-    expect(result.preserved).toBe(true);
-    expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
-    expect(trace.mainRedRepairCreates).toHaveLength(1);
-    expect(trace.mainRedRepairCreates[0]?.body).toContain("Evaluated commit: `origin/main-tip`");
-    expect(trace.mainRedRepairCreates[0]?.body).toContain("## Observation at origin/main-tip");
-    expect(trace.mainRedRepairCreates[0]?.body).toContain("### test:root");
-    expect(trace.mainRedRepairCreates[0]?.body).toContain("Bounded output tail:");
-    expect(trace.iterLogs).toContain("warn: main-red repair issue sync failed: gh issue create failed");
-    expect(trace.ensuredLabels).toContain("blocked:main-red-untracked");
-    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:main-red-untracked"))).toBe(
-      true,
-    );
-    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    // The verdict is inconclusive, so the branch parks on its own validation
+    // failure — it never lands, and it never becomes anyone else's land block.
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.ensuredLabels).not.toContain("blocked:main-red-untracked");
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+    // Nothing tracked: the retired repair lane files no issue for a red
+    // baseline — the gh surface has no create/find repair hook left to call.
+    expect(trace.comments.some((c) => c.body.includes("main-red repair"))).toBe(false);
     expect(trace.closed).toEqual([]);
-    expect(trace.deletedRemote).toEqual([]);
-    expect(trace.pushedAttempt.length).toBe(1);
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-
-    const blocker = parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "");
-    expect(blocker?.status).toBe("blocked");
-    expect(blocker?.kind).toBe("main-red-untracked");
-    expect(blocker?.summary).toContain("red main");
-    expect(blocker?.summary).toContain("gh issue create failed");
-    expect(blocker?.summary).toContain("afk/wAAAA/9-fix-the-thing");
-    expect(trace.comments.at(-1)?.body).toContain("afk/wAAAA/9-fix-the-thing");
-    expect(trace.comments.at(-1)?.body).toContain("gh issue create failed");
     expect(trace.released).toEqual([9]);
   });
 });
