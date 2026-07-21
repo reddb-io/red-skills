@@ -344,6 +344,7 @@ const SMART_SEARCH_OPERATION: MemoryOperationDefinition<
       description:
         "Read-only smart search over Memory. Composes governed recall, ingested document search, and vector diagnostics into one result without making vector search the source of truth.",
     },
+    http: { aliases: ["/api/search"] },
   },
   execute: (ctx, input) =>
     buildMemorySmartSearch(ctx.store, input.query, {
@@ -376,6 +377,7 @@ const SMART_SEARCH_VIEWER_OPERATION: MemoryOperationDefinition<
       description:
         "Read-only self-contained HTML viewer for smart search. Returns fused recall/doc/asset/vector results, counts, recommendations, embedded JSON, and HTML without writing Memory.",
     },
+    http: { aliases: ["/search"] },
   },
   execute: async (ctx, input) =>
     buildMemorySmartSearchViewerArtifact(
@@ -827,6 +829,7 @@ const HEALTH_OPERATION: MemoryOperationDefinition<OperationSchemas.HealthInput, 
       description:
         "Read-only Memory health summary for MCP agents. Returns graph stats, vector readiness, stale-node diagnostics, Skill telemetry availability, and recommended next actions.",
     },
+    http: { route: "/api/memory/health" },
   },
   execute: (ctx, input) => buildMemoryHealthReport(ctx.store, input),
 };
@@ -850,6 +853,7 @@ const HEALTH_VIEWER_OPERATION: MemoryOperationDefinition<
       description:
         "Read-only self-contained HTML viewer for Memory health. Returns graph stats, vector readiness, stale-node diagnostics, Skill telemetry availability, recommended actions, embedded JSON, and HTML.",
     },
+    http: { route: "/memory/health" },
   },
   execute: async (ctx, input) =>
     buildMemoryHealthViewerArtifact(await buildMemoryHealthReport(ctx.store, input)),
