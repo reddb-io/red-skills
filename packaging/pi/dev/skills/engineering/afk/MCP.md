@@ -83,11 +83,11 @@ worker that is merely pointed the wrong way.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `gate_run` | mutating | Materialize the feedback worktree and run the package-scoped gate. |
-| `gate_baseline_status` | read | Whether the base is tracked-red, and the repair issues tracking it. |
 
 **The gate command is canonical.** `gate_run` runs exactly what the repo
-declares; never widen it with stricter flags. Check `gate_baseline_status`
-before believing a red verdict is a regression.
+declares; never widen it with stricter flags. When it fails, the baseline
+comparison classifies the verdict as `branch-fault` or `inconclusive` — it
+never tracks the base branch as red (#2380).
 
 ### Landing — merge and cascade
 
