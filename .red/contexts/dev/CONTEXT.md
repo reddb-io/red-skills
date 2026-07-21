@@ -154,6 +154,14 @@ _Avoid_: tmp as a catch-all, state mixed with scratch
 The tracked knowledge/config directory at `.red/contracts/`, versioned in the repo and owned by the **dev** plugin. It holds test and validation fixtures (such as `.red/contracts/fixtures/quality-gate/`), contract assertions, and reference data that document interface boundaries and acceptance criteria. Content here is not disposable and must be backed by an Issue/Spec/ADR that states why the fixtures exist.
 _Avoid_: test data (use with care; contracts are *vetted* boundaries, not ad-hoc test input), fixtures root (this is the contracts home, not a general-purpose fixtures directory)
 
+**Config tombstone**:
+An entry in `DELETED_CONFIG_KEYS` naming a config key that USED to mean something (ADR 0117). The loader drops a tombstoned key and warns `RETIRED`; an unknown key stays silent for forward compatibility. Silence means "not yet", a warning means "not any more".
+_Avoid_: deprecated key (a tombstoned key does not still work), unknown key
+
+**Gate stage order**:
+The gate's stages in cheap → expensive order — trust, feedback, backpressure (ADR 0119). `gateVerdict` folds stage outcomes into one `ok` naming the earliest blocker, so a diff that can never auto-land is refused before the package suite runs.
+_Avoid_: validation order (the gate stages are not the suite's internal order), pipeline stage
+
 **State tier**:
 The gitignored durable machine-state tier at `.red/state/`. Named lanes include `afk/`, `rsp/`, `statusline/`, `branch-lock.yaml`, and `red-skills.rdb`. It is never mass-deletable and must survive `rm -rf .red/tmp`.
 _Avoid_: cache, tmp state
