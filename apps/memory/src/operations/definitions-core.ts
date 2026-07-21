@@ -558,7 +558,7 @@ const MAP_CONTRACT_OPERATION: MemoryOperationDefinition<OperationSchemas.MapCont
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "map-contract", supportsJson: true },
+    cli: { command: "map-contract", supportsJson: true, defaultFormat: "json" },
     mcp: {
       toolName: "memory_map_contract",
       description:
