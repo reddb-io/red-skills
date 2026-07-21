@@ -31,6 +31,9 @@ export const MEMORY_ROOT_ENV = "MEMORY_ROOT";
 /** Env var the brain plugin reads to override its repo root. */
 export const BRAIN_ROOT_ENV = "RED_BRAIN_ROOT";
 
+/** Env var that overrides the operator-scoped Manager portfolio root. */
+export const MANAGER_ROOT_ENV = "RED_MANAGER_ROOT";
+
 /**
  * Ordered root-override env vars, first non-empty wins in {@link resolveRedRoot}.
  * Memory takes precedence over brain only because it is listed first; a caller
@@ -91,6 +94,29 @@ export function brainDir(root: string): string {
 /** The LLM Wiki store home: `<root>/.red/wiki`. */
 export function wikiDir(root: string): string {
   return join(redDir(root), "wiki");
+}
+
+/**
+ * The Manager portfolio store home: `<root>/.red/manager` (ADR 0109, Spec #2290).
+ *
+ * Unlike every other store home the Manager root is NOT a repo root — the
+ * portfolio is operator-and-host-scoped and repo-independent, so callers pass
+ * the operator home directory (see {@link resolveManagerRoot}), never a
+ * checkout. Efforts therefore survive across repositories and worktrees.
+ */
+export function managerDir(root: string): string {
+  return join(redDir(root), "manager");
+}
+
+/** Per-effort store lane: `<root>/.red/manager/efforts`. */
+export function managerEffortsDir(root: string): string {
+  return join(managerDir(root), "efforts");
+}
+
+/** One effort's durable file: `<root>/.red/manager/efforts/<effortId>.toonl`. */
+export function managerEffortFile(root: string, effortId: string): string {
+  if (!effortId) throw new Error("effortId is required");
+  return join(managerEffortsDir(root), `${effortId}.toonl`);
 }
 
 // ── State-tier lanes (ADR 0098 §2) ──────────────────────────────────────────
@@ -332,6 +358,28 @@ export function resolveRedRoot(options: ResolveRedRootOptions): string {
     current = resolvedParent;
   }
   return options.startDir;
+}
+
+export interface ResolveManagerRootOptions {
+  /** The operator's home directory — the default Manager scope. */
+  homeDir: string;
+  /** Env map consulted for {@link MANAGER_ROOT_ENV}. */
+  env: Record<string, string | undefined>;
+}
+
+/**
+ * Resolve the directory that CONTAINS the Manager `.red/manager` store.
+ *
+ * Defaults to the operator home so the portfolio is operator-and-host-scoped
+ * and repo-independent — running `manager` from any checkout reaches the same
+ * efforts. `RED_MANAGER_ROOT` overrides it (relative values resolve against the
+ * home dir), which is how tests and alternate operator profiles redirect the
+ * store without touching the real home.
+ */
+export function resolveManagerRoot(options: ResolveManagerRootOptions): string {
+  const override = options.env[MANAGER_ROOT_ENV];
+  if (override) return isAbsolute(override) ? override : resolve(options.homeDir, override);
+  return options.homeDir;
 }
 
 // ── Legacy worktree classification (boot-sweep authority) ────────────────────
