@@ -136,6 +136,13 @@ export async function runCommandWait(context: CommandWaitContext): Promise<WaitE
  * must not be mistaken for a target failure. Only the deadline converts an
  * unresolved wait into a terminal `timeout`, and the last observation rides along
  * so the caller can see WHY it never resolved.
+ *
+ * `makeWakeSignal` is the webhook-acceleration hook. When provided, each sleep
+ * cycle creates a fresh AbortSignal by calling it; if that signal fires before
+ * the backoff interval elapses the probe runs immediately. A `undefined` return
+ * from the factory means "no early wake this cycle" — the full interval is used.
+ * The factory must create a fresh signal each call so the subscription is renewed
+ * after every probe.
  */
 export async function pollUntilDone(input: {
   probe: () => Promise<Verdict>;
@@ -144,6 +151,7 @@ export async function pollUntilDone(input: {
   registryPath: string;
   entry: WaitRegistryEntry;
   signal: AbortSignal;
+  makeWakeSignal?: () => AbortSignal | undefined;
 }): Promise<WaitExecution> {
   const { probe, timeoutMs, baseSleepMs, registryPath, entry, signal } = input;
   const deadline = Date.now() + timeoutMs;
@@ -173,7 +181,9 @@ export async function pollUntilDone(input: {
     // sleeping past the deadline, so the loop cannot overshoot its own bound.
     const backoffMs = Math.min(baseSleepMs * 4, Math.round(baseSleepMs * Math.pow(1.25, attempt - 1)));
     const jitterMs = Math.floor(Math.random() * 1_000);
-    await sleepUntil(Math.min(backoffMs + jitterMs, Math.max(0, deadline - Date.now())), signal);
+    const sleepMs = Math.min(backoffMs + jitterMs, Math.max(0, deadline - Date.now()));
+    const wakeSignal = input.makeWakeSignal?.();
+    await sleepUntilOrWake(sleepMs, signal, wakeSignal);
   }
 
   await writeStatus(registryPath, entry, "timeout").catch(() => undefined);
@@ -227,6 +237,35 @@ function interruptedVerdict(last: Verdict | undefined, attempts: number, lastPol
     attempts,
     last_poll_at: lastPollAt ?? null,
     ...(last ? { last_observation: observationOf(last) } : {}),
+  });
+}
+
+/**
+ * Like sleepUntil, but also resolves early when wakeSignal fires.
+ *
+ * When `wakeSignal` is undefined the behaviour is identical to `sleepUntil`.
+ * When it fires before `ms` elapses the sleep resolves immediately, so the
+ * next probe runs without waiting out the full backoff interval.
+ *
+ * `cancelSignal` always takes priority: if it fires the sleep resolves and the
+ * outer loop's abort check ends the wait. A `wakeSignal` that fires only
+ * shortens the sleep — it does not abort the wait.
+ */
+async function sleepUntilOrWake(ms: number, cancelSignal: AbortSignal, wakeSignal?: AbortSignal): Promise<void> {
+  if (cancelSignal.aborted || ms <= 0) return;
+  if (wakeSignal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      cancelSignal.removeEventListener("abort", onCancel);
+      wakeSignal?.removeEventListener("abort", onWake);
+      resolve();
+    }
+    const onCancel = () => done();
+    const onWake = () => done();
+    cancelSignal.addEventListener("abort", onCancel, { once: true });
+    wakeSignal?.addEventListener("abort", onWake, { once: true });
   });
 }
 
