@@ -19,9 +19,13 @@ export interface EnginePaths {
   readonly castleStateRoot: string;
   readonly castleHistory: string;
   readonly castleValidation: string;
+  /** Named-fleet profile registry (`name -> FleetProfile`). */
+  readonly castleFleets: string;
   readonly tmpRoot: string;
   readonly supervisorsRoot: string;
   readonly supervisor: (id: string) => string;
+  /** Runtime lane of ONE named fleet's supervisor. */
+  readonly fleet: (name: string) => string;
   readonly workersRoot: string;
   readonly worker: (workerId: string) => string;
   readonly monitorsRoot: string;
@@ -52,9 +56,11 @@ export function createEnginePaths(redRoot: string): EnginePaths {
     castleStateRoot,
     castleHistory: resolve(castleStateRoot, "history.toonl"),
     castleValidation: resolve(castleStateRoot, "validation.toonl"),
+    castleFleets: resolve(castleStateRoot, "fleets.toonl"),
     tmpRoot,
     supervisorsRoot,
     supervisor: (id) => resolve(supervisorsRoot, id),
+    fleet: (name) => resolve(supervisorsRoot, name),
     workersRoot,
     worker: (workerId) => resolve(workersRoot, workerId),
     monitorsRoot,
