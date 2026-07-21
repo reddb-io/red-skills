@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -235,6 +235,65 @@ describe("dev:afk MCP host adapter", () => {
     });
     await expect(deps.unblockSweep()).resolves.toEqual({ promoted: [2307] });
   });
+
+  it("routes the sensitive gate, landing, and claim tools through their operations", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(
+      deps.gateRun({ branch: "afk/w80UR/2307-castle-mcp-s4" }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      deps.landBranch({ issue: 2307, branch: "afk/w80UR/2307-castle-mcp-s4" }),
+    ).resolves.toMatchObject({ issue: 2307, ok: true });
+    await expect(deps.gateBaselineStatus({})).resolves.toEqual({
+      main_red: false,
+    });
+    await expect(deps.cascadeStatus({ issue: 2307 })).resolves.toMatchObject({
+      issue: 2307,
+    });
+    await expect(deps.claimStatus({ issue: 2307 })).resolves.toMatchObject({
+      issue: 2307,
+    });
+    await expect(deps.claimRelease({ issue: 2307 })).resolves.toMatchObject({
+      issue: 2307,
+    });
+    expect(operations.gateRun).toHaveBeenCalledWith({
+      branch: "afk/w80UR/2307-castle-mcp-s4",
+    });
+    expect(operations.landBranch).toHaveBeenCalledWith({
+      issue: 2307,
+      branch: "afk/w80UR/2307-castle-mcp-s4",
+    });
+  });
+
+  it("enumerates the disposable worktree lanes and refuses escapes on removal", async () => {
+    const cwd = await root();
+    await mkdir(join(cwd, ".red", "tmp", "worktrees", "landing", "main-2307"), {
+      recursive: true,
+    });
+    await mkdir(join(cwd, ".red", "tmp", "worktrees", "feedback", "afk-2307"), {
+      recursive: true,
+    });
+    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+
+    await expect(deps.worktreeList()).resolves.toEqual([
+      {
+        lane: "feedback",
+        name: "afk-2307",
+        path: join(".red", "tmp", "worktrees", "feedback", "afk-2307"),
+      },
+      {
+        lane: "landing",
+        name: "main-2307",
+        path: join(".red", "tmp", "worktrees", "landing", "main-2307"),
+      },
+    ]);
+    await expect(
+      deps.worktreeRemove({ path: join("..", "elsewhere") }),
+    ).rejects.toThrow(/escapes/);
+  });
 });
 
 function fakeOperations(): DevAfkMcpOperations {
@@ -254,5 +313,14 @@ function fakeOperations(): DevAfkMcpOperations {
       local_reaped: [],
     })),
     unblockSweep: vi.fn(async () => ({ promoted: [2307] })),
+    gateRun: vi.fn(async (input) => ({ branch: input.branch, ok: true })),
+    gateBaselineStatus: vi.fn(async () => ({ main_red: false })),
+    landBranch: vi.fn(async (input) => ({ issue: input.issue, ok: true })),
+    cascadeStatus: vi.fn(async (input) => ({
+      issue: input.issue,
+      promotable: [],
+    })),
+    claimStatus: vi.fn(async (input) => ({ issue: input.issue, holders: [] })),
+    claimRelease: vi.fn(async (input) => ({ issue: input.issue, conceded: [] })),
   };
 }

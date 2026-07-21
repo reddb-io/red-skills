@@ -78,6 +78,35 @@ export interface RetakeToolInput {
   prLimit?: number;
 }
 
+export interface GateRunInput {
+  branch: string;
+  base?: string;
+}
+
+export interface GateBaselineStatusInput {
+  base?: string;
+}
+
+export interface LandBranchInput {
+  issue: number;
+  branch: string;
+  base?: string;
+  title?: string;
+  openPr?: boolean;
+}
+
+export interface CascadeStatusInput {
+  issue: number;
+}
+
+export interface ClaimIssueInput {
+  issue: number;
+}
+
+export interface WorktreeRemoveInput {
+  path: string;
+}
+
 export interface CastleMcpDependencies {
   fleetList(): Promise<unknown>;
   fleetStatus(input: FleetNameInput): Promise<unknown>;
@@ -101,6 +130,14 @@ export interface CastleMcpDependencies {
   retake(input: RetakeToolInput): Promise<unknown>;
   reap(): Promise<unknown>;
   unblockSweep(): Promise<unknown>;
+  gateRun(input: GateRunInput): Promise<unknown>;
+  gateBaselineStatus(input: GateBaselineStatusInput): Promise<unknown>;
+  landBranch(input: LandBranchInput): Promise<unknown>;
+  cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
+  claimStatus(input: ClaimIssueInput): Promise<unknown>;
+  claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  worktreeList(): Promise<unknown>;
+  worktreeRemove(input: WorktreeRemoveInput): Promise<unknown>;
 }
 
 export interface CastleMcpTool {
@@ -372,6 +409,80 @@ export function createCastleMcpTools(
         "MUTATING: promote dependency-blocked issues whose requirements are all closed.",
       inputSchema: {},
       invoke: () => deps.unblockSweep(),
+    },
+    {
+      name: "gate_run",
+      title: "Run the AFK gate",
+      description:
+        "MUTATING: materialize the branch's feedback worktree and run the package-scoped validation gate against it.",
+      inputSchema: {
+        branch: z.string().min(1),
+        base: z.string().min(1).optional(),
+      },
+      invoke: (input) => deps.gateRun(input as unknown as GateRunInput),
+    },
+    {
+      name: "gate_baseline_status",
+      title: "Read gate baseline status",
+      description:
+        "Return whether the base branch is tracked-red and the open main-red repair issues that track it.",
+      inputSchema: { base: z.string().min(1).optional() },
+      invoke: ({ base }) =>
+        deps.gateBaselineStatus({ base: base as string | undefined }),
+    },
+    {
+      name: "land_branch",
+      title: "Land AFK branch",
+      description:
+        "MUTATING: land one validated worker branch into its base through the complete landing sequence.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        branch: z.string().min(1),
+        base: z.string().min(1).optional(),
+        title: z.string().min(1).optional(),
+        openPr: z.boolean().optional(),
+      },
+      invoke: (input) => deps.landBranch(input as unknown as LandBranchInput),
+    },
+    {
+      name: "cascade_status",
+      title: "Read close cascade",
+      description:
+        "Return the dependents of one issue and which of them the close cascade would promote.",
+      inputSchema: { issue: z.number().int().positive() },
+      invoke: ({ issue }) => deps.cascadeStatus({ issue: issue as number }),
+    },
+    {
+      name: "claim_status",
+      title: "Read AFK claim",
+      description:
+        "Return the parsed claim marker records for one issue and the worker currently holding it.",
+      inputSchema: { issue: z.number().int().positive() },
+      invoke: ({ issue }) => deps.claimStatus({ issue: issue as number }),
+    },
+    {
+      name: "claim_release",
+      title: "Release AFK claim",
+      description:
+        "MUTATING: post a concede marker for every un-conceded claim holder so the issue becomes claimable again.",
+      inputSchema: { issue: z.number().int().positive() },
+      invoke: ({ issue }) => deps.claimRelease({ issue: issue as number }),
+    },
+    {
+      name: "worktree_list",
+      title: "List disposable worktrees",
+      description:
+        "Enumerate every checkout under the disposable `.red/tmp/worktrees/*` lanes.",
+      inputSchema: {},
+      invoke: () => deps.worktreeList(),
+    },
+    {
+      name: "worktree_remove",
+      title: "Remove disposable worktree",
+      description:
+        "MUTATING: remove one checkout under the disposable `.red/tmp/worktrees/*` lanes.",
+      inputSchema: { path: z.string().min(1) },
+      invoke: ({ path }) => deps.worktreeRemove({ path: path as string }),
     },
   ];
 }

@@ -60,6 +60,31 @@ function deps(): CastleMcpDependencies {
     retake: vi.fn(async (input) => ({ issue: { number: input.issue } })),
     reap: vi.fn(async () => ({ remote: [], local: [] })),
     unblockSweep: vi.fn(async () => ({ promoted: [] })),
+    gateRun: vi.fn(async (input) => ({ branch: input.branch, ok: true, checks: [] })),
+    gateBaselineStatus: vi.fn(async () => ({ main_red: false, repair_issues: [] })),
+    landBranch: vi.fn(async (input) => ({
+      issue: input.issue,
+      branch: input.branch,
+      ok: true,
+    })),
+    cascadeStatus: vi.fn(async (input) => ({
+      issue: input.issue,
+      dependents: [],
+      promotable: [],
+    })),
+    claimStatus: vi.fn(async (input) => ({
+      issue: input.issue,
+      records: [],
+      holder: null,
+    })),
+    claimRelease: vi.fn(async (input) => ({
+      issue: input.issue,
+      conceded: ["w80UR"],
+    })),
+    worktreeList: vi.fn(async () => [
+      { lane: "landing", name: "main-adopt-2307", path: ".red/tmp/worktrees/landing/main-adopt-2307" },
+    ]),
+    worktreeRemove: vi.fn(async (input) => ({ path: input.path, removed: true })),
   };
 }
 
@@ -89,6 +114,14 @@ describe("dev:afk MCP tools", () => {
       "retake",
       "reap",
       "unblock_sweep",
+      "gate_run",
+      "gate_baseline_status",
+      "land_branch",
+      "cascade_status",
+      "claim_status",
+      "claim_release",
+      "worktree_list",
+      "worktree_remove",
     ]);
   });
 
@@ -220,5 +253,80 @@ describe("dev:afk MCP tools", () => {
     expect(d.reap).toHaveBeenCalledOnce();
     await tools.find((tool) => tool.name === "unblock_sweep")!.invoke({});
     expect(d.unblockSweep).toHaveBeenCalledOnce();
+  });
+
+  it("runs the gate and reports the baseline through the Gate domain", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "gate_run")!
+        .invoke({ branch: "afk/w80UR/2307-castle-mcp-s4" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(d.gateRun).toHaveBeenCalledWith({
+      branch: "afk/w80UR/2307-castle-mcp-s4",
+    });
+
+    await expect(
+      tools.find((tool) => tool.name === "gate_baseline_status")!.invoke({}),
+    ).resolves.toEqual({ main_red: false, repair_issues: [] });
+  });
+
+  it("lands a validated branch and reports the close cascade", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "land_branch")!
+      .invoke({ issue: 2307, branch: "afk/w80UR/2307-castle-mcp-s4" });
+    expect(d.landBranch).toHaveBeenCalledWith({
+      issue: 2307,
+      branch: "afk/w80UR/2307-castle-mcp-s4",
+    });
+
+    await tools
+      .find((tool) => tool.name === "cascade_status")!
+      .invoke({ issue: 2307 });
+    expect(d.cascadeStatus).toHaveBeenCalledWith({ issue: 2307 });
+    expect(
+      tools.find((tool) => tool.name === "land_branch")!.description,
+    ).toMatch(/^MUTATING:/);
+  });
+
+  it("reads and releases claim records through the Claim domain", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "claim_status")!.invoke({ issue: 2307 }),
+    ).resolves.toMatchObject({ issue: 2307, holder: null });
+    await tools
+      .find((tool) => tool.name === "claim_release")!
+      .invoke({ issue: 2307 });
+    expect(d.claimRelease).toHaveBeenCalledWith({ issue: 2307 });
+    expect(
+      tools.find((tool) => tool.name === "claim_release")!.description,
+    ).toMatch(/^MUTATING:/);
+  });
+
+  it("enumerates and removes disposable worktrees", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "worktree_list")!.invoke({}),
+    ).resolves.toMatchObject([{ lane: "landing" }]);
+    await tools
+      .find((tool) => tool.name === "worktree_remove")!
+      .invoke({ path: ".red/tmp/worktrees/landing/main-adopt-2307" });
+    expect(d.worktreeRemove).toHaveBeenCalledWith({
+      path: ".red/tmp/worktrees/landing/main-adopt-2307",
+    });
+    for (const name of ["gate_run", "worktree_remove"]) {
+      expect(tools.find((tool) => tool.name === name)!.description).toMatch(
+        /^MUTATING:/,
+      );
+    }
   });
 });

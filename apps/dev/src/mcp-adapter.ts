@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
@@ -19,10 +20,15 @@ import {
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
+  CascadeStatusInput,
   CastleMcpDependencies,
+  ClaimIssueInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  GateBaselineStatusInput,
+  GateRunInput,
+  LandBranchInput,
   LogsInput,
   RequeueToolInput,
   RetakeToolInput,
@@ -30,6 +36,7 @@ import type {
   WorkerRequestInput,
   WorkerSteerInput,
   WorkerStopInput,
+  WorktreeRemoveInput,
 } from "../../../packages/red-castle/src/mcp-server.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
@@ -57,7 +64,26 @@ import {
   dispatchGo,
   type DisposableIssueSpec,
 } from "./core/go.js";
-import { loadConfig, readBackpressure } from "./core/config.js";
+import {
+  getConfig,
+  loadConfig,
+  readBackpressure,
+  readValidationResourceBudget,
+} from "./core/config.js";
+import * as gitx from "./runtime/git.js";
+import { makeFeedbackWorktree } from "./runtime/feedback-worktree.js";
+import { relevantScopes, runFeedback } from "./core/feedback.js";
+import { doLanding } from "./core/landing.js";
+import {
+  parseClaimRecords,
+  renderClaimComment,
+  type ClaimRecord,
+} from "./core/claim.js";
+import { parseReqLabels, planCloseCascade, type DependentIssue } from "./core/boot-sweep.js";
+import {
+  MAIN_RED_REPAIR_MARKER,
+  mainRedRepairFailuresFromBody,
+} from "./core/main-red-repair.js";
 import {
   branchesToReap,
   planLiveBranchCleanup,
@@ -84,6 +110,12 @@ export interface DevAfkMcpOperations {
   retake(input: RetakeToolInput): Promise<unknown>;
   reap(): Promise<unknown>;
   unblockSweep(): Promise<unknown>;
+  gateRun(input: GateRunInput): Promise<unknown>;
+  gateBaselineStatus(input: GateBaselineStatusInput): Promise<unknown>;
+  landBranch(input: LandBranchInput): Promise<unknown>;
+  cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
+  claimStatus(input: ClaimIssueInput): Promise<unknown>;
+  claimRelease(input: ClaimIssueInput): Promise<unknown>;
 }
 
 export interface DevAfkMcpRuntime {
@@ -183,6 +215,27 @@ const defaultMcpRuntime: DevAfkMcpRuntime = {
   },
   executeRequeue: (root, input) => executeRequeue(input, { cwd: root }),
 };
+
+/** Resolve the base branch a gate/landing runs against: explicit input first,
+ * then the configured trunk, then `main`. */
+function resolveConfiguredBase(root: string, base?: string): string {
+  if (base) return base;
+  const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
+  return getConfig(config, "dev.trunk") || "main";
+}
+
+/** Fold claim markers to the LATEST record per worker — the same
+ * highest-comment-id-wins order the reconciler uses. */
+function latestClaimPerWorker(
+  records: readonly ClaimRecord[],
+): Map<string, ClaimRecord> {
+  const latest = new Map<string, ClaimRecord>();
+  for (const record of records) {
+    const seen = latest.get(record.worker);
+    if (!seen || record.commentId > seen.commentId) latest.set(record.worker, record);
+  }
+  return latest;
+}
 
 export function createDefaultDevAfkMcpOperations(
   root: string,
@@ -301,6 +354,178 @@ export function createDefaultDevAfkMcpOperations(
         },
       );
       return { promoted };
+    },
+    async gateRun(input) {
+      const paths = afkPaths(root);
+      const config = loadConfig(paths.configPath, { warn: () => undefined });
+      const base = resolveConfiguredBase(root, input.base);
+      const feedback = makeFeedbackWorktree(
+        root,
+        paths.feedbackWorktreesDir,
+        undefined,
+        { resourceBudget: readValidationResourceBudget(config) },
+      );
+      try {
+        const changedFiles = await gitx.changedFiles({ cwd: root }, input.branch, base);
+        const result = await runFeedback(feedback.pnpm, {
+          worktree: input.branch,
+          scopes: relevantScopes(feedback.layout, changedFiles),
+          layout: feedback.layout,
+          now: () => Date.now(),
+          baselineWorktree: base,
+        });
+        return {
+          branch: input.branch,
+          base,
+          ok: result.ok,
+          changed_files: changedFiles,
+          checks: result.checks.map((check) => ({
+            name: check.name,
+            script: check.script,
+            scope: check.scope,
+            status: check.status,
+          })),
+          baseline_probe_ran: result.baselineProbeRan === true,
+          baseline_downgraded: result.baselineDowngraded,
+          baseline_failures: result.baselineFailures ?? [],
+        };
+      } finally {
+        await feedback.cleanup();
+      }
+    },
+    async gateBaselineStatus(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      const tracked = (await ghx.listMainRedRepairIssues(gh)).filter((issue) =>
+        issue.body?.includes(MAIN_RED_REPAIR_MARKER),
+      );
+      return {
+        base: resolveConfiguredBase(root, input.base),
+        main_red: tracked.length > 0,
+        repair_issues: tracked.map((issue) => ({
+          number: issue.number,
+          title: issue.title ?? "",
+          failures: mainRedRepairFailuresFromBody(issue.body),
+        })),
+      };
+    },
+    async landBranch(input) {
+      const context = await resolveRepoContext(root);
+      const paths = afkPaths(root);
+      const gitCtx: gitx.GitContext = { cwd: root };
+      const base = resolveConfiguredBase(root, input.base);
+      const changedFiles = await gitx.changedFiles(gitCtx, input.branch, base);
+      const slug = (value: string) =>
+        value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
+      const result = await doLanding(
+        {
+          mergeExec: gitx.mergeExec(gitCtx),
+          remoteGit: gitx.gitExec(gitCtx),
+          fireHook: async () => true,
+          makeLandingWorktree: async (target) => {
+            const dest = join(paths.landingWorktreesDir, `${slug(target)}-mcp-${input.issue}`);
+            await gitx.worktreeRemove(gitCtx, dest);
+            return (await gitx.worktreeAdd(gitCtx, dest, target)) ? dest : null;
+          },
+          removeLandingWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
+          makeRebaseWorktree: async (branch) => {
+            const dest = join(paths.rebaseWorktreesDir, `${slug(branch)}-mcp-${input.issue}`);
+            await gitx.worktreeRemove(gitCtx, dest);
+            return (await gitx.worktreeAdd(gitCtx, dest, branch)) ? dest : null;
+          },
+          removeRebaseWorktree: (dir) => gitx.worktreeRemove(gitCtx, dir),
+        },
+        {
+          openPr: input.openPr !== false,
+          locked: false,
+          repo: context.repo,
+          repoDir: root,
+          remote: context.remote,
+          branch: input.branch,
+          base,
+          trunk: base,
+          issue: input.issue,
+          title: input.title ?? `Issue #${input.issue}`,
+          changedFiles,
+        },
+        {
+          preMerge: () => `pre_merge #${input.issue} (${input.branch} → ${base})`,
+          postMerge: (mergeSha) =>
+            `post_merge #${input.issue} (${input.branch} → ${base}${mergeSha ? ` @ ${mergeSha}` : ""})`,
+        },
+      );
+      return { issue: input.issue, branch: input.branch, base, ...result };
+    },
+    async cascadeStatus(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      const states = await ghx.listIssueStates(gh);
+      const dependents: DependentIssue[] = [];
+      for (const [number, row] of states) {
+        if (row.state.toUpperCase() !== "OPEN") continue;
+        const reqs = parseReqLabels(row.labels);
+        if (!reqs.includes(input.issue)) continue;
+        dependents.push({
+          number,
+          reqs: reqs.map((n) => ({
+            n,
+            closed: (states.get(n)?.state ?? "").toUpperCase() === "CLOSED",
+          })),
+        });
+      }
+      return {
+        issue: input.issue,
+        dependents: dependents.map((dependent) => ({
+          number: dependent.number,
+          reqs: dependent.reqs,
+        })),
+        promotable: planCloseCascade(input.issue, dependents).map((plan) => ({
+          number: plan.number,
+          refs: plan.refs,
+          req_labels: plan.reqLabels,
+        })),
+      };
+    },
+    async claimStatus(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
+      const latest = latestClaimPerWorker(records);
+      const holders = [...latest.values()].filter((record) => record.kind === "claim");
+      return {
+        issue: input.issue,
+        records: records.map((record) => ({
+          comment_id: record.commentId,
+          worker: record.worker,
+          kind: record.kind,
+          runner: record.runner ?? "",
+          created_at: record.createdAt ?? "",
+        })),
+        holders: holders.map((record) => ({
+          worker: record.worker,
+          comment_id: record.commentId,
+          runner: record.runner ?? "",
+          created_at: record.createdAt ?? "",
+        })),
+      };
+    },
+    async claimRelease(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
+      const holders = [...latestClaimPerWorker(records).values()].filter(
+        (record) => record.kind === "claim",
+      );
+      const conceded: string[] = [];
+      for (const holder of holders) {
+        await ghx.postClaimComment(
+          gh,
+          input.issue,
+          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede"),
+        );
+        conceded.push(holder.worker);
+      }
+      return { issue: input.issue, conceded };
     },
   };
 }
@@ -509,6 +734,41 @@ async function workerVitals(root: string) {
   }));
 }
 
+/** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
+ * lane-then-name order. A missing lane root is an empty list, not an error. */
+async function listDisposableWorktrees(root: string) {
+  const { readdir } = await import("node:fs/promises");
+  const worktreesRoot = worktreesDir(root);
+  const lanes = await readdir(worktreesRoot, { withFileTypes: true }).catch(() => []);
+  const out: { lane: string; name: string; path: string }[] = [];
+  for (const lane of lanes.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    const entries = await readdir(join(worktreesRoot, lane.name), {
+      withFileTypes: true,
+    }).catch(() => []);
+    for (const entry of entries.filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      out.push({
+        lane: lane.name,
+        name: entry.name,
+        path: relative(root, join(worktreesRoot, lane.name, entry.name)),
+      });
+    }
+  }
+  return out;
+}
+
+/** Remove ONE checkout under the disposable worktree lanes. A path that escapes
+ * `.red/tmp/worktrees/` is refused — the tool never removes a real checkout. */
+async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput) {
+  const worktreesRoot = resolve(worktreesDir(root));
+  const target = resolve(root, input.path);
+  const rel = relative(worktreesRoot, target);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("worktree path escapes the disposable worktree lanes");
+  }
+  await gitx.worktreeRemove({ cwd: root }, target);
+  return { path: relative(root, target), removed: !existsSync(target) };
+}
+
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
@@ -632,5 +892,13 @@ export function createDevAfkMcpDependencies(
     retake: (input) => operations.retake(input),
     reap: () => operations.reap(),
     unblockSweep: () => operations.unblockSweep(),
+    gateRun: (input) => operations.gateRun(input),
+    gateBaselineStatus: (input) => operations.gateBaselineStatus(input),
+    landBranch: (input) => operations.landBranch(input),
+    cascadeStatus: (input) => operations.cascadeStatus(input),
+    claimStatus: (input) => operations.claimStatus(input),
+    claimRelease: (input) => operations.claimRelease(input),
+    worktreeList: () => listDisposableWorktrees(root),
+    worktreeRemove: (input) => removeDisposableWorktree(root, input),
   };
 }
