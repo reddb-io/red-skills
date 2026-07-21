@@ -34,6 +34,41 @@ function deps(): CastleMcpDependencies {
       ready_for_agent: [],
       ready_for_human: [],
     })),
+    gateRun: vi.fn(async (input) => ({
+      branch: input.branch,
+      base: input.base ?? "main",
+      ok: true,
+      checks: [{ name: "test:apps/dev", status: "passed" }],
+    })),
+    gateBaselineStatus: vi.fn(async () => ({
+      main_red: false,
+      repair_issue: null,
+      failures: [],
+    })),
+    landBranch: vi.fn(async (input) => ({
+      ok: true,
+      issue: input.issue,
+      branch: input.branch,
+      locked: false,
+    })),
+    cascadeStatus: vi.fn(async () => ({ trunk: "main", branches: [] })),
+    claimStatus: vi.fn(async (input) => ({
+      issue: input.issue,
+      live_owner: "host:wABCD",
+      stale_owners: [],
+      conceded_owners: [],
+      records: [{ comment_id: 1, worker: "host:wABCD", kind: "claim" }],
+    })),
+    claimRelease: vi.fn(async (input) => ({
+      issue: input.issue,
+      worker: input.worker,
+      status: "conceded",
+    })),
+    worktreeList: vi.fn(async () => ({ lanes: [], worktrees: [] })),
+    worktreeRemove: vi.fn(async (input) => ({
+      path: input.path,
+      status: "removed",
+    })),
   };
 }
 
@@ -51,7 +86,69 @@ describe("dev:afk MCP tools", () => {
       "monitor",
       "history",
       "queue_status",
+      "gate_run",
+      "gate_baseline_status",
+      "land_branch",
+      "cascade_status",
+      "claim_status",
+      "claim_release",
+      "worktree_list",
+      "worktree_remove",
     ]);
+  });
+
+  it("marks every landing/claim/worktree tool that mutates", () => {
+    const tools = createCastleMcpTools(deps());
+    const mutating = tools
+      .filter((tool) => tool.description.startsWith("MUTATING:"))
+      .map((tool) => tool.name);
+    expect(mutating).toEqual(
+      expect.arrayContaining([
+        "land_branch",
+        "claim_release",
+        "worktree_remove",
+      ]),
+    );
+    expect(mutating).not.toContain("gate_baseline_status");
+    expect(mutating).not.toContain("claim_status");
+    expect(mutating).not.toContain("worktree_list");
+    expect(mutating).not.toContain("cascade_status");
+  });
+
+  it("runs the gate for a branch and lands it through doLanding", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+    await expect(
+      tools
+        .find((tool) => tool.name === "gate_run")!
+        .invoke({ branch: "afk/wABCD/2307-slice", base: "main" }),
+    ).resolves.toMatchObject({ ok: true, base: "main" });
+    expect(d.gateRun).toHaveBeenCalledWith({
+      branch: "afk/wABCD/2307-slice",
+      base: "main",
+    });
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "land_branch")!
+        .invoke({ issue: 2307, branch: "afk/wABCD/2307-slice" }),
+    ).resolves.toMatchObject({ ok: true, issue: 2307 });
+  });
+
+  it("reads claim records and enumerates the worktree lanes", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+    await expect(
+      tools.find((tool) => tool.name === "claim_status")!.invoke({ issue: 2307 }),
+    ).resolves.toMatchObject({
+      live_owner: "host:wABCD",
+      records: [{ worker: "host:wABCD", kind: "claim" }],
+    });
+
+    await expect(
+      tools.find((tool) => tool.name === "worktree_list")!.invoke({}),
+    ).resolves.toEqual({ lanes: [], worktrees: [] });
+    expect(d.worktreeList).toHaveBeenCalled();
   });
 
   it("returns structured fleet status without rendering command output", async () => {
