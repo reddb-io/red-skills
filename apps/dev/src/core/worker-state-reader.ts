@@ -354,11 +354,13 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
             state.current.number = identity.number;
           }
         }
-        // Derive the issue number from the attempt-dir basename when neither the
-        // state nor the identity sidecar carries a current.number (empty pre-sync).
+        // Derive the issue number from the issue-dir basename when neither the
+        // state nor the identity sidecar carries a current.number (empty
+        // pre-sync). Workspaces are keyed workers/{id}/{issue} — flat, no
+        // attempt ordinal (ADR 0103).
         if (state.current.number === "" || state.current.number === undefined || state.current.number === null) {
-          const attemptBasename = basename(dirname(path));
-          const m = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attemptBasename);
+          const issueBasename = basename(dirname(path));
+          const m = /^([1-9][0-9]*)$/.exec(issueBasename);
           if (m) state.current.number = Number(m[1]);
         }
       }

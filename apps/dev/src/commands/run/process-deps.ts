@@ -1100,7 +1100,7 @@ function makeRecordAttempt(
       });
       if (!memoryCli) return; // memory not opted-in / no CLI resolves — silent skip.
       const dir = current.attemptDir || gitRoot;
-      const payloadFile = join(dir, `memory-attempt-${payload.issueNumber}-a${payload.attemptNumber}.json`);
+      const payloadFile = join(dir, `memory-attempt-${payload.issueNumber}.json`);
       await fsx.ensureDir(dir);
       const json = toMemoryPayload(payload);
       await writeFile(payloadFile, json, "utf8");
@@ -1133,7 +1133,7 @@ function makeRecordOutcomeEvent(
       const dir = current.attemptDir || gitRoot;
       await fsx.ensureDir(dir);
       const json = JSON.stringify(event);
-      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}-a${event.context?.attemptNumber ?? "unknown"}.json`), json, "utf8");
+      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}.json`), json, "utf8");
       const run = exec ?? (await import("../../runtime/exec.js")).execTool;
       const [cmd, ...head] = brainCli;
       await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {

@@ -29,17 +29,11 @@ describe("EnginePaths", () => {
     expect(paths.monitor("m1")).toBe(resolve(redRoot, "tmp", "monitors", "m1"));
   });
 
-  it("resolves worker worktrees and every ratified worktree sub-lane", () => {
+  it("resolves every ratified worktree sub-lane (worker worktrees live under the worker's own workspace, not here)", () => {
     const redRoot = resolve("other", ".red");
     const paths = createEnginePaths(redRoot);
 
     expect(paths.worktreesRoot).toBe(resolve(redRoot, "tmp", "worktrees"));
-    expect(paths.workerWorktreesRoot).toBe(
-      resolve(redRoot, "tmp", "worktrees", "workers"),
-    );
-    expect(paths.workerWorktree("wAB12", 1904)).toBe(
-      resolve(redRoot, "tmp", "worktrees", "workers", "wAB12-1904"),
-    );
     expect(paths.worktreeLane("manual")).toBe(
       resolve(redRoot, "tmp", "worktrees", "manual"),
     );

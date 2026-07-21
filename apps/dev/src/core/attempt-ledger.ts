@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { isPositiveIntegerToken, isValidWorkerId, parseWorkerAttemptPath } from "./worker-paths.js";
+import { isPositiveIntegerToken, isValidWorkerId } from "./worker-paths.js";
 
 /**
  * attempt-ledger — derive the next attempt number and assemble the
@@ -13,7 +13,7 @@ import { isPositiveIntegerToken, isValidWorkerId, parseWorkerAttemptPath } from 
  *
  * This module is the FS-enumeration consumer of worker-paths: worker-paths owns
  * the path *grammar* (build/parse, never touching disk); this module walks the
- * real attempt tree and reuses `parseWorkerAttemptPath` to interpret each hit.
+ * real attempt tree and interprets each hit with its ledger-private parser.
  * The numbering logic is a pure function over a list of attempt-dir basenames;
  * the directory globbing is a thin injectable reader.
  *
@@ -70,6 +70,18 @@ export interface AttemptContext {
  * entries never bump the counter. The selection is numeric, not lexical. Returns
  * null when no valid prior attempt exists for the issue.
  */
+/**
+ * Ledger-private legacy matcher. Identity readers dropped the `-a{N}` level
+ * (#2170, ADR 0103); this DOOMED module (deleted wholesale by the #2174
+ * contraction) still ranks pre-0103 on-disk dirs, so it keeps its own parser
+ * for both grammars: flat `{issue}` (attempt 1) and legacy `{issue}-a{n}`.
+ */
+function parseLedgerBasename(basename: string): { issue: number; attempt: number } | null {
+  const m = /^([1-9][0-9]*)(?:-a([1-9][0-9]*))?$/.exec(basename);
+  if (!m) return null;
+  return { issue: Number(m[1]), attempt: m[2] ? Number(m[2]) : 1 };
+}
+
 export function highestAttempt(
   root: string,
   issue: number,
@@ -79,7 +91,7 @@ export function highestAttempt(
   for (const entry of entries) {
     if (!isValidWorkerId(entry.worker)) continue;
     for (const basename of entry.basenames) {
-      const parsed = parseWorkerAttemptPath(`workers/${entry.worker}/${basename}`);
+      const parsed = parseLedgerBasename(basename);
       if (!parsed || parsed.issue !== issue) continue;
       if (!best || parsed.attempt > best.attempt) {
         best = { attempt: parsed.attempt, dir: join(root, "workers", entry.worker, basename) };

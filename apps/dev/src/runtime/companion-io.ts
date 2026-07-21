@@ -90,9 +90,11 @@ export function companionVitals(state: AfkState): CompanionVitals {
 }
 
 /** Every companion fingerprint embedded in a comment body, regardless of where it
- * sits (visible text or an HTML-comment marker). Matches the exact grammar
- * `companionFingerprint` emits: `red:companion:<issue>:a<attempt>:<signal>`. */
-const FINGERPRINT_RE = /red:companion:\d+:a\d+:[a-z-]+/g;
+ * sits (visible text or an HTML-comment marker). Matches the current grammar
+ * `companionFingerprint` emits (`red:companion:<issue>:<signal>`, ADR 0103) AND
+ * the legacy pre-0103 form with the retired attempt ordinal
+ * (`red:companion:<issue>:a<attempt>:<signal>`), so old comments still dedupe. */
+const FINGERPRINT_RE = /red:companion:\d+:(?:a\d+:)?[a-z-]+/g;
 
 /**
  * The idempotency guard: collect every companion fingerprint already present in

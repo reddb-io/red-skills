@@ -26,7 +26,13 @@ Live process artifacts live in tmp lanes:
 - `tmp/supervisors/<id>/`
 - `tmp/workers/<workerId>/`
 - `tmp/monitors/<id>/`
-- `tmp/worktrees/workers/<workerId>-<ticket>/`
+- `tmp/workers/<workerId>/<issue>/.red-castle/worktrees/<branch-slug>/` — the
+  worker's git worktree. **Amended 2026-07-21:** the originally ratified
+  `tmp/worktrees/workers/<workerId>-<ticket>/` sub-lane was never materialised;
+  the shipped engine anchors the worktree inside the worker's own workspace
+  (the castle creates it at its `cwd`), which keeps every per-worker artifact
+  under one reclaimable directory. This amendment ratifies the shipped
+  behavior; the dead `workerWorktree` engine path builders were deleted.
 
 Human worktree lanes such as `manual`, `feedback`, `landing`, `rebase`,
 `cascade`, `adopt`, `reconcile`, and `docs` keep their homes under

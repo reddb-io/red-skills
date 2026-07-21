@@ -32,12 +32,13 @@ export interface EnginePaths {
   readonly workerSteerFile: (workerId: string) => string;
   readonly monitorsRoot: string;
   readonly monitor: (id: string) => string;
+  /**
+   * Shared pipeline/maintainer worktree lanes root. A WORKER's git worktree
+   * does NOT live here: the castle materialises it at the worker's own
+   * workspace, `tmp/workers/{id}/{issue}/.red-castle/worktrees/<slug>`
+   * (ADR 0105 as amended — the ratification of the shipped behavior).
+   */
   readonly worktreesRoot: string;
-  readonly workerWorktreesRoot: string;
-  readonly workerWorktree: (
-    workerId: string,
-    ticketId: number | string,
-  ) => string;
   readonly worktreeLane: (lane: CastleWorktreeLane) => string;
 }
 
@@ -50,7 +51,6 @@ export function createEnginePaths(redRoot: string): EnginePaths {
   const workersRoot = resolve(tmpRoot, "workers");
   const monitorsRoot = resolve(tmpRoot, "monitors");
   const worktreesRoot = resolve(tmpRoot, "worktrees");
-  const workerWorktreesRoot = resolve(worktreesRoot, "workers");
 
   return {
     redRoot: root,
@@ -69,9 +69,6 @@ export function createEnginePaths(redRoot: string): EnginePaths {
     monitorsRoot,
     monitor: (id) => resolve(monitorsRoot, id),
     worktreesRoot,
-    workerWorktreesRoot,
-    workerWorktree: (workerId, ticketId) =>
-      resolve(workerWorktreesRoot, `${workerId}-${ticketId}`),
     worktreeLane: (lane) => resolve(worktreesRoot, lane),
   };
 }

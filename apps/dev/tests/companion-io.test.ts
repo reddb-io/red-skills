@@ -18,10 +18,11 @@ import type { GhContext } from "../src/runtime/gh.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import type { WorkerStateRecord } from "../src/core/worker-state-reader.js";
 
-// A worker-state record whose path encodes (issue, attempt) for parseWorkerAttemptPath.
-function record(issue: number, attempt: number, current: Record<string, unknown>, live = true): WorkerStateRecord {
+// A worker-state record whose path encodes the issue for parseWorkerAttemptPath
+// (flat workspace, no attempt ordinal — ADR 0103).
+function record(issue: number, _attempt: number, current: Record<string, unknown>, live = true): WorkerStateRecord {
   return {
-    path: `/r/.red/tmp/workers/host-w/${issue}-a${attempt}/afk.state.toon`,
+    path: `/r/.red/tmp/workers/host-w/${issue}/afk.state.toon`,
     state: parseState({ current: { number: issue, ...current } }),
     live,
     active: live,
@@ -109,10 +110,10 @@ describe("companionVitals (#921)", () => {
 describe("parseSeenFingerprints (#921)", () => {
   it("extracts fingerprints from comment bodies (visible or HTML-comment marker)", () => {
     const set = parseSeenFingerprints([
-      `noise\n<!-- ${companionFingerprint(7, 1, "iteration-churn")} -->\nmore`,
+      `noise\n<!-- ${companionFingerprint(7, "iteration-churn")} -->\nmore`,
       "unrelated comment",
     ]);
-    expect(set.has(companionFingerprint(7, 1, "iteration-churn"))).toBe(true);
+    expect(set.has(companionFingerprint(7, "iteration-churn"))).toBe(true);
     expect(set.size).toBe(1);
   });
 });
@@ -176,13 +177,13 @@ describe("runCompanionPass (#921)", () => {
     expect(body?.args.join(" ")).toContain("## Agent brief");
     expect(body?.args.join(" ")).toContain("<!-- red:agent-brief v1 -->");
     const comment = gh.writes.find((w) => w.kind === "comment");
-    expect(comment?.args.join(" ")).toContain(companionFingerprint(7, 1, "iteration-churn"));
+    expect(comment?.args.join(" ")).toContain(companionFingerprint(7, "iteration-churn"));
     const labels = gh.writes.find((w) => w.kind === "editLabels");
     expect(labels?.args).toContain("ready-for-agent");
   });
 
   it("is idempotent — an existing fingerprint suppresses a second write", async () => {
-    const gh = ghRouter({ body: "x", comments: [`<!-- ${companionFingerprint(7, 1, "iteration-churn")} -->`] });
+    const gh = ghRouter({ body: "x", comments: [`<!-- ${companionFingerprint(7, "iteration-churn")} -->`] });
     const outcomes = await runCompanionPass({
       workersRoot: "/r/.red/tmp/workers",
       ctx: gh.ctx,
@@ -200,8 +201,11 @@ describe("runCompanionPass (#921)", () => {
       workersRoot: "/r/.red/tmp/workers",
       ctx: gh.ctx,
       thresholds: T,
-      cap: 2,
-      readStates: async () => [record(7, 2, churn)],
+      // With the attempt ordinal retired (ADR 0103) the enumerator always
+      // reports attempt 1, so the budget gate fires at cap <= 1. The real
+      // retry budget moves to the re-queue policy (#2172/#2174 contraction).
+      cap: 1,
+      readStates: async () => [record(7, 1, churn)],
     });
     expect(outcomes[0]?.disposition).toBe("escalated");
     const body = gh.writes.find((w) => w.kind === "editBody");
@@ -218,8 +222,11 @@ describe("runCompanionPass (#921)", () => {
       workersRoot: "/r/.red/tmp/workers",
       ctx: gh.ctx,
       thresholds: T,
-      cap: 2,
-      readStates: async () => [record(7, 2, churn)],
+      // With the attempt ordinal retired (ADR 0103) the enumerator always
+      // reports attempt 1, so the budget gate fires at cap <= 1. The real
+      // retry budget moves to the re-queue policy (#2172/#2174 contraction).
+      cap: 1,
+      readStates: async () => [record(7, 1, churn)],
     });
     const labels = gh.writes.find((w) => w.kind === "editLabels");
     expect(labels?.args).toContain("ready-for-human");

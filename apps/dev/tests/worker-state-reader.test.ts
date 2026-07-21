@@ -252,9 +252,10 @@ describe("worker-state-reader", () => {
 
   // Isolation fallback: worker.pid liveness when afk.state.toon.pid === 0
   it("isolation: live worker.pid + pid:0 state → quiet-but-live, issue derived from path", async () => {
-    // Path must look like {worker}/{N}-a{n}/afk.state.toon so issue derivation works.
+    // Path must look like {worker}/{issue}/afk.state.toon so issue derivation
+    // works — flat, no attempt ordinal (ADR 0103).
     const base = await mkdtemp(join(tmpdir(), "wsr-iso-live-"));
-    const attemptDir = join(base, "wISO", "1085-a1");
+    const attemptDir = join(base, "wISO", "1085");
     const path = await writeState(attemptDir, { pid: 0, current: {} });
     // No liveness lane (empty lane), workerPidContent = live pid, kill returns true.
     const rec = readWorkerState(path, {
@@ -267,7 +268,7 @@ describe("worker-state-reader", () => {
     expect(rec!.live).toBe(true);
     expect(rec!.active).toBe(false);
     expect(rec!.liveness).toBe("quiet-but-live");
-    // Issue number derived from the "1085-a1" attempt-dir basename.
+    // Issue number derived from the flat "1085" issue-dir basename.
     expect(rec!.state.current.number).toBe(1085);
     // Evaluator verdict carries the isolation-fallback reason.
     expect(rec!.livenessVerdict.status).toBe("alive");
