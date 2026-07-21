@@ -55,4 +55,13 @@ Tell the user which host branch you used, what changed or why nothing changed, a
 - Invoke as `/red-statusline` (Claude Code) or `$red-statusline` (Codex). Wire the host you are running under; do not imply the statusline feature belongs to only one client.
 - `/red-setup` may offer the Claude Code command-backed adapter during project bootstrap. Under Codex, use this skill to inspect or configure the native footer path.
 
+## MCP vs. Command-Backed Render Path
+
+The statusline has two client architectures — read [HOST-NOTES.md](HOST-NOTES.md#two-client-architecture) for the boundary rule before touching either path. In brief:
+
+- **Command-backed host (`statusLine`)** — a direct collector client (ADR 0084). Never rewire it through the MCP server; an MCP handshake per render tick is the synchronous-fetch-in-render-path regression the ADR forbids.
+- **Agents and UIs** — consume the same aggregate via the `dev:afk` MCP tool `statusline_aggregate`. The tool calls the identical collector cores and cache discipline as the command, so both surfaces stay in sync without duplicating logic.
+
+When diagnosing a blank statusline, the MCP path is NOT in scope — probe the `statusLine` command directly (step 5 of the Claude Code recipe in HOST-NOTES.md).
+
 </supporting-info>
