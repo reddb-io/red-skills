@@ -394,7 +394,11 @@ const ONBOARDING_MAP_OPERATION: MemoryOperationDefinition<OperationSchemas.Onboa
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "onboarding-map", supportsJson: true },
+    cli: {
+      command: "onboarding-map",
+      supportsJson: true,
+      reservedSubcommands: ["export"],
+    },
     mcp: {
       toolName: "memory_onboarding_map",
       description:
