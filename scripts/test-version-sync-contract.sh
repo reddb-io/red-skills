@@ -144,10 +144,51 @@ for retired in \
   fi
 done
 
-if grep -rqE 'RED_RELEASE_TOKEN|RELEASE_PAT|GH006' .github/workflows scripts 2>/dev/null; then
-  fail "the admin-bypass token / GH006 fallback must not survive anywhere in .github/workflows or scripts"
+# Match the token being USED (a secrets reference or a shell expansion), not the
+# word appearing in prose — this test and the workflow headers both explain why
+# the bypass is gone, and a doc mention must not fail the contract.
+if grep -rqE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+     .github/workflows scripts --exclude="$(basename "${BASH_SOURCE[0]}")" 2>/dev/null; then
+  fail "the admin-bypass token must not survive anywhere in .github/workflows or scripts"
+  grep -rnE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+    .github/workflows scripts --exclude="$(basename "${BASH_SOURCE[0]}")" >&2 || true
 else
-  pass "no RED_RELEASE_TOKEN / RELEASE_PAT / GH006 path survives"
+  pass "no RED_RELEASE_TOKEN / RELEASE_PAT credential path survives"
+fi
+
+# --- the version workflow proposes, it never pushes -------------------------
+
+RELEASE_WORKFLOW=".github/workflows/red-release.yml"
+
+if grep -qF 'changesets/action@' "$RELEASE_WORKFLOW"; then
+  pass "the version workflow maintains the Version Packages PR with changesets/action"
+else
+  fail "the version workflow must use changesets/action to maintain the Version Packages PR"
+fi
+
+if grep -qF 'version: pnpm release:version' "$RELEASE_WORKFLOW"; then
+  pass "changesets/action versions through pnpm release:version (changeset version + sync)"
+else
+  fail "changesets/action must version through pnpm release:version so the manifest sync runs"
+fi
+
+# The whole point of the migration: main is written by merged PRs only.
+if grep -qE 'git push [^ ]* HEAD:(main|\$\{?BASE)' "$RELEASE_WORKFLOW"; then
+  fail "the version workflow must never push a commit to main"
+else
+  pass "the version workflow pushes no commit to main"
+fi
+
+if grep -qF 'pnpm version:sync:check' "$RELEASE_WORKFLOW"; then
+  pass "the version workflow refuses to propose a bump on a drifted checkout"
+else
+  fail "the version workflow must run pnpm version:sync:check before versioning"
+fi
+
+if grep -qF 'gh workflow run red-publish.yml' "$RELEASE_WORKFLOW"; then
+  pass "the cut hands off to red-publish (a GITHUB_TOKEN tag push cannot trigger it)"
+else
+  fail "the cut must dispatch red-publish.yml explicitly"
 fi
 
 if (( failures > 0 )); then
