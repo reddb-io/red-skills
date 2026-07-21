@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,11 +10,13 @@ import {
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
 import {
+  buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
   createDevAfkMcpDependencies,
   resolveDevCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
+import type { HookExec } from "../src/core/hook-dispatcher.js";
 
 const roots: string[] = [];
 
@@ -333,6 +335,73 @@ describe("dev:afk MCP host adapter", () => {
     await expect(
       deps.worktreeRemove({ path: join("..", "elsewhere") }),
     ).rejects.toThrow(/escapes/);
+  });
+});
+
+describe("buildMcpLandingFireHook — lifecycle hook wiring", () => {
+  async function writeHookConfig(cwd: string, hookYaml: string): Promise<void> {
+    await mkdir(join(cwd, ".red"), { recursive: true });
+    await writeFile(
+      join(cwd, ".red", "config.yaml"),
+      `plugins:\n  dev:\n    enabled: "true"\nafk:\n  hooks:\n${hookYaml}`,
+      "utf8",
+    );
+  }
+
+  it("invokes configured pre_merge hook commands via the injected exec", async () => {
+    const cwd = await root();
+    const fired: Array<{ command: string; code: number }> = [];
+    const exec: HookExec = async (command) => {
+      fired.push({ command, code: 0 });
+      return { code: 0, stdout: "" };
+    };
+
+    await writeHookConfig(cwd, "    pre_merge: probe-pre\n");
+
+    const fireHook = buildMcpLandingFireHook(cwd, exec);
+    const ok = await fireHook("pre_merge", "{}");
+
+    expect(ok).toBe(true);
+    expect(fired).toEqual([{ command: "probe-pre", code: 0 }]);
+  });
+
+  it("returns false and aborts when a pre_merge hook exits non-zero", async () => {
+    const cwd = await root();
+    const exec: HookExec = async () => ({ code: 1, stdout: "" });
+
+    await writeHookConfig(cwd, "    pre_merge: veto-hook\n");
+
+    const fireHook = buildMcpLandingFireHook(cwd, exec);
+    const ok = await fireHook("pre_merge", "{}");
+
+    expect(ok).toBe(false);
+  });
+
+  it("returns true for post_merge even when the hook exits non-zero (continue policy)", async () => {
+    const cwd = await root();
+    const exec: HookExec = async () => ({ code: 99, stdout: "" });
+
+    await writeHookConfig(cwd, "    post_merge: noisy-hook\n");
+
+    const fireHook = buildMcpLandingFireHook(cwd, exec);
+    const ok = await fireHook("post_merge", "{}");
+
+    expect(ok).toBe(true);
+  });
+
+  it("returns true and fires no exec when no hooks are configured", async () => {
+    const cwd = await root();
+    const fired: string[] = [];
+    const exec: HookExec = async (command) => {
+      fired.push(command);
+      return { code: 0, stdout: "" };
+    };
+
+    const fireHook = buildMcpLandingFireHook(cwd, exec);
+    const ok = await fireHook("pre_merge", "{}");
+
+    expect(ok).toBe(true);
+    expect(fired).toHaveLength(0);
   });
 });
 
