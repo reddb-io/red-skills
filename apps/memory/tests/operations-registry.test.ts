@@ -364,7 +364,7 @@ describe("read-only Memory operations registry", () => {
   test("does not preserve a legacy CLI dispatch escape hatch", () => {
     expect(
       listReadOnlyMemoryOperations().filter(
-        (operation) => operation.renderer.cli.dispatch === "legacy",
+        (operation) => "dispatch" in operation.renderer.cli,
       ),
     ).toEqual([]);
   });
