@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Static contract tests for the npm publish ordering in red-release.yml.
+# Static contract tests for the npm publish ordering in red-publish.yml.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-WORKFLOW=".github/workflows/red-release.yml"
+WORKFLOW=".github/workflows/red-publish.yml"
 failures=0
 
 fail() {
@@ -39,16 +39,39 @@ assert_before() {
   fi
 }
 
+verify_line="$(line_of_step "Verify the tag matches the tree")"
 pack_line="$(line_of_step "Pack npm package + producer/consumer contract check")"
 publish_line="$(line_of_step "Publish to npm")"
 smoke_line="$(line_of_step "Smoke published npm package from registry")"
-stamp_line="$(line_of_step "Sync plugin manifest versions")"
-tag_line="$(line_of_step "Tag + GitHub Release")"
+release_line="$(line_of_step "GitHub Release")"
 
+# ADR 0121: manifest stamping moved OUT of the publish path into the Version
+# Packages PR, so the tag arrives with the versions already written. What the
+# publish must still prove, in order: the tag agrees with the tree it points at,
+# the tarball resolves before it is published, and the GitHub Release is cut
+# only after the registry actually serves the version.
+assert_before "tag/tree verification" "$verify_line" "pack/contract check" "$pack_line"
 assert_before "pack/contract check" "$pack_line" "publish" "$publish_line"
 assert_before "publish" "$publish_line" "registry smoke" "$smoke_line"
-assert_before "registry smoke" "$smoke_line" "manifest stamping" "$stamp_line"
-assert_before "manifest stamping" "$stamp_line" "tag/GitHub release" "$tag_line"
+assert_before "registry smoke" "$smoke_line" "GitHub release" "$release_line"
+
+if grep -qF 'node scripts/sync-version.mjs --check' "$WORKFLOW"; then
+  pass "publish re-checks the version-sync invariant at the tagged tree"
+else
+  fail "publish must run scripts/sync-version.mjs --check on the tagged tree"
+fi
+
+if grep -qF 'tag v${VERSION} points at a tree whose version is' "$WORKFLOW"; then
+  pass "a tag that disagrees with the tree fails the publish"
+else
+  fail "publish must fail when the tag disagrees with the tree's version"
+fi
+
+if grep -qF 'HEAD:main' "$WORKFLOW" || grep -qF 'git push origin HEAD' "$WORKFLOW"; then
+  fail "the publish workflow must never push a commit to main"
+else
+  pass "the publish workflow pushes no commit to main"
+fi
 
 if grep -qF '::error::NPM_TOKEN secret absent' "$WORKFLOW"; then
   pass "missing NPM_TOKEN is reported as an error"
@@ -98,19 +121,34 @@ fi
 if grep -q '^  workflow_dispatch:$' "$WORKFLOW" &&
    grep -q '^  schedule:$' "$WORKFLOW" &&
    grep -q 'cron:' "$WORKFLOW"; then
-  pass "release workflow has manual and scheduled retry triggers"
+  pass "publish workflow has manual and scheduled retry triggers"
 else
-  fail "release workflow must expose workflow_dispatch and schedule retry triggers"
+  fail "publish workflow must expose workflow_dispatch and schedule retry triggers"
 fi
 
-if grep -qF "github.event_name != 'push'" "$WORKFLOW" &&
-   grep -qF "contains(github.event.head_commit.message, '[skip release]')" "$WORKFLOW"; then
-  pass "skip-release guard only suppresses push-triggered release commits"
+# ADR 0121: the tag is the publish trigger. A `push: branches` trigger would put
+# the publish back on every commit to main, which is exactly the design this
+# replaced.
+if grep -qE '^      - "v\[0-9\]\+\.\[0-9\]\+\.\[0-9\]\+"$' "$WORKFLOW" &&
+   grep -q '^    tags:$' "$WORKFLOW"; then
+  pass "publish is triggered by a vX.Y.Z tag push"
 else
-  fail "release workflow retry events must not depend on github.event.head_commit"
+  fail "publish must trigger on a vX.Y.Z tag push"
 fi
 
-if grep -qF 'scheduled red-release retry' "$WORKFLOW"; then
+if grep -qE '^    branches:' "$WORKFLOW"; then
+  fail "publish must not trigger on a branch push"
+else
+  pass "publish does not trigger on a branch push"
+fi
+
+if grep -qF 'already has a GitHub Release — publish already complete' "$WORKFLOW"; then
+  pass "an already-released tag is a no-op, so the scheduled retry is idempotent"
+else
+  fail "publish must no-op when the tag already has a GitHub Release"
+fi
+
+if grep -qF 'scheduled red-publish retry' "$WORKFLOW"; then
   pass "fleet deferral notice names the scheduled retry path"
 else
   fail "fleet deferral notice must tell operators the scheduled retry will resume publication"
@@ -128,4 +166,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 
-printf '\nred-release npm publish contract ok\n'
+printf '\nred-publish npm publish contract ok\n'
