@@ -33,6 +33,8 @@ import {
   managerDir,
   managerEffortFile,
   managerEffortsDir,
+  managerLeaseFile,
+  managerLeasesDir,
   memoryDir,
   rebaseWorktreesDir,
   resolveManagerRoot,
@@ -87,8 +89,16 @@ describe("manager portfolio store", () => {
     );
   });
 
+  it("derives the operator-scoped lease lane from a home root", () => {
+    expect(managerLeasesDir("/home/op")).toBe("/home/op/.red/manager/leases");
+    expect(managerLeaseFile("/home/op", "eff_abc")).toBe(
+      "/home/op/.red/manager/leases/eff_abc.toonl",
+    );
+  });
+
   it("rejects an empty effort id instead of writing the lane directory itself", () => {
     expect(() => managerEffortFile("/home/op", "")).toThrow(/effortId is required/);
+    expect(() => managerLeaseFile("/home/op", "")).toThrow(/effortId is required/);
   });
 
   it("defaults the manager root to the operator home and honors the override", () => {

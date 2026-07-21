@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { parseCli } from "../src/cli.js";
 import { managerCommand } from "../src/commands/manager.js";
 import { readEffort } from "../src/core/manager/effort-store.js";
+import { readLease } from "../src/core/manager/effort-lease.js";
 
 let root: string;
 let out: string[];
@@ -94,6 +95,105 @@ describe("manager status", () => {
   });
 });
 
+describe("manager resume", () => {
+  it("transitions an effort to active and prints its brief", async () => {
+    await managerCommand(["start this effort"], deps());
+    const started = brief();
+    expect(started.lifecycle).toBe("inbox");
+    out = [];
+
+    expect(await managerCommand(["resume", String(started.effort_id)], deps())).toBe(0);
+    const resumed = brief();
+    expect(resumed.lifecycle).toBe("active");
+    expect(resumed.effort_id).toBe(started.effort_id);
+  });
+
+  it("resumes the most recently started effort when no id is given", async () => {
+    await managerCommand(["the latest effort"], deps());
+    out = [];
+
+    expect(await managerCommand(["resume"], deps())).toBe(0);
+    expect(brief().lifecycle).toBe("active");
+  });
+
+  it("acquires a lease visible via readLease", async () => {
+    await managerCommand(["leased effort"], deps());
+    const started = brief();
+    out = [];
+
+    await managerCommand(["resume", String(started.effort_id)], { ...deps(), host: "test-host" });
+    const lease = await readLease(root, String(started.effort_id));
+    expect(lease).not.toBeNull();
+    expect(lease?.host).toBe("test-host");
+  });
+
+  it("reports an error when no portfolio exists", async () => {
+    expect(await managerCommand(["resume"], deps())).toBe(1);
+    expect(err.join("")).toMatch(/no effort/i);
+  });
+
+  it("reports a lifecycle error when the effort cannot be resumed", async () => {
+    await managerCommand(["already done"], deps());
+    const started = brief();
+    out = [];
+    // End it
+    await managerCommand(["resume", String(started.effort_id)], deps());
+    out = [];
+    await managerCommand(["end", String(started.effort_id)], deps());
+    out = [];
+    // Try to resume a completed effort
+    expect(await managerCommand(["resume", String(started.effort_id)], deps())).toBe(1);
+    expect(err.join("")).toMatch(/\[manager\]/);
+  });
+});
+
+describe("manager end", () => {
+  it("transitions an active effort to completed and prints its brief", async () => {
+    await managerCommand(["finish this effort"], deps());
+    const started = brief();
+    out = [];
+    await managerCommand(["resume", String(started.effort_id)], deps());
+    out = [];
+
+    expect(await managerCommand(["end", String(started.effort_id)], deps())).toBe(0);
+    const ended = brief();
+    expect(ended.lifecycle).toBe("completed");
+    expect(ended.effort_id).toBe(started.effort_id);
+
+    const stored = await readEffort(root, String(started.effort_id));
+    expect(stored?.lifecycle).toBe("completed");
+  });
+
+  it("releases the lease on end", async () => {
+    await managerCommand(["releaseme"], deps());
+    const started = brief();
+    out = [];
+    await managerCommand(["resume", String(started.effort_id)], { ...deps(), host: "h1" });
+    out = [];
+
+    const leaseBefore = await readLease(root, String(started.effort_id));
+    expect(leaseBefore).not.toBeNull();
+
+    await managerCommand(["end", String(started.effort_id)], deps());
+    const leaseAfter = await readLease(root, String(started.effort_id));
+    expect(leaseAfter).toBeNull();
+  });
+
+  it("reports an error when no portfolio exists", async () => {
+    expect(await managerCommand(["end"], deps())).toBe(1);
+    expect(err.join("")).toMatch(/no effort/i);
+  });
+
+  it("reports a lifecycle error when the effort is not active", async () => {
+    await managerCommand(["not active"], deps());
+    const started = brief();
+    out = [];
+    // Effort is in inbox, not active — end should fail
+    expect(await managerCommand(["end", String(started.effort_id)], deps())).toBe(1);
+    expect(err.join("")).toMatch(/\[manager\]/);
+  });
+});
+
 describe("cli routing", () => {
   it("routes manager with its intent preserved", () => {
     expect(parseCli(["manager", "ship", "the", "skeleton"])).toEqual({
@@ -101,5 +201,7 @@ describe("cli routing", () => {
       args: ["ship", "the", "skeleton"],
     });
     expect(parseCli(["manager", "status"])).toEqual({ command: "manager", args: ["status"] });
+    expect(parseCli(["manager", "resume"])).toEqual({ command: "manager", args: ["resume"] });
+    expect(parseCli(["manager", "end"])).toEqual({ command: "manager", args: ["end"] });
   });
 });

@@ -119,6 +119,17 @@ export function managerEffortFile(root: string, effortId: string): string {
   return join(managerEffortsDir(root), `${effortId}.toonl`);
 }
 
+/** Per-effort lease lane: `<root>/.red/manager/leases`. */
+export function managerLeasesDir(root: string): string {
+  return join(managerDir(root), "leases");
+}
+
+/** One effort's lease file: `<root>/.red/manager/leases/<effortId>.toonl`. */
+export function managerLeaseFile(root: string, effortId: string): string {
+  if (!effortId) throw new Error("effortId is required");
+  return join(managerLeasesDir(root), `${effortId}.toonl`);
+}
+
 // ── State-tier lanes (ADR 0098 §2) ──────────────────────────────────────────
 
 /** Castle engine state lane: `.red/state/castle`. */
