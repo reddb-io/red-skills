@@ -38,6 +38,13 @@ interview/Spec**. Detection and planning never authorize a write.
 - ❌ **Merge and split remain judgment operations.** So do renumbering, changing a
   live decision, choosing among plausible successors/replacement paths, and
   resolving contradictions. Never apply these through the mechanical gate.
+- ❌ **Judgment operations are never applied in-session.** They only ever become
+  Spec work items, executed later by `/to-tickets` + `/afk`. No confirmation, no
+  interview answer, and no maintainer instruction inside this skill authorizes
+  minting, rewriting, or archiving an ADR for a merge, split, or supersede.
+- ✅ Every judgment proposal is **supersede-and-replace** — mint the successor
+  ADR(s) and archive the original(s) with `superseded-by` pointers, **never
+  in-place rewrites** of a historical record (ADR 0112).
 - ❌ Do not silently propagate to the wiki or Memory graph. Their changes remain
   separate interview decisions and Spec items.
 - ❌ Do not stack judgment questions. Ask one `Q##` per turn, wait, then re-evaluate.
@@ -144,9 +151,33 @@ buckets. Do not commit or publish here; the doc-landing finalizer owns landing.
 
 ## Phase 5 — Reconcile judgment findings (`/start` style)
 
+### Judgment operation vocabulary
+
+Three operations carry real consequence for the record: **merge** mints one
+consolidating ADR and archives the N originals, **split** mints N focused ADRs and
+archives the original, and **supersede a live decision** mints the successor and
+archives the original. Each is proposed in the interview and, once agreed, recorded
+as a Spec work item in exactly this shape:
+
+| Operation | Trigger | Proposed work item (supersede-and-replace) |
+|---|---|---|
+| **merge** | `merge-candidate` — N records cover one decision | mint **one consolidating ADR** carrying the current decision, then archive **the N originals**, each `superseded-by` the new number |
+| **split** | `split-candidate` — one record carries many decisions | mint **N focused ADRs**, then archive the original `superseded-by` the list of new numbers |
+| **supersede a live decision** | the decision changed, contradicts another record, or "this decision is incoherent" | mint **the successor ADR** stating the new decision, then archive the original `superseded-by` the successor |
+
+Every shape mints new numbers and archives originals — the number set grows, which
+is the honest cost of an immutable record. Never propose editing `## Decision`,
+renumbering in place, or deleting a record; those are **never in-place rewrites**
+and no variant of them is offered as a branch.
+
+State in each proposal which ADRs are minted (as `ADR-NEW-1`, `ADR-NEW-2`, … until
+`/to-tickets` allocates real numbers) and which are archived with which pointer.
+
+### The interview loop
+
 Walk the judgment ledger highest-impact first: numbering collision → contradiction
-→ merge/split → ambiguous supersession/path/archive → structural or controversial
-decision. For each unresolved finding, ask one question:
+→ merge/split → supersede a live decision → ambiguous supersession/path/archive →
+structural or controversial decision. For each unresolved finding, ask one question:
 
 > **Q##:** [decision to reconcile]
 > **Branches:**
@@ -167,9 +198,16 @@ item, never an inline mutation.
 If the ledger contains agreed judgment or propagation work, hand it to `/to-spec`:
 
 - Problem/Solution: the decision debt and reconciliation plan;
-- User Stories: concrete merge/split/new-ADR, ambiguous metadata, INDEX clustering,
-  wiki, Memory, or implementation work;
-- Human Decisions: every `Q##` answer in Decision/Why/Alternatives shape.
+- User Stories: one story per agreed judgment operation — the ADRs to mint and the
+  originals to archive with their `superseded-by` pointers — plus ambiguous
+  metadata, INDEX clustering, wiki, Memory, or implementation work;
+- Human Decisions: every `Q##` answer in Decision/Why/Alternatives shape. Each
+  agreed merge, split, and supersede-a-live-decision lands here as its own Human
+  Decision, so the reason the record changes shape survives the handoff.
+
+The Spec is the only artifact this skill produces for judgment work; `/to-tickets`
+slices it and `/afk` executes it later. Emitting the Spec is not permission to
+start it.
 
 Publish with `type:spec` + `needs-slicing` (never `ready-for-agent`; `/to-spec`
 handles labels). Do not publish an empty Spec for a mechanical-only or read-only
@@ -206,6 +244,10 @@ before exiting. It remains silent when no docs changed.
   between plausible replacement paths is judgment.
 - Merge/split always mint replacement ADRs and archive originals later; they never
   rewrite historical Decisions in-session.
+- "This ADR is wrong now" is a supersede-a-live-decision proposal, not a status
+  edit: the live record stays live until the Spec's successor ADR lands.
+- Agreeing to a merge in the interview produces a Spec work item. Doing the `git mv`
+  in the same session is the failure this lane exists to prevent.
 - A run stopped before or at the gate is a successful read-only review, not a
   partially failed apply.
 

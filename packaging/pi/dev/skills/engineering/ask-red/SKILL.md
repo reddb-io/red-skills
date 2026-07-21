@@ -126,6 +126,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   promotes it ahead of every `--spec` / `--issues` filter.
 - `/review-adrs` triages the decision record read-only, may apply only explicitly
   confirmed mechanical ADR maintenance, and feeds judgment findings to `/to-spec`.
+  Merge, split, and supersede-a-live-decision never apply in-session — they become
+  supersede-and-replace Spec work items for `/to-tickets` + `/afk`.
 - `/model-tier-policy` answers runner/model tier choices.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
