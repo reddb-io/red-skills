@@ -144,6 +144,19 @@ labels by hand.
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue
 with a non-empty open backlog is a flow bug to census, not a clean stop.
 
+### Wait — programmatic outcome polling
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `wait_start` | mutating | Spawn a detached rsp wait and return its registry id. |
+| `wait_list` | read | Active-wait registry from `.red/tmp/waits`. |
+| `wait_status` | read | Registry entry for a running wait or sealed result envelope for a finished one. |
+
+`wait_start` accepts `pr`, `run`, `release`, and `cmd` targets; `timeout_ms` and
+`reason` are optional. The returned `id` is the stable handle for `wait_status`.
+Finished waits are distinguished by a populated `result` field carrying the
+`rsp.wait.result` envelope; running waits carry `waits` with the active registry.
+
 ## Refs
 
 - ADR 0120 — red-castle is the AFK MCP; CLI and skills are clients.

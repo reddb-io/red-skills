@@ -229,6 +229,26 @@ const SURFACE: ReadonlyArray<{
       "MUTATING: remove one checkout under the disposable `.red/tmp/worktrees/*` lanes.",
     schema: ["path"],
   },
+  {
+    name: "wait_start",
+    title: "Start rsp wait",
+    description:
+      "MUTATING: spawn a detached rsp wait (pr | run | release | cmd) and return its registry id.",
+    schema: ["kind", "target", "timeout_ms", "reason"],
+  },
+  {
+    name: "wait_list",
+    title: "List active rsp waits",
+    description: "Return the active-wait registry from .red/tmp/waits.",
+    schema: [],
+  },
+  {
+    name: "wait_status",
+    title: "Read rsp wait status",
+    description:
+      "Return the registry entry for a running wait or the sealed result envelope for a finished one.",
+    schema: ["id"],
+  },
 ];
 
 describe("aggregated dev:afk MCP tool surface", () => {
