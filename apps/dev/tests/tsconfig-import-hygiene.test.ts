@@ -20,7 +20,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/retake.ts": 1,
   "src/commands/route-model-tier.ts": 1,
   "src/commands/run/activity.ts": 143,
-  "src/commands/run/command.ts": 87,
+  "src/commands/run/command.ts": 86,
   "src/commands/run/flags.ts": 133,
   "src/commands/run/process-deps.ts": 74,
   "src/commands/run/reconcile.ts": 110,

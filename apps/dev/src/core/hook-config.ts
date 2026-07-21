@@ -118,6 +118,7 @@ function isCanonical(name: string): name is HookName {
 
 const HOOKS_PREFIX = "afk.hooks.";
 const DEFAULTS_PREFIX = "afk.hooks.defaults.";
+const INDEXED_KEY_RE = /^([^.]+)(?:\.(\d+))?$/;
 
 /** Injectable directory lister — returns filenames (not full paths). */
 export type ListFiles = (dir: string) => string[];
@@ -209,6 +210,11 @@ export interface ResolveHooksOptions {
  * The `afk.hooks.defaults.<name>: false` toggle is no longer honored — shadow
  * the built-in with a same-named no-op script in `.red/hooks/` instead. Old
  * configs that still carry the key are silently ignored (no error).
+ *
+ * Supports two forms for multi-command hooks: a newline-joined block scalar or
+ * a YAML list. The YAML parser flattens a list into indexed keys of the form
+ * `afk.hooks.<name>.<N>`, which are collected in index order and merged with
+ * any bare-scalar entry for the same point.
  */
 export function resolveHooks(
   config: ConfigValues,
@@ -217,8 +223,10 @@ export function resolveHooks(
   const { defaultCommand } = options;
 
   // Walk the flat config once, collecting per-point user command lists and
-  // validating hook names eagerly.
-  const userLists = new Map<HookName, string[]>();
+  // validating hook names eagerly. Entries accumulate as {index, command}
+  // pairs so YAML-list indexed keys (`name.N`) sort before bare-string entries
+  // (which use MAX_SAFE_INTEGER as their sort key).
+  const userEntries = new Map<HookName, Array<{ index: number; command: string }>>();
 
   for (const [key, value] of Object.entries(config)) {
     if (!key.startsWith(HOOKS_PREFIX)) continue;
@@ -227,15 +235,36 @@ export function resolveHooks(
     // now that same-filename shadowing in .red/hooks/ replaces them.
     if (key.startsWith(DEFAULTS_PREFIX)) continue;
 
-    const name = key.slice(HOOKS_PREFIX.length);
+    const rawName = key.slice(HOOKS_PREFIX.length);
+    const match = INDEXED_KEY_RE.exec(rawName);
+    if (!match) throw new UnknownHookError(rawName);
+
+    const name = match[1]!;
     if (!isCanonical(name)) throw new UnknownHookError(name);
 
+    const explicitIndex = match[2] === undefined ? undefined : Number(match[2]);
     const commands = value
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    userLists.set(name, commands);
+
+    const entries = userEntries.get(name) ?? [];
+    commands.forEach((command, offset) => {
+      entries.push({
+        index: explicitIndex === undefined ? Number.MAX_SAFE_INTEGER + offset : explicitIndex + offset,
+        command,
+      });
+    });
+    userEntries.set(name, entries);
   }
+
+  // Sort each hook's entries by index and flatten to a string list.
+  const userLists = new Map<HookName, string[]>(
+    [...userEntries.entries()].map(([name, entries]) => [
+      name,
+      entries.sort((a, b) => a.index - b.index).map((e) => e.command),
+    ]),
+  );
 
   const { libraryHooksDir, projectHooksDir } = options;
   const listFiles = options.listFiles ?? ((dir) => readdirSync(dir));
@@ -267,6 +296,25 @@ export function resolveHooks(
   }
 
   return resolved;
+}
+
+/**
+ * Validate the hook names in a config without resolving scripts. Throws
+ * `UnknownHookError` for the first key whose name component (after stripping
+ * any `.N` index suffix) is not a canonical lifecycle point. Call this once at
+ * worker startup to surface config errors loudly before the session loop begins
+ * rather than crashing on first issue pick-up.
+ */
+export function validateHookConfig(config: ConfigValues): void {
+  for (const key of Object.keys(config)) {
+    if (!key.startsWith(HOOKS_PREFIX)) continue;
+    if (key.startsWith(DEFAULTS_PREFIX)) continue;
+    const rawName = key.slice(HOOKS_PREFIX.length);
+    const match = INDEXED_KEY_RE.exec(rawName);
+    if (!match) throw new UnknownHookError(rawName);
+    const name = match[1]!;
+    if (!isCanonical(name)) throw new UnknownHookError(name);
+  }
 }
 
 /**

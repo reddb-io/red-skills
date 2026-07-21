@@ -108,7 +108,7 @@ External advisory reviewers (CodeRabbit and the like) are **not** binding: the w
 - Output: empty stdout → context unchanged; JSON object on stdout → AFK replaces the documented mutable slice with the returned value. Non-JSON stdout is treated as a parse failure.
 - Exit code: `0` continues the chain; non-zero is routed through a per-hook policy table — `pre_*` aborts the step, `post_*` / `on_idle` / `on_*_error` log and continue so a broken notifier never wedges AFK.
 
-Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. A bare string is shorthand for a one-element list. An unknown hook name in `.red/config.yaml` is a hard error at session boot. Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
+Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. Two equivalent forms declare a multi-command hook: a bare scalar (one command, or commands joined by `\n`) and a **YAML list** (each element becomes one command, executed top-to-bottom). Both forms are accepted for every lifecycle point. An unknown hook name in `.red/config.yaml` is a hard error at session boot (surfaced before the first issue pick-up, so it does not cause a spawn/death churn loop). Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
 
 Every hook command emits explicit dispatch breadcrumbs around the shell call:
 `[afk:hooks] <point>: enter: <command>` and
@@ -223,7 +223,11 @@ Example configuration:
 ```yaml
 afk:
   hooks:
-    pre_session: "echo boot"            # bare-string shorthand
+    pre_session: "echo boot"            # bare-string shorthand (one command)
+    pre_merge:
+      # YAML list form — each element is one command, executed in order.
+      # Equivalent to the bare scalar "bash .red/hooks/fmt.sh" for a single entry.
+      - bash .red/hooks/pre_merge/red-rust-fmt.sh
     post_pick:
       # filter the queue to issues you opened — RED_AFK_GITHUB_LOGIN must be set
       - "RED_AFK_GITHUB_LOGIN=$(gh api user --jq .login) \
