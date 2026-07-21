@@ -23,6 +23,7 @@ function deps(): CastleMcpDependencies {
       status: "stopped",
       name: input.name,
     })),
+    fleetRegister: vi.fn(async () => ({ status: "registered" })),
     logs: vi.fn(async () => [
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]),
@@ -106,6 +107,7 @@ describe("dev:afk MCP tools", () => {
       "fleet_create",
       "fleet_edit",
       "fleet_stop",
+      "fleet_register",
       "logs",
       "worker_vitals",
       "dashboard",
