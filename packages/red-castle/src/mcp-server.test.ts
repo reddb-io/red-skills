@@ -48,6 +48,10 @@ function deps(): CastleMcpDependencies {
       runner: input.runner ?? "codex",
       method: input.runner ? "flag" : "env-var",
     })),
+    runnerSteer: vi.fn(async (input) => ({
+      worker: input.worker,
+      steer: "written",
+    })),
     workerRequest: vi.fn(async (input) => ({
       status: "completed",
       request: input.text,
@@ -79,6 +83,7 @@ describe("dev:afk MCP tools", () => {
       "worker_recycle",
       "runner_list",
       "runner_detect",
+      "runner_steer",
       "worker_request",
       "requeue",
       "retake",
@@ -175,6 +180,24 @@ describe("dev:afk MCP tools", () => {
       runner: "codex",
       text: "Use TDD.",
     });
+  });
+
+  it("writes a live-steer request into a running worker via runner_steer", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "runner_steer")!
+        .invoke({ worker: "wVM2Z", text: "Focus on the failing test first." }),
+    ).resolves.toMatchObject({ worker: "wVM2Z", steer: "written" });
+    expect(d.runnerSteer).toHaveBeenCalledWith({
+      worker: "wVM2Z",
+      text: "Focus on the failing test first.",
+    });
+    expect(
+      tools.find((tool) => tool.name === "runner_steer")!.description,
+    ).toMatch(/^MUTATING:/);
   });
 
   it("wraps structured requeue, retake, reap, and unblock-sweep cores", async () => {

@@ -5,6 +5,7 @@ import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
   castleLanePath,
+  createCastleLaneWriters,
   createEnginePaths,
   fleetRegistryPath,
   readCastleHistoryRecords,
@@ -27,6 +28,7 @@ import type {
   RetakeToolInput,
   WorkerDispatchInput,
   WorkerRequestInput,
+  WorkerSteerInput,
   WorkerStopInput,
 } from "../../../packages/red-castle/src/mcp-server.js";
 import { readBuildInfo } from "@reddb-io/build-info";
@@ -593,6 +595,22 @@ export function createDevAfkMcpDependencies(
         ]),
       ),
     runnerDetect: async ({ runner }) => detectRunner({ flag: runner }),
+    runnerSteer: async (input: WorkerSteerInput) => {
+      const paths = createEnginePaths(join(root, ".red"));
+      const steerPath = paths.workerSteerFile(input.worker);
+      const { writeFile: writeFileAsync, mkdir: mkdirAsync } = await import("node:fs/promises");
+      const { dirname } = await import("node:path");
+      await mkdirAsync(dirname(steerPath), { recursive: true });
+      const { encode } = await import("@reddb-io/toon");
+      await writeFileAsync(steerPath, encode({ text: input.text }), "utf8");
+      const writers = createCastleLaneWriters(paths);
+      await writers.worker(input.worker).append({
+        kind: "worker.steered",
+        worker_id: input.worker,
+        payload: { reason: input.text.slice(0, 200) },
+      });
+      return { worker: input.worker, steer: "written" };
+    },
     workerRequest: (input: WorkerRequestInput) => {
       const dispatch = { ...input, request: input.text };
       delete (dispatch as Partial<WorkerRequestInput>).text;

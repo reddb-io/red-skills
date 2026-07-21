@@ -447,13 +447,14 @@ export function buildProcessDeps(
     postAttemptFormatCommands: readPostAttemptFormat(config),
     // Thread a live activity probe off this attempt's activity meter. The
     // progress guard uses it as a soft progress signal when armed.
-    runAgent: makeRunAgent(
-      sandbox,
-      process.env,
-      maxIterations,
-      laneIdle,
-      () => activityMeter.peek(),
-    ),
+    // Inject the worker's steer-file path so the live-steer MCP surface
+    // (runner_steer) can write a pending directive that the Orchestrator picks
+    // up between iterations without AFK knowing about the file at claim time.
+    runAgent: (() => {
+      const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, () => activityMeter.peek());
+      const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
+      return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
+    })(),
     sandboxMode: sandbox,
     sandboxAvailable: async (mode) => {
       const run = exec ?? execTool;

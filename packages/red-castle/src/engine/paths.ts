@@ -28,6 +28,8 @@ export interface EnginePaths {
   readonly fleet: (name: string) => string;
   readonly workersRoot: string;
   readonly worker: (workerId: string) => string;
+  /** Live-steer file for a running worker (`workers/<id>/steer.toon`). */
+  readonly workerSteerFile: (workerId: string) => string;
   readonly monitorsRoot: string;
   readonly monitor: (id: string) => string;
   readonly worktreesRoot: string;
@@ -63,6 +65,7 @@ export function createEnginePaths(redRoot: string): EnginePaths {
     fleet: (name) => resolve(supervisorsRoot, name),
     workersRoot,
     worker: (workerId) => resolve(workersRoot, workerId),
+    workerSteerFile: (workerId) => resolve(workersRoot, workerId, "steer.toon"),
     monitorsRoot,
     monitor: (id) => resolve(monitorsRoot, id),
     worktreesRoot,

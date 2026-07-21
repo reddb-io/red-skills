@@ -406,6 +406,12 @@ export interface RunAgentInput {
    */
   goalProbe?: () => Promise<boolean | undefined>;
   /**
+   * Absolute path to the worker's live-steer file (`steer.toon`). When set,
+   * `buildRunOptions` creates a steer provider that reads (and consumes) the file
+   * between Orchestrator iterations, injecting its text as a `specialUserRequestBlock`.
+   */
+  steerFile?: string;
+  /**
    * Lane-idle stall reaper (issue #363) — the solo-path port of the fleet's
    * passive stall detector + hard stall reaper. COMPLEMENTARY to the #400
    * attempt PROGRESS guard above (which is commit-anchored and caps the whole
@@ -747,6 +753,23 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     idleTimeoutSeconds: input.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_S,
     ...(hooks ? { hooks } : {}),
     ...(logging ? { logging } : {}),
+    ...(input.steerFile
+      ? {
+          steerProvider: async () => {
+            const { readFile, unlink } = await import("node:fs/promises");
+            const { decode } = await import("@reddb-io/toon");
+            try {
+              const content = await readFile(input.steerFile!, "utf8");
+              const doc = decode(content) as Record<string, unknown>;
+              const text = typeof doc.text === "string" ? doc.text : undefined;
+              if (text) await unlink(input.steerFile!).catch(() => {});
+              return text;
+            } catch {
+              return undefined;
+            }
+          },
+        }
+      : {}),
   };
 }
 
