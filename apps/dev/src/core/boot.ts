@@ -61,7 +61,10 @@ import {
   type SpecSubIssueCandidate,
 } from "./spec-subissue-reconciler.js";
 import {
+  applyClaimHygieneFix,
+  autoHealableClaimHygiene,
   BASE_FRESHNESS_PROBE_ID,
+  CLAIM_HYGIENE_PROBE_ID,
   formatOperationalProbeFinding,
   runOperationalProbes,
   type BaseFreshnessProbeData,
@@ -321,6 +324,9 @@ export interface BootDeps {
     readonly action: "fast-forward" | "noop";
     readonly evidence: string;
   }>;
+  /** Posts an `afk:claim` concede comment. Wired so the boot sweep can
+   * auto-heal dead own-machine dangling claims instead of halting (#2321). */
+  concedeClaim?: (issue: number, body: string) => Promise<void>;
   /** Current epoch seconds (date +%s), injected so the run is deterministic. */
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
@@ -360,6 +366,31 @@ async function tryBootAutoApplyBaseFreshness(
   deps.log?.(
     `boot operational probe auto-fix applied: ${finding.id} before=${shortSha(data.localSha)} after=${shortSha(data.remoteSha)}; ${result.evidence}`,
   );
+  return true;
+}
+
+/**
+ * Auto-heal a claim-hygiene red finding that is PURELY dead own-machine
+ * danglers. A stranded `afk:claim` from this machine's own dead-pid worker is
+ * provably safe to concede, so the boot sweep concedes it and continues instead
+ * of throwing BootHaltError — one orphan claim must never halt every supervisor
+ * boot (#2321). Foreign / unknown-pid markers are NOT healed here: they stay in
+ * the red findings and still halt, because they need a human to adjudicate.
+ */
+async function tryBootAutoApplyClaimHygiene(
+  deps: BootDeps,
+  finding: OperationalProbeReport["findings"][number],
+): Promise<boolean> {
+  if (finding.id !== CLAIM_HYGIENE_PROBE_ID) return false;
+  if (!autoHealableClaimHygiene(finding)) return false;
+  const concedeClaim = deps.concedeClaim;
+  if (!concedeClaim) return false;
+  const result = await applyClaimHygieneFix(finding, {
+    confirm: async () => true,
+    concedeClaim,
+  });
+  if (result.status !== "applied") return false;
+  deps.log?.(`boot operational probe auto-fix applied: ${finding.id}; ${result.evidence}`);
   return true;
 }
 
@@ -615,7 +646,16 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
 
   // ---- 1a. operational probes ----
   const operationalProbes = await runOperationalProbes(options.operationalProbes ?? options.precheck);
-  const redProbe = operationalProbes.findings[0];
+  // A dangling `afk:claim` from THIS machine's dead-pid worker is provably safe
+  // to concede, so auto-heal such claim-hygiene findings here instead of letting
+  // one stranded claim throw BootHaltError and kill every supervisor boot
+  // (#2321). Foreign / unknown-pid markers survive the filter and still halt.
+  const redFindings: OperationalProbeReport["findings"][number][] = [];
+  for (const finding of operationalProbes.findings) {
+    if (await tryBootAutoApplyClaimHygiene(deps, finding)) continue;
+    redFindings.push(finding);
+  }
+  const redProbe = redFindings[0];
   if (redProbe) {
     const applied = await tryBootAutoApplyBaseFreshness(deps, redProbe);
     if (!applied) {
@@ -626,7 +666,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
       const workerSessionExempt = options.skipSweeps === true && isWorkerExemptBaseFreshnessFinding(redProbe);
       if (!workerSessionExempt) throw new BootHaltError("operational-probe", redProbe);
     }
-    const nextRedProbe = operationalProbes.findings[1];
+    const nextRedProbe = redFindings[1];
     if (nextRedProbe) throw new BootHaltError("operational-probe", nextRedProbe);
   }
 
