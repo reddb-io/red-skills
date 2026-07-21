@@ -42,7 +42,7 @@
       "Use $afk when this workspace needs it.",
       "Use $ask-red when this workspace needs it.",
       "Use $go when this workspace needs it.",
-      "Use $wayfinder when this workspace needs it."
+      "Use $manager when this workspace needs it."
     ],
     "brandColor": "#D92D20"
   }
