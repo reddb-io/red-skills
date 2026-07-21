@@ -19,9 +19,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 
-const NOW_ISO = "2026-07-21T12:00:00.000Z";
-const NOW_MS = Date.parse(NOW_ISO);
-const NOW_EPOCH = Math.floor(NOW_MS / 1000);
+// Snapshot timestamps are fixed; liveness records use real wall-clock time so
+// the 180-second idle window in readCastleMonitorWorkers sees them as fresh.
+const SNAPSHOT_ISO = "2026-07-21T12:00:00.000Z";
 
 function workerSnapshot(
   id: string,
@@ -34,8 +34,8 @@ function workerSnapshot(
     id,
     worker_id: id,
     version: 1,
-    updated_at: NOW_ISO,
-    started_at: NOW_ISO,
+    updated_at: SNAPSHOT_ISO,
+    started_at: SNAPSHOT_ISO,
     runner: "claude",
     pid,
     supervisor_id: fleetName,
@@ -65,9 +65,9 @@ describe("fleet_status worker partition (#2345)", () => {
     roots.push(root);
 
     const enginePaths = createEnginePaths(join(root, ".red"));
-    const lanes = createCastleLaneWriters(enginePaths, {
-      clock: () => NOW_ISO,
-    });
+    // No fixed clock: liveness records land at the real current time so the
+    // 180-second idle window in readCastleMonitorWorkers sees them as fresh.
+    const lanes = createCastleLaneWriters(enginePaths);
 
     // Write castle state snapshots — each stamped with their owning fleet.
     await writeCastleStateSnapshot(
@@ -96,23 +96,24 @@ describe("fleet_status worker partition (#2345)", () => {
     // Write minimal fleet-state files so readFleetState doesn't return null.
     // The slot_pids fallback isn't exercised here (all workers have stamps),
     // but the epoch field prevents parseFleetState from returning null.
-    const fleetState = (epoch: number) =>
-      encodeDevSnapshotToon({
-        ts: NOW_ISO,
-        epoch,
-        runner: "claude",
-        ready_for_agent: 0,
-        slots: { busy: 1, free: 0, total: 1, parked: 0 },
-        spawns_this_tick: 1,
-        churn: { deaths: 0, respawns: 0, window_s: 300 },
-      });
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const nowIso = new Date().toISOString();
+    const fleetState = encodeDevSnapshotToon({
+      ts: nowIso,
+      epoch: nowEpoch,
+      runner: "claude",
+      ready_for_agent: 0,
+      slots: { busy: 1, free: 0, total: 1, parked: 0 },
+      spawns_this_tick: 1,
+      churn: { deaths: 0, respawns: 0, window_s: 300 },
+    });
 
     const alphaSupervisorDir = join(root, ".red", "tmp", "supervisors", "alpha");
     const betaSupervisorDir = join(root, ".red", "tmp", "supervisors", "beta");
     await mkdir(alphaSupervisorDir, { recursive: true });
     await mkdir(betaSupervisorDir, { recursive: true });
-    await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState(NOW_EPOCH));
-    await writeFile(join(betaSupervisorDir, "state.toon"), fleetState(NOW_EPOCH));
+    await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState);
+    await writeFile(join(betaSupervisorDir, "state.toon"), fleetState);
 
     // Use a fixed nowMs so liveness records (written at NOW_ISO) are within the
     // 180-second idle window — they appear as NOW_MS which equals nowMs exactly.
