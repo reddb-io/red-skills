@@ -5,8 +5,7 @@ export { BLOCKED_SIGNAL, COMPLETION_SIGNALS, DONE_SIGNAL } from "@reddb-io/red-c
 export type { AgentOutput } from "./agent-output.js";
 export { CODEX_EFFORTS, CLAUDE_EFFORTS, MINIMAX_EFFORTS } from "./runner-spec.js";
 export {
-  DEFAULT_ATTEMPT_HARD_CAP_S,
-  DEFAULT_ATTEMPT_TIMEOUT_S,
+  DEFAULT_GOAL_POLL_MS,
   DEFAULT_IDLE_TIMEOUT_S,
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_REMOTE,
@@ -32,16 +31,10 @@ export type {
   AgentFactories,
   AgentOutcome,
   AgentRunner,
+  AttemptProgressInfo,
   RunAgentInput,
   RunAgentResult,
   SandboxMode,
   SandcastleDeps,
 } from "./execution/runtime.js";
-export { exceedsBudget, startAttemptGuard } from "./execution/attempt-guard.js";
-export type {
-  AttemptActivityUsage,
-  AttemptBudget,
-  AttemptBudgetUsage,
-  AttemptProgressInfo,
-  AttemptTimeoutReason,
-} from "./execution/attempt-guard.js";
+export { startGoalWatch } from "./execution/goal-watch.js";
