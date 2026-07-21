@@ -77,6 +77,7 @@ export interface MemoryOperationRendererMetadata {
   cli: {
     command: string;
     supportsJson: boolean;
+    dispatch?: "registry" | "legacy";
     reservedSubcommands?: readonly string[];
   };
   mcp: {
