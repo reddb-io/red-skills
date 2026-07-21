@@ -371,6 +371,11 @@ export async function buildBootDeps(
     log,
     fastForwardLocalBase: ({ remote, target }) =>
       fastForwardLocalTarget(gitx.mergeExec(gitCtx), { gitRepo: ctx.root, remote, target }),
+    concedeClaim: ctx.repo
+      ? async (issue, body) => {
+          await ghx.postClaimComment(ghCtx, issue, body);
+        }
+      : undefined,
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
