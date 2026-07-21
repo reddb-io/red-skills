@@ -132,12 +132,12 @@ describe("config", () => {
     expect(getConfig(values, "afk.review_gate.threshold")).toBe("simple");
   });
 
-  it("reads plugins.dev.review.* as the advisory review accessor (#2207)", () => {
+  it("folds plugins.dev.review.* to dev.review.* like every other dev accessor (#2207, #2244)", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
-    expect(getConfig(defaults, "review.enabled")).toBe("false");
-    expect(getConfig(defaults, "review.max_iterations")).toBe("1");
-    expect(getConfig(defaults, "review.reviewer_count")).toBe("1");
-    expect(getConfig(defaults, "review.quorum")).toBe("any");
+    expect(getConfig(defaults, "dev.review.enabled")).toBe("false");
+    expect(getConfig(defaults, "dev.review.max_iterations")).toBe("1");
+    expect(getConfig(defaults, "dev.review.reviewer_count")).toBe("1");
+    expect(getConfig(defaults, "dev.review.quorum")).toBe("any");
     expect(resolveAdversarialReviewConfig((key) => getConfig(defaults, key))).toEqual({
       enabled: false,
       maxIterations: 1,
@@ -149,8 +149,8 @@ describe("config", () => {
       read: () =>
         "plugins:\n  dev:\n    review:\n      enabled: true\n      max_iterations: 3\n",
     });
-    expect(getConfig(values, "review.enabled")).toBe("true");
-    expect(getConfig(values, "review.max_iterations")).toBe("3");
+    expect(getConfig(values, "dev.review.enabled")).toBe("true");
+    expect(getConfig(values, "dev.review.max_iterations")).toBe("3");
     expect(resolveAdversarialReviewConfig((key) => getConfig(values, key))).toEqual({
       enabled: true,
       maxIterations: 3,
