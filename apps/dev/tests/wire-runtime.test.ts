@@ -27,7 +27,7 @@ import {
   readFleetState,
   readFileSync,
   readToonCache,
-  resolveAttemptGuardArming,
+  resolveAttemptProbeArming,
   resolveAttemptHead,
   resolveRunSettings,
   resolveStatuslineCacheTtl,
@@ -46,42 +46,42 @@ import {
   writeRenderableAttempt,
 } from "./wire.helpers.js";
 
-describe("resolveAttemptGuardArming (issue #405)", () => {
+describe("resolveAttemptProbeArming (issue #405)", () => {
   const dir = "/red/tmp/workers/w1/42-a1";
 
-  it("arms the guard + lane-idle reaper under no-sandbox", () => {
-    expect(resolveAttemptGuardArming({ sandbox: "none", branch: "afk/x/1", attemptDir: dir })).toEqual({
-      guardArmed: true,
+  it("arms the head probe + lane-idle reaper under no-sandbox", () => {
+    expect(resolveAttemptProbeArming({ sandbox: "none", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      headProbeArmed: true,
       laneArmed: true,
     });
   });
 
-  it("arms the guard but NOT the lane-idle reaper under docker (host process tree is container-blind)", () => {
-    expect(resolveAttemptGuardArming({ sandbox: "docker", branch: "afk/x/1", attemptDir: dir })).toEqual({
-      guardArmed: true,
+  it("arms the head probe but NOT the lane-idle reaper under docker (host process tree is container-blind)", () => {
+    expect(resolveAttemptProbeArming({ sandbox: "docker", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      headProbeArmed: true,
       laneArmed: false,
     });
   });
 
-  it("arms the guard but NOT the lane-idle reaper under podman", () => {
-    expect(resolveAttemptGuardArming({ sandbox: "podman", branch: "afk/x/1", attemptDir: dir })).toEqual({
-      guardArmed: true,
+  it("arms the head probe but NOT the lane-idle reaper under podman", () => {
+    expect(resolveAttemptProbeArming({ sandbox: "podman", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      headProbeArmed: true,
       laneArmed: false,
     });
   });
 
   it("arms nothing without a worker branch (every mode)", () => {
     for (const sandbox of ["none", "docker", "podman"] as const) {
-      expect(resolveAttemptGuardArming({ sandbox, branch: undefined, attemptDir: dir })).toEqual({
-        guardArmed: false,
+      expect(resolveAttemptProbeArming({ sandbox, branch: undefined, attemptDir: dir })).toEqual({
+        headProbeArmed: false,
         laneArmed: false,
       });
     }
   });
 
   it("does not arm the lane-idle reaper without an attempt dir even under no-sandbox", () => {
-    expect(resolveAttemptGuardArming({ sandbox: "none", branch: "afk/x/1", attemptDir: undefined })).toEqual({
-      guardArmed: true,
+    expect(resolveAttemptProbeArming({ sandbox: "none", branch: "afk/x/1", attemptDir: undefined })).toEqual({
+      headProbeArmed: true,
       laneArmed: false,
     });
   });
