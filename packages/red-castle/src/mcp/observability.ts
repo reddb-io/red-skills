@@ -4,6 +4,8 @@ import type { CastleMcpTool } from "./tool.js";
 export interface LogsInput {
   lane: "worker" | "supervisor" | "monitor" | "liveness";
   id: string;
+  limit?: number;
+  kind?: string;
 }
 
 export interface ObservabilityDependencies {
@@ -23,10 +25,12 @@ export function createObservabilityTools(
       name: "logs",
       title: "Read Castle logs",
       description:
-        "Return raw CastleLaneRecord entries from one structured lane.",
+        "Return the newest CastleLaneRecord entries from one structured lane; bounded by `limit` (default 200, max 10 000). Pass `kind` to filter before the limit.",
       inputSchema: {
         lane: z.enum(["worker", "supervisor", "monitor", "liveness"]),
         id: z.string().min(1),
+        limit: z.number().int().positive().max(10_000).default(200),
+        kind: z.string().optional(),
       },
       invoke: (input) => deps.logs(input as unknown as LogsInput),
     },
