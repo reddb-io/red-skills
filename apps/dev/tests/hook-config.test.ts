@@ -3,6 +3,8 @@ import {
   CANONICAL_HOOK_NAMES,
   HOOK_DEFAULTS_REGISTRY,
   resolveHooks,
+  validateHookConfig,
+  UnknownHookError,
   scriptDefaultResolver,
   type ResolvedHooks,
 } from "../src/core/hook-config.js";
@@ -151,5 +153,77 @@ describe("hook-config resolution", () => {
       // None of the new points ship a built-in default → resolve to the empty list.
       expect(resolve({})[name]).toEqual([]);
     }
+  });
+
+  it("resolves YAML list-form (indexed keys) identically to the newline-joined scalar form", () => {
+    const listForm = resolve({
+      "afk.hooks.pre_session.0": "echo first",
+      "afk.hooks.pre_session.1": "echo second",
+      "afk.hooks.pre_session.2": "echo third",
+    });
+    const scalarForm = resolve({
+      "afk.hooks.pre_session": ["echo first", "echo second", "echo third"].join("\n"),
+    });
+    expect(listForm.pre_session).toEqual(["echo first", "echo second", "echo third"]);
+    expect(listForm.pre_session).toEqual(scalarForm.pre_session);
+  });
+
+  it("pins dispatch order for list-form hooks by explicit index", () => {
+    const resolved = resolve({
+      "afk.hooks.post_session.2": "echo c",
+      "afk.hooks.post_session.0": "echo a",
+      "afk.hooks.post_session.1": "echo b",
+    });
+    expect(resolved.post_session).toEqual(["echo a", "echo b", "echo c"]);
+  });
+
+  it("list-form for any lifecycle point does not throw UnknownHookError", () => {
+    for (const name of CANONICAL_HOOK_NAMES) {
+      expect(() =>
+        resolve({ [`afk.hooks.${name}.0`]: "echo test" }),
+      ).not.toThrow();
+    }
+  });
+
+  it("list-form and bare-string form for the same point merge in index-then-scalar order", () => {
+    // Indexed entries sort before the bare scalar (which uses MAX_SAFE_INTEGER as index).
+    const resolved = resolve({
+      "afk.hooks.post_session": "echo bare",
+      "afk.hooks.post_session.0": "echo indexed",
+    });
+    expect(resolved.post_session).toEqual(["echo indexed", "echo bare"]);
+  });
+
+  it("throws UnknownHookError for a genuinely unknown hook name in indexed form", () => {
+    expect(() =>
+      resolve({ "afk.hooks.not_a_real_hook.0": "echo nope" }),
+    ).toThrow(/unknown hook name 'not_a_real_hook'/);
+  });
+
+  it("validateHookConfig passes a valid config silently", () => {
+    expect(() =>
+      validateHookConfig({
+        "afk.hooks.pre_session": "echo boot",
+        "afk.hooks.pre_merge.0": "echo first",
+        "afk.hooks.pre_merge.1": "echo second",
+      }),
+    ).not.toThrow();
+  });
+
+  it("validateHookConfig throws UnknownHookError naming the offending key", () => {
+    let caught: unknown;
+    try {
+      validateHookConfig({ "afk.hooks.bad_hook_name": "echo nope" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownHookError);
+    expect((caught as UnknownHookError).hookName).toBe("bad_hook_name");
+  });
+
+  it("validateHookConfig throws for a malformed key that does not match name[.N]", () => {
+    expect(() =>
+      validateHookConfig({ "afk.hooks.pre_session.foo": "echo nope" }),
+    ).toThrow(UnknownHookError);
   });
 });
