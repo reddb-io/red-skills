@@ -141,11 +141,12 @@ export const CONFIG_DEFAULTS = {
   // attempts land exactly as before. When enabled, AFK opens/resolves the PR,
   // runs one isolated reviewer pass over ONLY the Issue + diff, posts the full
   // findings to both the PR and Issue, then continues landing regardless of the
-  // advisory verdict. Folded from `plugins.dev.review.*` to `review.*`.
-  "review.enabled": "false",
-  "review.max_iterations": "1",
-  "review.reviewer_count": "1",
-  "review.quorum": "any",
+  // advisory verdict. Folded from `plugins.dev.review.*` to `dev.review.*`,
+  // matching castle's fold and the `plugins.dev.* → dev.*` convention (#2244).
+  "dev.review.enabled": "false",
+  "dev.review.max_iterations": "1",
+  "dev.review.reviewer_count": "1",
+  "dev.review.quorum": "any",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
   // version-pinned release (today's behaviour); `canary` tracks npm's canary
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
@@ -629,12 +630,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     const m = /^plugins\.dev\.(.+)$/.exec(key);
     if (!m) continue;
     const rest = m[1]!;
-    const accessorKey =
-      rest === "afk" || rest.startsWith("afk.")
-        ? rest
-        : rest === "review" || rest.startsWith("review.")
-          ? rest
-          : `dev.${rest}`;
+    const accessorKey = rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`;
     values[accessorKey] = value;
     explicitAccessorKeys.add(accessorKey);
   }
