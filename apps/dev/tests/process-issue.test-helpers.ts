@@ -272,6 +272,7 @@ export function harness(opts: HarnessOptions = {}): {
   input: ProcessIssueInput;
   trace: Trace;
 } {
+  const postedClaims: { id: number; body: string }[] = [];
   const trace: Trace = {
     labelEdits: [],
     comments: [],
@@ -362,13 +363,16 @@ export function harness(opts: HarnessOptions = {}): {
       ? {
           async postClaim(_issue, body) {
             trace.comments.push({ issue: 9, body });
-            return 100; // our claim gets id 100
+            postedClaims.push({ id: 100, body }); // our claim gets id 100
+            return 100;
           },
           async listClaims() {
+            // The read-back ALWAYS echoes our own claim (#2385): a list that
+            // omits it is a verification failure, not a lost race.
             // "other" wins by posting an earlier id (50); "self" wins solo.
             return opts.claim?.winner === "other"
-              ? [{ id: 50, body: "<!-- afk:claim v1 worker=otherhost:wZZZZ kind=claim -->" }]
-              : [];
+              ? [{ id: 50, body: "<!-- afk:claim v1 worker=otherhost:wZZZZ kind=claim -->" }, ...postedClaims]
+              : [...postedClaims];
           },
           async concede(_issue, body) {
             trace.comments.push({ issue: 9, body });
