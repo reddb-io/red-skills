@@ -134,7 +134,7 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
     try {
       expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
       mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  feedback:\n    rebase_on_base: true\n");
+      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  feedback:\n    rebase_on_base: true\n");
       expect(resolveRunSettings(root).feedbackRebaseBase).toBe("main");
     } finally {
       rmSync(root, { recursive: true, force: true });
