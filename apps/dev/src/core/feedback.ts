@@ -187,20 +187,36 @@ export interface ValidationRecord {
   summary?: string;
 }
 
+/**
+ * The three baseline-comparison verdicts (#2380). The probe is a COMPARISON
+ * instrument, never a tracker: it classifies the *branch* and nothing else.
+ *
+ * 1. `clean` — the branch had no failures left to attribute.
+ * 2. `branch-fault` — at least one branch failure is green on the baseline, so
+ *    the branch owns it. Block the branch.
+ * 3. `inconclusive` — every branch failure also reproduces on the baseline, so
+ *    the probe cannot attribute fault. Block the branch anyway, but as an
+ *    inconclusive park (`blocked:validation`) carrying the comparison
+ *    evidence — never a tracked repair issue, never a global land block.
+ */
+export type BaselineComparisonVerdict = "clean" | "branch-fault" | "inconclusive";
+
 export interface BaselineDiffGateDecision {
-  /** True when at least one branch failure is green on the baseline. */
+  /** The comparison verdict for the branch. */
+  verdict: BaselineComparisonVerdict;
+  /** True for every verdict except `clean` — the probe never unblocks a branch. */
   shouldBlock: boolean;
   /** Failures present on the branch and absent from the baseline failing set. */
   blockingFailures: readonly string[];
-  /** Failures present on both branch and baseline; callers must record these. */
-  preExistingFailures: readonly string[];
+  /** Failures reproduced on both branch and baseline — the inconclusive set. */
+  inconclusiveFailures: readonly string[];
 }
 
 /**
- * Pure baseline-diff gate predicate. A branch blocks only for failures that
- * are new relative to the baseline failing set. Failures red in both places
- * are pre-existing main-red failures and are returned separately so callers
- * can route them to the main-red repair path instead of silently dropping them.
+ * Pure baseline-comparison predicate. A failure absent from the baseline is the
+ * branch's fault; a failure reproduced on the baseline is inconclusive. Both
+ * block the branch — the probe downgrades nothing and files nothing, because
+ * pre-merge gating is the sole quality gate (#2380).
  */
 export function decideBaselineDiffGate(
   branchFailingSet: readonly string[],
@@ -209,22 +225,31 @@ export function decideBaselineDiffGate(
   const baselineFailures = new Set(baselineFailingSet);
   const seen = new Set<string>();
   const blockingFailures: string[] = [];
-  const preExistingFailures: string[] = [];
+  const inconclusiveFailures: string[] = [];
 
   for (const failure of branchFailingSet) {
     if (seen.has(failure)) continue;
     seen.add(failure);
     if (baselineFailures.has(failure)) {
-      preExistingFailures.push(failure);
+      inconclusiveFailures.push(failure);
     } else {
       blockingFailures.push(failure);
     }
   }
 
+  // A real new failure outranks an inconclusive one: the branch is at fault
+  // regardless of what else reproduces on the baseline.
+  const verdict: BaselineComparisonVerdict = blockingFailures.length > 0
+    ? "branch-fault"
+    : inconclusiveFailures.length > 0
+      ? "inconclusive"
+      : "clean";
+
   return {
-    shouldBlock: blockingFailures.length > 0,
+    verdict,
+    shouldBlock: verdict !== "clean",
     blockingFailures,
-    preExistingFailures,
+    inconclusiveFailures,
   };
 }
 
@@ -505,29 +530,25 @@ export interface RunFeedbackResult {
   /** The sidecar lines, one JSONL record per check, in the same order. */
   sidecar: string[];
   /**
-   * AFK runner improvement: the set of check names that were downgraded from
-   * `failed` to `skipped` because they ALSO failed on the baseline branch
-   * (pre-existing failures on main, not the worker's fault). Always empty
-   * when no `baselineWorktree` is supplied to `runFeedback`. Surfaced for
-   * observability so the issue thread / envelope can explain why the gate
-   * passed when the worker's branch showed red.
+   * The branch failures that also reproduced on the baseline — the
+   * `inconclusive` set (#2380). These still fail the gate; they are surfaced so
+   * the park comment / envelope can say *why* the verdict is inconclusive
+   * rather than the branch's fault. Always empty when no `baselineWorktree`
+   * is supplied to `runFeedback`.
    */
-  baselineDowngraded: readonly string[];
+  baselineInconclusive: readonly string[];
   /**
-   * True when the baseline probe actually ran. This distinguishes "main is
-   * green for the failing worker checks" from "the happy path skipped the
-   * baseline probe entirely".
+   * True when the baseline probe actually ran. This distinguishes "the
+   * comparison ran and attributed the failure" from "the happy path skipped
+   * the baseline probe entirely".
    */
   baselineProbeRan?: boolean;
   /**
-   * The failed baseline check names observed by the probe. These are the
-   * pre-existing main failures a caller can surface in a repair issue. Equal to
-   * `baselineDowngraded` today, but kept as its own field because callers care
-   * about the baseline's state, not the worker reclassification mechanism.
+   * The comparison verdict for the branch, present only when the probe ran.
+   * Comparison-only: it never becomes a tracked issue and never blocks landing
+   * for anyone but this branch (#2380).
    */
-  baselineFailures?: readonly string[];
-  /** Actionable evidence retained from each failed baseline command. */
-  baselineFailureEvidence?: readonly BaselineFailureEvidence[];
+  baselineVerdict?: BaselineComparisonVerdict;
   /**
    * Quarantine entries that were active for this gate run — the full validated
    * list from `RunFeedbackInput.quarantine`. Always empty when no quarantine
@@ -580,6 +601,17 @@ function isCrashOrOom(code: number, output: string): boolean {
   return /JavaScript heap out of memory|Reached heap limit|FATAL ERROR|out of memory|\bKilled\b/i.test(output);
 }
 
+/**
+ * The sidecar summary for an `inconclusive` check — the comparison evidence a
+ * human needs to read the `blocked:validation` park without re-running anything.
+ */
+function baselineComparisonSummary(baselineSummary: string | undefined): string {
+  const detail = baselineSummary?.trim();
+  return detail
+    ? `inconclusive: also fails on the baseline — ${detail}`
+    : "inconclusive: also fails on the baseline";
+}
+
 function joinCommandOutput(stdout: string, stderr: string): string {
   if (stdout === "") return stderr;
   if (stderr === "") return stdout;
@@ -618,18 +650,18 @@ async function runChecksForBaseline(
     }
     const output = joinCommandOutput(result.stdout, result.stderr);
     if (isCrashOrOom(result.code, output)) {
-      // Inconclusive, NOT a confirmed pre-existing failure. Main's CI is the
-      // validation authority; a local probe OOM/crash on the resource-constrained
-      // fleet host must not manufacture a main-red verdict CI never saw. The
-      // caller filters `status === "failed"` into the baseline-failing set, so an
-      // inconclusive result is excluded — the branch failure is attributed to the
-      // branch (a per-worker block) instead of being filed as a cross-fleet
-      // main-red repair that re-fires the whole CI/CD on a non-bug.
+      // Probe-infrastructure failure ⇒ inconclusive, silently logged (#2380).
+      // Main's CI is the validation authority; a local probe OOM/crash on the
+      // resource-constrained fleet host must not manufacture a main-red verdict
+      // CI never saw. The caller filters `status === "failed"` into the
+      // baseline-failing set, so a crashed probe is excluded and the branch
+      // failure stays attributed to the branch — a per-worker block, never a
+      // cross-fleet claim about main.
       out.set(name, {
         status: "inconclusive",
         evidence: {
           check: name,
-          summary: "baseline probe inconclusive (crash/OOM) — not a confirmed main-red failure",
+          summary: "baseline probe inconclusive (crash/OOM) — not a confirmed baseline failure",
           outputTail: boundedFailureOutputTail(output),
         },
       });
@@ -707,7 +739,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         record,
       };
       push(check);
-      return { ok: false, checks, sidecar, baselineDowngraded: [], quarantined: [] };
+      return { ok: false, checks, sidecar, baselineInconclusive: [], quarantined: [] };
     }
     throw err;
   }
@@ -810,46 +842,40 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       failing.map((check) => check.name),
       baselineFailing,
     );
-    const preExisting = new Set(gateDecision.preExistingFailures);
-    const baselineFailureEvidence = gateDecision.preExistingFailures.flatMap((name) => {
-      const evidence = baselineResults.get(name)?.evidence;
-      return evidence ? [evidence] : [];
-    });
+    const inconclusive = new Set(gateDecision.inconclusiveFailures);
 
-    // Re-classify any check that ALSO failed on the baseline as
-    // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
-    // and the `failed` flag in lockstep so the downgraded check is
-    // observable on the Envelope / Memory sidecar but does not block
-    // the gate.
-    const downgraded: string[] = [];
+    // Annotate — never downgrade — a check that also failed on the baseline.
+    // The check stays `failed` so the branch parks `blocked:validation`; the
+    // rewritten summary carries the comparison evidence onto the sidecar so a
+    // human reading the park knows the failure was not attributed to the branch.
     for (let i = 0; i < checks.length; i += 1) {
       const check = checks[i]!;
       if (check.status !== "failed") continue;
-      if (preExisting.has(check.name)) {
-        const newRecord = buildValidationRecord({
-          name: check.name,
-          status: "skipped",
-          command: check.record.command,
-          summary: "pre-existing failure on baseline",
-        });
-        checks[i] = { ...check, status: "skipped", record: newRecord };
-        sidecar[i] = formatValidationLine(newRecord);
-        downgraded.push(check.name);
-      }
+      if (!inconclusive.has(check.name)) continue;
+      const evidence = baselineResults.get(check.name)?.evidence;
+      const newRecord = buildValidationRecord({
+        name: check.name,
+        status: "failed",
+        command: check.record.command,
+        exitCode: check.record.exitCode,
+        durationMs: check.record.durationMs,
+        summary: baselineComparisonSummary(evidence?.summary),
+      });
+      checks[i] = { ...check, record: newRecord };
+      sidecar[i] = formatValidationLine(newRecord);
     }
     failed = gateDecision.shouldBlock;
     return {
       ok: !failed,
       checks,
       sidecar,
-      baselineDowngraded: downgraded,
+      baselineInconclusive: gateDecision.inconclusiveFailures,
       baselineProbeRan: true,
-      baselineFailures: gateDecision.preExistingFailures,
-      baselineFailureEvidence,
+      baselineVerdict: gateDecision.verdict,
       quarantined: quarantine,
       validationScope,
     };
   }
 
-  return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine, validationScope };
+  return { ok: !failed, checks, sidecar, baselineInconclusive: [], quarantined: quarantine, validationScope };
 }
