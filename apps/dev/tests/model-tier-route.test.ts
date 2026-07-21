@@ -21,11 +21,11 @@ async function runCommand(args: string[], payload: unknown): Promise<string> {
 }
 
 /** Config with all defaults (no `.red/config.yaml` present). */
-const defaults = (): ConfigValues => loadConfig("/nope", { read: () => undefined, warn: () => {} });
+const defaults = (): ConfigValues => loadConfig("/nope", { ignoreActivationGate: true, read: () => undefined, warn: () => {} });
 
 /** Config overriding the simple tier's Claude model (single-source check). */
 const withSimpleOverride = (model: string): ConfigValues =>
-  loadConfig("/cfg", {
+  loadConfig("/cfg", { ignoreActivationGate: true,
     read: () => `plugins:\n  dev:\n    afk:\n      models:\n        claude:\n          simple:\n            model: ${model}\n`,
     warn: () => {},
   });
@@ -138,7 +138,7 @@ describe("routeModelTier — explicit pin vs legacy scalar", () => {
     // validate tier default = claude-haiku-4-5; legacy afk.model = claude-sonnet-4-6.
     // An explicit validate.model = claude-haiku-4-5 must beat the legacy scalar
     // (resolveTier bug #583), so a haiku dispatch to validate remains a noop.
-    const config = loadConfig("/x/.red/config.yaml", {
+    const config = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
         "afk:\n  model: claude-sonnet-4-6\n  models:\n    claude:\n      validate:\n        model: claude-haiku-4-5\n",
     });
