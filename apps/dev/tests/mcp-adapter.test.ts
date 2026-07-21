@@ -319,6 +319,36 @@ describe("dev:afk MCP host adapter", () => {
     });
   });
 
+  it("routes review and triage tools through their operations", async () => {
+    const cwd = await root();
+    const operations = fakeOperations();
+    const deps = createDevAfkMcpDependencies(cwd, operations);
+
+    await expect(deps.dailyReview({})).resolves.toMatchObject({
+      kind: "daily",
+    });
+    await expect(deps.weeklyReview({})).resolves.toMatchObject({
+      kind: "weekly",
+    });
+    await expect(
+      deps.triage({ issue: 2333, decision: "ready-for-agent" }),
+    ).resolves.toMatchObject({ issue: 2333 });
+    await expect(
+      deps.respond({ body: "/dev explain what is AFK?", number: 2333 }),
+    ).resolves.toMatchObject({ action: "ignored" });
+
+    expect(operations.dailyReview).toHaveBeenCalledWith({});
+    expect(operations.weeklyReview).toHaveBeenCalledWith({});
+    expect(operations.triage).toHaveBeenCalledWith({
+      issue: 2333,
+      decision: "ready-for-agent",
+    });
+    expect(operations.respond).toHaveBeenCalledWith({
+      body: "/dev explain what is AFK?",
+      number: 2333,
+    });
+  });
+
   it("enumerates the disposable worktree lanes and refuses escapes on removal", async () => {
     const cwd = await root();
     await mkdir(join(cwd, ".red", "tmp", "worktrees", "landing", "main-2307"), {
@@ -528,5 +558,9 @@ function fakeOperations(): DevAfkMcpOperations {
     claimStatus: vi.fn(async (input) => ({ issue: input.issue, holders: [] })),
     claimRelease: vi.fn(async (input) => ({ issue: input.issue, conceded: [] })),
     waitStart: vi.fn(async () => ({ id: "a1b2c3d4-uuid", pid: 73, status: "spawned" })),
+    dailyReview: vi.fn(async () => ({ kind: "daily" })),
+    weeklyReview: vi.fn(async () => ({ kind: "weekly" })),
+    triage: vi.fn(async (input) => ({ issue: input.issue, action: "apply" })),
+    respond: vi.fn(async () => ({ action: "ignored" })),
   };
 }

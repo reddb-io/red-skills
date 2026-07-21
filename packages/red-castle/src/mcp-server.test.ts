@@ -91,6 +91,10 @@ function deps(): CastleMcpDependencies {
       status: "finished",
       result: { schema: "rsp.wait.result", version: 1 },
     })),
+    dailyReview: vi.fn(async () => ({ kind: "daily" })),
+    weeklyReview: vi.fn(async () => ({ kind: "weekly" })),
+    triage: vi.fn(async (input) => ({ issue: input.issue, action: "apply" })),
+    respond: vi.fn(async () => ({ action: "ignored" })),
   };
 }
 
@@ -130,6 +134,10 @@ describe("dev:afk MCP tools", () => {
       "wait_start",
       "wait_list",
       "wait_status",
+      "daily_review",
+      "weekly_review",
+      "triage",
+      "respond",
     ]);
   });
 

@@ -1113,6 +1113,71 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(blocker?.summary).toContain("The implementation still omits the required audit trail.");
     expect(trace.envelopeBodies.at(-1)).toContain("Adversarial review budget exhausted");
   });
+
+  it("a crashing reviewer CLI degrades to pass — the worker survives and lands (#2352)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialExtractError: "claude-code exited with code 1",
+    });
+    const result = await processIssue(deps, input);
+
+    // The advisory pass ran and blew up — the machine-validated attempt still lands.
+    expect(trace.adversarialReviewContexts).toHaveLength(1);
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    // No verdict was posted, and the implementer was NOT re-seeded.
+    expect(trace.adversarialReviews).toEqual([]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+    // The failure is logged AND recorded in the attempt ledger.
+    expect(
+      trace.iterLogs.some((line) =>
+        line.includes("[adversarial-review] advisory pass failed, degraded to pass: claude-code exited with code 1"),
+      ),
+    ).toBe(true);
+    expect(trace.workerEvents).toContainEqual({
+      kind: "worker.review_degraded",
+      payload: { issue: 9, pr: 42, decision: "pass", reason: "claude-code exited with code 1" },
+    });
+  });
+
+  it("substitutes a reviewer model the host runner cannot dispatch and logs it (#2352)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: async () => "complex",
+      resolveTier: () => ({ model: "claude-opus-4-8", effort: "medium" }),
+      // The repo pins a codex model, but the host runner is claude (the #2352 outage).
+      adversarialReview: {
+        enabled: true,
+        maxIterations: 1,
+        reviewerCount: 1,
+        quorum: "any",
+        model: "gpt-5.6-sol",
+        effort: "medium",
+      },
+      adversarialFindings: { summary: "Clean.", findings: [] },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.adversarialReviewContexts).toHaveLength(1);
+    expect(trace.adversarialReviewContexts[0]).toMatchObject({
+      runner: "claude",
+      model: "claude-opus-4-8",
+      effort: "medium",
+    });
+    expect(
+      trace.iterLogs.some(
+        (line) =>
+          line.includes("cannot run model 'gpt-5.6-sol'") && line.includes("claude-opus-4-8"),
+      ),
+    ).toBe(true);
+    expect(trace.closed).toEqual([9]);
+  });
 });
 
 

@@ -25,6 +25,7 @@ import type {
   CascadeStatusInput,
   CastleMcpDependencies,
   ClaimIssueInput,
+  DailyReviewInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
@@ -32,9 +33,12 @@ import type {
   LandBranchInput,
   LogsInput,
   RequeueToolInput,
+  RespondToolInput,
   RetakeToolInput,
   WaitStartInput,
   WaitStatusInput,
+  TriageToolInput,
+  WeeklyReviewInput,
   WorkerDispatchInput,
   WorkerRequestInput,
   WorkerSteerInput,
@@ -94,6 +98,9 @@ import {
 } from "./core/branch-cleanup.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
+import { activityReviewCommand } from "./commands/activity-review.js";
+import { triageCommand } from "./commands/triage.js";
+import { respondCommand } from "./commands/respond.js";
 
 interface DispatchOperationInput extends WorkerDispatchInput {
   request?: string;
@@ -119,6 +126,10 @@ export interface DevAfkMcpOperations {
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
   waitStart(input: WaitStartInput): Promise<unknown>;
+  dailyReview(input: DailyReviewInput): Promise<unknown>;
+  weeklyReview(input: WeeklyReviewInput): Promise<unknown>;
+  triage(input: TriageToolInput): Promise<unknown>;
+  respond(input: RespondToolInput): Promise<unknown>;
 }
 
 export interface DevAfkMcpRuntime {
@@ -650,6 +661,34 @@ export function createDefaultDevAfkMcpOperations(
       const pid = await runtime.launchRspWait(args, root);
       return { id, pid, result_file: resultFile, status: "spawned" };
     },
+    async dailyReview(_input) {
+      const capture = captureStream();
+      const exitCode = await activityReviewCommand("daily", [], root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "toon");
+    },
+    async weeklyReview(_input) {
+      const capture = captureStream();
+      const exitCode = await activityReviewCommand("weekly", [], root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "toon");
+    },
+    async triage(input) {
+      const args: string[] = [String(input.issue), "--decision", input.decision, "--json"];
+      if (input.summon) args.push("--summon");
+      if (input.repo) args.push("--repo", input.repo);
+      const capture = captureStream();
+      const exitCode = await triageCommand(args, root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "json");
+    },
+    async respond(input) {
+      const args: string[] = ["--body", input.body, "--number", String(input.number)];
+      if (input.author) args.push("--author", input.author);
+      if (input.is_pr) args.push("--is-pr");
+      if (input.runner) args.push("--runner", input.runner);
+      if (input.repo) args.push("--repo", input.repo);
+      const capture = captureStream();
+      const exitCode = await respondCommand(args, root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "toon");
+    },
   };
 }
 
@@ -1048,5 +1087,9 @@ export function createDevAfkMcpDependencies(
     waitStart: (input) => operations.waitStart(input),
     waitList: () => listRspWaits(root),
     waitStatus: (input) => waitStatusImpl(root, input),
+    dailyReview: (input) => operations.dailyReview(input),
+    weeklyReview: (input) => operations.weeklyReview(input),
+    triage: (input) => operations.triage(input),
+    respond: (input) => operations.respond(input),
   };
 }
