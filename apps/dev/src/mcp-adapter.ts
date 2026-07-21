@@ -660,6 +660,7 @@ export function createDefaultDevAfkMcpOperations(
       });
       const pid = await runtime.launchRspWait(args, root);
       return { id, pid, result_file: resultFile, status: "spawned" };
+    },
     async dailyReview(_input) {
       const capture = captureStream();
       const exitCode = await activityReviewCommand("daily", [], root, capture.stream);
