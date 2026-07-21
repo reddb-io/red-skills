@@ -242,6 +242,34 @@ const SURFACE: ReadonlyArray<{
       "Return the registry entry for a running wait or the sealed result envelope for a finished one.",
     schema: ["id"],
   },
+  {
+    name: "daily_review",
+    title: "Build daily activity review",
+    description:
+      "Return the structured daily activity review report for the local window.",
+    schema: [],
+  },
+  {
+    name: "weekly_review",
+    title: "Build weekly activity review",
+    description:
+      "Return the structured weekly activity review report for the local window.",
+    schema: [],
+  },
+  {
+    name: "triage",
+    title: "Apply triage decision",
+    description:
+      "MUTATING: apply the decided triage transition to one issue, gated by the per-repo trust policy.",
+    schema: ["issue", "decision", "summon", "repo"],
+  },
+  {
+    name: "respond",
+    title: "Handle comment event",
+    description:
+      "MUTATING: parse a /dev comment summon, authorize the commenter, and route the advisory or mutation verb.",
+    schema: ["body", "number", "author", "is_pr", "runner", "repo"],
+  },
 ];
 
 describe("aggregated dev:afk MCP tool surface", () => {
