@@ -113,3 +113,73 @@ describe("effort brief with derived state (slice #2294)", () => {
     expect(Object.keys(brief)).not.toContain("children");
   });
 });
+
+describe("effort brief with execution artifact state (slice #2295)", () => {
+  const DERIVED_WITH_EXECUTION: ManagerMapDerivedState = {
+    map_issue: 42,
+    child_count: 1,
+    children: [200],
+    execution: {
+      issue_number: 200,
+      state: "open",
+      labels: ["ready-for-agent"],
+      pr_numbers: [],
+    },
+  };
+
+  const DERIVED_WITHOUT_EXECUTION: ManagerMapDerivedState = {
+    map_issue: 42,
+    child_count: 0,
+    children: [],
+  };
+
+  it("carries execution_issue and execution_state when an execution was dispatched", () => {
+    const brief = decode(
+      renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_EXECUTION),
+    ) as Record<string, unknown>;
+    expect(brief.execution_issue).toBe(200);
+    expect(brief.execution_state).toBe("open");
+  });
+
+  it("carries closed execution_state when the execution issue is closed", () => {
+    const derivedClosed: ManagerMapDerivedState = {
+      ...DERIVED_WITH_EXECUTION,
+      execution: { ...DERIVED_WITH_EXECUTION.execution!, state: "closed" },
+    };
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, derivedClosed)) as Record<
+      string,
+      unknown
+    >;
+    expect(brief.execution_state).toBe("closed");
+  });
+
+  it("omits execution_issue and execution_state when no dispatch has occurred", () => {
+    const brief = decode(
+      renderEffortBriefWithDerived(EFFORT, DERIVED_WITHOUT_EXECUTION),
+    ) as Record<string, unknown>;
+    expect(Object.keys(brief)).not.toContain("execution_issue");
+    expect(Object.keys(brief)).not.toContain("execution_state");
+  });
+
+  it("omits execution_issue and execution_state when execution is null", () => {
+    const derivedNull: ManagerMapDerivedState = {
+      map_issue: 42,
+      child_count: 0,
+      children: [],
+      execution: null,
+    };
+    const brief = decode(renderEffortBriefWithDerived(EFFORT, derivedNull)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(brief)).not.toContain("execution_issue");
+    expect(Object.keys(brief)).not.toContain("execution_state");
+  });
+
+  it("still carries state_source as reconciled with execution state", () => {
+    const brief = decode(
+      renderEffortBriefWithDerived(EFFORT, DERIVED_WITH_EXECUTION),
+    ) as Record<string, unknown>;
+    expect(brief.state_source).toBe("reconciled");
+  });
+});

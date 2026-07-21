@@ -3,6 +3,8 @@ import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import {
   findManagerMapByEffortId,
   publishAndReconcileManagerMap,
+  dispatchExecutionIssue,
+  readExecutionArtifact,
 } from "../src/runtime/gh/manager-map.js";
 import { buildEffortMarker, LABEL_MANAGER_MAP } from "../src/core/manager/map-reconciler.js";
 import type { EffortRecord } from "../src/core/manager/effort-store.js";
@@ -274,5 +276,155 @@ describe("publishAndReconcileManagerMap — partial-failure convergence", () => 
     const derived = await publishAndReconcileManagerMap(ctx, EFFORT);
     // The marker in the body identifies the effort even though the title changed
     expect(derived.map_issue).toBe(99);
+  });
+});
+
+describe("dispatchExecutionIssue (slice #2295)", () => {
+  it("creates a ready-for-agent issue and returns its number", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = (_tool, args) => {
+      calls.push([...args]);
+      const isCreate = args[0] === "issue" && args[1] === "create";
+      return Promise.resolve({
+        code: 0,
+        stdout: isCreate ? "https://github.com/acme/widgets/issues/200" : "",
+        stderr: "",
+      });
+    };
+    const ctx = { ...CTX_BASE, exec };
+    const num = await dispatchExecutionIssue(ctx, EFFORT, null);
+    expect(num).toBe(200);
+    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create");
+    expect(createCall).toBeDefined();
+    expect(createCall).toContain("--label");
+    expect(createCall).toContain("ready-for-agent");
+  });
+
+  it("links the execution issue as a sub-issue when a map number is given", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = (_tool, args) => {
+      calls.push([...args]);
+      const isCreate = args[0] === "issue" && args[1] === "create";
+      return Promise.resolve({
+        code: 0,
+        stdout: isCreate ? "https://github.com/acme/widgets/issues/201" : "",
+        stderr: "",
+      });
+    };
+    const ctx = { ...CTX_BASE, exec };
+    await dispatchExecutionIssue(ctx, EFFORT, 99);
+    // The sub-issues call is: ["api", "-X", "POST", "<path>/sub_issues", "-F", "sub_issue_id=N"]
+    const subIssueCall = calls.find((c) => c.some((a) => a.includes("sub_issues")));
+    expect(subIssueCall).toBeDefined();
+    expect(subIssueCall?.join(" ")).toContain("sub_issue_id=201");
+  });
+
+  it("does NOT link a sub-issue when mapNumber is null", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = (_tool, args) => {
+      calls.push([...args]);
+      const isCreate = args[0] === "issue" && args[1] === "create";
+      return Promise.resolve({
+        code: 0,
+        stdout: isCreate ? "https://github.com/acme/widgets/issues/202" : "",
+        stderr: "",
+      });
+    };
+    const ctx = { ...CTX_BASE, exec };
+    await dispatchExecutionIssue(ctx, EFFORT, null);
+    const subIssueCall = calls.find((c) => c.some((a) => a.includes("sub_issues")));
+    expect(subIssueCall).toBeUndefined();
+  });
+
+  it("throws when issue creation fails", async () => {
+    const exec: ExecFn = () => Promise.resolve({ code: 1, stdout: "", stderr: "error" });
+    const ctx = { ...CTX_BASE, exec };
+    await expect(dispatchExecutionIssue(ctx, EFFORT, null)).rejects.toThrow(/failed to create/);
+  });
+
+  it("includes the effort-ID marker in the execution issue body", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = (_tool, args) => {
+      calls.push([...args]);
+      const isCreate = args[0] === "issue" && args[1] === "create";
+      return Promise.resolve({
+        code: 0,
+        stdout: isCreate ? "https://github.com/acme/widgets/issues/203" : "",
+        stderr: "",
+      });
+    };
+    const ctx = { ...CTX_BASE, exec };
+    await dispatchExecutionIssue(ctx, EFFORT, null);
+    const createCall = calls.find((c) => c[0] === "issue" && c[1] === "create") ?? [];
+    const bodyIdx = createCall.indexOf("--body");
+    expect(bodyIdx).toBeGreaterThan(-1);
+    expect(createCall[bodyIdx + 1]).toContain(EFFORT.effort_id);
+  });
+});
+
+describe("readExecutionArtifact (slice #2295)", () => {
+  it("returns open execution state when the issue is open", async () => {
+    const exec: ExecFn = () =>
+      Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ number: 55, state: "OPEN", labels: [{ name: "ready-for-agent" }] }),
+        stderr: "",
+      });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 55);
+    expect(artifact).not.toBeNull();
+    expect(artifact?.issue_number).toBe(55);
+    expect(artifact?.state).toBe("open");
+    expect(artifact?.labels).toContain("ready-for-agent");
+  });
+
+  it("returns closed execution state when the issue is closed", async () => {
+    const exec: ExecFn = () =>
+      Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ number: 56, state: "CLOSED", labels: [] }),
+        stderr: "",
+      });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 56);
+    expect(artifact?.state).toBe("closed");
+  });
+
+  it("returns null when gh exits non-zero — silently tolerated", async () => {
+    const exec: ExecFn = () => Promise.resolve({ code: 1, stdout: "", stderr: "not found" });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 57);
+    expect(artifact).toBeNull();
+  });
+
+  it("returns null when the response is not valid JSON", async () => {
+    const exec: ExecFn = () => Promise.resolve({ code: 0, stdout: "not-json", stderr: "" });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 58);
+    expect(artifact).toBeNull();
+  });
+
+  it("returns null when state is not open or closed", async () => {
+    const exec: ExecFn = () =>
+      Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ number: 59, state: "MERGED", labels: [] }),
+        stderr: "",
+      });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 59);
+    expect(artifact).toBeNull();
+  });
+
+  it("treats the tracker state as untrusted evidence — pr_numbers is empty in this slice", async () => {
+    const exec: ExecFn = () =>
+      Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ number: 60, state: "OPEN", labels: [] }),
+        stderr: "",
+      });
+    const ctx = { ...CTX_BASE, exec };
+    const artifact = await readExecutionArtifact(ctx, 60);
+    expect(artifact?.pr_numbers).toEqual([]);
   });
 });

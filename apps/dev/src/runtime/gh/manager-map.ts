@@ -1,5 +1,5 @@
 // runtime/gh/manager-map.ts — Manager map publication I/O layer
-// (Spec #2290, slice #2294).
+// (Spec #2290, slices #2294 and #2295).
 //
 // The pure plan lives in core/manager/map-reconciler.ts; this module executes
 // it against GitHub. Each step is independently idempotent:
@@ -8,6 +8,11 @@
 //   3. Apply any missing labels.
 //   4. Read native sub-issues.
 // A partial failure re-runs from step 1 and converges with no rollback.
+//
+// Slice #2295 adds two more functions:
+//   dispatchExecutionIssue  — create a tracker issue for autonomous execution.
+//   readExecutionArtifact   — reconcile the dispatched issue state as untrusted
+//                             evidence (never a directive; Decision #2184).
 
 import { scrubOutbound } from "../outbound-redaction.js";
 import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
@@ -18,9 +23,11 @@ import {
   computeDesiredLabels,
   computeLabelsToAdd,
   extractEffortIdFromBody,
+  type ExecutionArtifact,
   type ManagerMapDerivedState,
 } from "../../core/manager/map-reconciler.js";
 import type { EffortRecord } from "../../core/manager/effort-store.js";
+import { LABEL_READY } from "../../core/triage-labels.js";
 
 /** A single manager map issue as read from the tracker. */
 export interface ManagerMapIssue {
@@ -155,4 +162,103 @@ export async function publishAndReconcileManagerMap(
 
   // Step 5: return derived state
   return computeDerivedState(mapNumber, children);
+}
+
+/**
+ * Dispatch an autonomous execution issue for the effort.
+ *
+ * Creates a `ready-for-agent` tracker issue whose intent is the effort's
+ * published intent. If the map has already been published, links the new issue
+ * as a native sub-issue. Returns the new issue number.
+ *
+ * The caller saves the returned number to the effort record as `dispatch_issue`
+ * so future `status` reconciles can read back its tracker state as untrusted
+ * evidence (Decision #2184, Spec #2290 slice #2295).
+ */
+export async function dispatchExecutionIssue(
+  ctx: GhContext,
+  effort: EffortRecord,
+  mapNumber: number | null,
+): Promise<number> {
+  const title = scrubOutbound(`[manager] ${effort.name}: autonomous execution`);
+  const body = scrubOutbound(
+    `${buildEffortMarker(effort.effort_id)}\n\n**Intent:** ${effort.intent}`,
+  );
+  const r = await runGh(ctx, [
+    "issue",
+    "create",
+    ...repoArgs(ctx),
+    "--title",
+    title,
+    "--body",
+    body,
+    "--label",
+    LABEL_READY,
+  ]);
+  const urlMatch = (r.stdout ?? "").match(/\/issues\/(\d+)\b/);
+  const num = urlMatch ? Number(urlMatch[1]) : NaN;
+  if (r.code !== 0 || !Number.isInteger(num) || num <= 0) {
+    throw new Error(
+      `gh: failed to create execution issue for effort ${effort.effort_id} (code ${r.code})`,
+    );
+  }
+  // Link the execution issue as a sub-issue of the map when available.
+  if (mapNumber !== null) {
+    await runGh(ctx, [
+      "api",
+      "-X",
+      "POST",
+      apiPath(ctx, `issues/${mapNumber}/sub_issues`),
+      "-F",
+      `sub_issue_id=${num}`,
+    ]);
+  }
+  return num;
+}
+
+/** Build the effort-ID marker for embedding in the execution issue body. */
+function buildEffortMarker(effortId: string): string {
+  return `<!-- red-skills:manager-map effort-id=${effortId} v1 -->`;
+}
+
+/**
+ * Reconcile the tracker state of a dispatched execution issue as UNTRUSTED
+ * EVIDENCE (Decision #2184, Spec #2290 slice #2295).
+ *
+ * Returns the issue's current state (open/closed) and labels from the tracker.
+ * Returns null when the issue cannot be read — the brief renders without it.
+ *
+ * This data is NEVER stored: it is read at render time, classified as untrusted
+ * evidence, and included in the brief only as a signal — never as a directive.
+ */
+export async function readExecutionArtifact(
+  ctx: GhContext,
+  issueNumber: number,
+): Promise<ExecutionArtifact | null> {
+  const r = await runGh(ctx, [
+    "issue",
+    "view",
+    String(issueNumber),
+    ...repoArgs(ctx),
+    "--json",
+    "number,state,labels",
+  ]);
+  if (r.code !== 0) return null;
+  let parsed: { number?: unknown; state?: unknown; labels?: unknown };
+  try {
+    parsed = JSON.parse(r.stdout || "{}") as typeof parsed;
+  } catch {
+    return null;
+  }
+  const state = String(parsed.state ?? "").toLowerCase();
+  if (state !== "open" && state !== "closed") return null;
+  const labels = Array.isArray(parsed.labels)
+    ? (parsed.labels as Array<{ name?: unknown }>).map((l) => String(l.name ?? ""))
+    : [];
+  return {
+    issue_number: issueNumber,
+    state: state as "open" | "closed",
+    labels,
+    pr_numbers: [],
+  };
 }

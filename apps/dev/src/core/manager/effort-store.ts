@@ -52,6 +52,14 @@ export interface EffortRecord {
   generation: number;
   created_at: string;
   updated_at: string;
+  /**
+   * The tracker issue number for the dispatched autonomous execution, when one
+   * has been dispatched (Spec #2290, slice #2295). Absent if no dispatch has
+   * occurred. Owned state only — the issue's current tracker state (open/closed,
+   * labels, PRs) is reconciled from the tracker at render time as untrusted
+   * evidence, never stored here.
+   */
+  dispatch_issue?: number;
 }
 
 /** Base class for every refusal this store raises. */
@@ -199,7 +207,7 @@ export function decodeEffortDocument(text: string): EffortRecord {
   if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
     throw new ManagerSchemaError("manager effort document has a non-integer generation");
   }
-  return {
+  const record: EffortRecord = {
     effort_id: requireString(body, "effort_id"),
     name: requireString(body, "name"),
     intent: requireString(body, "intent"),
@@ -208,6 +216,12 @@ export function decodeEffortDocument(text: string): EffortRecord {
     created_at: requireString(body, "created_at"),
     updated_at: requireString(body, "updated_at"),
   };
+  // dispatch_issue is optional — absent in efforts that predate slice #2295.
+  const rawDispatch = body.dispatch_issue;
+  if (typeof rawDispatch === "number" && Number.isInteger(rawDispatch) && rawDispatch > 0) {
+    record.dispatch_issue = rawDispatch;
+  }
+  return record;
 }
 
 /** Temp-write + rename, so a concurrent reader never observes a partial file. */

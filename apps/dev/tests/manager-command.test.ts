@@ -7,6 +7,7 @@ import { parseCli } from "../src/cli.js";
 import { managerCommand } from "../src/commands/manager.js";
 import { readEffort } from "../src/core/manager/effort-store.js";
 import { readLease } from "../src/core/manager/effort-lease.js";
+import type { ExecFn } from "../src/runtime/exec.js";
 
 let root: string;
 let out: string[];
@@ -194,6 +195,138 @@ describe("manager end", () => {
   });
 });
 
+describe("manager dispatch (slice #2295)", () => {
+  function makeGhDeps(
+    issueNumber: number,
+    issueState: "OPEN" | "CLOSED" = "OPEN",
+  ): Parameters<typeof managerCommand>[1] {
+    const exec: ExecFn = (_tool, args) => {
+      const isCreate = args[0] === "issue" && args[1] === "create";
+      const isView = args[0] === "issue" && args[1] === "view";
+      if (isCreate) {
+        return Promise.resolve({
+          code: 0,
+          stdout: `https://github.com/acme/widgets/issues/${issueNumber}`,
+          stderr: "",
+        });
+      }
+      if (isView) {
+        return Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify({
+            number: issueNumber,
+            state: issueState,
+            labels: [{ name: "ready-for-agent" }],
+          }),
+          stderr: "",
+        });
+      }
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    return { ...deps(), gh: { exec, repo: "acme/widgets", cwd: "/repo" } };
+  }
+
+  it("creates a tracker issue and records the dispatch_issue in the effort", async () => {
+    await managerCommand(["dispatch this intent"], deps());
+    const started = brief();
+    out = [];
+
+    expect(await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(300))).toBe(0);
+    const stored = await readEffort(root, String(started.effort_id));
+    expect(stored?.dispatch_issue).toBe(300);
+  });
+
+  it("renders a reconciled brief with execution_issue and execution_state", async () => {
+    await managerCommand(["dispatch attempt"], deps());
+    const started = brief();
+    out = [];
+
+    await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(301));
+    const rendered = brief();
+    expect(rendered.state_source).toBe("reconciled");
+    expect(rendered.execution_issue).toBe(301);
+    expect(rendered.execution_state).toBe("open");
+  });
+
+  it("dispatches the most recently started effort when no id is given", async () => {
+    await managerCommand(["latest effort for dispatch"], deps());
+    out = [];
+
+    expect(await managerCommand(["dispatch"], makeGhDeps(302))).toBe(0);
+    const rendered = brief();
+    expect(rendered.execution_issue).toBe(302);
+  });
+
+  it("refuses a second dispatch when one already exists", async () => {
+    await managerCommand(["already dispatched"], deps());
+    const started = brief();
+    out = [];
+
+    await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(303));
+    out = [];
+    err = [];
+
+    expect(
+      await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(304)),
+    ).toBe(1);
+    expect(err.join("")).toMatch(/already dispatched/);
+  });
+
+  it("fails with exit code 1 when no GH context is provided", async () => {
+    await managerCommand(["no gh context"], deps());
+    const started = brief();
+    out = [];
+
+    expect(await managerCommand(["dispatch", String(started.effort_id)], deps())).toBe(1);
+    expect(err.join("")).toMatch(/dispatch requires/i);
+  });
+
+  it("reconciles execution_state as open when the execution issue is open on status", async () => {
+    await managerCommand(["reconcile on status"], deps());
+    const started = brief();
+    out = [];
+
+    // Dispatch first
+    await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(305, "OPEN"));
+    out = [];
+
+    // Status with GH context reconciles execution state
+    await managerCommand(["status", String(started.effort_id)], makeGhDeps(305, "OPEN"));
+    const rendered = brief();
+    expect(rendered.state_source).toBe("reconciled");
+    expect(rendered.execution_issue).toBe(305);
+    expect(rendered.execution_state).toBe("open");
+  });
+
+  it("reconciles execution_state as closed when the execution issue is closed on status", async () => {
+    await managerCommand(["reconcile closed on status"], deps());
+    const started = brief();
+    out = [];
+
+    await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(306, "OPEN"));
+    out = [];
+
+    await managerCommand(["status", String(started.effort_id)], makeGhDeps(306, "CLOSED"));
+    const rendered = brief();
+    expect(rendered.execution_state).toBe("closed");
+  });
+
+  it("status falls back to owned brief when GH context is absent even with a dispatch_issue", async () => {
+    await managerCommand(["no gh on status"], deps());
+    const started = brief();
+    out = [];
+
+    // Dispatch with GH
+    await managerCommand(["dispatch", String(started.effort_id)], makeGhDeps(307));
+    out = [];
+
+    // Status without GH — falls back to owned brief
+    await managerCommand(["status", String(started.effort_id)], deps());
+    const rendered = brief();
+    expect(rendered.state_source).toBe("owned");
+  });
+});
+
 describe("cli routing", () => {
   it("routes manager with its intent preserved", () => {
     expect(parseCli(["manager", "ship", "the", "skeleton"])).toEqual({
@@ -203,5 +336,6 @@ describe("cli routing", () => {
     expect(parseCli(["manager", "status"])).toEqual({ command: "manager", args: ["status"] });
     expect(parseCli(["manager", "resume"])).toEqual({ command: "manager", args: ["resume"] });
     expect(parseCli(["manager", "end"])).toEqual({ command: "manager", args: ["end"] });
+    expect(parseCli(["manager", "dispatch"])).toEqual({ command: "manager", args: ["dispatch"] });
   });
 });

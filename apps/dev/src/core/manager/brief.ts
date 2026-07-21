@@ -1,5 +1,5 @@
 // core/manager/brief.ts — the Manager brief renderer (Spec #2290, slices
-// #2291 and #2294; architecture in ADR 0109).
+// #2291, #2294, and #2295; architecture in ADR 0109).
 //
 // The brief is a COMPUTED-ON-DEMAND render, never a stored snapshot: a stored
 // brief either goes stale against the tracker or duplicates state its owner
@@ -7,7 +7,8 @@
 //
 //   renderEffortBrief          — owned lifecycle state only (slice #2291).
 //   renderEffortBriefWithDerived — owned + freshly reconciled derived state
-//                                 (slice #2294: map publication + children).
+//                                 (slice #2294: map publication + children;
+//                                  slice #2295: execution artifact state).
 //
 // `state_source` distinguishes the paths: "owned" vs "reconciled". A brief
 // from the owned path can never be mistaken for a reconciled one.
@@ -34,12 +35,18 @@ export function renderEffortBrief(effort: EffortRecord): string {
 /**
  * Render one effort's brief with freshly reconciled derived state.
  * The derived state is NEVER stored — it is reconciled from the tracker at
- * render time so the brief can never go stale against the map's live children.
+ * render time so the brief can never go stale against the map's live children or
+ * the execution artifact's current tracker state.
+ *
+ * Execution artifact state (execution_issue, execution_state) is included only
+ * when `derived.execution` is present — it is untrusted evidence from the tracker
+ * (Spec #2290 Decision #2184), never a directive.
  */
 export function renderEffortBriefWithDerived(
   effort: EffortRecord,
   derived: ManagerMapDerivedState,
 ): string {
+  const execution = derived.execution;
   return encodeDevSnapshotToon({
     kind: "manager.brief",
     state_source: "reconciled",
@@ -52,6 +59,12 @@ export function renderEffortBriefWithDerived(
     updated_at: effort.updated_at,
     map_issue: derived.map_issue,
     child_count: derived.child_count,
+    ...(execution != null
+      ? {
+          execution_issue: execution.issue_number,
+          execution_state: execution.state,
+        }
+      : {}),
   });
 }
 
