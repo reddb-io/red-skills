@@ -366,7 +366,8 @@ function parseAdoptSlotPids(raw: string | undefined): HeartbeatSlotPid[] {
  * Parse the supervisor's own argv (forwarded by fleet.ts) into the filter /
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
  * fleet honours the same Spec/Ticket filter + alternate/fallback policy a single
- * `/afk run` would. Recognises the value flags `--spec` / `--issues` / `--request`
+ * `/afk run` would. Recognises the value flags `--spec` / `--issues` /
+ * `--selector` (a named fleet's work scope) / `--request`
  * (with `-r`) and the boolean flags `--alternate` / `--fallback-runner`, all in
  * both `--flag value` and `--flag=value` forms. Unknown args are dropped (the
  * supervisor only forwards the known filter/policy surface). Returns the argv
@@ -377,6 +378,7 @@ export function slotFilterArgs(args: readonly string[]): string[] {
   const valueFlags = new Map<string, string>([
     ["--spec", "--spec"],
     ["--issues", "--issues"],
+    ["--selector", "--selector"],
     ["--request", "--request"],
     ["-r", "--request"],
   ]);
