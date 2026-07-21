@@ -190,6 +190,77 @@ export function planTmpJanitor(input: TmpJanitorInput): TmpJanitorPlan {
   };
 }
 
+// ---------- orphaned feedback worktree planner ----------
+
+/**
+ * Extract the worker ID from a feedback worktree basename.
+ *
+ * AFK worker branches follow the pattern `afk/<workerID>/<issue>-<slug>`, which
+ * slugForBranch converts to `afk-<workerID>-<issue>-<slug>`. Parsing that basename
+ * back to a worker ID lets the janitor decide whether the owning worker is still
+ * alive without knowing the full branch name.
+ *
+ * Returns the worker ID string (e.g. `wOF09`) or `null` when the basename is not
+ * an AFK-worker branch slug (e.g. `main`, `feature-foo`).
+ */
+export function parseFeedbackWorktreeWorkerSlug(basename: string): string | null {
+  // afk-<workerID>-<issueN>-... where workerID is [A-Za-z0-9]+
+  const m = /^afk-([A-Za-z0-9]+)-[1-9][0-9]*-/.exec(basename);
+  return m ? (m[1] ?? null) : null;
+}
+
+/** An entry under `.red/tmp/worktrees/feedback/` with owner-liveness context. */
+export interface OrphanFeedbackEntry extends JanitorEntry {
+  /** Directory basename (not the full path). */
+  basename: string;
+  /**
+   * Whether the owning AFK worker is alive:
+   * - `false` when the entry is for an AFK worker branch whose worker.pid is dead.
+   * - `true` when the owning worker is still alive.
+   * - `null` when the entry is NOT an AFK worker branch (e.g. `main`, trunk) and
+   *   liveness must be inferred from `anyWorkerAlive` instead.
+   */
+  ownerAlive: boolean | null;
+}
+
+export interface OrphanFeedbackSweepPlan {
+  /** Entries whose owning worker is confirmed dead or whose non-worker owner is
+   * absent (no live workers at all). These are safe to remove. */
+  reclaim: OrphanFeedbackEntry[];
+  /** Entries with a live owner — do not touch. */
+  spare: OrphanFeedbackEntry[];
+}
+
+/**
+ * Plan which feedback worktrees to remove based on dead ownership — independently
+ * of the mtime TTL sweep (which still runs on its own schedule).
+ *
+ * - AFK-worker entries (`ownerAlive === false`) → reclaim immediately: the owning
+ *   worker died and will never use this cache again.
+ * - Non-worker entries, e.g. the shared `main` / trunk baseline worktree
+ *   (`ownerAlive === null`) → reclaim only when `anyWorkerAlive` is false: any live
+ *   worker might be mid-baseline-probe right now, so removing while workers are
+ *   running is unsafe.
+ * - Live-owner entries (`ownerAlive === true`) → always spare.
+ */
+export function planOrphanFeedbackWorktreeSweep(
+  entries: readonly OrphanFeedbackEntry[],
+  anyWorkerAlive: boolean,
+): OrphanFeedbackSweepPlan {
+  const reclaim: OrphanFeedbackEntry[] = [];
+  const spare: OrphanFeedbackEntry[] = [];
+  for (const entry of entries) {
+    if (entry.ownerAlive === false) {
+      reclaim.push(entry);
+    } else if (entry.ownerAlive === null && !anyWorkerAlive) {
+      reclaim.push(entry);
+    } else {
+      spare.push(entry);
+    }
+  }
+  return { reclaim, spare };
+}
+
 // ---------- stale worker planner ----------
 
 export interface WorkerDirIssueState {
