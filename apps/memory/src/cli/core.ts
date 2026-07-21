@@ -249,7 +249,6 @@ export const PROOF_REGISTRY_CLI_COMMANDS = new Set<string>();
 export const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
   listReadOnlyMemoryOperations()
     .filter((operation) => operation.transports.includes("cli"))
-    .filter((operation) => operation.renderer.cli.dispatch !== "legacy")
     .filter((operation) => !LEGACY_CLI_OPERATION_IDS.has(operation.id))
     .map((operation) => [operation.renderer.cli.command, operation]),
 );
