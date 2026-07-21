@@ -1,19 +1,53 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import { listMemoryHttpRegistryRoutes } from "../src/http-server.js";
 import {
   getReadOnlyMemoryOperation,
+  createReadOnlyMemoryOperationRegistry,
   executeReadOnlyMemoryOperation,
   listReadOnlyMemoryOperations,
 } from "../src/operations.js";
+import type { MemoryOperationFacets, MemoryOperationDefinition } from "../src/operations.js";
 import type { MemoryStore } from "../src/graph-store.js";
 import {
   bindMemoryOperationInput,
+  listMemoryOperationsForTransport,
   queryObjectFromSearchParams,
 } from "../src/operation-transport-adapter.js";
 
 describe("Memory operation transport adapter", () => {
+  test("discovers a new operation only on its declared transports", () => {
+    const definition = {
+      id: "memory.test-registration",
+      title: "Test registration",
+      description: "Proves one registration owns transport discovery.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ status: z.literal("ok") }),
+      safetyClass: "read-only",
+      sideEffectClass: "none",
+      capabilities: ["graph-store"],
+      transports: ["cli", "http"],
+      renderer: {
+        cli: { command: "test-registration", supportsJson: true },
+        mcp: { toolName: "memory_test_registration", description: "legacy transport copy" },
+      },
+      execute: async () => ({ status: "ok" as const }),
+    } satisfies MemoryOperationDefinition<object, { status: "ok" }>;
+    const facets = {
+      inputBinding: { fields: [] },
+      outputKind: { kind: "report", format: "json" },
+    } satisfies MemoryOperationFacets;
+    const operation = createReadOnlyMemoryOperationRegistry([definition], {
+      [definition.id]: facets,
+    }).get(definition.id);
+
+    expect(listMemoryOperationsForTransport([operation], "cli")).toEqual([operation]);
+    expect(listMemoryOperationsForTransport([operation], "http")).toEqual([operation]);
+    expect(listMemoryOperationsForTransport([operation], "mcp")).toEqual([]);
+  });
+
   test("binds doc brief CLI argv from registry input facets", () => {
     const operation = getReadOnlyMemoryOperation("memory.doc-brief");
 
