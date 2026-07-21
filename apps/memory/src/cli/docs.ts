@@ -182,8 +182,7 @@ export function registryCliOperationFor(
     if (parts[0] !== command) continue;
     const rest = parts.slice(1);
     if (rest.length === 0) {
-      const legacySubcommands = LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND[registeredCommand] ?? [];
-      if (legacySubcommands.includes(positional[0] ?? "")) continue;
+      if (operation.renderer.cli.reservedSubcommands?.includes(positional[0] ?? "")) continue;
       return operation;
     }
     if (rest.every((part, index) => positional[index] === part)) return operation;
