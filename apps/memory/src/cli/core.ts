@@ -228,7 +228,7 @@ export type ParsedArgs = LooseParsedArgs;
 
 export const execFileAsync = promisify(execFile);
 
-export const LEGACY_CLI_OPERATION_IDS = new Set(["memory.health"]);
+export const LEGACY_CLI_OPERATION_IDS = new Set<string>();
 
 export const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
   "merge-pass": ["execute", "unmerge"],
@@ -240,6 +240,7 @@ export const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-vi
 
 export const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
   listReadOnlyMemoryOperations()
+    .filter((operation) => operation.transports.includes("cli"))
     .filter((operation) => !LEGACY_CLI_OPERATION_IDS.has(operation.id))
     .map((operation) => [operation.renderer.cli.command, operation]),
 );
