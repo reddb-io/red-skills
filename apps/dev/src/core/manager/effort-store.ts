@@ -169,6 +169,7 @@ export function encodeEffortDocument(effort: EffortRecord): string {
     created_at: effort.created_at,
     updated_at: effort.updated_at,
   };
+  if (effort.dispatch_issue !== undefined) body.dispatch_issue = effort.dispatch_issue;
   if (effort.route !== undefined) body.route = effort.route;
   // ToonlRecord is flat (no arrays), so encode the list as newline-separated.
   // URLs never contain newlines, so the delimiter is unambiguous.
