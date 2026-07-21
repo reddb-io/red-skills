@@ -18,7 +18,7 @@ while IFS=$'\t' read -r file line action ref; do
     fail "$file:$line pins $action with '$ref' instead of a full commit SHA"
   fi
 done < <(
-  grep -RInE 'uses:[[:space:]]*(actions/(checkout|setup-node|github-script)|pnpm/action-setup)@' \
+  grep -RInE 'uses:[[:space:]]*(actions/(checkout|setup-node|github-script)|pnpm/action-setup|changesets/action)@' \
     .github/workflows .github/actions |
     sed -E 's/^([^:]+):([0-9]+):.*uses:[[:space:]]*([^[:space:]#]+)@([^[:space:]#]+).*/\1\t\2\t\3\t\4/'
 )
