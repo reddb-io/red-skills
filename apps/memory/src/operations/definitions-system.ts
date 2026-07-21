@@ -454,7 +454,7 @@ const DASHBOARD_OPERATION: MemoryOperationDefinition<
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "dashboard", supportsJson: false },
+    cli: { command: "dashboard", supportsJson: false, dispatch: "legacy" },
     mcp: {
       toolName: "memory_dashboard",
       description:
