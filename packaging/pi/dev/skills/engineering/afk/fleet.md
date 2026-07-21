@@ -4,6 +4,29 @@ This file serves the `afk fleet` branch: launching, stopping, and supervising `N
 concurrent `run` workers on one checkout. Reached from *When To Use*
 (`/afk fleet [N]`, `/afk fleet stop`) in [`SKILL.md`](./SKILL.md).
 
+## Drive fleets through the `dev:afk` MCP
+
+**A fleet is a named profile, and the `dev:afk` MCP owns its lifecycle.** The
+five fleet tools are the primary surface; the CLI forms documented below are the
+fallback transport for the same operations, and they address the `default`
+fleet. Read [`MCP.md`](./MCP.md) for host prefixing and mutation modes.
+
+| Verb | Tool | Notes |
+| --- | --- | --- |
+| launch | `fleet_create` | `{name, runner, target, selector?, config?, base?}` — persists the profile, then spawns its supervisor. |
+| resize / switch | `fleet_edit` | Same fields, all optional but `name`; sends the live resize directive instead of a second supervisor. |
+| ground truth | `fleet_status` | Supervisor pid, slots, churn, live workers for one fleet. |
+| inventory | `fleet_list` | Every registered profile. |
+| shutdown | `fleet_stop` | Stops that fleet and its detached workers. |
+| logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
+
+**A named fleet is a full profile, not just a worker count**: runner +
+work-scope `selector` (`{spec, lane, label, issues}`) + `config` knobs + `base`.
+Several named fleets run concurrently on one checkout — one on `claude` scoped
+to a Spec, another on `codex` draining the rest — and the three-layer claim is
+what guarantees they never double-claim an issue. Partition fleets by scope, not
+by hope: two fleets whose selectors overlap will contend for the same slices.
+
 ## Fleet Mode (runner-portable — binding)
 
 `/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet commands. They let one terminal command spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind a reaper-signal predicate, so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is killed tree-wide, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation.
@@ -87,6 +110,10 @@ Steps, in order:
 
 ### `/dev:afk fleet logs` — local structured log reader
 
+Through the MCP this is the `logs` tool: one call per lane, returning raw
+`CastleLaneRecord` entries rather than rendered lines. The CLI forms below
+render the same records for a human reader.
+
 `/dev:afk fleet logs --supervisor`, `/dev:afk fleet logs --worker <id>`, and
 `/dev:afk fleet logs --all` are read-only local views over the castle lanes.
 They do not call GitHub and do not mutate fleet state. They decode structured
@@ -123,5 +150,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- The bundle's `fleet` / `fleet stop` commands — the entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
+- [`MCP.md`](./MCP.md) — the `dev:afk` tool surface; `fleet_create`, `fleet_edit`, `fleet_status`, `fleet_list`, `fleet_stop`, and `logs` are the primary fleet interface.
+- The bundle's `fleet` / `fleet stop` commands — the CLI-fallback entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.

@@ -31,6 +31,26 @@ At approval time, check whether the repo has configured machine validation (`afk
 
 Scout mode is read-only and report-producing, so this Task+DoD gate does not apply to `/go --scout`.
 
+## Dispatch through the `dev:afk` MCP
+
+**`/go` and `/afk` are two clients of one interface.** After approval, dispatch
+the demand with the `worker_dispatch` tool — `{demand, runner?, mode?}`, where
+`mode` is exactly the `--mode` selector below. Pass a per-dispatch inner-agent
+instruction with `worker_request` instead, and reach a run already in flight
+with `runner_steer`. Watch it with `worker_status` and `monitor`; a `/go` worker
+is stamped `origin=go` / `current.kind=go`, so it is distinguishable from fleet
+workers in every observability tool. The complete surface, host tool-name
+prefixing, and the mutation-mode contract are in
+[`../afk/MCP.md`](../afk/MCP.md).
+
+`worker_dispatch` takes **exactly one** of `demand` or `issue`, and `mode` is
+valid only with `demand` — the schema enforces the `/go`-versus-`/afk` boundary
+that the hard rules below state in prose.
+
+**When the MCP is unreachable, name that and fall back to the CLI form below.**
+It is the same engine over the same cores; the fallback changes transport, not
+behavior.
+
 **Run the bundle — do not read its source.** This SKILL.md is the contract; the `dev` bundle's `go` command is a build artifact.
 
 Resolve the `red-skills-dev` runtime through the shared contract in
@@ -87,7 +107,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 - ✅ **Do** pass the demand/question as ONE quoted argument.
 - ✅ **Do** get Task+DoD approval before standard `/go`, then pass the approved DoD with `--dod`.
 - ✅ **Do** use `--scout` when you want an audit, investigation, or read-only analysis — not a code change.
-- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, distinguished by worker kind and mode gates.
+- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, driven through the same `dev:afk` MCP tools, distinguished by worker kind and mode gates.
 - ✅ **Do** run it whether or not a fleet is up — `/go` is a self-sufficient front door.
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.
