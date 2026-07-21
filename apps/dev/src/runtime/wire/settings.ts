@@ -5,6 +5,7 @@ import type { SandboxMode } from "../../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudgetUsage } from "../../core/execution.js";
 import { parseMaxIterations } from "../../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
+import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { inspectProcessTreeNative } from "../proc-tree.js";
 import {
   evaluateLiveness,
@@ -20,6 +21,14 @@ import { afkPaths } from "./paths.js";
 
 export interface RunSettings {
   sandbox: SandboxMode;
+  /**
+   * Container image the docker/podman sandbox runs (issue #2340). Resolved with
+   * precedence RED_AFK_SANDBOX_IMAGE env > `afk.sandbox_image` config >
+   * `sandcastle:<repo-dir>`. Always repo-root-derived, never derived from the
+   * per-attempt worktree — that produced an unbuildable `sandcastle:<issue>`
+   * tag and crashed every forced-isolation attempt.
+   */
+  sandboxImage: string;
   defaultRunner: string;
   model: string;
   effort: AgentEffort;
@@ -82,6 +91,14 @@ export function resolveRunSettings(
   const sandbox = (SANDBOX_MODES as readonly string[]).includes(rawSandbox)
     ? (rawSandbox as SandboxMode)
     : "none";
+  // Stable container image (#2340). Same precedence shape as the sandbox knob,
+  // resolved off `root` — the repo checkout — so every worker/issue/attempt asks
+  // for the SAME tag and an operator can build it once.
+  const sandboxImage = resolveSandboxImageName({
+    repoRoot: root,
+    configured: getConfig(cfg, "afk.sandbox_image"),
+    envOverride: env.RED_AFK_SANDBOX_IMAGE,
+  });
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const activeRunner = runner ?? (isRunner(defaultRunner) ? defaultRunner : "claude");
   // Pass env so the RED_AFK_MODEL/RED_AFK_EFFORT runtime override (the --model /
@@ -110,6 +127,7 @@ export function resolveRunSettings(
     : undefined;
   return {
     sandbox,
+    sandboxImage,
     defaultRunner,
     model: tier.model,
     effort: tier.effort,
@@ -221,6 +239,7 @@ export function makeRunAgent(
   maxIterations?: number,
   laneIdle?: LaneIdleStallConfig,
   budgetUsage?: () => AttemptBudgetUsage,
+  sandboxImage?: string,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
@@ -275,6 +294,9 @@ export function makeRunAgent(
     return runAgent(deps, {
       ...input,
       sandboxMode: effectiveSandbox,
+      // Stable container image (#2340). Per-call input wins (the untrusted-author
+      // policy resolves its own), else the boot-resolved repo-level tag.
+      ...(input.sandboxImage ?? sandboxImage ? { sandboxImage: input.sandboxImage ?? sandboxImage } : {}),
       maxIterations: input.maxIterations ?? maxIterations ?? parseMaxIterations(env.RED_AFK_MAX_ITERATIONS),
       idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout,
       ...(guardArmed
