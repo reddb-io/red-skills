@@ -65,7 +65,7 @@ import {
 import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
-import { resolveHooks, type HookName } from "../../core/hook-config.js";
+import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
@@ -281,8 +281,28 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
+  const sessionHooksConfig = loadConfig(afkPaths(ctx.root).configPath);
+
+  // Validate hook names once before the session loop. An unknown hook name
+  // (including a misspelled name where the user intended a list entry) must not
+  // crash the worker at first issue pick-up and trigger a supervisor churn loop.
+  // Write the retire file so the supervisor does not respawn this slot on exit.
+  try {
+    validateHookConfig(sessionHooksConfig);
+  } catch (err) {
+    const msg = err instanceof UnknownHookError
+      ? `[afk:config] fatal: ${err.message} in .red/config.yaml — fix the hook name and restart the fleet`
+      : `[afk:config] fatal: hook config error: ${err instanceof Error ? err.message : String(err)}`;
+    process.stderr.write(`${msg}\n`);
+    const retireFile = process.env.RED_AFK_RETIRE_FILE;
+    if (retireFile) {
+      try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
+    }
+    return 1;
+  }
+
   const sessionHooks = {
-    config: loadConfig(afkPaths(ctx.root).configPath),
+    config: sessionHooksConfig,
     resolveOptions: makeHookResolveOptions(ctx.root),
     exec: makeHookExec(ctx.root),
     env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
