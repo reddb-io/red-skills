@@ -48,6 +48,10 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
+- **Carrying one effort end to end** -> `/manager`. It is the liaison over the
+  lanes above, not a replacement for them: `$dev:manager <intent>` starts or
+  continues an effort and `manager status` renders its brief. Routing and
+  dispatch still land on `/afk`, `/go`, and the planning on-ramps.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
 - **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
@@ -78,7 +82,7 @@ Next handoff: <what must be true before the next command>
 ## Coverage Inventory
 
 The router must mention every published dev skill so `/red-doctor` can flag drift:
-`/afk`, `/ask-red`, `/go`, `/wayfinder`, `/model-tier-policy`, `/curate`,
+`/afk`, `/ask-red`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
 `/ground-truth`, `/red-doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
