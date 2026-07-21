@@ -61,7 +61,7 @@ import {
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
-import { resolveFleetFromArgs } from "../core/fleet-name.js";
+import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -552,7 +552,10 @@ function buildSupervisorDeps(
   // the environment survive. RED_AFK_RUNNER is re-added explicitly below so the
   // worker's detection cascade pins the supervisor's runner.
   let activeRunner = runner;
-  let workerEnv = buildWorkerEnv(process.env, activeRunner);
+  // Stamp the fleet name into the worker env so spawned workers can write it to
+  // their castle state snapshot (as supervisor_id). fleet_status reads this back
+  // to partition workers without relying solely on the slot-pid map (issue #2345).
+  let workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
   let hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
 
   return {
