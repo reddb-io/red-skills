@@ -112,6 +112,14 @@ export interface HarnessOptions {
   feedbackOk?: boolean;
   /** When true, the feedback baseline probe fails the same check as the worker. */
   baselineFails?: boolean;
+  /**
+   * When false, the POST-MERGE integration gate (#1335) fails while the
+   * pre-landing gate still passes. Detected by the `-C` dir: the post-merge gate
+   * is the only run whose token is the isolated landing/rebase worktree path
+   * ("/wt" / "/rwt") rather than a branch name. Models #2339, where the gate
+   * could not even materialise a worktree in that dir.
+   */
+  postMergeGateOk?: boolean;
   /** Existing main-red repair issue returned by the finder. false/null means missing. */
   mainRedRepairIssue?: boolean;
   /** When set, creating the main-red repair issue throws this message. */
@@ -532,6 +540,11 @@ export function harness(opts: HarnessOptions = {}): {
       const dir = cIdx >= 0 ? (args[cIdx + 1] ?? "") : "";
       if (dir === "main" || dir.startsWith("main/")) {
         return { code: opts.baselineFails ? 1 : 0, stdout: "", stderr: "" };
+      }
+      // The post-merge integration gate runs against the landing/rebase
+      // worktree PATH, never a branch name — so the dir discriminates it.
+      if (dir === "/wt" || dir.startsWith("/wt/") || dir === "/rwt" || dir.startsWith("/rwt/")) {
+        return { code: opts.postMergeGateOk === false ? 1 : 0, stdout: "", stderr: "" };
       }
       const feedbackRun = Math.floor(pnpmCalls / 4);
       pnpmCalls += 1;
