@@ -407,7 +407,7 @@ async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInpu
   if (deps.claimGh) {
     await deps.claimGh.concede(
       input.issue,
-      renderClaimComment({ worker: input.claimant ?? input.workerId, runner: input.runner }, "concede"),
+      renderClaimComment({ worker: input.claimant ?? input.workerId, runner: input.runner }, "concede", "released"),
     );
   }
   await deps.claimLock.release(input.issue);
