@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
@@ -140,6 +141,9 @@ async function launchDetachedRun(
     throw new Error("cannot dispatch worker: MCP bundle path is missing");
   }
   const bundle = resolveDevCliBundle(mcpBundle);
+  if (!existsSync(bundle)) {
+    throw new Error("cannot dispatch worker: sibling dev bundle is missing");
+  }
   const child = spawn(process.execPath, [bundle, "run", ...args], {
     cwd: root,
     env: process.env,
