@@ -136,6 +136,9 @@ describe("memory CLI argument binding", () => {
     const result = runMemory(["recall-ranked", "jwt rotation", "--root", root, "--json"]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ query: "jwt rotation" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      hits: [],
+      context_md: expect.stringContaining("Memory recall: jwt rotation"),
+    });
   });
 });
