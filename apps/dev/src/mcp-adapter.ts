@@ -1,5 +1,6 @@
 import { join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
+import { decode as decodeToon } from "@reddb-io/toon";
 import {
   castleLanePath,
   createEnginePaths,
@@ -10,6 +11,8 @@ import {
   readFleetProfiles,
   removeFleetProfile,
   upsertFleetProfile,
+  RUNNER_SPECS,
+  detectRunner,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
@@ -18,6 +21,11 @@ import type {
   FleetEditInput,
   FleetNameInput,
   LogsInput,
+  RequeueToolInput,
+  RetakeToolInput,
+  WorkerDispatchInput,
+  WorkerRequestInput,
+  WorkerStopInput,
 } from "../../../packages/red-castle/src/mcp-server.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
@@ -27,6 +35,7 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
 import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
@@ -37,6 +46,178 @@ import {
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
+import { runCommand } from "./commands/run.js";
+import { goCommand } from "./commands/go.js";
+import { stopCommand } from "./commands/stop.js";
+import { requeueCommand } from "./commands/requeue.js";
+import { retakeCommand } from "./commands/retake.js";
+import {
+  branchesToReap,
+  planLiveBranchCleanup,
+  planLocalBranchCleanup,
+} from "./core/branch-cleanup.js";
+import { executeUnblockSweep } from "./core/boot-sweep.js";
+import { collectReapInputs } from "./runtime/wire/reap.js";
+
+interface DispatchOperationInput extends WorkerDispatchInput {
+  request?: string;
+}
+
+export interface DevAfkMcpOperations {
+  dispatchIssue(
+    root: string,
+    input: DispatchOperationInput & { issue: number },
+  ): Promise<unknown>;
+  dispatchDemand(
+    root: string,
+    input: DispatchOperationInput & { demand: string },
+  ): Promise<unknown>;
+  stopWorker(root: string, input: WorkerStopInput): Promise<unknown>;
+  requeue(input: RequeueToolInput): Promise<unknown>;
+  retake(input: RetakeToolInput): Promise<unknown>;
+  reap(): Promise<unknown>;
+  unblockSweep(): Promise<unknown>;
+}
+
+function captureStream(): {
+  stream: Writable;
+  text(): string;
+} {
+  let output = "";
+  return {
+    stream: new Writable({
+      write(chunk, _encoding, callback) {
+        output += String(chunk);
+        callback();
+      },
+    }),
+    text: () => output,
+  };
+}
+
+function parsedCommandOutput(
+  output: string,
+  exitCode: number,
+  format: "json" | "toon",
+): unknown {
+  const trimmed = output.trim();
+  if (trimmed === "") return { exit_code: exitCode };
+  try {
+    const value = format === "json" ? JSON.parse(trimmed) : decodeToon(trimmed);
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      return { ...(value as Record<string, unknown>), exit_code: exitCode };
+    }
+    return { value, exit_code: exitCode };
+  } catch {
+    return { output: trimmed, exit_code: exitCode };
+  }
+}
+
+function dispatchArgs(input: DispatchOperationInput): string[] {
+  const args: string[] = [];
+  if (input.runner) args.push("--runner", input.runner);
+  if (input.request) args.push("--request", input.request);
+  return args;
+}
+
+function defaultOperations(root: string): DevAfkMcpOperations {
+  return {
+    async dispatchIssue(cwd, input) {
+      const exitCode = await runCommand({
+        cwd,
+        args: [
+          "--issues",
+          String(input.issue),
+          "--once",
+          ...dispatchArgs(input),
+        ],
+      });
+      return { kind: "afk", issue: input.issue, exit_code: exitCode };
+    },
+    async dispatchDemand(cwd, input) {
+      const args = [input.demand, ...dispatchArgs(input)];
+      if (input.mode) args.push("--mode", input.mode);
+      const exitCode = await goCommand(args, cwd);
+      return { kind: "go", demand: input.demand, exit_code: exitCode };
+    },
+    async stopWorker(cwd, input) {
+      const capture = captureStream();
+      const exitCode = await stopCommand(
+        ["--worker", input.worker],
+        cwd,
+        capture.stream,
+      );
+      return {
+        ...(parsedCommandOutput(capture.text(), exitCode, "toon") as object),
+        recycle: input.recycle,
+      };
+    },
+    async requeue(input) {
+      const args = [
+        String(input.issue),
+        "--guidance",
+        input.guidance,
+        "--json",
+      ];
+      if (input.repo) args.push("--repo", input.repo);
+      if (input.dryRun) args.push("--dry-run");
+      if (input.adoptBranch) args.push("--adopt-branch", input.adoptBranch);
+      const capture = captureStream();
+      const exitCode = await requeueCommand(args, root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "json");
+    },
+    async retake(input) {
+      const args = [String(input.issue), "--json"];
+      if (input.repo) args.push("--repo", input.repo);
+      if (input.prLimit) args.push("--pr-limit", String(input.prLimit));
+      const capture = captureStream();
+      const exitCode = await retakeCommand(args, root, capture.stream);
+      return parsedCommandOutput(capture.text(), exitCode, "json");
+    },
+    async reap() {
+      const context = await resolveRepoContext(root);
+      const inputs = await collectReapInputs(context);
+      const nowS = Math.floor(Date.now() / 1_000);
+      const remotePlan = planLiveBranchCleanup(
+        inputs.remoteLiveRefs,
+        inputs.lookup,
+        nowS,
+      );
+      const localPlan = planLocalBranchCleanup(
+        inputs.localLiveRefs,
+        inputs.lookup,
+        nowS,
+      );
+      const remoteReaped = branchesToReap(remotePlan).map((item) => item.branch);
+      const localReaped = branchesToReap(localPlan).map((item) => item.branch);
+      for (const branch of remoteReaped) await inputs.deleteRemote(branch);
+      for (const branch of localReaped) await inputs.deleteLocal(branch);
+      return {
+        remote_found: inputs.remoteLiveRefs.length,
+        local_found: inputs.localLiveRefs.length,
+        remote_reaped: remoteReaped,
+        local_reaped: localReaped,
+      };
+    },
+    async unblockSweep() {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      const candidates = await ghx.listUnblockCandidates(gh);
+      const promoted = await executeUnblockSweep(
+        candidates,
+        async (issue) => ((await ghx.issueClosed(gh, issue)) ? "CLOSED" : "OPEN"),
+        {
+          editLabels: async (issue, remove, add) => {
+            await ghx.editLabels(gh, issue, remove, add);
+          },
+          comment: (issue, body) => ghx.comment(gh, issue, body),
+          issueReference: (issue) => ghx.issueReference(gh, issue),
+        },
+      );
+      return { promoted };
+    },
+  };
+}
 
 function registryPath(root: string): string {
   return fleetRegistryPath(createEnginePaths(join(root, ".red")));
@@ -244,6 +425,7 @@ async function workerVitals(root: string) {
 
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
+  operations: DevAfkMcpOperations = defaultOperations(root),
 ): CastleMcpDependencies {
   return {
     fleetList: () => readFleetProfiles(registryPath(root)),
@@ -287,5 +469,66 @@ export function createDevAfkMcpDependencies(
         },
       };
     },
+    workerDispatch: (input) => {
+      if (input.issue !== undefined) {
+        return operations.dispatchIssue(root, {
+          ...input,
+          issue: input.issue,
+        });
+      }
+      if (input.demand !== undefined) {
+        return operations.dispatchDemand(root, {
+          ...input,
+          demand: input.demand,
+        });
+      }
+      throw new Error("worker dispatch requires an issue or demand");
+    },
+    workerStatus: async ({ worker }) => {
+      const workers = await workerVitals(root);
+      return worker === undefined
+        ? workers
+        : workers.filter((record) => record.worker.id === worker);
+    },
+    workerStop: (input) => operations.stopWorker(root, input),
+    runnerList: async () =>
+      Object.fromEntries(
+        Object.entries(RUNNER_SPECS).map(([runner, spec]) => [
+          runner,
+          {
+            efforts: spec.efforts,
+            channel: spec.channel,
+            factory: spec.factory,
+            ...(spec.forcedModel ? { forced_model: spec.forcedModel } : {}),
+            ...(spec.defaultEffort
+              ? { default_effort: spec.defaultEffort }
+              : {}),
+            structured_output: spec.structuredOutput === true,
+            auth_env: spec.resolveAuthEnv !== undefined,
+          },
+        ]),
+      ),
+    runnerDetect: async ({ runner }) => detectRunner({ flag: runner }),
+    workerRequest: (input: WorkerRequestInput) => {
+      const dispatch = { ...input, request: input.text };
+      delete (dispatch as Partial<WorkerRequestInput>).text;
+      if (dispatch.issue !== undefined) {
+        return operations.dispatchIssue(root, {
+          ...dispatch,
+          issue: dispatch.issue,
+        });
+      }
+      if (dispatch.demand !== undefined) {
+        return operations.dispatchDemand(root, {
+          ...dispatch,
+          demand: dispatch.demand,
+        });
+      }
+      throw new Error("worker request requires an issue or demand");
+    },
+    requeue: (input) => operations.requeue(input),
+    retake: (input) => operations.retake(input),
+    reap: () => operations.reap(),
+    unblockSweep: () => operations.unblockSweep(),
   };
 }
