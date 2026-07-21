@@ -49,9 +49,13 @@ claim keeps two fleets on the same backlog from double-claiming an issue.
 | `fleet_create` | mutating | Persist a named profile and spawn its supervisor. |
 | `fleet_edit` | mutating | Update a profile; sends a live resize directive when asked. |
 | `fleet_stop` | mutating | Stop one named fleet and its detached workers. |
+| `fleet_register` | mutating | Adopt an already-running supervisor into the registry without restarting it. |
 
 `selector` scopes what a fleet drains — `{spec, lane, label, issues}`. Omit
-`fleet` on the read and stop tools to address the `default` fleet.
+`fleet` on the read and stop tools to address the `default` fleet. Use
+`fleet_register` when a CLI-launched fleet shows up in `fleet_status` but
+not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
+immediately after.
 
 ### Worker — one worker's lifecycle
 
