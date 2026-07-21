@@ -773,7 +773,7 @@ function buildSupervisorDeps(
     resizeRequest: async () => readResizeRequest(afkPaths(root, fleet).supervisorResizePath),
     configureRunner: (nextRunner) => {
       activeRunner = nextRunner;
-      workerEnv = buildWorkerEnv(process.env, activeRunner);
+      workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
       hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
     },
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
