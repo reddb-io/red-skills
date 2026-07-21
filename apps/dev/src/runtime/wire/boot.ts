@@ -348,6 +348,7 @@ export async function buildBootDeps(
         return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
       },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
+      worktreePrune: () => gitx.worktreePrune(gitCtx),
     },
     gh: {
       editLabels: async (issue, remove, add) => {
