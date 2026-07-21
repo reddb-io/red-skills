@@ -667,6 +667,23 @@ async function runChecksForBaseline(
       });
       continue;
     }
+    if (output.includes("feedback worktree setup failed")) {
+      // Baseline worktree setup failure ⇒ inconclusive (#2379). The same
+      // doctrine as crash/OOM (#2380): a setup failure means the probe never
+      // ran, so we cannot confirm whether the failure is pre-existing on main.
+      // Marking it as inconclusive (not failed) keeps it out of baselineFailing,
+      // so all branch failures stay attributed to the branch and the gate blocks
+      // correctly without manufacturing a "main is red" verdict.
+      out.set(name, {
+        status: "inconclusive",
+        evidence: {
+          check: name,
+          summary: "baseline probe inconclusive (worktree setup failed) — not a confirmed baseline failure",
+          outputTail: boundedFailureOutputTail(output),
+        },
+      });
+      continue;
+    }
     out.set(name, {
       status: "failed",
       evidence: {
