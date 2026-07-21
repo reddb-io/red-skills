@@ -35,6 +35,9 @@ export const DIAGNOSTICS_TTL_S = 30 * 86400;
  * entries that have not been touched recently regardless of SHA currency. */
 export const FEEDBACK_TTL_S = 7 * 86400;
 
+/** Slug produced by slugForBranch("origin/main") — the baseline probe's worktree. */
+export const FEEDBACK_MAIN_SLUG = "origin-main";
+
 // ---------- lane registry (ADR 0098 §2) ----------
 
 /** Named entries that may appear directly under .red/tmp/. Anything not in
@@ -161,6 +164,12 @@ export interface TmpJanitorInput {
   diagnosticsEntries: readonly JanitorEntry[];
   /** Stat'd entries under tmp/worktrees/feedback/. */
   feedbackEntries: readonly JanitorEntry[];
+  /**
+   * Dead-owner-annotated entries under tmp/worktrees/feedback/ (#2379).
+   * Each entry carries the worker-liveness flag so the planner can sweep
+   * entries whose owning worker is dead without waiting for the 7-day TTL.
+   */
+  feedbackDeadOwnerEntries: readonly FeedbackWorktreeDeadOwnerEntry[];
   /** Legacy supervisor slot logs once written as loose tmp-root files. */
   legacySlotLogEntries: readonly JanitorEntry[];
   /** Names (not full paths) present directly under the tmp root. */
@@ -172,6 +181,8 @@ export interface TmpJanitorPlan {
   scratch: JanitorLanePlan;
   diagnostics: JanitorLanePlan;
   feedbackWorktrees: JanitorLanePlan;
+  /** Dead-owner feedback worktrees (#2379): entries whose worker is dead. */
+  feedbackDeadOwner: JanitorLanePlan;
   legacySlotLogs: JanitorLanePlan;
   /** Names at the tmp root not in KNOWN_TMP_LANES: reported, never deleted. */
   unknownTmpRoots: string[];
@@ -185,9 +196,59 @@ export function planTmpJanitor(input: TmpJanitorInput): TmpJanitorPlan {
     scratch: planScratchJanitor(input.scratchEntries, nowS),
     diagnostics: planDiagnosticsJanitor(input.diagnosticsEntries, nowS),
     feedbackWorktrees: planFeedbackWorktreeJanitor(input.feedbackEntries, nowS),
+    feedbackDeadOwner: planDeadOwnerFeedbackJanitor(input.feedbackDeadOwnerEntries),
     legacySlotLogs: planLogsJanitor(input.legacySlotLogEntries, nowS),
     unknownTmpRoots: auditTmpRoot(input.tmpRootNames).unknown,
   };
+}
+
+// ---------- dead-owner feedback worktree planner ----------
+
+/**
+ * Parse the worker-ID tag from a feedback worktree basename. Returns the worker
+ * ID string when the basename follows the `afk-<workerId>-*` convention (i.e.
+ * it was produced by slugForBranch on an `afk/<workerId>/…` branch), or `null`
+ * when the entry does not follow that pattern (e.g. the baseline `origin-main`
+ * entry or any other non-afk slug).
+ */
+export function parseFeedbackWorktreeWorker(basename: string): string | null {
+  const m = /^afk-([A-Za-z0-9]+)-/.exec(basename);
+  return m ? (m[1] ?? null) : null;
+}
+
+/** A feedback worktree entry annotated with dead-owner information. */
+export interface FeedbackWorktreeDeadOwnerEntry {
+  /** Absolute path of the entry. */
+  path: string;
+  /** basename of the path (used for pattern matching). */
+  basename: string;
+  /** Worker ID parsed from the `afk-<workerId>-*` slug, or null for others. */
+  workerIdTag: string | null;
+  /** True when the owning worker (or any worker, for non-afk entries) is live. */
+  workerLive: boolean;
+}
+
+/**
+ * Plan dead-owner feedback worktree cleanup. An entry is reclaimable when its
+ * owning worker is dead:
+ * - `afk-<workerId>-*` entries: reclaim when `workerLive === false` for that
+ *   specific worker tag.
+ * - non-`afk-*` entries (including the baseline `origin-main` worktree): reclaim
+ *   when `workerLive === false` (no worker alive that could be holding the entry).
+ */
+export function planDeadOwnerFeedbackJanitor(
+  entries: readonly FeedbackWorktreeDeadOwnerEntry[],
+): JanitorLanePlan {
+  const reclaim: JanitorEntry[] = [];
+  const spare: JanitorEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.workerLive) {
+      reclaim.push({ path: entry.path, mtimeS: 0 });
+    } else {
+      spare.push({ path: entry.path, mtimeS: 0 });
+    }
+  }
+  return { reclaim, spare };
 }
 
 // ---------- stale worker planner ----------
