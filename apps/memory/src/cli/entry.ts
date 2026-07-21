@@ -72,8 +72,6 @@ export async function main(): Promise<void> {
       return runSmartSearchViewer(args);
     case "capsule":
       return runCapsule(args);
-    case "context-pack":
-      return runContextPack(args);
     case "context-pack-viewer":
       return runContextPackViewer(args);
     case "recommend":
@@ -114,8 +112,6 @@ export async function main(): Promise<void> {
       return runMemoryMergePass(args);
     case "tidy-review":
       return runTidyReview(args);
-    case "dashboard":
-      return runDashboard(args);
     case "workbench":
       return runWorkbench(args);
     case "session":
@@ -220,10 +216,6 @@ export async function main(): Promise<void> {
       return runCommunitiesViewer(args);
     case "community-digest":
       return runCommunityDigest(args);
-    case "hub-report":
-      return runHubReport(args);
-    case "suggested-questions":
-      return runSuggestedQuestions(args);
     case "global-search":
       return runGlobalSearch(args);
     case "structural-impact":
