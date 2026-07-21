@@ -29,6 +29,7 @@ import type {
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  FleetRegisterInput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
@@ -994,6 +995,27 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
   return { path: relative(root, target), removed: !existsSync(target) };
 }
 
+async function registerFleet(root: string, input: FleetRegisterInput) {
+  const path = registryPath(root);
+  const paths = afkPaths(root, input.name);
+  const running = await discoverLiveSupervisorPid(
+    paths.supervisorRuntimeDir,
+    isLivePid,
+    { fleet: paths.fleet },
+  );
+  if (!running) {
+    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is not running`);
+  }
+  const profile = await upsertFleetProfile(path, {
+    name: paths.fleet,
+    runner: input.runner,
+    ...(input.selector ? { selector: input.selector } : {}),
+    ...(input.config ? { config: input.config } : {}),
+    ...(input.base ? { base: input.base } : {}),
+  });
+  return { status: "registered", profile, pid: running.pid };
+}
+
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
@@ -1012,6 +1034,7 @@ export function createDevAfkMcpDependencies(
       const result = await stopFleet(root, silent, input.name);
       return { fleet: input.name ?? "default", ...result };
     },
+    fleetRegister: (input) => registerFleet(root, input),
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {
       const records = await workerVitals(root, { live_only: input.live_only });
