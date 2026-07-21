@@ -12,7 +12,7 @@ import {
   executeReadOnlyMemoryOperation,
   listReadOnlyMemoryOperations,
 } from "../src/operations.js";
-import type { MemoryOperationFacets, MemoryOperationDefinition } from "../src/operations.js";
+import type { MemoryOperationDefinition } from "../src/operations.js";
 import type { MemoryStore } from "../src/graph-store.js";
 import { operationStructuredContent } from "../src/mcp-server/structured-content.js";
 import {
@@ -33,6 +33,8 @@ describe("Memory operation transport adapter", () => {
       sideEffectClass: "none",
       capabilities: ["graph-store"],
       transports: ["cli", "http"],
+      inputBinding: { fields: [] },
+      outputKind: { kind: "report", format: "json" },
       renderer: {
         cli: { command: "test-registration", supportsJson: true },
         mcp: { toolName: "memory_test_registration", description: "legacy transport copy" },
@@ -44,13 +46,7 @@ describe("Memory operation transport adapter", () => {
       },
       execute: async () => ({ status: "ok" as const }),
     } satisfies MemoryOperationDefinition<object, { status: "ok" }>;
-    const facets = {
-      inputBinding: { fields: [] },
-      outputKind: { kind: "report", format: "json" },
-    } satisfies MemoryOperationFacets;
-    const operation = createReadOnlyMemoryOperationRegistry([definition], {
-      [definition.id]: facets,
-    }).get(definition.id);
+    const operation = createReadOnlyMemoryOperationRegistry([definition]).get(definition.id);
 
     expect(listMemoryOperationsForTransport([operation], "cli")).toEqual([operation]);
     expect(listMemoryOperationsForTransport([operation], "http")).toEqual([operation]);
