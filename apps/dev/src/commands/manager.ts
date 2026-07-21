@@ -1,16 +1,21 @@
 // commands/manager.ts — the operator front door of the Manager (Spec #2290,
-// slices #2291, #2292, #2295; architecture in ADR 0109).
+// slices #2291, #2292, #2293, #2295; architecture in ADR 0109).
 //
-// Five shapes:
-//   `manager <intent>`         — mint an effort from the intent and persist it.
-//   `manager status [id]`      — render the brief for one effort (newest by default).
-//   `manager resume [id]`      — transition inbox/paused effort → active, acquire lease.
-//   `manager end [id]`         — transition active effort → completed, release lease.
-//   `manager dispatch [id]`    — dispatch an autonomous execution for the effort and
-//                                record the tracker issue number (slice #2295).
+// Lifecycle operations understood by this command:
+//   `manager <intent>`              — mint an effort from the intent and persist it.
+//   `manager status [id]`           — render the brief for one effort (newest by default).
+//   `manager resume [id]`           — transition inbox/paused effort → active, acquire lease.
+//   `manager end [id]`              — transition active effort → completed, release lease.
+//   `manager dispatch [id]`         — dispatch an autonomous execution for the effort and
+//                                     record the tracker issue number (slice #2295).
+//   `manager route <id> <skill>`    — record the ask-red route for an effort.
+//   `manager artifact <id> <ref>`   — capture an artifact reference from an
+//                                     inline session-bound skill run.
 //
 // The command is conversation-first: anything that is not a lifecycle keyword IS
-// the intent. Routing and reconciliation happen at render time via the GH layer.
+// the intent. Routing classification (intent → skill) is ask-red's job at the
+// SKILL.md/agent layer; this command only stores the route that ask-red returned
+// and the artifact references that inline skills produce.
 
 import { homedir } from "node:os";
 import { resolveManagerRoot } from "@reddb-io/shared/red-paths.js";
@@ -55,14 +60,16 @@ export interface ManagerCommandDeps {
 }
 
 const USAGE = [
-  "usage: afk manager <intent>          start an effort from an intent",
-  "       afk manager status [effort]   render an effort brief (default: the newest)",
-  "       afk manager resume [effort]   transition an effort to active and acquire the lease",
-  "       afk manager end [effort]      transition an active effort to completed",
-  "       afk manager dispatch [effort] dispatch autonomous execution for the effort",
+  "usage: afk manager <intent>                  start an effort from an intent",
+  "       afk manager status [effort]           render an effort brief (default: newest)",
+  "       afk manager resume [effort]           transition an effort to active and acquire the lease",
+  "       afk manager end [effort]              transition an active effort to completed",
+  "       afk manager dispatch [effort]         dispatch autonomous execution for the effort",
+  "       afk manager route <effort> <skill>    record the ask-red route",
+  "       afk manager artifact <effort> <ref>   capture an artifact reference",
 ].join("\n");
 
-const LIFECYCLE_WORDS = new Set(["status", "resume", "end", "dispatch"]);
+const LIFECYCLE_WORDS = new Set(["status", "resume", "end", "dispatch", "route", "artifact"]);
 
 function resolveRoot(deps: ManagerCommandDeps): string {
   return deps.root ?? resolveManagerRoot({ homeDir: homedir(), env: process.env });
@@ -178,6 +185,55 @@ async function dispatchCommand(
   return 0;
 }
 
+async function routeCommand(
+  effortId: string | undefined,
+  skill: string | undefined,
+  root: string,
+  write: (text: string) => void,
+  fail: (text: string) => void,
+  now: (() => Date) | undefined,
+): Promise<number> {
+  if (!effortId || !skill) {
+    fail(`${USAGE}\n`);
+    return 2;
+  }
+  const effort = await readEffort(root, effortId);
+  if (!effort) {
+    fail(`[manager] no effort ${effortId} in this portfolio\n`);
+    return 1;
+  }
+  const updated = await saveEffort(root, { ...effort, route: skill }, { now });
+  write(`${renderEffortBrief(updated)}\n`);
+  return 0;
+}
+
+async function artifactCommand(
+  effortId: string | undefined,
+  ref: string | undefined,
+  root: string,
+  write: (text: string) => void,
+  fail: (text: string) => void,
+  now: (() => Date) | undefined,
+): Promise<number> {
+  if (!effortId || !ref) {
+    fail(`${USAGE}\n`);
+    return 2;
+  }
+  const effort = await readEffort(root, effortId);
+  if (!effort) {
+    fail(`[manager] no effort ${effortId} in this portfolio\n`);
+    return 1;
+  }
+  const existing = effort.artifact_refs ?? [];
+  const updated = await saveEffort(
+    root,
+    { ...effort, artifact_refs: [...existing, ref] },
+    { now },
+  );
+  write(`${renderEffortBrief(updated)}\n`);
+  return 0;
+}
+
 export async function managerCommand(
   args: readonly string[],
   deps: ManagerCommandDeps = {},
@@ -196,6 +252,12 @@ export async function managerCommand(
     if (words[0] === "resume") return await resumeCommand(words[1], root, write, fail, deps);
     if (words[0] === "end") return await endCommand(words[1], root, write, fail, deps);
     if (words[0] === "dispatch") return await dispatchCommand(words[1], root, write, fail, deps);
+    if (words[0] === "route") {
+      return await routeCommand(words[1], words[2], root, write, fail, deps.now);
+    }
+    if (words[0] === "artifact") {
+      return await artifactCommand(words[1], words[2], root, write, fail, deps.now);
+    }
     // Anything that is not a known lifecycle keyword is the intent.
     if (LIFECYCLE_WORDS.has(words[0])) {
       fail(`[manager] unknown subcommand "${words[0]}"\n`);

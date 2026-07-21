@@ -15,6 +15,20 @@ Start or continue an effort — anything that is not a lifecycle operation IS th
 
 Run: `red-skills-dev manager <intent>`
 
+After the runtime starts the effort, **route it via `/ask-red`**: classify the
+intent and follow the returned route. Do NOT re-implement ask-red's classifier —
+invoke `/ask-red` and consume its answer.
+
+Record the ask-red route in the effort:
+
+Run: `red-skills-dev manager route <effort-id> <skill>`
+
+**For session-bound skills** (`to-spec`, `to-tickets`, `start`, `research`):
+run the skill **inline in this session** as a subroutine. When the skill
+produces an artifact (e.g., a GitHub issue URL from `/to-spec`), capture it:
+
+Run: `red-skills-dev manager artifact <effort-id> <url-or-ref>`
+
 Render the brief for an effort (the most recently started one by default):
 
 Run: `red-skills-dev manager status [effort-id]`
@@ -34,10 +48,12 @@ workflow) issues directives to the Manager.
 
 ## What this slice owns
 
-The first slice is the walking skeleton (Spec #2290, slice #2291): start,
-persist, status. Routing through `ask-red`, inline planning, autonomous
-dispatch, tracker reconciliation, leases, and `resume`/`end`/`checkpoint` are
-later slices of the same Spec.
+Slice #2291 (S1) is the walking skeleton: start, persist, status.
+Slice #2293 (S3) adds ask-red routing and inline session-bound skill handoff:
+the runtime stores the route and artifact references; the SKILL layer routes
+via `/ask-red` and runs session-bound skills inline.
+Autonomous dispatch, tracker reconciliation, leases, and
+`resume`/`end`/`checkpoint` are later slices of the same Spec.
 
 ## Where the portfolio lives
 
