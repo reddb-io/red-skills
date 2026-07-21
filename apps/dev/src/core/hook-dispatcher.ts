@@ -59,7 +59,6 @@ export const HOOK_EXIT_POLICY: Record<HookName, HookExitPolicy> = {
   pre_merge: "abort",
   post_merge: "continue",
   on_attempt_error: "continue",
-  on_attempt_timeout: "continue",
   on_recovery_decision: "continue",
   on_blocked: "continue",
   on_reconcile: "continue",
@@ -212,7 +211,7 @@ export function deriveHookEnv(base: Record<string, string>, contextJson: string)
   // New checkpoints (#832). Each exposes its decision-bearing field as a flat
   // RED_AFK_* var so a plain shell hook can branch without parsing the stdin JSON.
   set("RED_AFK_RECOVERY_DECISION", ctx.decision); // on_recovery_decision (mutable)
-  set("RED_AFK_RECOVERY_REASON", ctx.reason); // on_recovery_decision / on_attempt_timeout
+  set("RED_AFK_RECOVERY_REASON", ctx.reason); // on_recovery_decision
   set("RED_AFK_BLOCKED_LABEL", ctx.blocked_label); // on_blocked
   set("RED_AFK_FEEDBACK_CLASS", ctx.class); // on_feedback_classify (mutable)
   set("RED_AFK_RECONCILE_OUTCOME", ctx.outcome); // on_reconcile (landed/parked/skipped)
