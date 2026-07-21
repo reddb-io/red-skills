@@ -222,7 +222,18 @@ Usage:
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
 one, then use /memory:store and /memory:recall (or the CLI verbs) — they route
-to whichever mode init configured.`;
+to whichever mode init configured.
+
+Registered read-only operations:
+${registryCliHelp()}`;
+
+function registryCliHelp(): string {
+  return listReadOnlyMemoryOperations()
+    .filter((operation) => operation.transports.includes("cli"))
+    .sort((a, b) => a.renderer.cli.command.localeCompare(b.renderer.cli.command))
+    .map((operation) => `  memory ${operation.renderer.cli.command}\n      ${operation.description}`)
+    .join("\n");
+}
 
 export type ParsedArgs = LooseParsedArgs;
 
