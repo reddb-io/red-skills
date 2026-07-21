@@ -242,12 +242,9 @@ export const execFileAsync = promisify(execFile);
 export const LEGACY_CLI_OPERATION_IDS = new Set<string>();
 
 export const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
-  "merge-pass": ["execute", "unmerge"],
-  "onboarding-map": ["export"],
-  "tidy-review": ["refresh", "accept", "dismiss"],
 };
 
-export const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-viewer"]);
+export const PROOF_REGISTRY_CLI_COMMANDS = new Set<string>();
 
 export const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
   listReadOnlyMemoryOperations()
