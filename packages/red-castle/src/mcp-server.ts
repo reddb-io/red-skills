@@ -35,6 +35,32 @@ export interface LogsInput {
   id: string;
 }
 
+export interface GateRunInput {
+  branch: string;
+  base?: string;
+}
+
+export interface LandBranchInput {
+  issue: number;
+  branch: string;
+  base?: string;
+  openPr?: boolean;
+  sensitivePathApproved?: boolean;
+}
+
+export interface ClaimIssueInput {
+  issue: number;
+}
+
+export interface ClaimReleaseInput {
+  issue: number;
+  worker: string;
+}
+
+export interface WorktreeRemoveInput {
+  path: string;
+}
+
 export interface CastleMcpDependencies {
   fleetList(): Promise<unknown>;
   fleetStatus(input: FleetNameInput): Promise<unknown>;
@@ -47,6 +73,14 @@ export interface CastleMcpDependencies {
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
   queueStatus(): Promise<unknown>;
+  gateRun(input: GateRunInput): Promise<unknown>;
+  gateBaselineStatus(): Promise<unknown>;
+  landBranch(input: LandBranchInput): Promise<unknown>;
+  cascadeStatus(): Promise<unknown>;
+  claimStatus(input: ClaimIssueInput): Promise<unknown>;
+  claimRelease(input: ClaimReleaseInput): Promise<unknown>;
+  worktreeList(): Promise<unknown>;
+  worktreeRemove(input: WorktreeRemoveInput): Promise<unknown>;
 }
 
 export interface CastleMcpTool {
@@ -182,6 +216,94 @@ export function createCastleMcpTools(
         "Return ready-for-agent and ready-for-human queue candidates.",
       inputSchema: {},
       invoke: () => deps.queueStatus(),
+    },
+    {
+      name: "gate_run",
+      title: "Run the feedback gate",
+      description:
+        "Run the package-scoped feedback gate for one branch and return its verdict. " +
+        "Runs the repo's own test/typecheck/lint/build commands in an isolated " +
+        "feedback worktree — expensive, never a read-only probe.",
+      inputSchema: {
+        branch: z.string().min(1),
+        base: z.string().min(1).optional(),
+      },
+      invoke: (input) => deps.gateRun(input as unknown as GateRunInput),
+    },
+    {
+      name: "gate_baseline_status",
+      title: "Read baseline gate status",
+      description:
+        "Return whether the trunk baseline is tracked red, with the open main-red " +
+        "repair issue and its recorded baseline failures.",
+      inputSchema: {},
+      invoke: () => deps.gateBaselineStatus(),
+    },
+    {
+      name: "land_branch",
+      title: "Land a branch",
+      description:
+        "MUTATING: land one attempt branch into its base — push, serialize, merge " +
+        "(PR or direct), and promote. Merges code into the trunk; the sensitive-path " +
+        "guard still applies unless a reviewed branch is explicitly approved.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        branch: z.string().min(1),
+        base: z.string().min(1).optional(),
+        openPr: z.boolean().optional(),
+        sensitivePathApproved: z.boolean().optional(),
+      },
+      invoke: (input) => deps.landBranch(input as unknown as LandBranchInput),
+    },
+    {
+      name: "cascade_status",
+      title: "Read cascade rebase status",
+      description:
+        "Return every open AFK attempt branch with whether it still sits on a stale " +
+        "trunk tip, plus the live cascade worktrees.",
+      inputSchema: {},
+      invoke: () => deps.cascadeStatus(),
+    },
+    {
+      name: "claim_status",
+      title: "Read issue claims",
+      description:
+        "Return the parsed claim marker records for one issue with its live owner, " +
+        "stale owners, and conceded owners.",
+      inputSchema: { issue: z.number().int().positive() },
+      invoke: (input) => deps.claimStatus(input as unknown as ClaimIssueInput),
+    },
+    {
+      name: "claim_release",
+      title: "Release an issue claim",
+      description:
+        "MUTATING: post a concede marker on an issue so the named worker withdraws " +
+        "its claim and the issue returns to the executable pool.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        worker: z.string().min(1),
+      },
+      invoke: (input) =>
+        deps.claimRelease(input as unknown as ClaimReleaseInput),
+    },
+    {
+      name: "worktree_list",
+      title: "List Castle worktrees",
+      description:
+        "Enumerate the disposable worktree lanes under .red/tmp/worktrees with their " +
+        "registered git worktree state.",
+      inputSchema: {},
+      invoke: () => deps.worktreeList(),
+    },
+    {
+      name: "worktree_remove",
+      title: "Remove a Castle worktree",
+      description:
+        "MUTATING: remove one worktree under a .red/tmp/worktrees lane. Refuses any " +
+        "path outside those disposable lanes.",
+      inputSchema: { path: z.string().min(1) },
+      invoke: (input) =>
+        deps.worktreeRemove(input as unknown as WorktreeRemoveInput),
     },
   ];
 }
