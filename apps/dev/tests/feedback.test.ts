@@ -794,6 +794,46 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     // 4 scripts × 1 scope + 1 workspace typecheck = 5 invocations, no probe.
     expect(calls.length).toBe(5);
   });
+
+  it("baseline probe worktree setup failure → branch-fault, not inconclusive (#2379)", async () => {
+    // Model: the worker branch's test fails; the baseline probe's worktreeAdd
+    // failed for an infra reason (stale feedback/main), so the exec returns the
+    // 'feedback worktree setup failed' sentinel. That sentinel must NOT be treated
+    // as a confirmed baseline failure (which would make the worker's failure look
+    // pre-existing and dodge the block). Instead it is inconclusive for the PROBE
+    // only, and the branch failure stays attributed to the branch.
+    const exec: Exec = async (args) => {
+      const script = args[args.length - 1] ?? "";
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const isBaseline = dir.includes("main");
+      if (script === "test" && !isBaseline) {
+        return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+      }
+      if (isBaseline) {
+        // The baseline executor returns the sentinel when worktree setup failed.
+        return { code: 1, stdout: "", stderr: "feedback worktree setup failed for main; validation blocked" };
+      }
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    // The branch's failure is real; the probe failure is inconclusive.
+    // Verdict must be branch-fault (not inconclusive) because the baseline probe
+    // did NOT confirm the failure — worktree setup failed.
+    expect(result.ok).toBe(false);
+    expect(result.baselineProbeRan).toBe(true);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    // The setup failure is inconclusive for the probe — it must NOT appear in
+    // baselineInconclusive (that list is branch-perspective, not probe-perspective).
+    expect(result.baselineInconclusive).toEqual([]);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("failed");
+  });
 });
 
 // Workspace typecheck: a whole-workspace `typecheck` runs once after the
