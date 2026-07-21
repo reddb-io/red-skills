@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { worktreesDir } from "@reddb-io/shared/red-paths.js";
+import { waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
@@ -32,12 +34,15 @@ import type {
   LogsInput,
   RequeueToolInput,
   RetakeToolInput,
+  WaitStartInput,
+  WaitStatusInput,
   WorkerDispatchInput,
   WorkerRequestInput,
   WorkerSteerInput,
   WorkerStopInput,
   WorktreeRemoveInput,
 } from "../../../packages/red-castle/src/mcp-server.js";
+import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
 import { stopFleet, writeResizeRequest } from "./commands/fleet.js";
@@ -119,10 +124,13 @@ export interface DevAfkMcpOperations {
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  waitStart(input: WaitStartInput): Promise<unknown>;
 }
 
 export interface DevAfkMcpRuntime {
   launchRun(root: string, args: readonly string[]): Promise<{ pid: number }>;
+  /** Spawn rsp wait detached; returns the child PID. */
+  launchRspWait(args: readonly string[], cwd: string): Promise<number>;
   ensureLabel(root: string, name: string): Promise<void>;
   createIssue(root: string, spec: DisposableIssueSpec): Promise<number>;
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
@@ -208,8 +216,68 @@ export function resolveDevCliBundle(mcpBundle: string): string {
   );
 }
 
+export function resolveRspCliBundle(mcpBundle: string): string {
+  const file = basename(mcpBundle);
+  if (file === "afk-mcp.bundle.min.mjs") {
+    return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
+  }
+  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "rsp-"));
+  }
+  throw new Error(
+    `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
+  );
+}
+
+async function launchDetachedRspWait(
+  args: readonly string[],
+  cwd: string,
+): Promise<number> {
+  const mcpBundle = process.argv[1];
+  if (!mcpBundle) {
+    throw new Error("cannot spawn rsp wait: MCP bundle path is missing");
+  }
+  const bundle = resolveRspCliBundle(mcpBundle);
+  if (!existsSync(bundle)) {
+    throw new Error("cannot spawn rsp wait: sibling rsp bundle is missing");
+  }
+  const child = spawn(process.execPath, [bundle, ...args], {
+    cwd,
+    env: process.env,
+    detached: true,
+    stdio: "ignore",
+  });
+  const pid = child.pid;
+  if (!pid) throw new Error("cannot spawn rsp wait: spawn returned no pid");
+  child.unref();
+  return pid;
+}
+
+function buildWaitArgs(
+  kind: WaitStartInput["kind"],
+  target: string,
+  resultFile: string,
+  opts: { timeout_ms?: number; reason?: string },
+): string[] {
+  const args: string[] = ["wait", kind];
+  if (kind !== "cmd" && kind !== "release") {
+    args.push(target);
+  }
+  if (kind === "release" && target !== "*") {
+    args.push("--tag", target);
+  }
+  if (opts.timeout_ms !== undefined) args.push("--timeout", String(opts.timeout_ms));
+  if (opts.reason) args.push("--reason", opts.reason);
+  args.push("--result-file", resultFile);
+  if (kind === "cmd") {
+    args.push("--", target);
+  }
+  return args;
+}
+
 const defaultMcpRuntime: DevAfkMcpRuntime = {
   launchRun: launchDetachedRun,
+  launchRspWait: launchDetachedRspWait,
   async ensureLabel(root, name) {
     const context = await resolveRepoContext(root);
     await ghx.ensureLabel({ cwd: context.root, repo: context.repo }, name);
@@ -564,7 +632,32 @@ export function createDefaultDevAfkMcpOperations(
       }
       return { issue: input.issue, conceded };
     },
+    async waitStart(input) {
+      const id = randomUUID();
+      const resultFile = join(waitsDir(root), `${id}.toon`);
+      const args = buildWaitArgs(input.kind, input.target, resultFile, {
+        timeout_ms: input.timeout_ms,
+        reason: input.reason,
+      });
+      const pid = await runtime.launchRspWait(args, root);
+      return { id, pid, result_file: resultFile, status: "spawned" };
+    },
   };
+}
+
+async function waitStatusImpl(root: string, input: WaitStatusInput): Promise<unknown> {
+  const resultFile = join(waitsDir(root), `${input.id}.toon`);
+  try {
+    const raw = await readFile(resultFile, "utf8");
+    const trimmed = raw.trim();
+    if (trimmed) {
+      return { id: input.id, status: "finished", result: decodeToon(trimmed) };
+    }
+  } catch {
+    // result file not present — wait is still running or never started
+  }
+  const active = await listRspWaits(root);
+  return { id: input.id, status: "running", waits: active };
 }
 
 function registryPath(root: string): string {
@@ -945,5 +1038,8 @@ export function createDevAfkMcpDependencies(
     claimRelease: (input) => operations.claimRelease(input),
     worktreeList: () => listDisposableWorktrees(root),
     worktreeRemove: (input) => removeDisposableWorktree(root, input),
+    waitStart: (input) => operations.waitStart(input),
+    waitList: () => listRspWaits(root),
+    waitStatus: (input) => waitStatusImpl(root, input),
   };
 }
