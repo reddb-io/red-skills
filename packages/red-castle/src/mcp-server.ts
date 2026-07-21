@@ -35,6 +35,37 @@ export interface LogsInput {
   id: string;
 }
 
+export interface GateRunInput {
+  worktree?: string;
+  branch?: string;
+  base?: string;
+  changedFiles?: string[];
+}
+
+export interface LandBranchInput {
+  issue: number;
+  title: string;
+  branch: string;
+  base: string;
+  gatePassed: true;
+  openPr?: boolean;
+  trunk?: string;
+  validatedBranchTip?: string;
+}
+
+export interface ClaimIssueInput {
+  issue: number;
+}
+
+export interface ClaimReleaseInput extends ClaimIssueInput {
+  worker: string;
+  runner?: string;
+}
+
+export interface WorktreeRemoveInput {
+  worktree: string;
+}
+
 export interface CastleMcpDependencies {
   fleetList(): Promise<unknown>;
   fleetStatus(input: FleetNameInput): Promise<unknown>;
@@ -47,6 +78,14 @@ export interface CastleMcpDependencies {
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
   queueStatus(): Promise<unknown>;
+  gateRun(input: GateRunInput): Promise<unknown>;
+  gateBaselineStatus(): Promise<unknown>;
+  landBranch(input: LandBranchInput): Promise<unknown>;
+  cascadeStatus(): Promise<unknown>;
+  claimStatus(input: ClaimIssueInput): Promise<unknown>;
+  claimRelease(input: ClaimReleaseInput): Promise<unknown>;
+  worktreeList(): Promise<unknown>;
+  worktreeRemove(input: WorktreeRemoveInput): Promise<unknown>;
 }
 
 export interface CastleMcpTool {
@@ -182,6 +221,97 @@ export function createCastleMcpTools(
         "Return ready-for-agent and ready-for-human queue candidates.",
       inputSchema: {},
       invoke: () => deps.queueStatus(),
+    },
+    {
+      name: "gate_run",
+      title: "Run AFK feedback gate",
+      description:
+        "MUTATING: materialize a branch when needed, execute its package-scoped feedback checks, and return the structured verdict.",
+      inputSchema: {
+        worktree: z.string().min(1).optional(),
+        branch: z.string().min(1).optional(),
+        base: z.string().min(1).optional(),
+        changedFiles: z.array(z.string().min(1)).optional(),
+      },
+      invoke: (input) => {
+        const value = input as unknown as GateRunInput;
+        if ((value.worktree === undefined) === (value.branch === undefined)) {
+          throw new Error("exactly one of worktree or branch is required");
+        }
+        return deps.gateRun(value);
+      },
+    },
+    {
+      name: "gate_baseline_status",
+      title: "Read AFK gate baseline status",
+      description:
+        "Return the open main-red repair record that represents the current feedback baseline status.",
+      inputSchema: {},
+      invoke: () => deps.gateBaselineStatus(),
+    },
+    {
+      name: "land_branch",
+      title: "Land validated AFK branch",
+      description:
+        "MUTATING: call the canonical landing operation for a branch whose feedback gate passed.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        title: z.string().min(1),
+        branch: z.string().min(1),
+        base: z.string().min(1),
+        gatePassed: z.literal(true),
+        openPr: z.boolean().optional(),
+        trunk: z.string().min(1).optional(),
+        validatedBranchTip: z.string().min(1).optional(),
+      },
+      invoke: (input) =>
+        deps.landBranch(input as unknown as LandBranchInput),
+    },
+    {
+      name: "cascade_status",
+      title: "Read landing cascade status",
+      description:
+        "Return workers currently in the post-landing cascade phase.",
+      inputSchema: {},
+      invoke: () => deps.cascadeStatus(),
+    },
+    {
+      name: "claim_status",
+      title: "Read issue claims",
+      description:
+        "Return parsed claim records for one issue, excluding unrelated discussion.",
+      inputSchema: { issue: z.number().int().positive() },
+      invoke: ({ issue }) => deps.claimStatus({ issue: issue as number }),
+    },
+    {
+      name: "claim_release",
+      title: "Release issue claim",
+      description:
+        "MUTATING: append a concede marker that releases one worker claim.",
+      inputSchema: {
+        issue: z.number().int().positive(),
+        worker: z.string().min(1),
+        runner: z.string().min(1).optional(),
+      },
+      invoke: (input) =>
+        deps.claimRelease(input as unknown as ClaimReleaseInput),
+    },
+    {
+      name: "worktree_list",
+      title: "List managed worktrees",
+      description:
+        "Enumerate worktrees in the canonical .red/tmp/worktrees lanes.",
+      inputSchema: {},
+      invoke: () => deps.worktreeList(),
+    },
+    {
+      name: "worktree_remove",
+      title: "Remove managed worktree",
+      description:
+        "MUTATING: force-remove one worktree only when it resolves inside a canonical .red/tmp/worktrees lane.",
+      inputSchema: { worktree: z.string().min(1) },
+      invoke: ({ worktree }) =>
+        deps.worktreeRemove({ worktree: worktree as string }),
     },
   ];
 }
