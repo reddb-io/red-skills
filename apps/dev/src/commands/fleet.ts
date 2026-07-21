@@ -123,7 +123,7 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
   return { stop, status, fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
 }
 
-async function writeResizeRequest(
+export async function writeResizeRequest(
   path: string,
   target: number,
   shrinkMode: ElasticShrinkMode,
