@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   auditTmpRoot,
   DIAGNOSTICS_TTL_S,
+  FEEDBACK_MAIN_SLUG,
   FEEDBACK_TTL_S,
   KNOWN_TMP_LANES,
   LOGS_TTL_S,
+  parseFeedbackWorktreeWorker,
+  planDeadOwnerFeedbackJanitor,
   planDiagnosticsJanitor,
   planFeedbackWorktreeJanitor,
   planLogsJanitor,
@@ -12,6 +15,7 @@ import {
   planTmpJanitor,
   planWorkerDirJanitor,
   SCRATCH_TTL_S,
+  type FeedbackWorktreeDeadOwnerEntry,
   type JanitorEntry,
   type WorkerDirJanitorEntry,
 } from "../src/core/tmp-janitor.js";
@@ -156,6 +160,97 @@ describe("planFeedbackWorktreeJanitor", () => {
   });
 });
 
+// ---------- parseFeedbackWorktreeWorker ----------
+
+describe("parseFeedbackWorktreeWorker", () => {
+  it("extracts the worker ID from an afk-<workerId>-* slug", () => {
+    expect(parseFeedbackWorktreeWorker("afk-wOF09-2379-tmp-janitor")).toBe("wOF09");
+  });
+
+  it("extracts single-character worker IDs", () => {
+    expect(parseFeedbackWorktreeWorker("afk-w1-42-fix")).toBe("w1");
+  });
+
+  it("returns null for the baseline origin-main slug", () => {
+    expect(parseFeedbackWorktreeWorker(FEEDBACK_MAIN_SLUG)).toBeNull();
+  });
+
+  it("returns null for non-afk slugs", () => {
+    expect(parseFeedbackWorktreeWorker("origin-main")).toBeNull();
+    expect(parseFeedbackWorktreeWorker("feature-branch")).toBeNull();
+  });
+
+  it("returns null for a bare 'afk' with no trailing workerId segment", () => {
+    expect(parseFeedbackWorktreeWorker("afk")).toBeNull();
+    expect(parseFeedbackWorktreeWorker("afk-")).toBeNull();
+  });
+});
+
+// ---------- planDeadOwnerFeedbackJanitor ----------
+
+describe("planDeadOwnerFeedbackJanitor (#2379)", () => {
+  function deadOwnerEntry(
+    basename: string,
+    workerLive: boolean,
+    workerIdTag?: string | null,
+  ): FeedbackWorktreeDeadOwnerEntry {
+    return {
+      path: `/red/tmp/worktrees/feedback/${basename}`,
+      basename,
+      workerIdTag: workerIdTag !== undefined ? workerIdTag : parseFeedbackWorktreeWorker(basename),
+      workerLive,
+    };
+  }
+
+  it("returns empty plans when there are no entries", () => {
+    expect(planDeadOwnerFeedbackJanitor([])).toEqual({ reclaim: [], spare: [] });
+  });
+
+  it("reclaims an afk-* entry whose worker is dead", () => {
+    const e = deadOwnerEntry("afk-wOF09-2379-slug", false);
+    const plan = planDeadOwnerFeedbackJanitor([e]);
+    expect(plan.reclaim.map((r) => r.path)).toEqual([e.path]);
+    expect(plan.spare).toHaveLength(0);
+  });
+
+  it("spares an afk-* entry whose worker is still live", () => {
+    const e = deadOwnerEntry("afk-wOF09-2379-slug", true);
+    const plan = planDeadOwnerFeedbackJanitor([e]);
+    expect(plan.reclaim).toHaveLength(0);
+    expect(plan.spare.map((r) => r.path)).toEqual([e.path]);
+  });
+
+  it("reclaims the baseline origin-main entry when no workers are live", () => {
+    const e = deadOwnerEntry(FEEDBACK_MAIN_SLUG, false);
+    const plan = planDeadOwnerFeedbackJanitor([e]);
+    expect(plan.reclaim.map((r) => r.path)).toEqual([e.path]);
+  });
+
+  it("spares the baseline origin-main entry when any worker is live", () => {
+    const e = deadOwnerEntry(FEEDBACK_MAIN_SLUG, true);
+    const plan = planDeadOwnerFeedbackJanitor([e]);
+    expect(plan.spare.map((r) => r.path)).toEqual([e.path]);
+  });
+
+  it("partitions a mixed set: reclaims dead-owner, spares live-owner", () => {
+    const dead1 = deadOwnerEntry("afk-wOF09-2379-slug", false);
+    const dead2 = deadOwnerEntry(FEEDBACK_MAIN_SLUG, false);
+    const live = deadOwnerEntry("afk-wX1Y2-100-other", true);
+    const plan = planDeadOwnerFeedbackJanitor([dead1, dead2, live]);
+    expect(plan.reclaim.map((r) => r.path)).toEqual([dead1.path, dead2.path]);
+    expect(plan.spare.map((r) => r.path)).toEqual([live.path]);
+  });
+
+  it("sweeps 18 orphaned entries in a single pass (regression for #2379)", () => {
+    const orphans = Array.from({ length: 18 }, (_, i) =>
+      deadOwnerEntry(`afk-w${i.toString().padStart(3, "0")}-${100 + i}-slug`, false),
+    );
+    const plan = planDeadOwnerFeedbackJanitor(orphans);
+    expect(plan.reclaim).toHaveLength(18);
+    expect(plan.spare).toHaveLength(0);
+  });
+});
+
 // ---------- auditTmpRoot ----------
 
 describe("auditTmpRoot", () => {
@@ -208,6 +303,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [],
       diagnosticsEntries: [],
       feedbackEntries: [],
+      feedbackDeadOwnerEntries: [],
       legacySlotLogEntries: [],
       tmpRootNames: [...KNOWN_TMP_LANES],
     });
@@ -215,6 +311,7 @@ describe("planTmpJanitor", () => {
     expect(plan.scratch).toEqual({ reclaim: [], spare: [] });
     expect(plan.diagnostics).toEqual({ reclaim: [], spare: [] });
     expect(plan.feedbackWorktrees).toEqual({ reclaim: [], spare: [] });
+    expect(plan.feedbackDeadOwner).toEqual({ reclaim: [], spare: [] });
     expect(plan.unknownTmpRoots).toEqual([]);
   });
 
@@ -232,6 +329,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [oldScratch],
       diagnosticsEntries: [freshDiag],
       feedbackEntries: [oldFeedback, freshFeedback],
+      feedbackDeadOwnerEntries: [],
       legacySlotLogEntries: [],
       tmpRootNames: ["workers", "logs", "rogue-dir", "scratch"],
     });
@@ -244,7 +342,35 @@ describe("planTmpJanitor", () => {
     expect(plan.diagnostics.spare).toEqual([freshDiag]);
     expect(plan.feedbackWorktrees.reclaim).toEqual([oldFeedback]);
     expect(plan.feedbackWorktrees.spare).toEqual([freshFeedback]);
+    expect(plan.feedbackDeadOwner).toEqual({ reclaim: [], spare: [] });
     expect(plan.unknownTmpRoots).toEqual(["rogue-dir"]);
+  });
+
+  it("plans dead-owner feedback sweep alongside the TTL sweep (#2379)", () => {
+    const deadEntry: FeedbackWorktreeDeadOwnerEntry = {
+      path: "/red/tmp/worktrees/feedback/afk-wX1-42-slug",
+      basename: "afk-wX1-42-slug",
+      workerIdTag: "wX1",
+      workerLive: false,
+    };
+    const liveEntry: FeedbackWorktreeDeadOwnerEntry = {
+      path: "/red/tmp/worktrees/feedback/afk-wY2-99-slug",
+      basename: "afk-wY2-99-slug",
+      workerIdTag: "wY2",
+      workerLive: true,
+    };
+    const plan = planTmpJanitor({
+      nowS: NOW,
+      logEntries: [],
+      scratchEntries: [],
+      diagnosticsEntries: [],
+      feedbackEntries: [],
+      feedbackDeadOwnerEntries: [deadEntry, liveEntry],
+      legacySlotLogEntries: [],
+      tmpRootNames: [...KNOWN_TMP_LANES],
+    });
+    expect(plan.feedbackDeadOwner.reclaim.map((e) => e.path)).toEqual([deadEntry.path]);
+    expect(plan.feedbackDeadOwner.spare.map((e) => e.path)).toEqual([liveEntry.path]);
   });
 
   it("reclaims legacy tmp-root supervisor slot logs on the logs TTL", () => {
@@ -257,6 +383,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [],
       diagnosticsEntries: [],
       feedbackEntries: [],
+      feedbackDeadOwnerEntries: [],
       legacySlotLogEntries: [oldSlotLog, freshSlotLog],
       tmpRootNames: ["afk-supervisor-slot-0.log", "afk-supervisor-slot-1.log", "debug.log"],
     });
@@ -276,6 +403,7 @@ describe("planTmpJanitor", () => {
       scratchEntries: [],
       diagnosticsEntries: [],
       feedbackEntries: [],
+      feedbackDeadOwnerEntries: [],
       legacySlotLogEntries: [],
       tmpRootNames: ["workers", "go-workers", "claims", "waits", "worktrees"],
     });
