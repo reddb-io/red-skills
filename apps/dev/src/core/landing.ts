@@ -39,7 +39,6 @@ import {
   type WaitForReviewInput,
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
-import { decideMainRedAdminMerge, type MainRedRepairIssue } from "./main-red-repair.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
 
@@ -136,8 +135,6 @@ export interface LandingDeps {
    * immediately. Ignored on the locked path, which never opens a PR.
    */
   ciAwait?: CiAwaitInput;
-  /** Find the open auto-filed main-red repair issue for the #1237 admin-merge gate. */
-  findMainRedRepairIssue?(): Promise<MainRedRepairIssue | null>;
   /**
    * Non-blocking observability hook (issue #1279): invoked by the PR landing path
    * the moment the PR number is RESOLVED (open-or-reused, before the merge), so
@@ -243,13 +240,6 @@ export interface LandingInput {
    */
   sensitivePathApproved?: boolean;
   /**
-   * True when the feedback baseline probe found pre-existing failures on the
-   * trunk/main baseline. Used by the admin-PR path to enforce the tracked-red
-   * visibility gate (#1237). Defaults false/undefined so green-main landings are
-   * unaffected.
-   */
-  mainRed?: boolean;
-  /**
    * `<base>` has the forge's native merge queue configured (#1337). True → the PR
    * landing ENQUEUES (`gh pr merge --auto`) and takes NO local land-lock: the queue
    * already serializes entries and rebases + revalidates each onto the current tip.
@@ -345,7 +335,6 @@ export type LandingResult =
         | "pr-conflict"
         | "pr-merge-failed"
         | "infra"
-        | "main-red-untracked"
         | "adversarial-correction"
         // Legacy ADR 0083 landing-precondition route. New trunk freshness uses
         // the fleet-owned `red-trunk` mirror and no longer emits this from
@@ -370,7 +359,7 @@ export type LandingResult =
       originTrunkSha?: string;
       /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
       sensitivePaths?: SensitivePathHit[];
-      /** Main-red tracking gate (`main-red-untracked`): actionable refusal text. */
+      /** Actionable refusal text for the terminal note, when the route carries one. */
       message?: string;
       /** Infra failure (`infra`): actionable refusal text for the terminal note. */
       infraReason?: string;
@@ -526,14 +515,6 @@ export async function doLanding(
  * mirror promotion is identical for locked and unlocked PR landings.
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
-  if (input.base === input.trunk && input.mainRed === true) {
-    const current = deps.findMainRedRepairIssue ? await deps.findMainRedRepairIssue() : null;
-    const decision = decideMainRedAdminMerge({ mainRed: true, openRepairIssue: current });
-    if (!decision.ok) {
-      return { ok: false, reason: "main-red-untracked", locked: input.locked, message: decision.message };
-    }
-  }
-
   // Pre-merge rebase (#1006): rebase the worker branch onto the fetched base tip
   // in an ISOLATED worktree and force-push it before opening/merging the PR, so
   // the admin-merge is never rejected as a stale non-fast-forward and then
