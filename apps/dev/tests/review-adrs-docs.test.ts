@@ -58,6 +58,38 @@ describe("review-adrs docs contract", () => {
     expect(skill).toContain("Merge and split remain judgment operations");
   });
 
+  it("offers merge, split, and supersede-a-live-decision in the judgment interview", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("Judgment operation vocabulary");
+    for (const operation of ["merge", "split", "supersede a live decision"]) {
+      expect(skill).toContain(operation);
+    }
+    expect(skill).toContain("this decision is incoherent");
+    expect(skill).toContain("one `Q##` per turn");
+  });
+
+  it("shapes every judgment proposal as supersede-and-replace", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("supersede-and-replace");
+    expect(skill).toContain("one consolidating ADR");
+    expect(skill).toContain("archives the N originals");
+    expect(skill).toContain("N focused ADRs");
+    expect(skill).toContain("`superseded-by`");
+    expect(skill).toContain("never in-place rewrites");
+  });
+
+  it("captures judgment agreements as Spec work items instead of in-session writes", async () => {
+    const skill = await readReviewAdrsSkill();
+
+    expect(skill).toContain("never applied in-session");
+    expect(skill).toContain("Human Decisions");
+    expect(skill).toContain("Decision/Why/Alternatives");
+    expect(skill).toContain("/to-tickets");
+    expect(skill).toContain("/afk");
+  });
+
   it("points doc-writing skills at the shared doc-landing finalizer", async () => {
     const start = await readSkill("plugins/dev/skills/engineering/start/SKILL.md");
     const reviewAdrs = await readSkill("plugins/dev/skills/engineering/review-adrs/SKILL.md");
