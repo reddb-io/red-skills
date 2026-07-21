@@ -24,6 +24,7 @@ import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import type { ConfigValues } from "./config.js";
 import type { Runner } from "../types/runner.js";
+import type { FleetSelector } from "@reddb-io/red-castle/engine";
 
 // ---------- pure helpers (slugify / gen_worker_id) ----------
 
@@ -67,11 +68,14 @@ export interface IssueCandidate {
 }
 
 /** The selection filter, mirroring FILTER_KIND/FILTER_VALUE. `issues` keeps the
- * argument order; `spec` keeps spec-linked Tickets; `all` keeps every remainder. */
+ * argument order; `spec` keeps spec-linked Tickets; `all` keeps every remainder;
+ * `selector` is a NAMED FLEET's work scope — every facet present narrows the
+ * pool, so two fleets can partition one backlog between them. */
 export type SelectionFilter =
   | { kind: "all" }
   | { kind: "issues"; numbers: number[] }
-  | { kind: "spec"; spec: number };
+  | { kind: "spec"; spec: number }
+  | { kind: "selector"; selector: FleetSelector };
 
 import { LABEL_TYPE_SPEC, LABEL_URGENT, LABEL_HIGH, LABEL_READY, LABEL_TYPE_SCOUT } from "./triage-labels.js";
 
@@ -86,6 +90,20 @@ function matchesSpec(c: IssueCandidate, spec: number): boolean {
   // `spec:\s*#?<N>\b` — optional whitespace, optional `#`, then the number on a
   // word boundary (so spec:24 does not match a spec:240 candidate).
   return new RegExp(`spec:\\s*#?${spec}\\b`).test(c.body ?? "");
+}
+
+/**
+ * A named fleet's work-scope test: every facet the selector declares must hold
+ * (AND), so `{spec, lane}` keeps only that Spec's Tickets inside that lane. An
+ * empty selector matches everything — a fleet with no scope drains the whole
+ * backlog, exactly like the `all` filter.
+ */
+export function matchesSelector(c: IssueCandidate, selector: FleetSelector): boolean {
+  if (selector.spec !== undefined && !matchesSpec(c, selector.spec)) return false;
+  if (selector.lane !== undefined && !hasLabel(c, `lane:${selector.lane}`)) return false;
+  if (selector.label !== undefined && !hasLabel(c, selector.label)) return false;
+  if (selector.issues !== undefined && !selector.issues.includes(c.number)) return false;
+  return true;
 }
 
 /** Stable priority sort for the non-urgent remainder: `priority:high` (rank 0)
@@ -118,6 +136,9 @@ export class IssueSelectionError extends Error {
  * applying — in order:
  *
  *   1. Spec exclusion (hard): drop every `type:spec` candidate before any filter.
+ *   1a. Fleet work scope (hard, `selector` filter only): drop every candidate
+ *      outside the named fleet's selector — BEFORE the urgent split, so an
+ *      urgent issue another fleet owns can never be pulled across the boundary.
  *   2. Urgent prepend (hard, ahead of filters): split out `priority:urgent`;
  *      they jump the head sorted by number ascending (oldest fires first).
  *   3. Filter the queue:
@@ -128,7 +149,8 @@ export class IssueSelectionError extends Error {
  *          Lookup uses the full post-spec pool so urgent issues are explicitly
  *          addressable, then final queue assembly keeps urgents first.
  *        - spec: keep candidates with a spec:#N body ref / spec:N label.
- *        - all: keep the whole remainder.
+ *        - selector / all: keep the whole remainder (the selector already
+ *          narrowed the pool in step 1a).
  *      The spec/all filtered remainder is sorted priority:high→rest, then
  *      number asc.
  *   4. Concat `[urgent…] + [filtered…]`, deduped by number keeping the urgent
@@ -136,7 +158,15 @@ export class IssueSelectionError extends Error {
  */
 export function selectIssues(candidates: readonly IssueCandidate[], filter: SelectionFilter): IssueCandidate[] {
   // 1. Spec exclusion (hard).
-  const pool = candidates.filter((c) => !hasLabel(c, LABEL_TYPE_SPEC));
+  const excluded = candidates.filter((c) => !hasLabel(c, LABEL_TYPE_SPEC));
+
+  // 1a. Fleet work scope (hard, ahead of the urgent prepend). A named fleet must
+  // never touch an issue outside its selector — not even an urgent one — or two
+  // fleets partitioned across one backlog would race for the same claim.
+  const pool =
+    filter.kind === "selector"
+      ? excluded.filter((c) => matchesSelector(c, filter.selector))
+      : excluded;
 
   // 2. Urgent prepend — split, sorted by number ascending.
   const urgent = pool.filter((c) => hasLabel(c, LABEL_URGENT)).sort((a, b) => a.number - b.number);
@@ -168,6 +198,11 @@ export function selectIssues(candidates: readonly IssueCandidate[], filter: Sele
     }
     case "spec":
       filtered = sortByPriority(rest.filter((c) => matchesSpec(c, filter.spec)));
+      break;
+    case "selector":
+      // The scope was already applied to the pool above; what remains is the
+      // ordinary priority ordering of everything the fleet owns.
+      filtered = sortByPriority(rest);
       break;
     case "all":
     default:

@@ -1,3 +1,4 @@
+import type { FleetSelector } from "./fleet-registry.js";
 import type { Runner } from "./runner-types.js";
 
 export interface CastleIssueCandidate {
@@ -10,7 +11,22 @@ export interface CastleIssueCandidate {
 export type CastleSelectionFilter =
   | { kind: "all" }
   | { kind: "issues"; numbers: number[] }
-  | { kind: "spec"; spec: number };
+  | { kind: "spec"; spec: number }
+  /** A named fleet's work scope — every declared facet narrows the pool. */
+  | { kind: "selector"; selector: FleetSelector };
+
+/** True when a candidate falls inside a named fleet's work scope. Every facet
+ * the selector declares must hold; an empty selector matches everything. */
+export function matchesFleetSelector(
+  candidate: CastleIssueCandidate,
+  selector: FleetSelector,
+): boolean {
+  if (selector.spec !== undefined && !matchesSpec(candidate, selector.spec)) return false;
+  if (selector.lane !== undefined && !hasLabel(candidate, `lane:${selector.lane}`)) return false;
+  if (selector.label !== undefined && !hasLabel(candidate, selector.label)) return false;
+  if (selector.issues !== undefined && !selector.issues.includes(candidate.number)) return false;
+  return true;
+}
 
 export interface CastleSelectionLabels {
   ready: string;
@@ -62,7 +78,13 @@ export function selectCastleIssues(
   filter: CastleSelectionFilter,
   labels: CastleSelectionLabels = DEFAULT_CASTLE_SELECTION_LABELS,
 ): CastleIssueCandidate[] {
-  const pool = candidates.filter((candidate) => !hasLabel(candidate, labels.typeSpec));
+  const excluded = candidates.filter((candidate) => !hasLabel(candidate, labels.typeSpec));
+  // A named fleet's scope applies BEFORE the urgent prepend, so an urgent issue
+  // another fleet owns is never pulled across the boundary into a double-claim.
+  const pool =
+    filter.kind === "selector"
+      ? excluded.filter((candidate) => matchesFleetSelector(candidate, filter.selector))
+      : excluded;
   const urgent = pool
     .filter((candidate) => hasLabel(candidate, labels.urgent))
     .sort((a, b) => a.number - b.number);
@@ -94,6 +116,7 @@ export function selectCastleIssues(
         labels,
       );
       break;
+    case "selector":
     case "all":
     default:
       filtered = sortByPriority(rest, labels);
