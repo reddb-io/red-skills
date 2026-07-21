@@ -543,6 +543,9 @@ export function buildProcessDeps(
       // already landed in <base>, distinguishing own-merge close (done) from a
       // foreign close (claim-lost) when the guard observes the issue CLOSED.
       branchMerged: (branch, base) => gitx.branchMergedInto(gitCtx, branch, base),
+      // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
+      // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
+      discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
     },
     envelope: {
       git: gitx.gitExec(gitCtx),

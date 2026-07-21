@@ -1,4 +1,5 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
+import type { BranchRef } from "../branch-cleanup.js";
 import {
   buildRefFromSlug,
   deleteRemote,
@@ -173,6 +174,9 @@ export interface ProcessLookups {
   diffstat(branch: string, base: string): Promise<string>;
   branchPresent?(branch: string): Promise<boolean>;
   branchMerged?(branch: string, base: string): Promise<boolean>;
+  /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
+   * pushed attempt so re-claim can resume instead of rebuilding from scratch. */
+  discoverBranches?(): Promise<BranchRef[]>;
 }
 export function remoteTrackingBaseRef(remote: string, base: string): string {
   if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {

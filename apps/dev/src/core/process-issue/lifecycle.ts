@@ -6,7 +6,14 @@ import {
   slugifyRef,
   type GitExec,
 } from "../remote-branch.js";
-import { buildHandoff, exitProtocolFor, type HandoffComment } from "../handoff.js";
+import { buildHandoff, buildHumanGuidance, exitProtocolFor, type HandoffComment } from "../handoff.js";
+import {
+  buildResumeInstruction,
+  discoverResumableBranch,
+  extractFailureReason,
+  isExplicitRestartRequested,
+  isGateGreenBranch,
+} from "../branch-resume.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
 import {
@@ -274,6 +281,18 @@ export async function processIssue(
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
   const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
+  // Branch-resume logic (issue #2397): discover a prior pushed branch so re-claim
+  // can continue instead of rebuilding from scratch. Explicit restart overrides.
+  const allBranches = await deps.lookups.discoverBranches?.() ?? [];
+  const humanGuidanceForResume = buildHumanGuidance(comments);
+  const explicitRestart = isExplicitRestartRequested(humanGuidanceForResume);
+  const resumableBranch = explicitRestart ? null : discoverResumableBranch(allBranches, issue);
+  const failureReason = extractFailureReason(priorAttemptContext);
+  const resumeIsGateGreen = resumableBranch !== null && isGateGreenBranch(failureReason);
+  const resumeInstruction =
+    resumableBranch !== null
+      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen)
+      : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
   const handoff = buildHandoff({
     issue,
@@ -288,6 +307,7 @@ export async function processIssue(
     specRef: input.specRef,
     mergeGateCommands: deps.backpressureCommands ?? [],
     outputShaping,
+    resumeFromBranch: resumeInstruction,
   });
   deps.markState?.({
     "current.output_shaping_enabled": outputShaping.enabled,
@@ -356,11 +376,15 @@ export async function processIssue(
     });
   }
   const baseRef = baseResolution.baseRef;
-  await deps.git.prepareFreshWorkerBranch?.({
-    branch,
-    baseRef,
-    force: isMergeConflictRetry(priorAttemptContext),
-  });
+  // Skip branch preparation when resuming from a prior pushed branch: the branch
+  // already exists on origin and must not be deleted or reset (issue #2397).
+  if (!resumableBranch) {
+    await deps.git.prepareFreshWorkerBranch?.({
+      branch,
+      baseRef,
+      force: isMergeConflictRetry(priorAttemptContext),
+    });
+  }
   let activeRunner: Runner = toAgentRunner(input.runner);
   let attemptN = input.attempt;
   let activeTaskClass: AfkModelTier = taskClass;
@@ -423,114 +447,129 @@ export async function processIssue(
       hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
     );
   };
+  // Gate-green fast path (issue #2397): when a prior branch already cleared the
+  // feedback gate, skip the agent entirely on re-claim and re-validate directly.
+  let gateGreenSkip = resumeIsGateGreen;
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
-    const baseAgentInput: RunAgentInput = {
-      runner: activeRunner,
-      model: initialTier.model,
-      effort: initialTier.effort,
-      handoffPath,
-      handoffContent: currentHandoff,
-      systemPrompt: exitProtocolFor({
-        runMode: input.runMode,
-        structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(activeRunner)),
+    let run: RunAgentResult;
+    if (gateGreenSkip) {
+      // Consume the flag — subsequent loop iterations (e.g. go-verify retries)
+      // run the agent normally.
+      gateGreenSkip = false;
+      const fastBranch = resumableBranch!.branch;
+      deps.appendIterLog(
+        `🤖 /afk #${issue}: gate-green fast path — re-validating \`${fastBranch}\`, agent skipped.`,
+      );
+      run = { outcome: "done", branch: fastBranch, commits: [], stdout: "" };
+    } else {
+      const baseAgentInput: RunAgentInput = {
         runner: activeRunner,
-      }),
-      branch,
-      base: baseRef,
-      cwd: input.attemptDir,
-      logPath: `${input.attemptDir}/afk.log`,
-      onAgentEvent: agentEventSink,
-      onHeartbeat: (info) => {
-        const vitals = deps.heartbeatVitals?.();
-        void fireHook(
-          "on_heartbeat",
-          hookContext({
-            issue,
-            title: input.title,
-            workspace: branch,
-            runner: activeRunner,
-            attempt_n: attemptN,
-            ...(vitals ? { vitals } : {}),
-          }),
-        );
-        deps.emitHeartbeat?.({ ...info, base });
-      },
-      remote: input.remote,
-      continuousPush: input.runMode !== "scout",
-      goalProbe: () => deps.gh.issueClosed(issue),
-      env: agentEnv,
-      sandboxMode: sandboxDecision.sandboxMode,
-    };
-    const notesLoopCfg: NotesLoopConfig = deps.notesLoop ?? {
-      enabled: false,
-      maxIterations: 1,
-      innerMaxIterations: 0,
-      tokenBudget: 0,
-      wallClockS: 0,
-    };
-    const notesOutcome = await runNotesLoop({
-      config: notesLoopCfg,
-      baseHandoff: currentHandoff,
-      runOnce: ({ handoff: iterationHandoff }) =>
-        deps.runAgent({
-          ...baseAgentInput,
-          handoffContent: iterationHandoff,
-          ...(notesLoopCfg.enabled && notesLoopCfg.innerMaxIterations > 0
-            ? { maxIterations: notesLoopCfg.innerMaxIterations }
-            : {}),
-        }),
-      persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
-      now: () => deps.nowEpoch() * 1000,
-      tokensSpent: () => {
-        const vitals = deps.heartbeatVitals?.();
-        return vitals ? (vitals.input_tokens ?? 0) + (vitals.output_tokens ?? 0) : 0;
-      },
-      log: (message) => deps.appendIterLog(message),
-    });
-    let run: RunAgentResult = notesOutcome.run;
-    if (isRunnerRecoverableOutcome(run.outcome)) {
-      if (!deps.fallbackRunner) {
-        return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
-      }
-      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
-      const other: Runner = activeRunner === "claude" ? "codex" : "claude";
-      activeRunner = other;
-      attemptN += 1;
-      if (
-        !(await fireHook(
-          "pre_attempt",
-          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
-        ))
-      ) {
-        return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
-      }
-      const fallbackTier = resolveSpawnTier(deps, other, activeTaskClass);
-      run = await deps.runAgent({
-        runner: other,
-        model: fallbackTier.model,
-        effort: fallbackTier.effort,
+        model: initialTier.model,
+        effort: initialTier.effort,
         handoffPath,
         handoffContent: currentHandoff,
         systemPrompt: exitProtocolFor({
           runMode: input.runMode,
-          structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
-          runner: other,
+          structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(activeRunner)),
+          runner: activeRunner,
         }),
         branch,
-        base,
+        base: baseRef,
         cwd: input.attemptDir,
         logPath: `${input.attemptDir}/afk.log`,
         onAgentEvent: agentEventSink,
+        onHeartbeat: (info) => {
+          const vitals = deps.heartbeatVitals?.();
+          void fireHook(
+            "on_heartbeat",
+            hookContext({
+              issue,
+              title: input.title,
+              workspace: branch,
+              runner: activeRunner,
+              attempt_n: attemptN,
+              ...(vitals ? { vitals } : {}),
+            }),
+          );
+          deps.emitHeartbeat?.({ ...info, base });
+        },
         remote: input.remote,
         continuousPush: input.runMode !== "scout",
         goalProbe: () => deps.gh.issueClosed(issue),
         env: agentEnv,
         sandboxMode: sandboxDecision.sandboxMode,
+      };
+      const notesLoopCfg: NotesLoopConfig = deps.notesLoop ?? {
+        enabled: false,
+        maxIterations: 1,
+        innerMaxIterations: 0,
+        tokenBudget: 0,
+        wallClockS: 0,
+      };
+      const notesOutcome = await runNotesLoop({
+        config: notesLoopCfg,
+        baseHandoff: currentHandoff,
+        runOnce: ({ handoff: iterationHandoff }) =>
+          deps.runAgent({
+            ...baseAgentInput,
+            handoffContent: iterationHandoff,
+            ...(notesLoopCfg.enabled && notesLoopCfg.innerMaxIterations > 0
+              ? { maxIterations: notesLoopCfg.innerMaxIterations }
+              : {}),
+          }),
+        persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
+        now: () => deps.nowEpoch() * 1000,
+        tokensSpent: () => {
+          const vitals = deps.heartbeatVitals?.();
+          return vitals ? (vitals.input_tokens ?? 0) + (vitals.output_tokens ?? 0) : 0;
+        },
+        log: (message) => deps.appendIterLog(message),
       });
+      run = notesOutcome.run;
       if (isRunnerRecoverableOutcome(run.outcome)) {
+        if (!deps.fallbackRunner) {
+          return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
+        }
         await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
-        return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
+        const other: Runner = activeRunner === "claude" ? "codex" : "claude";
+        activeRunner = other;
+        attemptN += 1;
+        if (
+          !(await fireHook(
+            "pre_attempt",
+            hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+          ))
+        ) {
+          return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+        }
+        const fallbackTier = resolveSpawnTier(deps, other, activeTaskClass);
+        run = await deps.runAgent({
+          runner: other,
+          model: fallbackTier.model,
+          effort: fallbackTier.effort,
+          handoffPath,
+          handoffContent: currentHandoff,
+          systemPrompt: exitProtocolFor({
+            runMode: input.runMode,
+            structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
+            runner: other,
+          }),
+          branch,
+          base,
+          cwd: input.attemptDir,
+          logPath: `${input.attemptDir}/afk.log`,
+          onAgentEvent: agentEventSink,
+          remote: input.remote,
+          continuousPush: input.runMode !== "scout",
+          goalProbe: () => deps.gh.issueClosed(issue),
+          env: agentEnv,
+          sandboxMode: sandboxDecision.sandboxMode,
+        });
+        if (isRunnerRecoverableOutcome(run.outcome)) {
+          await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+          return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
+        }
       }
     }
     workerBranch = run.branch || branch;
