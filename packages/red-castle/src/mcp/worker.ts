@@ -5,7 +5,7 @@ export interface WorkerDispatchInput {
   issue?: number;
   demand?: string;
   runner?: string;
-  mode?: "no-mistakes" | "direct-PR" | "local-only";
+  mode?: "no-mistakes" | "direct-PR" | "local-only" | "scout";
 }
 
 export interface WorkerStatusInput {
@@ -28,7 +28,7 @@ export const dispatchShape = {
   issue: z.number().int().positive().optional(),
   demand: z.string().min(1).optional(),
   runner: z.string().min(1).optional(),
-  mode: z.enum(["no-mistakes", "direct-PR", "local-only"]).optional(),
+  mode: z.enum(["no-mistakes", "direct-PR", "local-only", "scout"]).optional(),
 };
 
 export function dispatchInput(
@@ -37,6 +37,9 @@ export function dispatchInput(
   const value = input as unknown as WorkerDispatchInput;
   if ((value.issue === undefined) === (value.demand === undefined)) {
     throw new Error("exactly one of issue or demand is required");
+  }
+  if (value.mode === "scout" && value.issue !== undefined) {
+    throw new Error("mode: scout is demand-only — combine scout with demand, not issue");
   }
   if (value.issue !== undefined && value.mode !== undefined) {
     throw new Error("mode is only valid for demand dispatches");
