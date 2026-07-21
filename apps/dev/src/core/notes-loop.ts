@@ -135,8 +135,8 @@ export interface NotesLoopOutcome {
  * The only outcome that CONTINUES the loop: the agent ran, likely committed a
  * small change, but did not signal completion (`no-sentinel`). Every other
  * non-`done` outcome is terminal for the loop — `blocked` is an explicit
- * give-up, and the guard/runner outcomes (`exhausted`, `runner-transient`,
- * `timeout`, `budget-exceeded`, `goal-moot`) are handled by the caller's
+ * give-up, and the runner/predicate outcomes (`exhausted`, `runner-transient`,
+ * `signal-killed`, `goal-moot`) are handled by the caller's
  * existing terminal policy and re-seeding them would not help.
  */
 function isContinuable(outcome: AgentOutcome): boolean {
