@@ -1,4 +1,6 @@
-import { join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, readdir } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { Writable } from "node:stream";
 import {
   castleLanePath,
@@ -10,14 +12,20 @@ import {
   readFleetProfiles,
   removeFleetProfile,
   upsertFleetProfile,
+  CASTLE_WORKTREE_LANES,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
+  ClaimIssueInput,
+  ClaimReleaseInput,
   CastleMcpDependencies,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  GateRunInput,
+  LandBranchInput,
   LogsInput,
+  WorktreeRemoveInput,
 } from "../../../packages/red-castle/src/mcp-server.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
@@ -27,6 +35,7 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
 import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
@@ -37,6 +46,295 @@ import {
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
+import { parseClaimRecords, renderClaimComment } from "./core/claim.js";
+import {
+  relevantScopes,
+  runFeedback,
+  type Exec as FeedbackExec,
+  type PackageLayout,
+} from "./core/feedback.js";
+import {
+  doLanding,
+  type LandingDeps,
+  type LandingHookContexts,
+} from "./core/landing.js";
+import { makeFeedbackWorktree } from "./runtime/feedback-worktree.js";
+import { createLandLock } from "./runtime/land-lock.js";
+import { pnpm as runPnpm } from "./runtime/exec.js";
+import * as gitx from "./runtime/git.js";
+
+export interface DevAfkMcpSensitiveOperations {
+  gateRun(input: GateRunInput): Promise<unknown>;
+  gateBaselineStatus(): Promise<unknown>;
+  landBranch(input: LandBranchInput): Promise<unknown>;
+  cascadeStatus(): Promise<unknown>;
+  claimStatus(input: ClaimIssueInput): Promise<unknown>;
+  claimRelease(input: ClaimReleaseInput): Promise<unknown>;
+  worktreeList(): Promise<unknown>;
+  worktreeRemove(input: WorktreeRemoveInput): Promise<unknown>;
+}
+
+function layoutAt(root: string): PackageLayout {
+  return {
+    hasPackage(scope) {
+      return existsSync(
+        join(scope === "." ? root : join(root, scope), "package.json"),
+      );
+    },
+    hasScript(scope, script) {
+      try {
+        const dir = scope === "." ? root : join(root, scope);
+        const pkg = JSON.parse(
+          readFileSync(join(dir, "package.json"), "utf8"),
+        ) as {
+          scripts?: Record<string, unknown>;
+        };
+        return Boolean(pkg.scripts && script in pkg.scripts);
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== "..");
+}
+
+function slug(value: string): string {
+  return (
+    value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
+    "worktree"
+  );
+}
+
+export function createDefaultDevAfkMcpSensitiveOperations(
+  root: string,
+): DevAfkMcpSensitiveOperations {
+  const paths = afkPaths(root);
+  const gitContext: gitx.GitContext = { cwd: root };
+
+  async function gateRun(input: GateRunInput) {
+    const branch = input.branch;
+    const localWorktree = input.worktree
+      ? resolve(root, input.worktree)
+      : undefined;
+    if (localWorktree && !isWithin(root, localWorktree)) {
+      throw new Error("gate worktree must resolve inside the repository");
+    }
+    const manager = branch
+      ? makeFeedbackWorktree(root, paths.feedbackWorktreesDir)
+      : undefined;
+    const layout = manager?.layout ?? layoutAt(localWorktree!);
+    const changedFiles =
+      input.changedFiles ??
+      (await gitx.changedFiles(
+        { cwd: localWorktree ?? root },
+        branch ?? "HEAD",
+        input.base ?? "main",
+      ));
+    const scopes = relevantScopes(layout, changedFiles);
+    const feedbackExec: FeedbackExec = manager
+      ? manager.pnpm
+      : async (args, opts) => {
+          const commandArgs = args[0] === "pnpm" ? args.slice(1) : args;
+          const result = await runPnpm(commandArgs, {
+            cwd: localWorktree!,
+            env: opts?.env,
+          });
+          return {
+            code: result.code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+        };
+    try {
+      return await runFeedback(feedbackExec, {
+        worktree: branch ?? localWorktree!,
+        scopes,
+        layout,
+        now: Date.now,
+        ...(branch && input.base ? { baselineWorktree: input.base } : {}),
+      });
+    } finally {
+      await manager?.cleanup();
+    }
+  }
+
+  async function baselineStatus() {
+    const context = await resolveRepoContext(root);
+    const issue = await ghx.findMainRedRepairIssue({
+      cwd: context.root,
+      repo: context.repo,
+    });
+    return { red: issue !== null, issue };
+  }
+
+  function landingDeps(input: LandBranchInput): LandingDeps {
+    const makeWorktree = async (laneRoot: string, ref: string) => {
+      await mkdir(laneRoot, { recursive: true });
+      const dest = join(laneRoot, `${slug(ref)}-mcp-${process.pid}`);
+      await gitx.worktreeRemove(gitContext, dest);
+      return (await gitx.worktreeAdd(gitContext, dest, ref)) ? dest : null;
+    };
+    return {
+      mergeExec: gitx.mergeExec(gitContext),
+      remoteGit: gitx.gitExec(gitContext),
+      fireHook: async () => true,
+      makeLandingWorktree: (base) =>
+        makeWorktree(paths.landingWorktreesDir, base),
+      removeLandingWorktree: (dir) => gitx.worktreeRemove(gitContext, dir),
+      makeRebaseWorktree: (branch) =>
+        makeWorktree(paths.rebaseWorktreesDir, branch),
+      removeRebaseWorktree: (dir) => gitx.worktreeRemove(gitContext, dir),
+      getDiffPaths: async () => ({
+        changedFiles: await gitx.changedFiles(
+          gitContext,
+          input.branch,
+          input.base,
+        ),
+        packageJsonDiff: "",
+      }),
+      findMainRedRepairIssue: async () => {
+        const context = await resolveRepoContext(root);
+        return ghx.findMainRedRepairIssue({
+          cwd: context.root,
+          repo: context.repo,
+        });
+      },
+      postMergeGate: async (worktree) => {
+        const result = await gateRun({
+          worktree,
+          base: input.base,
+          changedFiles: await gitx.changedFiles(
+            gitContext,
+            input.branch,
+            input.base,
+          ),
+        });
+        return { ok: Boolean((result as { ok?: boolean }).ok) };
+      },
+      landLock: createLandLock(paths.tmpDir, `mcp-${process.pid}`),
+    };
+  }
+
+  return {
+    gateRun,
+    gateBaselineStatus: baselineStatus,
+    async landBranch(input) {
+      if (input.gatePassed !== true) {
+        throw new Error("land_branch requires a passing gate verdict");
+      }
+      const context = await resolveRepoContext(root);
+      if (!context.repo)
+        throw new Error("land_branch could not resolve the repository slug");
+      const baseline = await baselineStatus();
+      const hooks: LandingHookContexts = {
+        preMerge: () =>
+          JSON.stringify({ issue: input.issue, branch: input.branch }),
+        postMerge: (mergeSha) =>
+          JSON.stringify({
+            issue: input.issue,
+            branch: input.branch,
+            mergeSha,
+          }),
+      };
+      return doLanding(
+        landingDeps(input),
+        {
+          openPr: input.openPr ?? true,
+          locked: false,
+          repo: context.repo,
+          repoDir: root,
+          remote: context.remote,
+          branch: input.branch,
+          validatedBranchTip: input.validatedBranchTip,
+          base: input.base,
+          trunk: input.trunk ?? input.base,
+          issue: input.issue,
+          title: input.title,
+          mainRed: (baseline as { red: boolean }).red,
+        },
+        hooks,
+      );
+    },
+    async cascadeStatus() {
+      const records = await readAllWorkerStates(paths.tmpDir);
+      return records
+        .filter(({ state }) => state.current.phase === "cascade")
+        .map(({ state, live, active }) => ({
+          worker: state.worker_id,
+          issue: state.current.number,
+          phase: state.current.phase,
+          live,
+          active,
+        }));
+    },
+    async claimStatus(input) {
+      const context = await resolveRepoContext(root);
+      const comments = await ghx.listClaimComments(
+        { cwd: context.root, repo: context.repo },
+        input.issue,
+      );
+      return parseClaimRecords(comments);
+    },
+    async claimRelease(input) {
+      const context = await resolveRepoContext(root);
+      await ghx.comment(
+        { cwd: context.root, repo: context.repo },
+        input.issue,
+        renderClaimComment(
+          { worker: input.worker, runner: input.runner },
+          "concede",
+        ),
+      );
+      return { released: true, issue: input.issue, worker: input.worker };
+    },
+    async worktreeList() {
+      const worktreesRoot = createEnginePaths(join(root, ".red")).worktreesRoot;
+      const entries: Array<{ lane: string; name: string; path: string }> = [];
+      for (const lane of CASTLE_WORKTREE_LANES) {
+        const laneRoot = join(worktreesRoot, lane);
+        const children = await readdir(laneRoot, { withFileTypes: true }).catch(
+          () => [],
+        );
+        for (const child of children) {
+          if (child.isDirectory()) {
+            entries.push({
+              lane,
+              name: child.name,
+              path: join(laneRoot, child.name),
+            });
+          }
+        }
+      }
+      return entries;
+    },
+    async worktreeRemove(input) {
+      const worktreesRoot = createEnginePaths(join(root, ".red")).worktreesRoot;
+      const candidate = resolve(worktreesRoot, input.worktree);
+      const rel = relative(worktreesRoot, candidate);
+      const [lane, name, ...rest] = rel.split(sep);
+      if (
+        !lane ||
+        !name ||
+        rest.length > 0 ||
+        !(CASTLE_WORKTREE_LANES as readonly string[]).includes(lane) ||
+        !isWithin(worktreesRoot, candidate)
+      ) {
+        throw new Error(
+          "worktree_remove requires <lane>/<name> inside a canonical worktree lane",
+        );
+      }
+      await gitx.worktreeRemove(gitContext, candidate);
+      if (existsSync(candidate)) {
+        throw new Error(`worktree removal failed for ${lane}/${name}`);
+      }
+      return { removed: true, lane, name };
+    },
+  };
+}
 
 function registryPath(root: string): string {
   return fleetRegistryPath(createEnginePaths(join(root, ".red")));
@@ -244,6 +542,7 @@ async function workerVitals(root: string) {
 
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
+  sensitive = createDefaultDevAfkMcpSensitiveOperations(root),
 ): CastleMcpDependencies {
   return {
     fleetList: () => readFleetProfiles(registryPath(root)),
@@ -287,5 +586,13 @@ export function createDevAfkMcpDependencies(
         },
       };
     },
+    gateRun: (input) => sensitive.gateRun(input),
+    gateBaselineStatus: () => sensitive.gateBaselineStatus(),
+    landBranch: (input) => sensitive.landBranch(input),
+    cascadeStatus: () => sensitive.cascadeStatus(),
+    claimStatus: (input) => sensitive.claimStatus(input),
+    claimRelease: (input) => sensitive.claimRelease(input),
+    worktreeList: () => sensitive.worktreeList(),
+    worktreeRemove: (input) => sensitive.worktreeRemove(input),
   };
 }
