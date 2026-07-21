@@ -36,7 +36,10 @@ This manual census is a stopgap for the queue reconciler tracked in #1739.
 ### Symptom
 
 Validation claims `main` is red, but the failure appears only in a local or
-agent-specific probe environment.
+agent-specific probe environment. Since #2380 this can only ever surface as ONE
+branch's `blocked:validation` park carrying an `inconclusive` baseline
+comparison — the main-red repair lane is retired, so no probe result is a
+tracked issue or a global land block.
 
 ### Confirm
 
@@ -53,7 +56,8 @@ agent-specific probe environment.
 1. Close the validation park with concrete evidence: current `main` CI state,
    relevant release tag, and the exact gate command that passed.
 2. Link the probe-environment bug instead of blocking the validation lane on a
-   check the gate does not run.
+   check the gate does not run. Never file a "repair main" issue for it — that
+   lane is retired; every problem is resolved in the PR before merge.
 3. Resume or requeue the issue only after the real configured gate is green.
 
 ### Root fix
