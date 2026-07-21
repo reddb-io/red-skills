@@ -1061,7 +1061,7 @@ const HUB_REPORT_OPERATION: MemoryOperationDefinition<OperationSchemas.HubReport
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "hub-report", supportsJson: true },
+    cli: { command: "hub-report", supportsJson: true, dispatch: "legacy" },
     mcp: {
       toolName: "memory_hub_report",
       description:
@@ -1086,7 +1086,7 @@ const SUGGESTED_QUESTIONS_OPERATION: MemoryOperationDefinition<
   sideEffectClass: "none",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "suggested-questions", supportsJson: true },
+    cli: { command: "suggested-questions", supportsJson: true, dispatch: "legacy" },
     mcp: {
       toolName: "memory_suggested_questions",
       description:
