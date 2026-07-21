@@ -6,13 +6,8 @@ export interface GateRunInput {
   base?: string;
 }
 
-export interface GateBaselineStatusInput {
-  base?: string;
-}
-
 export interface GateDependencies {
   gateRun(input: GateRunInput): Promise<unknown>;
-  gateBaselineStatus(input: GateBaselineStatusInput): Promise<unknown>;
 }
 
 export function createGateTools(deps: GateDependencies): CastleMcpTool[] {
@@ -27,15 +22,6 @@ export function createGateTools(deps: GateDependencies): CastleMcpTool[] {
         base: z.string().min(1).optional(),
       },
       invoke: (input) => deps.gateRun(input as unknown as GateRunInput),
-    },
-    {
-      name: "gate_baseline_status",
-      title: "Read gate baseline status",
-      description:
-        "Return whether the base branch is tracked-red and the open main-red repair issues that track it.",
-      inputSchema: { base: z.string().min(1).optional() },
-      invoke: ({ base }) =>
-        deps.gateBaselineStatus({ base: base as string | undefined }),
     },
   ];
 }
