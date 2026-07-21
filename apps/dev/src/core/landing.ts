@@ -423,7 +423,25 @@ export async function doLanding(
   // `/requeue --adopt-branch` no-agent lane, so the guard is skipped ONLY here.
   // The flag defaults false; no autonomous attempt path sets it, so the guard
   // keeps firing on every normal AFK/go landing.
-  const diffPaths = deps.getDiffPaths ? await deps.getDiffPaths() : undefined;
+  //
+  // A guard that cannot READ the diff has no verdict, so it must not pass: a
+  // failed lookup aborts the landing as `infra` rather than crashing the worker
+  // or silently landing an unscanned diff (ADR 0119).
+  let diffPaths: Awaited<ReturnType<NonNullable<LandingDeps["getDiffPaths"]>>> | undefined;
+  if (deps.getDiffPaths) {
+    try {
+      diffPaths = await deps.getDiffPaths();
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "infra",
+        infraReason: `the sensitive-path guard could not read the branch diff: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        locked,
+      };
+    }
+  }
   const landingInput = diffPaths ? { ...input, changedFiles: diffPaths.changedFiles } : input;
 
   if (diffPaths && input.sensitivePathApproved !== true) {
