@@ -29,12 +29,13 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 
 | Lane | Lifecycle | Owner | Policy |
 | --- | --- | --- | --- |
-| `.red/state/afk/` | durable state | dev/AFK | Supervisor state, restart counters, runner circuit-breakers, and AFK history that must survive tmp cleanup. |
+| `.red/state/castle/` | durable state | castle engine | Supervisor/worker state snapshots, fleet registry, history, restart counters, and circuit-breakers that must survive tmp cleanup. **Amended 2026-07-21:** supersedes the original `.red/state/afk/` row — ADR 0105's boot migration moved the durable namespace to `state/castle/`, and no `state/afk/` writer remains. |
 | `.red/state/rsp/` | durable state | rsp | Telemetry spool, status summaries, and resident process metadata. |
 | `.red/state/statusline/` | durable state | dev/statusline | Statusline caches that should survive tmp cleanup. |
 | `.red/state/branch-lock.yaml` | durable state | branch lock | Local branch lock state. |
 | `.red/state/red-skills.rdb` | durable state | shared Repo store | The shared RedDB file used by memory and rsp collections. This supersedes ADR 0095's `.red/red.rdb` location and the temporary `.red/tmp/red-skills.rdb` write-contract location. |
-| `.red/tmp/workers/` | disposable scratch | AFK | AFK worker/attempt lanes. Existing `{worker}/{issue}-a{n}` naming stays; stale attempts are swept by the AFK orphan policy. |
+| `.red/tmp/workers/` | disposable scratch | AFK | AFK worker lanes. **Amended 2026-07-21:** naming is flat `{worker}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. |
+| `.red/tmp/rsp/` | disposable scratch | rsp | Ephemeral rsp guards (resident wake lock). Registered 2026-07-21 to end the loose `rsp.wake.lock` at the tmp root. |
 | `.red/tmp/go-workers/` | disposable scratch | `/go` | Disposable issue workers. Existing collision-safe worker/attempt naming stays. |
 | `.red/tmp/scout-workers/` | disposable scratch | scout | Scout workers. Existing collision-safe worker/attempt naming stays. |
 | `.red/tmp/claims/` | disposable scratch | AFK claim substrate | Claim locks. Stale locks are reclaimed by the claim sweep. |

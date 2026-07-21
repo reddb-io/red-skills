@@ -437,7 +437,7 @@ async function setup(opts: {
     claimant: "e2ehost:wAAAA",
     tmpDir: join(root, "tmp"),
     attempt: 1,
-    attemptDir: join(root, "tmp", "workers", "wAAAA", "9-a1"),
+    attemptDir: join(root, "tmp", "workers", "wAAAA", "9"),
     repo: "o/r",
     repoDir,
     remote: "origin",

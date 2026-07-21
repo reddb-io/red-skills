@@ -48,12 +48,16 @@ const KNOWN_TMP_LANES = new Set([
   "go-workers",
   "scout-workers",
   "supervisors",
+  "monitors",
   "claims",
   "waits",
   "worktrees",
   "logs",
   "scratch",
   "diagnostics",
+  // Ephemeral rsp guards (resident wake lock) — registered by the ADR 0098
+  // amendment that ended the loose rsp.wake.lock at the tmp root.
+  "rsp",
 ]);
 
 const KNOWN_WORKTREE_LANES = new Set([

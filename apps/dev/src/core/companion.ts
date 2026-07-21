@@ -96,8 +96,11 @@ export function detectDrift(v: CompanionVitals, t: CompanionThresholds): DriftVe
  * than hashed — it doubles as the human-visible audit key. No clock / no
  * randomness (both are unavailable in this codebase's deterministic paths).
  */
-export function companionFingerprint(issue: number, attempt: number, signal: DriftSignal): string {
-  return `red:companion:${issue}:a${attempt}:${signal}`;
+export function companionFingerprint(issue: number, signal: DriftSignal): string {
+  // The attempt ordinal is retired (ADR 0103): a worker runs one attempt, so
+  // the key is (issue, signal). Legacy `a<n>` markers remain matchable by the
+  // IO scanner for dedupe against pre-0103 comments.
+  return `red:companion:${issue}:${signal}`;
 }
 
 /** A short, bounded "next acceptance criteria" note per drift signal — the
@@ -157,10 +160,10 @@ export function planCompanionCorrection(input: CompanionPlanInput): CompanionPla
   const verdict = detectDrift(input.vitals, input.thresholds);
   if (!verdict.drifting || verdict.primary === undefined) return null;
   const signal = verdict.primary;
-  const fingerprint = companionFingerprint(input.issue, input.attempt, signal);
-  // Idempotency: one correction per (issue, attempt, signal). A fresh attempt
-  // (higher `attempt`) gets a fresh fingerprint, so a genuinely new run is still
-  // correctable; a re-poll of the same attempt is a no-op.
+  const fingerprint = companionFingerprint(input.issue, signal);
+  // Idempotency: one correction per (issue, signal). With the attempt ordinal
+  // retired (ADR 0103) this matches the previous behavior exactly — the ordinal
+  // was constant at 1, so the key never varied within an issue anyway.
   if (input.seenFingerprints.has(fingerprint)) return null;
   if (input.attempt >= input.cap) {
     return {

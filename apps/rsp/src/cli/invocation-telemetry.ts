@@ -71,7 +71,7 @@ function nudgeColdTelemetryDrain(telemetryRoot: string, config: RspRuntimeConfig
     const socketPath = join(socketDir, "rsp.sock");
     const pidPath = join(socketDir, "rsp.pid");
     const registryPath = join(rspStateDir(rootDir), "rsp-resident.pid.json");
-    const wakeLockPath = join(rootDir, ".red", "tmp", "rsp.wake.lock");
+    const wakeLockPath = join(rootDir, ".red", "tmp", "rsp", "wake.lock");
     const child = spawn(process.execPath, [
       ...process.execArgv,
       process.argv[1] ?? "",

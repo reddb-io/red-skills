@@ -8,7 +8,7 @@ import {
   type TmpJanitorPlan,
   type WorkerDirJanitorEntry,
 } from "../core/tmp-janitor.js";
-import { allWorkersRoots, parseWorkerAttemptPath } from "../core/worker-paths.js";
+import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
 
 export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 
@@ -93,7 +93,8 @@ async function collectWorkerEntries(tmpDir: string, lookup: IssueStateLookup): P
         } catch {
           continue;
         }
-        const parsed = parseWorkerAttemptPath(childPath);
+        // Hygiene parser: legacy -a{n} dirs must stay janitorable (ADR 0103 #2170).
+        const parsed = parseReapableWorkerPath(childPath);
         if (!parsed) continue;
         issues.set(parsed.issue, lookup(parsed.issue));
       }

@@ -104,7 +104,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       mkdirSync(logs, { recursive: true });
       writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wAAAA\n", "utf8");
 
-      const iterDir = join(tmp, "workers", "wAAAA", "42-a1");
+      const iterDir = join(tmp, "workers", "wAAAA", "42");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
         join(iterDir, "afk.state.toon"),
@@ -130,7 +130,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
       mkdirSync(logs, { recursive: true });
       writeFileSync(slotLogPath(tmp, 1, logs), "[afk] worker: wBBBB\n", "utf8");
-      const iterDir = join(tmp, "workers", "wBBBB", "7-a1");
+      const iterDir = join(tmp, "workers", "wBBBB", "7");
       mkdirSync(iterDir, { recursive: true });
       // No afk.state.toon — worker died before claiming.
 
@@ -154,7 +154,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
         "utf8",
       );
 
-      const ccDir = join(tmp, "workers", "wCCCC", "10-a1");
+      const ccDir = join(tmp, "workers", "wCCCC", "10");
       mkdirSync(ccDir, { recursive: true });
       writeFileSync(
         join(ccDir, "afk.state.toon"),
@@ -162,7 +162,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
         "utf8",
       );
 
-      const ddDir = join(tmp, "workers", "wDDDD", "11-a1");
+      const ddDir = join(tmp, "workers", "wDDDD", "11");
       mkdirSync(ddDir, { recursive: true });
       writeFileSync(
         join(ddDir, "afk.state.toon"),
@@ -215,7 +215,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       writeFileSync(join(workerPath, "worker.pid"), String(pid), "utf8");
 
       // Iter dir with a claimed issue (as a live worker leaves it).
-      const iterDir = join(workerPath, "55-a1");
+      const iterDir = join(workerPath, "55");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
         join(iterDir, "afk.state.toon"),
@@ -245,7 +245,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       writeFileSync(join(workerPath, "worker.pid"), String(pid), "utf8");
 
       // Iter dir created but worker died before writing afk.state.toon.
-      const iterDir = join(workerPath, "7-a1");
+      const iterDir = join(workerPath, "7");
       mkdirSync(iterDir, { recursive: true });
 
       const work = parkedSlotWorkFor(tmp, 0, pid);
@@ -294,7 +294,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
 
       // Slot log lists logWid.
       writeFileSync(slotLogPath(tmp, 0, logs), `[afk] worker: ${logWid}\n`, "utf8");
-      const logIterDir = join(tmp, "workers", logWid, "20-a1");
+      const logIterDir = join(tmp, "workers", logWid, "20");
       mkdirSync(logIterDir, { recursive: true });
       writeFileSync(
         join(logIterDir, "afk.state.toon"),
@@ -306,7 +306,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
       const pidWorkerPath = join(tmp, "workers", pidWid);
       mkdirSync(pidWorkerPath, { recursive: true });
       writeFileSync(join(pidWorkerPath, "worker.pid"), String(pid), "utf8");
-      const pidIterDir = join(pidWorkerPath, "21-a1");
+      const pidIterDir = join(pidWorkerPath, "21");
       mkdirSync(pidIterDir, { recursive: true });
       writeFileSync(
         join(pidIterDir, "afk.state.toon"),
@@ -329,7 +329,7 @@ describe("parkedSlotWorkFor (real fs — not a fake)", () => {
     try {
       writeFileSync(join(tmp, "afk-supervisor-slot-0.log"), "[afk] worker: wOLD1\n", "utf8");
 
-      const iterDir = join(tmp, "workers", "wOLD1", "88-a1");
+      const iterDir = join(tmp, "workers", "wOLD1", "88");
       mkdirSync(iterDir, { recursive: true });
       writeFileSync(
         join(iterDir, "afk.state.toon"),

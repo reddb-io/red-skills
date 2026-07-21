@@ -75,7 +75,29 @@ export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | nu
   const normalized = path.replace(/\/$/, "");
   // Accept every worker-lane segment so a parked-attempt path reverses
   // regardless of which lane minted it.
-  const match = normalized.match(/(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)(?:-a([1-9][0-9]*))?$/);
+  // The attempt-ordinal grammar (`-a{N}`) is retired (ADR 0103): the path
+  // constructor no longer mints it, so readers no longer parse it. A legacy
+  // `{issue}-a{n}` directory minted before the constructor dropped the suffix
+  // simply fails to match here and is ignored rather than crashing a reader.
+  const match = normalized.match(/(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)$/);
+  if (!match) return null;
+  const [, worker, issue] = match;
+  if (!isValidWorkerId(worker)) return null;
+  return { worker, issue: Number(issue), attempt: 1 };
+}
+
+/**
+ * HYGIENE-ONLY parser: accepts BOTH the flat `{issue}` grammar and the retired
+ * legacy `{issue}-a{n}` grammar. Sweeps (orphan/cap reaps) must keep seeing
+ * pre-ADR-0103 directories so they can DELETE them — identity readers use the
+ * strict {@link parseWorkerAttemptPath} instead and simply ignore legacy dirs.
+ */
+export function parseReapableWorkerPath(path: string): WorkerAttemptIdentity | null {
+  if (!path) return null;
+  const normalized = path.replace(/\/$/, "");
+  const match = normalized.match(
+    /(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)(?:-a([1-9][0-9]*))?$/,
+  );
   if (!match) return null;
   const [, worker, issue, attempt] = match;
   if (!isValidWorkerId(worker)) return null;

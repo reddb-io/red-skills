@@ -99,15 +99,6 @@ export function isRenderableLive(
   return rec.livenessVerdict.status !== "stalled" && (rec.pidIdentityLive || rec.hostPidLive);
 }
 
-function attemptName(path: string): string {
-  return basename(dirname(path));
-}
-
-function attemptNumberFromPath(path: string): number {
-  const m = /^[1-9][0-9]*-a([1-9][0-9]*)$/.exec(attemptName(path));
-  return m ? Number(m[1]) : 0;
-}
-
 function attemptMtimeMs(path: string): number {
   try {
     return statSync(dirname(path)).mtimeMs;
@@ -132,8 +123,6 @@ function workerKey(rec: Pick<WorkerStateRecord, "path" | "state">): string {
 function compareWorkerAttempts(a: Pick<WorkerStateRecord, "path" | "state">, b: Pick<WorkerStateRecord, "path" | "state">): number {
   const started = attemptStartedMs(a) - attemptStartedMs(b);
   if (started !== 0) return started;
-  const attempt = attemptNumberFromPath(a.path) - attemptNumberFromPath(b.path);
-  if (attempt !== 0) return attempt;
   return a.path.localeCompare(b.path);
 }
 
@@ -365,11 +354,13 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
             state.current.number = identity.number;
           }
         }
-        // Derive the issue number from the attempt-dir basename when neither the
-        // state nor the identity sidecar carries a current.number (empty pre-sync).
+        // Derive the issue number from the issue-dir basename when neither the
+        // state nor the identity sidecar carries a current.number (empty
+        // pre-sync). Workspaces are keyed workers/{id}/{issue} — flat, no
+        // attempt ordinal (ADR 0103).
         if (state.current.number === "" || state.current.number === undefined || state.current.number === null) {
-          const attemptBasename = basename(dirname(path));
-          const m = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attemptBasename);
+          const issueBasename = basename(dirname(path));
+          const m = /^([1-9][0-9]*)$/.exec(issueBasename);
           if (m) state.current.number = Number(m[1]);
         }
       }

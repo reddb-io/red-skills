@@ -55,13 +55,13 @@ describe("detectDrift (#921)", () => {
   });
 });
 
-describe("companionFingerprint (#921)", () => {
-  it("is stable for identical inputs and varies by issue/attempt/signal", () => {
-    const a = companionFingerprint(42, 2, "iteration-churn");
-    expect(companionFingerprint(42, 2, "iteration-churn")).toBe(a);
-    expect(companionFingerprint(42, 3, "iteration-churn")).not.toBe(a);
-    expect(companionFingerprint(43, 2, "iteration-churn")).not.toBe(a);
-    expect(companionFingerprint(42, 2, "scope-creep")).not.toBe(a);
+describe("companionFingerprint (#921, attempt ordinal retired by ADR 0103)", () => {
+  it("is stable for identical inputs and varies by issue/signal", () => {
+    const a = companionFingerprint(42, "iteration-churn");
+    expect(companionFingerprint(42, "iteration-churn")).toBe(a);
+    expect(companionFingerprint(43, "iteration-churn")).not.toBe(a);
+    expect(companionFingerprint(42, "scope-creep")).not.toBe(a);
+    expect(a).toBe("red:companion:42:iteration-churn");
   });
 });
 
@@ -89,15 +89,15 @@ describe("planCompanionCorrection (#921)", () => {
     if (plan?.kind === "correct") expect(plan.note.length).toBeGreaterThan(0);
   });
 
-  it("is idempotent — the same (issue, attempt, signal) fingerprint is skipped", () => {
-    const fp = companionFingerprint(base.issue, base.attempt, "iteration-churn");
+  it("is idempotent — the same (issue, signal) fingerprint is skipped", () => {
+    const fp = companionFingerprint(base.issue, "iteration-churn");
     expect(planCompanionCorrection({ ...base, seenFingerprints: new Set([fp]) })).toBeNull();
   });
 
-  it("a fresh attempt gets a fresh correction despite a prior one", () => {
-    const fpA1 = companionFingerprint(base.issue, 1, "iteration-churn");
-    const plan = planCompanionCorrection({ ...base, attempt: 2, cap: 5, seenFingerprints: new Set([fpA1]) });
-    expect(plan?.kind).toBe("correct");
+  it("a prior correction for the signal stays skipped regardless of the retry ordinal (ADR 0103)", () => {
+    const fp = companionFingerprint(base.issue, "iteration-churn");
+    const plan = planCompanionCorrection({ ...base, attempt: 2, cap: 5, seenFingerprints: new Set([fp]) });
+    expect(plan).toBeNull();
   });
 
   it("escalates to a human once the per-issue budget is spent", () => {

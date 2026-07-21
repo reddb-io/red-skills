@@ -55,8 +55,10 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
     socketPath: join(socketDir, "rsp.sock"),
     pidPath: join(socketDir, "rsp.pid"),
     lockPath: join(socketDir, "rsp.lock"),
-    // The wake lock is a genuinely ephemeral guard, so it stays in the tmp tier.
-    wakeLockPath: join(rootDir, ".red", "tmp", "rsp.wake.lock"),
+    // The wake lock is a genuinely ephemeral guard, so it stays in the tmp
+    // tier — inside the registered `rsp` lane: ADR 0098 forbids loose files at
+    // the `.red/tmp/` root, every writer uses a named lane.
+    wakeLockPath: join(rootDir, ".red", "tmp", "rsp", "wake.lock"),
     // Durable status + resident metadata live in the rsp state lane (ADR 0098).
     summaryPath: join(rspState, "rsp-status-summary.json"),
     registryPath: join(rspState, "rsp-resident.pid.json"),

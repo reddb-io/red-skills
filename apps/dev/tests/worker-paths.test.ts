@@ -27,8 +27,8 @@ describe("worker paths", () => {
     expect(parseWorkerAttemptPath(`${path}/`)).toEqual({ worker: "wZ2R4", issue: 142, attempt: 1 });
   });
 
-  it("still reads retained legacy attempt-suffixed directories", () => {
-    expect(parseWorkerAttemptPath(".red/tmp/workers/wZ2R4/142-a3")).toEqual({ worker: "wZ2R4", issue: 142, attempt: 3 });
+  it("ignores retained legacy attempt-suffixed directories (readers drop the -a level, ADR 0103)", () => {
+    expect(parseWorkerAttemptPath(".red/tmp/workers/wZ2R4/142-a3")).toBeNull();
   });
 
   it("rejects malformed identities instead of constructing ambiguous paths", () => {

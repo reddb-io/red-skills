@@ -9,7 +9,7 @@ import { DEFAULT_BRANCH } from "../../core/pin-reader.js";
 import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../../core/boot.js";
 import type { AttemptDir } from "../../core/reclaim.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
-import { allWorkersRoots, parseWorkerAttemptPath } from "../../core/worker-paths.js";
+import { allWorkersRoots, parseReapableWorkerPath } from "../../core/worker-paths.js";
 import { parseClaimRecords } from "../../core/claim.js";
 import { collectFleetTruthProbeInput } from "../../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../../core/supervisor.js";
@@ -40,7 +40,8 @@ export async function collectBootOptions(
   const orphans = (await Promise.all(allWorkersRoots(paths.tmpDir).map((root) => fsx.listOrphanDirs(root, nowS)))).flat();
   const byIssue = new Map<number, AttemptDir[]>();
   for (const o of orphans) {
-    const parsed = parseWorkerAttemptPath(o.path);
+    // Hygiene parser: legacy -a{n} dirs must stay REAPABLE (ADR 0103 #2170).
+    const parsed = parseReapableWorkerPath(o.path);
     if (!parsed) continue;
     // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
     // excluded from the cap even when briefly quiet), read through the single
