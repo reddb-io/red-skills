@@ -135,7 +135,7 @@ import {
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
-import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier, timeoutNotes, timeoutReasonForEnvelope } from "./types.js";
+import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom, syncMainRedRepairIssue } from "./recovery.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, sensitivePathGuarded, mainRedUntrackedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, reconcileInputFor, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 export async function processIssue(
@@ -609,10 +609,7 @@ export async function processIssue(
           `🤖 /afk: exit barrier pushed \`${workerBranch}\` to origin (clean worktree; receipt head ${exitReceipt.head || "?"}).`,
         );
       }
-    } else if (
-      deps.salvageUncommitted &&
-      (run.outcome === "done" || run.outcome === "no-sentinel" || run.outcome === "budget-exceeded")
-    ) {
+    } else if (deps.salvageUncommitted && (run.outcome === "done" || run.outcome === "no-sentinel")) {
       const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
       if (salvagedFiles > 0) {
         salvagedUncommittedFiles = salvagedFiles;
@@ -626,16 +623,6 @@ export async function processIssue(
           `🤖 /afk: inner agent emitted ${run.outcome} but ${commitFact} — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
         );
       }
-    }
-    if (run.outcome === "budget-exceeded") {
-      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "budget-exceeded", current.attempt));
-      return await terminalFailure(common, "budget-exceeded", "budget", {
-        notes:
-          salvagedUncommittedFiles > 0
-            ? `_(budget guard aborted the attempt; salvaged ${salvagedUncommittedFiles} uncommitted file(s) onto \`${workerBranch}\` — partial work preserved for review)_`
-            : "_(budget guard aborted the attempt; no uncommitted work to salvage)_",
-        log: run.stdout || "afk: attempt aborted — per-attempt resource budget exceeded (#908)",
-      });
     }
     let salvaged = false;
     if (run.outcome === "no-sentinel") {
@@ -684,65 +671,6 @@ export async function processIssue(
         preserved: false,
         swept: false,
       };
-    } else if (run.outcome === "timeout") {
-      await fireHook(
-        "on_attempt_timeout",
-        hookContext({
-          issue,
-          title: input.title,
-          workspace: branch,
-          runner: activeRunner,
-          attempt_n: attemptN,
-          reason: timeoutReasonForEnvelope(run.timeoutReason),
-        }),
-      );
-      const reconciled = await reconcile(
-        { ...deps, fireHook },
-        reconcileInputFor(input, current, workerBranch, base, trunk, labels, activeRunner),
-      );
-      await fireHook(
-        "on_reconcile",
-        hookContext({
-          issue,
-          title: input.title,
-          workspace: branch,
-          attempt_n: attemptN,
-          outcome: reconciled.outcome,
-        }),
-      );
-      if (reconciled.outcome === "landed") {
-        await releaseClaim();
-        return {
-          outcome: "done",
-          issue,
-          branch: workerBranch,
-          base,
-          locked: reconciled.locked,
-          mergeSha: reconciled.mergeSha,
-          hooksFired,
-          envelopePosted: reconciled.posted,
-          preserved: true,
-          swept: true,
-        };
-      }
-      if (reconciled.outcome === "parked") {
-        await releaseClaim();
-        return {
-          outcome: "feedback-failed",
-          issue,
-          branch: workerBranch,
-          base,
-          hooksFired,
-          envelopePosted: reconciled.posted,
-          preserved: true,
-          swept: false,
-        };
-      }
-      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
-      return await terminalFailure(common, "stalled", "stalled", {
-        notes: timeoutNotes(run.timeoutReason),
-        log: run.stdout || "(attempt progress guard fired)",
-      });
     } else {
       const pwStatus = run.outcome === "done" ? "success" : "fail";
       await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
