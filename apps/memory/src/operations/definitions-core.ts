@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { renderToonOutput } from "../toon-output.js";
 import { toEdge } from "../export.js";
 import {
   buildMemoryAssetInventory,
@@ -432,7 +433,64 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<OperationSchemas.Context
   sideEffectClass: "cache-write",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "context-pack", supportsJson: true, dispatch: "legacy" },
+    cli: {
+      command: "context-pack",
+      supportsJson: true,
+      presentation: {
+        render: (output) => {
+          const pack = output as ContextPack;
+          return renderToonOutput({
+            rowsKey: "entries",
+            rows: pack.entries.map((entry) => ({
+              section: entry.section,
+              title: entry.title,
+              nodeType: entry.nodeType,
+              importance: entry.importance,
+              confidence: entry.confidence,
+              trust: entry.trust,
+              citation: entry.citation.urn,
+              reason: entry.reason,
+              excerpt: entry.excerpt,
+              expandHandle: entry.expandHandle,
+            })),
+            fields: [
+              "section",
+              "title",
+              "nodeType",
+              "importance",
+              "confidence",
+              "trust",
+              "citation",
+              "reason",
+              "excerpt",
+              "expandHandle",
+            ],
+            summary: {
+              status: pack.status,
+              goal: pack.goal,
+              entries: pack.entries.length,
+              coreContext: pack.coreContext.length,
+              warnings: pack.warnings.length,
+              omittedEntries: pack.omittedEntries,
+              budgetChars: pack.budgetChars,
+              usedChars: pack.usedChars,
+            },
+            extra: {
+              warnings: pack.warnings.map((warning) => ({
+                kind: warning.kind,
+                message: warning.message,
+              })),
+              ...(pack.entries.length === 0
+                ? {
+                    next:
+                      'run `memory store "..." --root <root>` or `memory ingest . --root <root>`, then rerun context-pack',
+                  }
+                : {}),
+            },
+          });
+        },
+      },
+    },
     mcp: {
       toolName: "memory_context_pack",
       description:
