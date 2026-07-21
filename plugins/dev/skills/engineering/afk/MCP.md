@@ -134,7 +134,7 @@ labels by hand.
 | `dashboard` | read | The operational dashboard over a `periodDays` window. |
 | `monitor` | read | Current workers, history events, and fleet monitor inputs. |
 | `history` | read | Structured castle history records, newest last. |
-| `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, fleet, workers, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
+| `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
 ### Queue — what is drainable now
 
