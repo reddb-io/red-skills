@@ -106,11 +106,13 @@ export async function runRegistryCliOperation(
       process.stdout.write(viewerCliSummary(operation, output, outPath));
       return;
     }
-    if (args.flags.json === true || operation.renderer.cli.defaultFormat === "json") {
-      console.log(JSON.stringify(output, null, 2));
-      return;
-    }
-    process.stdout.write(renderToonDocument(output));
+    process.stdout.write(
+      renderRegistryCliReport(
+        operation,
+        output,
+        args.flags.json === true || operation.renderer.cli.defaultFormat === "json",
+      ),
+    );
   } finally {
     if (operationNeedsGraphStore(operation)) await graphContext.store.close();
     if (args.flags.local === true && operation.id.startsWith("memory.vector-")) {
@@ -118,6 +120,27 @@ export async function runRegistryCliOperation(
       else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
     }
   }
+}
+
+export function renderRegistryCliReport(
+  operation: ReadOnlyMemoryOperation,
+  output: unknown,
+  jsonRequested: boolean,
+): string {
+  if (jsonRequested) return `${JSON.stringify(output, null, 2)}\n`;
+  if (operation.outputKind.kind === "report" && operation.outputKind.format === "markdown") {
+    if (typeof output === "string") return output;
+    if (
+      output !== null &&
+      typeof output === "object" &&
+      "markdown" in output &&
+      typeof output.markdown === "string"
+    ) {
+      return output.markdown;
+    }
+    throw new Error(`${operation.id} declared markdown output without a markdown field`);
+  }
+  return renderToonDocument(output);
 }
 
 export function operationNeedsGraphStore(operation: ReadOnlyMemoryOperation): boolean {
