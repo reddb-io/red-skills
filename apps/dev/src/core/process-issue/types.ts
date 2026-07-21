@@ -256,6 +256,14 @@ export interface ProcessIssueDeps {
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
   sandboxMode?: SandboxMode;
   sandboxAvailable?(mode: ContainerSandboxMode): Promise<boolean>;
+  /** Repo-level container image the isolation path runs (issue #2340), resolved
+   * off the repo root so it is stable across issues, workers, and attempts. */
+  sandboxImage?: string;
+  /** Whether `sandboxImage` already exists for `mode`. When registered, the
+   * forced-isolation policy probes it BEFORE claiming an attempt, so a missing
+   * image parks with a build command instead of crashing mid-run and burning
+   * the retry budget. */
+  sandboxImageAvailable?(mode: ContainerSandboxMode, image: string): Promise<boolean>;
   model: string;
   effort?: AgentEffort;
   classifyIssue?(metadata: IssueClassificationMetadata): Promise<AfkModelTier>;
