@@ -438,8 +438,9 @@ async function runAdoptLanding(
         const slug = bas.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
         const dest = join(paths.landingWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
-        const ok = await gitx.worktreeAdd(gitCtx, dest, bas);
-        return ok ? dest : null;
+        const added = await gitx.worktreeAdd(gitCtx, dest, bas);
+        if (!added.ok) gitx.warnWorktreeAdd(dest, bas, added.stderr);
+        return added.ok ? dest : null;
       },
       removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
       // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006).
@@ -447,8 +448,9 @@ async function runAdoptLanding(
         const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
         const dest = join(paths.rebaseWorktreesDir, `${slug}-adopt-${issue}`);
         await gitx.worktreeRemove(gitCtx, dest);
-        const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
-        return ok ? dest : null;
+        const added = await gitx.worktreeAdd(gitCtx, dest, branch);
+        if (!added.ok) gitx.warnWorktreeAdd(dest, branch, added.stderr);
+        return added.ok ? dest : null;
       },
       removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
       envelope: {
