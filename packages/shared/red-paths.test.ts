@@ -32,6 +32,8 @@ import {
   MANAGER_ROOT_ENV,
   managerDir,
   managerEffortFile,
+  managerCheckpointFile,
+  managerCheckpointsDir,
   managerEffortsDir,
   managerLeaseFile,
   managerLeasesDir,
@@ -96,9 +98,17 @@ describe("manager portfolio store", () => {
     );
   });
 
+  it("derives the operator-scoped checkpoint lane from a home root", () => {
+    expect(managerCheckpointsDir("/home/op")).toBe("/home/op/.red/manager/checkpoints");
+    expect(managerCheckpointFile("/home/op", "20260721T000000Z")).toBe(
+      "/home/op/.red/manager/checkpoints/20260721T000000Z.toonl",
+    );
+  });
+
   it("rejects an empty effort id instead of writing the lane directory itself", () => {
     expect(() => managerEffortFile("/home/op", "")).toThrow(/effortId is required/);
     expect(() => managerLeaseFile("/home/op", "")).toThrow(/effortId is required/);
+    expect(() => managerCheckpointFile("/home/op", "")).toThrow(/stamp is required/);
   });
 
   it("defaults the manager root to the operator home and honors the override", () => {
