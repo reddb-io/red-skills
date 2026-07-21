@@ -4,9 +4,9 @@
 // spawned `__supervise` process can never disagree about which supervisor lane
 // they are operating on. Pure over its inputs.
 
-import { DEFAULT_FLEET_NAME, resolveFleetName } from "@reddb-io/red-castle/engine";
+import { resolveFleetName } from "@reddb-io/red-castle/engine";
 
-export { DEFAULT_FLEET_NAME };
+export { DEFAULT_FLEET_NAME } from "@reddb-io/red-castle/engine";
 
 /** The env var carrying the fleet name across the detached `__supervise` spawn. */
 export const FLEET_NAME_ENV = "RED_AFK_FLEET";
