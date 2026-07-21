@@ -25,6 +25,7 @@ import {
   type AttemptRecordPayload,
 } from "../../core/attempt-record.js";
 import { isRunner, type Runner } from "../../types/runner.js";
+import { zeroAttemptDispatchFailure } from "../../core/go.js";
 import {
   afkPaths,
   collectPrecheckFacts,
@@ -495,6 +496,15 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (summary.runnerTransient) {
     process.stderr.write(`[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`);
     return 75;
+  }
+
+  // A targeted dispatch that attempted nothing is a failure, never a clean drain
+  // (#2385): `/go` reported `progress: 1/1 (100%)` + exit 0 over a claim the
+  // worker conceded without doing any work.
+  const zeroAttempt = zeroAttemptDispatchFailure(flags.filter?.kind === "issues", summary.processed);
+  if (zeroAttempt) {
+    process.stderr.write(`[afk] targeted dispatch attempted no work: ${zeroAttempt} — exiting 1\n`);
+    return 1;
   }
 
   return 0;

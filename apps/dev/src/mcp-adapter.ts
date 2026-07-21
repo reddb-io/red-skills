@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
+import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
@@ -122,7 +122,7 @@ export interface DevAfkMcpOperations {
 }
 
 export interface DevAfkMcpRuntime {
-  launchRun(root: string, args: readonly string[]): Promise<{ pid: number }>;
+  launchRun(root: string, args: readonly string[]): Promise<{ pid: number; log?: string }>;
   /** Spawn rsp wait detached; returns the child PID. */
   launchRspWait(args: readonly string[], cwd: string): Promise<number>;
   ensureLabel(root: string, name: string): Promise<void>;
@@ -173,10 +173,19 @@ function dispatchArgs(input: DispatchOperationInput): string[] {
   return args;
 }
 
+/** Where a detached worker's boot stdout/stderr is persisted, in the disposable
+ * logs lane (ADR 0098). A worker that dies before it writes its own state used
+ * to leave nothing but `worker.pid` — three silent spawn deaths in a row with
+ * zero evidence anywhere (#2385, #2376). The dispatch keeps the bytes. */
+export function dispatchLogPath(root: string, stampIso: string): string {
+  const safe = stampIso.replace(/[:.]/g, "-");
+  return join(logsDir(root, stampIso.slice(0, 10)), `dispatch-${safe}.log`);
+}
+
 async function launchDetachedRun(
   root: string,
   args: readonly string[],
-): Promise<{ pid: number }> {
+): Promise<{ pid: number; log?: string }> {
   const mcpBundle = process.argv[1];
   if (!mcpBundle) {
     throw new Error("cannot dispatch worker: MCP bundle path is missing");
@@ -185,16 +194,31 @@ async function launchDetachedRun(
   if (!existsSync(bundle)) {
     throw new Error("cannot dispatch worker: sibling dev bundle is missing");
   }
-  const child = spawn(process.execPath, [bundle, "run", ...args], {
-    cwd: root,
-    env: process.env,
-    detached: true,
-    stdio: "ignore",
-  });
-  const pid = child.pid;
-  if (!pid) throw new Error("cannot dispatch worker: spawn returned no pid");
-  child.unref();
-  return { pid };
+  // Capture boot stdout+stderr to a discoverable file. Best-effort: if the log
+  // cannot be opened, the dispatch still runs (with the old blind stdio) rather
+  // than failing over an observability concern.
+  const logFile = dispatchLogPath(root, `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`);
+  let fd: number | undefined;
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    fd = openSync(logFile, "a");
+  } catch {
+    fd = undefined;
+  }
+  try {
+    const child = spawn(process.execPath, [bundle, "run", ...args], {
+      cwd: root,
+      env: process.env,
+      detached: true,
+      stdio: fd === undefined ? "ignore" : ["ignore", fd, fd],
+    });
+    const pid = child.pid;
+    if (!pid) throw new Error("cannot dispatch worker: spawn returned no pid");
+    child.unref();
+    return { pid, log: fd === undefined ? undefined : logFile };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 export function resolveDevCliBundle(mcpBundle: string): string {
@@ -342,11 +366,15 @@ export function createDefaultDevAfkMcpOperations(
         kind: "afk",
         issue: input.issue,
         worker_pid: launch.pid,
+        // Post-mortem handle for a worker that dies before writing its own
+        // state (#2385): its boot stdout/stderr lands here.
+        worker_log: launch.log,
         status: "dispatched",
       };
     },
     async dispatchDemand(cwd, input) {
       let workerPid: number | undefined;
+      let workerLog: string | undefined;
       const configuredBackpressure = readBackpressure(
         loadConfig(afkPaths(cwd).configPath, { warn: () => undefined }),
       );
@@ -357,6 +385,7 @@ export function createDefaultDevAfkMcpOperations(
           runEngine: async (args) => {
             const launch = await runtime.launchRun(cwd, args);
             workerPid = launch.pid;
+            workerLog = launch.log;
             return 0;
           },
         },
@@ -376,6 +405,7 @@ export function createDefaultDevAfkMcpOperations(
         demand: input.demand,
         issue: result.issue,
         worker_pid: workerPid,
+        worker_log: workerLog,
         status: "dispatched",
       };
     },
@@ -604,7 +634,7 @@ export function createDefaultDevAfkMcpOperations(
         await ghx.postClaimComment(
           gh,
           input.issue,
-          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede"),
+          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
         );
         conceded.push(holder.worker);
       }

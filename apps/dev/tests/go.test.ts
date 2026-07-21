@@ -9,6 +9,7 @@ import {
   GO_ORIGIN,
   LABEL_GO_LANE,
   buildDisposableIssue,
+  zeroAttemptDispatchFailure,
   buildGoEngineArgs,
   dispatchGo,
   parseGoMode,
@@ -248,5 +249,30 @@ describe("dispatchGo", () => {
       { runner: "claude" },
     );
     expect(result.engineExit).toBe(1);
+  });
+});
+
+// A targeted dispatch that ran zero attempts is a failure, never a clean drain
+// (#2385): `/go` reported `progress: 1/1 (100%)` and exit 0 over an issue the
+// worker claimed and immediately conceded without doing any work.
+describe("zeroAttemptDispatchFailure", () => {
+  it("fails a targeted dispatch whose only outcome was a concede", () => {
+    const reason = zeroAttemptDispatchFailure(true, [{ issue: 2383, outcome: "claim-lost" }]);
+    expect(reason).toContain("no attempt ran");
+    expect(reason).toContain("#2383: claim-lost");
+  });
+
+  it("fails a targeted dispatch that selected nothing at all", () => {
+    expect(zeroAttemptDispatchFailure(true, [])).toContain("no targeted issue was selected");
+  });
+
+  it("passes a targeted dispatch that genuinely attempted the issue", () => {
+    expect(zeroAttemptDispatchFailure(true, [{ issue: 2383, outcome: "done" }])).toBeNull();
+    expect(zeroAttemptDispatchFailure(true, [{ issue: 2383, outcome: "blocked" }])).toBeNull();
+  });
+
+  it("leaves an open-ended /afk drain alone — picking up nothing is normal there", () => {
+    expect(zeroAttemptDispatchFailure(false, [])).toBeNull();
+    expect(zeroAttemptDispatchFailure(false, [{ issue: 1, outcome: "claim-lost" }])).toBeNull();
   });
 });

@@ -16,6 +16,7 @@ import {
   buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
   createDevAfkMcpDependencies,
+  dispatchLogPath,
   resolveDevCliBundle,
   resolveRspCliBundle,
   type DevAfkMcpOperations,
@@ -46,6 +47,13 @@ describe("dev:afk MCP host adapter", () => {
         join("cache", "afk-mcp-2.76.1.bundle.min.mjs"),
       ),
     ).toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
+  });
+
+  // Three consecutive dispatches died silently leaving only `worker.pid` — the
+  // spawn discarded stdout/stderr, so a boot death left zero evidence (#2385).
+  it("parks worker boot output in the dated logs lane", () => {
+    const path = dispatchLogPath("/repo", "2026-07-21T19:18:38.920Z-abc12345");
+    expect(path).toBe(join("/repo", ".red", "tmp", "logs", "2026-07-21", "dispatch-2026-07-21T19-18-38-920Z-abc12345.log"));
   });
 
   it("lists registered fleets through the Castle registry primitive", async () => {

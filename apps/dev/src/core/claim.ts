@@ -42,6 +42,20 @@ export const CLAIM_MARKER_VERSION = 1;
  * releases voluntarily). */
 export type ClaimKind = "claim" | "concede";
 
+/** Why a `concede` was posted. The two causes are operationally opposite — one
+ * says another worker owns the issue, the other says we owned it and let go —
+ * and the single ambiguous sentence they used to share ("lost the claim race or
+ * released") turned a crashed worker's release into a phantom claim race in
+ * every post-mortem (#2385). `unspecified` keeps legacy callers rendering the
+ * old wording. */
+export type ConcedeReason = "lost" | "released" | "unspecified";
+
+const CONCEDE_WORDING: Record<ConcedeReason, string> = {
+  lost: "lost the claim race to an earlier claimant",
+  released: "released the claim it held",
+  unspecified: "lost the claim race or released",
+};
+
 /** One parsed claim marker. `commentId` is GitHub's server-assigned monotonic
  * comment id — the total order that makes the primitive atomic across hosts. */
 export interface ClaimRecord {
@@ -67,6 +81,20 @@ export interface ClaimSelf {
 }
 
 export type ClaimVerdict = "won" | "lost";
+
+/**
+ * A claim could not be VERIFIED — our own just-posted marker never came back
+ * from the read-back, or reconciliation dropped it. Thrown, never folded into a
+ * `lost` verdict: "we could not check" is not "somebody else won" (#2385). The
+ * caller surfaces it as a session error so the dispatch fails loudly instead of
+ * conceding an issue nobody else contends.
+ */
+export class ClaimVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaimVerificationError";
+  }
+}
 
 export interface ClaimDecision {
   verdict: ClaimVerdict;
@@ -149,19 +177,21 @@ export function renderRecoveryAudit(
 export function renderClaimComment(
   self: { worker: string; runner?: string; createdAt?: string },
   kind: ClaimKind = "claim",
+  reason?: ConcedeReason,
 ): string {
   const fields = [
     `v${CLAIM_MARKER_VERSION}`,
     `worker=${escapeField(self.worker)}`,
     `kind=${kind}`,
   ];
+  if (kind === "concede" && reason) fields.push(`reason=${escapeField(reason)}`);
   if (self.runner) fields.push(`runner=${escapeField(self.runner)}`);
   if (self.createdAt) fields.push(`ts=${escapeField(self.createdAt)}`);
   const marker = `${MARKER_OPEN} ${fields.join(" ")} -->`;
   const human =
     kind === "claim"
       ? `🤖 AFK claim by worker \`${self.worker}\`${self.runner ? ` (runner \`${self.runner}\`)` : ""}.`
-      : `🤖 AFK worker \`${self.worker}\` conceded this issue (lost the claim race or released).`;
+      : `🤖 AFK worker \`${self.worker}\` conceded this issue (${CONCEDE_WORDING[reason ?? "unspecified"]}).`;
   return `${marker}\n${human}`;
 }
 
@@ -252,6 +282,16 @@ export function reconcileClaim(
 ): ClaimDecision {
   const isStale = opts.isStale ?? (() => false);
 
+  // An unusable identity means the claim could not be VERIFIED at all — an
+  // unparseable POST response or a blank worker key. Never fold that into
+  // "lost": the caller must retry or fail, not concede to nobody (#2385).
+  if (!Number.isFinite(self.commentId) || self.worker === "") {
+    throw new ClaimVerificationError(
+      `claim verification failed: unusable claimant identity (worker ${JSON.stringify(self.worker)}, ` +
+        `comment id ${String(self.commentId)})`,
+    );
+  }
+
   // Per-worker fold: earliest claim id + latest marker (kind + record).
   interface Fold {
     earliestClaimId: number | null;
@@ -283,6 +323,15 @@ export function reconcileClaim(
     }
   };
 
+  // Did WE just post the marker we are reconciling? True when `self.commentId`
+  // out-orders every marker the list already carries for our identity — i.e. our
+  // claim is the freshest word on the issue. A caller re-reconciling an OLD claim
+  // of its own (the returning stale owner) is not fresh, and stays subject to the
+  // staleness predicate that reclaimed its issue.
+  const selfPostedFresh =
+    Number.isFinite(self.commentId) &&
+    records.every((r) => r.worker !== self.worker || r.commentId < self.commentId);
+
   for (const r of records) ingest(r);
   // Always merge self in (read-after-write safety). Our own marker is a `claim`.
   ingest({
@@ -300,7 +349,12 @@ export function reconcileClaim(
   for (const [worker, f] of folds) {
     if (f.latestKind === "concede") continue; // withdrew
     if (f.earliestClaimId === null) continue; // only ever conceded — not a claim
-    if (isStale(f.latestRecord)) {
+    // A JUST-POSTED self is never stale (#2385): we wrote that marker moments
+    // ago, so a predicate rejecting it can only be a clock-skew or
+    // timestamp-parse defect — and dropping ourselves made a SOLE claimant fall
+    // through to "no live claim contends" and concede its own freshly minted
+    // issue. A returning owner re-reading its OLD claim stays stale-eligible.
+    if (!(worker === self.worker && selfPostedFresh) && isStale(f.latestRecord)) {
       stale.push({ worker, claimId: f.earliestClaimId }); // dead/expired — recovered
       continue;
     }
@@ -308,6 +362,18 @@ export function reconcileClaim(
   }
 
   if (contenders.length === 0) {
+    if (selfPostedFresh) {
+      // Unreachable for a just-posted claim: `self` is merged in as a live claim
+      // above and is stale-exempt, so an empty contender set means our own
+      // identity was unusable (empty worker key). That is a VERIFICATION
+      // failure, never a lost race — fail loudly instead of conceding (#2385).
+      throw new ClaimVerificationError(
+        `claim verification failed on the reconciler: our own claim (worker ${JSON.stringify(self.worker)}, ` +
+          `comment id ${String(self.commentId)}) did not survive reconciliation — no live claim contends`,
+      );
+    }
+    // Not a fresh post: we are re-reading an old claim of ours that has since
+    // been conceded or aged out. Nobody contends and we do not hold it.
     return { verdict: "lost", winner: null, reason: "no live claim contends", recovered: [] };
   }
 
@@ -374,6 +440,55 @@ export interface AcquireClaimOptions extends ClaimReconcileOptions {
    * wording.
    */
   deathFor?: (recoveredWorker: string) => string | null;
+  /** Read-back attempts allowed before a claim is declared unverifiable (#2385).
+   * GitHub's comment list is read-your-write in practice but not guaranteed, and
+   * the gh layer degrades a failed list call to an empty array — both looked
+   * exactly like "nobody claimed, including us". Default 3. */
+  verifyAttempts?: number;
+  /** Milliseconds to wait between read-back attempts. Default 1000. */
+  verifyDelayMs?: number;
+  /** Injected sleep so the retry loop is testable without a real clock. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_VERIFY_ATTEMPTS = 3;
+const DEFAULT_VERIFY_DELAY_MS = 1000;
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Read the issue's claim markers back until OUR OWN marker is visible (the
+ * verification step). Retries a list that has not yet propagated and a list call
+ * that failed outright; throws `ClaimVerificationError` when every attempt is
+ * exhausted. Never returns a list that lacks our marker — that ambiguity is what
+ * made a sole claimant concede its own freshly minted issue (#2385).
+ */
+async function listVerifiedClaims(
+  gh: ClaimGh,
+  issue: number,
+  commentId: number,
+  opts: AcquireClaimOptions,
+): Promise<RawClaimComment[]> {
+  const attempts = Math.max(1, opts.verifyAttempts ?? DEFAULT_VERIFY_ATTEMPTS);
+  const delayMs = opts.verifyDelayMs ?? DEFAULT_VERIFY_DELAY_MS;
+  const sleep = opts.sleep ?? realSleep;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0 && delayMs > 0) await sleep(delayMs);
+    let raw: RawClaimComment[];
+    try {
+      raw = await gh.listClaims(issue);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    if (raw.some((c) => c.id === commentId)) return raw;
+    lastError = new Error(`our claim comment ${commentId} was absent from ${raw.length} listed comment(s)`);
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new ClaimVerificationError(
+    `claim verification failed on #${issue} after ${attempts} read-back attempt(s): ${detail}`,
+  );
 }
 
 /**
@@ -393,13 +508,13 @@ export async function acquireClaim(
     issue,
     renderClaimComment({ worker: self.worker, runner: self.runner, createdAt: self.createdAt }, "claim"),
   );
-  const raw = await gh.listClaims(issue);
+  const raw = await listVerifiedClaims(gh, issue, commentId, opts);
   const records = parseClaimRecords(raw);
   const decision = reconcileClaim(records, { ...self, commentId }, opts);
   if (decision.verdict === "lost" && !opts.suppressConcede) {
     await gh.concede(
       issue,
-      renderClaimComment({ worker: self.worker, runner: self.runner }, "concede"),
+      renderClaimComment({ worker: self.worker, runner: self.runner }, "concede", "lost"),
     );
   }
   // One audit comment when we won by recovering a stale cross-host claim (#627).
