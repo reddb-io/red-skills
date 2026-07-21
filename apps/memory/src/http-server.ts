@@ -21,6 +21,7 @@ import {
 } from "./operations.js";
 import {
   executeMemoryOperationFromTransport,
+  listMemoryOperationsForTransport,
   MemoryOperationTransportError,
   queryObjectFromSearchParams,
   viewerHtml,
@@ -139,11 +140,13 @@ const ENDPOINTS = [
   "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
 
-const REGISTRY_HTTP_EXCLUDED_OPERATION_IDS = new Set(["memory.workbench"]);
 const REGISTRY_HTTP_ROUTES = buildRegistryHttpRoutes();
 
-export function listMemoryHttpRegistryRoutes(): Array<{ route: string; operationId: string }> {
-  return [...REGISTRY_HTTP_ROUTES.entries()]
+export function listMemoryHttpRegistryRoutes(
+  operations?: readonly ReadOnlyMemoryOperation[],
+): Array<{ route: string; operationId: string }> {
+  const routes = operations ? buildRegistryHttpRoutes(operations) : REGISTRY_HTTP_ROUTES;
+  return [...routes.entries()]
     .map(([route, operation]) => ({ route, operationId: operation.id }))
     .sort((a, b) => a.route.localeCompare(b.route));
 }
@@ -289,10 +292,11 @@ async function handleRegistryHttpOperation(
   }
 }
 
-function buildRegistryHttpRoutes(): Map<string, ReadOnlyMemoryOperation> {
+function buildRegistryHttpRoutes(
+  operations: readonly ReadOnlyMemoryOperation[] = listReadOnlyMemoryOperations(),
+): Map<string, ReadOnlyMemoryOperation> {
   const routes = new Map<string, ReadOnlyMemoryOperation>();
-  for (const operation of listReadOnlyMemoryOperations()) {
-    if (REGISTRY_HTTP_EXCLUDED_OPERATION_IDS.has(operation.id)) continue;
+  for (const operation of listMemoryOperationsForTransport(operations, "http")) {
     for (const route of httpRoutesForOperation(operation)) {
       const existing = routes.get(route);
       if (existing && existing.id !== operation.id) {
@@ -308,8 +312,6 @@ function buildRegistryHttpRoutes(): Map<string, ReadOnlyMemoryOperation> {
 
 function httpRoutesForOperation(operation: ReadOnlyMemoryOperation): string[] {
   const routes = [defaultHttpRouteForOperation(operation)];
-  if (operation.id === "memory.context-pack") routes.push("/api/context-pack");
-  if (operation.id === "memory.context-pack-viewer") routes.push("/context-pack");
   if (operation.id === "memory.smart-search") routes.push("/api/search");
   if (operation.id === "memory.smart-search-viewer") routes.push("/search");
   return routes;
