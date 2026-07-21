@@ -140,11 +140,13 @@ describe("runAgent — independent worker-vitals sampler (ADR 0103)", () => {
     await Promise.resolve();
   };
 
-  it("stamps vitals on its own cadence for a codex run even with the attempt-guard un-armed and the stream quiet", async () => {
-    // The exact fleet repro: a codex worker with no attempt timeout (guard never
-    // arms) that emits no stream events (blocked waiting on a test suite). Before
-    // the ADR 0103 sampler, BOTH heartbeat paths hung off headProbe + guard
-    // arming, so `emitHeartbeat` never fired and loc/tokens sat at +0 -0.
+  it("stamps vitals on its own cadence for a quiet codex run with no guard in the engine", async () => {
+    // The exact fleet repro: a codex worker that emits no stream events (blocked
+    // waiting on a test suite). Before the ADR 0103 sampler, BOTH heartbeat paths
+    // hung off headProbe + attempt-guard arming, so `emitHeartbeat` never fired
+    // and loc/tokens sat at +0 -0. The guard is now gone entirely, which makes
+    // this sampler the ONLY unconditional vitals driver — the regression this
+    // slice must not reintroduce.
     const heartbeats: AttemptProgressInfo[] = [];
     const sched = manualScheduler();
     const clock = fakeClock();
@@ -166,10 +168,9 @@ describe("runAgent — independent worker-vitals sampler (ADR 0103)", () => {
       model: "gpt-5.4",
       headProbe: async () => "deadbeef",
       onHeartbeat: (info) => heartbeats.push(info),
-      // deliberately NO attemptTimeoutSeconds → the attempt-guard does not arm.
     });
     await flush();
-    expect(sched.armed()).toBe(true); // the sampler armed itself, guard did not
+    expect(sched.armed()).toBe(true); // the sampler armed itself
     expect(heartbeats).toHaveLength(0); // nothing before the first sample window
 
     clock.advance(DEFAULT_VITALS_SAMPLE_MS);
