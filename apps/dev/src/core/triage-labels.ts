@@ -105,11 +105,6 @@ export const LABEL_TRUNK_DIVERGED = "blocked:trunk-diverged";
 // configuration — an intent-class change that can never auto-land. A human
 // must review the change before it reaches the base branch.
 export const LABEL_SENSITIVE_PATH = "blocked:sensitive-path";
-// Main-red tracking gate (#1237): admin-merge may continue onto a red main only
-// while the auto-filed main-red repair issue is open. If main is red and that
-// visibility issue is absent, landing refuses with this human-only label instead
-// of silently delivering onto untracked red.
-export const LABEL_MAIN_RED_UNTRACKED = "blocked:main-red-untracked";
 // Attempt base resolution guard (#1380): the remote base could not be fetched and
 // the local base branch is behind the last-known remote-tracking tip. A worker
 // must never branch from that stale local base because it can revert already
