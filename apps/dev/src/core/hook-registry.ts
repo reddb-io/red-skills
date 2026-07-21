@@ -107,10 +107,6 @@ export const HOOK_REGISTRY: Record<HookName, HookSpec> = {
     context: [mut("issue"), mut("workspace"), mut("error"), mut("attempt_n")],
     exit: "continue",
   },
-  on_attempt_timeout: {
-    context: [ro("issue"), ro("workspace"), ro("attempt_n"), ro("reason")],
-    exit: "continue",
-  },
   on_recovery_decision: {
     context: [ro("issue"), mut("decision"), ro("reason"), ro("attempt_n")],
     exit: "continue",
