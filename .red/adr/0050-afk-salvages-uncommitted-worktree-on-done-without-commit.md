@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted. Complements ADR 0047 (salvage a no-sentinel branch that already passes feedback) and ADR 0028 (`<promise>` is the canonical attempt-exit). Where 0047 rescues a branch that **carries commits** but lacks a sentinel, this ADR rescues the inverse and its partial variant: a **sentinel-bearing** (or no-sentinel) attempt whose worktree still has dirty paths after the agent exits.
+**superseded by ADR 0103.** The salvage-uncommitted net described here is removed: partial uncommitted work is not salvaged, and forensics are the terminal Envelope plus the commits the continuous-push hook already sent to origin. The preventive half stands — AGENT-PROMPT still requires the inner agent to commit before it signals.
+
+Historical status: accepted. Complemented ADR 0047 (salvage a no-sentinel branch that already passes feedback) and ADR 0028 (`<promise>` is the canonical attempt-exit). Where 0047 rescues a branch that **carries commits** but lacks a sentinel, this ADR rescues the inverse and its partial variant: a **sentinel-bearing** (or no-sentinel) attempt whose worktree still has dirty paths after the agent exits.
 
 ## Context
 

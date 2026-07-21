@@ -72,10 +72,6 @@ export interface Trace {
   recordedAttempts: AttemptRecordPayload[];
   /** Brain outcome events fired after terminal attempt completion. */
   outcomeEvents: OutcomeEvent[];
-  /** Worker branches passed to the commit-leftovers salvage port. */
-  salvageCalls: string[];
-  /** Worker branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
-  terminalBarrierCalls: string[];
   /** Metadata handed to the per-issue classifier before runAgent. */
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
@@ -219,23 +215,12 @@ export interface HarnessOptions {
   withSidecarPort?: boolean;
   /** Commits sandcastle reports runAgent landed on the worker branch. Defaults
    * to one commit on a real outcome / none on exhaustion. Set `[]` to model the
-   * codex DONE-without-commit case the salvage port rescues. */
+   * codex DONE-without-commit case (ADR 0103: no longer rescued). */
   commits?: { sha: string }[];
   /** Text chunks emitted through the agent stream callback before runAgent returns. */
   agentTextEvents?: string[];
   /** Override the fake runAgent completion signal. */
   completionSignal?: string;
-  /** When set, register the commit-leftovers `salvageUncommitted` port and have
-   * it return this count (files committed). undefined omits the port (legacy
-   * caller — no salvage). */
-  salvage?: number;
-  /** When set, register the ADR 0083 §4 `terminalExitBarrier` port (#1021). The
-   * fake records the branch and returns a {@link TerminalReceipt} whose
-   * `salvagedFiles` / `pushed` are driven by these fields (defaults: 0 files,
-   * pushed:true). `fault:true` makes the port reject, proving the terminal still
-   * reports (with a not-pushed receipt) when the barrier itself faults. undefined
-   * omits the port (legacy caller — no barrier crossing). */
-  terminalBarrier?: { salvagedFiles?: number; pushed?: boolean; fault?: boolean };
   /** Issue body threaded into processIssue. */
   body?: string;
   /** Execution mode forwarded to ProcessIssueInput (e.g. `"scout"`). */
@@ -289,7 +274,6 @@ export function harness(opts: HarnessOptions = {}): {
     envelopeBodies: [],
     released: [],
     runAgentCalls: [],
-    terminalBarrierCalls: [],
     listByLabelCalls: [],
     ensuredLabels: [],
     sidecarWrites: [],
@@ -298,7 +282,6 @@ export function harness(opts: HarnessOptions = {}): {
     adversarialReviewContexts: [],
     recordedAttempts: [],
     outcomeEvents: [],
-    salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
     workerEvents: [],
@@ -737,35 +720,6 @@ export function harness(opts: HarnessOptions = {}): {
           trace.outcomeEvents.push(event);
         }
       : undefined,
-    // Commit-leftovers salvage port (codex DONE-without-commit). Omitted unless
-    // opted in, so legacy-shaped tests keep today's behaviour.
-    salvageUncommitted:
-      opts.salvage === undefined
-        ? undefined
-        : async (branch) => {
-            trace.salvageCalls.push(branch);
-            return opts.salvage as number;
-          },
-    // ADR 0083 §4 terminal exit barrier port (#1021). Records the branch and
-    // returns a scripted TerminalReceipt; `fault` rejects to prove the terminal
-    // still reports when the barrier itself faults.
-    terminalExitBarrier:
-      opts.terminalBarrier === undefined
-        ? undefined
-        : async (branch) => {
-            trace.terminalBarrierCalls.push(branch);
-            if (opts.terminalBarrier!.fault) throw new Error("terminal barrier boom");
-            const salvagedFiles = opts.terminalBarrier!.salvagedFiles ?? 0;
-            const pushed = opts.terminalBarrier!.pushed ?? true;
-            return {
-              branch,
-              head: pushed ? "beefcafe" : "",
-              pushedAt: "2026-07-03T12:00:00Z",
-              salvaged: salvagedFiles > 0,
-              salvagedFiles,
-              pushed,
-            };
-          },
     // Spec cascade rebase port (#1007): injected when siblingBranches is set.
     cascadeRebase:
       opts.siblingBranches !== undefined

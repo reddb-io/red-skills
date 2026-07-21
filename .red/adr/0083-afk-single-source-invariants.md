@@ -109,13 +109,19 @@ Red-castle exposes the canonical "is this attempt alive" signal:
 - All consumers in `apps/dev` (stall reaper, monitor, statusline, dashboard,
   task mirror) read one evaluator; none re-derives liveness from the firehose.
 
-### 4. Exit barrier (owner: `apps/dev` core)
+### 4. Exit barrier (owner: `apps/dev` core) — *removed by ADR 0103*
 
 **Work is saved iff its branch ref is pushed to `origin`.** Every terminal
 path of an attempt — DONE, guard abort, stall-kill, crash teardown, reconcile —
 passes through a single exit barrier that salvage-commits uncommitted work and
 pushes the branch before the attempt is allowed to end. A terminal path that
 bypasses the barrier is a bug by definition.
+
+**Amendment (ADR 0103).** The barrier, its `ExitReceipt`/`TerminalReceipt`, and
+the salvage-uncommitted step are gone. "Saved = pushed" survives, but it is
+delivered by the continuous-push hook (issue #191) as the agent commits, not by
+an exit-time crossing; uncommitted worktree state is disposable, and terminal
+disposition flows through the Envelope alone. Invariants 1–3 stand unchanged.
 
 ### Ownership split
 

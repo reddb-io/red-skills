@@ -18,7 +18,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import { passExitBarrier, passTerminalBarrier } from "../../core/exit-barrier.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,
@@ -384,42 +383,10 @@ export function buildProcessDeps(
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
-    // Commit-leftovers salvage: when the inner agent emits DONE / exits without
-    // committing (observed with codex), commit its dirty worktree onto the worker
-    // branch so the feedback gate + landing see the work instead of an empty
-    // merge. No-op when the worktree is clean. Best-effort.
-    salvageUncommitted: (branch) => gitx.salvageUncommitted(gitCtx, branch, ctx.remote),
-    // ADR 0083 §4 exit barrier (DONE tracer, #1020): the single owner of the DONE
-    // path's terminal exit — salvage-commit dirty worktree paths, push the branch
-    // to origin (retry once), and return the auditable receipt. Bound over the same
-    // GitContext: salvage reuses `salvageUncommitted`, push uses `pushBranch`, and
-    // the head sha is read from the pushed local ref.
-    exitBarrier: (branch) =>
-      passExitBarrier(
-        {
-          salvage: (b) => gitx.salvageUncommitted(gitCtx, b, ctx.remote),
-          push: (b) => gitx.pushBranch(gitCtx, b, ctx.remote),
-          headSha: async (b) => (await gitx.branchHead(gitCtx, b)) ?? "",
-          nowIso: () => new Date().toISOString(),
-        },
-        branch,
-      ),
-    // ADR 0083 §4 exit barrier (every-terminal, #1021): the FAILURE-terminal
-    // crossing bound over the SAME GitContext as the DONE barrier — guard abort,
-    // stall-kill, crash teardown, and (via reconcile) the no-agent lane all pass
-    // through it. Unlike the DONE barrier it never throws; a rejected push is
-    // recorded in the receipt (`pushed:false`) so the failing attempt still
-    // terminates but the branch state is reported truthfully.
-    terminalExitBarrier: (branch) =>
-      passTerminalBarrier(
-        {
-          salvage: (b) => gitx.salvageUncommitted(gitCtx, b, ctx.remote),
-          push: (b) => gitx.pushBranch(gitCtx, b, ctx.remote),
-          headSha: async (b) => (await gitx.branchHead(gitCtx, b)) ?? "",
-          nowIso: () => new Date().toISOString(),
-        },
-        branch,
-      ),
+    // ADR 0103: no exit-time salvage and no exit receipt. Work reaches origin as
+    // the agent commits (the continuous-push hook, issue #191); a worktree still
+    // dirty when the worker exits is disposable, and the terminal Envelope plus
+    // those pushed commits are the forensic record.
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
