@@ -9,6 +9,7 @@ import { codexMonitorAgentCommand } from "./commands/codex-monitor-agent.js";
 import { codexStatuslineCommand } from "./commands/codex-statusline.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-workflow.js";
+import { managerCommand } from "./commands/manager.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
@@ -36,6 +37,7 @@ export type CliCommand =
   | "fleet"
   | "stop"
   | "go"
+  | "manager"
   | "dashboard"
   | "audit-skills"
   | "afk-output-shaping"
@@ -84,6 +86,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     fleet: {},
     stop: {},
     go: {},
+    manager: {},
     dashboard: {},
     "audit-skills": {},
     "afk-output-shaping": {},
@@ -141,6 +144,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "fleet") return fleetCommand(parsed.args);
   if (parsed.command === "stop") return stopCommand(parsed.args);
   if (parsed.command === "go") return goCommand(parsed.args);
+  if (parsed.command === "manager") return managerCommand(parsed.args);
   if (parsed.command === "dashboard") return dashboardCommand(parsed.args);
   if (parsed.command === "audit-skills") return auditSkillsCommand(parsed.args);
   if (parsed.command === "afk-output-shaping") return afkOutputShapingCommand(parsed.args);
