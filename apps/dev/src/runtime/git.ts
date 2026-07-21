@@ -509,6 +509,15 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
+/**
+ * Run `git worktree prune` to drop stale entries from git's internal worktree
+ * registry after orphaned worktree dirs have been removed from disk. Best-effort:
+ * never throws so a prune failure does not abort the janitor sweep.
+ */
+export async function worktreePrune(ctx: GitContext): Promise<void> {
+  await runGit(ctx, ["worktree", "prune"]);
+}
+
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
