@@ -469,6 +469,7 @@ const WORKBENCH_OPERATION: MemoryOperationDefinition<OperationSchemas.WorkbenchI
   id: "memory.workbench",
   title: "Memory workbench",
   description: "Self-contained HTML workbench combining Memory dashboard, capabilities, and session timeline.",
+  transports: ["cli", "mcp"],
   inputSchema: OperationSchemas.WorkbenchInputSchema,
   outputSchema: OperationSchemas.WorkbenchOutputSchema,
   safetyClass: "read-only",
