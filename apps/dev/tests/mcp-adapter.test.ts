@@ -117,8 +117,8 @@ describe("dev:afk MCP host adapter", () => {
 
   it("detaches MCP dispatches without writing progress to stdout", async () => {
     const cwd = await root();
-    const launchRun = vi.fn(async () => ({ pid: 73 }));
-    const createIssue = vi.fn(async () => 2308);
+    const launchRun = vi.fn(async (_cwd: string, _args: string[]) => ({ pid: 73 }));
+    const createIssue = vi.fn(async (_title: string, _opts: { labels: string[]; body: string }) => 2308);
     const ensureLabel = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write");
     const operations = createDefaultDevAfkMcpOperations(cwd, {
