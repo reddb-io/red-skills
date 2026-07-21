@@ -28,7 +28,6 @@ import type {
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
-  GateBaselineStatusInput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
@@ -89,10 +88,6 @@ import {
 } from "./core/claim.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./core/boot-sweep.js";
 import {
-  MAIN_RED_REPAIR_MARKER,
-  mainRedRepairFailuresFromBody,
-} from "./core/main-red-repair.js";
-import {
   branchesToReap,
   planLiveBranchCleanup,
   planLocalBranchCleanup,
@@ -119,7 +114,6 @@ export interface DevAfkMcpOperations {
   reap(): Promise<unknown>;
   unblockSweep(): Promise<unknown>;
   gateRun(input: GateRunInput): Promise<unknown>;
-  gateBaselineStatus(input: GateBaselineStatusInput): Promise<unknown>;
   landBranch(input: LandBranchInput): Promise<unknown>;
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
@@ -479,28 +473,12 @@ export function createDefaultDevAfkMcpOperations(
             status: check.status,
           })),
           baseline_probe_ran: result.baselineProbeRan === true,
-          baseline_downgraded: result.baselineDowngraded,
-          baseline_failures: result.baselineFailures ?? [],
+          baseline_verdict: result.baselineVerdict ?? null,
+          baseline_inconclusive: result.baselineInconclusive,
         };
       } finally {
         await feedback.cleanup();
       }
-    },
-    async gateBaselineStatus(input) {
-      const context = await resolveRepoContext(root);
-      const gh = { cwd: context.root, repo: context.repo };
-      const tracked = (await ghx.listMainRedRepairIssues(gh)).filter((issue) =>
-        issue.body?.includes(MAIN_RED_REPAIR_MARKER),
-      );
-      return {
-        base: resolveConfiguredBase(root, input.base),
-        main_red: tracked.length > 0,
-        repair_issues: tracked.map((issue) => ({
-          number: issue.number,
-          title: issue.title ?? "",
-          failures: mainRedRepairFailuresFromBody(issue.body),
-        })),
-      };
     },
     async landBranch(input) {
       const context = await resolveRepoContext(root);
@@ -1031,7 +1009,6 @@ export function createDevAfkMcpDependencies(
     reap: () => operations.reap(),
     unblockSweep: () => operations.unblockSweep(),
     gateRun: (input) => operations.gateRun(input),
-    gateBaselineStatus: (input) => operations.gateBaselineStatus(input),
     landBranch: (input) => operations.landBranch(input),
     cascadeStatus: (input) => operations.cascadeStatus(input),
     claimStatus: (input) => operations.claimStatus(input),
