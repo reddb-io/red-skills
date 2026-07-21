@@ -73,6 +73,12 @@ seed_repo() {
   local remote="$TMP/$name-remote.git" work="$TMP/$name"
   rm -rf "$remote" "$work"
   git init -q --bare "$remote"
+  # The bare remote's HEAD must name main explicitly: on a runner with no
+  # init.defaultBranch the bare init points HEAD at master, so a later clone
+  # of this remote checks out nothing and its pushes fail with
+  # "src refspec main does not match any" (first seen killing the release
+  # workflow itself, 2026-07-21).
+  git -C "$remote" symbolic-ref HEAD refs/heads/main
   git init -q -b main "$work"
   git -C "$work" config user.email release@example.test
   git -C "$work" config user.name 'release bot'
