@@ -27,7 +27,7 @@ import {
   readFleetState,
   readFileSync,
   readToonCache,
-  resolveAttemptGuardArming,
+  resolveAttemptProbeArming,
   resolveAttemptHead,
   resolveRunSettings,
   resolveStatuslineCacheTtl,
