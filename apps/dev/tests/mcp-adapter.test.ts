@@ -293,9 +293,6 @@ describe("dev:afk MCP host adapter", () => {
     await expect(
       deps.landBranch({ issue: 2307, branch: "afk/w80UR/2307-castle-mcp-s4" }),
     ).resolves.toMatchObject({ issue: 2307, ok: true });
-    await expect(deps.gateBaselineStatus({})).resolves.toEqual({
-      main_red: false,
-    });
     await expect(deps.cascadeStatus({ issue: 2307 })).resolves.toMatchObject({
       issue: 2307,
     });
@@ -515,7 +512,6 @@ function fakeOperations(): DevAfkMcpOperations {
     })),
     unblockSweep: vi.fn(async () => ({ promoted: [2307] })),
     gateRun: vi.fn(async (input) => ({ branch: input.branch, ok: true })),
-    gateBaselineStatus: vi.fn(async () => ({ main_red: false })),
     landBranch: vi.fn(async (input) => ({ issue: input.issue, ok: true })),
     cascadeStatus: vi.fn(async (input) => ({
       issue: input.issue,

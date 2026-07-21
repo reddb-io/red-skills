@@ -25,10 +25,6 @@ import {
   type RunFeedbackResult,
 } from "../feedback.js";
 import {
-  planMainRedRepair,
-  type MainRedRepairIssue,
-} from "../main-red-repair.js";
-import {
   computeValidationScope,
   formatValidationScope,
   scopesForValidationScope,
@@ -334,13 +330,6 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
         next: "Review the sensitive change, then requeue if it is safe to land.",
       };
-    case "main-red-untracked":
-      return {
-        status: "blocked",
-        kind: "main-red-untracked",
-        summary: oneLine(sections.log, "Admin-merge refused because main is red without an open main-red repair issue."),
-        next: "Restore or create the auto-filed main-red repair issue, then requeue.",
-      };
     case "base-stale":
       return {
         status: "blocked",
@@ -375,7 +364,6 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "decision",
   "trunk-diverged",
   "sensitive-path",
-  "main-red-untracked",
   "infra",
 ]);
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -654,40 +642,6 @@ export async function sensitivePathGuarded(
   await releaseOwnedClaim(deps, input);
   return {
     outcome: "sensitive-path",
-    issue: input.issue,
-    branch: c.branch,
-    base: c.base,
-    locked,
-    hooksFired: c.hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
-}
-export async function mainRedUntrackedBlocked(
-  c: StageCommon,
-  message: string,
-  locked: boolean,
-  repairSyncFailure: string | null = null,
-): Promise<ProcessIssueResult> {
-  const { deps, input } = c;
-  const syncFailureDetail = repairSyncFailure
-    ? ` The auto-file attempt for the main-red repair issue failed and must be inspected: ${repairSyncFailure}.`
-    : "";
-  const detail =
-    `${message} The attempt branch \`${c.branch}\` is intact and validated, but landing is held until the tracked-red ` +
-    `repair issue exists.${syncFailureDetail} Requeue after the auto-file path recreates it.`;
-  await routeRecovery(deps, input.issue, "main-red-untracked", recoveryOrdinalFor(input));
-  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("main-red-untracked", { log: detail }));
-  const posted = await emitFailure(c, envelopeStatusFor("main-red-untracked"), "main-red-untracked", { log: detail });
-  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
-  await recordAttemptBestEffort(c, "main-red-untracked", {
-    durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: detail,
-  });
-  await releaseOwnedClaim(deps, input);
-  return {
-    outcome: "main-red-untracked",
     issue: input.issue,
     branch: c.branch,
     base: c.base,

@@ -27,10 +27,6 @@ import {
   type RunFeedbackResult,
 } from "../feedback.js";
 import {
-  planMainRedRepair,
-  type MainRedRepairIssue,
-} from "../main-red-repair.js";
-import {
   computeValidationScope,
   formatValidationScope,
   scopesForValidationScope,
@@ -135,8 +131,8 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom, syncMainRedRepairIssue } from "./recovery.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, sensitivePathGuarded, mainRedUntrackedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, sensitivePathGuarded, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -391,8 +387,6 @@ export async function processIssue(
   let lastValidationScope: ValidationScope | undefined = undefined;
   let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
-  let mainRed = false;
-  let mainRedRepairSyncFailure: string | null = null;
   let currentHandoff = handoff;
   let goVerifyRetriesUsed = 0;
   let adversarialReviewCorrectionsUsed = 0;
@@ -849,12 +843,10 @@ export async function processIssue(
           title: input.title,
           workspace: branch,
           ok: feedback.ok,
-          downgraded: feedback.baselineDowngraded,
+          inconclusive: feedback.baselineInconclusive,
         }),
       );
     }
-    mainRed = feedback.baselineProbeRan === true && (feedback.baselineFailures?.length ?? 0) > 0;
-    mainRedRepairSyncFailure = await syncMainRedRepairIssue(deps, feedback, baseResolution.sha);
     await fireHook(
       "post_feedback",
       hookContext({
@@ -1049,7 +1041,6 @@ export async function processIssue(
       maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
-      findMainRedRepairIssue: deps.gh.findMainRedRepairIssue,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -1109,7 +1100,6 @@ export async function processIssue(
       issue,
       title: input.title,
       labels,
-      mainRed,
       nativeMergeQueue: deps.nativeMergeQueue,
     },
     {
@@ -1175,14 +1165,6 @@ export async function processIssue(
     }
     if (landing.reason === "sensitive-paths") {
       return await sensitivePathGuarded(common, landing.sensitivePaths ?? [], landing.locked);
-    }
-    if (landing.reason === "main-red-untracked") {
-      return await mainRedUntrackedBlocked(
-        common,
-        landing.message ?? "Admin-merge refused: main is red without an open main-red repair issue.",
-        landing.locked,
-        mainRedRepairSyncFailure,
-      );
     }
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);

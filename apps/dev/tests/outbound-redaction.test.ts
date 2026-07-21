@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { comment, createIssue, editBody, postClaimComment, updateMainRedRepairIssue, type GhContext } from "../src/runtime/gh.js";
+import { comment, createIssue, editBody, postClaimComment, type GhContext } from "../src/runtime/gh.js";
 import { buildReviewGh } from "../src/runtime/review-gh.js";
 import { scrubOutbound } from "../src/runtime/outbound-redaction.js";
 import { landPr, type Exec } from "../src/core/merge.js";
@@ -101,7 +101,7 @@ describe("scrubOutbound", () => {
 });
 
 describe("GitHub outbound write seams", () => {
-  it("scrubs issue comments, claim comments, issue body edits, issue creation, and main-red repair updates", async () => {
+  it("scrubs issue comments, claim comments, issue body edits, and issue creation", async () => {
     withSyntheticEnv();
     const calls: { cmd: string; args: string[] }[] = [];
     const exec: ExecFn = async (cmd, args): Promise<ExecOutput> => {
@@ -118,7 +118,6 @@ describe("GitHub outbound write seams", () => {
     await postClaimComment(ctx, 1, `<!-- afk:claim v1 worker=w kind=claim runner=codex -->\n${LEAK_TEXT}`);
     await editBody(ctx, 1, LEAK_TEXT);
     await createIssue(ctx, { title: `Issue ${LEAK_ENV_VALUE}`, body: LEAK_TEXT, labels: ["ready-for-agent"] });
-    await updateMainRedRepairIssue(ctx, 1, { title: `Repair ${LEAK_ENV_VALUE}`, body: LEAK_TEXT, labels: ["ready-for-human"] });
 
     const joined = calls.flatMap((c) => c.args).join("\n");
     expectScrubbed(joined);

@@ -90,6 +90,14 @@ _Avoid_: main (as a hardcoded assumption), default branch, primary branch
 How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
+**Baseline comparison**:
+The feedback gate's classifier for a FAILED branch gate: the failing checks are re-run against the base worktree solely to decide who owns the failure. A failure absent from the base is `branch-fault`; a failure reproduced on the base is `inconclusive`; a probe that OOMs, crashes, or cannot be set up is inconclusive and silently logged. Every verdict except `clean` fails the gate and parks that ONE branch `blocked:validation` with the comparison evidence on the sidecar. Comparison-only by construction: it files nothing, downgrades nothing, and never blocks another branch's **Landing**.
+_Avoid_: baseline probe as a main-health check, pre-existing-failure downgrade, tracked-red
+
+**Main-red repair lane — RETIRED (#2380)**:
+The historical post-merge lane in which the baseline probe auto-filed a `priority:urgent` "main-red repair" issue and **Landing** refused to admin-merge until that issue existed (`blocked:main-red-untracked`). Retired because it contradicts the doctrine that **all problems are resolved in the PR before merge**: branch protection enforces green required checks on an up-to-date branch, so a code-caused red trunk is impossible by construction, and every repair issue the lane ever filed was a false positive that froze the pipeline (probe OOM, stale feedback worktree). What replaced it is **Baseline comparison** — evidence for one branch's verdict, never a tracked issue and never a global land block. If real CI on the **Trunk** turns red from a flake or infra fault, that is a human notification concern, not an auto-filed land-blocker.
+_Avoid_: main-red repair issue, tracked-red gate, post-merge repair, `blocked:main-red-untracked`
+
 **Docs Sweep**:
 The `/afk` boot phase that enforces origin-visible `.red/` documentation before any worker dispatch. It detects stranded glossary docs (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`) and ADRs (`.red/adr/**`) from dirty, untracked, ignored, and ahead-of-origin state; auto-lands one `docs:` PR through the ADR 0092 isolated lane when publishable; and halts boot with the explicit relative file list when origin reachability or landing fails.
 _Avoid_: handoff doc injection, best-effort docs warning

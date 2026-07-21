@@ -48,7 +48,7 @@ describe("Pattern 1 — submodule lifecycle in a fresh worktree", () => {
       ok: false,
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);
@@ -98,13 +98,14 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
-    expect(result.baselineDowngraded).toEqual([]);
+    expect(result.baselineVerdict).toBe("branch-fault");
+    expect(result.baselineInconclusive).toEqual([]);
   });
 
-  it("a failing check that ALSO fails on the baseline is downgraded (the worker is fine, main is broken)", async () => {
+  it("a failing check that ALSO fails on the baseline is INCONCLUSIVE — the branch parks with the evidence, main is never tracked as red (#2380)", async () => {
     const exec = fakeExec({
       "afk/wX/123-slug/apps/dev::test": 1, // worker fails
-      "main/apps/dev::test": 1, // baseline also fails → pre-existing flake, downgrade
+      "main/apps/dev::test": 1, // baseline also fails → comparison cannot attribute fault
     });
     const result = await runFeedback(exec, {
       worktree: "afk/wX/123-slug",
@@ -113,11 +114,12 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
       now: () => 0,
       baselineWorktree: "main",
     });
-    expect(result.ok).toBe(true); // downgraded, gate passes
-    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    expect(result.ok).toBe(false); // inconclusive still blocks THIS branch
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
     const check = result.checks.find((c) => c.name === "test:apps/dev")!;
-    expect(check.status).toBe("skipped");
-    expect(check.record.summary).toBe("pre-existing failure on baseline");
+    expect(check.status).toBe("failed");
+    expect(check.record.summary).toContain("inconclusive: also fails on the baseline");
   });
 
   it("the optional rebase-on-base is wired through resolveRunSettings (opt-in, default OFF)", async () => {
@@ -142,15 +144,16 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
   });
 });
 
-// Pattern 3: Pre-existing test failures on main being inherited — main had
+// Pattern 3: Failures inherited from the base branch — main had
 // `memory-brain-boundary-docs.test.ts` failing; every worker's branch (forked
-// from main) inherited it; the gate picked it up. The baseline probe
-// identifies it as a pre-existing flake and downgrades it.
-describe("Pattern 3 — pre-existing main failures being inherited", () => {
-  it("the baseline probe downgrades a pre-existing main failure (so a green branch isn't parked)", async () => {
-    // Model: only the `test:apps/dev` check fails on BOTH worker + baseline
-    // (pre-existing flake). All other checks pass. Without the probe, the
-    // gate would fail; with the probe, the only failure is downgraded.
+// from main) inherited it; the gate picked it up. The comparison probe cannot
+// attribute that failure to the branch, so the verdict is INCONCLUSIVE: the
+// branch parks `blocked:validation` with the evidence, and nothing is filed.
+describe("Pattern 3 — failures inherited from the base branch", () => {
+  it("a failure reproduced on the baseline yields the INCONCLUSIVE verdict, never a tracked repair issue", async () => {
+    // Model: only the `test:apps/dev` check fails on BOTH worker + baseline.
+    // All other checks pass, so the comparison has nothing to blame the branch
+    // for — but the branch still does not land on an unexplained red check.
     const exec = fakeExec({
       "afk/wX/123-slug::test": 0,
       "afk/wX/123-slug/apps/dev::test": 1,
@@ -168,8 +171,9 @@ describe("Pattern 3 — pre-existing main failures being inherited", () => {
       now: () => 0,
       baselineWorktree: "main",
     });
-    expect(result.ok).toBe(true);
-    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    expect(result.ok).toBe(false);
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
   });
 });
 
@@ -188,7 +192,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       ok: false,
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);
@@ -205,7 +209,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       ok: false,
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);

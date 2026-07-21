@@ -181,13 +181,6 @@ const SURFACE: ReadonlyArray<{
     schema: ["branch", "base"],
   },
   {
-    name: "gate_baseline_status",
-    title: "Read gate baseline status",
-    description:
-      "Return whether the base branch is tracked-red and the open main-red repair issues that track it.",
-    schema: ["base"],
-  },
-  {
     name: "land_branch",
     title: "Land AFK branch",
     description:

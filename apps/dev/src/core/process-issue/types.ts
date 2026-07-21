@@ -27,10 +27,6 @@ import {
   type RunFeedbackResult,
 } from "../feedback.js";
 import {
-  planMainRedRepair,
-  type MainRedRepairIssue,
-} from "../main-red-repair.js";
-import {
   computeValidationScope,
   formatValidationScope,
   scopesForValidationScope,
@@ -137,14 +133,6 @@ export interface ProcessGh {
   repoVisibility?(): Promise<RepoVisibility | undefined>;
   actorTrustSignals?(actor: string): Promise<ActorTrustSignals>;
   renderDecisionCard?(issue: number): Promise<void>;
-  listMainRedRepairIssues?(): Promise<readonly MainRedRepairIssue[]>;
-  findMainRedRepairIssue?(failures?: readonly string[]): Promise<MainRedRepairIssue | null>;
-  createMainRedRepairIssue?(spec: { title: string; body: string; labels: readonly string[] }): Promise<number>;
-  updateMainRedRepairIssue?(
-    issue: number,
-    spec: { title: string; body: string; labels: readonly string[] },
-  ): Promise<void>;
-  closeMainRedRepairIssue?(issue: number, comment: string): Promise<void>;
 }
 export interface ProcessClaimLock {
   acquire(issue: number): Promise<boolean>;

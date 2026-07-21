@@ -43,27 +43,6 @@ describe("doLanding — happy paths", () => {
     expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
   });
 
-  it("unlocked + red main + open main-red repair issue → admin-merges", async () => {
-    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: true });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
-    expect(h.mainRedRepairLookups).toBe(1);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
-  });
-
-  it("unlocked + red main + no main-red repair issue → refuses before admin-merge", async () => {
-    const h = harness({ locked: false, mainRed: true, mainRedRepairIssue: false });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-
-    expect(r.ok).toBe(false);
-    if (r.ok) throw new Error("unreachable");
-    expect(r.reason).toBe("main-red-untracked");
-    expect(r.message).toContain("Refusing admin-merge onto red main");
-    expect(h.mainRedRepairLookups).toBe(1);
-    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
-  });
-
   it("default unlocked landing → merge runs without --admin (branch protection is honored, #1103)", async () => {
     const h = harness({ locked: false });
     const r = await doLanding(h.deps, h.input, h.hooks);

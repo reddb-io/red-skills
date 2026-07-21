@@ -2,11 +2,6 @@ import {
   LABEL_TYPE_SPEC,
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
-import {
-  MAIN_RED_REPAIR_MARKER,
-  selectMainRedRepairIssue,
-  type MainRedRepairIssue,
-} from "../../core/main-red-repair.js";
 import { scrubOutbound } from "../outbound-redaction.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
 
@@ -280,96 +275,6 @@ export async function listSpecSubIssueCandidates(
     });
   }
   return candidates;
-}
-
-/** Hard page cap for repair-issue discovery: 20 pages × 100 = 2000 open issues. */
-const MAIN_RED_REPAIR_MAX_PAGES = 20;
-
-/**
- * List every open marked main-red repair issue across all GitHub result pages.
- * Pages explicitly (`page=N`) instead of `gh api --paginate --slurp`: `--slurp`
- * only exists on gh >= 2.47, and on an older host gh the unknown flag crashed
- * every landing at this call.
- */
-export async function listMainRedRepairIssues(ctx: GhContext): Promise<MainRedRepairIssue[]> {
-  const rows: Array<{
-    number?: number;
-    title?: string;
-    body?: string;
-    labels?: Array<{ name?: string }>;
-  }> = [];
-  for (let page = 1; page <= MAIN_RED_REPAIR_MAX_PAGES; page++) {
-    const r = await runGh(ctx, [
-      "api",
-      apiPath(ctx, `issues?state=open&per_page=100&page=${page}`),
-    ]);
-    if (r.code !== 0) {
-      throw new Error(`gh: failed to list main-red repair issues (code ${r.code}): ${(r.stderr || r.stdout).trim()}`);
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(r.stdout || "[]");
-      if (!Array.isArray(parsed)) throw new Error("expected an array");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`gh: invalid main-red repair issue response: ${message}`);
-    }
-    rows.push(...(parsed as typeof rows));
-    if (parsed.length < 100) break;
-  }
-  return rows
-    .filter((item) => String(item.body ?? "").includes(MAIN_RED_REPAIR_MARKER))
-    .map((row) => ({
-      number: Number(row.number),
-      title: String(row.title ?? ""),
-      body: String(row.body ?? ""),
-      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
-    }))
-    .filter((issue) => Number.isInteger(issue.number) && issue.number > 0)
-    .sort((a, b) => a.number - b.number);
-}
-
-/** Find an open marked main-red repair issue, optionally matching a failing-check set. */
-export async function findMainRedRepairIssue(
-  ctx: GhContext,
-  failures?: readonly string[],
-): Promise<MainRedRepairIssue | null> {
-  const issues = await listMainRedRepairIssues(ctx);
-  return failures === undefined ? issues[0] ?? null : selectMainRedRepairIssue(issues, failures);
-}
-
-/** Create the auto-filed main-red repair issue. */
-export async function createMainRedRepairIssue(
-  ctx: GhContext,
-  spec: { title: string; body: string; labels: readonly string[] },
-): Promise<number> {
-  return createIssue(ctx, spec);
-}
-
-/** Refresh the auto-filed main-red repair issue. */
-export async function updateMainRedRepairIssue(
-  ctx: GhContext,
-  issue: number,
-  spec: { title: string; body: string; labels: readonly string[] },
-): Promise<void> {
-  const args = [
-    "issue",
-    "edit",
-    String(issue),
-    ...repoArgs(ctx),
-    "--title",
-    scrubOutbound(spec.title),
-    "--body",
-    scrubOutbound(spec.body),
-  ];
-  for (const label of spec.labels) args.push("--add-label", label);
-  await runGh(ctx, args);
-}
-
-/** Close the auto-filed main-red repair issue once main is green again. */
-export async function closeMainRedRepairIssue(ctx: GhContext, issue: number, closeComment: string): Promise<void> {
-  await comment(ctx, issue, closeComment);
-  await closeIssue(ctx, issue);
 }
 
 /** Idempotently create the `runner-error` label (best-effort). Mirrors

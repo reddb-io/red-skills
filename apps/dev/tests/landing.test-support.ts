@@ -36,7 +36,6 @@ export interface Harness {
   firedHooks: string[];
   removedWorktrees: string[];
   removedRebaseWorktrees: string[];
-  mainRedRepairLookups: number;
   /** cwds the conflict resolver was dispatched in. */
   resolverCwds: string[];
   /** dirs the post-merge gate was invoked with (#1335). */
@@ -121,10 +120,6 @@ export interface Opts {
    * `/requeue --adopt-branch` human land of a reviewed protected diff.
    */
   sensitivePathApproved?: boolean;
-  /** Main-red tracking gate (#1237): set input.mainRed. */
-  mainRed?: boolean;
-  /** Main-red tracking gate (#1237): whether the open repair issue finder returns an issue. */
-  mainRedRepairIssue?: boolean;
   /** Issue labels used to derive the landing-created conventional merge title. */
   labels?: string[];
   /** Changed files used for fallback conventional-title classification (#1373). */
@@ -157,7 +152,6 @@ export function harness(opts: Opts = {}): Harness {
   const firedHooks: string[] = [];
   const removedWorktrees: string[] = [];
   const removedRebaseWorktrees: string[] = [];
-  let mainRedRepairLookups = 0;
   const resolverCwds: string[] = [];
   const postMergeGateDirs: string[] = [];
   const mechanicalResolverDirs: string[] = [];
@@ -319,13 +313,6 @@ export function harness(opts: Opts = {}): Harness {
           packageJsonDiff: "",
         })
       : undefined,
-    findMainRedRepairIssue:
-      opts.mainRed === undefined
-        ? undefined
-        : async () => {
-            mainRedRepairLookups += 1;
-            return opts.mainRedRepairIssue ? { number: 123 } : null;
-          },
     onPrResolved: opts.onPrResolvedAbort ? async () => "abort" : undefined,
     // Post-merge-integration gate (#1335): only wired when the test opts in.
     postMergeGate: opts.postMergeGate
@@ -362,7 +349,6 @@ export function harness(opts: Opts = {}): Harness {
     // #1171: only set when the test opts in; default undefined keeps the guard
     // armed for every existing landing assertion.
     sensitivePathApproved: opts.sensitivePathApproved,
-    mainRed: opts.mainRed,
     nativeMergeQueue: opts.nativeMergeQueue,
   };
 
@@ -380,9 +366,6 @@ export function harness(opts: Opts = {}): Harness {
     firedHooks,
     removedWorktrees,
     removedRebaseWorktrees,
-    get mainRedRepairLookups() {
-      return mainRedRepairLookups;
-    },
     resolverCwds,
     postMergeGateDirs,
     mechanicalResolverDirs,

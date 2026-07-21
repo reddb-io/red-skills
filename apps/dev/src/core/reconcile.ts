@@ -420,13 +420,14 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       ok: true,
       checks: [],
       sidecar: ["merge-conflict reland: prior validation trusted; local suite not re-run (#1095)"],
-      baselineDowngraded: [],
+      baselineInconclusive: [],
       quarantined: [],
     };
   } else {
-    // AFK runner improvement: pass `base` as the `baselineWorktree` so a
-    // pre-existing failure on the base branch (NOT the worker's fault) is
-    // downgraded instead of parking the green branch. Mirrors the DONE path.
+    // AFK runner improvement: pass `base` as the `baselineWorktree` so the
+    // comparison probe can classify a branch failure that also reproduces on
+    // the base as `inconclusive` rather than the branch's fault (#2380).
+    // Mirrors the DONE path.
     feedback = await runFeedback(deps.pnpm, {
       worktree: branch,
       scopes: relevantScopes(deps.layout, changedFiles),
