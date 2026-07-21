@@ -15,6 +15,7 @@ import type { AgentProvider, IterationUsage } from "./AgentProvider.js";
 import type { Timeouts } from "./run.js";
 import { TextDeltaBuffer } from "./TextDeltaBuffer.js";
 import { attachAbortMetadata } from "./AbortMetadata.js";
+import { specialUserRequestBlock } from "./engine/runner-spawn.js";
 
 export type { ParsedStreamEvent, IterationUsage } from "./AgentProvider.js";
 
@@ -325,6 +326,12 @@ export interface OrchestrateOptions {
   readonly timeouts?: Timeouts;
   /** Forwarded to `withSandboxLifecycle` — see `SandboxLifecycleOptions.keepSourceBranch`. */
   readonly keepSourceBranch?: boolean;
+  /**
+   * Live-steer provider. Called BEFORE each iteration after the first; resolves
+   * the steer text to inject as a `specialUserRequestBlock` into that iteration's
+   * prompt, or `undefined` when no steer is pending.
+   */
+  readonly steerProvider?: () => Promise<string | undefined>;
 }
 
 /** Per-iteration result carrying an optional session ID. */
@@ -398,6 +405,12 @@ export const orchestrate = (
       yield* checkAbort();
       yield* display.status(label(`Iteration ${i}/${iterations}`), "info");
 
+      // Check for live steer between iterations (only from i=2 onward).
+      const iterSteerText: string | undefined =
+        i > 1 && options.steerProvider
+          ? yield* Effect.promise(() => options.steerProvider!())
+          : undefined;
+
       const sandboxResult = yield* factory.withSandbox(
         (
           { hostWorktreePath, sandboxRepoPath, applyToHost, bindMountHandle },
@@ -452,10 +465,18 @@ export const orchestrate = (
 
                 // Preprocess prompt (run !`command` expressions inside sandbox).
                 // Inline prompts pass through literally — skip expansion.
+                // Between iterations, inject any pending live-steer text as a
+                // specialUserRequestBlock appended to the base prompt.
+                const steerBlock = iterSteerText
+                  ? specialUserRequestBlock(iterSteerText)
+                  : null;
+                const iterPrompt = steerBlock
+                  ? `${prompt}\n\n${steerBlock}`
+                  : prompt;
                 const fullPrompt = options.skipPromptExpansion
-                  ? prompt
+                  ? iterPrompt
                   : yield* preprocessPrompt(
-                      prompt,
+                      iterPrompt,
                       ctx.sandbox,
                       ctx.sandboxRepoDir,
                     );
