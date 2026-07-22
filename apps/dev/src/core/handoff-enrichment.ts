@@ -193,7 +193,7 @@ function renderBounded(
   maxBytes: number,
 ): string {
   const selectedTerms = terms.map(({ score: _score, ...term }) => term);
-  const selectedExemplars = [...exemplars];
+  const selectedExemplars = exemplars.map(({ pr, title, shows }) => ({ pr, title, shows }));
   for (;;) {
     const payload = {
       context: { name: context.name, glossary_path: context.path },
