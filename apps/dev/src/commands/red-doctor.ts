@@ -187,13 +187,23 @@ function renderToon(
 ): string {
   return encodeToon({
     hostToolchain: {
-      binaries: hostReport.rows,
+      binaries: hostReport.rows.map((row) => ({
+        tool: row.tool,
+        version: row.version,
+        required: row.required,
+        manager: row.manager,
+        verdict: row.verdict,
+      })),
       findings: hostReport.findings.map((finding) => ({
         tool: finding.tool,
         kind: finding.kind,
         remediation: finding.remediation,
       })),
-      appliedFixes: hostFixes,
+      appliedFixes: hostFixes.map((fix) => ({
+        tool: fix.tool,
+        status: fix.status,
+        reason: fix.reason,
+      })),
     },
     probes: probeReport.probes.map((probe) => ({
       id: probe.id,
