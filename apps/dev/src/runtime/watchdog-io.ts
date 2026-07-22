@@ -12,7 +12,10 @@ import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
+import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
+import { editLabels, viewLabels } from "./gh.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
@@ -159,12 +162,27 @@ export function buildWatchdogIO(
       await rm(stopFile, { force: true });
     },
 
-    // Preserve stale claim evidence for the replacement supervisor's boot
-    // sweep. That sweep rotates GitHub `running` back to `ready-for-agent`
-    // before deleting the local claim; deleting here would lose the issue id
-    // and strand the remote label forever.
+    // Reconcile GitHub before deleting local claim evidence. A failed remote
+    // read/edit leaves the directory intact for the replacement supervisor's
+    // boot sweep; only a completed remote decision consumes the issue number.
     reconcile: async () => {
-      // Deliberately empty: supervisor boot owns full local + GitHub reconcile.
+      const stale = await listStaleClaimDirs(paths.tmpDir).catch(() => []);
+      const repo = await resolveRepoSlug(root);
+      const gh = { cwd: root, repo };
+      for (const claim of stale) {
+        if (claim.issue === undefined) continue;
+        try {
+          const labels = await viewLabels(gh, claim.issue);
+          const parked = labels.includes(LABEL_HUMAN) || labels.some((label) => label.startsWith("blocked:"));
+          if (labels.includes(LABEL_RUNNING) && !parked) {
+            const edited = await editLabels(gh, claim.issue, [LABEL_RUNNING], [LABEL_READY]);
+            if (!edited) continue;
+          }
+          await removeDir(claim.path);
+        } catch {
+          // Preserve the claim for boot when GitHub reconciliation is uncertain.
+        }
+      }
     },
 
     isRecoveryPending: async () => fileExists(paths.supervisorRecoveryPath),
