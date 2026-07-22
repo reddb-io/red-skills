@@ -2464,6 +2464,69 @@ describe("Orchestrator Display integration", () => {
     expect(exitResult._tag).toBe("Success");
   }, 10_000);
 
+  it("does not idle-timeout while a streamed tool call remains in flight", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "orch-idle-tool-flight-"));
+
+    await initRepo(hostDir);
+    await commitFile(hostDir, "hello.txt", "hello", "initial commit");
+
+    const { factoryLayer } = makeTestSandboxFactory(hostDir, (dir) => {
+      const real = makeLocalSandbox(dir);
+      return {
+        exec: (command, options) => {
+          if (command.startsWith("claude ") && options?.onLine) {
+            const onLine = options.onLine;
+            return Effect.gen(function* () {
+              yield* Effect.promise(
+                () => new Promise((resolve) => setTimeout(resolve, 50)),
+              );
+              onLine(
+                JSON.stringify({
+                  type: "assistant",
+                  message: {
+                    content: [
+                      {
+                        type: "tool_use",
+                        name: "Bash",
+                        input: { command: "pnpm install" },
+                      },
+                    ],
+                  },
+                }),
+              );
+              // The child command stays silent for longer than the text-silence
+              // timeout, then the agent emits its terminal result.
+              yield* Effect.promise(
+                () => new Promise((resolve) => setTimeout(resolve, 250)),
+              );
+              onLine(JSON.stringify({ type: "result", result: "done" }));
+              return { stdout: "", stderr: "", exitCode: 0 };
+            });
+          }
+          return real.exec(command, options);
+        },
+        copyIn: (hostPath, sandboxPath) => real.copyIn(hostPath, sandboxPath),
+        copyFileOut: (sandboxPath, hostPath) =>
+          real.copyFileOut(sandboxPath, hostPath),
+      };
+    });
+
+    const exitResult = await Effect.runPromise(
+      orchestrate({
+        provider: testProvider,
+        hostRepoDir: hostDir,
+        iterations: 1,
+        prompt: "test",
+        idleTimeoutSeconds: 0.1,
+      }).pipe(
+        Effect.provide(Layer.merge(factoryLayer, testDisplayLayer)),
+        Effect.exit,
+      ),
+    );
+
+    expect(exitResult._tag).toBe("Success");
+  }, 10_000);
+
   it("resets the idle timer on unparsed stdout lines (no structured events)", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "orch-idle-raw-"));
 

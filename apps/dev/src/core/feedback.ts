@@ -364,7 +364,8 @@ export function formatValidationLine(record: ValidationRecord): string {
  * `summary` containing one of those markers — or an exit-code-137 (SIGKILL,
  * the Linux OOM killer signature), or a `maxBuffer length exceeded` capture
  * overflow (a green-but-verbose suite Node killed for its OUTPUT size, not a
- * test failure) anywhere in the gate output — flips this classifier to true.
+ * test failure), or a missing file below `node_modules` anywhere in the gate
+ * output — flips this classifier to true.
  * The detection is substring-based on purpose: it has to survive pnpm's
  * error-wrapping, multi-line output, and minor message drift.
  */
@@ -392,6 +393,21 @@ export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
     // output was too large — so this is an environment/config problem, not a
     // worker-code failure. Route through bounded validation-infra recovery.
     if (summary.includes("maxBuffer length exceeded")) {
+      return true;
+    }
+    // A dependency tree that disappears after setup is an infrastructure
+    // failure even when the runner surfaces it from inside vitest. Limit the
+    // heuristic to node_modules paths so an application-owned missing fixture
+    // remains a semantic failure.
+    if (
+      summary.includes("node_modules") &&
+      (
+        summary.includes("ERR_MODULE_NOT_FOUND") ||
+        summary.includes("Cannot find module") ||
+        summary.includes("Cannot find package") ||
+        /ENOENT:[^\n]*no such file or directory/i.test(summary)
+      )
+    ) {
       return true;
     }
   }
