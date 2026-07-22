@@ -171,7 +171,7 @@ export async function stopFleet(
   // path must sweep them — otherwise a "stopped" report is a lie while orphaned
   // workers keep claiming, committing, and merging. Reuse the watchdog's
   // detached-worker killer + claim reconcile so no issue is stranded in `running`.
-  const io = buildWatchdogIO(root, stdout);
+  const io = buildWatchdogIO(root, stdout, paths.fleet);
   const sweepOrphans = async (): Promise<void> => {
     const killed = await io.killWorkers();
     if (killed > 0) {
@@ -485,7 +485,7 @@ export async function statusFleet(
   fleetName?: string,
 ): Promise<FleetStatusResult> {
   const paths = afkPaths(root, fleetName);
-  const io = buildWatchdogIO(root, stdout);
+  const io = buildWatchdogIO(root, stdout, paths.fleet);
   const liveness = await io.liveness();
   const liveSupervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, { fleet: paths.fleet });
   if (liveSupervisor) {
@@ -582,7 +582,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     // wedged supervisor down and fall through to a clean relaunch. A FRESH
     // heartbeat still refuses the launch, exactly as before.
     const cfg = resolveSupervisorConfig();
-    const io = buildWatchdogIO(root, stdout);
+    const io = buildWatchdogIO(root, stdout, paths.fleet);
     const liveness = await io.liveness();
     const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
     if (health !== "quiescent") {
