@@ -40,7 +40,6 @@ import {
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
-import { checkSensitivePaths, type SensitivePathHit } from "./shared-gate.js";
 
 /** Everything the landing needs, all side effects injected — mirroring how
  * process-issue called each of these inline. */
@@ -110,23 +109,6 @@ export interface LandingDeps {
    * Ignored on the direct path, which never opens a PR.
    */
   waitForReview?: WaitForReviewInput;
-  /**
-   * Opt-in sensitive-path guard (issue #1102). Present → the landing scans the
-   * branch diff against the closed set of sensitive path patterns before pushing
-   * or integrating; any hit aborts with `sensitive-paths` and pages a human.
-   * Absent (the default) → the guard is skipped (safe for the direct path and
-   * existing callers that have not yet wired the dep).
-   */
-  getDiffPaths?: () => Promise<{
-    changedFiles: string[];
-    packageJsonDiff: string;
-    /**
-     * Diff-aware exemption for the TOON guard allowlist. Present when the branch
-     * touched it; `safe` is true when the edit only shrank the allowlist (no
-     * `external` entry added or changed), so the sensitive-path guard skips it.
-     */
-    allowlistExemption?: { path: string; safe: boolean };
-  }>;
   /**
    * Opt-in CI-aware merge for the UNLOCKED PR landing (#812). Present →
    * landPr polls the PR's merge state and merges only once it is genuinely
@@ -226,19 +208,6 @@ export interface LandingInput {
   labels?: readonly string[];
   /** Changed files in the worker branch, used to classify fallback landing titles. */
   changedFiles?: readonly string[];
-  /**
-   * Sensitive-path guard bypass (issue #1171). Defaults false/undefined. When
-   * true, the step-0a sensitive-path guard scan is SKIPPED so a branch whose diff
-   * touches a protected path (CI workflow, lifecycle script, git hook, `.red/`
-   * config) can still land. This is set EXCLUSIVELY by the explicit
-   * `/requeue --adopt-branch` operator path (core/requeue + commands/requeue),
-   * after a maintainer has reviewed the diff — it is the human "already-reviewed"
-   * signal the ADR-0055 no-agent landing lane carries. HARD INVARIANT: it must be
-   * UNREACHABLE from any autonomous attempt (AFK/go inner-agent landing), so the
-   * guard keeps firing on every normal attempt. The default is false and only the
-   * operator adopt path ever passes true.
-   */
-  sensitivePathApproved?: boolean;
   /**
    * `<base>` has the forge's native merge queue configured (#1337). True → the PR
    * landing ENQUEUES (`gh pr merge --auto`) and takes NO local land-lock: the queue
@@ -340,10 +309,6 @@ export type LandingResult =
         // the fleet-owned `red-trunk` mirror and no longer emits this from
         // landing, but older callers/tests may still reference the result shape.
         | "trunk-diverged"
-        // Sensitive-path guard (issue #1102): the branch diff touches a CI
-        // workflow file, a package.json lifecycle script, a git hook, or `.red/`
-        // trust/gate configuration. Never auto-lands; pages a human.
-        | "sensitive-paths"
         // Post-merge-integration gate (#1335): the feedback gate failed on the
         // integrated (worker branch merged with current origin/<base>) tree. The
         // landing aborted BEFORE pushing anything to the remote base. The caller
@@ -357,8 +322,6 @@ export type LandingResult =
       localTrunkSha?: string;
       /** Legacy ADR 0083 divergence (`trunk-diverged`): the fresh-fetched `origin/<trunk>` SHA. */
       originTrunkSha?: string;
-      /** Sensitive-path guard (`sensitive-paths`): the hits that triggered the guard. */
-      sensitivePaths?: SensitivePathHit[];
       /** Actionable refusal text for the terminal note, when the route carries one. */
       message?: string;
       /** Infra failure (`infra`): actionable refusal text for the terminal note. */
@@ -400,46 +363,7 @@ export async function doLanding(
   hooks: LandingHookContexts,
 ): Promise<LandingResult> {
   const { locked } = input;
-
-  // 0a. Sensitive-path guard (issue #1102): scan the branch diff for sensitive
-  // path patterns BEFORE any push or git integration. A hit is an intent-class
-  // change (CI workflow, lifecycle script, git hook, .red/ config) that must
-  // never auto-land — abort immediately and page a human. Opt-in: the guard is
-  // skipped when getDiffPaths is absent (backwards-compatible default).
-  //
-  // #1171 bypass: `input.sensitivePathApproved === true` means a maintainer has
-  // reviewed the protected diff and is landing it through the explicit
-  // `/requeue --adopt-branch` no-agent lane, so the guard is skipped ONLY here.
-  // The flag defaults false; no autonomous attempt path sets it, so the guard
-  // keeps firing on every normal AFK/go landing.
-  //
-  // A guard that cannot READ the diff has no verdict, so it must not pass: a
-  // failed lookup aborts the landing as `infra` rather than crashing the worker
-  // or silently landing an unscanned diff (ADR 0119).
-  let diffPaths: Awaited<ReturnType<NonNullable<LandingDeps["getDiffPaths"]>>> | undefined;
-  if (deps.getDiffPaths) {
-    try {
-      diffPaths = await deps.getDiffPaths();
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "infra",
-        infraReason: `the sensitive-path guard could not read the branch diff: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        locked,
-      };
-    }
-  }
-  const landingInput = diffPaths ? { ...input, changedFiles: diffPaths.changedFiles } : input;
-
-  if (diffPaths && input.sensitivePathApproved !== true) {
-    const { changedFiles, packageJsonDiff, allowlistExemption } = diffPaths;
-    const hits = checkSensitivePaths(changedFiles, packageJsonDiff, allowlistExemption);
-    if (hits.length > 0) {
-      return { ok: false, reason: "sensitive-paths", locked, sensitivePaths: hits };
-    }
-  }
+  const landingInput = input;
 
   // 1. push the worker branch so landMerge/landPr have a remote ref.
   // NOT best-effort: if the push fails the remote has no commits and any merge

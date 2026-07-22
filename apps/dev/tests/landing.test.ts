@@ -177,73 +177,13 @@ describe("doLanding — fleet mirror decouples landing from the primary checkout
   });
 });
 
-describe("doLanding — sensitive-path guard (issue #1102)", () => {
-  it("diff touching .github/workflows → aborts with sensitive-paths BEFORE any push/hook/land", async () => {
-    const h = harness({ locked: false, sensitivePaths: "hit" });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.reason).toBe("sensitive-paths");
-      expect(r.locked).toBe(false);
-      expect(r.sensitivePaths).toBeDefined();
-      expect(r.sensitivePaths!.length).toBeGreaterThan(0);
-      expect(r.sensitivePaths![0].path).toBe(".github/workflows/ci.yml");
-    }
-    // The abort is early: no push, no hooks, no landing.
-    expect(h.pushedAttempt).toHaveLength(0);
-    expect(h.firedHooks).toHaveLength(0);
-    const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
-    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
-  });
-
-  it("sensitive-paths abort also fires on the DIRECT (locked) path before integrating", async () => {
-    const h = harness({ locked: true, sensitivePaths: "hit" });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.reason).toBe("sensitive-paths");
-      expect(r.locked).toBe(true);
-    }
-    expect(h.pushedAttempt).toHaveLength(0);
-    expect(h.firedHooks).toHaveLength(0);
-    expect(h.removedWorktrees).toHaveLength(0);
-  });
-
-  it("clean diff with no sensitive paths proceeds to a normal landing", async () => {
-    const h = harness({ locked: false, sensitivePaths: "clean" });
+describe("doLanding — formerly-sensitive paths land normally (#2417)", () => {
+  it("a diff touching .github/workflows/ proceeds to a normal landing without blocking", async () => {
+    const h = harness({ locked: false, changedFiles: [".github/workflows/ci.yml", "src/index.ts"] });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
     expect(h.pushedAttempt).toHaveLength(1);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
-  });
-
-  it("absent getDiffPaths dep → guard is skipped, landing proceeds normally", async () => {
-    // sensitivePaths: undefined → getDiffPaths not wired → guard is a no-op.
-    const h = harness({ locked: false });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
-  });
-
-  it("sensitivePathApproved=true → guard bypassed, a hit diff lands normally (#1171 adopt path)", async () => {
-    // The `/requeue --adopt-branch` human land: getDiffPaths still HITS a
-    // protected path, but the maintainer-approved flag skips the guard so the
-    // reviewed branch lands.
-    const h = harness({ locked: false, sensitivePaths: "hit", sensitivePathApproved: true });
-    const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
-    expect(h.pushedAttempt).toHaveLength(1);
-    expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
-  });
-
-  it("sensitivePathApproved defaults undefined/false → a hit diff STILL parks (guard not weakened for the agent path)", async () => {
-    // The autonomous path never sets the flag, so the identical hit diff aborts.
-    const h = harness({ locked: false, sensitivePaths: "hit" });
-    expect(h.input.sensitivePathApproved).toBeUndefined();
-    const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("sensitive-paths");
-    expect(h.pushedAttempt).toHaveLength(0);
   });
 });
 

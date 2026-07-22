@@ -109,7 +109,6 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
-  LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import {
@@ -117,7 +116,6 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 export type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 export interface ProcessGh {
   viewLabels(issue: number): Promise<string[]>;

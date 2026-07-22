@@ -101,7 +101,6 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
-  LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import {
@@ -109,7 +108,6 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
 import { editLabelsTagged, routeRecovery } from "./recovery.js";
@@ -322,13 +320,6 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
         next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
       };
-    case "sensitive-path":
-      return {
-        status: "blocked",
-        kind: "sensitive-path",
-        summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
-        next: "Review the sensitive change, then requeue if it is safe to land.",
-      };
     case "base-stale":
       return {
         status: "blocked",
@@ -362,7 +353,6 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "stalled",
   "decision",
   "trunk-diverged",
-  "sensitive-path",
   "infra",
 ]);
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -596,37 +586,6 @@ export async function trunkDivergedBlocked(
   await releaseOwnedClaim(deps, input);
   return {
     outcome: "trunk-diverged",
-    issue: input.issue,
-    branch: c.branch,
-    base: c.base,
-    locked,
-    hooksFired: c.hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
-}
-export async function sensitivePathGuarded(
-  c: StageCommon,
-  hits: Array<{ path: string; reason: string }>,
-  locked: boolean,
-): Promise<ProcessIssueResult> {
-  const { deps, input } = c;
-  const hitList = hits.map((h) => `\`${h.path}\` (${h.reason})`).join(", ");
-  const detail =
-    `Landing blocked: the diff touches sensitive path(s) that require human review before auto-landing — ` +
-    `${hitList}. The attempt branch is intact. Requeue after reviewing the change.`;
-  await routeRecovery(deps, input.issue, "sensitive-path", recoveryOrdinalFor(input));
-  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("sensitive-path", { log: detail }));
-  const posted = await emitFailure(c, envelopeStatusFor("sensitive-path"), "sensitive-path", { log: detail });
-  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
-  await recordAttemptBestEffort(c, "sensitive-path", {
-    durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: detail,
-  });
-  await releaseOwnedClaim(deps, input);
-  return {
-    outcome: "sensitive-path",
     issue: input.issue,
     branch: c.branch,
     base: c.base,

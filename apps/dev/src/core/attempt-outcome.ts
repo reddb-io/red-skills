@@ -37,7 +37,6 @@ import {
   LABEL_INFRA,
   LABEL_BUDGET,
   LABEL_TRUNK_DIVERGED,
-  LABEL_SENSITIVE_PATH,
   LABEL_BASE_STALE,
 } from "./triage-labels.js";
 
@@ -105,12 +104,6 @@ export type AttemptOutcome =
   // auto-commit / force-push to repair it, so a bounded retry could only re-hit
   // the same precondition.
   | "trunk-diverged"
-  // Sensitive-path guard (issue #1102): the landing diff touched a CI workflow
-  // file, a package.json lifecycle script, a git hook, or `.red/` trust/gate
-  // configuration. These are intent-class changes that require human review —
-  // auto-landing them would bypass auditability regardless of test/CI status.
-  // Human-only (non-recoverable): a bounded retry does not change the diff.
-  | "sensitive-path"
   // Base freshness guard (#1380): remote fetch failed and the local base branch is
   // behind the last-known remote-tracking tip. The worker never starts from that
   // rotten local base; the issue parks for a human/network recovery.
@@ -173,8 +166,6 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_BUDGET;
     case "trunk-diverged":
       return LABEL_TRUNK_DIVERGED;
-    case "sensitive-path":
-      return LABEL_SENSITIVE_PATH;
     case "base-stale":
       return LABEL_BASE_STALE;
     case "infra":
@@ -243,9 +234,6 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     // is intact on the attempt branch; the local trunk a human owns is out of
     // sync, so it emits a `blocked` envelope (never `merge-conflict`).
     case "trunk-diverged":
-    // sensitive-path (#1102) folds into the generic `blocked` bucket — the diff
-    // touched a sensitive path; a human must review it before landing.
-    case "sensitive-path":
     // base-stale (#1380) folds into the generic `blocked` bucket — no worker ran;
     // the local base is too stale to trust while the remote is unreachable.
     case "base-stale":
@@ -319,9 +307,6 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     // auto-retry cannot un-diverge the maintainer's local trunk, and the Landing
     // refuses to repair it — only a human reconciling the local state clears it.
     case "trunk-diverged":
-    // sensitive-path (#1102) is NON-recoverable: a retry runs the same diff and
-    // hits the same guard. Only a human reviewing the sensitive change clears it.
-    case "sensitive-path":
     // base-stale (#1380) is NON-recoverable in-process: a bounded agent retry
     // cannot make the remote reachable or refresh the local base safely.
     case "base-stale":
