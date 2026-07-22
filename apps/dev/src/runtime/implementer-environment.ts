@@ -28,6 +28,8 @@ export interface PreparedImplementerEnvironment {
   runtime: ImplementerRuntimeProjection;
   metrics: ImplementerMetrics;
   artifactPath: string;
+  /** Finalise the actual invocation-to-first-stream runner startup sample. */
+  recordRunnerStartup(projectedRunnerStartupMs: number): void;
 }
 
 interface PluginManifest {
@@ -58,6 +60,13 @@ function readManifest(
   return JSON.parse(readFileSync(path, "utf8")) as PluginManifest;
 }
 
+function serializedManifestBytes(roots: readonly string[]): number {
+  return roots.reduce((total, root) => {
+    const path = join(root, ".codex-plugin", "plugin.json");
+    return total + readFileSync(path).byteLength;
+  }, 0);
+}
+
 export function discoverImplementerCatalog(
   pluginRoots: ImplementerPluginRoots,
 ): ImplementerSkill[] {
@@ -70,13 +79,10 @@ export function discoverImplementerCatalog(
         const skillFile = join(path, "SKILL.md");
         const text = readFileSync(skillFile, "utf8");
         const name = frontmatterValue(text, "name") ?? basename(path);
-        const description = frontmatterValue(text, "description") ?? "";
-        const catalogLine = `${plugin}:${name}\n${description}\n${skillFile}\n`;
         return {
           plugin,
           name,
           path,
-          payloadBytes: Buffer.byteLength(catalogLine, "utf8"),
         };
       }),
     );
@@ -187,21 +193,28 @@ function tomlString(value: string): string {
 
 function codexOverrides(
   projection: ReturnType<typeof resolveImplementerProjection>,
+  runtimeRoot: string,
+  pluginRoots: ImplementerPluginRoots,
 ): string[] {
-  const enabled = new Set(projection.enabledPlugins);
   const overrides = IMPLEMENTER_PLUGIN_NAMES.map(
     (plugin) =>
-      `plugins.${tomlString(`${plugin}@red-skills`)}.enabled=${String(enabled.has(plugin))}`,
+      `plugins.${tomlString(`${plugin}@red-skills`)}.enabled=false`,
   );
-  const disabledSkillPaths = projection.excluded
-    .filter((skill) => enabled.has(skill.plugin))
-    .map(
-      (skill) =>
-        `{path=${tomlString(join(skill.path, "SKILL.md"))},enabled=false}`,
+  const projectedSkillPaths = projection.skills.map((skill) => {
+    const sourceRoot = pluginRoots[skill.plugin];
+    if (!sourceRoot) return undefined;
+    const projectedPath = join(
+      runtimeRoot,
+      "plugins",
+      skill.plugin,
+      relative(sourceRoot, skill.path),
+      "SKILL.md",
     );
-  if (disabledSkillPaths.length > 0) {
-    overrides.push(`skills.config=[${disabledSkillPaths.join(",")}]`);
-  }
+    return `{path=${tomlString(projectedPath)},enabled=true}`;
+  });
+  overrides.push(
+    `skills.config=[${projectedSkillPaths.filter(Boolean).join(",")}]`,
+  );
   return overrides;
 }
 
@@ -209,12 +222,19 @@ export function prepareImplementerEnvironment(input: {
   attemptDir: string;
   configText: string;
   pluginRoots: ImplementerPluginRoots;
+  historicalRunnerStartupMs?: number;
   nowMs?: () => number;
 }): PreparedImplementerEnvironment {
   const nowMs = input.nowMs ?? (() => performance.now());
   const legacyStarted = nowMs();
   const catalog = discoverImplementerCatalog(input.pluginRoots);
-  const legacyBootMs = Math.max(0, nowMs() - legacyStarted);
+  const legacyProjectionSetupMs = Math.max(0, nowMs() - legacyStarted);
+  const legacySkillManifestBytes = serializedManifestBytes(
+    IMPLEMENTER_PLUGIN_NAMES.flatMap((plugin) => {
+      const root = input.pluginRoots[plugin];
+      return root ? [root] : [];
+    }),
+  );
 
   const projectedStarted = nowMs();
   const projection = resolveImplementerProjection(input.configText, catalog);
@@ -243,28 +263,56 @@ export function prepareImplementerEnvironment(input: {
       join(opencodeConfigDir, "skills", `${skill.plugin}-${skill.name}`),
     );
   }
-  const projectedBootMs = Math.max(0, nowMs() - projectedStarted);
+  const projectedProjectionSetupMs = Math.max(0, nowMs() - projectedStarted);
+  const projectedSkillManifestBytes = serializedManifestBytes(pluginDirs);
   const metrics = buildImplementerMetrics(projection, {
-    legacyBootMs,
-    projectedBootMs,
+    legacyProjectionSetupMs,
+    projectedProjectionSetupMs,
+    historicalRunnerStartupMs: input.historicalRunnerStartupMs ?? 0,
+    projectedRunnerStartupMs: 0,
+    legacySkillManifestBytes,
+    projectedSkillManifestBytes,
   });
   const artifactPath = join(input.attemptDir, "implementer-runtime.toon");
-  writeFileSync(
-    artifactPath,
-    assertDevSnapshotToonLossless({
-      ...metrics,
-      skills: projection.skills.map((skill) => `${skill.plugin}:${skill.name}`),
-    } as unknown as Parameters<typeof assertDevSnapshotToonLossless>[0]),
-    "utf8",
-  );
+  const writeArtifact = (): void => {
+    writeFileSync(
+      artifactPath,
+      assertDevSnapshotToonLossless({
+        ...metrics,
+        runner_startup_baseline:
+          input.historicalRunnerStartupMs === undefined
+            ? "unavailable"
+            : "operator-historical",
+        skills: projection.skills.map(
+          (skill) => `${skill.plugin}:${skill.name}`,
+        ),
+      } as unknown as Parameters<typeof assertDevSnapshotToonLossless>[0]),
+      "utf8",
+    );
+  };
+  writeArtifact();
 
   return {
     runtime: {
       claudePluginDirs: pluginDirs,
-      codexConfigOverrides: codexOverrides(projection),
+      codexConfigOverrides: codexOverrides(
+        projection,
+        runtimeRoot,
+        input.pluginRoots,
+      ),
       opencodeConfigDir,
     },
     metrics,
     artifactPath,
+    recordRunnerStartup(projectedRunnerStartupMs): void {
+      metrics.runner_startup_ms = {
+        before: input.historicalRunnerStartupMs ?? projectedRunnerStartupMs,
+        after: projectedRunnerStartupMs,
+        delta:
+          projectedRunnerStartupMs -
+          (input.historicalRunnerStartupMs ?? projectedRunnerStartupMs),
+      };
+      writeArtifact();
+    },
   };
 }
