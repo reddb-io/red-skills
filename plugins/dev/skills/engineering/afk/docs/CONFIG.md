@@ -38,6 +38,7 @@ MCP, and non-essential host hooks are absent from every projection.
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
+| `afk.implementer.skills` | — | implementer profile | Optional comma-separated exact allowlist of `plugin:skill` entries for inner workers. It replaces the trimmed dev implementer profile (so it can widen or narrow it), while ADR 0067 activation remains authoritative: a skill from a disabled plugin is never exposed. The canonical YAML location is `plugins.dev.afk.implementer.skills`. |
 | `afk.model` | — | runner-specific | Legacy global model override. Prefer tiered `afk.models.<runner>.<tier>.model` so Codex never receives a Claude-only model. |
 | `afk.models.<runner>` | — | runner-specific | Legacy per-runner scalar model override. Used only when no explicit tier model is set. |
 | `afk.models.claude.<tier>.model` | — | tier-specific | Claude Code model id for `validate`, `simple`, `complex`, or `think`. |
@@ -74,6 +75,8 @@ MCP, and non-essential host hooks are absent from every projection.
 
 ```yaml
 afk:
+  implementer:
+    skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
   worktree_launches_pull_request: true   # true → admin-PR landing; false → direct merge (offline). Decoupled from the lock (#842)
   models:
     claude:
