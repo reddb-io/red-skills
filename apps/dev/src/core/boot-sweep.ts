@@ -418,9 +418,9 @@ export async function executeMixedBlockedNormalize(
 
 // ---------- reconcile sweep ----------
 
-/** Pattern for an AFK live-iteration worker branch (`afk/{worker}/{N}-{slug}`).
- * Mirrors the LIVE_REF_RE capture in branch-cleanup.ts. */
-const AFK_LIVE_BRANCH_RE = /^afk\/[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+$/;
+/** Pattern for deterministic `afk/{N}-{slug}` and legacy
+ * `afk/{worker}/{N}-{slug}` branches. Mirrors branch-cleanup.ts. */
+const AFK_LIVE_BRANCH_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+)$/;
 
 /**
  * Extract the issue number from an `afk/{worker}/{N}-{slug}` live-iteration
@@ -429,7 +429,7 @@ const AFK_LIVE_BRANCH_RE = /^afk\/[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+$/;
  */
 export function issueFromAFKBranch(branch: string): number | null {
   const m = AFK_LIVE_BRANCH_RE.exec(branch);
-  return m ? Number(m[1]) : null;
+  return m ? Number(m[1] ?? m[2]) : null;
 }
 
 /**
