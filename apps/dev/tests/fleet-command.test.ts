@@ -219,6 +219,8 @@ describe("fleet command stale supervisor state", () => {
       const epoch = Math.floor(Date.now() / 1000);
       mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
       mkdirSync(join(dirname(paths.supervisorRuntimeDir), "s12345"), { recursive: true });
+      writeFileSync(paths.supervisorPidPath, "12345", "utf8");
+      writeFileSync(paths.supervisorPidStartPath, "start-12345", "utf8");
       writeFileSync(
         paths.fleetStatePath,
         JSON.stringify({
