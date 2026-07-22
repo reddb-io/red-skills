@@ -96,7 +96,7 @@ async function runRead(
   const rows = parseAliasedRepositoryResponse(operation, parsed);
   const items = keyedRows(rows.map((row) => ({
     number: row.number,
-    value: row.error ? { error: row.error } : projectRead(command.verb, row.value ?? {}, fields),
+    value: row.error ? { error: row.error } : projectRead(command.verb as "issues" | "prs", row.value ?? {}, fields),
   })));
   const failures = rows.filter((row) => row.error).length;
   return result({
@@ -123,7 +123,7 @@ async function readRestFallback(
   const rows = await boundedMap(command.numbers, concurrency, async (number) => {
     const response = await exec([surface, "view", String(number), "--repo", repo, "--json", ghFields]);
     if (response.code !== 0) return { number, value: { error: compactError(response) || "REST fallback failed" } };
-    return { number, value: projectRead(command.verb, asRecord(parseJson(response.stdout)), fields) };
+    return { number, value: projectRead(command.verb as "issues" | "prs", asRecord(parseJson(response.stdout)), fields) };
   });
   const failures = rows.filter((row) => "error" in row.value).length;
   return result({
@@ -162,7 +162,9 @@ async function runEditLabels(
     const nodeId = stringValue(row.value?.id);
     return nodeId ? [{ number: row.number, nodeId }] : [];
   });
-  const initial = new Map(rows.filter((row) => row.error).map((row) => [row.number, { error: row.error! }]));
+  const initial = new Map<number, JsonObject>(
+    rows.filter((row) => row.error).map((row) => [row.number, { error: row.error! }]),
+  );
   const mutation = buildAliasedLabelMutation(
     targets,
     command.add.map((name) => labels.get(name)!),
@@ -188,7 +190,7 @@ async function editLabelsRestFallback(
   concurrency: number,
   argv: readonly string[],
 ): Promise<GhBatchResult> {
-  const rows = await boundedMap(command.numbers, concurrency, async (number) => {
+  const rows = await boundedMap(command.numbers, concurrency, async (number): Promise<{ number: number; value: JsonObject }> => {
     const args = ["issue", "edit", String(number), "--repo", repo];
     for (const label of command.add) args.push("--add-label", label);
     for (const label of command.remove) args.push("--remove-label", label);
@@ -247,7 +249,7 @@ async function linkSubIssuesRestFallback(
   concurrency: number,
   argv: readonly string[],
 ): Promise<GhBatchResult> {
-  const rows = await boundedMap(children, concurrency, async (number) => {
+  const rows = await boundedMap(children, concurrency, async (number): Promise<{ number: number; value: JsonObject }> => {
     const idResponse = await exec(["api", `repos/${repo}/issues/${number}`, "--jq", ".id"]);
     const id = Number(idResponse.stdout.trim());
     if (idResponse.code !== 0 || !Number.isSafeInteger(id) || id <= 0) {
