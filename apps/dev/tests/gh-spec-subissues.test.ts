@@ -44,11 +44,15 @@ describe("listSpecSubIssueCandidates", () => {
       if (joined.includes("issue list") && joined.includes("--label spec:43")) {
         return { code: 0, stdout: JSON.stringify([]), stderr: "" };
       }
-      if (joined.includes("issues/42/sub_issues")) {
-        return { code: 0, stdout: `${JSON.stringify({ number: 8 })}\n`, stderr: "" };
-      }
-      if (joined.includes("issues/43/sub_issues")) {
-        return { code: 0, stdout: "", stderr: "" };
+      if (joined.includes("api graphql")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ data: { repository: {
+            i0: { number: 42, subIssues: { nodes: [{ number: 8 }] } },
+            i1: { number: 43, subIssues: { nodes: [] } },
+          } } }),
+          stderr: "",
+        };
       }
       return { code: 1, stdout: "", stderr: "unexpected" };
     });
@@ -60,6 +64,8 @@ describe("listSpecSubIssueCandidates", () => {
       { number: 42, labels: ["type:spec", "needs-slicing"], labelChildren: [7], nativeSubIssues: [8] },
       { number: 43, labels: ["type:spec"], labelChildren: [], nativeSubIssues: [] },
     ]);
+    expect(rec.calls.filter((call) => call.args[0] === "api" && call.args[1] === "graphql")).toHaveLength(1);
+    expect(rec.calls.some((call) => call.args.join(" ").includes("/sub_issues"))).toBe(false);
   });
 });
 
