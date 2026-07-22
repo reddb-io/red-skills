@@ -1,5 +1,25 @@
 # @reddb-io/dev
 
+## 2.80.0
+
+### Minor Changes
+
+- 70b50c3: Landing squashes a worker branch's own micro-history to one commit at its fork
+  point before the pre-merge rebase, so a 60-commit retry chain presents ONE
+  consolidated conflict set instead of replaying every continuous-push commit
+  sequentially onto fresh trunk. Branch adoption (re-claim resume) now opens with
+  a mandatory base sync instruction — fetch + rebase onto origin/<base>, resolving
+  conflicts while the agent is present and drift is smallest. (#2481)
+
+### Patch Changes
+
+- 7ae5d01: Skill docs now teach the npx direct-run form (`npx -y -p @reddb-io/red-skills@<version>
+red-skills-dev ...`) as the canonical invocation everywhere; a bare `red-skills-dev`
+  shim is demoted to a warm-cache optimization. Field installs without the shim
+  followed the old docs into command-not-found failures.
+  - @reddb-io/shared@2.80.0
+  - @reddb-io/build-info@2.80.0
+
 ## 2.79.1
 
 ### Patch Changes
