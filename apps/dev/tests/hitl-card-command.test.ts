@@ -39,6 +39,33 @@ describe("hitl-card command runaway guards", () => {
       "/requeue Cannot requeue: blocked:infra is not supported",
       "github-actions[bot]",
       "Bot",
+      ["maintainer"],
+      [{ login: "github-actions[bot]", type: "Bot" }],
+      "/tmp",
+      output.stream,
+    )).resolves.toBe(0);
+
+    expect(calls).toBe(0);
+    expect(output.text()).toContain("ignored automation-authored comment");
+  });
+
+  it("drops an unallowlisted PAT-backed User refusal without making a GitHub call", async () => {
+    let calls = 0;
+    const exec: HitlCardExec = async () => {
+      calls += 1;
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const output = capture();
+
+    await expect(cmdAct(
+      exec,
+      "reddb-io/red-skills",
+      2443,
+      "/requeue Cannot requeue: blocked:infra is not supported",
+      "release-maintainer",
+      "User",
+      ["maintainer"],
+      [{ login: "github-actions[bot]", type: "Bot" }],
       "/tmp",
       output.stream,
     )).resolves.toBe(0);
@@ -59,6 +86,8 @@ describe("hitl-card command runaway guards", () => {
     const comments = [0, 1, 2].map((minute) => ({
       body: `${HITL_CARD_ACTION_MARKER}\naction ${minute}`,
       createdAt: `2026-07-22T07:5${minute}:00Z`,
+      author: "github-actions[bot]",
+      authorType: "Bot",
     }));
 
     await expect(enforceHitlCardActionRate(
@@ -68,6 +97,7 @@ describe("hitl-card command runaway guards", () => {
       comments,
       output.stream,
       now,
+      [{ login: "github-actions[bot]", type: "Bot" }],
     )).resolves.toBe(true);
 
     expect(posted).toHaveLength(1);
@@ -75,7 +105,12 @@ describe("hitl-card command runaway guards", () => {
     expect(posted[0]).toContain("loop suspected");
     expect(posted[0]).toContain("standing down");
 
-    comments.push({ body: posted[0]!, createdAt: "2026-07-22T07:59:00Z" });
+    comments.push({
+      body: posted[0]!,
+      createdAt: "2026-07-22T07:59:00Z",
+      author: "github-actions[bot]",
+      authorType: "Bot",
+    });
     await enforceHitlCardActionRate(
       exec,
       "reddb-io/red-skills",
@@ -83,6 +118,7 @@ describe("hitl-card command runaway guards", () => {
       comments,
       output.stream,
       now,
+      [{ login: "github-actions[bot]", type: "Bot" }],
     );
     expect(posted).toHaveLength(1);
   });
