@@ -8,11 +8,43 @@
 
 import type { BranchRef } from "./branch-cleanup.js";
 
-const LIVE_REF_ISSUE_RE = /^afk\/[^/]+\/([0-9]+)-[a-z0-9-]+$/;
+const LIVE_REF_ISSUE_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[^/]+\/([0-9]+)-[a-z0-9-]+)$/;
 
 function issueFromRef(branch: string): number | null {
   const m = LIVE_REF_ISSUE_RE.exec(branch);
-  return m ? Number(m[1]) : null;
+  return m ? Number(m[1] ?? m[2]) : null;
+}
+
+/** Minimal open-PR projection needed by attempt bootstrap. */
+export interface AttemptPullRequest {
+  number: number;
+  headRefName: string;
+  body?: string;
+}
+
+/** True when an open PR names the issue through an AFK head branch or a closing
+ * reference in its body. Both deterministic and legacy AFK heads are accepted
+ * so an issue requeued during migration adopts rather than duplicates work. */
+export function pullRequestMatchesAttempt(pr: AttemptPullRequest, issue: number): boolean {
+  if (issueFromRef(pr.headRefName) === issue) return true;
+  const escaped = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${escaped}\\b`, "i").test(pr.body ?? "");
+}
+
+/** Select the branch to adopt. Prefer the deterministic issue head (the
+ * structural collision backstop), then the newest matching legacy PR. */
+export function selectAttemptPullRequest(
+  prs: readonly AttemptPullRequest[],
+  issue: number,
+): AttemptPullRequest | null {
+  const matches = prs.filter((pr) => pullRequestMatchesAttempt(pr, issue));
+  if (matches.length === 0) return null;
+  return matches.reduce((best, current) => {
+    const bestDeterministic = issueFromRef(best.headRefName) === issue && best.headRefName.split("/").length === 2;
+    const currentDeterministic = issueFromRef(current.headRefName) === issue && current.headRefName.split("/").length === 2;
+    if (currentDeterministic !== bestDeterministic) return currentDeterministic ? current : best;
+    return current.number > best.number ? current : best;
+  });
 }
 
 /**
