@@ -7,9 +7,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
 import { superviseCommand } from "./commands/supervise.js";
-import { createDevAfkMcpDependencies } from "./mcp-adapter.js";
+import { createCastleMcpDependencies } from "./mcp-adapter.js";
 
-const buildInfo = readBuildInfo("afk");
+const buildInfo = readBuildInfo("castle");
 
 function toon(value: unknown): string {
   return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
@@ -17,8 +17,8 @@ function toon(value: unknown): string {
   });
 }
 
-export function createDevAfkMcpServer(): McpServer {
-  const server = new McpServer({ name: "dev:afk", version: buildInfo.version });
+export function createCastleMcpServer(): McpServer {
+  const server = new McpServer({ name: "castle", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
     name: string,
     config: {
@@ -30,7 +30,7 @@ export function createDevAfkMcpServer(): McpServer {
       content: Array<{ type: "text"; text: string }>;
     }>,
   ) => void;
-  for (const tool of createCastleMcpTools(createDevAfkMcpDependencies())) {
+  for (const tool of createCastleMcpTools(createCastleMcpDependencies())) {
     registerTool(
       tool.name,
       {
@@ -49,7 +49,7 @@ export function createDevAfkMcpServer(): McpServer {
 }
 
 async function run(): Promise<void> {
-  await createDevAfkMcpServer().connect(new StdioServerTransport());
+  await createCastleMcpServer().connect(new StdioServerTransport());
 }
 
 export interface McpEntrypointDependencies {
@@ -90,7 +90,7 @@ if (isDirectExecution) {
   void main().then((exitCode) => {
     process.exitCode = exitCode;
   }).catch((error) => {
-    process.stderr.write(`dev:afk MCP fatal: ${String(error)}\n`);
+    process.stderr.write(`castle MCP fatal: ${String(error)}\n`);
     process.exitCode = 1;
   });
 }

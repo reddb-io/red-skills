@@ -235,11 +235,11 @@ async function launchDetachedRun(
 
 export function resolveDevCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "dev.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "dev-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "dev-"));
   }
   throw new Error(
     `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -248,11 +248,11 @@ export function resolveDevCliBundle(mcpBundle: string): string {
 
 export function resolveRspCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "rsp-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
   }
   throw new Error(
     `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -1056,7 +1056,7 @@ async function registerFleet(root: string, input: FleetRegisterInput) {
   return { status: "registered", profile, pid: running.pid };
 }
 
-export function createDevAfkMcpDependencies(
+export function createCastleMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {

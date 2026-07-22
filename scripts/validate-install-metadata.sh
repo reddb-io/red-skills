@@ -88,9 +88,13 @@ validate_plugin() {
       || fail "$plugin: Codex MCP manifest must contain an mcpServers object"
     if [[ "$plugin" == "dev" ]]; then
       [[ -x "$dir/hooks/code-nav-mcp.sh" ]] \
-        || fail "$plugin: code-nav MCP launcher must exist and be executable"
-      jq -e '.mcpServers["code-nav"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
-        || fail "$plugin: code-nav MCP manifest must use the on-demand launcher"
+        || fail "$plugin: navigator MCP launcher must exist and be executable"
+      jq -e '.mcpServers["navigator"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+        || fail "$plugin: navigator MCP manifest must use the on-demand launcher"
+      [[ -x "$dir/hooks/castle-mcp.sh" ]] \
+        || fail "$plugin: castle MCP launcher must exist and be executable"
+      jq -e '.mcpServers["castle"].args[]? | contains("castle-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+        || fail "$plugin: castle MCP manifest must use the on-demand launcher"
     fi
   fi
 
