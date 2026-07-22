@@ -27,7 +27,7 @@ import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
-import { LABEL_READY, LABEL_SENSITIVE_PATH } from "../core/triage-labels.js";
+import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import {
   REQUEUE_ORIGIN,
@@ -61,13 +61,6 @@ export interface RequeueAdoptData {
   title: string;
   body: string;
   labels: readonly string[];
-  /**
-   * #1171: the park being adopted was `blocked:sensitive-path`, so the maintainer
-   * running `--adopt-branch` has reviewed the protected diff. Threaded into the
-   * ADR-0055 reconcile as `sensitivePathApproved`, which skips doLanding's
-   * sensitive-path guard for THIS human land only. Defaults false.
-   */
-  sensitivePathApproved?: boolean;
 }
 
 /**
@@ -225,35 +218,6 @@ function directiveComment(plan: RequeuePlan, guidance?: string): string {
     "</details>",
   ];
   return lines.join("\n");
-}
-
-/**
- * #1171 audit comment for a `blocked:sensitive-path` adopt: a human explicitly
- * approved a protected diff and is landing it through `--adopt-branch`, bypassing
- * doLanding's sensitive-path guard. Records WHO (the gh authenticated login,
- * best-effort) and WHEN (UTC), plus the recorded guidance, so the bypass is never
- * silent.
- */
-async function sensitivePathAdoptAudit(cwd: string, branch: string, guidance?: string): Promise<string> {
-  let who = "a maintainer";
-  try {
-    const r = await execTool("gh", ["api", "user", "-q", ".login"], { cwd });
-    if (r.code === 0 && r.stdout.trim()) who = `@${r.stdout.trim()}`;
-  } catch {
-    /* best-effort: the audit is still posted with the generic actor. */
-  }
-  const when = new Date().toISOString();
-  return [
-    "<details data-kind=\"sensitive-path-adopt\">",
-    "<summary>Sensitive-path adopt approved</summary>",
-    "",
-    `${who} approved the sensitive-path diff and landed \`${branch}\` via \`/requeue --adopt-branch\` at ${when}.`,
-    "The landing sensitive-path guard (#1102) was bypassed for this human-reviewed land only; every autonomous attempt keeps the guard armed (#1171).",
-    "",
-    "Human guidance:",
-    guidance?.trim() || "(none recorded)",
-    "</details>",
-  ].join("\n");
 }
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
@@ -487,10 +451,6 @@ async function runAdoptLanding(
       attempt: 0,
       attemptDir: join(paths.adoptWorktreesDir, String(issue)),
       runner: "claude" as Runner,
-      // #1171: bypass doLanding's sensitive-path guard ONLY for a maintainer-
-      // reviewed adopt of a `blocked:sensitive-path` park. Defaults false — a
-      // normal adopt keeps the guard armed.
-      sensitivePathApproved: issueData.sensitivePathApproved === true,
     };
 
     // Seed a short-lived `origin="requeue"` worker-presence row so the
@@ -549,9 +509,6 @@ export async function executeRequeue(
     };
   }
 
-  const wasSensitivePathPark =
-    issueState.labels.includes(LABEL_SENSITIVE_PATH) ||
-    parseCurrentBlocker(issueState.body)?.kind === "sensitive-path";
   const plan = planRequeue({
     body: issueState.body,
     labels: issueState.labels,
@@ -638,14 +595,7 @@ export async function executeRequeue(
     title: "",
     body: plan.requeueable ? plan.body : issueState.body,
     labels: postLabels,
-    sensitivePathApproved: wasSensitivePathPark,
   };
-  if (wasSensitivePathPark) {
-    await gh.comment(
-      input.issue,
-      await sensitivePathAdoptAudit(cwd, adoptBranch, guidance),
-    );
-  }
 
   const silent = new Writable({
     write(_chunk, _encoding, callback) {
