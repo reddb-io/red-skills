@@ -48,7 +48,7 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
-- **Operating the castle itself** -> the `dev:afk` MCP, not a shell command.
+- **Operating the castle itself** -> the `castle` MCP, not a shell command.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
   interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
@@ -101,7 +101,7 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
-`dev:afk` MCP (the canonical castle interface) ->
+`castle` MCP (the canonical castle interface) ->
 `plugins/dev/skills/engineering/afk/MCP.md`.
 
 Troubleshooting references registered by owner:
@@ -142,7 +142,7 @@ through `/memory:view`, `memory docs reference-graph`, and
   Merge, split, and supersede-a-live-decision never apply in-session — they become
   supersede-and-replace Spec work items for `/to-tickets` + `/afk`.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
-  `runner_detect` on the `dev:afk` MCP answer which backend a host resolves to.
+  `runner_detect` on the `castle` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and

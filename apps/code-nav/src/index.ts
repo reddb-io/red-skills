@@ -51,8 +51,8 @@ function loc(uri: string, range: { start: { line: number; character: number } })
   }`;
 }
 
-const buildInfo = readBuildInfo("code-nav");
-const server = new McpServer({ name: "code-nav", version: buildInfo.version });
+const buildInfo = readBuildInfo("navigator");
+const server = new McpServer({ name: "navigator", version: buildInfo.version });
 
 const posShape = {
   file: z.string().describe("Workspace-relative path to the source file."),
@@ -197,7 +197,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `code-nav MCP ready (root=${ROOT}, languages=${Object.keys(servers).join(",")})\n`,
+    `navigator MCP ready (root=${ROOT}, languages=${Object.keys(servers).join(",")})\n`,
   );
 }
 
@@ -205,7 +205,7 @@ if (process.argv[2] === "--version" || process.argv[2] === "-v" || process.argv[
   process.stdout.write(process.argv.includes("--json") ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`);
 } else {
   main().catch((err) => {
-    process.stderr.write(`code-nav fatal: ${String(err)}\n`);
+    process.stderr.write(`navigator fatal: ${String(err)}\n`);
     process.exit(1);
   });
 }
