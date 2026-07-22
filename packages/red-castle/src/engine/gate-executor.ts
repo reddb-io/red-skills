@@ -7,7 +7,19 @@ import {
   type FeedbackScript,
 } from "./gate-constants.js";
 import type { GateFinding, GateSink, GateSinkOutcome } from "./gate-sink.js";
-import { computeValidationScope, scopesForValidationScope, type PackageLayout, type ValidationScope, type WorkspaceGraph } from "./validation-cone.js";
+import {
+  computeValidationScope,
+  scopesForValidationScope,
+  type PackageLayout,
+  type ValidationScope,
+  type WorkspaceGraph,
+} from "./validation-cone.js";
+import {
+  evaluateHostGateAdmission,
+  type GateWeightClass,
+  type HostCapabilityProfile,
+  type HostGateAdmission,
+} from "./host-capability-profile.js";
 
 export type ValidationStatus = "passed" | "failed" | "skipped";
 
@@ -57,6 +69,10 @@ export interface RunCastleGateInput {
   applyMechanical: (finding: GateFinding) => Promise<void>;
   now: () => number;
   backpressureTimeoutMs?: number;
+  /** This machine's durable capability declaration. Absent keeps legacy permissive routing. */
+  hostProfile?: HostCapabilityProfile;
+  /** Explicit gate weight when the caller has already classified the run. */
+  gateWeight?: GateWeightClass;
 }
 
 export interface CastleGateResult {
@@ -66,10 +82,18 @@ export interface CastleGateResult {
   sidecar: string[];
   sinkOutcomes: GateSinkOutcome[];
   mechanicalApplied: number;
+  admission: HostGateAdmission;
+}
+
+function gateWeightForScope(scope: ValidationScope): GateWeightClass {
+  if (scope.type === "whole-workspace") return "full-workspace";
+  return scope.packages.length > 1 ? "heavy-cone" : "light-cone";
 }
 
 export function classifyFinding(finding: GateFinding): "mechanical" | "intent" {
-  return (MECHANICAL_KINDS as readonly string[]).includes(finding.kind) ? "mechanical" : "intent";
+  return (MECHANICAL_KINDS as readonly string[]).includes(finding.kind)
+    ? "mechanical"
+    : "intent";
 }
 
 function scopeLabel(scope: string): string {
@@ -100,14 +124,21 @@ function validationRecord(input: {
     name: input.name,
     status: input.status,
   };
-  if (input.command !== undefined && input.command !== "") record.command = input.command;
-  if (input.exitCode !== undefined && Number.isFinite(input.exitCode)) record.exitCode = Math.trunc(input.exitCode);
+  if (input.command !== undefined && input.command !== "")
+    record.command = input.command;
+  if (input.exitCode !== undefined && Number.isFinite(input.exitCode))
+    record.exitCode = Math.trunc(input.exitCode);
   if (input.durationMs !== undefined) record.durationMs = input.durationMs;
-  if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
+  if (input.summary !== undefined && input.summary !== "")
+    record.summary = input.summary;
   return record;
 }
 
-function pushCheck(checks: ValidationCheck[], sidecar: string[], check: ValidationCheck): void {
+function pushCheck(
+  checks: ValidationCheck[],
+  sidecar: string[],
+  check: ValidationCheck,
+): void {
   checks.push(check);
   sidecar.push(JSON.stringify(check.record));
 }
@@ -125,7 +156,11 @@ async function runFeedbackChecks(
       pushCheck(checks, sidecar, {
         name,
         status: "skipped",
-        record: validationRecord({ name, status: "skipped", summary: "no package.json" }),
+        record: validationRecord({
+          name,
+          status: "skipped",
+          summary: "no package.json",
+        }),
       });
       continue;
     }
@@ -137,7 +172,11 @@ async function runFeedbackChecks(
         pushCheck(checks, sidecar, {
           name,
           status: "skipped",
-          record: validationRecord({ name, status: "skipped", summary: "script missing" }),
+          record: validationRecord({
+            name,
+            status: "skipped",
+            summary: "script missing",
+          }),
         });
         continue;
       }
@@ -172,35 +211,70 @@ async function runBackpressureChecks(
   sidecar: string[],
 ): Promise<boolean> {
   let ok = true;
-  const timeoutMs = input.backpressureTimeoutMs ?? DEFAULT_BACKPRESSURE_TIMEOUT_MS;
+  const timeoutMs =
+    input.backpressureTimeoutMs ?? DEFAULT_BACKPRESSURE_TIMEOUT_MS;
   for (const raw of input.backpressureCommands ?? []) {
     const command = raw.trim();
     if (command === "") continue;
     const name = `backpressure:${command}`;
     const start = input.now();
-    const result = await input.backpressureExec({ command, cwd: input.worktree, timeoutMs });
+    const result = await input.backpressureExec({
+      command,
+      cwd: input.worktree,
+      timeoutMs,
+    });
     const durationMs = input.now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") ok = false;
-    const summary = result.code === KILLED_EXIT_CODE
-      ? `command timed out after ${timeoutMs}ms`
-      : outputSummary(status, `${result.stdout}${result.stderr}`);
+    const summary =
+      result.code === KILLED_EXIT_CODE
+        ? `command timed out after ${timeoutMs}ms`
+        : outputSummary(status, `${result.stdout}${result.stderr}`);
     pushCheck(checks, sidecar, {
       name,
       status,
-      record: validationRecord({ name, status, command, exitCode: result.code, durationMs, summary }),
+      record: validationRecord({
+        name,
+        status,
+        command,
+        exitCode: result.code,
+        durationMs,
+        summary,
+      }),
     });
   }
   return ok;
 }
 
-export async function runCastleGate(input: RunCastleGateInput): Promise<CastleGateResult> {
-  const validationScope = computeValidationScope(input.changedFiles, input.layout, input.graph);
+export async function runCastleGate(
+  input: RunCastleGateInput,
+): Promise<CastleGateResult> {
+  const validationScope = computeValidationScope(
+    input.changedFiles,
+    input.layout,
+    input.graph,
+  );
+  const admission = evaluateHostGateAdmission(
+    input.hostProfile,
+    input.gateWeight ?? gateWeightForScope(validationScope),
+  );
   const checks: ValidationCheck[] = [];
   const sidecar: string[] = [];
   const sinkOutcomes: GateSinkOutcome[] = [];
   let mechanicalApplied = 0;
   let ok = true;
+
+  if (!admission.admitted) {
+    return {
+      ok: false,
+      validationScope,
+      checks,
+      sidecar,
+      sinkOutcomes,
+      mechanicalApplied,
+      admission,
+    };
+  }
 
   for (const finding of input.findings ?? []) {
     if (classifyFinding(finding) === "mechanical") {
@@ -213,12 +287,25 @@ export async function runCastleGate(input: RunCastleGateInput): Promise<CastleGa
     }
   }
 
-  const feedbackOk = await runFeedbackChecks(input, scopesForValidationScope(validationScope), checks, sidecar);
+  const feedbackOk = await runFeedbackChecks(
+    input,
+    scopesForValidationScope(validationScope),
+    checks,
+    sidecar,
+  );
   ok = ok && feedbackOk;
 
   if (feedbackOk) {
-    ok = ok && await runBackpressureChecks(input, checks, sidecar);
+    ok = ok && (await runBackpressureChecks(input, checks, sidecar));
   }
 
-  return { ok, validationScope, checks, sidecar, sinkOutcomes, mechanicalApplied };
+  return {
+    ok,
+    validationScope,
+    checks,
+    sidecar,
+    sinkOutcomes,
+    mechanicalApplied,
+    admission,
+  };
 }
