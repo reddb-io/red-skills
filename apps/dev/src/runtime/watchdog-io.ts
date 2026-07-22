@@ -12,7 +12,6 @@ import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
-import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
@@ -160,15 +159,21 @@ export function buildWatchdogIO(
       await rm(stopFile, { force: true });
     },
 
-    // Reconcile stranded claims: drop every claim-lock dir whose owning worker
-    // pid is dead, so no issue stays claimed (and unre-grabbable) across the
-    // restart. listStaleClaimDirs already gates on liveness, so a claim a still-
-    // live orphaned worker holds is left untouched. The relaunched fleet's
-    // worker boot finishes the gh label rotation (the trip-sweep / orphan path).
+    // Preserve stale claim evidence for the replacement supervisor's boot
+    // sweep. That sweep rotates GitHub `running` back to `ready-for-agent`
+    // before deleting the local claim; deleting here would lose the issue id
+    // and strand the remote label forever.
     reconcile: async () => {
-      const stale = await listStaleClaimDirs(paths.tmpDir).catch(() => []);
-      for (const dir of stale) {
-        await removeDir(dir.path).catch(() => {});
+      // Deliberately empty: supervisor boot owns full local + GitHub reconcile.
+    },
+
+    isRecoveryPending: async () => fileExists(paths.supervisorRecoveryPath),
+
+    setRecoveryPending: async (pending) => {
+      if (pending) {
+        await writeFile(paths.supervisorRecoveryPath, "quiescent-relaunch\n", "utf8");
+      } else {
+        await rm(paths.supervisorRecoveryPath, { force: true });
       }
     },
 
