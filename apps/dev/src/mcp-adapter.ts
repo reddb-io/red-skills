@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
@@ -903,7 +903,28 @@ async function laneLogs(root: string, input: LogsInput) {
 }
 
 async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
-  const records = await readAllWorkerStates(afkPaths(root).tmpDir);
+  const paths = createEnginePaths(join(root, ".red"));
+  const [records, workerDirs] = await Promise.all([
+    readAllWorkerStates(afkPaths(root).tmpDir),
+    readdir(paths.workersRoot, { withFileTypes: true }).catch(() => []),
+  ]);
+  const alerts = new Map<string, { type: string; at: string; message: string }>();
+  await Promise.all(workerDirs.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const lane = await readCastleLaneRecords(castleLanePath(paths, "worker", entry.name));
+    const latest = [...lane].reverse().find((record) => record.kind === "worker.session-error");
+    const payload = latest?.payload;
+    if (
+      latest && payload &&
+      typeof payload.type === "string" &&
+      typeof payload.message === "string"
+    ) {
+      alerts.set(entry.name, {
+        type: payload.type,
+        at: typeof payload.at === "string" ? payload.at : latest.at,
+        message: payload.message,
+      });
+    }
+  }));
   const all = records.map(({ state, ...record }) => ({
     worker: {
       id: state.worker_id,
@@ -941,8 +962,57 @@ async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
     renderable_live: record.renderableLive,
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
+    alert: alerts.get(state.worker_id),
   }));
-  return opts.live_only !== false ? all.filter((r) => r.live === true) : all;
+  const represented = new Set(all.map((record) => record.worker.id));
+  for (const [workerId, alert] of alerts) {
+    if (represented.has(workerId)) continue;
+    all.push({
+      worker: {
+        id: workerId,
+        pid: 0,
+        runner: "",
+        origin: "",
+        started_at: alert.at,
+        done: 0,
+        total: 0,
+        blocked: 0,
+        failed: 1,
+        current: {
+          number: "",
+          runner: "",
+          retries: 0,
+          phase: "blocked",
+          iteration: "",
+          activity: "session-error",
+          loc_added: 0,
+          loc_removed: 0,
+          last_commit_at: "",
+          tools_called_count: 0,
+          text_chunk_count: 0,
+          reasoning_events: 0,
+          reasoning_tokens: 0,
+          last_event_at: alert.at,
+          waiting_count: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+      },
+      live: false,
+      active: false,
+      renderable_live: false,
+      liveness: "dead",
+      liveness_verdict: {
+        status: "stalled",
+        reason: "session-error",
+        laneFresh: false,
+        crossCheckArmed: false,
+      },
+      alert,
+    });
+  }
+  return opts.live_only !== false ? all.filter((r) => r.live === true || r.alert !== undefined) : all;
 }
 
 function projectFields(
