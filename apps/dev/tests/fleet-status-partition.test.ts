@@ -1,0 +1,144 @@
+/**
+ * Pins the multi-fleet worker partition introduced by #2345.
+ *
+ * Two named fleets ("alpha" and "beta") each own one live worker, stamped with
+ * their fleet via `supervisor_id` in the castle state snapshot.  Each
+ * `fleet_status` call must report only its own worker in `live_workers` and
+ * place the other fleet's worker in `unattributed_workers`.
+ */
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  castleStateSnapshotPath,
+  createCastleLaneWriters,
+  createEnginePaths,
+  writeCastleStateSnapshot,
+} from "@reddb-io/red-castle/engine";
+import { afterEach, describe, expect, it } from "vitest";
+import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
+import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
+
+// Snapshot timestamps are fixed; liveness records use real wall-clock time so
+// the 180-second idle window in readCastleMonitorWorkers sees them as fresh.
+const SNAPSHOT_ISO = "2026-07-21T12:00:00.000Z";
+
+function workerSnapshot(
+  id: string,
+  issue: number,
+  pid: number,
+  fleetName: string,
+) {
+  return {
+    kind: "worker" as const,
+    id,
+    worker_id: id,
+    version: 1,
+    updated_at: SNAPSHOT_ISO,
+    started_at: SNAPSHOT_ISO,
+    runner: "claude",
+    pid,
+    supervisor_id: fleetName,
+    current: {
+      origin: "afk",
+      number: issue,
+      title: `Issue ${issue}`,
+      activity: "implementing",
+      phase: "implementing",
+    },
+    queue: [issue],
+    completed: [],
+    envelope: { posted: false },
+  };
+}
+
+describe("fleet_status worker partition (#2345)", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })));
+    roots.length = 0;
+  });
+
+  it("partitions stamped workers to their owning fleet", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fleet-partition-"));
+    roots.push(root);
+
+    const enginePaths = createEnginePaths(join(root, ".red"));
+    // Liveness records use real wall-clock time so the 180-second idle window in
+    // readCastleMonitorWorkers sees them as fresh (no fixed clock injected).
+    const lanes = createCastleLaneWriters(enginePaths);
+
+    // Write castle state snapshots — each stamped with their owning fleet.
+    await writeCastleStateSnapshot(
+      castleStateSnapshotPath(enginePaths, "worker", "w_alpha"),
+      workerSnapshot("w_alpha", 100, 1001, "alpha"),
+    );
+    await writeCastleStateSnapshot(
+      castleStateSnapshotPath(enginePaths, "worker", "w_beta"),
+      workerSnapshot("w_beta", 200, 2001, "beta"),
+    );
+
+    // Write recent liveness lane records so both workers appear live to the monitor.
+    await lanes.liveness("w_alpha").append({
+      kind: "worker.heartbeat",
+      worker_id: "w_alpha",
+      issue: 100,
+      payload: {},
+    });
+    await lanes.liveness("w_beta").append({
+      kind: "worker.heartbeat",
+      worker_id: "w_beta",
+      issue: 200,
+      payload: {},
+    });
+
+    // Write minimal fleet-state files so readFleetState doesn't return null.
+    // The slot_pids fallback isn't exercised here (all workers have stamps),
+    // but the epoch field prevents parseFleetState from returning null.
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const nowIso = new Date().toISOString();
+    const fleetState = encodeDevSnapshotToon({
+      ts: nowIso,
+      epoch: nowEpoch,
+      runner: "claude",
+      ready_for_agent: 0,
+      slots: { busy: 1, free: 0, total: 1, parked: 0 },
+      spawns_this_tick: 1,
+      churn: { deaths: 0, respawns: 0, window_s: 300 },
+    });
+
+    const alphaSupervisorDir = join(root, ".red", "tmp", "supervisors", "alpha");
+    const betaSupervisorDir = join(root, ".red", "tmp", "supervisors", "beta");
+    await mkdir(alphaSupervisorDir, { recursive: true });
+    await mkdir(betaSupervisorDir, { recursive: true });
+    await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState);
+    await writeFile(join(betaSupervisorDir, "state.toon"), fleetState);
+
+    const mcp = createDevAfkMcpDependencies(root);
+
+    // fleetStatus returns Promise<unknown> — cast through any to access fields.
+    const alphaStatus = (await mcp.fleetStatus({ name: "alpha" })) as {
+      live_workers: Array<{ id: string }>;
+      unattributed_workers: Array<{ id: string }>;
+    };
+    const betaStatus = (await mcp.fleetStatus({ name: "beta" })) as {
+      live_workers: Array<{ id: string }>;
+      unattributed_workers: Array<{ id: string }>;
+    };
+
+    // Alpha fleet: sees its own worker, not beta's.
+    const alphaLive = alphaStatus.live_workers.map((w) => w.id);
+    const alphaUnattributed = alphaStatus.unattributed_workers.map((w) => w.id);
+    expect(alphaLive).toContain("w_alpha");
+    expect(alphaLive).not.toContain("w_beta");
+    expect(alphaUnattributed).not.toContain("w_alpha");
+
+    // Beta fleet: sees its own worker, not alpha's.
+    const betaLive = betaStatus.live_workers.map((w) => w.id);
+    const betaUnattributed = betaStatus.unattributed_workers.map((w) => w.id);
+    expect(betaLive).toContain("w_beta");
+    expect(betaLive).not.toContain("w_alpha");
+    expect(betaUnattributed).not.toContain("w_beta");
+  });
+});

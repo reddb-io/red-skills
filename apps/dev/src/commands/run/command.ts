@@ -1,4 +1,5 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
+import { FLEET_NAME_ENV } from "../../core/fleet-name.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
   runModeForCandidate,
@@ -276,6 +277,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
+    fleetName: process.env[FLEET_NAME_ENV] || undefined,
   });
 
   // --request/-r special block, threaded into the handoff the agent reads.
