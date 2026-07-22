@@ -1,4 +1,5 @@
 export const GITHUB_GRAPHQL_BATCH_SIZE = 100;
+export const GITHUB_REST_CONCURRENCY = 4;
 
 export type GitHubRepositoryObjectKind = "issue" | "pullRequest";
 export type GitHubRepositoryBatchField =
@@ -33,6 +34,24 @@ export interface AliasedRepositoryRow {
   number: number;
   value?: Record<string, unknown>;
   error?: string;
+}
+
+export async function boundedMap<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  fn: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), values.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (next < values.length) {
+      const index = next++;
+      results[index] = await fn(values[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 const FIELD_SELECTIONS: Record<GitHubRepositoryBatchField, string> = {
