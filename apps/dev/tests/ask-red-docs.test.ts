@@ -57,6 +57,8 @@ describe("ask-red router docs contract", () => {
     expect(askRedSkill).toContain("gh >= 2.47.0");
     expect(askRedSkill).toContain("pinned `tq`");
     expect(askRedSkill).toContain("/red-doctor --fix");
+  });
+
   it("routes executable ticket readiness through triage and the read-only doctor check", async () => {
     const askRedSkill = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 
