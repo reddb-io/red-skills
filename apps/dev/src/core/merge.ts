@@ -124,6 +124,16 @@ export interface PreMergeRebaseInput {
   resolveAgent?: (repo: string) => Promise<boolean>;
   /** Small attempt budget for `resolveAgent`; default 2. */
   maxAgentResolveAttempts?: number;
+  /**
+   * Squash the branch's own commits into one before rebasing when the branch is
+   * more than this many commits ahead of its fork point (issue #2481). Replaying
+   * dozens of continuous-push micro-commits one at a time onto a moved base
+   * multiplies every conflict by the number of commits touching that file; the
+   * landing value is the NET diff, so the rebase presents one consolidated
+   * conflict set instead. Default 1 (any multi-commit branch squashes);
+   * `Infinity` disables.
+   */
+  squashAheadThreshold?: number;
 }
 
 /** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
@@ -156,6 +166,40 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
   const maxAgentResolveAttempts = Math.max(0, input.maxAgentResolveAttempts ?? 2);
   const baseRef = `${remote}/${base}`;
 
+  // Squash the branch's own micro-history down to one commit at its fork point
+  // (issue #2481). Field pathology: a five-worker retry chain accumulated 65
+  // continuous-push commits on an ever-staler base; the landing rebase then
+  // replayed them ONE AT A TIME onto fresh trunk, re-hitting the same conflicts
+  // file by file for 40+ minutes. The squash runs in the ISOLATED rebase
+  // worktree (never the primary) and the pre-squash history survives on the
+  // pushed remote branch until the force-push publishes the squashed result.
+  // Best-effort: any failure leaves the branch unsquashed and the rebase
+  // proceeds exactly as before.
+  const squashThreshold = input.squashAheadThreshold ?? 1;
+  const squashOwnHistory = async (): Promise<void> => {
+    const fork = await exec(["git", "-C", repo, "merge-base", baseRef, "HEAD"]);
+    const forkSha = fork.stdout.trim();
+    if (fork.code !== 0 || forkSha.length === 0) return;
+    const count = await exec(["git", "-C", repo, "rev-list", "--count", `${forkSha}..HEAD`]);
+    const ahead = Number.parseInt(count.stdout.trim(), 10);
+    if (count.code !== 0 || !Number.isFinite(ahead) || ahead <= squashThreshold) return;
+    const subjects = await exec([
+      "git", "-C", repo, "log", "--reverse", "--format=%s", `${forkSha}..HEAD`,
+    ]);
+    const body = subjects.code === 0
+      ? subjects.stdout.trim().split("\n").slice(0, 50).map((s) => `- ${s}`).join("\n")
+      : "";
+    const reset = await exec(["git", "-C", repo, "reset", "--soft", forkSha]);
+    if (reset.code !== 0) return;
+    const message = `land: squash ${ahead} attempt commits from ${branch}${body ? `\n\n${body}` : ""}`;
+    const commit = await exec(["git", "-C", repo, "commit", "-m", message, "--quiet"]);
+    if (commit.code !== 0) {
+      // A failed commit after a soft reset would leave staged-but-uncommitted
+      // work; restore the original tip so the plain rebase still runs.
+      await exec(["git", "-C", repo, "reset", "--soft", "HEAD@{1}"]);
+    }
+  };
+
   // Fetch the base tip and rebase the worker branch onto it. Reused by the
   // push-retry loop so a racing base advance is re-integrated before each retry.
   const rebaseOntoBase = async (): Promise<PreMergeRebaseResult & { alreadyIntegrated?: boolean }> => {
@@ -163,6 +207,7 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     if (fetch.code !== 0) return { ok: false, reason: "fetch-failed" };
     const alreadyIntegrated = await exec(["git", "-C", repo, "merge-base", "--is-ancestor", baseRef, "HEAD"]);
     if (alreadyIntegrated.code === 0) return { ok: true, alreadyIntegrated: true };
+    await squashOwnHistory();
     const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
     if (rebase.code !== 0) {
       // #1095: give the opt-in mechanical resolver a chance to auto-resolve

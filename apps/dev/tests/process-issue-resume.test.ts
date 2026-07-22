@@ -103,7 +103,8 @@ describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
     const handoff = trace.handoffs[0]?.content ?? "";
     expect(handoff).toContain("<resume-from-branch>");
     expect(handoff).toContain(PRIOR_BRANCH);
-    expect(handoff).toContain("continue from where it left off");
+    expect(handoff).toContain("Continue from where it left off");
+    expect(handoff).toContain("FIRST, before anything else, sync the branch");
   });
 
   it("does NOT call prepareFreshWorkerBranch when a prior branch exists (even non-gate-green)", async () => {

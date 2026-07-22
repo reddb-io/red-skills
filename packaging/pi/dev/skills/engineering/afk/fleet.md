@@ -87,7 +87,7 @@ not part of the current fleet contract.
    That remains the model for truly conflicting second supervisors, but `fleet <N>` is now the supported live resize/switch surface. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
 3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
-   RED_AFK_RUNNER=<runner> red-skills-dev fleet <N> [--request <text>]
+   RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills@<version> red-skills-dev fleet <N> [--request <text>]
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/supervisors/default/afk-supervisor.pid` to appear and contain a live pinned PID, then arms the repo-scoped self-heal watchdog and prints both PIDs plus the target. Failure to arm either process fails the launch; supervisor failure reports the tail of `.red/tmp/supervisors/default/supervisor.log.toonl`. Capture the reported supervisor PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**

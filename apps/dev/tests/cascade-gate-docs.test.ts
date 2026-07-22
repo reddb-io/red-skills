@@ -51,6 +51,16 @@ describe("cascade gate docs contract — /to-spec", () => {
     expect(gateIndex).toBeGreaterThan(0);
     expect(publishIndex).toBeGreaterThan(gateIndex);
   });
+
+  it("emits machine-checkable acceptance criteria for downstream tickets", async () => {
+    const skill = await readSkill(
+      "plugins/dev/skills/engineering/to-spec/SKILL.md"
+    );
+
+    expect(skill).toContain("## Acceptance Criteria");
+    expect(skill).toContain("machine-checkable");
+    expect(skill).toContain("test, command, fixture, or pinned observable behavior");
+  });
 });
 
 describe("cascade gate docs contract — /to-tickets", () => {
@@ -94,5 +104,16 @@ describe("cascade gate docs contract — /to-tickets", () => {
     const publishIndex = skill.indexOf("Publish in dependency order");
     expect(gateIndex).toBeGreaterThan(0);
     expect(publishIndex).toBeGreaterThan(gateIndex);
+  });
+
+  it("uses issue-template acceptance criteria that pass executable lint", async () => {
+    const skill = await readSkill(
+      "plugins/dev/skills/engineering/to-tickets/SKILL.md"
+    );
+
+    expect(skill).toContain("Running `<focused command>` passes");
+    expect(skill).toContain("The failing fixture or reproduction demonstrates");
+    expect(skill).toContain("The pinned observable behavior");
+    expect(skill).not.toContain("- [ ] Criterion 1");
   });
 });

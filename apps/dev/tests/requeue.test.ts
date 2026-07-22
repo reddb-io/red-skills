@@ -23,6 +23,13 @@ const decisionBlocker = {
   next: "Human must decide before work can proceed.",
 };
 
+const infraBlocker = {
+  status: "blocked" as const,
+  kind: "infra",
+  summary: "The runner could not create its worktree.",
+  next: "Retry after the transient infrastructure fault clears.",
+};
+
 const parkedBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
   validationBlocker,
 )}\n\n## Acceptance\n- [ ] Done\n`;
@@ -33,6 +40,10 @@ const specBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCur
 
 const decisionBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
   decisionBlocker,
+)}\n`;
+
+const infraBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
+  infraBlocker,
 )}\n`;
 
 describe("requeue — label flip invariant", () => {
@@ -53,7 +64,7 @@ describe("requeue — label flip invariant", () => {
   });
 });
 
-describe("requeue — supported kinds (validation, spec)", () => {
+describe("requeue — supported kinds (validation, spec, infra)", () => {
   it("clears the active blocker in the rewritten body instead of requiring manual editing", () => {
     const plan = planRequeue({
       body: parkedBody,
@@ -117,6 +128,19 @@ describe("requeue — supported kinds (validation, spec)", () => {
     expect(plan.requeueable).toBe(true);
     expect(plan.refuseForHitl).toBe(false);
     expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:spec"]));
+    expect(plan.addLabels).toEqual(["ready-for-agent"]);
+  });
+
+  it("requeues a transient blocked:infra park through the standard tool", () => {
+    const plan = planRequeue({
+      body: infraBody,
+      labels: ["ready-for-human", "blocked:infra"],
+      guidance: "Runner recovered; retry the worktree setup.",
+    });
+    expect(plan.requeueable).toBe(true);
+    expect(plan.refuseForHitl).toBe(false);
+    expect(plan.activeBlocker?.kind).toBe("infra");
+    expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:infra"]));
     expect(plan.addLabels).toEqual(["ready-for-agent"]);
   });
 });

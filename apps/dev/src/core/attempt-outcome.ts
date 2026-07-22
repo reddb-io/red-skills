@@ -25,6 +25,7 @@ import type { AttemptStatus } from "./envelope.js";
 import {
   LABEL_QUOTA,
   LABEL_RUNNER_TRANSIENT,
+  LABEL_HOST_CONFIG,
   LABEL_MERGE_CONFLICT,
   LABEL_CI,
   LABEL_SPEC,
@@ -87,6 +88,9 @@ export type AttemptOutcome =
   | "hook-aborted"
   | "exhausted"
   | "runner-transient"
+  // Permanent runner-host defect: a required interpreter or cwd is missing.
+  // No cooldown/fallback retry can repair host configuration.
+  | "host-config"
   | "stalled"
   // AFK runner improvement (#908): a per-attempt resource ceiling aborted the
   // attempt (token / cost / tool-call / waiting-window). Parked for a human —
@@ -139,6 +143,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_QUOTA;
     case "runner-transient":
       return LABEL_RUNNER_TRANSIENT;
+    case "host-config":
+      return LABEL_HOST_CONFIG;
     case "merge-conflict":
       return LABEL_MERGE_CONFLICT;
     case "ci-failed":
@@ -227,6 +233,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "hook-aborted":
     case "exhausted":
     case "runner-transient":
+    case "host-config":
     case "claim-lost":
     case "stalled":
     case "budget-exceeded":
@@ -297,6 +304,7 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     case "ci-failed":
     case "ci-pending":
     case "blocked":
+    case "host-config":
     case "feedback-failed":
     case "stalled":
     // #908: a budget abort is NOT auto-recoverable — re-running the inner agent
@@ -322,3 +330,6 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
       return null;
   }
 }
+
+/** sysexits(3) EX_CONFIG: permanent host configuration failure. */
+export const HOST_CONFIG_EXIT_CODE = 78;

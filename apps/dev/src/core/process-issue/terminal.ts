@@ -282,6 +282,13 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
         next: "Review the attempt log and decide whether to retry or revise the issue brief.",
       };
+    case "host-config":
+      return {
+        status: "blocked",
+        kind: "host-config",
+        summary: oneLine(sections.log ?? sections.notes, "Required runner host configuration is unavailable."),
+        next: "Install or restore the required shell/workspace on the host, then requeue this issue.",
+      };
     case "stalled":
       return {
         status: "blocked",
@@ -358,6 +365,7 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "decision",
   "trunk-diverged",
   "infra",
+  "host-config",
 ]);
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
   if (!existing) return false;
