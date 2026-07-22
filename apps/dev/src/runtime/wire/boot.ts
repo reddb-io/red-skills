@@ -124,8 +124,23 @@ export async function collectHostPrerequisiteProbeInput(
     (typeof HOST_PREREQUISITE_COMMANDS)[number],
     boolean
   >;
-  const bashVersion = commands.bash ? (await exec("bash", ["--version"])).stdout : undefined;
-  return { commands, bashVersion };
+  if (!commands.bash) return { commands };
+
+  try {
+    const result = await exec("bash", ["--version"]);
+    if (result.code === 0) return { commands, bashVersion: result.stdout };
+    return {
+      commands,
+      bashVersion: result.stdout,
+      bashVersionExitCode: result.code,
+      bashVersionError: result.stderr.trim() || undefined,
+    };
+  } catch (error) {
+    return {
+      commands,
+      bashVersionError: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function collectPrecheckFacts(
