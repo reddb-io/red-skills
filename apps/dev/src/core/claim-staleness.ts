@@ -11,10 +11,10 @@
 // held by a worker that died on another machine is released by ANY other
 // worker's sweep, no human hunting required.
 //
-// A live worker keeps its claim fresh by re-posting its claim marker on a
-// cadence (the substrate already orders by EARLIEST claim id and reads staleness
-// off the LATEST marker, so a refresh never improves the worker's queue position
-// but does reset its liveness clock). The staleness WINDOW is deliberately a
+// A live worker keeps its claim fresh by editing the timestamp on its existing
+// claim marker on a shared fleet cadence (the server-order id never changes, so
+// a refresh cannot improve queue position and a later concede stays authoritative).
+// The staleness WINDOW is deliberately a
 // generous multiple of that refresh cadence — `cadence × (tolerance + 1)` — so a
 // live-but-slow worker that merely missed a few refreshes is NEVER robbed; only a
 // worker silent past the whole window is reclaimed.
@@ -72,6 +72,7 @@ export const DEFAULT_CLAIM_REAPER: ClaimReaperConfig = {
 };
 
 export type ClaimFreshness = "fresh" | "stale";
+export type ClaimHolderVerdict = "live" | "evictable";
 
 /**
  * The staleness window in seconds — the maximum age a claim record may reach
@@ -116,6 +117,27 @@ export function classifyClaim(
   if ("claimGraceS" in config && ageS <= config.claimGraceS) return "fresh";
   if (ageS <= staleWindowS(config)) return "fresh";
   return "stale";
+}
+
+/**
+ * Resolve holder liveness without applying remote TTL semantics to local
+ * workers. Same-host process evidence is authoritative: a live pid keeps the
+ * claim and a dead pid makes it evictable regardless of marker age. Only a
+ * remote holder falls back to the shared heartbeat TTL.
+ */
+export function claimHolderVerdict(
+  record: ClaimRecord,
+  localHost: string,
+  localProcessAlive: (worker: string) => boolean,
+  nowS: number,
+  config: ClaimStalenessConfig | ClaimReaperConfig = DEFAULT_CLAIM_REAPER,
+): ClaimHolderVerdict {
+  const separator = record.worker.indexOf(":");
+  const holderHost = separator < 0 ? "" : record.worker.slice(0, separator);
+  if (holderHost === localHost) {
+    return localProcessAlive(record.worker) ? "live" : "evictable";
+  }
+  return classifyClaim(record, nowS, config) === "stale" ? "evictable" : "live";
 }
 
 /**
@@ -229,6 +251,9 @@ export interface ClaimedIssue {
   attemptBranchCommitS?: number;
   /** Claim owners proven dead on this host by their per-worker `worker.pid`. */
   deadOwners?: readonly string[];
+  /** Claim owners proven live on this host by their per-worker `worker.pid`.
+   * Local process evidence overrides heartbeat age. */
+  liveOwners?: readonly string[];
 }
 
 /** A planned release: the issue to return to the executable pool + the stale
@@ -289,7 +314,9 @@ export function planStaleClaimSweep(
   const releases: StaleClaimRelease[] = [];
   for (const c of claimed) {
     const deadOwners = new Set(c.deadOwners ?? []);
-    const state = classifyIssueClaims(c.records, (record) => deadOwners.has(record.worker) || isStale(record));
+    const liveOwners = new Set(c.liveOwners ?? []);
+    const state = classifyIssueClaims(c.records, (record) =>
+      liveOwners.has(record.worker) ? false : deadOwners.has(record.worker) || isStale(record));
     if (state.liveOwner === null && state.staleOwners.length > 0) {
       const hasDeadOwner = state.staleOwners.some((owner) => deadOwners.has(owner));
       if (!hasDeadOwner && isRecentAttemptCommit(c.attemptBranchCommitS, nowS, config.recentCommitProtectionS)) continue;
