@@ -76,7 +76,9 @@ export interface SupervisorFs {
   /**
    * Red-castle evaluator verdict for the slot's current attempt (ADR 0083 §3).
    * The `laneIdleMs` parameter sets the idle threshold so the supervisor can
-   * use its configured stall window rather than the display threshold.
+   * use its configured stall window rather than the display threshold, and
+   * `issueWallClockMaxMs` carries the activity-independent per-issue ceiling
+   * (#2286) so an attempt that never converges cannot hold a slot forever.
    * Returns null when no iter dir is found (worker between iterations or died
    * pre-claim). Replaces the old `agentLaneMtime` firehose-mtime check.
    */
@@ -84,6 +86,7 @@ export interface SupervisorFs {
     slot: number,
     laneIdleMs: number,
     laneHardIdleMs?: number,
+    issueWallClockMaxMs?: number,
   ): LivenessVerdict | null;
   /** Resolve the slot's current iteration dir + the state it carries, or null
    * when the worker is between iterations / died pre-claim. Mirrors
