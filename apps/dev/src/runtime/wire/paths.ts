@@ -50,6 +50,8 @@ export interface AfkPaths {
   supervisorWatchdogPidStartPath: string;
   /** Atomic single-owner acquisition lane for watchdog startup. */
   supervisorWatchdogLockPath: string;
+  /** Durable marker for an interrupted quiescent-supervisor replacement. */
+  supervisorRecoveryPath: string;
   /** Supervisor stop sentinel (tmp supervisor lane). */
   supervisorStopPath: string;
   /** Supervisor human-readable view source (structured TOONL firehose). */
@@ -115,6 +117,7 @@ export function afkPaths(root: string, fleetName?: string): AfkPaths {
     supervisorWatchdogPidPath: join(supervisorRuntime, "afk-supervisor-watchdog.pid"),
     supervisorWatchdogPidStartPath: join(supervisorRuntime, "afk-supervisor-watchdog.pid.start"),
     supervisorWatchdogLockPath: join(supervisorRuntime, "afk-supervisor-watchdog.lock"),
+    supervisorRecoveryPath: join(supervisorRuntime, "afk-supervisor.recovering"),
     supervisorStopPath: join(supervisorRuntime, "afk-supervisor.stop"),
     supervisorLogPath: join(supervisorRuntime, "supervisor.log.toonl"),
     supervisorResizePath: join(supervisorRuntime, "resize.toon"),
