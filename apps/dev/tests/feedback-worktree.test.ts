@@ -212,6 +212,47 @@ describe("makeFeedbackWorktree install (#458)", () => {
     expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
   });
 
+  it("self-heals a stale worktree on 'already exists' — removes and recreates (#2379)", async () => {
+    // Model: first worktreeAdd fails with "already exists"; the manager removes
+    // the stale worktree and retries; the retry succeeds.
+    const calls: Array<{ op: string; dest: string }> = [];
+    let addAttempt = 0;
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async (_ctx, dest) => {
+        addAttempt += 1;
+        calls.push({ op: "add", dest });
+        if (addAttempt === 1) {
+          return { ok: false, stderr: "fatal: '/dest' already exists" };
+        }
+        return { ok: true, stderr: "" };
+      },
+      worktreeRemove: async (_ctx, dest) => {
+        calls.push({ op: "remove", dest });
+      },
+      pnpm: async (args, opts) => {
+        const isInstall = args[0] === "install";
+        calls.push({ op: isInstall ? "install" : "script", dest: opts.cwd ?? "" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      exec: async (_cmd, _args, opts) => {
+        calls.push({ op: "script", dest: opts.cwd ?? "" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+    // Self-heal succeeds: the gate runs normally.
+    expect(result.code).toBe(0);
+    // First add failed, then remove, then second add, then install, then script.
+    expect(calls.map((c) => c.op)).toEqual(["add", "remove", "add", "install", "script"]);
+    expect(addAttempt).toBe(2);
+  });
+
   it("surfaces the underlying git stderr on a failed worktree add (#2339)", async () => {
     const { io } = fakeIO(0, false, 0, { enabled: false });
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });

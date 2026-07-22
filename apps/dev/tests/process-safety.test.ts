@@ -166,10 +166,10 @@ describe("installProcessSafety — event log lines (via direct handler call)", (
   });
 
   it("records the last AFK step on catchable death receipts", () => {
-    markProcessSafetyStep("post-barrier:feedback-start");
+    markProcessSafetyStep("post-agent:feedback-start");
     handlers.sigHup();
     const line = log.find((l) => l.includes("event=SIGHUP"));
-    expect(line).toContain('last_step="post-barrier:feedback-start"');
+    expect(line).toContain('last_step="post-agent:feedback-start"');
   });
 
   it("exit handler records null exit code (process killed by signal)", () => {

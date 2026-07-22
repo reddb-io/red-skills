@@ -41,16 +41,16 @@ else
   fail "release workflow must push the bump commit via scripts/release-push-bump.sh"
 fi
 
-if grep -qF 'RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN || secrets.RELEASE_PAT }}' "$WORKFLOW"; then
+if grep -qF 'RELEASE_PAT: ${{ secrets.RELEASE_PAT }}' "$WORKFLOW"; then
   pass "release workflow passes the optional bypass-capable token"
 else
-  fail "release workflow must pass RED_RELEASE_TOKEN to the bump push"
+  fail "release workflow must pass RELEASE_PAT to the bump push"
 fi
 
-if grep -qF 'x-access-token:${RED_RELEASE_TOKEN}' "$HELPER"; then
-  pass "helper prefers RED_RELEASE_TOKEN credentials when the secret is set"
+if grep -qF 'x-access-token:${RELEASE_PAT}' "$HELPER"; then
+  pass "helper prefers RELEASE_PAT credentials when the secret is set"
 else
-  fail "helper must push with RED_RELEASE_TOKEN when it is available"
+  fail "helper must push with RELEASE_PAT when it is available"
 fi
 
 if grep -qF 'rebase --autostash' "$HELPER"; then

@@ -4,7 +4,11 @@ import {
   isLegacySlotLogName,
   planTmpJanitor,
   planWorkerDirJanitor,
+  parseFeedbackWorktreeWorkerSlug,
+  planOrphanFeedbackWorktreeSweep,
   type JanitorEntry,
+  type OrphanFeedbackEntry,
+  type OrphanFeedbackSweepPlan,
   type TmpJanitorPlan,
   type WorkerDirJanitorEntry,
 } from "../core/tmp-janitor.js";
@@ -15,6 +19,10 @@ export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 export interface TmpJanitorReport {
   plan: TmpJanitorPlan;
   staleWorkers: ReturnType<typeof planWorkerDirJanitor>;
+  /** Orphaned feedback worktrees whose owning worker is dead (or the shared
+   * baseline worktree when no workers are alive). Swept independently of the
+   * mtime TTL sweep so dead-owner entries age out immediately. */
+  orphanFeedback: OrphanFeedbackSweepPlan;
 }
 
 export interface TmpJanitorApplyResult {
@@ -22,6 +30,8 @@ export interface TmpJanitorApplyResult {
   staleWorkers: string[];
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
+  /** Orphaned feedback worktrees that were removed. */
+  orphanFeedback: string[];
 }
 
 export interface TmpJanitorRunResult extends TmpJanitorReport {
@@ -108,12 +118,63 @@ async function collectWorkerEntries(tmpDir: string, lookup: IssueStateLookup): P
   return out;
 }
 
+/**
+ * Build the live-worker PID index: a map from worker ID to liveness so the
+ * orphan feedback sweep can decide per-entry without re-reading PID files.
+ * Returns null when any worker is alive (signals that the shared baseline
+ * worktree is in use and must be spared).
+ */
+async function buildWorkerLivenessIndex(tmpDir: string): Promise<{ liveWorkers: Set<string>; anyAlive: boolean }> {
+  const liveWorkers = new Set<string>();
+  let anyAlive = false;
+  for (const workersRoot of allWorkersRoots(tmpDir)) {
+    for (const workerDir of await listNames(workersRoot)) {
+      const pidFile = join(workersRoot, workerDir, "worker.pid");
+      if (pidAlive(await readText(pidFile))) {
+        liveWorkers.add(workerDir);
+        anyAlive = true;
+      }
+    }
+  }
+  return { liveWorkers, anyAlive };
+}
+
+async function collectOrphanFeedbackEntries(tmpDir: string): Promise<{
+  entries: OrphanFeedbackEntry[];
+  anyWorkerAlive: boolean;
+}> {
+  const feedbackDir = join(tmpDir, "worktrees", "feedback");
+  const names = await listNames(feedbackDir);
+  const { liveWorkers, anyAlive } = await buildWorkerLivenessIndex(tmpDir);
+  const entries: OrphanFeedbackEntry[] = [];
+  for (const name of names) {
+    const path = join(feedbackDir, name);
+    let mtimeS = 0;
+    try {
+      const st = await stat(path);
+      mtimeS = Math.floor(st.mtimeMs / 1000);
+    } catch {
+      continue; // raced away
+    }
+    const workerSlug = parseFeedbackWorktreeWorkerSlug(name);
+    let ownerAlive: boolean | null;
+    if (workerSlug !== null) {
+      ownerAlive = liveWorkers.has(workerSlug);
+    } else {
+      // Non-afk entry (e.g. 'main'): liveness is inferred from anyAlive
+      ownerAlive = null;
+    }
+    entries.push({ path, basename: name, mtimeS, ownerAlive });
+  }
+  return { entries, anyWorkerAlive: anyAlive };
+}
+
 export async function collectTmpJanitorReport(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
 ): Promise<TmpJanitorReport> {
-  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers] =
+  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData] =
     await Promise.all([
       listNames(tmpDir),
       listEntries(tmpDir),
@@ -122,6 +183,7 @@ export async function collectTmpJanitorReport(
       listEntries(join(tmpDir, "diagnostics")),
       listEntries(join(tmpDir, "worktrees", "feedback")),
       collectWorkerEntries(tmpDir, lookup),
+      collectOrphanFeedbackEntries(tmpDir),
     ]);
   const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
 
@@ -136,12 +198,14 @@ export async function collectTmpJanitorReport(
       tmpRootNames,
     }),
     staleWorkers: planWorkerDirJanitor(workers),
+    orphanFeedback: planOrphanFeedbackWorktreeSweep(orphanFeedbackData.entries, orphanFeedbackData.anyWorkerAlive),
   };
 }
 
 export async function applyTmpJanitorReport(
   tmpDir: string,
   report: TmpJanitorReport,
+  options: { worktreePrune?: () => Promise<void> } = {},
 ): Promise<TmpJanitorApplyResult> {
   const expired = [
     ...report.plan.logs.reclaim,
@@ -155,6 +219,7 @@ export async function applyTmpJanitorReport(
     staleWorkers: [],
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
+    orphanFeedback: [],
   };
 
   for (const entry of expired) {
@@ -177,6 +242,17 @@ export async function applyTmpJanitorReport(
     result.unknownTmpRoots.push(path);
   }
 
+  for (const entry of report.orphanFeedback.reclaim) {
+    await rm(entry.path, { recursive: true, force: true });
+    result.orphanFeedback.push(entry.path);
+  }
+
+  // After removing orphaned feedback worktrees, ask git to prune its own
+  // internal registry so stale worktree entries do not accumulate there either.
+  if (result.orphanFeedback.length > 0 && options.worktreePrune) {
+    await options.worktreePrune().catch(() => {});
+  }
+
   return result;
 }
 
@@ -184,9 +260,9 @@ export async function runTmpJanitor(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
-  options: { fix?: boolean } = {},
+  options: { fix?: boolean; worktreePrune?: () => Promise<void> } = {},
 ): Promise<TmpJanitorRunResult> {
   const report = await collectTmpJanitorReport(tmpDir, nowS, lookup);
   if (!options.fix) return report;
-  return { ...report, applied: await applyTmpJanitorReport(tmpDir, report) };
+  return { ...report, applied: await applyTmpJanitorReport(tmpDir, report, options) };
 }

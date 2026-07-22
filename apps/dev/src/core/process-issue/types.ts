@@ -1,4 +1,5 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
+import type { BranchRef } from "../branch-cleanup.js";
 import {
   buildRefFromSlug,
   deleteRemote,
@@ -51,7 +52,6 @@ import {
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
-import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "../exit-barrier.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -174,6 +174,9 @@ export interface ProcessLookups {
   diffstat(branch: string, base: string): Promise<string>;
   branchPresent?(branch: string): Promise<boolean>;
   branchMerged?(branch: string, base: string): Promise<boolean>;
+  /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
+   * pushed attempt so re-claim can resume instead of rebuilding from scratch. */
+  discoverBranches?(): Promise<BranchRef[]>;
 }
 export function remoteTrackingBaseRef(remote: string, base: string): string {
   if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
@@ -308,9 +311,6 @@ export interface ProcessIssueDeps {
   recoveryEnv?: RecoveryEnv;
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
-  salvageUncommitted?(branch: string): Promise<number>;
-  exitBarrier?(branch: string): Promise<ExitReceipt>;
-  terminalExitBarrier?(branch: string): Promise<TerminalReceipt>;
   cascadeRebase?: CascadeRebasePort;
 }
 export interface CascadeRebasePort {
@@ -353,7 +353,6 @@ export interface ProcessIssueResult {
   locked?: boolean;
   mergeSha?: string;
   cleanupError?: string;
-  exitReceipt?: ExitReceipt;
   hooksFired: HookName[];
   envelopePosted?: boolean;
   preserved: boolean;

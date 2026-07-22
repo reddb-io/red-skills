@@ -1,4 +1,5 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
+import { FLEET_NAME_ENV } from "../../core/fleet-name.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
   runModeForCandidate,
@@ -18,7 +19,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import { passExitBarrier, passTerminalBarrier } from "../../core/exit-barrier.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,
@@ -277,6 +277,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
+    fleetName: process.env[FLEET_NAME_ENV] || undefined,
   });
 
   // --request/-r special block, threaded into the handoff the agent reads.

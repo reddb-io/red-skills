@@ -10,6 +10,7 @@ import type { GitExec, GitExecResult } from "../core/remote-branch.js";
 import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/merge.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import type { RemoteUrlFact } from "../core/operational-probes.js";
+import { withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./gh/quota.js";
 
 export const FLEET_TRUNK = "red-trunk";
 export const FLEET_TRUNK_REF = `refs/heads/${FLEET_TRUNK}`;
@@ -24,6 +25,15 @@ export interface GitContext {
    * through — can be driven without touching the OS. See exec.ts::ExecFn.
    */
   exec?: ExecFn;
+  /**
+   * When present, `gh`-headed commands routed through {@link mergeExec} retry
+   * on rate-limit responses (REST 403/429, GraphQL RATE_LIMITED) with a bounded
+   * wait instead of returning failure immediately. onWait emits 'quota-wait'
+   * activity so the wait is visible in worker vitals/lane records. After the
+   * cap, the failing response is returned so the caller can park with an
+   * explicit quota reason.
+   */
+  quotaBackoff?: GhQuotaBackoffOpts;
 }
 
 function opts(ctx: GitContext): ExecOptions {
@@ -509,6 +519,15 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
+/**
+ * Run `git worktree prune` to drop stale entries from git's internal worktree
+ * registry after orphaned worktree dirs have been removed from disk. Best-effort:
+ * never throws so a prune failure does not abort the janitor sweep.
+ */
+export async function worktreePrune(ctx: GitContext): Promise<void> {
+  await runGit(ctx, ["worktree", "prune"]);
+}
+
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
@@ -525,7 +544,12 @@ export function mergeExec(ctx: GitContext): MergeExec {
     // commands (git push / gh pr merge) the close path issues.
     const [head, ...rest] = args;
     const exec = ctx.exec ?? execTool;
-    const r = await exec(head ?? "git", rest, opts(ctx));
+    const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, opts(ctx));
+    // Apply quota backoff only to `gh`-headed commands: git commands do not
+    // make GitHub API calls and must never be silently delayed.
+    const r = (ctx.quotaBackoff && head === "gh")
+      ? await withGhQuotaBackoff(fn, ctx.quotaBackoff)
+      : await fn();
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 }
@@ -557,8 +581,8 @@ export async function checkedOutBranches(ctx: GitContext): Promise<Set<string>> 
 /**
  * Resolve the worktree path currently checked out on `branch`, parsed from
  * `git worktree list --porcelain`. Returns undefined when no live worktree holds
- * the branch. Used by {@link salvageUncommitted} to reach a worktree the inner
- * agent edited but never committed.
+ * the branch. Used to reach the worktree an inner agent is editing (for example
+ * to resolve its host settings) without assuming the attempt-dir layout.
  */
 export async function worktreePathForBranch(ctx: GitContext, branch: string): Promise<string | undefined> {
   const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
@@ -654,84 +678,6 @@ export function unquotePorcelainPath(raw: string): string {
     bytes.push(0x5c);
   }
   return Buffer.from(bytes).toString("utf8");
-}
-
-/**
- * Salvage uncommitted work an inner agent left in its worktree. Observed with
- * the codex runner: the agent edits files, passes the gates, and emits
- * `<promise>DONE</promise>`, but leaves some or all paths dirty — so sandcastle
- * only sees the committed subset and the remaining diff is stranded.
- *
- * Locates the worktree checked out on `branch` and, when it is dirty, commits
- * each changed path on ITS OWN COMMIT — the one-commit-per-file discipline
- * AGENT-PROMPT mandates — then pushes the branch so the host ref carries the
- * work. Returns the number of files committed (0 = clean worktree / nothing to
- * salvage). Routed through the same `runGit` seam so tests drive it without an OS
- * git. Best-effort: a failing stage/commit on one path is skipped, never thrown.
- */
-export async function salvageUncommitted(ctx: GitContext, branch: string, remote = "origin"): Promise<number> {
-  const wt = await worktreePathForBranch(ctx, branch);
-  if (!wt) return 0;
-  const wctx: GitContext = { cwd: wt, exec: ctx.exec };
-  const status = await runGit(wctx, ["status", "--porcelain"]);
-  if (status.code !== 0) return 0;
-  const paths: string[] = [];
-  for (const line of status.stdout.split("\n")) {
-    const t = line.replace(/\s+$/, "");
-    if (!t) continue;
-    // porcelain v1: "XY path" — the path begins at column 3. A rename is
-    // "old -> new"; take the destination. Paths with special/non-ASCII bytes
-    // are C-quoted by git (core.quotePath default), so they are unwrapped AND
-    // un-escaped to the literal path `git add --` accepts — stripping the quotes
-    // alone leaves backslash escapes that don't name the file, silently dropping
-    // it from the salvage.
-    let p = t.slice(3);
-    const arrow = p.indexOf(" -> ");
-    if (arrow !== -1) p = p.slice(arrow + 4);
-    p = unquotePorcelainPath(p);
-    if (p) paths.push(p);
-  }
-  let committed = 0;
-  for (const p of paths) {
-    const add = await runGit(wctx, ["add", "--", p]);
-    if (add.code !== 0) continue;
-    const message = `afk: salvage uncommitted change to ${p}\n\nInner agent emitted a completion sentinel with this file still dirty; AFK committed it so the feedback gate and landing see the work.`;
-    // `--no-verify` bypasses the CONSUMER repo's commit-phase hooks (pre-commit /
-    // commit-msg) on AFK's own salvage commit (#840) — AFK's binding validation is
-    // the feedback gate + backpressure, not the consumer's per-commit hooks, and a
-    // reformat-and-restage hook would break the one-path-staged discipline. The
-    // worktree's `core.hooksPath` redirect already covers the continuous-push path;
-    // `--no-verify` covers the isolated-provider path where that hook never ran.
-    // It leaves `post-commit` firing, so the continuous-push hook still pushes.
-    const commit = await runGit(wctx, ["commit", "--no-verify", "-m", message, "--", p]);
-    if (commit.code === 0) committed += 1;
-  }
-  if (committed > 0) {
-    // The continuous-push post-commit hook may already have pushed each commit;
-    // force-with-lease guarantees the host ref matches the salvaged worktree.
-    await runGit(wctx, ["push", "--force-with-lease", remote, `HEAD:refs/heads/${branch}`]);
-  }
-  return committed;
-}
-
-/**
- * Push a LOCAL branch ref to `remote` (create or update the remote branch). The
- * ref lives in the shared `.git`, so this runs from the primary checkout cwd —
- * no worktree needed. Used by the ADR 0083 §4 exit barrier to guarantee the
- * attempt branch reached origin before the attempt is allowed to terminate.
- * Returns `{ok:true}` on a clean push; `{ok:false, error}` (never throws) on a
- * rejected/failed push so the barrier owns the retry + hard-error policy. Routed
- * through the same `runGit` seam so tests drive it without an OS git.
- */
-export async function pushBranch(
-  ctx: GitContext,
-  branch: string,
-  remote = "origin",
-): Promise<{ ok: boolean; error?: string }> {
-  if (!branch) return { ok: false, error: "empty branch" };
-  const r = await runGit(ctx, ["push", remote, `refs/heads/${branch}:refs/heads/${branch}`]);
-  if (r.code === 0) return { ok: true };
-  return { ok: false, error: (r.stderr || r.stdout || `git push exited ${r.code}`).trim() };
 }
 
 /**

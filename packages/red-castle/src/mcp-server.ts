@@ -14,6 +14,7 @@ import {
 } from "./mcp/review.js";
 import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
 import type { CastleMcpTool } from "./mcp/tool.js";
+import { applyDangerPosture, type DangerPosture } from "./mcp/posture.js";
 import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
 import { createWorkerTools, type WorkerDependencies } from "./mcp/worker.js";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./mcp/worktree.js";
 
 export type { CastleMcpTool } from "./mcp/tool.js";
+export type { DangerPosture } from "./mcp/posture.js";
 export type {
   FleetSelectorInput,
   FleetCreateInput,
@@ -75,11 +77,17 @@ export interface CastleMcpDependencies
  * Compose the published dev:afk tool surface from the per-domain registries.
  * The concatenation order IS the published order — `mcp-tool-surface.test.ts`
  * freezes it.
+ *
+ * `posture` controls how tools that declare a `dangerClass` are gated:
+ *   - `"allow"` (default) — unchanged behavior.
+ *   - `"confirm"` — dangerous tools require `confirmation: true` in the input.
+ *   - `"deny"` — dangerous tools always return a structured refusal.
  */
 export function createCastleMcpTools(
   deps: CastleMcpDependencies,
+  posture: DangerPosture = "allow",
 ): CastleMcpTool[] {
-  return [
+  const tools = [
     ...createFleetTools(deps),
     ...createObservabilityTools(deps),
     ...createWorkerTools(deps),
@@ -92,4 +100,5 @@ export function createCastleMcpTools(
     ...createWaitTools(deps),
     ...createReviewTools(deps),
   ];
+  return applyDangerPosture(tools, posture);
 }

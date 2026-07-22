@@ -13,7 +13,6 @@ import {
   resolveFreshBase,
   worktreePathForBranch,
   worktreePathUnder,
-  salvageUncommitted,
   unquotePorcelainPath,
   listRemoteBranches,
 } from "../src/runtime/git.js";
@@ -379,108 +378,14 @@ describe("unquotePorcelainPath", () => {
   });
 });
 
-describe("salvageUncommitted (codex DONE-without-commit)", () => {
-  const porcelain = "worktree /repo/.red/tmp/wt\nHEAD bbb\nbranch refs/heads/afk/w/1-x\n";
-
-  it("commits each dirty path one-per-file (scoped) and pushes once", async () => {
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok(" M src/a.ts\n?? src/b.ts\n");
-      return ok();
-    });
-    const ctx: GitContext = { cwd: "/repo", exec };
-    expect(await salvageUncommitted(ctx, "afk/w/1-x")).toBe(2);
-
-    const adds = calls.filter((c) => c[1] === "add");
-    const commits = calls.filter((c) => c[1] === "commit");
-    const pushes = calls.filter((c) => c[1] === "push");
-    // one add + one commit per file, each scoped with `-- <path>`.
-    expect(adds.map((c) => c[c.length - 1])).toEqual(["src/a.ts", "src/b.ts"]);
-    expect(commits).toHaveLength(2);
-    for (const c of commits) expect(c[c.length - 2]).toBe("--");
-    // each salvage commit bypasses the consumer repo's commit-phase hooks (#840).
-    for (const c of commits) expect(c).toContain("--no-verify");
-    // a single force-with-lease push of HEAD to the branch ref.
-    expect(pushes).toHaveLength(1);
-    expect(pushes[0]).toEqual([
-      "git",
-      "push",
-      "--force-with-lease",
-      "origin",
-      "HEAD:refs/heads/afk/w/1-x",
-    ]);
-  });
-
-  it("un-escapes a C-quoted unicode porcelain path before staging", async () => {
-    // git core.quotePath wraps non-ASCII paths in quotes AND octal-escapes each
-    // raw UTF-8 byte: café.txt → "caf\303\251.txt". Stripping the quotes alone
-    // leaves the backslash escapes, naming a file that doesn't exist → the work
-    // is silently dropped. The literal path must reach `git add --`.
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok('?? "caf\\303\\251.txt"\n');
-      return ok();
-    });
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
-    const add = calls.find((c) => c[1] === "add")!;
-    expect(add[add.length - 1]).toBe("café.txt");
-    const commit = calls.find((c) => c[1] === "commit")!;
-    expect(commit[commit.length - 1]).toBe("café.txt");
-  });
-
-  it("un-escapes a quoted path with a space and stages the literal name", async () => {
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok('?? "na me.txt"\n');
-      return ok();
-    });
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
-    const add = calls.find((c) => c[1] === "add")!;
-    expect(add[add.length - 1]).toBe("na me.txt");
-  });
-
-  it("un-escapes the quoted destination path of a rename", async () => {
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok('R  old.ts -> "caf\\303\\251.ts"\n');
-      return ok();
-    });
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
-    const add = calls.find((c) => c[1] === "add")!;
-    expect(add[add.length - 1]).toBe("café.ts");
-  });
-
-  it("commits the destination path of a rename", async () => {
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok("R  old.ts -> new.ts\n");
-      return ok();
-    });
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
-    const add = calls.find((c) => c[1] === "add")!;
-    expect(add[add.length - 1]).toBe("new.ts");
-  });
-
-  it("no-ops (returns 0, no commit, no push) for a clean worktree", async () => {
-    const { exec, calls } = recordingExec((_c, args) => (args.includes("list") ? ok(porcelain) : ok("")));
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(0);
-    expect(calls.some((c) => c[1] === "commit")).toBe(false);
-    expect(calls.some((c) => c[1] === "push")).toBe(false);
-  });
-
-  it("returns 0 when no live worktree holds the branch", async () => {
-    const { exec } = recordingExec(() => ok("worktree /repo\nbranch refs/heads/main\n"));
-    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(0);
-  });
-
-  it("honours a custom remote in the push refspec", async () => {
-    const { exec, calls } = recordingExec((_c, args) => {
-      if (args.includes("list")) return ok(porcelain);
-      if (args.includes("status")) return ok(" M src/a.ts\n");
-      return ok();
-    });
-    await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x", "upstream");
-    const push = calls.find((c) => c[1] === "push")!;
-    expect(push[3]).toBe("upstream");
+describe("exit-time salvage surface (ADR 0103)", () => {
+  it("exports no salvage-uncommitted or exit-barrier push helper", async () => {
+    // ADR 0103 retired the exit barrier and its salvage step: uncommitted work is
+    // disposable, so the runtime git surface must not offer a way to commit a
+    // dirty worktree (or push a branch "one last time") on the way out. A
+    // reintroduced helper fails here before it can grow call sites.
+    const gitModule = await import("../src/runtime/git.js");
+    expect(Object.keys(gitModule)).not.toContain("salvageUncommitted");
+    expect(Object.keys(gitModule)).not.toContain("pushBranch");
   });
 });

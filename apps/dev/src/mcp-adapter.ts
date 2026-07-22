@@ -745,9 +745,25 @@ async function fleetStatus(root: string, input: FleetNameInput) {
     config.supervisorStaleS,
     config.progressStaleS,
   );
-  const liveWorkers = monitor.workers.filter(
+  // Build a PID set for the slot-pid fallback: workers without a fleet stamp
+  // (legacy or pre-stamp) are attributed to this fleet if their pid appears in
+  // the supervisor's slot map. Workers with a stamp that differs from this fleet
+  // name go to the unattributed bucket even if their pid matches.
+  const fleetPidSet = new Set(
+    (fleet?.slotPids ?? []).map((sp) => sp.pid).filter((pid) => pid > 0),
+  );
+  const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
+  function attributedToThisFleet(worker: (typeof allLiveWorkers)[number]): boolean {
+    const stampedFleet = worker.state.fleet;
+    // Stamped workers: use the stamp as the definitive source of truth.
+    if (stampedFleet !== undefined) return stampedFleet === paths.fleet;
+    // Legacy/unstamped workers: fall back to the supervisor's slot-pid map.
+    return fleetPidSet.has(worker.state.pid);
+  }
+  const liveWorkers = allLiveWorkers.filter(attributedToThisFleet);
+  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisFleet(w));
   const latestBundleVersion =
     fleet?.latestBundleVersion ?? readBuildInfo("dev").version;
   return {
@@ -786,6 +802,14 @@ async function fleetStatus(root: string, input: FleetNameInput) {
       issue: String(worker.state.current.number),
       activity: worker.state.current.activity,
       origin: worker.state.origin ?? "afk",
+    })),
+    unattributed_workers: unattributedWorkers.map((worker) => ({
+      id: worker.state.worker_id,
+      pid: worker.state.pid,
+      issue: String(worker.state.current.number),
+      activity: worker.state.current.activity,
+      origin: worker.state.origin ?? "afk",
+      fleet: worker.state.fleet ?? null,
     })),
   };
 }
