@@ -9,35 +9,16 @@ import {
   type IssueCandidate,
 } from "../../core/session.js";
 import { genWorkerId } from "../../core/session.js";
-import {
-  runBoot,
-  type BootDeps,
-  type BootOptions,
-  type BootResult,
-  type BootstrapInput,
-  type ReconcileBootRunner,
-} from "../../core/boot.js";
-import {
-  reconcile,
-  type ReconcileDeps,
-  type ReconcileInput,
-} from "../../core/reconcile.js";
+import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput, type ReconcileBootRunner } from "../../core/boot.js";
+import { reconcile, type ReconcileDeps, type ReconcileInput } from "../../core/reconcile.js";
 import { resolveBase } from "../../core/base-resolver.js";
-import {
-  findOwnedBranch,
-  type ReconcileSweepPlan,
-} from "../../core/boot-sweep.js";
+import { findOwnedBranch, type ReconcileSweepPlan } from "../../core/boot-sweep.js";
 import {
   classifyConflictedFileKind,
   partitionConflicts,
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
-import {
-  processIssue,
-  type ProcessIssueDeps,
-  type ProcessIssueInput,
-  type ProcessIssueResult,
-} from "../../core/process-issue.js";
+import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,
@@ -59,10 +40,7 @@ import {
   type AfkPaths,
 } from "../../runtime/wire.js";
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
-import {
-  workerDir as workerDirPath,
-  workerPidFile,
-} from "../../core/worker-paths.js";
+import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
@@ -75,15 +53,7 @@ import type { GhContext } from "../../runtime/gh.js";
 import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import {
-  getConfig,
-  loadConfig,
-  readBackpressure,
-  readPostAttemptFormat,
-  readValidationResourceBudget,
-  resolveTier,
-  resolveCiTimeoutSeconds,
-} from "../../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
@@ -92,20 +62,10 @@ import {
   resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../../core/issue-classifier.js";
-import {
-  LABEL_READY_FOR_REVIEW,
-  LABEL_GO_LANE,
-  LABEL_SCOUT_LANE,
-  LABEL_MERGE_CONFLICT,
-} from "../../core/triage-labels.js";
+import { LABEL_READY_FOR_REVIEW, LABEL_GO_LANE, LABEL_SCOUT_LANE, LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
-import {
-  resolveHooks,
-  validateHookConfig,
-  UnknownHookError,
-  type HookName,
-} from "../../core/hook-config.js";
+import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import {
   createEnginePaths,
@@ -125,27 +85,12 @@ import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
-import {
-  specialUserRequestBlock,
-  claudeSpawnArgs,
-  codexSpawnArgs,
-} from "../../core/runner-spawn.js";
+import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../../core/worker-paths.js";
 import { createLandLock } from "../../runtime/land-lock.js";
-import {
-  branchLockPath,
-  readLockedBranch,
-  isLocked,
-} from "../../runtime/lock.js";
-import {
-  makeHookExec,
-  makeHookResolveOptions,
-  hookEnv,
-} from "../../runtime/hooks.js";
-import {
-  makeFeedbackWorktree,
-  type FeedbackWorktree,
-} from "../../runtime/feedback-worktree.js";
+import { branchLockPath, readLockedBranch, isLocked } from "../../runtime/lock.js";
+import { makeHookExec, makeHookResolveOptions, hookEnv } from "../../runtime/hooks.js";
+import { makeFeedbackWorktree, type FeedbackWorktree } from "../../runtime/feedback-worktree.js";
 import {
   installProcessSafety,
   fileSafetyLogger,
@@ -153,63 +98,24 @@ import {
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
 import { join } from "node:path";
-import {
-  hostFingerprintPrefix,
-  workerIdentity,
-} from "../../core/host-identity.js";
-import {
-  appendAgentRecord,
-  appendRecordToonlTaggedRow,
-} from "../../core/jsonl-log.js";
-import {
-  initStateSync,
-  readPidStartTime,
-  updateState,
-  writeIdentitySync,
-} from "../../core/state.js";
-import {
-  decodeDevSnapshotSniff,
-  encodeDevSnapshotToon,
-} from "../../core/toon-snapshot.js";
-import {
-  buildProgressHeartbeat,
-  formatIterationMarker,
-} from "../../core/heartbeat.js";
-import {
-  resolveAttemptLoc,
-  locMemoPath,
-  type LocMemo,
-} from "../../core/loc-memo.js";
+import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
+import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
+import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
+import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
+import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
+import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import {
-  makeStaleClaimPredicate,
-  resolveClaimStalenessConfig,
-} from "../../core/claim-staleness.js";
+import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 import { renderClaimComment } from "../../core/claim.js";
 import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
 
-import {
-  checkBootGuard,
-  isNamespacedDispatch,
-  parseRunFlags,
-  resolveRunDispatchIdentity,
-  type RunOptions,
-} from "./flags.js";
-import {
-  buildProcessDeps,
-  parseSlot,
-  type CurrentAttempt,
-} from "./process-deps.js";
+import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, type RunOptions } from "./flags.js";
+import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
-import {
-  nextAttemptSync,
-  openRunnerCircuit,
-  recordBootError,
-  runnerCircuitOpen,
-} from "./state.js";
+import { nextAttemptSync, openRunnerCircuit, recordBootError, runnerCircuitOpen } from "./state.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -227,9 +133,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
-  const runner: Runner = isRunner(detection.runner)
-    ? detection.runner
-    : "claude";
+  const runner: Runner = isRunner(detection.runner) ? detection.runner : "claude";
 
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd, process.env, runner);
@@ -249,30 +153,19 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // fleet-owned and the supervisor already holds the pid. A `/go`/`--scout`
   // dispatch (#1087) is exempt too: its isolated namespace/lane/origin can
   // never collide with the fleet, so it must boot whether or not a fleet is up.
-  if (
-    flags.reconcileIssue === undefined &&
-    process.env.RED_AFK_SWEEPS_DONE !== "1"
-  ) {
+  if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
     const pidFile = paths.supervisorPidPath;
     const exempt = isNamespacedDispatch({
       origin: dispatchIdentity.origin,
       kind: dispatchIdentity.kind,
       lane: dispatchIdentity.lane,
     });
-    const guard = await checkBootGuard(
-      pidFile,
-      flags.force,
-      process.stdout,
-      isLivePid,
-      exempt,
-    );
+    const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
     if (guard === "refused") return 1;
   }
 
   // Worker id — probe the workers root for collisions.
-  const existing = new Set(
-    (await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id),
-  );
+  const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
   const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
@@ -300,13 +193,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Supervisor-dispatched reconcile worker: bypass the normal boot+session and
   // validate-and-land the specific parked branch for `--reconcile-issue <n>`.
   if (flags.reconcileIssue !== undefined) {
-    return runReconcileWorker(
-      flags.reconcileIssue,
-      runner,
-      ctx,
-      paths,
-      workerId,
-    );
+    return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
   }
 
   const facts = await collectPrecheckFacts(ctx);
@@ -377,9 +264,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     }
   } catch (err) {
     await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
-      process.stderr.write(
-        `[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
+      process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
     });
     return 1;
   }
@@ -389,31 +274,17 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
   // (default behaviour unchanged).
   const config = loadConfig(paths.configPath, { warn: () => undefined });
-  const feedback = makeFeedbackWorktree(
-    ctx.root,
-    paths.feedbackWorktreesDir,
-    undefined,
-    {
-      rebaseOnto: settings.feedbackRebaseBase,
-      resourceBudget: readValidationResourceBudget(config),
-    },
-  );
+  const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
+    rebaseOnto: settings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
+  });
 
   // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A
   // supervisor-owned boot skips every sweep (including reconcile) and the fleet
   // dispatches reconcile per-tick instead, so the runner is wired only on the
   // solo / sweep-running path.
   if (!sweepsDone) {
-    bootDeps = {
-      ...bootDeps,
-      reconcileRunner: makeBootReconcileRunner(
-        ctx,
-        paths,
-        workerId,
-        runner,
-        feedback,
-      ),
-    };
+    bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
   }
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
@@ -437,18 +308,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   try {
     validateHookConfig(sessionHooksConfig);
   } catch (err) {
-    const msg =
-      err instanceof UnknownHookError
-        ? `[afk:config] fatal: ${err.message} in .red/config.yaml — fix the hook name and restart the fleet`
-        : `[afk:config] fatal: hook config error: ${err instanceof Error ? err.message : String(err)}`;
+    const msg = err instanceof UnknownHookError
+      ? `[afk:config] fatal: ${err.message} in .red/config.yaml — fix the hook name and restart the fleet`
+      : `[afk:config] fatal: hook config error: ${err instanceof Error ? err.message : String(err)}`;
     process.stderr.write(`${msg}\n`);
     const retireFile = process.env.RED_AFK_RETIRE_FILE;
     if (retireFile) {
-      try {
-        writeFileSync(retireFile, "");
-      } catch {
-        /* best-effort */
-      }
+      try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
     }
     return 1;
   }
@@ -457,17 +323,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
     config: sessionHooksConfig,
     resolveOptions: makeHookResolveOptions(ctx.root),
     exec: makeHookExec(ctx.root),
-    env: hookEnv(
-      ctx.repo,
-      ctx.root,
-      parseSlot(process.env.RED_AFK_SLOT),
-      runner,
-    ),
+    env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
   };
-  const resolvedSessionHooks = resolveHooks(
-    sessionHooks.config,
-    sessionHooks.resolveOptions,
-  );
+  const resolvedSessionHooks = resolveHooks(sessionHooks.config, sessionHooks.resolveOptions);
 
   const deps: CastleWorkerDrainDeps<
     BootDeps,
@@ -478,9 +336,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     ProcessIssueResult,
     SessionIssueTemplate
   > = {
-    gh: {
-      listCandidates: () => ghx.listCandidates(ghCtx, dispatchIdentity.lane),
-    },
+    gh: { listCandidates: () => ghx.listCandidates(ghCtx, dispatchIdentity.lane) },
     runBoot,
     bootDeps,
     bootOptions,
@@ -493,12 +349,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     processIssue: async (pd, pi) => {
       const result = await processIssue(pd, pi);
       if (result.outcome === "runner-transient") {
-        await openRunnerCircuit(
-          paths.runnerCircuitDir,
-          pi.runner,
-          Math.floor(Date.now() / 1000),
-          process.env,
-        ).catch(() => {});
+        await openRunnerCircuit(paths.runnerCircuitDir, pi.runner, Math.floor(Date.now() / 1000), process.env).catch(() => {});
       }
       // Abandon means DELETE (#644): buildProcessInput pre-creates the attempt
       // dir + state (current.number, live pid) BEFORE the claim, so a lost race
@@ -511,9 +362,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       }
       const sp = join(pi.attemptDir, "afk.state.toon");
       if (await fsx.pathExists(sp)) {
-        await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(
-          () => {},
-        );
+        await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
       }
       return result;
@@ -536,10 +385,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     // Session-scoped lifecycle hooks (PRD #207): the castle drain owns the
     // session state machine, while dev supplies the existing hook dispatcher so
     // the configured hook surface and output stay unchanged.
-    dispatchSessionHook: async (
-      name: CastleSessionHookName,
-      context: string,
-    ) => {
+    dispatchSessionHook: async (name: CastleSessionHookName, context: string) => {
       const result = await dispatchHooks(
         name as HookName,
         resolvedSessionHooks[name as HookName],
@@ -553,31 +399,15 @@ export async function runCommand(options: RunOptions): Promise<number> {
       return { aborted: result.aborted };
     },
     runnerCircuit: {
-      isOpen: (r) =>
-        runnerCircuitOpen(
-          paths.runnerCircuitDir,
-          r,
-          Math.floor(Date.now() / 1000),
-        ),
+      isOpen: (r) => runnerCircuitOpen(paths.runnerCircuitDir, r, Math.floor(Date.now() / 1000)),
     },
-    buildProcessInput: (
-      candidate: IssueCandidate,
-      c: SessionContext,
-    ): ProcessIssueInput => {
-      const recoveryOrdinal = nextAttemptSync(
-        c.issueTemplate.tmpDir,
-        candidate.number,
-      );
+    buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
+      const recoveryOrdinal = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
       // Long-running workers key workspaces by workerId+issueId. The retry
       // ordinal remains separate policy data for per-class recovery caps and
       // prior-failure prompt context; it no longer shapes the directory name.
       const attempt = 1;
-      const attemptDir = buildWorkerAttemptPath(
-        c.issueTemplate.tmpDir,
-        c.workerId,
-        candidate.number,
-        attempt,
-      );
+      const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
       // Point the session-scoped envelope/iter-log closures at this attempt.
       current.attemptDir = attemptDir;
       // Native-path observability (sibling of #350): the shell era's iter_open
@@ -644,9 +474,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       }
       // Append the --request block into the handoff body so the inner agent
       // (which reads handoff.md as its prompt) sees the special request.
-      const body = requestBlock
-        ? `${candidate.body}\n\n${requestBlock}`
-        : candidate.body;
+      const body = requestBlock ? `${candidate.body}\n\n${requestBlock}` : candidate.body;
       return {
         issue: candidate.number,
         title: candidate.title,
@@ -666,10 +494,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
-        runMode: runModeForCandidate(
-          candidate,
-          flags.prePr ? "no-mistakes" : flags.runMode,
-        ),
+        runMode: runModeForCandidate(candidate, flags.prePr ? "no-mistakes" : flags.runMode),
         // Lane-aware claim preflight (#1045): the pre-claim state-validity recheck
         // must validate against the label this issue was SELECTED under (the
         // `--lane` value), not a hardcoded `ready-for-agent`. `flags.lane` is
@@ -685,13 +510,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   try {
     summary = await runCastleWorkerDrain(deps, sessionCtx);
   } catch (err) {
-    await recordBootError(bootstrap.workerDir, "session-error", err).catch(
-      () => {
-        process.stderr.write(
-          `[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-      },
-    );
+    await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
+      process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
     return 1;
   } finally {
     await feedback.cleanup();
@@ -707,15 +528,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // it) ends the run with exit 75 (EX_TEMPFAIL) so a supervisor retries once the
   // quota resets, rather than treating it as a clean drain (0) or hard fail (1).
   if (summary.exhausted) {
-    process.stderr.write(
-      `[afk] runner exhausted — exiting 75 (EX_TEMPFAIL); rerun when quota resets\n`,
-    );
+    process.stderr.write(`[afk] runner exhausted — exiting 75 (EX_TEMPFAIL); rerun when quota resets\n`);
     return 75;
   }
   if (summary.runnerTransient) {
-    process.stderr.write(
-      `[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`,
-    );
+    process.stderr.write(`[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`);
     return 75;
   }
   if (summary.hostConfig) {
@@ -728,14 +545,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // A targeted dispatch that attempted nothing is a failure, never a clean drain
   // (#2385): `/go` reported `progress: 1/1 (100%)` + exit 0 over a claim the
   // worker conceded without doing any work.
-  const zeroAttempt = zeroAttemptDispatchFailure(
-    flags.filter?.kind === "issues",
-    summary.processed,
-  );
+  const zeroAttempt = zeroAttemptDispatchFailure(flags.filter?.kind === "issues", summary.processed);
   if (zeroAttempt) {
-    process.stderr.write(
-      `[afk] targeted dispatch attempted no work: ${zeroAttempt} — exiting 1\n`,
-    );
+    process.stderr.write(`[afk] targeted dispatch attempted no work: ${zeroAttempt} — exiting 1\n`);
     return 1;
   }
 
