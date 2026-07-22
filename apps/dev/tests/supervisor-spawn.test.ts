@@ -1,10 +1,15 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, writeSync } from "node:fs";
+import type { SpawnOptions } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const spawn = vi.hoisted(() => vi.fn(() => ({ unref: vi.fn() })));
+const spawn = vi.hoisted(() => vi.fn((
+  _command: string,
+  _args: readonly string[],
+  _options: SpawnOptions,
+) => ({ unref: vi.fn() })));
 const readFile = vi.hoisted(() => vi.fn(async () => {
   throw new Error("missing");
 }));
