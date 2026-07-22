@@ -1,10 +1,4 @@
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,11 +13,16 @@ describe("castle singleton lease", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(
+      roots.map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   it("acquires, renews, and releases one lease through injected IO", async () => {
-    const root = join(tmpdir(), `castle-singleton-lease-${crypto.randomUUID()}`);
+    const root = join(
+      tmpdir(),
+      `castle-singleton-lease-${crypto.randomUUID()}`,
+    );
     roots.push(root);
     const paths = createEnginePaths(join(root, ".red"));
     let now = "2026-07-22T18:30:00.000Z";
@@ -93,8 +92,8 @@ describe("castle singleton lease", () => {
       lease: { pid: 6100, start_time: "2026-07-22T18:42:00.000Z" },
     });
     expect(isPidAlive).toHaveBeenCalledWith(5100);
-    await expect(first.release("github-webhook", crashedOwner)).rejects.toBeInstanceOf(
-      SingletonLeaseOwnershipError,
-    );
+    await expect(
+      first.release("github-webhook", crashedOwner),
+    ).rejects.toBeInstanceOf(SingletonLeaseOwnershipError);
   });
 });
