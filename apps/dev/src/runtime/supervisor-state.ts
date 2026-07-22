@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, readdir, readFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { isLivePid as defaultIsLivePid } from "./kill-tree.js";
 import { readPidStartTime } from "../core/state.js";
 
@@ -58,55 +58,23 @@ export async function readSupervisorIdentity(
 
 export interface SupervisorPidDiscovery {
   pid: number;
-  source: "pid-file" | "snapshot-dir";
+  source: "pid-file";
   path: string;
 }
 
 export interface DiscoverSupervisorPidOptions {
-  /**
-   * The named fleet `supervisorRuntimeDir` belongs to. Only the `"default"`
-   * fleet scans its SIBLING `s<pid>` dirs — that legacy layout predates named
-   * fleets and is ambiguous once several fleets share `supervisors/`. A named
-   * fleet answers from its own lane alone, so discovering fleet A's supervisor
-   * can never report fleet B's pid.
-   */
+  /** Named fleet retained for call-site compatibility; liveness is resolved
+   * exclusively from that fleet's pinned pid identity. */
   fleet?: string;
   /** Injectable stable process-start lookup for deterministic identity tests. */
   pidStartTime?: (pid: number) => string | null;
 }
 
-/** Collect the live `s<pid>` supervisor-lane dirs directly under `dir`, newest
- * pid first. An unreadable dir contributes nothing. */
-async function liveLaneDirs(
-  dir: string,
-  isLivePid: (pid: number) => boolean,
-): Promise<SupervisorPidDiscovery[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  return entries
-    .map((entry) => {
-      const match = /^s([1-9][0-9]*)$/.exec(entry);
-      if (!match) return null;
-      const lanePid = Number(match[1]);
-      if (!Number.isSafeInteger(lanePid) || lanePid <= 0) return null;
-      return { pid: lanePid, path: join(dir, entry) };
-    })
-    .filter((candidate): candidate is { pid: number; path: string } => candidate !== null)
-    .sort((a, b) => b.pid - a.pid)
-    .filter((candidate) => isLivePid(candidate.pid))
-    .map((candidate) => ({ ...candidate, source: "snapshot-dir" as const }));
-}
-
 /**
  * Find the supervisor pid that owns ONE fleet's runtime lane. The pid file is
- * the authoritative lock; the `s<pid>` lane dirs are the fallback for a
- * supervisor whose pid file was lost. The fallback searches the fleet's OWN dir
- * first (where a named supervisor writes its lane), then — for the default
- * fleet only — the legacy sibling layout.
+ * the authoritative lock and its process-start sidecar is mandatory. Snapshot
+ * lane names contain only a PID, so they cannot distinguish a recycled process
+ * and are never an authoritative liveness source.
  */
 export async function discoverLiveSupervisorPid(
   supervisorRuntimeDir: string,
@@ -122,13 +90,7 @@ export async function discoverLiveSupervisorPid(
     return { pid: identity.pid, source: "pid-file", path: pidFile };
   }
 
-  const own = await liveLaneDirs(supervisorRuntimeDir, isLivePid);
-  if (own.length > 0) return own[0]!;
-
-  const fleet = options.fleet ?? "default";
-  if (fleet !== "default") return null;
-  const legacy = await liveLaneDirs(dirname(supervisorRuntimeDir), isLivePid);
-  return legacy[0] ?? null;
+  return null;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -148,6 +110,7 @@ async function supervisorArtifactPaths(dir: string): Promise<string[]> {
     join(dir, "state.toon"),
     join(dir, "state.toon.tmp"),
     join(dir, "afk-supervisor.stop"),
+    join(dir, "afk-supervisor.recovering"),
     join(dir, "resize.toon"),
     join(dir, "restarts.toon"),
     join(dir, "monitor-log-cursors.toon"),
