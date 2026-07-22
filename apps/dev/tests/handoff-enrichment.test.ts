@@ -4,6 +4,7 @@ import {
   buildHandoffEnrichment,
   type HandoffEnrichmentDeps,
 } from "../src/core/handoff-enrichment.js";
+import { buildHandoff } from "../src/core/handoff.js";
 
 const CONTEXT_MAP = `# Context Map
 
@@ -134,5 +135,21 @@ describe("AFK handoff enrichment", () => {
         }),
       ),
     ).resolves.toBe("");
+  });
+
+  it("injects the TOON supplement in a named handoff section and omits an empty supplement", () => {
+    const input = {
+      issue: 2402,
+      title: "Enrich handoff",
+      body: "Base issue body",
+      runner: "codex",
+      started: "2026-07-22T00:00:00Z",
+      attempt: 1,
+      url: "https://example.test/issues/2402",
+      comments: [],
+    };
+    const enriched = buildHandoff({ ...input, enrichment: "context:\n  name: Dev" });
+    expect(enriched).toContain("<handoff-enrichment>\ncontext:\n  name: Dev\n</handoff-enrichment>");
+    expect(buildHandoff({ ...input, enrichment: "" })).not.toContain("<handoff-enrichment>");
   });
 });
