@@ -100,6 +100,7 @@ export type AgentOutcome =
   | "signal-killed"
   | "exhausted"
   | "runner-transient"
+  | "host-config"
   | "goal-moot";
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
@@ -767,7 +768,7 @@ export function isExhaustionError(error: unknown): boolean {
  * worker crashes that kill the orchestrator and orphan the issue in `running`.
  *
  * Covers two families: (a) Codex transport/setup hiccups (websocket, thread
- * start, spawn/cwd); and (b) **provider server-side overload** — a `529
+ * start); and (b) **provider server-side overload** — a `529
  * Overloaded` / `overloaded_error` (Anthropic) or `503 Service Unavailable`,
  * which is temporary and server-side, not your code or your quota. Before this,
  * a 529 matched neither the exhaustion nor the transient pattern, so it hit the
@@ -783,7 +784,30 @@ export function isTransientRunnerError(error: unknown): boolean {
 }
 
 const runnerTransientPattern =
-  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i;
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i;
+
+type HostConfigFailure = "missing-interpreter" | "missing-cwd";
+
+function hostConfigFailure(error: unknown): HostConfigFailure | null {
+  if (error === null || error === undefined) return null;
+  const parts: string[] = [];
+  collectErrorStrings(error, parts, new Set(), 0);
+  if (parts.some((part) => /spawn\s+sh\s+ENOENT/i.test(part))) return "missing-interpreter";
+  if (parts.some((part) => /cwd does not exist/i.test(part))) return "missing-cwd";
+  return null;
+}
+
+/** Permanent runner-host defects that cannot heal through cooldown or fallback. */
+export function isHostConfigRunnerError(error: unknown): boolean {
+  return hostConfigFailure(error) !== null;
+}
+
+function hostConfigOperatorMessage(error: unknown): string {
+  if (hostConfigFailure(error) === "missing-interpreter") {
+    return "afk: fatal host configuration: required POSIX shell `sh` could not be spawned (spawn sh ENOENT). Install or restore the required shell, then rerun; this failure is not retryable.";
+  }
+  return "afk: fatal host configuration: the worker current directory does not exist. Restore the configured workspace/current directory, then rerun; this failure is not retryable.";
+}
 
 /** Recursively gather string values reachable from an error-ish value, bounded
  * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */
@@ -821,6 +845,7 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
  * whose message matches the exhaustion patterns (the common case — the provider
  * raises on a 429 / usage-limit), or by completing with exhaustion text on
  * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). A
+ * missing interpreter/current-directory defect maps to fatal `host-config`; a
  * transient transport / server-overload error maps to `runner-transient`; any
  * OTHER thrown error maps to `no-sentinel` (a recoverable crash) rather than
  * propagating — so an unrecognized runner failure never kills the drain or
@@ -1013,6 +1038,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     }
     if (isExhaustionError(error)) {
       return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
+    }
+    if (isHostConfigRunnerError(error)) {
+      return {
+        outcome: "host-config",
+        branch: input.branch,
+        commits: [],
+        stdout: hostConfigOperatorMessage(error),
+      };
     }
     if (isTransientRunnerError(error)) {
       return {

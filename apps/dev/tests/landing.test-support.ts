@@ -77,7 +77,7 @@ export interface Opts {
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
   /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
-  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
   /** rc the final `gh pr merge` returns (1 → PR exists but merge is rejected). */
   prMergeCode?: number;
   /** Make the landing-worktree provisioner fail (returns null). */
@@ -121,6 +121,8 @@ export interface Opts {
   postMergeGate?: boolean;
   /** When true AND `postMergeGate` is wired, the gate returns `{ ok: false }`. */
   postMergeGateFails?: boolean;
+  /** Require post-merge validation even when the postMergeGate dep is absent. */
+  requirePostMergeValidation?: boolean;
   /**
    * Global land-lock (#1337). Present → wire `deps.landLock` with this port, so a
    * test can observe when the landing entered and left the critical section.
@@ -201,6 +203,9 @@ export function harness(opts: Opts = {}): Harness {
       if (j === `git -C /repo rev-parse --verify --quiet origin/${input.base}`) {
         return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
       }
+      if (j === `git -C /repo rev-parse origin/${input.base}`) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
       // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
       if (j === `git -C ${RWT} rebase origin/main`) {
         return { code: opts.rebaseCode ?? 0, stdout: "", stderr: "" };
@@ -256,13 +261,17 @@ export function harness(opts: Opts = {}): Harness {
       }
       if (j.includes("pr view")) {
         // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
-        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
-          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
-          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
-          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
-          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        const map: Record<string, { mergeStateStatus: string; mergeable: string; baseRefOid: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", baseRefOid: "0r1g1nsha", statusCheckRollup: [] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
       }
       if (j.includes("pr merge")) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
@@ -318,6 +327,7 @@ export function harness(opts: Opts = {}): Harness {
           return { ok: !opts.postMergeGateFails };
         }
       : undefined,
+    requirePostMergeValidation: opts.requirePostMergeValidation,
     // Global land-lock (#1337): only wired when the test opts in.
     landLock: opts.landLock,
     landingPhase: async (phase) => {

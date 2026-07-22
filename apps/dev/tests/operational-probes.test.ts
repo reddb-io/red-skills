@@ -47,6 +47,7 @@ describe("operational probe registry", () => {
     const decoded = decode(toon) as { probes: Array<{ id: string; verdict: string }>; findings: unknown[] };
 
     expect(decoded.probes).toEqual([
+      { id: "afk.host-prerequisites", name: "AFK host prerequisites", verdict: "ok" },
       { id: "git.remote.https-forbidden", name: "SSH-only git remotes", verdict: "red" },
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },

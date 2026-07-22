@@ -42,6 +42,20 @@ export async function comment(ctx: GhContext, issue: number, body: string): Prom
   await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
 }
 
+/** Edit an existing issue comment by REST id. Returns false when gh refuses the
+ * patch so callers can preserve idempotency instead of posting duplicates. */
+export async function editComment(ctx: GhContext, commentId: number, body: string): Promise<boolean> {
+  const r = await runGh(ctx, [
+    "api",
+    "-X",
+    "PATCH",
+    apiPath(ctx, `issues/comments/${commentId}`),
+    "-f",
+    `body=${scrubOutbound(body)}`,
+  ]);
+  return r.code === 0;
+}
+
 // ---------- atomic GitHub-native claim (ADR 0066) ----------
 //
 // The claim primitive needs the comment's server-assigned NUMERIC id (the
@@ -405,15 +419,27 @@ export async function viewIssueFull(
   }
 }
 
-/** `gh issue view --json body` → raw body, or undefined when absent. */
-export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
+export type IssueBodyReadResult =
+  | { ok: true; body: string }
+  | { ok: false; reason: string };
+
+/** `gh issue view --json body` → raw body. Distinguishes an empty body from a
+ * failed/unparseable read so readiness lint never mutates on unknown content. */
+export async function readIssueBody(ctx: GhContext, issue: number): Promise<IssueBodyReadResult> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);
-  if (r.code !== 0) return undefined;
+  if (r.code !== 0) return { ok: false, reason: `failed to read issue body (gh exit ${r.code})` };
   try {
-    return String((JSON.parse(r.stdout) as { body?: string }).body ?? "");
+    return { ok: true, body: String((JSON.parse(r.stdout) as { body?: string }).body ?? "") };
   } catch {
-    return undefined;
+    return { ok: false, reason: "failed to parse issue body JSON" };
   }
+}
+
+/** `gh issue view --json body` → raw body, or undefined when absent/unreadable.
+ * Compatibility wrapper for callers that deliberately degrade to best effort. */
+export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
+  const result = await readIssueBody(ctx, issue);
+  return result.ok ? result.body : undefined;
 }
 
 /** `gh issue view --json url` → the resolved issue url. */

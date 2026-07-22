@@ -114,9 +114,9 @@ Avoid specific file paths or code snippets — they go stale fast. **Exception**
 
 ## Acceptance criteria
 
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
+- [ ] Running `<focused command>` passes for this slice.
+- [ ] The failing fixture or reproduction demonstrates the behavior before the implementation.
+- [ ] The pinned observable behavior remains true after re-running the command or workflow.
 
 ## Blocked by
 

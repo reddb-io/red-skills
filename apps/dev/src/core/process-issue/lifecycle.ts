@@ -27,6 +27,8 @@ import {
   type SandboxMode,
 } from "../execution.js";
 import {
+  buildValidationRecord,
+  formatValidationLine,
   runFeedback,
   isInfraFeedbackFailure,
   type Exec as PnpmExec,
@@ -56,7 +58,7 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding } from "../landing.js";
+import { doLanding, type LandingPostMergeValidation } from "../landing.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -690,6 +692,12 @@ export async function processIssue(
           notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
         });
       }
+      if (run.outcome === "host-config") {
+        return await terminalFailure(common, "host-config", "host-config", {
+          notes: run.stdout,
+          log: run.stdout,
+        });
+      }
     }
     if (input.runMode === "scout") {
       const report = scoutReportFrom(scoutTextChunks, run.stdout);
@@ -1047,6 +1055,7 @@ export async function processIssue(
         validationSidecar = mergedFeedback.sidecar;
         return { ok: true };
       },
+      requirePostMergeValidation: true,
       landingPhase: markLandingPhase,
     },
     {
@@ -1180,6 +1189,15 @@ export async function processIssue(
   }
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
+  if (landing.postMergeValidation) {
+    validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(landing.postMergeValidation)];
+    deps.recordWorkerEvent?.("worker.post_merge_validation", {
+      path: landing.postMergeValidation.path,
+      reason: landing.postMergeValidation.reason,
+      pr_number: landing.postMergeValidation.prNumber,
+      check_count: landing.postMergeValidation.path === "satisfied-by-ci" ? landing.postMergeValidation.checkCount : undefined,
+    });
+  }
   markLandingPhase("cascade");
   deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
@@ -1223,4 +1241,12 @@ export async function processIssue(
     swept: true,
   };
   }
+}
+
+function postMergeValidationSidecarLine(validation: LandingPostMergeValidation): string {
+  return formatValidationLine(buildValidationRecord({
+    name: `post-merge:${validation.path}`,
+    status: "passed",
+    summary: validation.reason,
+  }));
 }
