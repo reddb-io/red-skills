@@ -86,6 +86,7 @@ const PAYLOAD: StatuslineAggregate = {
     live_workers: [
       { id: "wTST1", pid: 4243, issue: "2344", activity: "editing", origin: "afk" },
     ],
+    unattributed_workers: [],
   },
   fleet_chip: {
     runner: "claude",

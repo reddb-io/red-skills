@@ -516,7 +516,7 @@ describe("rsp wait MCP tools", () => {
 describe("statusline_aggregate MCP tool", () => {
   it("returns the payload shape with project, repo, fleet, workers, and queue", async () => {
     const cwd = await root();
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
 
     const result = await deps.statuslineAggregate() as Record<string, unknown>;
 
@@ -571,7 +571,7 @@ describe("statusline_aggregate MCP tool", () => {
       "utf8",
     );
 
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
     const result = await deps.statuslineAggregate() as { workers: Array<Record<string, unknown>> };
 
     expect(result.workers).toHaveLength(1);
