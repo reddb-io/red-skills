@@ -25,8 +25,14 @@ export type ImplementerSpawnConstraint =
   | {
       kind: "codex-config";
       config: {
-        plugins: Record<"dev@red-skills" | "memory@red-skills" | "brain@red-skills", boolean>;
-        mcpServers: Record<"navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp", boolean>;
+        plugins: Record<
+          "dev@red-skills" | "memory@red-skills" | "brain@red-skills",
+          boolean
+        >;
+        mcpServers: Record<
+          "navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp",
+          boolean
+        >;
         hooks: false;
         rsp: boolean;
       };
@@ -35,14 +41,22 @@ export type ImplementerSpawnConstraint =
       kind: "opencode-config";
       config: {
         plugins: ImplementerEnabledSurfaces["plugins"];
-        mcp: Record<"navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp", { enabled: boolean }>;
+        mcp: Record<
+          "navigator" | "castle" | "red-memory" | "brain" | "red-ui" | "rsp",
+          { enabled: boolean }
+        >;
         pluginEvents: readonly [];
         rsp: boolean;
       };
     }
   | {
       kind: "pi-flags";
-      flags: readonly ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes"];
+      flags: readonly [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+      ];
       skills: ImplementerEnabledSurfaces["plugins"];
       extensions: ImplementerEnabledSurfaces["mcp"];
       rsp: boolean;
@@ -54,10 +68,23 @@ export interface ImplementerEnvironmentProjection {
   constraint: ImplementerSpawnConstraint;
 }
 
-type ImplementerProjector = (enabled: ImplementerEnabledSurfaces) => ImplementerSpawnConstraint;
+type ImplementerProjector = (
+  enabled: ImplementerEnabledSurfaces,
+) => ImplementerSpawnConstraint;
 
-export const CODEX_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh"];
-export const CLAUDE_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
+export const CODEX_EFFORTS: readonly AgentEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+export const CLAUDE_EFFORTS: readonly AgentEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 export const MINIMAX_EFFORTS: readonly AgentEffort[] = ["low"];
 
 export interface RunnerSpec {
@@ -66,7 +93,9 @@ export interface RunnerSpec {
   factory: "claudeCode" | "codex" | "opencode";
   forcedModel?: string;
   defaultEffort?: AgentEffort;
-  resolveAuthEnv?: (env: NodeJS.ProcessEnv) => Record<string, string> | undefined;
+  resolveAuthEnv?: (
+    env: NodeJS.ProcessEnv,
+  ) => Record<string, string> | undefined;
   structuredOutput?: boolean;
   /**
    * Model-slug families this runner's CLI can dispatch. A runner with a
@@ -131,7 +160,12 @@ const openCodeImplementerEnvironment: ImplementerProjector = (enabled) => ({
 
 const piImplementerEnvironment: ImplementerProjector = (enabled) => ({
   kind: "pi-flags",
-  flags: ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes"],
+  flags: [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+  ],
   skills: [...enabled.plugins],
   extensions: [...enabled.mcp],
   rsp: enabled.rsp,
@@ -175,13 +209,19 @@ export const RUNNER_SPECS: Record<AgentRunner, RunnerSpec> = {
   },
 };
 
-function enabledImplementerSurfaces(values: ImplementerConfigValues): ImplementerEnabledSurfaces {
+function enabledImplementerSurfaces(
+  values: ImplementerConfigValues,
+): ImplementerEnabledSurfaces {
   const memory = values["plugins.memory.enabled"] === "true";
   const brain = values["plugins.brain.enabled"] === "true";
   const redUi = values["plugins.red-ui.enabled"] === "true";
   const rsp = values["rsp.enabled"] === "true";
   return {
-    plugins: ["dev", ...(memory ? ["memory" as const] : []), ...(brain ? ["brain" as const] : [])],
+    plugins: [
+      "dev",
+      ...(memory ? ["memory" as const] : []),
+      ...(brain ? ["brain" as const] : []),
+    ],
     mcp: [
       "navigator",
       ...(memory ? ["red-memory" as const] : []),
@@ -211,7 +251,9 @@ export function projectImplementerEnvironment(
 }
 
 export function toAgentRunner(r: Runner): AgentRunner {
-  return r === "codex" || r === "opencode" || r === "claude-minimax" ? r : "claude";
+  return r === "codex" || r === "opencode" || r === "claude-minimax"
+    ? r
+    : "claude";
 }
 
 export function runnerSupportsStructuredOutput(runner: AgentRunner): boolean {
@@ -225,7 +267,10 @@ export function runnerSupportsStructuredOutput(runner: AgentRunner): boolean {
  * runner/model PAIR, so an operator's cross-runner model pin is substituted
  * before spawn instead of exiting non-zero at run time.
  */
-export function runnerSupportsModel(runner: AgentRunner, model: string): boolean {
+export function runnerSupportsModel(
+  runner: AgentRunner,
+  model: string,
+): boolean {
   const spec = RUNNER_SPECS[runner];
   const slug = model.trim();
   if (slug.length === 0) return false;
