@@ -5,13 +5,15 @@
 // here — callers resolve target/runner/passthrough and inject them.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
 import { FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { migrateLegacyDevPaths } from "./red-path-migration.js";
+import { reapStaleSupervisorState } from "./supervisor-state.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -61,17 +63,21 @@ export interface SpawnSupervisorOptions {
   adoptSlotPids?: readonly HeartbeatSlotPid[];
   /** Named fleet this supervisor owns (defaults to the `default` lane). */
   fleet?: string;
+  /** Maximum time to wait for the child to publish its pid file. */
+  probeDeadlineMs?: number;
 }
 
 /**
- * Spawn a detached `__supervise` process for `root`, waiting up to 3s for it to
- * write its pid file. Returns the supervisor pid, or null when the pid file
- * never appeared (the caller surfaces the log tail). Mirrors fleet.ts's original
- * inline spawn so launch + watchdog-relaunch stay byte-identical.
+ * Spawn a detached `__supervise` process for `root`, waiting for it to write its
+ * pid file. The default 15s boot window covers migrations/reaps in large repos;
+ * callers can shorten or extend it for their environment. Returns the supervisor
+ * pid, or null when the pid file never appeared (the caller surfaces the log tail).
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
+  await migrateLegacyDevPaths(opts.root).catch(() => undefined);
   const paths = afkPaths(opts.root, opts.fleet);
   mkdirSync(dirname(paths.supervisorPidPath), { recursive: true });
+  await reapStaleSupervisorState(dirname(paths.supervisorPidPath), isLivePid);
   const pidFile = paths.supervisorPidPath;
 
   const childArgs = [...(opts.passthrough ?? [])];
@@ -93,15 +99,26 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     env.RED_AFK_ADOPT_SLOT_PIDS = JSON.stringify(opts.adoptSlotPids);
   }
 
-  const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
-    cwd: opts.root,
-    env,
-    detached: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  child.unref();
+  let stderrFd: number | undefined;
+  try {
+    mkdirSync(dirname(paths.supervisorLogPath), { recursive: true });
+    stderrFd = openSync(paths.supervisorLogPath, "a");
+  } catch {
+    stderrFd = undefined;
+  }
+  try {
+    const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
+      cwd: opts.root,
+      env,
+      detached: true,
+      stdio: ["ignore", "ignore", stderrFd ?? "ignore"],
+    });
+    child.unref();
+  } finally {
+    if (stderrFd !== undefined) closeSync(stderrFd);
+  }
 
-  return waitForPidFile(pidFile, 3_000);
+  return waitForPidFile(pidFile, opts.probeDeadlineMs ?? 15_000);
 }
 
 /**
