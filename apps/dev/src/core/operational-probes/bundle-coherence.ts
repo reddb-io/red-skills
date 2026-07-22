@@ -30,10 +30,11 @@ function findings(input: BundleCoherenceProbeInput): BundleCoherenceFindingKind[
   if (pointer && input.laneNewestVersion && compareSemver(input.laneNewestVersion, pointer) > 0) {
     out.push("pointer-behind-lane");
   }
+  const newestAvailableLane = input.laneNewestVersion ?? input.installedVersion;
   if (
     input.pointerVersion &&
-    input.laneNewestVersion &&
-    compareSemver(input.pointerVersion, input.laneNewestVersion) > 0
+    newestAvailableLane &&
+    compareSemver(input.pointerVersion, newestAvailableLane) > 0
   ) {
     out.push("pointer-ahead-of-lane");
   }
