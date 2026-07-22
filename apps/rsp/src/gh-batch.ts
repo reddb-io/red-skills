@@ -150,39 +150,42 @@ async function runEditLabels(
 ): Promise<GhBatchResult> {
   if (command.add.length === 0 && command.remove.length === 0) return usageResult(argv, "pass --add and/or --remove");
   const names = [...new Set([...command.add, ...command.remove])];
-  const lookup = buildAliasedRepositoryQuery("issue", command.numbers, [], { labelNames: names });
-  const lookupResponse = await runGraphql(exec, repo, lookup.query);
-  if (isQuotaFailure(lookupResponse)) return await editLabelsRestFallback(command, repo, exec, concurrency, argv);
-  if (lookupResponse.code !== 0) return globalMutationFailure(command, argv, lookupResponse, "label lookup failed");
-  const payload = parseJson(lookupResponse.stdout);
-  const root = asRecord(asRecord(asRecord(payload).data).repository);
-  const labels = new Map(lookup.labelAliases.map(({ alias, name }) => [name, stringValue(asRecord(root[alias]).id)]));
+  const [identities, labelRows] = await Promise.all([
+    lookupIssueIdentities(command.numbers, repo, exec, concurrency),
+    boundedMap(names, concurrency, async (name) => {
+      const response = await exec(["api", `repos/${repo}/labels/${encodeURIComponent(name)}`]);
+      return { name, nodeId: stringValue(asRecord(parseJson(response.stdout)).node_id), error: response.code === 0 ? "" : compactError(response) };
+    }),
+  ]);
+  const labels = new Map(labelRows.map((row) => [row.name, row.nodeId]));
   const missing = names.filter((name) => !labels.get(name));
   if (missing.length > 0) {
     return mutationResult(argv, command.numbers, keyed(command.numbers, () => ({ error: `label not found: ${missing.join(", ")}` })), "graphql");
   }
-  const rows = parseAliasedRepositoryResponse(lookup, payload);
-  const targets = rows.flatMap((row) => {
-    const nodeId = stringValue(row.value?.id);
-    return nodeId ? [{ number: row.number, nodeId }] : [];
-  });
   const initial = new Map<number, JsonObject>(
-    rows.filter((row) => row.error).map((row) => [row.number, { error: row.error! }]),
+    identities.filter((row) => row.error).map((row) => [row.number, { error: row.error! }]),
   );
-  const mutation = buildAliasedLabelMutation(
-    targets,
-    command.add.map((name) => labels.get(name)!),
-    command.remove.map((name) => labels.get(name)!),
-  );
-  if (mutation.aliases.length === 0) return mutationResult(argv, command.numbers, mapToKeyed(command.numbers, initial), "graphql");
-  const mutationResponse = await runGraphql(exec, repo, mutation.query);
-  if (isQuotaFailure(mutationResponse)) return await editLabelsRestFallback(command, repo, exec, concurrency, argv);
-  if (mutationResponse.code !== 0) return globalMutationFailure(command, argv, mutationResponse, "label mutation failed");
-  const errors = errorsByAlias(mutation.aliases, parseJson(mutationResponse.stdout));
-  for (const target of targets) {
-    const aliases = mutation.aliases.filter((entry) => entry.number === target.number);
-    const error = aliases.map((entry) => errors.get(entry.alias)).find(Boolean);
-    initial.set(target.number, error ? { error } : { ok: true });
+  const targets = identities.flatMap((row) => row.nodeId ? [{ number: row.number, nodeId: row.nodeId }] : []);
+  const operationsPerTarget = Number(command.add.length > 0) + Number(command.remove.length > 0);
+  const chunkSize = Math.max(1, Math.floor(GITHUB_GRAPHQL_BATCH_SIZE / operationsPerTarget));
+  for (const targetChunk of chunks(targets, chunkSize)) {
+    const mutation = buildAliasedLabelMutation(
+      targetChunk,
+      command.add.map((name) => labels.get(name)!),
+      command.remove.map((name) => labels.get(name)!),
+    );
+    const mutationResponse = await runGraphql(exec, repo, mutation.query);
+    if (isQuotaFailure(mutationResponse)) return await editLabelsRestFallback(command, repo, exec, concurrency, argv);
+    if (mutationResponse.code !== 0) {
+      for (const target of targetChunk) initial.set(target.number, { error: compactError(mutationResponse) || "label mutation failed" });
+      continue;
+    }
+    const errors = errorsByAlias(mutation.aliases, parseJson(mutationResponse.stdout));
+    for (const target of targetChunk) {
+      const aliases = mutation.aliases.filter((entry) => entry.number === target.number);
+      const error = aliases.map((entry) => errors.get(entry.alias)).find(Boolean);
+      initial.set(target.number, error ? { error } : { ok: true });
+    }
   }
   return mutationResult(argv, command.numbers, mapToKeyed(command.numbers, initial), "graphql");
 }
@@ -195,11 +198,17 @@ async function editLabelsRestFallback(
   argv: readonly string[],
 ): Promise<GhBatchResult> {
   const rows = await boundedMap(command.numbers, concurrency, async (number): Promise<{ number: number; value: JsonObject }> => {
-    const args = ["issue", "edit", String(number), "--repo", repo];
-    for (const label of command.add) args.push("--add-label", label);
-    for (const label of command.remove) args.push("--remove-label", label);
-    const response = await exec(args);
-    return { number, value: response.code === 0 ? { ok: true } : { error: compactError(response) || "REST fallback failed" } };
+    for (const label of command.remove) {
+      const response = await exec(["api", "-X", "DELETE", `repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`]);
+      if (response.code !== 0) return { number, value: { error: compactError(response) || `failed to remove label ${label}` } };
+    }
+    if (command.add.length > 0) {
+      const args = ["api", "-X", "POST", `repos/${repo}/issues/${number}/labels`];
+      for (const label of command.add) args.push("-f", `labels[]=${label}`);
+      const response = await exec(args);
+      if (response.code !== 0) return { number, value: { error: compactError(response) || "failed to add labels" } };
+    }
+    return { number, value: { ok: true } };
   });
   return mutationResult(argv, command.numbers, keyedRows(rows), "rest-fallback", concurrency);
 }
@@ -213,34 +222,33 @@ async function runLinkSubIssues(
 ): Promise<GhBatchResult> {
   if (command.numbers.length < 2) return usageResult(argv, "pass a parent and at least one child issue");
   const [parentNumber, ...children] = command.numbers;
-  const lookup = buildAliasedRepositoryQuery("issue", command.numbers, []);
-  const lookupResponse = await runGraphql(exec, repo, lookup.query);
-  if (isQuotaFailure(lookupResponse)) return await linkSubIssuesRestFallback(parentNumber!, children, repo, exec, concurrency, argv);
-  if (lookupResponse.code !== 0) return globalMutationFailure({ ...command, numbers: children }, argv, lookupResponse, "issue lookup failed");
-  const rows = parseAliasedRepositoryResponse(lookup, parseJson(lookupResponse.stdout));
-  const parent = rows[0];
-  const parentId = stringValue(parent?.value?.id);
+  const identities = await lookupIssueIdentities(command.numbers, repo, exec, concurrency);
+  const parent = identities[0];
+  const parentId = parent?.nodeId;
   if (!parentId) {
     return mutationResult(argv, children, keyed(children, () => ({ error: parent?.error ?? "parent not found" })), "graphql");
   }
   const initial = new Map<number, JsonObject>();
-  const childTargets = rows.slice(1).flatMap((row) => {
-    const nodeId = stringValue(row.value?.id);
-    if (!nodeId) {
+  const childTargets = identities.slice(1).flatMap((row) => {
+    if (!row.nodeId) {
       initial.set(row.number, { error: row.error ?? "child not found" });
       return [];
     }
-    return [{ number: row.number, nodeId }];
+    return [{ number: row.number, nodeId: row.nodeId }];
   });
-  const mutation = buildAliasedSubIssueMutation({ number: parentNumber!, nodeId: parentId }, childTargets);
-  if (mutation.aliases.length === 0) return mutationResult(argv, children, mapToKeyed(children, initial), "graphql");
-  const mutationResponse = await runGraphql(exec, repo, mutation.query);
-  if (isQuotaFailure(mutationResponse)) return await linkSubIssuesRestFallback(parentNumber!, children, repo, exec, concurrency, argv);
-  if (mutationResponse.code !== 0) return globalMutationFailure({ ...command, numbers: children }, argv, mutationResponse, "sub-issue mutation failed");
-  const errors = errorsByAlias(mutation.aliases, parseJson(mutationResponse.stdout));
-  for (const entry of mutation.aliases) {
-    const error = errors.get(entry.alias);
-    initial.set(entry.number, error ? { error } : { ok: true });
+  for (const targetChunk of chunks(childTargets, GITHUB_GRAPHQL_BATCH_SIZE)) {
+    const mutation = buildAliasedSubIssueMutation({ number: parentNumber!, nodeId: parentId }, targetChunk);
+    const mutationResponse = await runGraphql(exec, repo, mutation.query);
+    if (isQuotaFailure(mutationResponse)) return await linkSubIssuesRestFallback(parentNumber!, children, repo, exec, concurrency, argv);
+    if (mutationResponse.code !== 0) {
+      for (const target of targetChunk) initial.set(target.number, { error: compactError(mutationResponse) || "sub-issue mutation failed" });
+      continue;
+    }
+    const errors = errorsByAlias(mutation.aliases, parseJson(mutationResponse.stdout));
+    for (const entry of mutation.aliases) {
+      const error = errors.get(entry.alias);
+      initial.set(entry.number, error ? { error } : { ok: true });
+    }
   }
   return mutationResult(argv, children, mapToKeyed(children, initial), "graphql");
 }
@@ -369,6 +377,24 @@ function projectChecks(commits: unknown): JsonObject {
 async function runGraphql(exec: GhBatchExec, repo: string, query: string): Promise<GhBatchExecOutput> {
   const [owner, name] = splitRepo(repo);
   return await exec(["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `repo=${name}`]);
+}
+
+async function lookupIssueIdentities(
+  numbers: readonly number[],
+  repo: string,
+  exec: GhBatchExec,
+  concurrency: number,
+): Promise<Array<{ number: number; nodeId?: string; databaseId?: number; error?: string }>> {
+  return await boundedMap(numbers, concurrency, async (number) => {
+    const response = await exec(["api", `repos/${repo}/issues/${number}`]);
+    const value = asRecord(parseJson(response.stdout));
+    const nodeId = stringValue(value.node_id);
+    const databaseId = numberValue(value.id);
+    if (response.code !== 0 || !nodeId) {
+      return { number, error: compactError(response) || "REST issue lookup failed" };
+    }
+    return { number, nodeId, databaseId: databaseId > 0 ? databaseId : undefined };
+  });
 }
 
 function chunks<T>(values: readonly T[], size: number): T[][] {
