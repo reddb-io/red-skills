@@ -506,7 +506,7 @@ describe("circuit trip and sweep", () => {
     expect(slot.swept).toBe(false);
     expect(io.spawnSlot).not.toHaveBeenCalled();
     expect(io.parkedSlotWork).not.toHaveBeenCalled();
-    expect(io.log).toHaveBeenCalledWith(expect.stringContaining("fatal host configuration"));
+    expect(io.logLines).toContainEqual(expect.stringContaining("fatal host configuration"));
   });
 
   it("trips after K fast deaths, parks the slot, and runs the trip sweep", async () => {
