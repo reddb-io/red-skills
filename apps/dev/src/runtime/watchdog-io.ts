@@ -25,7 +25,7 @@ import { appendRecordToonl } from "../core/jsonl-log.js";
 // files on exit, so the relaunch must not write a fresh pid file until the dying
 // process has finished cleaning up — otherwise it would clobber the new one.
 import { isLivePid, killTreeAndWait } from "./kill-tree.js";
-import { isSupervisorIdentityLive } from "./supervisor-state.js";
+import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
 import { readPidStartTime } from "../core/state.js";
 
 async function readPid(path: string): Promise<number | null> {
@@ -179,13 +179,22 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
-      await spawnSupervisor({
+      const spawnedPid = await spawnSupervisor({
         root,
         target: lastTarget,
         runner,
         adoptSlotPids: lastSlotPids,
         fleet: paths.fleet,
       });
+      if (spawnedPid === null) return false;
+      const identity = await readSupervisorIdentity(pidFile, pidStartFile);
+      if (
+        identity === null ||
+        identity.pid !== spawnedPid ||
+        !isSupervisorIdentityLive(identity, isLivePid, readPidStartTime)
+      ) {
+        return false;
+      }
       // Stamp a fresh heartbeat so the very next watchdog pass (a monitor cron
       // tick firing every poll) sees the new supervisor as healthy and does not
       // double-fire while it boots.
@@ -194,6 +203,7 @@ export function buildWatchdogIO(
       } catch {
         // best-effort
       }
+      return true;
     },
 
     deadSupervisorSignals: async (): Promise<DeadSupervisorSignals> => {
