@@ -46,8 +46,7 @@ The report answers six questions, in this order:
    work; a branch ahead of its remote holds unpushed commits. Either one means
    **the code exists and nobody knows** — say so loudly.
 6. **What is the blocker really?** `blocked:validation` and `blocked:spec` are
-   retryable. `blocked:sensitive-path` is a landing gate, not a retry gate.
-   Anything else is a pending human decision.
+   retryable. Anything else is a pending human decision.
 
 ## 2. Report — Say Where The Issue Stands
 
@@ -76,7 +75,6 @@ Pick by verdict, never by label alone:
 | Pending human decision, mixed `blocked:*` labels, or label/body mismatch | `/hitl #ISSUE` — stop here, do not requeue |
 | Parked `blocked:validation` / `blocked:spec`, work unstarted, guidance in hand | plain requeue (below) |
 | Work done on a branch — committed and pushed | adopt-branch landing (below) |
-| `blocked:sensitive-path`, and you have **reviewed** the protected diff | adopt-branch landing (a bare requeue refuses) |
 | Open PR with failing checks or changes requested | fix the PR branch first; neither command lands a red PR |
 | Dirty worktree | commit and push inside that worktree, then re-run `/retake` |
 
@@ -133,22 +131,6 @@ is re-parked immediately. The blocker must clear in the same transition that
 flips the labels. Producing that single transition is what the `requeue` command
 exists for.
 
-## Clearing a `blocked:sensitive-path` park (#1171)
-
-A sensitive-path park means the diff touches a protected path — a CI workflow, a
-lifecycle script, a git hook, `.red/` config. It gates **landing**, so it
-re-fires on every fresh attempt: bare requeue → `/hitl` → a new attempt
-reproduces the same protected diff → re-parks. An infinite loop.
-
-`--adopt-branch` breaks it. On a `blocked:sensitive-path` issue, requeue clears
-the blocker, drops `ready-for-human` and `blocked:sensitive-path`, and adopts the
-reviewed branch **with the sensitive-path landing guard bypassed for that land
-only**. An audit comment records who approved the diff and when — the bypass is
-never silent. The guard is never weakened for the autonomous path: every normal
-AFK or `/go` attempt still parks. The bypass is reachable only from this
-explicit human command, and a bare requeue of a sensitive-path park still
-refuses.
-
 ## `/retake` vs `/hitl` — the decision boundary
 
 **Stay in `/retake`** when the decision is already made: the issue is
@@ -160,7 +142,7 @@ and want to land it.
 **Hand to `/hitl`** when the pending human decision still has to be *extracted* —
 it interviews the maintainer, decides delegability, then clears the blocker and
 requeues. Hand over any issue carrying mixed `blocked:*` labels, a label/body
-mismatch, or a blocked kind outside `validation` / `spec` / `sensitive-path`
+mismatch, or a blocked kind outside `validation` / `spec`
 (`blocked:decision`, `blocked:stalled`). Both paths end in the same safe state;
 `/retake` is the informed shortcut, `/hitl` is the interview.
 

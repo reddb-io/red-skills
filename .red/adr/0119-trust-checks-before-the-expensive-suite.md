@@ -1,8 +1,9 @@
 # 0119 — Cheap trust checks run before the expensive suite, under one verdict
 
-- **Status**: accepted
+- **Status**: superseded — the trust/sensitive-path stage was removed in #2417 (2026-07-21); the ordering principle (cheap → expensive) and the single-verdict fold are kept for the remaining feedback and backpressure stages
 - **Date**: 2026-07-21
-- **Related**: ADR 0081 (`/go`, closed mechanical allowlist + context-aware escalation), ADR 0055 (no-agent landing lane / `--adopt-branch`), ADR 0118 (cascade outcome on the sibling's issue), issue #1102 (sensitive-path guard), issue #1171 (the adopt-path bypass)
+- **Superseded by**: #2417 (removed sensitive-path detection entirely; trust stage dropped from `GATE_STAGE_ORDER`)
+- **Related**: ADR 0081 (`/go`, closed mechanical allowlist + context-aware escalation), ADR 0055 (no-agent landing lane / `--adopt-branch`), ADR 0118 (cascade outcome on the sibling's issue), issue #1102 (sensitive-path guard — removed), issue #1171 (the adopt-path bypass — removed)
 
 ## Context
 
