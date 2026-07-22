@@ -13,6 +13,10 @@ export interface WorkerVitalsInput {
   fields?: string[];
 }
 
+export interface EventsSinceInput {
+  cursor?: string;
+}
+
 export interface ObservabilityDependencies {
   logs(input: LogsInput): Promise<unknown>;
   workerVitals(input: WorkerVitalsInput): Promise<unknown>;
@@ -20,6 +24,7 @@ export interface ObservabilityDependencies {
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
   queueStatus(): Promise<unknown>;
+  eventsSince(input: EventsSinceInput): Promise<unknown>;
 }
 
 export function createObservabilityTools(
@@ -91,6 +96,17 @@ export function createObservabilityTools(
         "Return ready-for-agent and ready-for-human queue candidates.",
       inputSchema: {},
       invoke: () => deps.queueStatus(),
+    },
+    {
+      name: "events_since",
+      title: "Poll events since cursor",
+      description:
+        "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+      inputSchema: {
+        cursor: z.string().min(1).optional(),
+      },
+      invoke: (input) =>
+        deps.eventsSince({ cursor: input.cursor as string | undefined }),
     },
   ];
 }

@@ -35,6 +35,12 @@ function deps(): CastleMcpDependencies {
       ready_for_agent: [],
       ready_for_human: [],
     })),
+    eventsSince: vi.fn(async (input) => {
+      if (input.cursor === undefined) {
+        return { events: [], history: [], lane_records: [], cursor: "eyJ2IjoxLCJhdCI6IjIwMjYtMDctMjJUMDA6MDA6MDAuMDAwWiJ9" };
+      }
+      return { refused: true, reason: "Unknown cursor format; call queue_status or worker_status to re-baseline." };
+    }),
     workerDispatch: vi.fn(async (input) => ({
       status: "completed",
       target: input.issue ?? input.demand,
@@ -114,6 +120,7 @@ describe("castle MCP tools", () => {
       "monitor",
       "history",
       "queue_status",
+      "events_since",
       "worker_dispatch",
       "worker_status",
       "worker_stop",
@@ -420,6 +427,27 @@ describe("castle MCP tools", () => {
       reason: expect.stringContaining("exactly one"),
     });
     expect(d.workerRequest).not.toHaveBeenCalled();
+  });
+
+  it("returns a baseline cursor when events_since is called without a cursor", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    const result = await tools.find((tool) => tool.name === "events_since")!.invoke({});
+    expect(result).toMatchObject({ cursor: expect.any(String) });
+    expect(d.eventsSince).toHaveBeenCalledWith({ cursor: undefined });
+  });
+
+  it("returns a terse refusal for an unknown cursor", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "events_since")!.invoke({ cursor: "not-a-valid-cursor" }),
+    ).resolves.toMatchObject({ refused: true, reason: expect.stringContaining("re-baseline") });
+    expect(
+      tools.find((tool) => tool.name === "events_since")!.description,
+    ).not.toMatch(/^MUTATING:/);
   });
 
   it("enumerates and removes disposable worktrees", async () => {

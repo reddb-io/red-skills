@@ -148,9 +148,22 @@ labels by hand.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. |
+| `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue
 with a non-empty open backlog is a flow bug to census, not a clean stop.
+
+`events_since` is the incremental read surface: use it instead of re-calling
+`queue_status`, `worker_status`, or `fleet_status` on every polling tick. **Cost
+guidance:** omit `cursor` on the first call to get a baseline cursor with no
+events; store that cursor; pass it on every subsequent tick to receive only
+what changed. The resident caches `queue_status`, `claim_status`, and
+`cascade_status` for ~15 s — within that window those reads are free. Use
+`events_since` for longer-running monitors where you need sub-second awareness
+of history completions and worker phase changes without polling GitHub directly.
+Unknown or expired cursors (> 7 days old) are refused with a terse `refused:
+true` response; re-baseline by calling `queue_status` and `worker_status` to
+rebuild state, then call `events_since` with no cursor to get a fresh handle.
 
 ### Wait — programmatic outcome polling
 
