@@ -63,6 +63,10 @@ When you would run one of these commands, run it through `rsp` instead:
 | `gh issue view` | `rsp gh issue view` |
 | `gh run list` | `rsp gh run list` |
 | `gh run view` | `rsp gh run view` |
+| `gh issues` | `rsp gh issues` |
+| `gh prs` | `rsp gh prs` |
+| `gh edit-labels` | `rsp gh edit-labels` |
+| `gh link-sub-issues` | `rsp gh link-sub-issues` |
 | `vitest` | `rsp vitest` |
 | `vitest run` | `rsp vitest run` |
 | `cargo test` | `rsp cargo test` |
@@ -85,6 +89,10 @@ When you would run one of these commands, run it through `rsp` instead:
 - For `gh issue view`, prefer `rsp gh issue view` when the summarized output is enough.
 - For `gh run list`, prefer `rsp gh run list` when the summarized output is enough.
 - For `gh run view`, prefer `rsp gh run view` when the summarized output is enough.
+- For `gh issues`, prefer `rsp gh issues` when the summarized output is enough.
+- For `gh prs`, prefer `rsp gh prs` when the summarized output is enough.
+- For `gh edit-labels`, prefer `rsp gh edit-labels` when the summarized output is enough.
+- For `gh link-sub-issues`, prefer `rsp gh link-sub-issues` when the summarized output is enough.
 - For `vitest`, prefer `rsp vitest` when the summarized output is enough.
 - For `vitest run`, prefer `rsp vitest run` when the summarized output is enough.
 - For `cargo test`, prefer `rsp cargo test` when the summarized output is enough.

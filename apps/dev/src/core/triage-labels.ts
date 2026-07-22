@@ -81,6 +81,9 @@ export const LABEL_DEPENDENCY = "blocked:dependency";
 export const LABEL_SPEC = "blocked:spec";
 export const LABEL_QUOTA = "blocked:quota";
 export const LABEL_RUNNER_TRANSIENT = "blocked:runner-transient";
+// Permanent host prerequisite/configuration failure (for example a missing
+// `sh` interpreter or vanished worker cwd). Never auto-retried.
+export const LABEL_HOST_CONFIG = "blocked:host-config";
 export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
 // AFK runner improvement (#812): an UNLOCKED admin-merge cannot bypass required
 // status checks on an `enforce_admins` base. A completed, MERGEABLE PR whose

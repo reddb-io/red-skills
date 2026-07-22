@@ -314,6 +314,7 @@ describe("castle worker drain", () => {
       expected: "exhausted",
       exhausted: true,
       runnerTransient: false,
+      hostConfig: false,
       retirementChecks: 0,
     },
     {
@@ -321,6 +322,15 @@ describe("castle worker drain", () => {
       expected: "runner-unavailable",
       exhausted: false,
       runnerTransient: true,
+      hostConfig: false,
+      retirementChecks: 0,
+    },
+    {
+      outcome: "host-config" as const,
+      expected: "host-config",
+      exhausted: false,
+      runnerTransient: false,
+      hostConfig: true,
       retirementChecks: 0,
     },
     {
@@ -328,6 +338,7 @@ describe("castle worker drain", () => {
       expected: "once",
       exhausted: false,
       runnerTransient: false,
+      hostConfig: false,
       retirementChecks: 0,
     },
     {
@@ -335,6 +346,7 @@ describe("castle worker drain", () => {
       expected: "graceful-retirement",
       exhausted: false,
       runnerTransient: false,
+      hostConfig: false,
       retirementChecks: 1,
     },
   ])(
@@ -344,6 +356,7 @@ describe("castle worker drain", () => {
       expected,
       exhausted,
       runnerTransient,
+      hostConfig,
       retirementChecks,
     }) => {
       const shouldRetire = vi.fn(() => true);
@@ -360,6 +373,7 @@ describe("castle worker drain", () => {
         stopReason: expected,
         exhausted,
         runnerTransient,
+        hostConfig,
       });
       expect(shouldRetire).toHaveBeenCalledTimes(retirementChecks);
       expect(harness.processedRunners).toEqual(["claude"]);
