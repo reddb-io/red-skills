@@ -392,6 +392,7 @@ export type MergeReadiness = "merge" | "conflict" | "ci-failed" | "pending";
 
 export interface CiGreenEvidence {
   checkCount: number;
+  requiredCheckCount: number;
   summary: string;
 }
 
@@ -411,10 +412,15 @@ export interface CiAwaitInput {
   maxPolls?: number;
   /** Delay between polls, in ms. Default 10000. */
   intervalMs?: number;
+  /** Base branch whose required checks must be proven green before CI evidence is usable. */
+  baseBranch?: string;
+  /** Current fetched base SHA; CI evidence is usable only when GitHub sees this base. */
+  expectedBaseOid?: string;
 }
 
 interface RollupEntry {
   name?: unknown;
+  context?: unknown;
   status?: unknown;
   conclusion?: unknown;
   state?: unknown;
@@ -452,11 +458,17 @@ export interface MergeStateView {
    * did not fetch it). The settled-vs-computing signal: `mergeStateStatus` alone
    * can read a transient value before GitHub finishes computing mergeability. */
   mergeable: string;
+  baseRefOid?: string;
+  headRefOid?: string;
   anyFailed: boolean;
   anyPending: boolean;
   checkCount?: number;
   successfulChecks?: number;
   skippedOrNeutralChecks?: number;
+  successfulCheckNames?: string[];
+  skippedOrNeutralCheckNames?: string[];
+  failedCheckNames?: string[];
+  pendingCheckNames?: string[];
 }
 
 function checkSucceeded(entry: RollupEntry): boolean {
@@ -469,6 +481,12 @@ function checkSkippedOrNeutral(entry: RollupEntry): boolean {
   const conclusion = up(entry.conclusion);
   const state = up(entry.state);
   return ["SKIPPED", "NEUTRAL"].includes(conclusion) || ["SKIPPED", "NEUTRAL"].includes(state);
+}
+
+function checkLabel(entry: RollupEntry): string {
+  const name = typeof entry.name === "string" ? entry.name.trim() : "";
+  if (name) return name;
+  return typeof entry.context === "string" ? entry.context.trim() : "";
 }
 
 function emptyMergeStateView(): MergeStateView {
@@ -496,21 +514,49 @@ export function parseMergeStateView(stdout: string): MergeStateView {
     }
     const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
     const mergeable = (parsed as { mergeable?: unknown }).mergeable;
+    const baseRefOid = (parsed as { baseRefOid?: unknown }).baseRefOid;
+    const headRefOid = (parsed as { headRefOid?: unknown }).headRefOid;
     const rollup = (parsed as { statusCheckRollup?: unknown }).statusCheckRollup;
     const entries: RollupEntry[] = Array.isArray(rollup)
       ? rollup.filter((e): e is RollupEntry => typeof e === "object" && e !== null)
       : [];
+    const names = (predicate: (entry: RollupEntry) => boolean): string[] =>
+      entries.filter(predicate).map(checkLabel).filter((name) => name !== "");
     return {
       mergeStateStatus: typeof mergeStateStatus === "string" ? mergeStateStatus : "",
       mergeable: typeof mergeable === "string" ? mergeable : "",
+      ...(typeof baseRefOid === "string" ? { baseRefOid } : {}),
+      ...(typeof headRefOid === "string" ? { headRefOid } : {}),
       anyFailed: entries.some(checkFailed),
       anyPending: entries.some(checkPending),
       checkCount: entries.length,
       successfulChecks: entries.filter(checkSucceeded).length,
       skippedOrNeutralChecks: entries.filter(checkSkippedOrNeutral).length,
+      ...(entries.length > 0
+        ? {
+            successfulCheckNames: names(checkSucceeded),
+            skippedOrNeutralCheckNames: names(checkSkippedOrNeutral),
+            failedCheckNames: names(checkFailed),
+            pendingCheckNames: names(checkPending),
+          }
+        : {}),
     };
   } catch {
     return emptyMergeStateView();
+  }
+}
+
+async function requiredCheckContexts(exec: Exec, repo: string, baseBranch: string | undefined): Promise<string[]> {
+  if (!baseBranch) return [];
+  const res = await exec([
+    "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
+  ]);
+  if (res.code !== 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(res.stdout);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string" && v.trim() !== "") : [];
+  } catch {
+    return [];
   }
 }
 
@@ -554,18 +600,28 @@ export function classifyMergeState(view: MergeStateView): MergeReadiness {
   return "pending";
 }
 
-function ciEvidenceFor(view: MergeStateView, readiness: MergeReadiness): CiGreenEvidence | undefined {
+function ciEvidenceFor(
+  view: MergeStateView,
+  readiness: MergeReadiness,
+  requiredChecks: readonly string[],
+  expectedBaseOid: string | undefined,
+): CiGreenEvidence | undefined {
   if (readiness !== "merge") return undefined;
-  const checkCount = view.checkCount ?? 0;
-  const successfulChecks = view.successfulChecks ?? 0;
-  const skippedOrNeutralChecks = view.skippedOrNeutralChecks ?? 0;
-  if (checkCount === 0) return undefined;
-  if (view.anyFailed || view.anyPending) return undefined;
-  if (skippedOrNeutralChecks > 0) return undefined;
-  if (successfulChecks !== checkCount) return undefined;
+  if (up(view.mergeStateStatus) !== "CLEAN" || up(view.mergeable) !== "MERGEABLE") return undefined;
+  if (!expectedBaseOid || view.baseRefOid !== expectedBaseOid) return undefined;
+  if (requiredChecks.length === 0) return undefined;
+  const successful = new Set(view.successfulCheckNames ?? []);
+  const skippedOrNeutral = new Set(view.skippedOrNeutralCheckNames ?? []);
+  const failed = new Set(view.failedCheckNames ?? []);
+  const pending = new Set(view.pendingCheckNames ?? []);
+  for (const required of requiredChecks) {
+    if (!successful.has(required)) return undefined;
+    if (failed.has(required) || pending.has(required) || skippedOrNeutral.has(required)) return undefined;
+  }
   return {
-    checkCount,
-    summary: `${checkCount} successful check(s)`,
+    checkCount: requiredChecks.length,
+    requiredCheckCount: requiredChecks.length,
+    summary: `${requiredChecks.length} required check(s) green`,
   };
 }
 
@@ -593,15 +649,17 @@ export async function waitForMergeReadyWithEvidence(
 ): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
+  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch);
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
     const res = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,statusCheckRollup",
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
     ]);
     const view = parseMergeStateView(res.stdout);
     const verdict = classifyMergeState(view);
     if (verdict !== "pending") {
-      return { readiness: verdict, ...(ciEvidenceFor(view, verdict) ? { ciEvidence: ciEvidenceFor(view, verdict) } : {}) };
+      const ciEvidence = ciEvidenceFor(view, verdict, requiredChecks, input.expectedBaseOid);
+      return { readiness: verdict, ...(ciEvidence ? { ciEvidence } : {}) };
     }
     if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
   }
@@ -991,14 +1049,20 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   //   - merge      → fall through to the merge below.
   let ciEvidence: CiGreenEvidence | undefined;
   if (ciAwait) {
-    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, ciAwait);
+    const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
+    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+      ...ciAwait,
+      baseBranch: ciAwait.baseBranch ?? target,
+      expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
+    });
     ciEvidence = ready.ciEvidence;
     if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
     if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
     if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
   }
 
-  if (beforeMerge && !(await beforeMerge({ prNumber, ...(ciEvidence ? { ciEvidence } : {}) })).ok) {
+  const beforeMergeCiEvidence = mergeQueue ? undefined : ciEvidence;
+  if (beforeMerge && !(await beforeMerge({ prNumber, ...(beforeMergeCiEvidence ? { ciEvidence: beforeMergeCiEvidence } : {}) })).ok) {
     return { ok: false, prNumber, reason: "before-merge-failed" };
   }
 
@@ -1015,7 +1079,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // An ENQUEUED PR has not merged yet — the queue lands it asynchronously once it
   // drains, so there is no merge commit on `origin/<target>` to promote to. Skip
   // the local fast-forward rather than pulling a tip that does not carry this work.
-  if (mergeQueue) return { ok: true, prNumber, ...(ciEvidence ? { ciEvidence } : {}) };
+  if (mergeQueue) return { ok: true, prNumber };
 
   const mergedCommit = await exec([
     "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
