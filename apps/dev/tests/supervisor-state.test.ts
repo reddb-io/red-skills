@@ -57,6 +57,7 @@ describe("pinned supervisor identity", () => {
       mkdirSync(runtime, { recursive: true });
       writeFileSync(join(runtime, "afk-supervisor.pid"), "4242", "utf8");
       writeFileSync(join(runtime, "afk-supervisor.pid.start"), "recorded-start", "utf8");
+      mkdirSync(join(runtime, "s4242"), { recursive: true });
 
       const pidStartTime = () => "recycled-start";
       expect(
