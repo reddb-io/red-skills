@@ -61,8 +61,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "worker_vitals",
     title: "Read worker vitals",
-    description: "Return the liveness-qualified state of all local workers.",
-    schema: [],
+    description:
+      "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+    schema: ["live_only", "fields"],
   },
   {
     name: "dashboard",
@@ -102,8 +103,8 @@ const SURFACE: ReadonlyArray<{
     name: "worker_status",
     title: "Read worker status",
     description:
-      "Return normalized, liveness-qualified state for one worker or every local worker.",
-    schema: ["worker"],
+      "Return normalized, liveness-qualified state for one worker or every local worker. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers.",
+    schema: ["worker", "live_only", "fields"],
   },
   {
     name: "worker_stop",
