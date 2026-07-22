@@ -21,6 +21,7 @@ import {
   terminateAll,
   type SpawnPolicy,
   type SupervisorDeps,
+  type SupervisorState,
 } from "../core/supervisor.js";
 import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
@@ -902,46 +903,21 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       ? []
       : ((await readFleetState(stateFile).catch(() => null))?.slotPids ?? []);
   const adoptSlotPids = envAdoptSlotPids.length > 0 ? envAdoptSlotPids : stateAdoptSlotPids;
-  await reapStaleSupervisorState(stateAfk, isAlive);
+  const priorSupervisor = await reapStaleSupervisorState(stateAfk, isAlive);
   // One supervisor PER NAMED FLEET. The lock is the fleet's own pid file inside
   // `supervisors/<fleet>/`, so a second `alpha` supervisor is refused while
   // `beta` boots freely alongside it.
-  if (existsSync(pidFile)) {
-    try {
-      const prev = Number(require("node:fs").readFileSync(pidFile, "utf8").trim());
-      if (prev && isAlive(prev)) {
-        process.stderr.write(`supervisor already running for fleet ${fleet} (pid=${prev})\n`);
-        return 1;
-      }
-    } catch {
-      // stale — overwrite
-    }
+  if (priorSupervisor.status === "live") {
+    process.stderr.write(
+      `supervisor already running for fleet ${fleet} (pid=${priorSupervisor.pid})\n`,
+    );
+    return 1;
   }
+  const ownStartTime = readPidStartTime(process.pid);
+  if (ownStartTime === null) throw new Error("cannot pin supervisor process start time");
+  writeFileSync(paths.supervisorPidStartPath, ownStartTime, "utf8");
   writeFileSync(pidFile, String(process.pid), "utf8");
-  writeFileSync(paths.supervisorPidStartPath, readPidStartTime(process.pid) ?? "", "utf8");
-  // clear any stale stop file
-  if (existsSync(stopFile)) rmSync(stopFile, { force: true });
-  rmSync(paths.supervisorResizePath, { force: true });
-
-  const values = loadConfig(paths.configPath, { warn: () => undefined });
-  const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
-  const state = initSupervisorState(config.target);
-  const repo = await resolveRepoSlug(root).catch(() => "");
-  const trunk = getConfig(values, "dev.trunk") || "main";
-  const ghCtx = { cwd: root, repo };
   const supervisorId = `s${process.pid}`;
-  // The filter/policy flags fleet.ts forwarded (--spec/--issues/--alternate/
-  // --fallback-runner/--request), threaded into every slot's `run --once`.
-  const slotArgs = slotFilterArgs(args);
-  // Base env for fleet hooks: RED_AFK_REPO, RED_AFK_ROOT, RED_AFK_RUNNER.
-  const hookEnvBase: Record<string, string> = {
-    RED_AFK_ROOT: root,
-    RED_AFK_WORKSPACE: root,
-    RED_AFK_RUNNER: config.runner,
-    ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
-  };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, fleet, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
-
   const exitWriter = createCastleLaneWriters(
     createEnginePaths(join(root, ".red")),
   ).supervisor(join(fleet, supervisorId));
@@ -979,33 +955,66 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   process.once("uncaughtExceptionMonitor", onUncaughtException);
 
   const stopRequested = (): boolean => existsSync(stopFile);
-
-  // A bare `kill <supervisor-pid>` (SIGTERM/SIGINT) must not orphan the detached
-  // slot workers or leave the pid/stop control files behind (#2056). Without a
-  // handler the signal skips the `finally` below, stranding both. Translate the
-  // signal into the same clean shutdown the stop-file path performs: terminate
-  // every live slot (SIGTERM→grace→SIGKILL→confirm via terminateAll), clean the
-  // control files, then exit with the conventional 128+signal code.
+  let state: SupervisorState | undefined;
+  let deps: SupervisorDeps | undefined;
   let shuttingDown = false;
   const onSignal = (signal: "SIGTERM" | "SIGINT" | "SIGHUP"): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     void (async () => {
       await exitRecorder.record("signal", { signal });
-      try {
-        await terminateAll(state, deps);
-      } catch {
-        // best-effort — still clean control files and exit.
+      if (state !== undefined && deps !== undefined) {
+        try {
+          await terminateAll(state, deps);
+        } catch {
+          // best-effort — still clean control files and exit.
+        }
       }
       process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
     })();
   };
-  process.once("SIGTERM", () => onSignal("SIGTERM"));
-  process.once("SIGINT", () => onSignal("SIGINT"));
-  process.once("SIGHUP", () => onSignal("SIGHUP"));
+  const onSigterm = (): void => onSignal("SIGTERM");
+  const onSigint = (): void => onSignal("SIGINT");
+  const onSighup = (): void => onSignal("SIGHUP");
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  process.once("SIGHUP", onSighup);
 
   let completed = false;
   try {
+    // Everything after publishing the pinned identity is inside this lifecycle
+    // boundary, including configuration and dependency construction.
+    if (existsSync(stopFile)) rmSync(stopFile, { force: true });
+    rmSync(paths.supervisorResizePath, { force: true });
+
+    const values = loadConfig(paths.configPath, { warn: () => undefined });
+    const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
+    state = initSupervisorState(config.target);
+    const repo = await resolveRepoSlug(root).catch(() => "");
+    const trunk = getConfig(values, "dev.trunk") || "main";
+    const ghCtx = { cwd: root, repo };
+    const slotArgs = slotFilterArgs(args);
+    const hookEnvBase: Record<string, string> = {
+      RED_AFK_ROOT: root,
+      RED_AFK_WORKSPACE: root,
+      RED_AFK_RUNNER: config.runner,
+      ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
+    };
+    deps = buildSupervisorDeps(
+      root,
+      tmp,
+      slotLogsDir,
+      firehoseFile,
+      stateFile,
+      supervisorId,
+      fleet,
+      config.runner,
+      ghCtx,
+      trunk,
+      slotArgs,
+      hookEnvBase,
+      adoptSlotPids,
+    );
     await runSupervisor(state, deps, config, stopRequested);
     completed = true;
     await exitRecorder.record(stopRequested() ? "explicit-stop" : "completed");
@@ -1018,6 +1027,9 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   } finally {
     process.removeListener("exit", onProcessExit);
     process.removeListener("uncaughtExceptionMonitor", onUncaughtException);
+    process.removeListener("SIGTERM", onSigterm);
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGHUP", onSighup);
     if (completed) {
       rmSync(pidFile, { force: true });
       rmSync(paths.supervisorPidStartPath, { force: true });
