@@ -27,20 +27,22 @@ export interface HitlCardCommentSource {
   author?: string;
   authorType?: string;
   body: string;
+  allowedAuthors: readonly string[];
 }
 
 /**
  * Reject automation before either slash-command or natural-language parsing.
- * GitHub's default token reports `Bot`, while a PAT can make the same workflow
- * reply look like a `User`; the login and stable outbound markers close those
- * two independent self-reaction paths.
+ * GitHub's default token reports `Bot`, while a PAT can make automation look
+ * like a `User`; requiring an explicitly eligible human login before parsing
+ * closes that path independently of the stable outbound-marker guard.
  */
 export function shouldIgnoreHitlCardComment(input: HitlCardCommentSource): boolean {
   const authorType = input.authorType?.trim().toLowerCase();
-  if (authorType && authorType !== "user") return true;
+  if (authorType !== "user") return true;
 
-  const author = input.author?.trim() ?? "";
-  if (/\[bot\]$/i.test(author) || /^github-actions$/i.test(author)) return true;
+  const author = input.author?.trim().toLowerCase() ?? "";
+  const allowedAuthors = new Set(input.allowedAuthors.map((login) => login.trim().toLowerCase()));
+  if (!author || !allowedAuthors.has(author)) return true;
 
   const body = input.body.trimStart();
   return [
@@ -57,6 +59,13 @@ export function shouldIgnoreHitlCardComment(input: HitlCardCommentSource): boole
 export interface HitlCardActionComment {
   body: string;
   createdAt?: string;
+  author?: string;
+  authorType?: string;
+}
+
+export interface HitlCardActorIdentity {
+  login: string;
+  type: string;
 }
 
 export interface HitlCardActionRate {
@@ -66,28 +75,28 @@ export interface HitlCardActionRate {
 }
 
 /**
- * Count completed card actions in a rolling window. The legacy summary match
- * protects already-running installations while the v1 marker gives new action
- * receipts an exact, cheap identity.
+ * Count completed card actions in a rolling window. A receipt counts only when
+ * both its GitHub login/type identity and its exact leading marker match, so a
+ * pasted or quoted marker from an ordinary comment cannot consume the budget.
  */
 export function evaluateHitlCardActionRate(
   comments: readonly HitlCardActionComment[],
   now = new Date(),
+  cardAuthors: readonly HitlCardActorIdentity[] = [],
 ): HitlCardActionRate {
   const cutoff = now.getTime() - HITL_CARD_ACTION_WINDOW_MS;
+  const identities = new Set(cardAuthors.map(({ login, type }) =>
+    `${login.trim().toLowerCase()}\0${type.trim().toLowerCase()}`));
   let actionCount = 0;
   let hasStandDown = false;
 
   for (const comment of comments) {
     const createdAt = Date.parse(comment.createdAt ?? "");
     if (!Number.isFinite(createdAt) || createdAt < cutoff || createdAt > now.getTime()) continue;
-    if (
-      comment.body.includes(HITL_CARD_ACTION_MARKER) ||
-      comment.body.includes("<summary>HITL card:")
-    ) {
-      actionCount += 1;
-    }
-    if (comment.body.includes(HITL_CARD_STAND_DOWN_MARKER)) hasStandDown = true;
+    const identity = `${comment.author?.trim().toLowerCase() ?? ""}\0${comment.authorType?.trim().toLowerCase() ?? ""}`;
+    if (!identities.has(identity)) continue;
+    if (comment.body.startsWith(HITL_CARD_ACTION_MARKER)) actionCount += 1;
+    if (comment.body.startsWith(HITL_CARD_STAND_DOWN_MARKER)) hasStandDown = true;
   }
 
   const limited = actionCount >= HITL_CARD_ACTION_LIMIT;
