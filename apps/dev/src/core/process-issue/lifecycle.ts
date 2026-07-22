@@ -190,7 +190,7 @@ export async function processIssue(
       deps.claimGh,
       { worker: input.claimant ?? input.workerId, runner: input.runner },
       issue,
-      { isStale: deps.claimStale, deathFor: deps.recoveredWorkerDeathCause },
+      { isStale: deps.claimStale, deathFor: deps.recoveredWorkerDeathCause, nowS: deps.nowEpoch() },
     );
     if (decision.verdict === "lost") {
       await deps.claimLock.release(issue);
