@@ -15,6 +15,7 @@ import {
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 import { loadConfig } from "../src/core/config.js";
+import { readPidStartTime } from "../src/core/state.js";
 import { afkPaths } from "../src/runtime/wire.js";
 import { resolveResidentPaths } from "../../rsp/src/resident-client.js";
 
@@ -112,6 +113,11 @@ async function writeFleetSnapshot(
   const dir = dirname(afkPaths(root).supervisorPidPath);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
+  await writeFile(
+    join(dir, "afk-supervisor.pid.start"),
+    `${readPidStartTime(process.pid)!}\n`,
+    "utf8",
+  );
   await writeFile(
     join(dir, "state.toon"),
     JSON.stringify({
@@ -694,7 +700,7 @@ describe("statusline command — rendered line", () => {
     expect(stripAnsi(out.text())).not.toContain("flt=codex 1/1†");
   });
 
-  it("renders the fleet segment when the pid anchor is missing but the supervisor lane is live", async () => {
+  it("suppresses an unpinned supervisor lane when the pid anchor is missing", async () => {
     await seedFreshRepoCache(root, 0, 0);
     await seedFreshCache(root, 2, 0);
     await writeFleetSnapshot(root);
@@ -704,8 +710,8 @@ describe("statusline command — rendered line", () => {
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
-    expect(stripAnsi(out.text())).toContain("flt=codex 1/1");
-    expect(stripAnsi(out.text())).toContain("q=2");
+    expect(stripAnsi(out.text())).not.toContain("flt=codex 1/1");
+    expect(stripAnsi(out.text())).not.toContain("q=2");
   });
 
   it("suppresses the fleet segment when the supervisor pid is dead", async () => {
