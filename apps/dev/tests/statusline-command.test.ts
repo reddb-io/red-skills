@@ -15,6 +15,7 @@ import {
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 import { loadConfig } from "../src/core/config.js";
+import { readPidStartTime } from "../src/core/state.js";
 import { afkPaths } from "../src/runtime/wire.js";
 import { resolveResidentPaths } from "../../rsp/src/resident-client.js";
 
@@ -112,6 +113,11 @@ async function writeFleetSnapshot(
   const dir = dirname(afkPaths(root).supervisorPidPath);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "afk-supervisor.pid"), `${process.pid}\n`, "utf8");
+  await writeFile(
+    join(dir, "afk-supervisor.pid.start"),
+    `${readPidStartTime(process.pid)!}\n`,
+    "utf8",
+  );
   await writeFile(
     join(dir, "state.toon"),
     JSON.stringify({
