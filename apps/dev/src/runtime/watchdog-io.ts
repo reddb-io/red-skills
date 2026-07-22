@@ -56,8 +56,9 @@ async function fileExists(path: string): Promise<boolean> {
 export function buildWatchdogIO(
   root: string,
   stdout: NodeJS.WritableStream = process.stdout,
+  fleet?: string,
 ): WatchdogIO {
-  const paths = afkPaths(root);
+  const paths = afkPaths(root, fleet);
   const pidFile = paths.supervisorPidPath;
   const pidStartFile = paths.supervisorPidStartPath;
   const stopFile = paths.supervisorStopPath;
@@ -177,7 +178,13 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
-      await spawnSupervisor({ root, target: lastTarget, runner, adoptSlotPids: lastSlotPids });
+      await spawnSupervisor({
+        root,
+        target: lastTarget,
+        runner,
+        adoptSlotPids: lastSlotPids,
+        fleet: paths.fleet,
+      });
       // Stamp a fresh heartbeat so the very next watchdog pass (a monitor cron
       // tick firing every poll) sees the new supervisor as healthy and does not
       // double-fire while it boots.
