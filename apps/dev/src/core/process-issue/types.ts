@@ -1,5 +1,6 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
 import type { BranchRef } from "../branch-cleanup.js";
+import type { AttemptPullRequest } from "../branch-resume.js";
 import {
   buildRefFromSlug,
   deleteRemote,
@@ -176,6 +177,9 @@ export interface ProcessLookups {
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
    * pushed attempt so re-claim can resume instead of rebuilding from scratch. */
   discoverBranches?(): Promise<BranchRef[]>;
+  /** List open PRs that may already carry this issue's work. The lifecycle
+   * applies its own body/head match before adopting one. */
+  discoverOpenPullRequests?(issue: number): Promise<AttemptPullRequest[]>;
 }
 export function remoteTrackingBaseRef(remote: string, base: string): string {
   if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
