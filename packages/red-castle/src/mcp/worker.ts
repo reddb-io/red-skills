@@ -10,11 +10,18 @@ export interface WorkerDispatchInput {
 
 export interface WorkerStatusInput {
   worker?: string;
+  live_only?: boolean;
+  fields?: string[];
 }
 
 export interface WorkerStopInput {
   worker: string;
   recycle: boolean;
+}
+
+export interface WorkerInputRefusal {
+  refused: true;
+  reason: string;
 }
 
 export interface WorkerDependencies {
@@ -52,16 +59,35 @@ export function createWorkerTools(deps: WorkerDependencies): CastleMcpTool[] {
       description:
         "MUTATING: run one tracked issue or mint and run one disposable demand through the AFK worker lifecycle.",
       inputSchema: dispatchShape,
-      invoke: (input) => deps.workerDispatch(dispatchInput(input)),
+      invoke: (input) => {
+        let parsed: WorkerDispatchInput;
+        try {
+          parsed = dispatchInput(input);
+        } catch (err) {
+          return Promise.resolve<WorkerInputRefusal>({
+            refused: true,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return deps.workerDispatch(parsed);
+      },
     },
     {
       name: "worker_status",
       title: "Read worker status",
       description:
-        "Return normalized, liveness-qualified state for one worker or every local worker.",
-      inputSchema: { worker: z.string().min(1).optional() },
-      invoke: ({ worker }) =>
-        deps.workerStatus({ worker: worker as string | undefined }),
+        "Return normalized, liveness-qualified state for one worker or every local worker. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers.",
+      inputSchema: {
+        worker: z.string().min(1).optional(),
+        live_only: z.boolean().default(true),
+        fields: z.array(z.string().min(1)).optional(),
+      },
+      invoke: ({ worker, live_only, fields }) =>
+        deps.workerStatus({
+          worker: worker as string | undefined,
+          live_only: (live_only ?? true) as boolean,
+          fields: fields as string[] | undefined,
+        }),
     },
     {
       name: "worker_stop",
