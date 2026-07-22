@@ -4,9 +4,9 @@ This file serves the `afk fleet` branch: launching, stopping, and supervising `N
 concurrent `run` workers on one checkout. Reached from *When To Use*
 (`/afk fleet [N]`, `/afk fleet stop`) in [`SKILL.md`](./SKILL.md).
 
-## Drive fleets through the `dev:afk` MCP
+## Drive fleets through the `castle` MCP
 
-**A fleet is a named profile, and the `dev:afk` MCP owns its lifecycle.** The
+**A fleet is a named profile, and the `castle` MCP owns its lifecycle.** The
 five fleet tools are the primary surface; the CLI forms documented below are the
 fallback transport for the same operations, and they address the `default`
 fleet. Read [`MCP.md`](./MCP.md) for host prefixing and mutation modes.
@@ -165,6 +165,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- [`MCP.md`](./MCP.md) — the `dev:afk` tool surface; `fleet_create`, `fleet_edit`, `fleet_status`, `fleet_list`, `fleet_stop`, and `logs` are the primary fleet interface.
+- [`MCP.md`](./MCP.md) — the `castle` tool surface; `fleet_create`, `fleet_edit`, `fleet_status`, `fleet_list`, `fleet_stop`, and `logs` are the primary fleet interface.
 - The bundle's `fleet` / `fleet stop` commands — the CLI-fallback entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.

@@ -23,7 +23,7 @@ vi.mock("@reddb-io/red-castle/engine", async (importOriginal) => {
   };
 });
 
-import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
+import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
@@ -52,7 +52,7 @@ describe("fleet_create startup probe", () => {
     vi.mocked(spawnSupervisor).mockResolvedValue(43120);
 
     await expect(
-      createDevAfkMcpDependencies(cwd).fleetCreate({
+      createCastleMcpDependencies(cwd).fleetCreate({
         name: "healthy",
         runner: "codex",
         target: 2,
@@ -87,7 +87,7 @@ describe("fleet_create startup probe", () => {
       return null;
     });
 
-    const failure = await createDevAfkMcpDependencies(cwd)
+    const failure = await createCastleMcpDependencies(cwd)
       .fleetCreate({
         name: "fast-death",
         runner: "codex",
@@ -119,7 +119,7 @@ describe("fleet_create startup probe", () => {
     );
 
     await expect(
-      createDevAfkMcpDependencies(cwd).fleetCreate({
+      createCastleMcpDependencies(cwd).fleetCreate({
         name: "rollback-failure",
         runner: "codex",
         target: 1,
