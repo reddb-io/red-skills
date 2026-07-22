@@ -11,12 +11,17 @@ import type { AttemptDir } from "../../core/reclaim.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../../core/worker-paths.js";
 import { parseClaimRecords } from "../../core/claim.js";
-import { collectFleetTruthProbeInput } from "../../core/operational-probes.js";
+import {
+  collectFleetTruthProbeInput,
+  HOST_PREREQUISITE_COMMANDS,
+  type HostPrerequisiteProbeInput,
+} from "../../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../../core/supervisor.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
 import { isLivePid } from "../kill-tree.js";
+import { execTool, type ExecFn } from "../exec.js";
 import { collectTmpJanitorReport } from "../tmp-janitor.js";
 import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
 import * as ghx from "../gh.js";
@@ -103,6 +108,24 @@ export async function collectBootOptions(
 
 export interface CollectPrecheckFactsOptions {
   readonly includeNpmBundleCoherence?: boolean;
+  readonly hostPrerequisiteExec?: ExecFn;
+}
+
+export async function collectHostPrerequisiteProbeInput(
+  exec: ExecFn = execTool,
+): Promise<HostPrerequisiteProbeInput> {
+  const availability = await Promise.all(
+    HOST_PREREQUISITE_COMMANDS.map(async (command) => {
+      const result = await exec("sh", ["-c", 'command -v "$1" >/dev/null 2>&1', "host-prereq", command]);
+      return [command, result.code === 0] as const;
+    }),
+  );
+  const commands = Object.fromEntries(availability) as Record<
+    (typeof HOST_PREREQUISITE_COMMANDS)[number],
+    boolean
+  >;
+  const bashVersion = commands.bash ? (await exec("bash", ["--version"])).stdout : undefined;
+  return { commands, bashVersion };
 }
 
 export async function collectPrecheckFacts(
@@ -121,7 +144,18 @@ export async function collectPrecheckFacts(
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch, lockRaw] =
+  const [
+    ghInstalled,
+    ghAuthenticated,
+    isRepo,
+    remoteUrls,
+    hasMain,
+    currentBranch,
+    pnpmProbe,
+    lockedBranch,
+    lockRaw,
+    hostPrerequisites,
+  ] =
     await Promise.all([
       ghx.ghInstalled(ghCtx),
       ghx.ghAuthenticated(ghCtx),
@@ -132,6 +166,7 @@ export async function collectPrecheckFacts(
       import("../exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
       readLockedBranch(lockPath),
       fsx.readText(lockPath),
+      collectHostPrerequisiteProbeInput(options.hostPrerequisiteExec),
     ]);
   const resolvedFocalBranch = await resolveBaseWithSource(
     { issueBody: "" },
@@ -207,6 +242,7 @@ export async function collectPrecheckFacts(
     configuredTrunk,
     configuredTrunkSource,
     pnpmInstalled,
+    hostPrerequisites,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
     allowHttpsRemote:
