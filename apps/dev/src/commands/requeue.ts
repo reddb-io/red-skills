@@ -26,7 +26,6 @@ import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
-import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
 import {
