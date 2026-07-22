@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { afkPaths } from "./wire.js";
+import { readPidStartTime } from "../core/state.js";
+import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,15 +16,11 @@ function isLivePid(pid: number): boolean {
   }
 }
 
-async function readLivePid(path: string): Promise<number | null> {
-  try {
-    const raw = (await readFile(path, "utf8")).trim();
-    if (!/^[1-9][0-9]*$/.test(raw)) return null;
-    const pid = Number(raw);
-    return isLivePid(pid) ? pid : null;
-  } catch {
-    return null;
-  }
+async function readLiveWatchdogPid(pidPath: string, startPath: string): Promise<number | null> {
+  const identity = await readSupervisorIdentity(pidPath, startPath);
+  return identity && isSupervisorIdentityLive(identity, isLivePid, readPidStartTime)
+    ? identity.pid
+    : null;
 }
 
 export interface SpawnSupervisorWatchdogOptions {
@@ -37,7 +34,10 @@ export async function spawnSupervisorWatchdog(
 ): Promise<number | null> {
   const paths = afkPaths(options.root, options.fleet);
   mkdirSync(dirname(paths.supervisorWatchdogPidPath), { recursive: true });
-  const existing = await readLivePid(paths.supervisorWatchdogPidPath);
+  const existing = await readLiveWatchdogPid(
+    paths.supervisorWatchdogPidPath,
+    paths.supervisorWatchdogPidStartPath,
+  );
   if (existing !== null) return existing;
 
   const child = spawn(
@@ -54,7 +54,10 @@ export async function spawnSupervisorWatchdog(
 
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
-    const pid = await readLivePid(paths.supervisorWatchdogPidPath);
+    const pid = await readLiveWatchdogPid(
+      paths.supervisorWatchdogPidPath,
+      paths.supervisorWatchdogPidStartPath,
+    );
     if (pid !== null) return pid;
     await sleep(100);
   }
