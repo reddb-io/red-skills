@@ -58,6 +58,10 @@ export interface WatchdogIO {
   readRestartLedger?(): Promise<number[]>;
   /** Persist the pruned dead-supervisor restart ledger after a respawn. Best-effort. */
   writeRestartLedger?(epochs: number[]): Promise<void>;
+  /** Durable quiescent-recovery marker. It survives the supervisor pid file
+   * being removed between teardown and a successful replacement boot. */
+  isRecoveryPending?(): Promise<boolean>;
+  setRecoveryPending?(pending: boolean): Promise<void>;
   /** Loud, structured progress line (best-effort). */
   log(line: string): void;
 }
@@ -160,6 +164,7 @@ export interface SupervisorWatchdogLoopOptions {
   pass(): Promise<void>;
   shouldStop(): boolean;
   sleep(ms: number): Promise<void>;
+  onPassError?(error: unknown): void;
 }
 
 /**
@@ -172,7 +177,11 @@ export async function runSupervisorWatchdogLoop(
   options: SupervisorWatchdogLoopOptions,
 ): Promise<void> {
   while (!options.shouldStop()) {
-    await options.pass();
+    try {
+      await options.pass();
+    } catch (error) {
+      options.onPassError?.(error);
+    }
     if (options.shouldStop()) return;
     await options.sleep(options.pollMs);
   }
@@ -254,13 +263,32 @@ export async function runWatchdog(
     crashLoopSuppressed: false,
   };
 
-  if (health === "healthy") return base;
+  if (health === "healthy") {
+    if (await io.isRecoveryPending?.()) await io.setRecoveryPending?.(false);
+    return base;
+  }
 
   if (health === "absent") {
     // A null pid means the pid file is gone — a graceful `fleet stop` (or a fleet
     // that never launched). NEVER resurrect that; the safety net only fires for a
     // crashed supervisor that left its pid file behind pointing at a dead pid.
-    if (liveness.pid === null) return base;
+    if (liveness.pid === null) {
+      if (!(await io.isRecoveryPending?.())) return base;
+      io.log("watchdog: supervisor identity is absent during pending recovery; retrying relaunch.");
+      let relaunched = false;
+      try {
+        relaunched = await io.relaunch();
+      } catch (err) {
+        io.log(`watchdog: relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (!relaunched) {
+        io.log("watchdog: relaunch failed: no pinned supervisor identity appeared; recovery remains armed.");
+        return base;
+      }
+      await io.setRecoveryPending?.(false);
+      io.log("watchdog: pending supervisor recovery completed — fresh fleet relaunched.");
+      return { ...base, recovered: true };
+    }
     return await recoverDeadSupervisor(io, liveness.pid, now, restartBound, base);
   }
 
@@ -275,6 +303,7 @@ export async function runWatchdog(
   io.log(
     `⚠️  watchdog: supervisor pid=${liveness.pid ?? "?"} is QUIESCENT — ${reason}. Recovering.`,
   );
+  await io.setRecoveryPending?.(true);
   await teardownWedgedSupervisor(io, liveness.pid);
   let relaunched = false;
   try {
@@ -286,6 +315,7 @@ export async function runWatchdog(
     io.log("watchdog: relaunch failed: no pinned supervisor identity appeared; recovery remains armed.");
     return base;
   }
+  await io.setRecoveryPending?.(false);
   io.log(`watchdog: wedged supervisor recovered — fresh fleet relaunched.`);
   return { ...base, recovered: true };
 }
