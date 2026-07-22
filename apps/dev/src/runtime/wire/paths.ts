@@ -46,6 +46,10 @@ export interface AfkPaths {
   supervisorPidStartPath: string;
   /** External self-heal watchdog pid file (same repo-scoped fleet lane). */
   supervisorWatchdogPidPath: string;
+  /** Stable process-start token paired with the watchdog pid lock. */
+  supervisorWatchdogPidStartPath: string;
+  /** Atomic single-owner acquisition lane for watchdog startup. */
+  supervisorWatchdogLockPath: string;
   /** Supervisor stop sentinel (tmp supervisor lane). */
   supervisorStopPath: string;
   /** Supervisor human-readable view source (structured TOONL firehose). */
@@ -109,6 +113,8 @@ export function afkPaths(root: string, fleetName?: string): AfkPaths {
     supervisorPidPath: join(supervisorRuntime, "afk-supervisor.pid"),
     supervisorPidStartPath: join(supervisorRuntime, "afk-supervisor.pid.start"),
     supervisorWatchdogPidPath: join(supervisorRuntime, "afk-supervisor-watchdog.pid"),
+    supervisorWatchdogPidStartPath: join(supervisorRuntime, "afk-supervisor-watchdog.pid.start"),
+    supervisorWatchdogLockPath: join(supervisorRuntime, "afk-supervisor-watchdog.lock"),
     supervisorStopPath: join(supervisorRuntime, "afk-supervisor.stop"),
     supervisorLogPath: join(supervisorRuntime, "supervisor.log.toonl"),
     supervisorResizePath: join(supervisorRuntime, "resize.toon"),
