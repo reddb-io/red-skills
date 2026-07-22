@@ -107,19 +107,6 @@ export interface Opts {
    * Unset → the local trunk reads as an ancestor of origin → proceeds.
    */
   trunk?: "diverged" | "absent";
-  /**
-   * Sensitive-path guard (issue #1102): inject getDiffPaths.
-   *   - undefined → guard not wired (safe default, no-op, existing tests unaffected)
-   *   - "hit"  → getDiffPaths returns a diff that touches .github/workflows/ci.yml
-   *   - "clean"→ getDiffPaths returns a diff with no sensitive paths
-   */
-  sensitivePaths?: "hit" | "clean";
-  /**
-   * Sensitive-path guard bypass (#1171). When true, `input.sensitivePathApproved`
-   * is set so the step-0a guard is skipped even on a "hit" diff. Models the
-   * `/requeue --adopt-branch` human land of a reviewed protected diff.
-   */
-  sensitivePathApproved?: boolean;
   /** Issue labels used to derive the landing-created conventional merge title. */
   labels?: string[];
   /** Changed files used for fallback conventional-title classification (#1373). */
@@ -302,17 +289,6 @@ export function harness(opts: Opts = {}): Harness {
           return opts.agentConflictResolve === "resolve";
         }
       : undefined,
-    // #1102/#1373: only wired when the test opts in (opt-in — absent → guard skipped).
-    getDiffPaths: opts.sensitivePaths || opts.changedFiles
-      ? async () => ({
-          changedFiles:
-            opts.changedFiles ??
-            (opts.sensitivePaths === "hit"
-              ? [".github/workflows/ci.yml", "src/index.ts"]
-              : ["src/index.ts", "apps/dev/src/core/landing.ts"]),
-          packageJsonDiff: "",
-        })
-      : undefined,
     onPrResolved: opts.onPrResolvedAbort ? async () => "abort" : undefined,
     // Post-merge-integration gate (#1335): only wired when the test opts in.
     postMergeGate: opts.postMergeGate
@@ -346,9 +322,7 @@ export function harness(opts: Opts = {}): Harness {
     issue: 9,
     title: "Fix the thing",
     ...(opts.labels ? { labels: opts.labels } : {}),
-    // #1171: only set when the test opts in; default undefined keeps the guard
-    // armed for every existing landing assertion.
-    sensitivePathApproved: opts.sensitivePathApproved,
+    ...(opts.changedFiles ? { changedFiles: opts.changedFiles } : {}),
     nativeMergeQueue: opts.nativeMergeQueue,
   };
 
