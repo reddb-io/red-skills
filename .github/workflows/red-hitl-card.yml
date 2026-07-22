@@ -70,6 +70,7 @@ jobs:
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
       github.event.comment.user.type == 'User' &&
+      contains(fromJSON('["filipeforattini"]'), github.event.comment.user.login) &&
       !startsWith(github.event.comment.body, '🤖') &&
       !startsWith(github.event.comment.body, '⛔') &&
       !startsWith(github.event.comment.body, '⚠️') &&
@@ -107,6 +108,10 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
           COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
+          # Human directives and machine receipts have separate explicit
+          # identities so PAT-backed automation cannot masquerade as a user.
+          HITL_CARD_ALLOWED_AUTHORS: filipeforattini
+          HITL_CARD_RECEIPT_IDENTITIES: filipeforattini:User,github-actions[bot]:Bot
         run: |
           set -euo pipefail
           LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
@@ -115,6 +120,8 @@ jobs:
             --body "$COMMENT_BODY" \
             --author "$COMMENT_AUTHOR" \
             --author-type "$COMMENT_AUTHOR_TYPE" \
+            --allowed-authors "$HITL_CARD_ALLOWED_AUTHORS" \
+            --receipt-identities "$HITL_CARD_RECEIPT_IDENTITIES" \
             --repo "${{ github.repository }}"
 
   # ─── refresh ───────────────────────────────────────────────────────────────
