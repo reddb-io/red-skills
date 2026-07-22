@@ -1,6 +1,20 @@
-import { buildDashboardReport, renderDashboardReport, renderDashboardReportToon, type DashboardIssue, type DashboardPullRequest, type DashboardRelease } from "../core/dashboard.js";
-import { collectMonitorInputs, resolveRepoContext } from "../runtime/wire.js";
+import {
+  aggregateImplementerRuntimeMetrics,
+  buildDashboardReport,
+  renderDashboardReport,
+  renderDashboardReportToon,
+  type DashboardIssue,
+  type DashboardPullRequest,
+  type DashboardRelease,
+  type ImplementerRuntimeSample,
+} from "../core/dashboard.js";
+import {
+  afkPaths,
+  collectMonitorInputs,
+  resolveRepoContext,
+} from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
+import { readAllWorkerStates } from "../core/worker-state-reader.js";
 
 /** Output format. TOON is the default agent-facing wire format (PRD #928 / ADR
  * 0081); `--json` forces raw JSON (tooling/escape hatch), `--human` the prose. */
@@ -170,7 +184,8 @@ export async function collectDashboardReport(
   const ctx = await resolveRepoContext(cwd);
   const repoArgs = ctx.repo ? ["--repo", ctx.repo] : [];
 
-  const [issueRows, prRows, releaseRows, monitor] = await Promise.all([
+  const [issueRows, prRows, releaseRows, monitor, workerStates] =
+    await Promise.all([
     ghJson<unknown>(exec, cwd, [
       "issue",
       "list",
@@ -197,9 +212,26 @@ export async function collectDashboardReport(
       ? ghJson<unknown>(exec, cwd, ["api", `repos/${ctx.repo}/releases?per_page=100`])
       : Promise.resolve([]),
     collectMonitorInputs(cwd),
+    readAllWorkerStates(afkPaths(cwd).tmpDir),
   ]);
 
   const live = monitor.workers.filter((worker) => worker.live).length;
+  const implementerSamples = workerStates.flatMap(({ state }) => {
+    const current = state.current;
+    const sample: ImplementerRuntimeSample = {
+      runner_startup_before_ms:
+        current.implementer_runner_startup_before_ms ?? 0,
+      runner_startup_after_ms:
+        current.implementer_runner_startup_after_ms ?? 0,
+      skill_manifest_before_bytes:
+        current.implementer_skill_manifest_before_bytes ?? 0,
+      skill_manifest_after_bytes:
+        current.implementer_skill_manifest_after_bytes ?? 0,
+    };
+    return Object.values(sample).every((value) => value > 0) ? [sample] : [];
+  });
+  const implementerRuntime =
+    aggregateImplementerRuntimeMetrics(implementerSamples);
   const report = buildDashboardReport({
     issues: issueRows.map(issueFrom).filter((issue) => issue.number > 0),
     pullRequests: prRows.map(prFrom).filter((pr) => pr.number > 0),
@@ -208,6 +240,9 @@ export async function collectDashboardReport(
       live,
       stale: monitor.workers.length - live,
       total: monitor.workers.length,
+      ...(implementerRuntime
+        ? { implementer_runtime: implementerRuntime }
+        : {}),
     },
     now: new Date(),
     periodDays,
