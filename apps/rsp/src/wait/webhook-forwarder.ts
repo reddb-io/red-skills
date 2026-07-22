@@ -28,6 +28,7 @@
  */
 import { EventEmitter } from "node:events";
 import { spawn, type ChildProcess } from "node:child_process";
+import { terminateProcessTree } from "./process-tree.js";
 
 export type WebhookMode = "webhook" | "polling";
 
@@ -66,6 +67,7 @@ export function deliveryMatchesRun(delivery: WebhookDelivery, runId: string): bo
 
 const GH_WEBHOOK_EVENTS = "pull_request,pull_request_review,check_run,check_suite,workflow_run";
 const MAX_RESTARTS = 3;
+const STOP_GRACE_MS = 1_000;
 
 /** stderr patterns that indicate the extension is not installed → no restart. */
 const NOT_INSTALLED_RE = /no extension matched|unknown command|command not found/i;
@@ -87,6 +89,7 @@ export class WebhookForwarder extends EventEmitter {
   private _dead = false;
   private restarts = 0;
   private _mode: WebhookMode = "polling";
+  private stopping?: Promise<void>;
 
   constructor(private readonly opts: WebhookForwarderOptions) {
     super();
@@ -103,21 +106,20 @@ export class WebhookForwarder extends EventEmitter {
   /** Spawn the forwarder child and begin routing deliveries. */
   start(): void {
     if (this._dead || this.opts.cancelSignal.aborted) return;
-    this.opts.cancelSignal.addEventListener("abort", () => this.stop(), { once: true });
+    this.opts.cancelSignal.addEventListener("abort", () => void this.stop(), { once: true });
     this.spawnChild();
   }
 
-  /** Kill the child and prevent all future restarts. */
-  stop(): void {
+  /** Kill the complete child tree, wait for proof, and prevent all future restarts. */
+  async stop(): Promise<void> {
+    if (this.stopping) return await this.stopping;
     this._dead = true;
     this.emit("stopped");
     const child = this.child;
     this.child = undefined;
-    if (child) {
-      try {
-        child.kill("SIGTERM");
-      } catch {}
-    }
+    if (!child) return;
+    this.stopping = terminateProcessTree(child, STOP_GRACE_MS).then(() => undefined);
+    await this.stopping;
   }
 
   /**
@@ -165,6 +167,7 @@ export class WebhookForwarder extends EventEmitter {
       child = spawn(ghBin, ["webhook", "forward", `--events=${GH_WEBHOOK_EVENTS}`], {
         cwd: this.opts.cwd,
         stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
     } catch {
       return;
