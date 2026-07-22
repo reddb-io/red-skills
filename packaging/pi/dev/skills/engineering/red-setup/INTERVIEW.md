@@ -135,7 +135,7 @@ After installing, verify:
 ```bash
 command -v red-skills-dev
 command -v rsp
-red-skills-dev dashboard --json
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev dashboard --json
 rsp git status
 ```
 

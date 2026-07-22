@@ -181,7 +181,7 @@ export async function superviseTick(
     const now = deps.now();
     for (let i = 0; i < state.slots.length; i += 1) {
       const slot = state.slots[i]!;
-      if (!slot.parked || slot.halfOpen || slot.spawning) continue;
+      if (!slot.parked || slot.halfOpen || slot.spawning || slot.fatalReason === "host-config") continue;
       if (spawnPolicy === "hard-stop") continue;
       if (!isHalfOpenDue(slot.tripEpoch, slot.backoffStep, now, config)) continue;
       deps.log?.(

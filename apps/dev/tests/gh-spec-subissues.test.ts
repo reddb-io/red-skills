@@ -44,11 +44,15 @@ describe("listSpecSubIssueCandidates", () => {
       if (joined.includes("issue list") && joined.includes("--label spec:43")) {
         return { code: 0, stdout: JSON.stringify([]), stderr: "" };
       }
-      if (joined.includes("issues/42/sub_issues")) {
-        return { code: 0, stdout: `${JSON.stringify({ number: 8 })}\n`, stderr: "" };
-      }
-      if (joined.includes("issues/43/sub_issues")) {
-        return { code: 0, stdout: "", stderr: "" };
+      if (joined.includes("api graphql")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ data: { repository: {
+            i0: { number: 42, subIssues: { nodes: [{ number: 8 }] } },
+            i1: { number: 43, subIssues: { nodes: [] } },
+          } } }),
+          stderr: "",
+        };
       }
       return { code: 1, stdout: "", stderr: "unexpected" };
     });
@@ -60,6 +64,55 @@ describe("listSpecSubIssueCandidates", () => {
       { number: 42, labels: ["type:spec", "needs-slicing"], labelChildren: [7], nativeSubIssues: [8] },
       { number: 43, labels: ["type:spec"], labelChildren: [], nativeSubIssues: [] },
     ]);
+    expect(rec.calls.filter((call) => call.args[0] === "api" && call.args[1] === "graphql")).toHaveLength(1);
+    expect(rec.calls.some((call) => call.args.join(" ").includes("/sub_issues"))).toBe(false);
+  });
+
+  it("retries alias failures through bounded REST without caching empty relationships", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    let activeFallbacks = 0;
+    let maxFallbacks = 0;
+    const specs = Array.from({ length: 9 }, (_, index) => index + 40);
+    const exec: ExecFn = async (cmd, args) => {
+      calls.push({ cmd, args: [...args] });
+      const joined = args.join(" ");
+      if (joined.includes("issue list") && joined.includes("--label type:spec")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify(specs.map((number) => ({ number, state: "OPEN", closedAt: null, labels: [{ name: "type:spec" }] }))),
+          stderr: "",
+        };
+      }
+      if (joined.includes("issue list") && joined.includes("--label spec:")) {
+        return { code: 0, stdout: "[]", stderr: "" };
+      }
+      if (joined.includes("api graphql")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            data: { repository: Object.fromEntries(specs.map((_, index) => [`i${index}`, null])) },
+            errors: specs.map((number, index) => ({ message: `failed ${number}`, path: ["repository", `i${index}`] })),
+          }),
+          stderr: "",
+        };
+      }
+      if (joined.includes("/sub_issues")) {
+        activeFallbacks += 1;
+        maxFallbacks = Math.max(maxFallbacks, activeFallbacks);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        activeFallbacks -= 1;
+        const spec = Number(joined.match(/issues\/(\d+)\/sub_issues/)?.[1]);
+        return { code: 0, stdout: `${JSON.stringify({ number: spec + 100 })}\n`, stderr: "" };
+      }
+      return { code: 1, stdout: "", stderr: "unexpected" };
+    };
+
+    const candidates = await listSpecSubIssueCandidates({ cwd: "/r", repo: "acme/widgets", exec });
+
+    expect(candidates.map((candidate) => candidate.nativeSubIssues)).toEqual(specs.map((spec) => [spec + 100]));
+    expect(calls.filter((call) => call.args.join(" ").includes("/sub_issues"))).toHaveLength(9);
+    expect(maxFallbacks).toBeGreaterThan(1);
+    expect(maxFallbacks).toBeLessThanOrEqual(4);
   });
 });
 

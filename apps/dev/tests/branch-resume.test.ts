@@ -173,7 +173,23 @@ describe("buildResumeInstruction", () => {
 
   it("non-gate-green variant tells the agent to continue from where it left off", () => {
     const text = buildResumeInstruction("afk/wAB12/9-fix", false);
-    expect(text).toContain("continue from where it left off");
+    expect(text).toContain("Continue from where it left off");
     expect(text).toContain("do NOT start over");
+  });
+
+  it("both variants open with a mandatory base sync before any work (#2481)", () => {
+    for (const gateGreen of [true, false]) {
+      const text = buildResumeInstruction("afk/wAB12/9-fix", gateGreen);
+      expect(text).toContain("FIRST, before anything else, sync the branch");
+      expect(text).toContain("git rebase origin/main");
+      expect(text).toContain("git push --force-with-lease");
+    }
+  });
+
+  it("sync instruction names the configured base branch", () => {
+    const text = buildResumeInstruction("afk/wAB12/9-fix", false, "develop");
+    expect(text).toContain("git fetch origin develop");
+    expect(text).toContain("git rebase origin/develop");
+    expect(text).toContain("origin/develop..HEAD");
   });
 });

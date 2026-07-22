@@ -19,13 +19,14 @@ the label claims `ready-for-human`, but the truth is in the worktree.
 
 Resolve the `red-skills-dev` runtime through the shared contract in
 [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
-installed shim on `PATH` first, otherwise use the ADR 0091 npm direct-run form
+canonical ADR 0091 npm direct-run form (an installed shim on `PATH` is only a
+warm-cache optimization for the same command):
 `npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake ...`. If the
 shim is missing, name that fallback instead of surfacing a bare
 command-not-found.
 
 ```bash
-red-skills-dev retake 123
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123
 ```
 
 The runtime accepts `123` and `#123`; quote `'#123'` when a shell would read it
@@ -81,7 +82,7 @@ Pick by verdict, never by label alone:
 ### Plain requeue — put a parked issue back in the queue
 
 ```bash
-red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
 ```
 
 One atomic transition: archive the active `## Current blocker` into
@@ -91,7 +92,7 @@ drop `ready-for-human` and every `blocked:*` label, add `ready-for-agent`.
 ### Adopt-branch landing — validate and land hand-done work
 
 ```bash
-red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
 ```
 
 After the requeue transition, the branch routes through the **no-agent landing

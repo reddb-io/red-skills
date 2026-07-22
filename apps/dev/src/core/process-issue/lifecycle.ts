@@ -288,7 +288,7 @@ export async function processIssue(
   const resumeIsGateGreen = resumableBranch !== null && isGateGreenBranch(failureReason);
   const resumeInstruction =
     resumableBranch !== null
-      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen)
+      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)
       : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
   const handoff = buildHandoff({
@@ -677,6 +677,12 @@ export async function processIssue(
       if (run.outcome === "blocked") {
         return await terminalFailure(common, "blocked", "blocked", {
           notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
+        });
+      }
+      if (run.outcome === "host-config") {
+        return await terminalFailure(common, "host-config", "host-config", {
+          notes: run.stdout,
+          log: run.stdout,
         });
       }
     }

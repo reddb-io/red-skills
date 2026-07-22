@@ -35,7 +35,10 @@ plugins:
     #   so the worst case is one extra correction round and the PR still lands.
     #   Raising max_iterations to 2+ enables parking to ready-for-human.
     review:
-      enabled: true
+      # Maintainer decision 2026-07-22: review OFF in this repo — the extra
+      # bounded round was still costing wall-clock on every landing during the
+      # reliability push. Re-enable by flipping this back to true.
+      enabled: false
       max_iterations: 1
       reviewer_count: 1
       quorum: any

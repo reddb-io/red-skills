@@ -126,8 +126,8 @@ footer items and persisting them to `config.toml`. The dev bundle also exposes
 an explicit inspector/fixer:
 
 ```bash
-red-skills-dev codex-statusline
-red-skills-dev codex-statusline --fix
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline --fix
 ```
 
 The inspector reports the active `tui.status_line`, flags a missing

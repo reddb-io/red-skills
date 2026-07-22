@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runTriage } from "../src/commands/triage.js";
+import { ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER } from "../src/core/executable-acceptance.js";
 import type { GhContext } from "../src/runtime/gh.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import type { TrustPolicy } from "../src/core/trust-gate.js";
@@ -14,13 +15,30 @@ interface FakeGh {
   calls: { cmd: string; args: string[] }[];
   edits: { remove: string[]; add: string[] }[];
   comments: string[];
+  commentEdits: { id: number; body: string }[];
   closes: number[];
 }
 
-function fakeGh(author: string, labels: string[] = ["needs-triage"]): FakeGh {
+interface FakeComment {
+  id?: number;
+  body: string;
+  authorAssociation?: string;
+  isBot?: boolean;
+}
+
+function fakeGh(
+  author: string,
+  labels: string[] = ["needs-triage"],
+  body = `## Acceptance criteria
+
+- [ ] Running \`pnpm --filter @reddb-io/dev test\` passes.
+`,
+  existingComments: Array<string | FakeComment> = [],
+): FakeGh {
   const calls: { cmd: string; args: string[] }[] = [];
   const edits: { remove: string[]; add: string[] }[] = [];
   const comments: string[] = [];
+  const commentEdits: { id: number; body: string }[] = [];
   const closes: number[] = [];
 
   const ok = (stdout = ""): ExecOutput => ({ code: 0, stdout, stderr: "" });
@@ -35,6 +53,38 @@ function fakeGh(author: string, labels: string[] = ["needs-triage"]): FakeGh {
     }
     if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "labels") {
       return Promise.resolve(ok(JSON.stringify({ labels: labels.map((name) => ({ name })) })));
+    }
+    if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "body") {
+      return Promise.resolve(ok(JSON.stringify({ body })));
+    }
+    if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "comments") {
+      return Promise.resolve(ok(JSON.stringify({
+        comments: existingComments.map((comment) => ({
+          body: typeof comment === "string" ? comment : comment.body,
+          author: { login: "red-skills-bot", is_bot: true },
+          authorAssociation: "MEMBER",
+          createdAt: "2026-07-22T00:00:00Z",
+        })),
+      })));
+    }
+    if (has("api") && has("--paginate") && args.some((arg) => arg.includes("issues/") && arg.endsWith("/comments"))) {
+      return Promise.resolve(ok(existingComments.map((comment, index) => {
+        const item: FakeComment = typeof comment === "string" ? { body: comment } : comment;
+        return JSON.stringify({
+          id: item.id ?? index + 1,
+          body: item.body,
+          author: { login: "red-skills-bot", is_bot: item.isBot ?? true },
+          authorAssociation: item.authorAssociation ?? "MEMBER",
+          createdAt: "2026-07-22T00:00:00Z",
+        });
+      }).join("\n")));
+    }
+    if (has("api") && has("PATCH") && args.some((arg) => arg.includes("issues/comments/"))) {
+      const idArg = args.find((arg) => arg.includes("issues/comments/")) ?? "";
+      const id = Number(idArg.match(/issues\/comments\/(\d+)/)?.[1] ?? 0);
+      const bodyArg = args.find((arg) => arg.startsWith("body=")) ?? "body=";
+      commentEdits.push({ id, body: bodyArg.slice("body=".length) });
+      return Promise.resolve(ok());
     }
     if (has("edit")) {
       const remove: string[] = [];
@@ -58,7 +108,7 @@ function fakeGh(author: string, labels: string[] = ["needs-triage"]): FakeGh {
     return Promise.resolve(ok());
   };
 
-  return { exec, calls, edits, comments, closes };
+  return { exec, calls, edits, comments, commentEdits, closes };
 }
 
 const strict: TrustPolicy = { enabled: true, allowlist: ["alice"] };
@@ -100,6 +150,136 @@ describe("runTriage — trusted author auto-triages", () => {
     await runTriage(ctxFor(fake), strict, { issue: 9, decision: "wontfix", summon: false });
     expect(fake.edits).toEqual([{ remove: ["needs-triage"], add: ["wontfix"] }]);
     expect(fake.closes).toEqual([9]);
+  });
+});
+
+describe("runTriage — ready-for-agent acceptance criteria lint", () => {
+  it("routes an AC-less executable candidate back to needs-triage with one recipe comment", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"], "## What to build\n\nMake it better.\n");
+    const outcome = await runTriage(ctxFor(fake), strict, {
+      issue: 77,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-failed");
+    expect(fake.edits).toEqual([{ remove: ["ready-for-agent"], add: ["needs-triage"] }]);
+    expect(fake.comments).toHaveLength(1);
+    expect(fake.comments[0]).toContain(ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER);
+    expect(fake.comments[0]).toContain("missing acceptance-criteria section");
+    expect(fake.closes).toEqual([]);
+  });
+
+  it("does not post a duplicate recipe comment when a trusted lint marker already exists", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"], "## What to build\n\nMake it better.\n", [
+      `> *This was generated by AI during triage.*\n\n${ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER}`,
+    ]);
+    const outcome = await runTriage(ctxFor(fake), strict, {
+      issue: 78,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-failed");
+    expect(fake.edits).toEqual([{ remove: ["ready-for-agent"], add: ["needs-triage"] }]);
+    expect(fake.comments).toEqual([]);
+    expect(fake.commentEdits).toHaveLength(1);
+    expect(fake.commentEdits[0]?.body).toContain("missing acceptance-criteria section");
+  });
+
+  it("updates the owned recipe comment when the lint reason changes", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"], `## Acceptance criteria
+
+- [ ] The UI renders nicely.
+`, [
+      {
+        id: 456,
+        body: `> *This was generated by AI during triage.*\n\n${ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER}\n\nMissing: missing acceptance-criteria section.`,
+        authorAssociation: "MEMBER",
+        isBot: false,
+      },
+    ]);
+    const outcome = await runTriage(ctxFor(fake), strict, {
+      issue: 79,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-failed");
+    expect(fake.comments).toEqual([]);
+    expect(fake.commentEdits).toHaveLength(1);
+    expect(fake.commentEdits[0]).toMatchObject({ id: 456 });
+    expect(fake.commentEdits[0]?.body).toContain("The UI renders nicely.");
+  });
+
+  it("does not trust a copied recipe marker from a dubious commenter", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"], "## What to build\n\nMake it better.\n", [
+      {
+        id: 999,
+        body: ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER,
+        authorAssociation: "CONTRIBUTOR",
+        isBot: false,
+      },
+    ]);
+    const outcome = await runTriage(ctxFor(fake), strict, {
+      issue: 80,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-failed");
+    expect(fake.commentEdits).toEqual([]);
+    expect(fake.comments).toHaveLength(1);
+    expect(fake.comments[0]).toContain("missing acceptance-criteria section");
+  });
+
+  it("holds without writes when the issue body cannot be read", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"]);
+    const failing: GhContext = {
+      cwd: "/r",
+      repo: "acme/widgets",
+      exec: (cmd, argv) => {
+        const args = [...argv];
+        if (args.includes("--json") && args[args.indexOf("--json") + 1] === "body") {
+          return Promise.resolve({ code: 1, stdout: "", stderr: "network unavailable" });
+        }
+        return fake.exec(cmd, argv, { cwd: "/r" });
+      },
+    };
+    const outcome = await runTriage(failing, strict, {
+      issue: 81,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-held");
+    expect(fake.edits).toEqual([]);
+    expect(fake.comments).toEqual([]);
+    expect(fake.commentEdits).toEqual([]);
+  });
+
+  it("does not post a recipe comment when existing comments cannot be read", async () => {
+    const fake = fakeGh("alice", ["ready-for-agent"], "## What to build\n\nMake it better.\n");
+    const failing: GhContext = {
+      cwd: "/r",
+      repo: "acme/widgets",
+      exec: (cmd, argv) => {
+        const args = [...argv];
+        if (args.includes("api") && args.includes("--paginate")) {
+          return Promise.resolve({ code: 1, stdout: "", stderr: "comments unavailable" });
+        }
+        return fake.exec(cmd, argv, { cwd: "/r" });
+      },
+    };
+    const outcome = await runTriage(failing, strict, {
+      issue: 82,
+      decision: "ready-for-agent",
+      summon: false,
+    });
+
+    expect(outcome.action).toBe("acceptance-lint-failed");
+    expect(fake.edits).toEqual([{ remove: ["ready-for-agent"], add: ["needs-triage"] }]);
+    expect(fake.comments).toEqual([]);
   });
 });
 

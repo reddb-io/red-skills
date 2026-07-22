@@ -23,8 +23,10 @@ by the server. Read the fields; do not re-parse rendered text.
 CLI — never hand-roll the operation.** The CLI is the same engine behind the
 same cores, so the fallback is a transport change, not a behavior change.
 Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
-an installed `red-skills-dev` shim on `PATH` first, otherwise the ADR 0091
-npm direct-run form `npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`.
+the canonical ADR 0091 npm direct-run form
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
+every installation; an installed shim on `PATH` is only a warm-cache
+optimization for the same command.
 
 ## Mutation modes are binding
 
