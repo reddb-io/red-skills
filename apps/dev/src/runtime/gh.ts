@@ -8,6 +8,7 @@ export {
   viewLabels,
   editLabels,
   comment,
+  editComment,
   postClaimComment,
   listClaimComments,
   editBody,
@@ -19,11 +20,12 @@ export {
   closeIssue,
   viewIssueFull,
   issueBody,
+  readIssueBody,
   issueUrl,
   issueReference,
 } from "./gh/issues.js";
 export type { CommentTrustResolver } from "./gh/comments.js";
-export { issueComments, prComments, prReviewComments } from "./gh/comments.js";
+export { issueComments, readIssueComments, prComments, prReviewComments } from "./gh/comments.js";
 export type { StatuslineQueueCounts } from "./gh/queue.js";
 export {
   queueVisibilityProbeInput,

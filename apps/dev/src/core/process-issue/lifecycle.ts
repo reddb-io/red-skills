@@ -677,6 +677,12 @@ export async function processIssue(
           notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
         });
       }
+      if (run.outcome === "host-config") {
+        return await terminalFailure(common, "host-config", "host-config", {
+          notes: run.stdout,
+          log: run.stdout,
+        });
+      }
     }
     if (input.runMode === "scout") {
       const report = scoutReportFrom(scoutTextChunks, run.stdout);

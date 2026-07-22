@@ -26,6 +26,7 @@ const TABLE: Row[] = [
   // recoverable: carry both a typed label and a recovery policy key
   { outcome: "exhausted", label: "blocked:quota", recovery: "quota" },
   { outcome: "runner-transient", label: "blocked:runner-transient", recovery: "runner-transient" },
+  { outcome: "host-config", label: "blocked:host-config", recovery: null },
   { outcome: "no-sentinel", label: "blocked:crashed", recovery: "crashed" },
   // #1308: signal-killed is a distinct crash class (OS signal, SIGKILL/SIGTERM).
   // Same `crashed` recovery policy as no-sentinel; the label is distinct so the
@@ -83,6 +84,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "hook-aborted",
       "exhausted",
       "runner-transient",
+      "host-config",
       "stalled",
       "budget-exceeded",
       "base-stale",
@@ -143,6 +145,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     { outcome: "hook-aborted", status: "blocked" },
     { outcome: "exhausted", status: "blocked" },
     { outcome: "runner-transient", status: "blocked" },
+    { outcome: "host-config", status: "blocked" },
     { outcome: "claim-lost", status: "blocked" },
     { outcome: "stalled", status: "blocked" },
     { outcome: "budget-exceeded", status: "blocked" },
@@ -171,6 +174,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "hook-aborted",
       "exhausted",
       "runner-transient",
+      "host-config",
       "stalled",
       "budget-exceeded",
       "base-stale",

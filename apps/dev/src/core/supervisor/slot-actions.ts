@@ -8,6 +8,7 @@ import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { ReconcileCandidate, SpawnPolicy, SupervisorDeps } from "./types.js";
+import { HOST_CONFIG_EXIT_CODE } from "../attempt-outcome.js";
 
 export async function handleDeadSlot(
   slot: number,
@@ -21,6 +22,23 @@ export async function handleDeadSlot(
     if (spawnPolicy === "hard-stop") return null;
     return spawnPolicy ? deps.proc.spawnSlot(slot, spawnPolicy) : deps.proc.spawnSlot(slot);
   };
+  const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
+
+  // EX_CONFIG is a permanent host defect, not a fast runner death. Park the
+  // slot indefinitely without adding to the circuit ring, sweeping work, or
+  // spawning a cooldown probe that can only fail the same way.
+  if (exitCode === HOST_CONFIG_EXIT_CODE) {
+    state.pid = null;
+    state.parked = true;
+    state.fatalReason = "host-config";
+    state.halfOpen = false;
+    state.tripEpoch = 0;
+    deps.log?.(
+      `fatal host configuration: slot ${slot} parked without retry; fix the required shell/workspace and restart the fleet`,
+    );
+    return { parked: true };
+  }
+
   // Half-open probe death: resolve the circuit transition before the normal path.
   if (state.parked && state.halfOpen) {
     const now = deps.now();
@@ -76,7 +94,6 @@ export async function handleDeadSlot(
     return { parked: false };
   }
 
-  const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
   const cleanExit = exitCode === 0;
 
   if (cleanExit) {
