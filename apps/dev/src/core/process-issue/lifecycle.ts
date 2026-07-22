@@ -132,7 +132,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 export async function processIssue(
   deps: ProcessIssueDeps,
@@ -442,6 +442,28 @@ export async function processIssue(
       hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
     );
   };
+  let stallConvergenceUsed = 0;
+  const stallConvergenceCap = resolveStallConvergenceBudget(deps);
+  const retryAfkMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
+    if (input.laneLabel === LABEL_GO_LANE) return false;
+    if (escalatedSimpleFeedback) return false;
+    if (stallConvergenceUsed >= stallConvergenceCap) return false;
+    stallConvergenceUsed += 1;
+    attemptN += 1;
+    currentHandoff = appendAfkGateCorrectionHandoff(handoff, {
+      gate,
+      validation,
+      retry: stallConvergenceUsed,
+      cap: stallConvergenceCap,
+    });
+    deps.appendIterLog(
+      `🤖 /afk: ${gate} machine gate failed after DONE; correction retry ${stallConvergenceUsed}/${stallConvergenceCap}.`,
+    );
+    return await fireHook(
+      "pre_attempt",
+      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+    );
+  };
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
   let gateGreenSkip = resumeIsGateGreen;
@@ -689,11 +711,15 @@ export async function processIssue(
       const validationText =
         "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
       deps.appendIterLog(`🤖 /afk: ${validationText}`);
-      if (await retryGoMachineGate("feedback", validationText)) {
+      if (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText)) {
         continue;
       }
+      const convergenceNote =
+        stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap
+          ? ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`
+          : "";
       return await terminalFailure(common, "feedback-failed", "feedback", {
-        notes: "Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.",
+        notes: `Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.${convergenceNote}`,
         validation: validationText,
       }, { validationSummary: validationText });
     }
@@ -796,8 +822,11 @@ export async function processIssue(
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
       const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
-      if (!isInfra && await retryGoMachineGate("feedback", validationText)) {
+      if (!isInfra && (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText))) {
         continue;
+      }
+      if (!isInfra && stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
+        notes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
       }
       return await terminalFailure(common, outcome, "feedback", {
         notes,
@@ -819,13 +848,16 @@ export async function processIssue(
       gateStages.push({ stage: "backpressure", ok: backpressure.ok });
       if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
-        const notes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        let bpNotes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         const validationText = backpressure.sidecar.join("\n");
-        if (await retryGoMachineGate("backpressure", validationText)) {
+        if (await retryGoMachineGate("backpressure", validationText) || await retryAfkMachineGate("backpressure", validationText)) {
           continue;
         }
+        if (stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
+          bpNotes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
+        }
         return await terminalFailure(common, "feedback-failed", "feedback", {
-          notes,
+          notes: bpNotes,
           validation: validationText,
         }, { validationSummary: validationText });
       }
