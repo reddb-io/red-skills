@@ -15,11 +15,11 @@ name: red-workspace-ci
 on:
   pull_request:
   push:
-    # automation/toon-bump: the red-toon-watch rolling PR is opened with
-    # GITHUB_TOKEN, whose events never trigger pull_request workflows — the
-    # push trigger attaches these check runs to the head SHA so the rolling
-    # PR still gets real CI adjudication.
-    branches: [main, automation/toon-bump]
+    # automation/toon-bump and changeset-release/main are written with
+    # GITHUB_TOKEN, whose events never trigger pull_request workflows. The push
+    # trigger attaches these check runs to each head SHA so both automation PRs
+    # still receive the required test/typecheck adjudication.
+    branches: [main, automation/toon-bump, changeset-release/main]
 
 permissions:
   contents: read
@@ -39,6 +39,16 @@ jobs:
 
       - name: Test red-release npm publish contract
         run: scripts/test-red-release-npm-publish-contract.sh
+
+      - name: Test red-release approval gate contract
+        run: scripts/test-red-release-approval-gate.sh
+
+      # ADR 0121: the version-sync writer is what keeps the manifests coherent
+      # with the changesets-decided version. Pin it on every PR, not only at
+      # release time — a drifted manifest reaching main is what used to fail the
+      # cut after npm was already published.
+      - name: Test version sync contract
+        run: scripts/test-version-sync-contract.sh
 
       - name: Test red-castle vendor contract
         run: scripts/test-red-castle-vendor-contract.sh
@@ -100,7 +110,15 @@ jobs:
       - name: Install pinned tq
         env:
           TQ_VERSION: v0.3.0
-        run: curl -fsSL "https://raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh" | sh
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 1 --retry-delay 2 --retry-connrefused \
+            -H "Accept: application/vnd.github.raw+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}" |
+            sh
 
       - name: Install workspace dependencies
         env:

@@ -60,10 +60,27 @@ function isHolderAlive(pid: number): boolean {
   }
 }
 
-/** Build the host-backed global land-lock for this worker process. */
-export function createLandLock(tmpDir: string, holder: string, pid: number = process.pid): LandLock {
+/**
+ * Build a host-backed file lock at an ARBITRARY path — the same acquire/steal
+ * sequencing as the land-lock, aimed at any other resource that is shared by
+ * every process on this host (#2437: the singleton feedback baseline worktree).
+ * Timings are caller-supplied because the contention windows differ by orders
+ * of magnitude: a land holds its lock for a push, a worktree materialise holds
+ * it for a `pnpm install`.
+ */
+export function createPathLock(
+  path: string,
+  holder: string,
+  options: { waitTimeoutMs?: number; pollMs?: number; staleAfterMs?: number } = {},
+  pid: number = process.pid,
+): LandLock {
   return createFileLandLock(
     { fs: nodeLandLockFs, clock: { now: () => Date.now(), sleep: (ms) => delay(ms) }, isHolderAlive },
-    { path: landLockPath(tmpDir), holder, pid },
+    { path, holder, pid, ...options },
   );
+}
+
+/** Build the host-backed global land-lock for this worker process. */
+export function createLandLock(tmpDir: string, holder: string, pid: number = process.pid): LandLock {
+  return createPathLock(landLockPath(tmpDir), holder, {}, pid);
 }

@@ -56,7 +56,7 @@ export function loadServers(): Record<string, ServerSpec> {
     return merged;
   } catch (err) {
     process.stderr.write(
-      `code-nav: failed to parse CODE_NAV_SERVERS, using defaults: ${String(err)}\n`,
+      `navigator: failed to parse CODE_NAV_SERVERS, using defaults: ${String(err)}\n`,
     );
     return DEFAULT_SERVERS;
   }

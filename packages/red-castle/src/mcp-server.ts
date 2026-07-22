@@ -6,6 +6,7 @@ import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
 import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
 import {
   createObservabilityTools,
+  type EventsSinceInput,
   type ObservabilityDependencies,
 } from "./mcp/observability.js";
 import {
@@ -31,7 +32,7 @@ export type {
   FleetNameInput,
   FleetRegisterInput,
 } from "./mcp/fleet.js";
-export type { LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { EventsSinceInput, LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
@@ -75,7 +76,7 @@ export interface CastleMcpDependencies
     ReviewDependencies {}
 
 /**
- * Compose the published dev:afk tool surface from the per-domain registries.
+ * Compose the published castle tool surface from the per-domain registries.
  * The concatenation order IS the published order — `mcp-tool-surface.test.ts`
  * freezes it.
  *

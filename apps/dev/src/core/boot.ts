@@ -75,6 +75,7 @@ import {
   type OperationalProbeContext,
   type OperationalProbeReport,
 } from "./operational-probes.js";
+import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
@@ -154,6 +155,8 @@ export interface PrecheckFacts {
   labelBodyCoherence?: OperationalProbeContext["labelBodyCoherence"];
   /** Optional local trunk freshness probe facts for red-doctor and boot visibility. */
   baseFreshness?: OperationalProbeContext["baseFreshness"];
+  /** Required command availability and Bash version facts for the earliest boot probe. */
+  hostPrerequisites?: OperationalProbeContext["hostPrerequisites"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
@@ -216,6 +219,10 @@ export interface BootFs {
   removeDir(path: string): Promise<void>;
   /** Final worker.pid liveness guard before removing a whole worker dir. */
   workerPidLive?(workerDir: string): Promise<boolean>;
+  /** Fresh owner-liveness verdict before removing a feedback worktree. */
+  feedbackWorktreeLiveness?(
+    path: string,
+  ): Promise<"owner-live" | "owner-dead" | "no-live-workers">;
   /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
   reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
 }
@@ -290,14 +297,17 @@ export class BootHaltError extends Error {
 
   constructor(phase: "docs-sweep", plan: DocsSweepPlan);
   constructor(phase: "operational-probe", probe: OperationalProbeReport["findings"][number]);
+  constructor(phase: "host-prereq", probe: OperationalProbeReport["findings"][number]);
   constructor(
-    readonly phase: "docs-sweep" | "operational-probe",
+    readonly phase: "docs-sweep" | "operational-probe" | "host-prereq",
     detail: DocsSweepPlan | OperationalProbeReport["findings"][number],
   ) {
     super(
       phase === "docs-sweep"
         ? `Docs Sweep halted (${(detail as DocsSweepPlan).haltReason ?? "unknown"}): ${renderDocsSweepFileList((detail as DocsSweepPlan).files)}`
-        : `Operational probe red: ${formatOperationalProbeFinding(detail as OperationalProbeReport["findings"][number])}`,
+        : `${phase === "host-prereq" ? "Host prerequisite probe red" : "Operational probe red"}: ${formatOperationalProbeFinding(
+            detail as OperationalProbeReport["findings"][number],
+          )}`,
     );
     this.name = "BootHaltError";
     if (phase === "docs-sweep") this.plan = detail as DocsSweepPlan;
@@ -627,6 +637,11 @@ export interface TmpJanitorSweepResult {
   staleWorkers: string[];
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
+  protectedLiveFeedback: string[];
+  removals: Array<{
+    path: string;
+    livenessVerdict: "not-worker-workspace" | "worker-dead" | "owner-dead" | "no-live-workers";
+  }>;
 }
 
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
@@ -655,6 +670,7 @@ export interface BootResult {
  * its plan through injected IO. The order is the parity target (afk.sh top-level
  * startup):
  *
+ *   0. host prerequisites   — required commands + Bash baseline; failure halts.
  *   1. precheck             — hard preconditions; a failure aborts the run.
  *   2. bootstrap            — ensure .red/tmp + .red/state, gitignore lines,
  *                             per-worker dir + worker.pid (via fs).
@@ -688,6 +704,9 @@ export interface BootResult {
  * bootstrap+claim only and never races peers over `.red/tmp` / branch / gh state.
  */
 export async function runBoot(deps: BootDeps, options: BootOptions): Promise<BootResult> {
+  const hostPrerequisite = runHostPrerequisiteProbe(options.operationalProbes ?? options.precheck);
+  if (hostPrerequisite.verdict === "red") throw new BootHaltError("host-prereq", hostPrerequisite);
+
   // ---- 1. precheck ----
   const pre = precheck(options.precheck);
   if (!pre.ok) return { precheck: pre };
@@ -799,6 +818,8 @@ async function runTmpJanitorSweep(
     staleWorkers: [],
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
+    protectedLiveFeedback: [],
+    removals: [],
   };
   if (!sweep) return result;
 
@@ -809,8 +830,22 @@ async function runTmpJanitorSweep(
     ...sweep.plan.feedbackWorktrees.reclaim,
     ...sweep.plan.legacySlotLogs.reclaim,
   ];
+  const feedbackPaths = new Set(sweep.plan.feedbackWorktrees.reclaim.map((entry) => entry.path));
   for (const entry of expired) {
+    if (feedbackPaths.has(entry.path)) {
+      const verdict = await deps.fs.feedbackWorktreeLiveness?.(entry.path).catch(() => "owner-live" as const)
+        ?? "owner-live";
+      if (verdict === "owner-live") {
+        result.protectedLiveFeedback.push(entry.path);
+        continue;
+      }
+      await deps.fs.removeDir(entry.path);
+      result.removals.push({ path: entry.path, livenessVerdict: verdict });
+      result.expiredLanes.push(entry.path);
+      continue;
+    }
     await deps.fs.removeDir(entry.path);
+    result.removals.push({ path: entry.path, livenessVerdict: "not-worker-workspace" });
     result.expiredLanes.push(entry.path);
   }
 
@@ -821,12 +856,14 @@ async function runTmpJanitorSweep(
       continue;
     }
     await deps.fs.removeDir(worker.path);
+    result.removals.push({ path: worker.path, livenessVerdict: "worker-dead" });
     result.staleWorkers.push(worker.path);
   }
 
   for (const name of sweep.plan.unknownTmpRoots) {
     const path = join(options.bootstrap.tmpDir, name);
     await deps.fs.removeDir(path);
+    result.removals.push({ path, livenessVerdict: "not-worker-workspace" });
     result.unknownTmpRoots.push(path);
   }
 

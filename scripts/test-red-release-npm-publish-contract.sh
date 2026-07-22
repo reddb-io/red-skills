@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Static contract tests for the npm publish ordering in red-release.yml.
+# Static contract tests for the npm publish ordering in red-publish.yml.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-WORKFLOW=".github/workflows/red-release.yml"
+WORKFLOW=".github/workflows/red-publish.yml"
+WORKSPACE_CI=".github/workflows/red-workspace-ci.yml"
 failures=0
 
 fail() {
@@ -39,16 +40,39 @@ assert_before() {
   fi
 }
 
+verify_line="$(line_of_step "Verify the tag matches the tree")"
 pack_line="$(line_of_step "Pack npm package + producer/consumer contract check")"
 publish_line="$(line_of_step "Publish to npm")"
 smoke_line="$(line_of_step "Smoke published npm package from registry")"
-stamp_line="$(line_of_step "Sync plugin manifest versions")"
-tag_line="$(line_of_step "Tag + GitHub Release")"
+release_line="$(line_of_step "GitHub Release")"
 
+# ADR 0121: manifest stamping moved OUT of the publish path into the Version
+# Packages PR, so the tag arrives with the versions already written. What the
+# publish must still prove, in order: the tag agrees with the tree it points at,
+# the tarball resolves before it is published, and the GitHub Release is cut
+# only after the registry actually serves the version.
+assert_before "tag/tree verification" "$verify_line" "pack/contract check" "$pack_line"
 assert_before "pack/contract check" "$pack_line" "publish" "$publish_line"
 assert_before "publish" "$publish_line" "registry smoke" "$smoke_line"
-assert_before "registry smoke" "$smoke_line" "manifest stamping" "$stamp_line"
-assert_before "manifest stamping" "$stamp_line" "tag/GitHub release" "$tag_line"
+assert_before "registry smoke" "$smoke_line" "GitHub release" "$release_line"
+
+if grep -qF 'node scripts/sync-version.mjs --check' "$WORKFLOW"; then
+  pass "publish re-checks the version-sync invariant at the tagged tree"
+else
+  fail "publish must run scripts/sync-version.mjs --check on the tagged tree"
+fi
+
+if grep -qF 'tag v${VERSION} points at a tree whose version is' "$WORKFLOW"; then
+  pass "a tag that disagrees with the tree fails the publish"
+else
+  fail "publish must fail when the tag disagrees with the tree's version"
+fi
+
+if grep -qF 'HEAD:main' "$WORKFLOW" || grep -qF 'git push origin HEAD' "$WORKFLOW"; then
+  fail "the publish workflow must never push a commit to main"
+else
+  pass "the publish workflow pushes no commit to main"
+fi
 
 if grep -qF '::error::NPM_TOKEN secret absent' "$WORKFLOW"; then
   pass "missing NPM_TOKEN is reported as an error"
@@ -98,22 +122,85 @@ fi
 if grep -q '^  workflow_dispatch:$' "$WORKFLOW" &&
    grep -q '^  schedule:$' "$WORKFLOW" &&
    grep -q 'cron:' "$WORKFLOW"; then
-  pass "release workflow has manual and scheduled retry triggers"
+  pass "publish workflow has manual and scheduled retry triggers"
 else
-  fail "release workflow must expose workflow_dispatch and schedule retry triggers"
+  fail "publish workflow must expose workflow_dispatch and schedule retry triggers"
 fi
 
-if grep -qF "github.event_name != 'push'" "$WORKFLOW" &&
-   grep -qF "contains(github.event.head_commit.message, '[skip release]')" "$WORKFLOW"; then
-  pass "skip-release guard only suppresses push-triggered release commits"
+# changesets/action writes its PR branch with GITHUB_TOKEN. GitHub deliberately
+# suppresses a pull_request workflow run for that push, so the branch itself
+# must be covered by the workspace CI push trigger or the Version Packages PR
+# can never receive the required test/typecheck contexts.
+if grep -qF 'branches: [main, automation/toon-bump, changeset-release/main]' "$WORKSPACE_CI"; then
+  pass "Version Packages PR branch receives workspace CI checks"
 else
-  fail "release workflow retry events must not depend on github.event.head_commit"
+  fail "red-workspace-ci must push-trigger changeset-release/main"
 fi
 
-if grep -qF 'scheduled red-release retry' "$WORKFLOW"; then
-  pass "fleet deferral notice names the scheduled retry path"
+# Deferred tags form a FIFO publication queue. Publishing newest-first can move
+# npm's latest dist-tag and the moving vX tag backwards on the next retry.
+if grep -qF -- "--sort=v:refname" "$WORKFLOW" &&
+   ! grep -qF -- "--sort=-v:refname" "$WORKFLOW"; then
+  pass "scheduled retries inspect release tags oldest-first"
 else
-  fail "fleet deferral notice must tell operators the scheduled retry will resume publication"
+  fail "scheduled retries must inspect release tags oldest-first"
+fi
+
+if grep -qF 'oldest incomplete release is $oldest_pending' "$WORKFLOW"; then
+  pass "an explicit target cannot jump ahead of the oldest incomplete release"
+else
+  fail "explicit targets must be rejected when an older release is incomplete"
+fi
+
+# Pre-flow tags never had a release tail and can never gain one (their major
+# line already moved past them, or has no moving ref at all). They must be
+# skipped, not fatal: erroring wedged every publish behind v0.0.1/v1.2.0 (#2460).
+if grep -qF 'skipping stale incomplete release' "$WORKFLOW" &&
+   ! grep -qF 'refusing stale incomplete release' "$WORKFLOW"; then
+  pass "stale incomplete releases are skipped, never fatal"
+else
+  fail "a stale incomplete release must be skipped by the FIFO scan, not error the run"
+fi
+
+# ADR 0121: the tag is the publish trigger. A `push: branches` trigger would put
+# the publish back on every commit to main, which is exactly the design this
+# replaced.
+if grep -qE '^      - "v\[0-9\]\+\.\[0-9\]\+\.\[0-9\]\+"$' "$WORKFLOW" &&
+   grep -q '^    tags:$' "$WORKFLOW"; then
+  pass "publish is triggered by a vX.Y.Z tag push"
+else
+  fail "publish must trigger on a vX.Y.Z tag push"
+fi
+
+if grep -qE '^    branches:' "$WORKFLOW"; then
+  fail "publish must not trigger on a branch push"
+else
+  pass "publish does not trigger on a branch push"
+fi
+
+if grep -qF 'release_complete()' "$WORKFLOW" &&
+   grep -qF 'major ref already reaches' "$WORKFLOW"; then
+  pass "completion requires both the GitHub Release and a reconciled major tag"
+else
+  fail "a GitHub Release alone must not suppress major-tag reconciliation"
+fi
+
+if grep -qF 'already has a GitHub Release — reconciling release tail' "$WORKFLOW" &&
+   grep -qF 'git push --force origin "refs/tags/$major:refs/tags/$major"' "$WORKFLOW"; then
+  pass "a retry can reconcile the major tag after GitHub Release creation"
+else
+  fail "GitHub Release creation must be idempotent while major-tag reconciliation still runs"
+fi
+
+# The fleet-activity deferral was REMOVED (2026-07-22): red-publish never
+# touches main and running workers pin their bundle at spawn, so publishing
+# during a fleet is safe; the old gate repeatedly held releases hostage to
+# orphaned `running` labels.
+if ! grep -qF 'Defer if /afk fleet is active' "$WORKFLOW" &&
+   ! grep -qF "steps.fleet.outputs.running" "$WORKFLOW"; then
+  pass "publish has no fleet-activity deferral gate"
+else
+  fail "red-publish must not defer on fleet activity — it never touches main"
 fi
 
 if grep -qF 'for attempt in 1 2 3 4 5 6 7 8 9 10' "$WORKFLOW" &&
@@ -128,4 +215,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 
-printf '\nred-release npm publish contract ok\n'
+printf '\nred-publish npm publish contract ok\n'

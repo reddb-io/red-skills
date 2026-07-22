@@ -8,6 +8,7 @@ import {
   initStateSync,
   isStateActive,
   isStateLive,
+  readPidStartTime,
   readState,
   updateState,
   WORKER_LIVE_MAX_AGE_S,
@@ -15,6 +16,17 @@ import {
 import { AfkStateSchema } from "../src/types/state.js";
 
 describe("state", () => {
+  it("falls back to a portable process-start token when procfs is unavailable", () => {
+    const token = readPidStartTime(4242, {
+      readProcStat: () => {
+        throw new Error("procfs unavailable");
+      },
+      readPsStart: () => "Tue Jul 22 07:00:01 2026",
+    });
+
+    expect(token).toBe("ps:Tue Jul 22 07:00:01 2026");
+  });
+
   it("default-parses missing or malformed state files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const missing = await readState(join(dir, "missing.json"));

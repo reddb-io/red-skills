@@ -18,6 +18,7 @@ const cfg = (over: Partial<NotesLoopConfig> = {}): NotesLoopConfig => ({
   innerMaxIterations: 0,
   tokenBudget: 0,
   wallClockS: 0,
+  trunkSync: false,
   ...over,
 });
 
@@ -46,6 +47,8 @@ describe("resolveNotesLoopConfig", () => {
     expect(c.innerMaxIterations).toBe(0);
     expect(c.tokenBudget).toBe(0);
     expect(c.wallClockS).toBe(0);
+    // #2481: the sync is opt-OUT — never syncing is what produced stale bases.
+    expect(c.trunkSync).toBe(true);
   });
 
   it("reads the folded accessor keys", () => {
@@ -62,6 +65,7 @@ describe("resolveNotesLoopConfig", () => {
       innerMaxIterations: 10,
       tokenBudget: 500000,
       wallClockS: 3600,
+      trunkSync: true,
     });
   });
 
@@ -135,6 +139,69 @@ describe("runNotesLoop — enabled", () => {
     expect(n).toBe(3);
     expect(out.iterations).toBe(3);
     expect(out.stoppedBy).toBe("max-iterations");
+  });
+
+  it("#2481: syncs trunk at every iteration boundary and carries the note forward", async () => {
+    const syncedAt: number[] = [];
+    const handoffs: string[] = [];
+    await runNotesLoop({
+      config: cfg({ maxIterations: 3, trunkSync: true }),
+      baseHandoff: "BASE",
+      runOnce: (it) => {
+        handoffs.push(it.handoff);
+        return Promise.resolve(result("no-sentinel", { commits: [{ sha: "c1" }] }));
+      },
+      syncTrunk: (iteration) => {
+        syncedAt.push(iteration);
+        return Promise.resolve(`Trunk sync: merged ${iteration}`);
+      },
+    });
+    // An attempt running >1 iteration syncs at least once — here after each.
+    expect(syncedAt).toEqual([1, 2, 3]);
+    expect(handoffs[1]).toContain("Trunk sync: merged 1");
+    expect(handoffs[2]).toContain("Trunk sync: merged 2");
+  });
+
+  it("#2481: a sync that changed nothing adds no note", async () => {
+    const handoffs: string[] = [];
+    await runNotesLoop({
+      config: cfg({ maxIterations: 2, trunkSync: true }),
+      baseHandoff: "BASE",
+      runOnce: (it) => {
+        handoffs.push(it.handoff);
+        return Promise.resolve(result("no-sentinel", { commits: [{ sha: "c1" }] }));
+      },
+      syncTrunk: () => Promise.resolve(undefined),
+    });
+    expect(handoffs[1]).not.toContain("Trunk sync");
+  });
+
+  it("#2481: trunkSync:false never touches the worktree", async () => {
+    let synced = 0;
+    await runNotesLoop({
+      config: cfg({ maxIterations: 2, trunkSync: false }),
+      baseHandoff: "BASE",
+      runOnce: () => Promise.resolve(result("no-sentinel", { commits: [{ sha: "c1" }] })),
+      syncTrunk: () => {
+        synced += 1;
+        return Promise.resolve("nope");
+      },
+    });
+    expect(synced).toBe(0);
+  });
+
+  it("#2481: a single done iteration never syncs — there is no boundary to sync at", async () => {
+    let synced = 0;
+    await runNotesLoop({
+      config: cfg({ maxIterations: 3, trunkSync: true }),
+      baseHandoff: "BASE",
+      runOnce: () => Promise.resolve(result("done")),
+      syncTrunk: () => {
+        synced += 1;
+        return Promise.resolve("nope");
+      },
+    });
+    expect(synced).toBe(0);
   });
 
   it("carries prior notes into each subsequent iteration's handoff", async () => {

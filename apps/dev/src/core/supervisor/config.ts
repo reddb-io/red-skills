@@ -72,7 +72,8 @@ export interface SupervisorConfig {
    * RED_AFK_SUPERVISOR_STALE_S — the EXTERNAL watchdog's quiescence threshold
    * (default 300). A supervisor whose #406 heartbeat has not advanced within this
    * many seconds is treated as hard-hung (alive PID, drain loop wedged) and
-   * recovered by an already-alive surface (fleet pre-check / monitor tick) — see
+   * recovered by the detached fleet watchdog (with fleet pre-check / opt-in
+   * monitor tick as secondary surfaces) — see
    * watchdog.ts + classifySupervisor. This is the recovery half of the
    * unwedgeable-loop work: tickTimeoutS keeps a SINGLE tick from freezing the
    * loop; this knob catches the case where the whole process is hung below the
@@ -122,8 +123,8 @@ export interface SupervisorConfig {
    * RED_AFK_SUPERVISOR_MAX_RESTARTS — crash-loop bound for the dead-supervisor
    * watchdog (#1097, default 5). When a supervisor is found DEAD (its pid file
    * points to a no-longer-alive process) with a non-empty `ready-for-agent` queue
-   * and live workers below target, an already-alive surface (the monitor tick)
-   * respawns the fleet and records the restart epoch. Once this many restarts land
+   * and live workers below target, the detached fleet watchdog respawns the
+   * fleet and records the restart epoch. Once this many restarts land
    * inside `supervisorRestartWindowS` the watchdog STOPS respawning and surfaces
    * the crash loop instead of hiding it behind an endless respawn. 0 / non-numeric
    * falls back to the default so a typo can never disable the bound (and never

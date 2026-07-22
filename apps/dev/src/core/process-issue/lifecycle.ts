@@ -13,6 +13,8 @@ import {
   extractFailureReason,
   isExplicitRestartRequested,
   isGateGreenBranch,
+  pullRequestMatchesAttempt,
+  selectAttemptPullRequest,
 } from "../branch-resume.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
@@ -27,6 +29,8 @@ import {
   type SandboxMode,
 } from "../execution.js";
 import {
+  buildValidationRecord,
+  formatValidationLine,
   runFeedback,
   isInfraFeedbackFailure,
   type Exec as PnpmExec,
@@ -56,7 +60,7 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding } from "../landing.js";
+import { doLanding, type LandingPostMergeValidation } from "../landing.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -90,6 +94,7 @@ import {
 import { getConfig } from "../config.js";
 import type { AfkModelTier, ConfigValues } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
+import { renderTrunkSyncNote, syncTrunkIntoBranch } from "../trunk-sync.js";
 import {
   buildIssueClassificationMetadata,
   shouldRequestReview,
@@ -132,7 +137,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 export async function processIssue(
   deps: ProcessIssueDeps,
@@ -276,19 +281,60 @@ export async function processIssue(
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
   const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
+  // Attempt adoption (#2416): inspect open PRs before the worker branch is
+  // materialised. A matching PR is authoritative existing work and takes the
+  // no-agent validate-and-land path. The issue comment makes every concurrent
+  // historical attempt visible to a human instead of silently selecting one.
+  const openPullRequests = await deps.lookups.discoverOpenPullRequests?.(issue) ?? [];
+  const matchingPullRequests = openPullRequests
+    .filter((pr) => pullRequestMatchesAttempt(pr, issue))
+    .sort((a, b) => a.number - b.number);
+  const adoptedPullRequest = selectAttemptPullRequest(matchingPullRequests, issue);
+  if (matchingPullRequests.length > 0) {
+    await deps.gh.comment(
+      issue,
+      `🤖 /afk Attempt PRs for #${issue}: ${matchingPullRequests.map((pr) => `#${pr.number}`).join(", ")}. ` +
+        (adoptedPullRequest
+          ? `Adopting #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\` through the no-agent gate.`
+          : "No adoptable head was found."),
+    );
+  }
+
   // Branch-resume logic (issue #2397): discover a prior pushed branch so re-claim
-  // can continue instead of rebuilding from scratch. Explicit restart overrides.
+  // can continue instead of rebuilding from scratch. Explicit restart overrides a
+  // branch-only resume, but never silently supersedes an existing open PR.
   const allBranches = await deps.lookups.discoverBranches?.() ?? [];
   const humanGuidanceForResume = buildHumanGuidance(comments);
   const explicitRestart = isExplicitRestartRequested(humanGuidanceForResume);
-  const resumableBranch = explicitRestart ? null : discoverResumableBranch(allBranches, issue);
+  const resumableBranch = adoptedPullRequest
+    ? { branch: adoptedPullRequest.headRefName }
+    : explicitRestart
+      ? null
+      : discoverResumableBranch(allBranches, issue);
   const failureReason = extractFailureReason(priorAttemptContext);
-  const resumeIsGateGreen = resumableBranch !== null && isGateGreenBranch(failureReason);
+  const resumeIsGateGreen = adoptedPullRequest !== null ||
+    (resumableBranch !== null && isGateGreenBranch(failureReason));
+  if (adoptedPullRequest) {
+    deps.appendIterLog(
+      `🤖 /afk #${issue}: adopting open PR #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\`; agent skipped.`,
+    );
+  }
   const resumeInstruction =
     resumableBranch !== null
-      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen)
+      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)
       : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
+  const enrichment = deps.lookups.handoffEnrichment
+    ? await deps.lookups
+        .handoffEnrichment({
+          issue,
+          title: input.title,
+          body: input.body,
+          labels,
+          specRef: input.specRef,
+        })
+        .catch(() => undefined)
+    : undefined;
   const handoff = buildHandoff({
     issue,
     title: input.title,
@@ -303,6 +349,7 @@ export async function processIssue(
     mergeGateCommands: deps.backpressureCommands ?? [],
     outputShaping,
     resumeFromBranch: resumeInstruction,
+    enrichment,
   });
   deps.markState?.({
     "current.output_shaping_enabled": outputShaping.enabled,
@@ -450,6 +497,28 @@ export async function processIssue(
       hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
     );
   };
+  let stallConvergenceUsed = 0;
+  const stallConvergenceCap = resolveStallConvergenceBudget(deps);
+  const retryAfkMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
+    if (input.laneLabel === LABEL_GO_LANE) return false;
+    if (escalatedSimpleFeedback) return false;
+    if (stallConvergenceUsed >= stallConvergenceCap) return false;
+    stallConvergenceUsed += 1;
+    attemptN += 1;
+    currentHandoff = appendAfkGateCorrectionHandoff(handoff, {
+      gate,
+      validation,
+      retry: stallConvergenceUsed,
+      cap: stallConvergenceCap,
+    });
+    deps.appendIterLog(
+      `🤖 /afk: ${gate} machine gate failed after DONE; correction retry ${stallConvergenceUsed}/${stallConvergenceCap}.`,
+    );
+    return await fireHook(
+      "pre_attempt",
+      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+    );
+  };
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
   let gateGreenSkip = resumeIsGateGreen;
@@ -509,6 +578,7 @@ export async function processIssue(
         innerMaxIterations: 0,
         tokenBudget: 0,
         wallClockS: 0,
+        trunkSync: true,
       };
       const notesOutcome = await runNotesLoop({
         config: notesLoopCfg,
@@ -522,6 +592,17 @@ export async function processIssue(
               : {}),
           }),
         persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
+        // In-attempt trunk sync (#2481): between iterations the attempt worktree
+        // is quiet, so merging the moved trunk in costs one small conflict pass
+        // instead of the enormous one the landing rebase would otherwise pay.
+        syncTrunk: async () => {
+          const sync = await syncTrunkIntoBranch(deps.mergeExec, {
+            repo: input.attemptDir,
+            remote: input.remote,
+            base,
+          });
+          return renderTrunkSyncNote(sync, base);
+        },
         now: () => deps.nowEpoch() * 1000,
         tokensSpent: () => {
           const vitals = deps.heartbeatVitals?.();
@@ -655,6 +736,12 @@ export async function processIssue(
           notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
         });
       }
+      if (run.outcome === "host-config") {
+        return await terminalFailure(common, "host-config", "host-config", {
+          notes: run.stdout,
+          log: run.stdout,
+        });
+      }
     }
     if (input.runMode === "scout") {
       const report = scoutReportFrom(scoutTextChunks, run.stdout);
@@ -697,11 +784,15 @@ export async function processIssue(
       const validationText =
         "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
       deps.appendIterLog(`🤖 /afk: ${validationText}`);
-      if (await retryGoMachineGate("feedback", validationText)) {
+      if (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText)) {
         continue;
       }
+      const convergenceNote =
+        stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap
+          ? ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`
+          : "";
       return await terminalFailure(common, "feedback-failed", "feedback", {
-        notes: "Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.",
+        notes: `Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.${convergenceNote}`,
         validation: validationText,
       }, { validationSummary: validationText });
     }
@@ -804,8 +895,11 @@ export async function processIssue(
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
       const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
-      if (!isInfra && await retryGoMachineGate("feedback", validationText)) {
+      if (!isInfra && (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText))) {
         continue;
+      }
+      if (!isInfra && stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
+        notes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
       }
       return await terminalFailure(common, outcome, "feedback", {
         notes,
@@ -827,13 +921,16 @@ export async function processIssue(
       gateStages.push({ stage: "backpressure", ok: backpressure.ok });
       if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
-        const notes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        let bpNotes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         const validationText = backpressure.sidecar.join("\n");
-        if (await retryGoMachineGate("backpressure", validationText)) {
+        if (await retryGoMachineGate("backpressure", validationText) || await retryAfkMachineGate("backpressure", validationText)) {
           continue;
         }
+        if (stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
+          bpNotes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
+        }
         return await terminalFailure(common, "feedback-failed", "feedback", {
-          notes,
+          notes: bpNotes,
           validation: validationText,
         }, { validationSummary: validationText });
       }
@@ -1002,6 +1099,7 @@ export async function processIssue(
         validationSidecar = mergedFeedback.sidecar;
         return { ok: true };
       },
+      requirePostMergeValidation: true,
       landingPhase: markLandingPhase,
     },
     {
@@ -1097,7 +1195,9 @@ export async function processIssue(
         common,
         "merge-conflict",
         landing.prNumber,
-        `the open PR has merge conflicts and could not be landed`,
+        // #2481: the stale-branch guard parks here with its own reason, so the
+        // note names the real refusal instead of a conflict that never happened.
+        landing.message ?? `the open PR has merge conflicts and could not be landed`,
       );
     }
     if (landing.reason === "pr-merge-failed") {
@@ -1133,6 +1233,15 @@ export async function processIssue(
   }
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
+  if (landing.postMergeValidation) {
+    validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(landing.postMergeValidation)];
+    deps.recordWorkerEvent?.("worker.post_merge_validation", {
+      path: landing.postMergeValidation.path,
+      reason: landing.postMergeValidation.reason,
+      pr_number: landing.postMergeValidation.prNumber,
+      check_count: landing.postMergeValidation.path === "satisfied-by-ci" ? landing.postMergeValidation.checkCount : undefined,
+    });
+  }
   markLandingPhase("cascade");
   deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
@@ -1176,4 +1285,12 @@ export async function processIssue(
     swept: true,
   };
   }
+}
+
+function postMergeValidationSidecarLine(validation: LandingPostMergeValidation): string {
+  return formatValidationLine(buildValidationRecord({
+    name: `post-merge:${validation.path}`,
+    status: "passed",
+    summary: validation.reason,
+  }));
 }

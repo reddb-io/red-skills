@@ -31,7 +31,7 @@ At approval time, check whether the repo has configured machine validation (`afk
 
 Scout mode is read-only and report-producing, so this Task+DoD gate does not apply to `/go --scout`.
 
-## Dispatch through the `dev:afk` MCP
+## Dispatch through the `castle` MCP
 
 **`/go` and `/afk` are two clients of one interface.** After approval, dispatch
 the demand with the `worker_dispatch` tool — `{demand, runner?, mode?}`, where
@@ -54,19 +54,20 @@ behavior.
 **Run the bundle — do not read its source.** This SKILL.md is the contract; the `dev` bundle's `go` command is a build artifact.
 
 Resolve the `red-skills-dev` runtime through the shared contract in
-[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
-installed shim on `PATH` first, otherwise use the ADR 0091 npm direct-run form
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev go ...`. If the shim
-is missing, name that fallback instead of surfacing a bare command-not-found.
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): the canonical
+form is the ADR 0091 npm direct-run
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev go ...`, which works on
+every installation; an installed `red-skills-dev` shim on `PATH` is only a
+warm-cache optimization for the same command.
 
 Invoke the dev CLI's `go` command with the demand as a single quoted argument:
 
 ```
 # Standard /go — ships a PR (direct-PR is the default mode)
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<approved-task>" --dod "<definition-of-done>" [--request "<inner-agent-instruction>"] [--verify "<cmd>"] [--mode <mode>] [--runner <runner>] [+yolo]
+RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev go "<approved-task>" --dod "<definition-of-done>" [--request "<inner-agent-instruction>"] [--verify "<cmd>"] [--mode <mode>] [--runner <runner>] [+yolo]
 
 # Scout mode — read-only investigation, posts a report comment, no branch/PR/merge
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go --scout "<question>" [--runner <runner>]
+RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev go --scout "<question>" [--runner <runner>]
 ```
 
 Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex` from Codex). Use `--runner` only when the user explicitly pinned a backend. `/go` does not accept a short `-r` form; use long `--runner` for backend pinning and long `--request` for per-dispatch inner-agent instructions.
@@ -107,7 +108,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 - ✅ **Do** pass the demand/question as ONE quoted argument.
 - ✅ **Do** get Task+DoD approval before standard `/go`, then pass the approved DoD with `--dod`.
 - ✅ **Do** use `--scout` when you want an audit, investigation, or read-only analysis — not a code change.
-- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, driven through the same `dev:afk` MCP tools, distinguished by worker kind and mode gates.
+- ✅ **Do** let `/go` reuse the AFK engine end-to-end. It is the same castle worker / monitor / heartbeat / envelope path, driven through the same `castle` MCP tools, distinguished by worker kind and mode gates.
 - ✅ **Do** run it whether or not a fleet is up — `/go` is a self-sufficient front door.
 - ❌ Do **not** add `ready-for-agent` to the minted issue — lane isolation breaks.
 - ❌ Do **not** hand-mint the issue or hand-spawn a worker — call `go`, which does the lane + namespace + origin wiring as one unit.

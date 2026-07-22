@@ -17,7 +17,7 @@ import { scriptDefaultResolver, type ResolveHooksOptions } from "../core/hook-co
 import { skillDirFromModule } from "../platform/skill-paths.js";
 
 /**
- * A real `HookExec`: runs the hook command through `sh -c`, passing the
+ * A real `HookExec`: runs the hook command through `bash -c`, passing the
  * documented RED_AFK_* env and the mutable context JSON on stdin, and returns
  * the exit code + captured stdout. When `libraryHooksDir` is supplied it is
  * prepended to PATH so inline config entries can call library scripts by name
@@ -29,7 +29,7 @@ export function makeHookExec(cwd: string, libraryHooksDir?: string): HookExec {
     if (libraryHooksDir) {
       fullEnv.PATH = `${libraryHooksDir}${fullEnv.PATH ? `:${fullEnv.PATH}` : ""}`;
     }
-    const r = await execTool("sh", ["-c", command], {
+    const r = await execTool("bash", ["-c", command], {
       cwd,
       env: fullEnv,
       input: stdinJson,

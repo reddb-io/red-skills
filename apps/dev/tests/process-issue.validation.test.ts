@@ -1016,6 +1016,27 @@ describe("processIssue — runner transient transport/setup failure", () => {
   });
 });
 
+describe("processIssue — fatal host configuration", () => {
+  it("runs once, never falls back, and escalates with an actionable host-config label", async () => {
+    const { deps, input, trace } = harness({ outcome: "host-config", fallbackRunner: true });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("host-config");
+    expect(result.preserved).toBe(true);
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(labelTrace(trace)).toEqual([
+      "-ready-for-agent|+running",
+      "-running|+ready-for-human+blocked:host-config",
+    ]);
+    expect(trace.ensuredLabels).toContain("blocked:host-config");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.released).toEqual([9]);
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+    expect(trace.bodyEdits[0]?.body).toContain("kind: host-config");
+    expect(trace.bodyEdits[0]?.body).toContain("Install or restore the required shell");
+  });
+});
+
 
 describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
   it("fetches the resolved base and forks the worker branch off it (not HEAD)", async () => {
@@ -1051,7 +1072,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
 
     expect(result.outcome).toBe("done");
     expect(trace.changedFileCalls).toContainEqual({
-      branch: "afk/wAAAA/9-fix-the-thing",
+      branch: "afk/9-fix-the-thing",
       base: "red-trunk",
     });
     const pnpmDirs = trace.pnpmArgs
@@ -1060,8 +1081,8 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
         return idx >= 0 ? args[idx + 1] : undefined;
       })
       .filter(Boolean);
-    expect(pnpmDirs).toContain("afk/wAAAA/9-fix-the-thing/packages/fresh");
-    expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
+    expect(pnpmDirs).toContain("afk/9-fix-the-thing/packages/fresh");
+    expect(pnpmDirs).not.toContain("afk/9-fix-the-thing/packages/stale");
   });
 
   it("resolves an unlocked, pinless issue to the configured Trunk and forks off red-trunk", async () => {
@@ -1144,3 +1165,107 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
   });
 });
 
+describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", () => {
+  it("retries an empty-diff DONE up to stallConvergenceBudget, then parks with convergence note", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      changedFilesSequence: [[], []],
+      feedbackOk: true,
+      stallConvergenceBudget: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("bounded correction retry 1/1");
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE gate-correction budget exhausted");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("lands when a gate-correction retry produces a diff", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      changedFilesSequence: [[], ["packages/x/src/a.ts"]],
+      feedbackOk: true,
+      stallConvergenceBudget: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
+  });
+
+  it("retries a red feedback gate up to stallConvergenceBudget, then parks; handoff carries <afk-gate-correction>", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, false],
+      stallConvergenceBudget: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<afk-gate-correction>");
+    expect(retryHandoff).toContain("feedback machine gate failed after DONE");
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE gate-correction budget exhausted");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("lands when a feedback gate-correction retry makes the gate green", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, true],
+      stallConvergenceBudget: 2,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
+  });
+
+  it("retries a red backpressure gate up to stallConvergenceBudget, then parks", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: false,
+      stallConvergenceBudget: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<afk-gate-correction>");
+    expect(retryHandoff).toContain("backpressure machine gate failed after DONE");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("go lane ignores stallConvergenceBudget — retryAfkMachineGate is a no-op for lane:go", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
+      stallConvergenceBudget: 99,
+    });
+    const result = await processIssue(deps, input);
+
+    // go lane with cap=0 parks on first failure; stallConvergenceBudget has no effect
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+});

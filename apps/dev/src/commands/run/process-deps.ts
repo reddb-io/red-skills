@@ -64,6 +64,7 @@ import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
+import { buildHandoffEnrichment } from "../../core/handoff-enrichment.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -411,6 +412,11 @@ export function buildProcessDeps(
       await ghx.comment(ghCtx, issue, body);
     },
     goVerifyRetries,
+    stallConvergenceBudget: (() => {
+      const raw = getConfig(config, "afk.stallConvergenceBudget");
+      const parsed = raw === undefined ? NaN : Number(raw);
+      return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+    })(),
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
@@ -529,6 +535,20 @@ export function buildProcessDeps(
           return undefined;
         }
       },
+      handoffEnrichment: ({ issue: _issue, ...metadata }) =>
+        buildHandoffEnrichment(metadata, {
+          readText: (path) => readFile(join(ctx.root, path), "utf8"),
+          gitLog: async (paths) => {
+            if (paths.length === 0) return "";
+            const run = exec ?? execTool;
+            const result = await run(
+              "git",
+              ["log", "-n", "24", "--format=%H%x1f%s%x1f%b%x1e", "--", ...paths],
+              { cwd: ctx.root, timeoutMs: 5_000, maxBuffer: 512 * 1024 },
+            );
+            return result.code === 0 ? result.stdout : "";
+          },
+        }),
       changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
       diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
       // FIX E: confirm the sandcastle worker branch actually landed on the host
@@ -546,6 +566,42 @@ export function buildProcessDeps(
       // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
       // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
       discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
+      // Attempt-adoption sanity check (#2416): one cheap open-PR census before
+      // any agent run. The lifecycle owns exact body/head matching and adoption.
+      discoverOpenPullRequests: async () => {
+        const run = exec ?? execTool;
+        const result = await run(
+          "gh",
+          [
+            "pr",
+            "list",
+            "--repo",
+            ctx.repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,headRefName,body",
+          ],
+          { cwd: ctx.root },
+        );
+        if (result.code !== 0) return [];
+        try {
+          const rows = JSON.parse(result.stdout || "[]") as unknown;
+          if (!Array.isArray(rows)) return [];
+          return rows
+            .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
+            .map((row) => ({
+              number: Number(row.number ?? 0),
+              headRefName: String(row.headRefName ?? ""),
+              body: typeof row.body === "string" ? row.body : undefined,
+            }))
+            .filter((row) => row.number > 0 && row.headRefName.length > 0);
+        } catch {
+          return [];
+        }
+      },
     },
     envelope: {
       git: gitx.gitExec(gitCtx),

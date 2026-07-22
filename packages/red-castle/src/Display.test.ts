@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Layer, Ref } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseRecords } from "@reddb-io/toon";
 import {
   Display,
   type DisplayEntry,
   FileDisplay,
+  FILE_LOG_TOONL_HEADER,
   SilentDisplay,
   terminalStyle,
 } from "./Display.js";
@@ -646,5 +648,125 @@ describe("terminalStyle", () => {
     expect(styled).toContain("\u001b[1mTokens\u001b[22m");
     expect(styled).toContain("\u001b[2m1,234 in / 567 out\u001b[22m");
     expect(styled).toContain(": ");
+  });
+});
+
+describe("FileDisplay - TOONL framing", () => {
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), "sandcastle-display-toonl-"));
+    const logPath = join(dir, "afk.log.toonl");
+    const layer = Layer.provide(
+      FileDisplay.layer(logPath, "toonl"),
+      NodeFileSystem.layer,
+    );
+    return { logPath, layer };
+  };
+
+  const messages = (logPath: string) =>
+    parseRecords(readFileSync(logPath, "utf-8")).map((row) => row.msg);
+
+  it("opens the lane with ONE segment header and a run-started row", async () => {
+    const { logPath, layer } = setup();
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const d = yield* Display;
+        yield* d.intro("sandcastle");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const log = readFileSync(logPath, "utf-8");
+    expect(log.startsWith(`${FILE_LOG_TOONL_HEADER}\n`)).toBe(true);
+    expect(log.split("\n").filter((line) => line.startsWith("[]{"))).toHaveLength(1);
+    expect(parseRecords(log)).toEqual([
+      { at: expect.any(String), kind: "run-started", msg: "Run started" },
+    ]);
+  });
+
+  it("frames line-oriented entries as decodable rows, one row per line", async () => {
+    const { logPath, layer } = setup();
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const d = yield* Display;
+        yield* d.status("Syncing files...", "info");
+        yield* d.toolCall("Bash", '{"cmd":"ls, -la"}');
+        yield* d.summary("Summary", { branch: "afk/w1/2347" });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(messages(logPath)).toEqual([
+      "Run started",
+      "Syncing files...",
+      'Bash({"cmd":"ls, -la"})',
+      "Summary",
+      "  branch: afk/w1/2347",
+    ]);
+  });
+
+  it("buffers streamed prose chunks into one row per completed line", async () => {
+    const { logPath, layer } = setup();
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const d = yield* Display;
+        yield* d.textChunk("thinking about ");
+        yield* d.textChunk("the fix\nnext line");
+        yield* d.status("Done!", "success");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(messages(logPath)).toEqual([
+      "Run started",
+      "thinking about the fix",
+      "next line",
+      "Done!",
+    ]);
+  });
+
+  it("appends to an existing lane without a second header", async () => {
+    const { logPath, layer } = setup();
+    const again = Layer.provide(
+      FileDisplay.layer(logPath, "toonl"),
+      NodeFileSystem.layer,
+    );
+
+    for (const l of [layer, again]) {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const d = yield* Display;
+          yield* d.status("tick", "info");
+        }).pipe(Effect.provide(l)),
+      );
+    }
+
+    const log = readFileSync(logPath, "utf-8");
+    expect(log.split("\n").filter((line) => line.startsWith("[]{"))).toHaveLength(1);
+    expect(messages(logPath)).toEqual([
+      "Run started",
+      "tick",
+      "Run started",
+      "tick",
+    ]);
+  });
+
+  it("leaves the default text framing untouched", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sandcastle-display-text-"));
+    const logPath = join(dir, "test.log");
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const d = yield* Display;
+        yield* d.status("Syncing files...", "info");
+      }).pipe(
+        Effect.provide(
+          Layer.provide(FileDisplay.layer(logPath), NodeFileSystem.layer),
+        ),
+      ),
+    );
+
+    expect(readFileSync(logPath, "utf-8")).toMatch(
+      /^\n--- Run started: .+ ---\nSyncing files\.\.\.\n$/,
+    );
   });
 });

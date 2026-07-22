@@ -75,6 +75,11 @@ snapshots:
 }
 
 async function writeRegisteredSites(root: string, version: string): Promise<void> {
+  await write(
+    root,
+    "apps/dev/src/core/host-toolchain-doctor.ts",
+    `export const TQ_PINNED_VERSION = "${version}";\n`,
+  );
   await write(root, ".github/workflows/red-workspace-ci.yml", `env:\n  TQ_VERSION: v${version}\n`);
   await write(root, ".github/workflows/red-rsp-benchmark-ci.yml", `env:\n  TQ_VERSION: v${version}\n`);
   await write(
@@ -127,6 +132,14 @@ function target(version: string): CatalogToonVersion {
 }
 
 describe("toon-bump dev command", () => {
+  test("registers the runtime tq pin as a single-writer site", () => {
+    expect(TOON_PIN_SITES).toContainEqual(expect.objectContaining({
+      name: "red-doctor.runtime.host-toolchain-pin",
+      path: "apps/dev/src/core/host-toolchain-doctor.ts",
+      form: "version",
+    }));
+  });
+
   test("routes as a dedicated dev CLI verb", () => {
     expect(parseCli(["toon-bump", "0.3.0", "--root", "/repo", "--dry-run"])).toEqual({
       command: "toon-bump",

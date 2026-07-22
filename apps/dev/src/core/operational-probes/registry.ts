@@ -5,6 +5,7 @@ import { claimHygieneProbe } from "./claim-hygiene.js";
 import { configCoherenceProbe } from "./config-coherence.js";
 import { fleetTruthProbe } from "./fleet-truth.js";
 import { focalBranchProbe } from "./focal-branch.js";
+import { hostPrerequisiteProbe } from "./host-prerequisites.js";
 import { httpsRemoteProbe } from "./https-remote.js";
 import { labelBodyCoherenceProbe } from "./label-body-coherence.js";
 import { queueVisibilityProbe } from "./queue-visibility.js";
@@ -17,6 +18,7 @@ import type {
 } from "./types.js";
 
 export const OPERATIONAL_PROBES: readonly OperationalProbe[] = [
+  hostPrerequisiteProbe,
   httpsRemoteProbe,
   queueVisibilityProbe,
   focalBranchProbe,

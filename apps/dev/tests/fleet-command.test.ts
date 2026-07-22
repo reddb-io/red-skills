@@ -15,13 +15,23 @@ vi.mock("../src/runtime/kill-tree.js", () => ({
   killTreeAndWait: killTreeMocks.killTreeAndWait,
 }));
 
+vi.mock("../src/core/state.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/state.js")>();
+  return { ...actual, readPidStartTime: (pid: number) => `start-${pid}` };
+});
+
 vi.mock("../src/runtime/supervisor-spawn.js", () => ({
   spawnSupervisor: vi.fn(async () => 43210),
+}));
+
+vi.mock("../src/runtime/supervisor-watchdog-spawn.js", () => ({
+  spawnSupervisorWatchdog: vi.fn(async () => 43211),
 }));
 
 import { launchFleet, logsFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
+import { spawnSupervisorWatchdog } from "../src/runtime/supervisor-watchdog-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 function scratch(): string {
@@ -39,6 +49,9 @@ function writeSupervisorArtifacts(root: string, pid: number | string): Record<st
     firehose: paths0.fleetFirehosePath,
   };
   writeFileSync(paths.pid, String(pid), "utf8");
+  if (typeof pid === "number") {
+    writeFileSync(paths0.supervisorPidStartPath, `start-${pid}`, "utf8");
+  }
   writeFileSync(paths.state, "{not json", "utf8");
   writeFileSync(paths.log, "old supervisor log\n", "utf8");
   writeFileSync(paths.firehose, "old firehose\n", "utf8");
@@ -57,6 +70,8 @@ describe("fleet command stale supervisor state", () => {
     killTreeMocks.killTreeAndWait.mockResolvedValue(false);
     vi.mocked(spawnSupervisor).mockClear();
     vi.mocked(spawnSupervisor).mockResolvedValue(43210);
+    vi.mocked(spawnSupervisorWatchdog).mockClear();
+    vi.mocked(spawnSupervisorWatchdog).mockResolvedValue(43211);
   });
 
   it("launchFleet removes dead supervisor pid/state/log files before spawning", async () => {
@@ -67,6 +82,7 @@ describe("fleet command stale supervisor state", () => {
       await launchFleet(["1"], root, stream());
 
       expect(spawnSupervisor).toHaveBeenCalledTimes(1);
+      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root, fleet: "default" });
       expect(existsSync(paths.pid)).toBe(false);
       expect(existsSync(paths.state)).toBe(false);
       expect(existsSync(paths.log)).toBe(false);
@@ -149,6 +165,28 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("stopFleet writes the stop sentinel and terminates the repo watchdog before reporting none", async () => {
+    const root = scratch();
+    try {
+      const paths = afkPaths(root);
+      mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+      writeFileSync(paths.supervisorWatchdogPidPath, "24680", "utf8");
+      writeFileSync(paths.supervisorWatchdogPidStartPath, "start-24680", "utf8");
+      vi.mocked(isLivePid).mockImplementation((pid) => pid === 24680);
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
+
+      const result = await stopFleet(root, stream());
+
+      expect(result).toEqual({ status: "none" });
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(24680);
+      expect(existsSync(paths.supervisorWatchdogPidPath)).toBe(false);
+      expect(existsSync(paths.supervisorWatchdogPidStartPath)).toBe(false);
+      expect(existsSync(paths.supervisorStopPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("statusFleet reports supervisor + slots ground truth read-only, no supervisor → absent (#2060)", async () => {
     const root = scratch();
     try {
@@ -181,6 +219,8 @@ describe("fleet command stale supervisor state", () => {
       const epoch = Math.floor(Date.now() / 1000);
       mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
       mkdirSync(join(dirname(paths.supervisorRuntimeDir), "s12345"), { recursive: true });
+      writeFileSync(paths.supervisorPidPath, "12345", "utf8");
+      writeFileSync(paths.supervisorPidStartPath, "start-12345", "utf8");
       writeFileSync(
         paths.fleetStatePath,
         JSON.stringify({
@@ -306,7 +346,7 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("stopFleet discovers a live supervisor from the structured lane when the pid anchor is missing", async () => {
+  it("stopFleet ignores an unpinned structured lane when the pid anchor is missing", async () => {
     const root = scratch();
     try {
       const paths = afkPaths(root);
@@ -318,8 +358,8 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream());
 
-      expect(result).toEqual({ status: "stopped", pid: 12345 });
-      expect(existsSync(paths.supervisorStopPath)).toBe(true);
+      expect(result).toEqual({ status: "none" });
+      expect(existsSync(paths.supervisorStopPath)).toBe(false);
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -332,6 +372,7 @@ describe("fleet command stale supervisor state", () => {
       const stateAfk = dirname(afkPaths(root).supervisorPidPath);
       mkdirSync(stateAfk, { recursive: true });
       writeFileSync(join(stateAfk, "afk-supervisor.pid"), "12345", "utf8");
+      writeFileSync(join(stateAfk, "afk-supervisor.pid.start"), "start-12345", "utf8");
       const epoch = Math.floor(Date.now() / 1000);
       writeFileSync(
         join(stateAfk, "state.toon"),
@@ -356,6 +397,7 @@ describe("fleet command stale supervisor state", () => {
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
+      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root, fleet: "default" });
       expect(writes.join("")).toContain("fleet directive pending");
       expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
@@ -366,15 +408,35 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("rolls back a newly launched supervisor when watchdog arming fails", async () => {
+    const root = scratch();
+    try {
+      vi.mocked(spawnSupervisorWatchdog).mockResolvedValueOnce(null);
+      const paths = afkPaths(root);
+      mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+      writeFileSync(paths.supervisorPidPath, "43210", "utf8");
+      writeFileSync(paths.supervisorPidStartPath, "start-43210", "utf8");
+
+      await expect(launchFleet(["1"], root, stream())).rejects.toThrow("watchdog did not arm");
+
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(43210);
+      expect(existsSync(paths.supervisorPidPath)).toBe(false);
+      expect(existsSync(paths.supervisorPidStartPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("launchFleet reports applied when a live runner directive already matches the heartbeat", async () => {
     const root = scratch();
     try {
-      const stateAfk = join(root, ".red", "state", "castle");
+      const stateAfk = dirname(afkPaths(root).supervisorPidPath);
       mkdirSync(stateAfk, { recursive: true });
       writeFileSync(join(stateAfk, "afk-supervisor.pid"), "12345", "utf8");
+      writeFileSync(join(stateAfk, "afk-supervisor.pid.start"), "start-12345", "utf8");
       const epoch = Math.floor(Date.now() / 1000);
       writeFileSync(
-        join(stateAfk, "afk-supervisor.state.json"),
+        join(stateAfk, "state.toon"),
         JSON.stringify({
           epoch,
           last_progress_epoch: epoch,

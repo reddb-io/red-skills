@@ -11,6 +11,10 @@ vi.mock("../src/runtime/supervisor-spawn.js", () => ({
   spawnSupervisor: vi.fn(async () => 7777),
 }));
 
+vi.mock("../src/runtime/supervisor-watchdog-spawn.js", () => ({
+  spawnSupervisorWatchdog: vi.fn(async () => 7778),
+}));
+
 // Import after mock is hoisted so launchFleet picks up the stub.
 const { launchFleet } = await import("../src/commands/fleet.js");
 

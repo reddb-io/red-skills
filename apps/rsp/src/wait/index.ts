@@ -178,17 +178,21 @@ async function dispatchWait(
         entry.webhook_mode = "webhook";
       });
       forwarder.start();
-      return await pollUntilDone({
-        probe: createPrProbe(number, call, {
-          emptyChecksGraceMs: envDuration("RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS", 30_000),
-        }),
-        timeoutMs: parsed.options.timeoutMs,
-        baseSleepMs: envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
-        makeWakeSignal: forwarder.makeWakeSignalFor("pr", number),
-        registryPath,
-        entry,
-        signal,
-      });
+      try {
+        return await pollUntilDone({
+          probe: createPrProbe(number, call, {
+            emptyChecksGraceMs: envDuration("RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS", 30_000),
+          }),
+          timeoutMs: parsed.options.timeoutMs,
+          baseSleepMs: envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
+          makeWakeSignal: forwarder.makeWakeSignalFor("pr", number),
+          registryPath,
+          entry,
+          signal,
+        });
+      } finally {
+        await forwarder.stop();
+      }
     }
 
     case "run": {
@@ -200,15 +204,19 @@ async function dispatchWait(
         entry.webhook_mode = "webhook";
       });
       forwarder.start();
-      return await pollUntilDone({
-        probe: () => probeRun(id.value, call),
-        timeoutMs: parsed.options.timeoutMs,
-        baseSleepMs: envDuration("RSP_WAIT_RUN_POLL_MS", 15_000),
-        makeWakeSignal: forwarder.makeWakeSignalFor("run", id.value),
-        registryPath,
-        entry,
-        signal,
-      });
+      try {
+        return await pollUntilDone({
+          probe: () => probeRun(id.value, call),
+          timeoutMs: parsed.options.timeoutMs,
+          baseSleepMs: envDuration("RSP_WAIT_RUN_POLL_MS", 15_000),
+          makeWakeSignal: forwarder.makeWakeSignalFor("run", id.value),
+          registryPath,
+          entry,
+          signal,
+        });
+      } finally {
+        await forwarder.stop();
+      }
     }
 
     case "release":
