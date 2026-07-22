@@ -178,4 +178,27 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
       "boot sweeps: precheck FAILED (not-on-trunk: current=main expected=feat/x source=pin) — workers will run their own precheck",
     );
   });
+
+  it("logs every janitor removal with its target and liveness verdict", () => {
+    const result: BootResult = {
+      precheck: { ok: true, warnings: [] },
+      tmpJanitor: {
+        expiredLanes: [".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate"],
+        staleWorkers: [],
+        unknownTmpRoots: [],
+        protectedLiveWorkers: [],
+        protectedLiveFeedback: [],
+        removals: [
+          {
+            path: ".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate",
+            livenessVerdict: "owner-dead",
+          },
+        ],
+      },
+    };
+
+    expect(formatBootSweepResult(result)).toContain(
+      "remove=.red/tmp/worktrees/feedback/afk-wDEAD-2450-gate liveness=owner-dead",
+    );
+  });
 });

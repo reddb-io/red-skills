@@ -127,6 +127,10 @@ function renderHuman(
       `applied stale workers: ${applied.staleWorkers.length}`,
       `applied unknown tmp roots: ${applied.unknownTmpRoots.length}`,
       `protected live workers: ${applied.protectedLiveWorkers.length}`,
+      `protected live feedback worktrees: ${applied.protectedLiveFeedback.length}`,
+      ...applied.removals.map(
+        (removal) => `  remove=${rel(root, removal.path)} liveness=${removal.livenessVerdict}`,
+      ),
     );
   }
   return `${lines.join("\n")}\n`;
@@ -195,6 +199,11 @@ function renderToon(
           staleWorkers: applied.staleWorkers.map((path) => rel(root, path)),
           unknownTmpRoots: applied.unknownTmpRoots.map((path) => rel(root, path)),
           protectedLiveWorkers: applied.protectedLiveWorkers.map((path) => rel(root, path)),
+          protectedLiveFeedback: applied.protectedLiveFeedback.map((path) => rel(root, path)),
+          removals: applied.removals.map((removal) => ({
+            path: rel(root, removal.path),
+            livenessVerdict: removal.livenessVerdict,
+          })),
         }
       : null,
   });

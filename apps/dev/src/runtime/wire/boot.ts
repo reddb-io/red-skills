@@ -398,6 +398,25 @@ export async function buildBootDeps(
         const pid = Number(raw.trim());
         return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
       },
+      feedbackWorktreeLiveness: async (path) => {
+        // Re-collect immediately before deletion: the boot plan may have been
+        // built before another fleet spawned the feedback worktree's owner.
+        const current = await collectTmpJanitorReport(
+          paths.tmpDir,
+          Math.floor(Date.now() / 1000),
+          () => "UNKNOWN",
+        );
+        const entries = [
+          ...current.orphanFeedback.reclaim,
+          ...current.orphanFeedback.spare,
+        ];
+        const entry = entries.find((candidate) => candidate.path === path);
+        if (!entry || entry.ownerAlive === true) return "owner-live";
+        if (entry.ownerAlive === false) return "owner-dead";
+        return current.orphanFeedback.reclaim.some((candidate) => candidate.path === path)
+          ? "no-live-workers"
+          : "owner-live";
+      },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
     },
     gh: {
