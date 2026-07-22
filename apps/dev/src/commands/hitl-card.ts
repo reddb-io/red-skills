@@ -120,11 +120,11 @@ async function fetchActionComments(
   repo: string,
   issue: number,
 ): Promise<HitlCardActionComment[]> {
+  const repoPath = repo || "{owner}/{repo}";
   const r = await exec([
     "gh", "api",
-    `repos/{owner}/{repo}/issues/${issue}/comments?per_page=100`,
+    `repos/${repoPath}/issues/${issue}/comments?per_page=100`,
     "--paginate", "--slurp",
-    ...repoArgs(repo),
   ]);
   if (r.code !== 0) throw new Error(`fetch issue #${issue} comment identities failed: ${r.stderr.trim()}`);
   const parsed = JSON.parse(r.stdout) as unknown;
