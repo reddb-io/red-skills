@@ -177,6 +177,9 @@ export interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** When true, resolveFreshBase returns ok:false (simulating a boot-time
+   * mirror refresh failure — the regression path for #2436). */
+  freshBaseFail?: boolean;
   /** Restart-informed context block returned by the attempt ledger lookup. */
   priorAttemptContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
@@ -400,12 +403,24 @@ export function harness(opts: HarnessOptions = {}): {
       async deleteLocalBranch() {},
       async resolveFreshBase({ base, remote }) {
         if (opts.fetchedBases) opts.fetchedBases.push(base);
+        if (opts.freshBaseFail) {
+          return {
+            ok: false,
+            base,
+            baseRef: `${remote}/${base}`,
+            sha: "",
+            source: "mirror" as const,
+            remoteReachable: false,
+            reason: "base-stale" as const,
+            message: `could not refresh fleet trunk mirror red-trunk from ${remote}/${base}`,
+          };
+        }
         return {
           ok: true,
           base,
           baseRef: "red-trunk",
           sha: `${remote}/${base}-tip`,
-          source: "mirror",
+          source: "mirror" as const,
           remoteReachable: true,
         };
       },
