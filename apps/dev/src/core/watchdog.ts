@@ -1,9 +1,9 @@
 // watchdog — the EXTERNAL recovery layer for a hard-hung fleet supervisor
 // (#407). The HITL decision (2026-06-08) was: a live-but-quiescent supervisor
 // (alive PID, drain loop wedged, #406 heartbeat gone stale) cannot re-arm
-// itself, so recovery is driven by an ALREADY-ALIVE surface — the fleet-launch
-// pre-check (fleet.ts) and an opt-in monitor tick (`monitor --watchdog`) — never a new
-// standalone daemon.
+// itself, so recovery is driven by the detached repo-scoped fleet watchdog.
+// The fleet-launch pre-check and opt-in `monitor --watchdog` tick remain
+// secondary manual recovery surfaces over this same pure sequencer.
 //
 // This module is PURE SEQUENCING over injected IO, mirroring supervisor.ts:
 // every side effect (reading the pid/heartbeat, killing a tree, clearing the
