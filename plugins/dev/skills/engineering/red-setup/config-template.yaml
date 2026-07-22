@@ -26,6 +26,14 @@ plugins:
   #                               # external PRs as request data. It still treats
   #                               # PR bodies/diffs as untrusted and never checks
   #                               # out, builds, tests, or executes PR code.
+  #   afk:
+  #     implementer:
+  #       skills: dev:tdd, dev:diagnose
+  #                               # Optional exact worker skill allowlist. Entries
+  #                               # are `plugin:skill`, comma-separated. It replaces
+  #                               # the trimmed implementer default (so it can widen
+  #                               # or narrow it) but never bypasses the ADR 0067
+  #                               # `plugins.<name>.enabled: true` activation gate.
   # memory:
   #   enabled: true               # then run /memory:init to pick a storage mode
   # brain:
