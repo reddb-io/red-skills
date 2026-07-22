@@ -38,6 +38,12 @@ The solo `/afk run` worker's in-process layer is armed only under no-sandbox iso
 
 The reaper owns the run's `AbortController` (it constructs one when the ADR 0057 goal predicate has not already). The threshold env vars (`RED_AFK_STALL_THRESHOLD_S`, `RED_AFK_STALL_KILL_THRESHOLD_S`, `RED_AFK_STALL_POLL_S`) are consistent with Fleet Mode.
 
+## Activity-independent wall-clock ceiling (#2286)
+
+**Every cap above is silence-based, so none of them can see a busy attempt that never converges.** An attempt stuck in a self-feeding edit/test loop keeps its liveness lane fresh and its process tree hot, reads `alive` forever, and holds a slot forever. The wall-clock-per-issue ceiling is the age-based twin: once age **since claim** reaches `RED_AFK_ISSUE_WALL_CLOCK_MAX_S` (config `afk.issue_wall_clock_max_s`, default 2700s = 45 min), the evaluator returns `stalled` with a reason distinct from the silence caps — evaluated *before* the lane-freshness, hard-silence, and descendant checks, so no activity signal can veto it.
+
+The ceiling is a **deadline, not a countdown**: the reaper anchors the stall window to the kill threshold on first detection so escalation happens on that same tick, then routes the kill through the unchanged `decideReaperSignal` predicate and the `on_stall_reap` veto hook. A generous default is deliberate — this is a runaway backstop, not a pace-setter. An unknown claim epoch (no attempt state stamp) disables the ceiling rather than guessing an age.
+
 ## Host-level OOM signature (#1758)
 
 When the worker log, supervisor tick log, and an unrelated interactive operator
