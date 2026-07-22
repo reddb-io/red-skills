@@ -21,6 +21,19 @@ export function isLivePid(pid: number): boolean {
   }
 }
 
+/** True while either the dedicated process group or its leader still exists.
+ * Group liveness is the teardown authority: the leader may exit first while a
+ * pnpm/vitest descendant keeps the group alive. */
+export function isLiveTree(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+    return isLivePid(pid);
+  }
+}
+
 /** Signal the whole process group (`-pid`), falling back to the bare pid. Both
  * attempts swallow errors: a process that is already gone is success. */
 export function signalTree(pid: number, signal: NodeJS.Signals): void {
@@ -44,7 +57,7 @@ export interface KillTreeIO {
 }
 
 const defaultIO: KillTreeIO = {
-  isAlive: isLivePid,
+  isAlive: isLiveTree,
   signal: signalTree,
   sleep: realSleep,
 };
