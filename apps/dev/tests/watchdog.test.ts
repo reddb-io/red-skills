@@ -53,7 +53,7 @@ function makeIo(
     killWorkers: vi.fn(async () => {}),
     clearControlFiles: vi.fn(async () => {}),
     reconcile: vi.fn(async () => {}),
-    relaunch: vi.fn(async () => {}),
+    relaunch: vi.fn(async () => true),
     deadSupervisorSignals: vi.fn(async () => signals),
     readRestartLedger: vi.fn(async () => ledger),
     writeRestartLedger: vi.fn(async () => {}),
@@ -136,7 +136,7 @@ describe("runWatchdog — quiescent supervisor recovery (#407)", () => {
     expect(fake.relaunch).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers even if relaunch throws (logged, never rejects)", async () => {
+  it("does not report recovery when relaunch throws", async () => {
     const { io, fake } = makeIo(
       makeLiveness({ pid: 4242, pidAlive: true, lastHeartbeatEpoch: NOW - 9999 }),
     );
@@ -144,7 +144,7 @@ describe("runWatchdog — quiescent supervisor recovery (#407)", () => {
 
     const result = await runWatchdog(io, STALE, PROGRESS_STALE);
 
-    expect(result.recovered).toBe(true);
+    expect(result.recovered).toBe(false);
     expect(fake.killTree).toHaveBeenCalledTimes(1);
     expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("relaunch failed"));
   });
@@ -262,7 +262,7 @@ describe("runWatchdog — dead-supervisor safety net (#1097)", () => {
   const BOUND = { maxRestarts: 3, windowS: 300 };
   const deadPid = makeLiveness({ pid: 4242, pidAlive: false });
 
-  it("respawns a dead supervisor: records restart, clears files, reconciles, relaunches", async () => {
+  it("respawns a dead supervisor: reconciles, relaunches, then records the restart", async () => {
     const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
 
     const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
@@ -273,7 +273,9 @@ describe("runWatchdog — dead-supervisor safety net (#1097)", () => {
     expect(result.recovered).toBe(false); // that flag is the quiescent (#407) path
 
     expect(fake.writeRestartLedger).toHaveBeenCalledWith([NOW]);
-    expect(fake.clearControlFiles).toHaveBeenCalledTimes(1);
+    // The stale pinned identity stays present until the new supervisor replaces
+    // it, so a failed boot remains detectable on the next watchdog pass.
+    expect(fake.clearControlFiles).not.toHaveBeenCalled();
     expect(fake.reconcile).toHaveBeenCalledTimes(1);
     expect(fake.relaunch).toHaveBeenCalledTimes(1);
     // The dead-supervisor path must NOT kill the surviving detached workers.
@@ -330,14 +332,26 @@ describe("runWatchdog — dead-supervisor safety net (#1097)", () => {
     expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("max-restarts cap"));
   });
 
-  it("still records the respawn + relaunches even when relaunch throws (logged)", async () => {
+  it("keeps recovery armed and does not consume the restart budget when relaunch fails", async () => {
     const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
     fake.relaunch.mockRejectedValueOnce(new Error("spawn failed"));
 
     const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
 
-    expect(result.respawnedDeadSupervisor).toBe(true);
-    expect(fake.writeRestartLedger).toHaveBeenCalledWith([NOW]);
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.writeRestartLedger).not.toHaveBeenCalled();
+    expect(fake.clearControlFiles).not.toHaveBeenCalled();
+    expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("relaunch failed"));
+  });
+
+  it("treats a null supervisor spawn as a failed relaunch", async () => {
+    const { io, fake } = makeIo(deadPid, makeSignals({ readyForAgent: 3, liveWorkers: 0, target: 2 }));
+    fake.relaunch.mockResolvedValueOnce(false);
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE, BOUND);
+
+    expect(result.respawnedDeadSupervisor).toBe(false);
+    expect(fake.writeRestartLedger).not.toHaveBeenCalled();
     expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("relaunch failed"));
   });
 
