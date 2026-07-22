@@ -43,6 +43,9 @@ jobs:
       - name: Test red-castle vendor contract
         run: scripts/test-red-castle-vendor-contract.sh
 
+      - name: Test hitl-card merge token contract
+        run: scripts/test-red-hitl-card-merge-token-contract.sh
+
       - name: Test marketplace manifest validator
         run: scripts/test-validate-marketplace-manifests.sh
 
