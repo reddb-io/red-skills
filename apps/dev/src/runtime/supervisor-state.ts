@@ -123,6 +123,7 @@ async function exists(path: string): Promise<boolean> {
 async function supervisorArtifactPaths(dir: string): Promise<string[]> {
   const out = [
     join(dir, "afk-supervisor.pid"),
+    join(dir, "afk-supervisor.pid.start"),
     join(dir, "afk-supervisor-boot.pid"),
     join(dir, "state.toon"),
     join(dir, "state.toon.tmp"),
