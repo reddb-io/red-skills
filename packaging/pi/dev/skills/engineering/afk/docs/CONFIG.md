@@ -13,6 +13,28 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 - **The directory must be opted in** (ADR 0116). Without an explicit `plugins.dev.enabled: true` (ADR 0067), the loader returns the documented defaults and **none** of the file's settings — every table below reads as its default. This is decided in the loader, not only at process entry, so no caller can read a disabled directory's settings.
 - **Retired keys are dropped and warned** (ADR 0117). A key on the tombstone list (`afk.attempt_timeout`, retired when the commit-anchored progress guard replaced the wall-clock cap) warns `RETIRED — it no longer does anything` and is unreadable. An **unknown** key stays silent for forward compatibility: silence means "not yet", a warning means "not any more".
 
+### Implementer environment
+
+An AFK inner agent does not inherit the host's full plugin, MCP, hook, or
+statusline environment. Castle projects the existing activation gates into a
+discovery-closed constraint owned by each runner-spec row:
+
+| Existing gate | Inner-agent surface |
+|---|---|
+| `plugins.dev.enabled: true` | Dev essentials and the `navigator` code-navigation MCP (always present for an AFK implementer) |
+| `plugins.memory.enabled: true` | Memory plugin and `red-memory` MCP |
+| `plugins.brain.enabled: true` | Brain plugin and `brain` MCP |
+| `plugins.red-ui.enabled: true` | `red-ui` MCP |
+| `rsp.enabled: true` | rsp MCP/instructions and runner integration |
+
+There is deliberately no implementer payload or allowlist key. Each optional
+surface is present only when its existing gate is exactly `true`; enabling one
+gate does not enable any sibling surface. Claude starts bare with strict MCP
+loading and explicit settings, Codex receives explicit plugin/MCP config,
+OpenCode receives an isolated config projection, and Pi disables discovery and
+receives explicit skills/extensions. Statusline integration, Castle's operator
+MCP, and non-essential host hooks are absent from every projection.
+
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
