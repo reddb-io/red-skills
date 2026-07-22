@@ -13,11 +13,16 @@ describe("castle singleton event lane", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(
+      roots.map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   it("appends TOONL events and reads a bounded tail through injected IO", async () => {
-    const root = join(tmpdir(), `castle-singleton-events-${crypto.randomUUID()}`);
+    const root = join(
+      tmpdir(),
+      `castle-singleton-events-${crypto.randomUUID()}`,
+    );
     roots.push(root);
     const paths = createEnginePaths(join(root, ".red"));
     let tick = 0;
