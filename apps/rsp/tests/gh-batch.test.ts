@@ -223,4 +223,37 @@ describe("rsp gh batch", () => {
     expect(maxActive).toBeLessThanOrEqual(3);
     expect(maxActive).toBeGreaterThan(1);
   });
+
+  it("projects PR check rollups from explicit REST fallback endpoints", async () => {
+    const calls: string[][] = [];
+    const exec: GhBatchExec = async (args) => {
+      calls.push([...args]);
+      if (args.slice(0, 2).join(" ") === "api graphql") return response("", 1, "GraphQL quota exhausted");
+      if (args[1] === "repos/acme/widgets/pulls/12") {
+        return response({ number: 12, state: "open", mergeable: true, head: { sha: "abc123" } });
+      }
+      if (args[1] === "repos/acme/widgets/commits/abc123/check-runs") {
+        return response({ check_runs: [{ name: "test", status: "completed", conclusion: "success" }] });
+      }
+      if (args[1] === "repos/acme/widgets/commits/abc123/status") {
+        return response({ state: "success", statuses: [{ context: "lint", state: "success" }] });
+      }
+      return response("", 1, "unexpected REST endpoint");
+    };
+
+    const result = await runGhBatchCommand([
+      "gh", "prs", "12", "--json", "mergeable,statusCheckRollup", "--repo", "acme/widgets",
+    ], { exec });
+    const payload = decode(result.stdout.toString()) as { prs: Record<string, Record<string, unknown>> };
+
+    expect(payload.prs["12"]).toEqual({
+      number: 12,
+      mergeable: "mergeable",
+      statusCheckRollup: {
+        state: "success",
+        contexts: [{ name: "test", state: "success" }, { name: "lint", state: "success" }],
+      },
+    });
+    expect(calls.slice(1).every((args) => args[0] === "api" && args[1] !== "graphql")).toBe(true);
+  });
 });
