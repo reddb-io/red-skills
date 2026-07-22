@@ -14,6 +14,7 @@ import {
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
 import { afkPaths } from "../src/runtime/wire.js";
+import { recordBootError } from "../src/commands/run/state.js";
 import {
   buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
@@ -102,6 +103,40 @@ describe("dev:afk MCP host adapter", () => {
     await expect(
       deps.logs({ lane: "worker", id: "../../outside" }),
     ).rejects.toThrow("escapes its Castle lane root");
+  });
+
+  it("surfaces a session-error death in the worker lane and default worker vitals", async () => {
+    const cwd = await root();
+    const workerId = "wER01";
+    const workerDir = join(cwd, ".red", "tmp", "workers", workerId);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      await recordBootError(workerDir, "session-error", new Error("bundle coherence halted dispatch"));
+    } finally {
+      stderr.mockRestore();
+    }
+
+    const deps = createDevAfkMcpDependencies(cwd);
+    await expect(deps.logs({ lane: "worker", id: workerId })).resolves.toEqual([
+      expect.objectContaining({
+        kind: "worker.session-error",
+        worker_id: workerId,
+        payload: expect.objectContaining({
+          type: "session-error",
+          message: "bundle coherence halted dispatch",
+        }),
+      }),
+    ]);
+    await expect(deps.workerVitals({ live_only: true })).resolves.toEqual([
+      expect.objectContaining({
+        worker: expect.objectContaining({ id: workerId }),
+        alert: expect.objectContaining({
+          type: "session-error",
+          message: "bundle coherence halted dispatch",
+        }),
+      }),
+    ]);
   });
 
   it("bounds logs reads by limit and filters by kind before the limit", async () => {
