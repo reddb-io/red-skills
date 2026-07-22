@@ -24,6 +24,7 @@ import {
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
+import { readPidStartTime } from "../src/core/state.js";
 
 const roots: string[] = [];
 
@@ -385,6 +386,7 @@ describe("fleet_register — adopt a live unregistered fleet", () => {
     const paths = afkPaths(cwd);
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
     await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+    await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
 
     const result = await createCastleMcpDependencies(cwd).fleetRegister({
       runner: "claude",
@@ -413,6 +415,7 @@ describe("fleet_register — adopt a live unregistered fleet", () => {
     const paths = afkPaths(cwd, "alpha");
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
     await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+    await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
 
     const deps = createCastleMcpDependencies(cwd);
     await deps.fleetRegister({ name: "alpha", runner: "claude" });
