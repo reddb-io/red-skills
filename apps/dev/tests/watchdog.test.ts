@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   decideDeadSupervisorRespawn,
+  runSupervisorWatchdogLoop,
   runWatchdog,
   teardownWedgedSupervisor,
   type DeadSupervisorSignals,
@@ -23,6 +24,8 @@ interface FakeIo {
   deadSupervisorSignals: ReturnType<typeof vi.fn>;
   readRestartLedger: ReturnType<typeof vi.fn>;
   writeRestartLedger: ReturnType<typeof vi.fn>;
+  isRecoveryPending: ReturnType<typeof vi.fn>;
+  setRecoveryPending: ReturnType<typeof vi.fn>;
   log: ReturnType<typeof vi.fn>;
 }
 
@@ -57,6 +60,8 @@ function makeIo(
     deadSupervisorSignals: vi.fn(async () => signals),
     readRestartLedger: vi.fn(async () => ledger),
     writeRestartLedger: vi.fn(async () => {}),
+    isRecoveryPending: vi.fn(async () => false),
+    setRecoveryPending: vi.fn(async () => {}),
     log: vi.fn(),
   };
   return { io: fake as unknown as WatchdogIO, fake };
@@ -147,6 +152,19 @@ describe("runWatchdog — quiescent supervisor recovery (#407)", () => {
     expect(result.recovered).toBe(false);
     expect(fake.killTree).toHaveBeenCalledTimes(1);
     expect(fake.log).toHaveBeenCalledWith(expect.stringContaining("relaunch failed"));
+    expect(fake.setRecoveryPending).toHaveBeenCalledWith(true);
+  });
+
+  it("retries a failed quiescent relaunch from its durable recovery marker", async () => {
+    const absent = makeLiveness();
+    const { io, fake } = makeIo(absent);
+    fake.isRecoveryPending.mockResolvedValue(true);
+
+    const result = await runWatchdog(io, STALE, PROGRESS_STALE);
+
+    expect(result.recovered).toBe(true);
+    expect(fake.relaunch).toHaveBeenCalledTimes(1);
+    expect(fake.setRecoveryPending).toHaveBeenLastCalledWith(false);
   });
 
   it("recovers a supervisor whose heartbeat is fresh but progress epoch is stale with busy slots (#579)", async () => {
@@ -187,6 +205,29 @@ describe("runWatchdog — quiescent supervisor recovery (#407)", () => {
     expect(result.health).toBe("healthy");
     expect(result.recovered).toBe(false);
     expect(fake.killTree).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSupervisorWatchdogLoop", () => {
+  it("logs a transient pass failure and keeps the next recovery pass armed", async () => {
+    let stopping = false;
+    const pass = vi.fn()
+      .mockRejectedValueOnce(new Error("transient state read"))
+      .mockImplementationOnce(async () => {
+        stopping = true;
+      });
+    const onPassError = vi.fn();
+
+    await runSupervisorWatchdogLoop({
+      pollMs: 1,
+      pass,
+      shouldStop: () => stopping,
+      sleep: async () => {},
+      onPassError,
+    });
+
+    expect(pass).toHaveBeenCalledTimes(2);
+    expect(onPassError).toHaveBeenCalledWith(expect.objectContaining({ message: "transient state read" }));
   });
 });
 
