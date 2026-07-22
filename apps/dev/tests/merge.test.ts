@@ -1021,6 +1021,89 @@ describe("preMergeRebase (#1006)", () => {
     expect(joined(calls).some((c) => c.includes("reset --soft"))).toBe(false);
   });
 
+  // #2481 item 4: the stale-branch guard. Measurement needs a fork sha, a
+  // post-squash ahead count, and the fork point's commit date; `nowEpochS` is
+  // injected so the age arithmetic is deterministic.
+  const NOW = 1_800_000_000;
+  const forkAgedHours = (h: number) => ({
+    match: (a: string[]) => a.includes("log") && a.includes("--format=%ct"),
+    result: { code: 0, stdout: `${NOW - h * 3600}\n` },
+  });
+
+  it("refuses a branch that is both far ahead and base-stale, before rebasing (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(15)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("stale-branch");
+    expect(r.message).toContain("65 commits ahead");
+    expect(r.message).toContain("15h");
+    expect(joined(calls).some((c) => c === "git -C /wt rebase origin/main")).toBe(false);
+  });
+
+  it("a squash that collapses the micro-history keeps the guard quiet (#2481)", async () => {
+    // The squash runs first, so the guard measures ONE commit — the whole point
+    // of squashing is that a fat branch stops being a doomed sequential rebase.
+    let revListCalls = 0;
+    const { exec, calls } = fakeExec([
+      ancestorCheckFails,
+      forkPoint,
+      {
+        match: (a: string[]) => a.includes("rev-list"),
+        result: { code: 0, stdout: "" },
+      },
+      forkAgedHours(15),
+    ]);
+    const counting: Exec = async (argv) => {
+      if (argv.includes("rev-list")) {
+        revListCalls += 1;
+        return { code: 0, stdout: revListCalls === 1 ? "65\n" : "1\n", stderr: "" };
+      }
+      return await exec(argv);
+    };
+    const r = await preMergeRebase(counting, { ...base, nowEpochS: () => NOW });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("far ahead but a FRESH base still rebases — both conditions must hold (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(1)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("an unmeasurable base age never refuses the landing (#2481)", async () => {
+    // No `%ct` answer → the guard cannot prove staleness → proceed as before.
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("staleBranchGuard: null disables the refusal entirely (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(99)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      staleBranchGuard: null,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
   it("clean rebase → fetches base, rebases, force-pushes the branch, ok", async () => {
     const { exec, calls } = fakeExec([needsRebase]);
     const r = await preMergeRebase(exec, base);

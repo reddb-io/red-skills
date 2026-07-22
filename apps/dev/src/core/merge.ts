@@ -134,15 +134,73 @@ export interface PreMergeRebaseInput {
    * `Infinity` disables.
    */
   squashAheadThreshold?: number;
+  /**
+   * Stale-branch refusal thresholds (issue #2481). `null` disables the guard;
+   * absent uses {@link DEFAULT_STALE_BRANCH_GUARD}.
+   */
+  staleBranchGuard?: StaleBranchGuard | null;
+  /** Epoch-seconds clock for the base-age arithmetic; defaults to the wall clock. */
+  nowEpochS?: () => number;
+}
+
+/**
+ * Thresholds for the stale-branch landing refusal (issue #2481, item 4). A
+ * branch that is BOTH far ahead and forked from a long-stale base is a doomed
+ * sequential rebase: every commit replays onto a trunk that moved under it, so
+ * the same conflicts re-surface file by file for tens of minutes. Refusing up
+ * front parks it with an actionable reason instead of grinding.
+ */
+export interface StaleBranchGuard {
+  /** Refuse only when the branch is MORE than this many commits ahead of its fork point. */
+  maxAhead: number;
+  /** …AND its fork point is older than this many hours. */
+  maxBaseAgeHours: number;
+}
+
+/** Both conditions must hold, so a fat-but-fresh or old-but-thin branch still lands. */
+export const DEFAULT_STALE_BRANCH_GUARD: StaleBranchGuard = { maxAhead: 40, maxBaseAgeHours: 12 };
+
+/** What the guard measured about a branch, in the units it refuses on. */
+export interface StaleBranchObservation {
+  /** Commits the branch carries beyond its fork point, AFTER any squash. */
+  ahead: number;
+  /** Hours since the fork point commit; `undefined` when unmeasurable. */
+  baseAgeHours?: number;
+}
+
+/**
+ * The pure refusal decision (issue #2481). An unmeasurable observation NEVER
+ * refuses — the guard only speaks when it can prove both halves of the
+ * pathology, so a mocked/limited git surface degrades to the historical path.
+ */
+export function evaluateStaleBranchGuard(
+  observation: StaleBranchObservation,
+  guard: StaleBranchGuard = DEFAULT_STALE_BRANCH_GUARD,
+): { park: boolean; message?: string } {
+  const { ahead, baseAgeHours } = observation;
+  if (!Number.isFinite(ahead) || baseAgeHours === undefined || !Number.isFinite(baseAgeHours)) {
+    return { park: false };
+  }
+  if (ahead <= guard.maxAhead || baseAgeHours <= guard.maxBaseAgeHours) return { park: false };
+  return {
+    park: true,
+    message:
+      `the branch is ${ahead} commits ahead of a base that is ${Math.round(baseAgeHours)}h stale ` +
+      `(limits: ${guard.maxAhead} commits / ${guard.maxBaseAgeHours}h); ` +
+      "rebasing that micro-history onto current trunk would replay the same conflicts commit by commit. " +
+      "Rebuild the slice on a fresh base, or squash the branch to its net diff and re-run the landing.",
+  };
 }
 
 /** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
-export type PreMergeRebaseFailReason = "fetch-failed" | "conflict" | "push-rejected";
+export type PreMergeRebaseFailReason = "fetch-failed" | "conflict" | "push-rejected" | "stale-branch";
 
 export interface PreMergeRebaseResult {
   ok: boolean;
   /** Set on `ok:false` — the distinct failure mode. */
   reason?: PreMergeRebaseFailReason;
+  /** Actionable refusal text, set on `stale-branch`. */
+  message?: string;
 }
 
 /**
@@ -200,6 +258,26 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     }
   };
 
+  // Stale-branch refusal (issue #2481, item 4). Measured AFTER the squash, so a
+  // branch whose micro-history just collapsed to one commit is no longer the
+  // doomed sequential rebase the guard exists to stop. Every measurement is
+  // best-effort: a git surface that cannot answer leaves `baseAgeHours`
+  // undefined and the guard stays silent.
+  const staleGuard = input.staleBranchGuard === undefined ? DEFAULT_STALE_BRANCH_GUARD : input.staleBranchGuard;
+  const nowEpochS = input.nowEpochS ?? (() => Math.floor(Date.now() / 1000));
+  const measureStaleBranch = async (): Promise<StaleBranchObservation> => {
+    const fork = await exec(["git", "-C", repo, "merge-base", baseRef, "HEAD"]);
+    const forkSha = fork.stdout.trim();
+    if (fork.code !== 0 || forkSha.length === 0) return { ahead: Number.NaN };
+    const count = await exec(["git", "-C", repo, "rev-list", "--count", `${forkSha}..HEAD`]);
+    const ahead = Number.parseInt(count.stdout.trim(), 10);
+    if (count.code !== 0) return { ahead: Number.NaN };
+    const forkDate = await exec(["git", "-C", repo, "log", "-1", "--format=%ct", forkSha]);
+    const forkEpochS = Number.parseInt(forkDate.stdout.trim(), 10);
+    if (forkDate.code !== 0 || !Number.isFinite(forkEpochS)) return { ahead };
+    return { ahead, baseAgeHours: (nowEpochS() - forkEpochS) / 3600 };
+  };
+
   // Fetch the base tip and rebase the worker branch onto it. Reused by the
   // push-retry loop so a racing base advance is re-integrated before each retry.
   const rebaseOntoBase = async (): Promise<PreMergeRebaseResult & { alreadyIntegrated?: boolean }> => {
@@ -208,6 +286,10 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     const alreadyIntegrated = await exec(["git", "-C", repo, "merge-base", "--is-ancestor", baseRef, "HEAD"]);
     if (alreadyIntegrated.code === 0) return { ok: true, alreadyIntegrated: true };
     await squashOwnHistory();
+    if (staleGuard) {
+      const verdict = evaluateStaleBranchGuard(await measureStaleBranch(), staleGuard);
+      if (verdict.park) return { ok: false, reason: "stale-branch", message: verdict.message };
+    }
     const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
     if (rebase.code !== 0) {
       // #1095: give the opt-in mechanical resolver a chance to auto-resolve
