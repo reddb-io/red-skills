@@ -17,6 +17,7 @@ describe("host toolchain doctor", () => {
 
   it("detects gh's install manager from injected host facts", () => {
     expect(detectGhInstallManager({ ghPath: "/opt/asdf/shims/gh", toolVersions: "github-cli 2.47.1\n" })).toBe("asdf");
+    expect(detectGhInstallManager({ ghPath: "/users/operator/.asdf/shims/gh" })).toBe("asdf");
     expect(detectGhInstallManager({ ghPath: "/usr/bin/gh", aptManaged: true })).toBe("apt");
     expect(detectGhInstallManager({ ghPath: "/opt/homebrew/bin/gh", brewManaged: true })).toBe("brew");
     expect(detectGhInstallManager({ ghPath: "/usr/local/bin/gh" })).toBe("direct");
