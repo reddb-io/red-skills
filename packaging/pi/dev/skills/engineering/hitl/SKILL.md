@@ -146,8 +146,6 @@ For stale parks, card verbs, and recovery checks, see [TROUBLESHOOTING.md](./TRO
 
 Use `/hitl` when the pending human decision still has to be **extracted and answered** — it interviews you, decides delegability, then (when delegable) clears the active `## Current blocker` and requeues. When the decision is **already made** and you only need to put a parked `blocked:validation`/`blocked:spec` issue back in the queue, reach for [`/retake`](../retake/SKILL.md) instead — its **`/retake` vs `/hitl` — the decision boundary** section is the authoritative split. Both end in the same safe state; never flip labels by hand, because AFK preflight re-reads the active blocker and re-parks the issue.
 
-**`blocked:sensitive-path` is NOT a manual-land dead-end (#1171).** A sensitive-path park (diff touches a protected path — CI workflow, lifecycle script, git hook, `.red/` config) is a landing gate that re-fires on every fresh attempt, so routing it back to `ready-for-agent` just spawns a new attempt that reproduces the same protected diff and re-parks — an infinite loop. Once you have **reviewed the protected diff**, clear it with [`/retake`](../retake/SKILL.md) and its `requeue <issue> --adopt-branch <branch> --guidance "<review note>"` action: it lands the already-reviewed branch through the ADR-0055 no-agent lane with the sensitive-path guard bypassed for that human land only (an audit comment records the approval). Do not hand-merge it — `--adopt-branch` is the supported path.
-
 ## Directive block template
 
 ```markdown
