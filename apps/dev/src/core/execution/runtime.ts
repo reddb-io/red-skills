@@ -320,6 +320,8 @@ export interface RunAgentInput {
    * that the agent's build actually sees CARGO_TARGET_DIR is pending #284.
    */
   env?: Record<string, string>;
+  /** Runner-native projection of the repo-enabled implementer skill surface. */
+  implementer?: ImplementerRuntimeProjection;
   /**
    * Absolute path sandcastle drains its own file-log to (the `logging.path` of
    * the "file" mode). AFK points this at the attempt dir's `afk.log` — our ONE
@@ -433,7 +435,11 @@ export interface RunAgentResult {
 /** Provider factories + the sandcastle `run` entrypoint, injected for testing. */
 export interface SandcastleDeps {
   run: (options: RunOptions) => Promise<RunResult>;
-  agentFor: (runner: AgentRunner, model: string, opts?: { effort?: AgentEffort }) => RunOptions["agent"];
+  agentFor: (
+    runner: AgentRunner,
+    model: string,
+    opts?: { effort?: AgentEffort; implementer?: ImplementerRuntimeProjection },
+  ) => RunOptions["agent"];
   /**
    * Build the sandbox provider for a mode. `opts.mountPath` (issue #405) is the
    * absolute host attempt dir: under docker/podman it is added as a bind-mount at
@@ -495,9 +501,23 @@ export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
  * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
  */
 export interface AgentFactories {
-  claudeCode: (model: string, options?: { effort?: AgentEffort; env?: Record<string, string> }) => RunOptions["agent"];
-  codex: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
+  claudeCode: (model: string, options?: {
+    effort?: AgentEffort;
+    env?: Record<string, string>;
+    settingSources?: readonly ("user" | "project" | "local")[];
+    pluginDirs?: readonly string[];
+  }) => RunOptions["agent"];
+  codex: (model: string, options?: {
+    effort?: AgentEffort;
+    configOverrides?: readonly string[];
+  }) => RunOptions["agent"];
   opencode: (model: string, options?: { variant?: string; env?: Record<string, string> }) => RunOptions["agent"];
+}
+
+export interface ImplementerRuntimeProjection {
+  claudePluginDirs: readonly string[];
+  codexConfigOverrides: readonly string[];
+  opencodeConfigDir: string;
 }
 
 /**
@@ -524,7 +544,7 @@ export function buildAgent(
   factories: AgentFactories,
   runner: AgentRunner,
   model: string,
-  opts: { effort?: AgentEffort } | undefined,
+  opts: { effort?: AgentEffort; implementer?: ImplementerRuntimeProjection } | undefined,
   env: NodeJS.ProcessEnv,
   warn?: (message: string) => void,
 ): RunOptions["agent"] {
@@ -540,7 +560,10 @@ export function buildAgent(
   if (spec.channel === "variant") {
     const options: { variant?: string; env?: Record<string, string> } = {};
     if (requested !== undefined) options.variant = requested;
-    if (authEnv) options.env = authEnv;
+    const projectionEnv = opts?.implementer
+      ? { OPENCODE_CONFIG_DIR: opts.implementer.opencodeConfigDir }
+      : undefined;
+    if (authEnv || projectionEnv) options.env = { ...authEnv, ...projectionEnv };
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
   }
 
@@ -566,12 +589,23 @@ export function buildAgent(
   // `forcedModel` (claude-minimax → MiniMax-M3) discards the resolved tier model.
   const targetModel = spec.forcedModel ?? model;
   if (spec.factory === "codex") {
-    // The codex provider takes no `env` seam; codex never resolves an auth env.
-    return factories.codex(targetModel, effort !== undefined ? { effort } : undefined);
+    const options: { effort?: AgentEffort; configOverrides?: readonly string[] } = {};
+    if (effort !== undefined) options.effort = effort;
+    if (opts?.implementer) options.configOverrides = opts.implementer.codexConfigOverrides;
+    return factories.codex(targetModel, Object.keys(options).length > 0 ? options : undefined);
   }
-  const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
+  const options: {
+    effort?: AgentEffort;
+    env?: Record<string, string>;
+    settingSources?: readonly ("user" | "project" | "local")[];
+    pluginDirs?: readonly string[];
+  } = {};
   if (effort !== undefined) options.effort = effort;
   if (authEnv) options.env = authEnv;
+  if (opts?.implementer) {
+    options.settingSources = ["project", "local"];
+    options.pluginDirs = opts.implementer.claudePluginDirs;
+  }
   return factories.claudeCode(targetModel, Object.keys(options).length > 0 ? options : undefined);
 }
 
@@ -678,7 +712,10 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
       }
     : undefined;
   return {
-    agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
+    agent: deps.agentFor(input.runner, input.model, {
+      effort: input.effort,
+      ...(input.implementer ? { implementer: input.implementer } : {}),
+    }),
     // Bind-mount the host attempt dir into the container at the identical path
     // (issue #405) so the proof-of-life lane + the worktree sandcastle creates
     // under it are host-visible mid-run — the precondition for arming the guard +
