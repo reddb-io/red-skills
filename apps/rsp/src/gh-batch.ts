@@ -129,7 +129,20 @@ async function readRestFallback(
   const rows = await boundedMap(command.numbers, concurrency, async (number) => {
     const response = await exec(["api", `repos/${repo}/${surface}/${number}`]);
     if (response.code !== 0) return { number, value: { error: compactError(response) || "REST fallback failed" } };
-    return { number, value: projectRestRead(command.verb as "issues" | "prs", asRecord(parseJson(response.stdout)), fields.output) };
+    let value = asRecord(parseJson(response.stdout));
+    if (command.verb === "prs" && fields.output.some(isCheckField)) {
+      const sha = stringValue(asRecord(value.head).sha);
+      if (!sha) return { number, value: { error: "REST fallback pull response omitted head SHA" } };
+      const checks = await exec(["api", `repos/${repo}/commits/${sha}/check-runs`]);
+      if (checks.code !== 0) return { number, value: { error: compactError(checks) || "REST check-runs fallback failed" } };
+      const statuses = await exec(["api", `repos/${repo}/commits/${sha}/status`]);
+      if (statuses.code !== 0) return { number, value: { error: compactError(statuses) || "REST commit-status fallback failed" } };
+      value = {
+        ...value,
+        restCheckRollup: projectRestChecks(asRecord(parseJson(checks.stdout)), asRecord(parseJson(statuses.stdout))),
+      };
+    }
+    return { number, value: projectRestRead(command.verb as "issues" | "prs", value, fields.output) };
   });
   const failures = rows.filter((row) => "error" in row.value).length;
   return result({
@@ -347,8 +360,8 @@ function projectRestRead(verb: "issues" | "prs", value: Record<string, unknown>,
     if (field === "labels") {
       const labels = Array.isArray(value.labels) ? value.labels.filter(isRecord) : [];
       out.labels = labels.map((label) => stringValue(label.name)).filter(Boolean);
-    } else if (["checks", "checkRollup", "statusCheckRollup"].includes(field)) {
-      out[field] = { state: "", contexts: [] };
+    } else if (isCheckField(field)) {
+      out[field] = asRecord(value.restCheckRollup) as JsonObject;
     } else if (field === "state") {
       out.state = stringValue(value.state).toLowerCase();
     } else if (field === "mergeable") {
@@ -360,6 +373,35 @@ function projectRestRead(verb: "issues" | "prs", value: Record<string, unknown>,
   }
   if (!("number" in out)) out.number = numberValue(value.number);
   return out;
+}
+
+function projectRestChecks(checks: Record<string, unknown>, statuses: Record<string, unknown>): JsonObject {
+  const checkRuns = Array.isArray(checks.check_runs) ? checks.check_runs.filter(isRecord) : [];
+  const statusRows = Array.isArray(statuses.statuses) ? statuses.statuses.filter(isRecord) : [];
+  const contexts = [
+    ...checkRuns.map((check) => ({
+      name: stringValue(check.name),
+      state: (stringValue(check.conclusion) || stringValue(check.status)).toLowerCase(),
+    })),
+    ...statusRows.map((status) => ({
+      name: stringValue(status.context),
+      state: stringValue(status.state).toLowerCase(),
+    })),
+  ];
+  return {
+    state: stringValue(statuses.state).toLowerCase() || aggregateCheckState(contexts.map((context) => context.state)),
+    contexts,
+  };
+}
+
+function aggregateCheckState(states: readonly string[]): string {
+  if (states.some((state) => ["failure", "error", "cancelled", "timed_out", "action_required"].includes(state))) return "failure";
+  if (states.some((state) => ["pending", "queued", "in_progress", "requested", "waiting"].includes(state))) return "pending";
+  return states.length > 0 && states.every((state) => ["success", "neutral", "skipped"].includes(state)) ? "success" : "";
+}
+
+function isCheckField(field: string): boolean {
+  return ["checks", "checkRollup", "statusCheckRollup"].includes(field);
 }
 
 function projectChecks(commits: unknown): JsonObject {
