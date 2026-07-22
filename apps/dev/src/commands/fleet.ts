@@ -21,7 +21,13 @@ import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
 import { spawnSupervisorWatchdog } from "../runtime/supervisor-watchdog-spawn.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
-import { discoverLiveSupervisorPid, reapStaleSupervisorState } from "../runtime/supervisor-state.js";
+import {
+  discoverLiveSupervisorPid,
+  isSupervisorIdentityLive,
+  readSupervisorIdentity,
+  reapStaleSupervisorState,
+} from "../runtime/supervisor-state.js";
+import { readPidStartTime } from "../core/state.js";
 import { parseFleetFlag, DEFAULT_FLEET_NAME } from "../core/fleet-name.js";
 
 export interface FleetLaunchResult {
@@ -166,6 +172,27 @@ export async function stopFleet(
   const stateAfk = dirname(paths.supervisorPidPath);
   const pidFile = paths.supervisorPidPath;
   const stopFile = join(dirname(pidFile), "afk-supervisor.stop");
+  // Publish stop intent before inspecting either process. A watchdog pass that
+  // already observed a dead supervisor must see this sentinel before it can
+  // relaunch, and the watchdog itself must be gone before any terminal report.
+  await mkdir(dirname(stopFile), { recursive: true });
+  await writeFile(stopFile, "", "utf8");
+  const watchdogIdentity = await readSupervisorIdentity(
+    paths.supervisorWatchdogPidPath,
+    paths.supervisorWatchdogPidStartPath,
+  );
+  if (
+    watchdogIdentity !== null &&
+    isSupervisorIdentityLive(watchdogIdentity, isLivePid, readPidStartTime)
+  ) {
+    const watchdogDead = await killTreeAndWait(watchdogIdentity.pid);
+    if (!watchdogDead) {
+      stdout.write(`✗ fleet watchdog pid=${watchdogIdentity.pid} survived termination; stop remains armed.\n`);
+      return { status: "timeout", pid: watchdogIdentity.pid };
+    }
+  }
+  await rm(paths.supervisorWatchdogPidPath, { force: true });
+  await rm(paths.supervisorWatchdogPidStartPath, { force: true });
   // Detached workers survive the supervisor's death (#2056): they are spawned
   // `detached: true` so they are NOT in the supervisor's process tree. Every stop
   // path must sweep them — otherwise a "stopped" report is a lie while orphaned
@@ -182,7 +209,7 @@ export async function stopFleet(
   const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, { fleet: paths.fleet });
   if (!liveSupervisor) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
-    if (supervisor.status === "stale") {
+    if (supervisor.status === "stale" && supervisor.pid !== undefined) {
       await sweepOrphans();
       stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
       return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
@@ -192,8 +219,6 @@ export async function stopFleet(
     return { status: "none" };
   }
   const pid = liveSupervisor.pid;
-  await mkdir(dirname(stopFile), { recursive: true });
-  await writeFile(stopFile, "", "utf8");
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (!isLivePid(pid)) {
@@ -218,7 +243,9 @@ export async function stopFleet(
   if (dead) {
     // SIGKILL skips the supervisor's own `finally`, so clean its control files.
     await rm(pidFile, { force: true });
+    await rm(paths.supervisorPidStartPath, { force: true });
     await rm(stopFile, { force: true });
+    await rm(paths.supervisorRecoveryPath, { force: true });
     // killTree of the supervisor pid misses the detached workers — sweep them.
     await sweepOrphans();
     stdout.write(`🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`);
