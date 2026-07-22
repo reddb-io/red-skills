@@ -152,6 +152,16 @@ else
   fail "explicit targets must be rejected when an older release is incomplete"
 fi
 
+# Pre-flow tags never had a release tail and can never gain one (their major
+# line already moved past them, or has no moving ref at all). They must be
+# skipped, not fatal: erroring wedged every publish behind v0.0.1/v1.2.0 (#2460).
+if grep -qF 'skipping stale incomplete release' "$WORKFLOW" &&
+   ! grep -qF 'refusing stale incomplete release' "$WORKFLOW"; then
+  pass "stale incomplete releases are skipped, never fatal"
+else
+  fail "a stale incomplete release must be skipped by the FIFO scan, not error the run"
+fi
+
 # ADR 0121: the tag is the publish trigger. A `push: branches` trigger would put
 # the publish back on every commit to main, which is exactly the design this
 # replaced.
