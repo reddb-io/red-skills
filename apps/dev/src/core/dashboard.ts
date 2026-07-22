@@ -31,6 +31,46 @@ export interface DashboardLocalWorkers {
   live: number;
   stale: number;
   total: number;
+  implementer_runtime?: {
+    samples: number;
+    runner_startup_ms: { before: number; after: number; delta: number };
+    skill_manifest_bytes: { before: number; after: number; delta: number };
+  };
+}
+
+export interface ImplementerRuntimeSample {
+  runner_startup_before_ms: number;
+  runner_startup_after_ms: number;
+  skill_manifest_before_bytes: number;
+  skill_manifest_after_bytes: number;
+}
+
+export function aggregateImplementerRuntimeMetrics(
+  samples: readonly ImplementerRuntimeSample[],
+): NonNullable<DashboardLocalWorkers["implementer_runtime"]> | undefined {
+  if (samples.length === 0) return undefined;
+  const mean = (field: keyof ImplementerRuntimeSample): number =>
+    Math.round(
+      samples.reduce((sum, sample) => sum + sample[field], 0) /
+        samples.length,
+    );
+  const runnerBefore = mean("runner_startup_before_ms");
+  const runnerAfter = mean("runner_startup_after_ms");
+  const manifestBefore = mean("skill_manifest_before_bytes");
+  const manifestAfter = mean("skill_manifest_after_bytes");
+  return {
+    samples: samples.length,
+    runner_startup_ms: {
+      before: runnerBefore,
+      after: runnerAfter,
+      delta: runnerAfter - runnerBefore,
+    },
+    skill_manifest_bytes: {
+      before: manifestBefore,
+      after: manifestAfter,
+      delta: manifestAfter - manifestBefore,
+    },
+  };
 }
 
 export interface DashboardInput {
@@ -240,6 +280,7 @@ function fmtNullableRate(value: number | null): string {
 }
 
 export function renderDashboardReport(report: DashboardReport): string {
+  const implementerRuntime = report.operations.local_workers.implementer_runtime;
   const lines = [
     `RedSkills dashboard (${report.period_days}d)`,
     `generated: ${report.generated_at}`,
@@ -249,6 +290,13 @@ export function renderDashboardReport(report: DashboardReport): string {
     `  open issues: ${report.operations.open_issues}`,
     `  global running workers: ${report.operations.global_running_workers}`,
     `  local workers: ${report.operations.local_workers.live} live / ${report.operations.local_workers.stale} stale / ${report.operations.local_workers.total} total`,
+    ...(implementerRuntime
+      ? [
+          `  implementer runtime samples: ${implementerRuntime.samples}`,
+          `  runner startup: ${implementerRuntime.runner_startup_ms.before}ms → ${implementerRuntime.runner_startup_ms.after}ms (${implementerRuntime.runner_startup_ms.delta}ms)`,
+          `  skill manifest: ${implementerRuntime.skill_manifest_bytes.before}B → ${implementerRuntime.skill_manifest_bytes.after}B (${implementerRuntime.skill_manifest_bytes.delta}B)`,
+        ]
+      : []),
     `  issues created in period: ${report.operations.issues_created_in_period}`,
     `  issues closed today: ${report.operations.issues_closed_today}`,
     `  issues closed in period: ${report.operations.issues_closed_in_period}`,

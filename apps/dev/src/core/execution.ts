@@ -33,6 +33,7 @@ export type {
   AgentOutcome,
   AgentRunner,
   AttemptProgressInfo,
+  ImplementerRuntimeProjection,
   RunAgentInput,
   RunAgentResult,
   SandboxMode,

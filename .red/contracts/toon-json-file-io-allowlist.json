@@ -26,6 +26,18 @@
    "moveKey": "24cdd7f5b667"
   },
   {
+   "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#2879d3bfb880",
+   "classification": "external",
+   "reason": "Claude and Codex plugin manifests are JSON by host contract.",
+   "moveKey": "f632cd5f3c50"
+  },
+  {
+   "id": "apps/dev/src/runtime/implementer-environment.ts#json-stringify-file-write#ea0a59dd5189",
+   "classification": "external",
+   "reason": "Projected Claude and Codex plugin manifests remain JSON for host interoperability.",
+   "moveKey": "11f3d6af2227"
+  },
+  {
    "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
    "classification": "external",
    "reason": "package.json is ecosystem JSON.",

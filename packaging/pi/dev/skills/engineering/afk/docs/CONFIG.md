@@ -38,6 +38,8 @@ MCP, and non-essential host hooks are absent from every projection.
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
+| `plugins.dev.afk.implementer.skills` | — | implementer profile | Optional comma-separated exact allowlist of `plugin:skill` entries for inner workers. It replaces the trimmed dev implementer profile (so it can widen or narrow it), while ADR 0067 activation remains authoritative: a skill from a disabled plugin is never exposed. |
+| `plugins.dev.afk.implementer.runner_startup_baseline_ms` | — | _(unset)_ | Optional historical unprojected runner-startup baseline (invocation to first stream event). When present, each worker artifact and dashboard report compare it with the actual projected startup sample; when absent, the first projected sample self-baselines with a zero delta and is marked `unavailable`. |
 | `afk.model` | — | runner-specific | Legacy global model override. Prefer tiered `afk.models.<runner>.<tier>.model` so Codex never receives a Claude-only model. |
 | `afk.models.<runner>` | — | runner-specific | Legacy per-runner scalar model override. Used only when no explicit tier model is set. |
 | `afk.models.claude.<tier>.model` | — | tier-specific | Claude Code model id for `validate`, `simple`, `complex`, or `think`. |
@@ -73,6 +75,13 @@ MCP, and non-essential host hooks are absent from every projection.
 | `afk.drain.max_cost_usd` | `RED_AFK_DRAIN_MAX_COST_USD` / `fleet --budget-usd` | _(unset)_ | Per-drain USD budget for the fleet supervisor. Spend is read from WorkerVitals (`current.cost_usd`) in worker state files, not a parallel ledger. Tiers are OK below 75%, WARNING at 75%, CRITICAL at 90%, and HARD_STOP at 100%. CRITICAL spawns new workers with one model-tier-policy downgrade; HARD_STOP stops all new spawns, lets in-flight workers finish, and records a TOON budget event in `.red/tmp/supervisors/default/supervisor.log.toonl`. |
 
 ```yaml
+plugins:
+  dev:
+    afk:
+      implementer:
+        skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
+        runner_startup_baseline_ms: 840 # optional measured pre-projection historical baseline
+
 afk:
   worktree_launches_pull_request: true   # true → admin-PR landing; false → direct merge (offline). Decoupled from the lock (#842)
   models:

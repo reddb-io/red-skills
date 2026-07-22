@@ -104,6 +104,11 @@ export const AfkCurrentSchema = z.object({
    * the existing `output_tokens` heartbeat counter for the report surface. */
   output_shaping_variant: z.string().default(""),
   output_shaping_enabled: z.boolean().default(false),
+  /** Implementer projection measurements consumed by the throughput dashboard. */
+  implementer_runner_startup_before_ms: z.number().default(0),
+  implementer_runner_startup_after_ms: z.number().default(0),
+  implementer_skill_manifest_before_bytes: z.number().default(0),
+  implementer_skill_manifest_after_bytes: z.number().default(0),
 });
 
 export const AfkStateSchema = z.object({

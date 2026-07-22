@@ -31,7 +31,6 @@ import {
   collectMonitorInputs,
   buildBootDeps,
   buildMinimalBootDeps,
-  makeRunAgent,
   resolveRepoContext,
   resolveRunSettings,
   type RepoContext,
@@ -102,6 +101,7 @@ import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-s
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
+import { resolveImplementerPluginRoots } from "../../runtime/implementer-environment.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
@@ -109,6 +109,7 @@ import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core
 import { renderClaimComment } from "../../core/claim.js";
 
 import { deriveActivity } from "./activity.js";
+import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import {
   castleWorktreeUnder,
@@ -173,6 +174,16 @@ export function buildProcessDeps(
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
+  let configText = "";
+  try {
+    configText = readFileSync(paths.configPath, "utf8");
+  } catch {
+    // The strict activation gate stays closed when config is absent/unreadable.
+  }
+  const implementerPluginRoots = resolveImplementerPluginRoots({
+    repoRoot: ctx.root,
+    env: process.env,
+  });
   // Trust policy for the guidance-channel source-trust projection (issue #1100).
   const trustPolicy = parseTrustPolicy(config);
   // Repo-level container image for the isolation path (#2340) — resolved off the
@@ -421,14 +432,11 @@ export function buildProcessDeps(
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
     postAttemptFormatCommands: readPostAttemptFormat(config),
-    // Inject the worker's steer-file path so the live-steer MCP surface
-    // (runner_steer) can write a pending directive that the Orchestrator picks
-    // up between iterations without AFK knowing about the file at claim time.
-    runAgent: (() => {
-      const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, sandboxImage);
-      const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
-      return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
-    })(),
+    runAgent: makeImplementerRunAgent({
+      root: ctx.root, workerId, current, config, configText,
+      pluginRoots: implementerPluginRoots, castleBridge, sandbox,
+      maxIterations, laneIdle, sandboxImage,
+    }),
     sandboxMode: sandbox,
     sandboxAvailable: async (mode) => {
       const run = exec ?? execTool;
