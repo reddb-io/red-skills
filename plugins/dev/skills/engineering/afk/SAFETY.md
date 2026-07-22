@@ -5,8 +5,8 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Repository Layout Invariants
 
 - The **primary checkout** stays on `main` at all times. Never `git checkout`, `git switch`, or `git branch -m` inside it.
-- All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
-- The worktree branch is mirrored to `origin/afk/{id}/{N}-{slug}` for remote backup. The orchestrator pushes the worktree branch via the PR's admin-merge (unlocked) or direct merge + push of the locked branch (locked); it does not push `main` directly.
+- All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on the deterministic issue branch `afk/{N}-{slug}`.
+- The worktree branch is mirrored to `origin/afk/{N}-{slug}` for remote backup. One issue has one head branch across workers, so a ghost requeue collides structurally instead of creating a silent parallel attempt. The orchestrator pushes the worktree branch via the PR's admin-merge (unlocked) or direct merge + push of the locked branch (locked); it does not push `main` directly.
 
 ## Git Operations
 
@@ -15,7 +15,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 - `git add`, `git commit` (for the pre-merge snapshot when primary is dirty).
 - `git worktree add|remove|list`.
 - `git rebase` (integration step only: `git rebase origin/{pinned}` to integrate the fetched base before merging, per the Merge section below).
-- `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
+- `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
 - Read-only: `git status`, `git log`, `git diff`, `git show`, `git branch`.
 
 **Allowed in worktree:**
@@ -59,7 +59,8 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 ## Worktree Lifecycle
 
 - Created from `origin/{pinned}` after `git fetch` (where `{pinned}` is the resolved base branch: lock > pin > main).
-- Branch name: `afk/{id}/{N}-{slug}` (literal `afk/` + worker ID + issue number + slug). Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
+- Before fresh work starts, list open PRs and adopt any whose body closes `#{N}` or whose head is the deterministic/legacy AFK branch for `#{N}`. Cross-link every matching PR on the issue. A fresh branch is allowed only when no open attempt exists (or after an explicit commented supersede + PR close).
+- Branch name: `afk/{N}-{slug}` (literal `afk/` + issue number + slug). Worker/runner provenance belongs in the PR body and handoff record, not the ref. Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
 - Removed only after successful merge **and** push. Never remove a worktree with uncommitted changes — that loses work.
 - If cleanup fails (e.g. worktree busy), leave it in place and print the path for manual recovery.
 
