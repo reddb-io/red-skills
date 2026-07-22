@@ -174,6 +174,30 @@ describe("rsp gh batch", () => {
     expect(calls.some((args) => args[0] === "issue" && args[1] === "edit")).toBe(false);
   });
 
+  it("chunks label mutations by 100 target ids", async () => {
+    const calls: string[][] = [];
+    const exec: GhBatchExec = async (args) => {
+      calls.push([...args]);
+      if (args[1]?.includes("/issues/")) {
+        const number = Number(args[1].match(/issues\/(\d+)$/)?.[1]);
+        return response({ number, node_id: `I_${number}` });
+      }
+      if (args[1]?.includes("/labels/")) return response({ node_id: `L_${args[1].split("/").at(-1)}` });
+      return response({ data: {} });
+    };
+    const numbers = Array.from({ length: 101 }, (_, index) => String(index + 1));
+
+    const result = await runGhBatchCommand([
+      "gh", "edit-labels", "--add", "ready", "--remove", "crashed", ...numbers, "--repo", "acme/widgets",
+    ], { exec });
+    const graphqlCalls = calls.filter((args) => args.slice(0, 2).join(" ") === "api graphql");
+
+    expect(result.status).toBe(0);
+    expect(graphqlCalls).toHaveLength(2);
+    expect(graphqlCalls[0]!.join(" ")).toContain("add99: addLabelsToLabelable");
+    expect(graphqlCalls[1]!.join(" ")).toContain("add0: addLabelsToLabelable");
+  });
+
   it("surfaces GraphQL quota degradation and uses bounded REST concurrency", async () => {
     let active = 0;
     let maxActive = 0;
