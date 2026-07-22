@@ -2,6 +2,27 @@ import { constants } from "node:fs";
 import { access, readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isLivePid as defaultIsLivePid } from "./kill-tree.js";
+import { readPidStartTime } from "../core/state.js";
+
+export interface SupervisorIdentity {
+  pid: number;
+  startTime: string;
+}
+
+/**
+ * Verify the repo-owned supervisor identity, not merely PID existence. A PID
+ * reused by another process (including a same-command supervisor in a sibling
+ * repo) is dead for this lane when its stable process-start token differs.
+ */
+export function isSupervisorIdentityLive(
+  identity: SupervisorIdentity,
+  isLivePid: (pid: number) => boolean = defaultIsLivePid,
+  pidStartTime: (pid: number) => string | null = readPidStartTime,
+): boolean {
+  if (!isLivePid(identity.pid)) return false;
+  if (identity.startTime === "") return true;
+  return pidStartTime(identity.pid) === identity.startTime;
+}
 
 export interface SupervisorStateReapResult {
   status: "absent" | "live" | "stale";
