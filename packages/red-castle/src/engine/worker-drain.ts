@@ -1,5 +1,9 @@
 import type { FleetSelector } from "./fleet-registry.js";
 import type { Runner } from "./runner-types.js";
+import {
+  resolveHostCapabilities,
+  type HostCapabilityProfile,
+} from "./host-capability-profile.js";
 
 export interface CastleIssueCandidate {
   number: number;
@@ -21,10 +25,20 @@ export function matchesFleetSelector(
   candidate: CastleIssueCandidate,
   selector: FleetSelector,
 ): boolean {
-  if (selector.spec !== undefined && !matchesSpec(candidate, selector.spec)) return false;
-  if (selector.lane !== undefined && !hasLabel(candidate, `lane:${selector.lane}`)) return false;
-  if (selector.label !== undefined && !hasLabel(candidate, selector.label)) return false;
-  if (selector.issues !== undefined && !selector.issues.includes(candidate.number)) return false;
+  if (selector.spec !== undefined && !matchesSpec(candidate, selector.spec))
+    return false;
+  if (
+    selector.lane !== undefined &&
+    !hasLabel(candidate, `lane:${selector.lane}`)
+  )
+    return false;
+  if (selector.label !== undefined && !hasLabel(candidate, selector.label))
+    return false;
+  if (
+    selector.issues !== undefined &&
+    !selector.issues.includes(candidate.number)
+  )
+    return false;
   return true;
 }
 
@@ -78,12 +92,16 @@ export function selectCastleIssues(
   filter: CastleSelectionFilter,
   labels: CastleSelectionLabels = DEFAULT_CASTLE_SELECTION_LABELS,
 ): CastleIssueCandidate[] {
-  const excluded = candidates.filter((candidate) => !hasLabel(candidate, labels.typeSpec));
+  const excluded = candidates.filter(
+    (candidate) => !hasLabel(candidate, labels.typeSpec),
+  );
   // A named fleet's scope applies BEFORE the urgent prepend, so an urgent issue
   // another fleet owns is never pulled across the boundary into a double-claim.
   const pool =
     filter.kind === "selector"
-      ? excluded.filter((candidate) => matchesFleetSelector(candidate, filter.selector))
+      ? excluded.filter((candidate) =>
+          matchesFleetSelector(candidate, filter.selector),
+        )
       : excluded;
   const urgent = pool
     .filter((candidate) => hasLabel(candidate, labels.urgent))
@@ -93,7 +111,9 @@ export function selectCastleIssues(
   let filtered: CastleIssueCandidate[];
   switch (filter.kind) {
     case "issues": {
-      const byNumber = new Map(pool.map((candidate) => [candidate.number, candidate] as const));
+      const byNumber = new Map(
+        pool.map((candidate) => [candidate.number, candidate] as const),
+      );
       const ordered: CastleIssueCandidate[] = [];
       const missing: number[] = [];
       for (const number of filter.numbers) {
@@ -124,7 +144,10 @@ export function selectCastleIssues(
   }
 
   const urgentNumbers = new Set(urgent.map((candidate) => candidate.number));
-  return [...urgent, ...filtered.filter((candidate) => !urgentNumbers.has(candidate.number))];
+  return [
+    ...urgent,
+    ...filtered.filter((candidate) => !urgentNumbers.has(candidate.number)),
+  ];
 }
 
 export type CastleWorkerOutcome =
@@ -185,6 +208,8 @@ export interface CastleWorkerDrainContext<TIssueTemplate = unknown> {
   sweepsSkipped?: boolean;
   issueTemplate: TIssueTemplate;
   policy?: CastleWorkerDrainPolicy;
+  /** This machine's durable capability declaration. Absent keeps legacy permissive routing. */
+  hostProfile?: HostCapabilityProfile;
 }
 
 export interface CastleWorkerDrainProcessed {
@@ -224,7 +249,10 @@ export interface CastleWorkerDrainDeps<
   runBoot(deps: TBootDeps, options: TBootOptions): Promise<TBootResult>;
   bootDeps: TBootDeps;
   bootOptions: TBootOptions;
-  processIssue(deps: TProcessDeps, input: TProcessInput): Promise<TProcessResult>;
+  processIssue(
+    deps: TProcessDeps,
+    input: TProcessInput,
+  ): Promise<TProcessResult>;
   processDeps: TProcessDeps;
   buildProcessInput(
     candidate: CastleIssueCandidate,
@@ -262,8 +290,12 @@ function classify(outcome: CastleWorkerOutcome): "done" | "blocked" | "failed" {
   }
 }
 
-function budgetSpent(snapshot: CastleWorkerDrainBudgetSnapshot | undefined): boolean {
-  return snapshot !== undefined && snapshot.cap > 0 && snapshot.used >= snapshot.cap;
+function budgetSpent(
+  snapshot: CastleWorkerDrainBudgetSnapshot | undefined,
+): boolean {
+  return (
+    snapshot !== undefined && snapshot.cap > 0 && snapshot.used >= snapshot.cap
+  );
 }
 
 export async function runCastleWorkerDrain<
@@ -287,7 +319,10 @@ export async function runCastleWorkerDrain<
   ctx: CastleWorkerDrainContext<TIssueTemplate>,
 ): Promise<CastleWorkerDrainSummary<TBootResult>> {
   const sessionHooksFired: CastleSessionHookName[] = [];
-  const fireSessionHook = async (name: CastleSessionHookName, context: string): Promise<boolean> => {
+  const fireSessionHook = async (
+    name: CastleSessionHookName,
+    context: string,
+  ): Promise<boolean> => {
     if (!deps.dispatchSessionHook) return true;
     sessionHooksFired.push(name);
     const result = await deps.dispatchSessionHook(name, context);
@@ -331,13 +366,17 @@ export async function runCastleWorkerDrain<
   }
 
   try {
-    if (!(await fireSessionHook("pre_session", statsContext(0, 0, 0)))) return empty;
+    if (!(await fireSessionHook("pre_session", statsContext(0, 0, 0))))
+      return empty;
 
     await fireSessionHook("pre_pick", JSON.stringify({ filter: ctx.filter }));
     const candidates = await deps.gh.listCandidates();
     const queue = selectCastleIssues(candidates, ctx.filter, deps.labels);
     const total = queue.length;
-    await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));
+    await fireSessionHook(
+      "post_pick",
+      JSON.stringify({ issues: queue.map((candidate) => candidate.number) }),
+    );
 
     if (total === 0) {
       await fireSessionHook("on_idle", statsContext(0, 0, 0));
@@ -356,6 +395,7 @@ export async function runCastleWorkerDrain<
     let hostConfigStop = false;
     let stopReason: CastleWorkerStopReason | undefined;
     let activeRunner: Runner = ctx.runner;
+    const hostCapabilities = resolveHostCapabilities(ctx.hostProfile);
 
     for (let i = 0; i < queue.length; i++) {
       if (ctx.policy?.supervisorKilled?.()) {
@@ -366,11 +406,17 @@ export async function runCastleWorkerDrain<
         stopReason = "budget-cap";
         break;
       }
-      if (ctx.policy?.maxRuntimeMs !== undefined && nowMs() - startedMs >= ctx.policy.maxRuntimeMs) {
+      if (
+        ctx.policy?.maxRuntimeMs !== undefined &&
+        nowMs() - startedMs >= ctx.policy.maxRuntimeMs
+      ) {
         stopReason = "lifetime-cap";
         break;
       }
-      if (ctx.policy?.maxIssues !== undefined && processed.length >= ctx.policy.maxIssues) {
+      if (
+        ctx.policy?.maxIssues !== undefined &&
+        processed.length >= ctx.policy.maxIssues
+      ) {
         stopReason = "lifetime-cap";
         break;
       }
@@ -381,15 +427,29 @@ export async function runCastleWorkerDrain<
 
       const candidate = queue[i]!;
       const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
-      if (deps.runnerCircuit && (await deps.runnerCircuit.isOpen(issueRunner))) {
+      if (!hostCapabilities.runners.includes(issueRunner)) {
+        stopReason = "runner-unavailable";
+        deps.emit(
+          `runner ${issueRunner} unavailable in host capability profile — skipping dispatch`,
+        );
+        break;
+      }
+      if (
+        deps.runnerCircuit &&
+        (await deps.runnerCircuit.isOpen(issueRunner))
+      ) {
         runnerTransientStop = true;
         stopReason = "runner-unavailable";
-        deps.emit(`runner ${issueRunner} circuit open — stopping before claiming more issues`);
+        deps.emit(
+          `runner ${issueRunner} circuit open — stopping before claiming more issues`,
+        );
         break;
       }
 
       const input = deps.buildProcessInput(candidate, ctx);
-      const perIssueInput = ctx.alternate ? { ...input, runner: issueRunner } : input;
+      const perIssueInput = ctx.alternate
+        ? { ...input, runner: issueRunner }
+        : input;
       const result = await deps.processIssue(deps.processDeps, perIssueInput);
       const bucket = classify(result.outcome);
       if (bucket === "done") done++;
@@ -453,7 +513,9 @@ export async function runCastleWorkerDrain<
       JSON.stringify({
         runner: ctx.runner,
         worker_id: ctx.workerId,
-        error: { message: error instanceof Error ? error.message : String(error) },
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+        },
       }),
     );
     throw error;
