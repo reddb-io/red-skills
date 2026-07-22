@@ -292,6 +292,17 @@ export async function processIssue(
       ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)
       : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
+  const enrichment = deps.lookups.handoffEnrichment
+    ? await deps.lookups
+        .handoffEnrichment({
+          issue,
+          title: input.title,
+          body: input.body,
+          labels,
+          specRef: input.specRef,
+        })
+        .catch(() => undefined)
+    : undefined;
   const handoff = buildHandoff({
     issue,
     title: input.title,
@@ -306,6 +317,7 @@ export async function processIssue(
     mergeGateCommands: deps.backpressureCommands ?? [],
     outputShaping,
     resumeFromBranch: resumeInstruction,
+    enrichment,
   });
   deps.markState?.({
     "current.output_shaping_enabled": outputShaping.enabled,
