@@ -533,7 +533,15 @@ async function preMergeRebaseInWorktree(
     });
     if (!rebased.ok) {
       // Real conflict / exhausted force-with-lease retries → park merge-conflict.
-      return { ok: false, reason: "pr-conflict", locked: input.locked };
+      // A `stale-branch` refusal (#2481) parks through the same route but carries
+      // its own actionable text, so the human sees WHY the landing declined to
+      // replay a fat branch onto a base that moved hours ago.
+      return {
+        ok: false,
+        reason: "pr-conflict",
+        locked: input.locked,
+        ...(rebased.reason === "stale-branch" && rebased.message ? { message: rebased.message } : {}),
+      };
     }
     // Post-merge-integration gate (#1335): re-run the feedback gate on the
     // rebased worktree (worker branch rebased onto current origin/<base>)
