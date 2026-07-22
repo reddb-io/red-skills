@@ -27,6 +27,8 @@ export type HostPrerequisiteCommand = "bash" | "git" | "jq" | "gh" | "node" | "t
 export interface HostPrerequisiteProbeInput {
   readonly commands: Readonly<Record<HostPrerequisiteCommand, boolean>>;
   readonly bashVersion?: string;
+  readonly bashVersionExitCode?: number;
+  readonly bashVersionError?: string;
 }
 
 export interface ConfigNamespacingProbeInput {
