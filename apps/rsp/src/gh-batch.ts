@@ -1,11 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import {
+  boundedMap,
   buildAliasedLabelMutation,
   buildAliasedRepositoryQuery,
   buildAliasedSubIssueMutation,
   errorsByAlias,
   GITHUB_GRAPHQL_BATCH_SIZE,
+  GITHUB_REST_CONCURRENCY,
   parseAliasedRepositoryResponse,
   type AliasedRepositoryOperation,
   type GitHubRepositoryBatchField,
@@ -49,7 +51,7 @@ interface ReadFields {
   query: GitHubRepositoryBatchField[];
 }
 
-const DEFAULT_REST_CONCURRENCY = 4;
+const DEFAULT_REST_CONCURRENCY = GITHUB_REST_CONCURRENCY;
 const ISSUE_FIELDS = new Set(["number", "title", "state", "labels", "body"]);
 const PR_FIELDS = new Set(["number", "title", "state", "mergeable", "checks", "checkRollup", "statusCheckRollup", "body"]);
 
@@ -401,19 +403,6 @@ function chunks<T>(values: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let start = 0; start < values.length; start += size) out.push(values.slice(start, start + size));
   return out;
-}
-
-async function boundedMap<T, R>(values: readonly T[], concurrency: number, fn: (value: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (next < values.length) {
-      const index = next++;
-      results[index] = await fn(values[index]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }
 
 function parseBatchCommand(argv: readonly string[]): ParsedBatchCommand {
