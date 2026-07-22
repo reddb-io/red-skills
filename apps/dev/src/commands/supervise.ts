@@ -7,7 +7,7 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import {
@@ -62,6 +62,9 @@ import {
 } from "@reddb-io/red-castle/engine";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { createSupervisorExitRecorder } from "../core/supervisor-exit.js";
+import { readPidStartTime } from "../core/state.js";
+import { encodeLines, type ToonlRecord } from "@reddb-io/toon";
 
 function isAlive(pid: number): boolean {
   try {
@@ -915,6 +918,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     }
   }
   writeFileSync(pidFile, String(process.pid), "utf8");
+  writeFileSync(paths.supervisorPidStartPath, readPidStartTime(process.pid) ?? "", "utf8");
   // clear any stale stop file
   if (existsSync(stopFile)) rmSync(stopFile, { force: true });
   rmSync(paths.supervisorResizePath, { force: true });
@@ -938,6 +942,42 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   };
   const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, fleet, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
 
+  const exitWriter = createCastleLaneWriters(
+    createEnginePaths(join(root, ".red")),
+  ).supervisor(join(fleet, supervisorId));
+  const exitRecorder = createSupervisorExitRecorder({
+    supervisorId,
+    append: async (record) => {
+      await exitWriter.append(record);
+    },
+    appendSync: (record) => {
+      try {
+        mkdirSync(dirname(exitWriter.path), { recursive: true });
+        const row: ToonlRecord = {
+          at: new Date().toISOString(),
+          kind: record.kind,
+          supervisor_id: supervisorId,
+          payload: JSON.stringify(record.payload ?? {}),
+        };
+        appendFileSync(exitWriter.path, encodeLines().push(row), "utf8");
+      } catch {
+        // a process-exit fallback is necessarily best-effort.
+      }
+    },
+  });
+  const onProcessExit = (code: number): void => {
+    exitRecorder.recordSync("process-exit", { code });
+  };
+  const onUncaughtException = (error: Error, origin: NodeJS.UncaughtExceptionOrigin): void => {
+    exitRecorder.recordSync("exception", {
+      name: error.name,
+      message: error.message,
+      origin,
+    });
+  };
+  process.once("exit", onProcessExit);
+  process.once("uncaughtExceptionMonitor", onUncaughtException);
+
   const stopRequested = (): boolean => existsSync(stopFile);
 
   // A bare `kill <supervisor-pid>` (SIGTERM/SIGINT) must not orphan the detached
@@ -947,28 +987,42 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   // every live slot (SIGTERM→grace→SIGKILL→confirm via terminateAll), clean the
   // control files, then exit with the conventional 128+signal code.
   let shuttingDown = false;
-  const onSignal = (signal: "SIGTERM" | "SIGINT"): void => {
+  const onSignal = (signal: "SIGTERM" | "SIGINT" | "SIGHUP"): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     void (async () => {
+      await exitRecorder.record("signal", { signal });
       try {
         await terminateAll(state, deps);
       } catch {
         // best-effort — still clean control files and exit.
       }
-      rmSync(pidFile, { force: true });
-      rmSync(stopFile, { force: true });
-      process.exit(signal === "SIGINT" ? 130 : 143);
+      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
     })();
   };
   process.once("SIGTERM", () => onSignal("SIGTERM"));
   process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGHUP", () => onSignal("SIGHUP"));
 
+  let completed = false;
   try {
     await runSupervisor(state, deps, config, stopRequested);
+    completed = true;
+    await exitRecorder.record(stopRequested() ? "explicit-stop" : "completed");
+  } catch (error) {
+    await exitRecorder.record("exception", {
+      name: error instanceof Error ? error.name : "Error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
-    rmSync(pidFile, { force: true });
-    rmSync(stopFile, { force: true });
+    process.removeListener("exit", onProcessExit);
+    process.removeListener("uncaughtExceptionMonitor", onUncaughtException);
+    if (completed) {
+      rmSync(pidFile, { force: true });
+      rmSync(paths.supervisorPidStartPath, { force: true });
+      rmSync(stopFile, { force: true });
+    }
   }
   return 0;
 }
