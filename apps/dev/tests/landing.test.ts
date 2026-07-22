@@ -380,7 +380,17 @@ describe("doLanding — CI-aware merge (#812)", () => {
   it("unlocked + ciAwait, CLEAN → polls merge state then admin-merges", async () => {
     const h = harness({ locked: false, ciAware: "merge" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "satisfied-by-ci",
+        reason: "PR #42 had fresh green CI evidence from 1 required check(s); local post-merge validation skipped.",
+        prNumber: 42,
+        checkCount: 1,
+      },
+    });
     const j = joined(h.mergeCalls);
     const viewIdx = j.findIndex((c) => c.includes("pr view"));
     const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --merge"));
@@ -691,17 +701,45 @@ describe("doLanding — post-land promotion advances red-trunk, not the primary 
 // Validate the merged tree (origin/<base> integrated into the worker branch)
 // BEFORE pushing to the remote, so a stale-main-broken result is never merged.
 describe("doLanding — post-merge-integration gate (#1335)", () => {
-  it("direct path: gate absent → proceeds unchanged (backwards-compat)", async () => {
-    const h = harness({ locked: true, openPr: false });
+  it("direct path: gate absent → fails infra because no local validation fallback is available", async () => {
+    const h = harness({ locked: true, openPr: false, requirePostMergeValidation: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      locked: true,
+      infraReason: "Post-merge validation fallback is not configured for a direct landing that bypassed PR CI.",
+    });
     expect(h.postMergeGateDirs).toEqual([]);
   });
 
-  it("PR path: gate absent → proceeds unchanged (backwards-compat)", async () => {
-    const h = harness({ locked: false, openPr: true });
+  it("PR path: gate absent + usable CI evidence → records satisfied-by-CI", async () => {
+    const h = harness({ locked: false, openPr: true, ciAware: "merge" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "satisfied-by-ci",
+        reason: "PR #42 had fresh green CI evidence from 1 required check(s); local post-merge validation skipped.",
+        prNumber: 42,
+        checkCount: 1,
+      },
+    });
+    expect(h.postMergeGateDirs).toEqual([]);
+  });
+
+  it("PR path: gate absent + unusable CI evidence → fails infra", async () => {
+    const h = harness({ locked: false, openPr: true, ciAware: "skipped" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({
+      ok: false,
+      reason: "infra",
+      locked: false,
+      prNumber: 42,
+      infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
+    });
     expect(h.postMergeGateDirs).toEqual([]);
   });
 
@@ -733,7 +771,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
       mergeSha: "abc1234",
       postMergeValidation: {
         path: "satisfied-by-ci",
-        reason: "PR #42 had fresh green CI evidence from 1 successful check(s); local post-merge validation skipped.",
+        reason: "PR #42 had fresh green CI evidence from 1 required check(s); local post-merge validation skipped.",
         prNumber: 42,
         checkCount: 1,
       },
