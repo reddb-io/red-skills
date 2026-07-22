@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSupervisorExitRecorder } from "../src/core/supervisor-exit.js";
 import { runSupervisorWatchdogLoop } from "../src/core/watchdog.js";
+import { isSupervisorIdentityLive } from "../src/runtime/supervisor-state.js";
 
 describe("fleet supervisor terminal lifecycle (#2442)", () => {
   it("writes exactly one terminal lane record naming the received signal", async () => {
@@ -50,5 +51,15 @@ describe("fleet supervisor steady-state self-heal (#2442)", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(15_000);
     expect(respawns).toBe(1);
+  });
+
+  it("rejects a live recycled pid whose start-time differs from this repo's pin", () => {
+    expect(
+      isSupervisorIdentityLive(
+        { pid: 4242, startTime: "repo-a-start" },
+        () => true,
+        () => "sibling-or-recycled-start",
+      ),
+    ).toBe(false);
   });
 });
