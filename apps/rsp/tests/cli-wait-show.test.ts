@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { chmod } from "node:fs/promises";
 import type { JsonObject } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import {
@@ -203,6 +204,95 @@ describe("rsp cli", () => {
       wait: { status: "failure" },
       verdict: { exit_code: 1, summary: "PR #123 has merge conflicts", details: { mergeable: "CONFLICTING" } },
     });
+  });
+
+  it("two concurrent PR waits both exit with sealed verdicts and no registry leak", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    const bin = join(root, "bin");
+    const readyFile = join(root, "pr-ready");
+    const forwarderPids = join(root, "forwarder-pids");
+    const gh = join(bin, "gh");
+    await mkdir(bin, { recursive: true });
+    await writeFile(
+      gh,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'if [ "${1:-}" = "webhook" ] && [ "${2:-}" = "forward" ]; then',
+        '  printf "%s\\n" "$$" >> "$GH_FORWARDER_PIDS"',
+        "  exec \"$GH_NODE_BIN\" -e 'setInterval(() => {}, 1000)'",
+        "fi",
+        'if [ -f "$GH_PR_READY_FILE" ]; then',
+        '  printf \'%s\\n\' \'{"number":123,"state":"OPEN","mergeable":"MERGEABLE","statusCheckRollup":[{"conclusion":"SUCCESS"}]}\'',
+        "else",
+        '  printf \'%s\\n\' \'{"number":123,"state":"OPEN","mergeable":"UNKNOWN","statusCheckRollup":[{"conclusion":null,"status":"IN_PROGRESS"}]}\'',
+        "fi",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(gh, 0o755);
+
+    const reasons = ["concurrent wait one", "concurrent wait two"];
+    const resultFiles = reasons.map((_, index) => join(root, `wait-${index + 1}.json`));
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      GH_FORWARDER_PIDS: forwarderPids,
+      GH_NODE_BIN: process.execPath,
+      GH_PR_READY_FILE: readyFile,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+    };
+    const children = reasons.map((reason, index) => {
+      const child = spawn(process.execPath, [
+        "--import", tsxLoader, cli, "wait", "pr", "123", "--json",
+        "--reason", reason, "--result-file", resultFiles[index]!, "--timeout", "60s",
+      ], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+      child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+      return { child, stdout, stderr };
+    });
+
+    try {
+      const active = await Promise.all(reasons.map((reason) => waitForActiveWait(root, reason)));
+      expect(new Set(active.map((entry) => entry.id)).size).toBe(2);
+      await writeFile(readyFile, "ready\n", "utf8");
+
+      const closed = await Promise.allSettled(
+        children.map(({ child }) => closeWithTimeout(child, normalizedDurationMs(2_000))),
+      );
+      for (const [index, outcome] of closed.entries()) {
+        expect(outcome.status, children[index]!.stderr.toString()).toBe("fulfilled");
+        if (outcome.status === "fulfilled") expect(outcome.value).toBe(0);
+      }
+      for (const [index, resultFile] of resultFiles.entries()) {
+        expect(JSON.parse(await readFile(resultFile, "utf8"))).toMatchObject({
+          wait: { target: "pr:123", status: "success", reason: reasons[index] },
+          verdict: { target_exit_code: 0, exit_code: 0, delivery: { status: "success" } },
+        });
+      }
+      expect((decode(runRsp(root, ["wait", "ls"], {}).stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
+      const pids = (await readFile(forwarderPids, "utf8"))
+        .split("\n")
+        .map(Number)
+        .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+      expect(pids).toHaveLength(2);
+      expect(pids.filter(isPidAlive)).toEqual([]);
+    } finally {
+      for (const { child } of children) {
+        if (isPidAlive(child.pid ?? 0)) child.kill("SIGKILL");
+      }
+      const pids = (await readFile(forwarderPids, "utf8").catch(() => ""))
+        .split("\n")
+        .map(Number)
+        .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+      for (const pid of pids) {
+        if (isPidAlive(pid)) process.kill(pid, "SIGKILL");
+      }
+    }
   });
 
   it("wait run pins branch latest to one run id before polling", async () => {
