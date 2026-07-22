@@ -15,6 +15,7 @@ import {
   isRunnerExhausted,
   openCodeAuthEnv,
   parseRunnerFlag,
+  projectImplementerEnvironment,
   resolveMiniMaxClaudeEnv,
   resolveOpenCodeAuth,
   runnerSupportsModel,
@@ -28,6 +29,35 @@ import {
 import { runners, type Runner } from "./runner-types.js";
 
 describe("engine runner registry", () => {
+  it.each([
+    ["claude", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["claude", { "plugins.memory.enabled": "true" }, { plugins: ["dev", "memory"], mcp: ["navigator", "red-memory"], rsp: false }],
+    ["claude", { "plugins.brain.enabled": "true" }, { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false }],
+    ["claude", { "plugins.red-ui.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false }],
+    ["claude", { "rsp.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true }],
+    ["codex", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["codex", { "plugins.memory.enabled": "true" }, { plugins: ["dev", "memory"], mcp: ["navigator", "red-memory"], rsp: false }],
+    ["codex", { "plugins.brain.enabled": "true" }, { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false }],
+    ["codex", { "plugins.red-ui.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false }],
+    ["codex", { "rsp.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true }],
+    ["opencode", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["opencode", { "plugins.memory.enabled": "true" }, { plugins: ["dev", "memory"], mcp: ["navigator", "red-memory"], rsp: false }],
+    ["opencode", { "plugins.brain.enabled": "true" }, { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false }],
+    ["opencode", { "plugins.red-ui.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false }],
+    ["opencode", { "rsp.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true }],
+    ["pi", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    ["pi", { "plugins.memory.enabled": "true" }, { plugins: ["dev", "memory"], mcp: ["navigator", "red-memory"], rsp: false }],
+    ["pi", { "plugins.brain.enabled": "true" }, { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false }],
+    ["pi", { "plugins.red-ui.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false }],
+    ["pi", { "rsp.enabled": "true" }, { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true }],
+  ] as const)("projects the exact %s implementer constraint for one activation gate", (runner, values, enabled) => {
+    const projection = projectImplementerEnvironment(runner, values);
+
+    expect(projection.enabled).toEqual(enabled);
+    expect(projection.constraint).toMatchSnapshot();
+    expect(JSON.stringify(projection)).not.toMatch(/statusline|hooks\/|hooks\\\\/);
+  });
+
   it("owns the runner rows and provider-less projection", () => {
     const cases: Array<[Runner, AgentRunner]> = [
       ["claude", "claude"],
