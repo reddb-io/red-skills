@@ -206,6 +206,7 @@ export function workerLivenessFor(
   slotPid: number | null,
   laneIdleMs: number,
   laneHardIdleMs?: number,
+  issueWallClockMaxMs?: number,
 ): LivenessVerdict | null {
   const dir = findSlotIterDir(tmpDir, slotPid);
   if (dir === null) return null;
@@ -226,11 +227,21 @@ export function workerLivenessFor(
   // different execution path and are not managed by the fleet supervisor.
   const { crossCheckArmed } = resolveLivenessCrossCheckArming({ sandboxTag: "none" });
 
-  // Worker pid from the state file for the descendant probe.
+  // Worker pid from the state file for the descendant probe, plus the attempt's
+  // claim epoch for the wall-clock ceiling (#2286). `current.started_at` is the
+  // attempt's own claim stamp; `started_at` is the worker-level fallback. An
+  // unparseable/absent stamp leaves the epoch undefined, which disables the
+  // ceiling rather than guessing an age.
   let agentPid = 0;
+  let issueClaimedAtMs: number | undefined;
   try {
     const rec = readWorkerState(join(dir, "afk.state.toon"));
-    if (rec !== null) agentPid = rec.state.pid;
+    if (rec !== null) {
+      agentPid = rec.state.pid;
+      const raw = rec.state.current.started_at || rec.state.started_at;
+      const parsed = raw ? Date.parse(raw) : Number.NaN;
+      if (!Number.isNaN(parsed)) issueClaimedAtMs = parsed;
+    }
   } catch {
     // best-effort
   }
@@ -246,6 +257,8 @@ export function workerLivenessFor(
       now: Date.now(),
       laneIdleMs,
       laneHardIdleMs,
+      issueClaimedAtMs,
+      issueWallClockMaxMs,
       crossCheckArmed,
       hasLiveDescendants,
     });

@@ -7,6 +7,7 @@ import { parseMaxIterations } from "../../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { inspectProcessTreeNative } from "../proc-tree.js";
+import { readWorkerState } from "../../core/worker-state-reader.js";
 import {
   evaluateLiveness,
   resolveLivenessCrossCheckArming,
@@ -152,6 +153,7 @@ export function agentLivenessVerdictSync(
   attemptDir: string,
   laneIdleMs: number,
   laneHardIdleMs?: number,
+  issueWallClockMaxMs?: number,
 ): LivenessVerdict | null {
   const lanePath = join(attemptDir, LIVENESS_LANE_FILENAME);
   let laneRecencyMs: number | undefined;
@@ -168,8 +170,19 @@ export function agentLivenessVerdictSync(
   const hasLiveDescendants = crossCheckArmed
     ? createProcessDescendantProbe({ agentPid: process.pid })
     : undefined;
+  // Claim epoch for the wall-clock ceiling (#2286). An absent/unparseable stamp
+  // leaves it undefined, which disables the ceiling rather than guessing an age.
+  let issueClaimedAtMs: number | undefined;
   try {
-    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, laneHardIdleMs, crossCheckArmed, hasLiveDescendants });
+    const rec = readWorkerState(join(attemptDir, "afk.state.toon"));
+    const raw = rec === null ? "" : rec.state.current.started_at || rec.state.started_at;
+    const parsed = raw ? Date.parse(raw) : Number.NaN;
+    if (!Number.isNaN(parsed)) issueClaimedAtMs = parsed;
+  } catch {
+    // best-effort
+  }
+  try {
+    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, laneHardIdleMs, issueClaimedAtMs, issueWallClockMaxMs, crossCheckArmed, hasLiveDescendants });
   } catch {
     return null;
   }
@@ -292,6 +305,7 @@ export function makeRunAgent(
                 laneAttemptDir,
                 laneIdleCfg.stallThresholdS * 1000,
                 laneIdleCfg.stallKillThresholdS * 1000,
+                laneIdleCfg.issueWallClockMaxS * 1000,
               ),
             // Inner-agent tree is a descendant of this worker process; the native
             // inspector is safe-by-default (a failed ps reports busy, never reaps).

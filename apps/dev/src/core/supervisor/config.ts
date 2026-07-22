@@ -25,6 +25,15 @@ export interface SupervisorConfig {
    * slot becomes a hard-reap candidate (default 1800). Must be strictly greater
    * than stallThresholdS — validateStallThresholds enforces it. */
   stallKillThresholdS: number;
+  /**
+   * RED_AFK_ISSUE_WALL_CLOCK_MAX_S / `afk.issue_wall_clock_max_s` — the
+   * activity-independent wall-clock ceiling a single attempt may hold one issue
+   * for (default 2700 = 45 min). The age-based twin of stallKillThresholdS:
+   * silence-based caps cannot see a busy attempt that never converges, so this
+   * one ignores activity entirely and keys off age since claim. Generous by
+   * design — it is a runaway backstop, not a pace-setter.
+   */
+  issueWallClockMaxS: number;
   /** Runner name carried in the discard / no-sentinel envelopes
    * (RED_AFK_RUNNER, default "claude"). */
   runner: string;
@@ -151,6 +160,7 @@ export const SUPERVISOR_DEFAULTS = {
   circuitWindowS: 90,
   stallThresholdS: 600,
   stallKillThresholdS: 1800,
+  issueWallClockMaxS: 2700,
   runner: "claude",
   pollIntervalS: 15,
   eventFallbackS: 60,
@@ -269,6 +279,12 @@ export function resolveSupervisorConfig(
       "RED_AFK_STALL_KILL_THRESHOLD_S",
       SUPERVISOR_DEFAULTS.stallKillThresholdS,
     ),
+    // 0 would reap every attempt the moment it claims — floor it back to the
+    // default so a typo can never turn the backstop into an instant killer.
+    issueWallClockMaxS:
+      num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", 0) ||
+      parsePositiveNumber(getCfg("afk.issue_wall_clock_max_s")) ||
+      SUPERVISOR_DEFAULTS.issueWallClockMaxS,
     runner: env.RED_AFK_RUNNER && env.RED_AFK_RUNNER.length > 0 ? env.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
     pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS),
     // 0 would make the safety-net fire instantly (busy-spin) — floor it back to

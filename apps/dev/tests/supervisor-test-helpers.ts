@@ -101,6 +101,20 @@ export function stalledVerdict(laneAgeS: number): LivenessVerdict {
   };
 }
 
+/** Build a wall-clock-ceiling LivenessVerdict (#2286): stalled despite a fresh
+ * lane, because the attempt has held its issue past the per-issue ceiling. */
+export function wallClockVerdict(issueAgeS: number): LivenessVerdict {
+  return {
+    status: "stalled",
+    laneFresh: true,
+    laneAgeMs: 1_000,
+    crossCheckArmed: true,
+    issueAgeMs: issueAgeS * 1000,
+    wallClockExceeded: true,
+    reason: "issue wall-clock ceiling exceeded — activity-independent",
+  };
+}
+
 /** Build an alive LivenessVerdict (lane fresh). */
 export function aliveVerdict(): LivenessVerdict {
   return {
@@ -120,6 +134,7 @@ export function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     circuitWindowS: 90,
     stallThresholdS: 30,
     stallKillThresholdS: 90,
+    issueWallClockMaxS: 2700,
     runner: "claude",
     pollIntervalS: 15,
     eventFallbackS: 60,

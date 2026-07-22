@@ -53,6 +53,9 @@ export interface LaneIdleStallConfig {
   stallKillThresholdS: number;
   /** RED_AFK_STALL_POLL_S — agent-lane sampling cadence (seconds). */
   stallPollS: number;
+  /** RED_AFK_ISSUE_WALL_CLOCK_MAX_S — activity-independent per-issue wall-clock
+   * ceiling (seconds, #2286). Mirrors the fleet knob so solo and fleet agree. */
+  issueWallClockMaxS: number;
 }
 
 /**
@@ -80,7 +83,11 @@ export function resolveLaneIdleStallConfig(
   validateStallThresholds({ stallThresholdS, stallKillThresholdS });
   // 0 matches /^[0-9]+$/ but would busy-spin, so floor it back to the default.
   const stallPollS = num("RED_AFK_STALL_POLL_S", DEFAULT_STALL_POLL_S) || DEFAULT_STALL_POLL_S;
-  return { stallThresholdS, stallKillThresholdS, stallPollS };
+  // 0 would reap every attempt the moment it claims — floor back to the default.
+  const issueWallClockMaxS =
+    num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", SUPERVISOR_DEFAULTS.issueWallClockMaxS) ||
+    SUPERVISOR_DEFAULTS.issueWallClockMaxS;
+  return { stallThresholdS, stallKillThresholdS, stallPollS, issueWallClockMaxS };
 }
 
 /** The kill verdict the reaper reports each tick: "not-candidate" (not yet
