@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEnginePaths } from "./paths.js";
 import {
   createSingletonLeaseStore,
+  SingletonLeaseOwnershipError,
   singletonLeasePath,
 } from "./singleton-lease.js";
 
@@ -62,5 +63,38 @@ describe("castle singleton lease", () => {
     expect(await store.release("github-webhook", owner)).toBe(true);
     expect(await store.read("github-webhook")).toBeUndefined();
     expect(isPidAlive).not.toHaveBeenCalled();
+  });
+
+  it("reaps a crashed holder when its recorded PID is dead", async () => {
+    const root = join(tmpdir(), `castle-stale-lease-${crypto.randomUUID()}`);
+    roots.push(root);
+    const paths = createEnginePaths(join(root, ".red"));
+    const fs = { mkdir, readFile, rename, rm, writeFile };
+    const crashedOwner = { pid: 5100, startTime: "2026-07-22T18:40:00.000Z" };
+    const replacement = { pid: 6100, startTime: "2026-07-22T18:42:00.000Z" };
+    const first = createSingletonLeaseStore(paths, {
+      fs,
+      clock: () => "2026-07-22T18:40:01.000Z",
+      isPidAlive: () => true,
+    });
+    await first.acquire("github-webhook", crashedOwner);
+    const isPidAlive = vi.fn((pid: number) => pid !== crashedOwner.pid);
+    const next = createSingletonLeaseStore(paths, {
+      fs,
+      clock: () => "2026-07-22T18:42:01.000Z",
+      isPidAlive,
+    });
+
+    const acquired = await next.acquire("github-webhook", replacement);
+
+    expect(acquired).toMatchObject({
+      acquired: true,
+      reaped: true,
+      lease: { pid: 6100, start_time: "2026-07-22T18:42:00.000Z" },
+    });
+    expect(isPidAlive).toHaveBeenCalledWith(5100);
+    await expect(first.release("github-webhook", crashedOwner)).rejects.toBeInstanceOf(
+      SingletonLeaseOwnershipError,
+    );
   });
 });
