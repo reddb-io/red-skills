@@ -447,27 +447,54 @@ export function buildProcessDeps(
       return (input: Parameters<typeof inner>[0]) => {
         const attemptDir = input.cwd ?? current.attemptDir;
         if (!prepared || preparedDir !== attemptDir) {
+          const baselineRaw = getConfig(
+            config,
+            "afk.implementer.runner_startup_baseline_ms",
+          );
+          const baseline = Number(baselineRaw);
           prepared = prepareImplementerEnvironment({
             attemptDir,
             configText,
             pluginRoots: implementerPluginRoots,
+            ...(Number.isFinite(baseline) && baseline > 0
+              ? { historicalRunnerStartupMs: baseline }
+              : {}),
           });
           preparedDir = attemptDir;
-          void castleBridge.record("worker.implementer-environment", {
-            artifact: "implementer-runtime.toon",
-            ...prepared.metrics,
-          }).catch(() => {});
-          void updateState(join(attemptDir, "afk.state.toon"), {
-            "current.implementer_payload_before_bytes": prepared.metrics.payload_bytes.before,
-            "current.implementer_payload_after_bytes": prepared.metrics.payload_bytes.after,
-            "current.implementer_boot_before_ms": prepared.metrics.boot_time_ms.before,
-            "current.implementer_boot_after_ms": prepared.metrics.boot_time_ms.after,
-          }).catch(() => {});
         }
+        const launchStarted = performance.now();
+        let startupRecorded = false;
+        const originalOnAgentEvent = input.onAgentEvent;
         return inner({
           ...input,
           steerFile: steerFilePath,
           implementer: prepared.runtime,
+          onAgentEvent: (event) => {
+            if (!startupRecorded) {
+              startupRecorded = true;
+              prepared.recordRunnerStartup(
+                Math.max(0, Math.round(performance.now() - launchStarted)),
+              );
+              void updateState(join(attemptDir, "afk.state.toon"), {
+                "current.implementer_runner_startup_before_ms":
+                  prepared.metrics.runner_startup_ms.before,
+                "current.implementer_runner_startup_after_ms":
+                  prepared.metrics.runner_startup_ms.after,
+                "current.implementer_skill_manifest_before_bytes":
+                  prepared.metrics.skill_manifest_bytes.before,
+                "current.implementer_skill_manifest_after_bytes":
+                  prepared.metrics.skill_manifest_bytes.after,
+              })
+                .then(() =>
+                  castleBridge.record("worker.implementer-environment", {
+                    artifact: "implementer-runtime.toon",
+                    ...prepared.metrics,
+                  }),
+                )
+                .catch(() => {});
+            }
+            originalOnAgentEvent?.(event);
+          },
         });
       };
     })(),
