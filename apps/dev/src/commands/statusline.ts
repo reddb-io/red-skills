@@ -252,7 +252,7 @@ export async function resolveStatuslineRsp(root: string, env: NodeJS.ProcessEnv 
 /** The block-1 project input: basename, the resolved git ref (branch or detached
  * short sha), and the running `dev` plugin version (build-info → dim `v<version>`
  * tag on the themed header). */
-async function resolveProject(root: string): Promise<ProjectInput> {
+export async function resolveProject(root: string): Promise<ProjectInput> {
   const ctx: gitx.GitContext = { cwd: root };
   const version = readBuildInfo("dev").version;
   const bundleCache = readDevBundleCacheState(version);

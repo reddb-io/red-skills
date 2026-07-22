@@ -285,6 +285,13 @@ const SURFACE: ReadonlyArray<{
       "MUTATING: parse a /dev comment summon, authorize the commenter, and route the advisory or mutation verb.",
     schema: ["body", "number", "author", "is_pr", "runner", "repo"],
   },
+  {
+    name: "statusline_aggregate",
+    title: "Read statusline aggregate",
+    description:
+      "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
+    schema: [],
+  },
 ];
 
 describe("aggregated castle MCP tool surface", () => {

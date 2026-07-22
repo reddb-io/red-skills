@@ -14,6 +14,10 @@ import {
   type ReviewDependencies,
 } from "./mcp/review.js";
 import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
+import {
+  createStatuslineTools,
+  type StatuslineDependencies,
+} from "./mcp/statusline.js";
 import type { CastleMcpTool } from "./mcp/tool.js";
 import { applyDangerPosture, type DangerPosture } from "./mcp/posture.js";
 import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
@@ -73,7 +77,8 @@ export interface CastleMcpDependencies
     ClaimDependencies,
     WorktreeDependencies,
     WaitDependencies,
-    ReviewDependencies {}
+    ReviewDependencies,
+    StatuslineDependencies {}
 
 /**
  * Compose the published castle tool surface from the per-domain registries.
@@ -101,6 +106,7 @@ export function createCastleMcpTools(
     ...createWorktreeTools(deps),
     ...createWaitTools(deps),
     ...createReviewTools(deps),
+    ...createStatuslineTools(deps),
   ];
   return applyDangerPosture(tools, posture);
 }

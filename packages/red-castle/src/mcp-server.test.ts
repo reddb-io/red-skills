@@ -102,6 +102,13 @@ function deps(): CastleMcpDependencies {
     weeklyReview: vi.fn(async () => ({ kind: "weekly" })),
     triage: vi.fn(async (input) => ({ issue: input.issue, action: "apply" })),
     respond: vi.fn(async () => ({ action: "ignored" })),
+    statuslineAggregate: vi.fn(async () => ({
+      project: { basename: "red-skills", branch: "main", version: "2.78.0", docs_unlanded: 0 },
+      repo: { open_prs: 3, today_prs: 1, open_issues: 24, cache_age_s: null },
+      fleet: null,
+      workers: [],
+      queue: { ready_for_agent: 2, ready_for_human: 1, cache_age_s: null },
+    })),
   };
 }
 
@@ -147,6 +154,7 @@ describe("castle MCP tools", () => {
       "weekly_review",
       "triage",
       "respond",
+      "statusline_aggregate",
     ]);
   });
 
@@ -360,6 +368,20 @@ describe("castle MCP tools", () => {
     expect(
       tools.find((tool) => tool.name === "wait_start")!.description,
     ).toMatch(/^MUTATING:/);
+  });
+
+  it("reads the statusline aggregate through the Statusline domain", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "statusline_aggregate")!.invoke({}),
+    ).resolves.toMatchObject({
+      project: { basename: "red-skills", branch: "main" },
+      repo: { open_issues: 24 },
+      queue: { ready_for_agent: 2, ready_for_human: 1 },
+    });
+    expect(d.statuslineAggregate).toHaveBeenCalledOnce();
   });
 
   it("passes live_only and fields through to the worker_vitals dep", async () => {

@@ -64,10 +64,16 @@ import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
 import {
   afkPaths,
   collectMonitorInputs,
+  collectStatuslineAfk,
+  collectStatuslineDocs,
+  collectStatuslineFleet,
+  collectStatuslineRepo,
+  inferGitHubRepoSlug,
   readFleetState,
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
+import { resolveProject } from "./commands/statusline.js";
 import { stopCommand } from "./commands/stop.js";
 import { executeRequeue } from "./commands/requeue.js";
 import { retakeCommand } from "./commands/retake.js";
@@ -967,6 +973,8 @@ async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
         number: state.current.number,
         runner: state.current.runner,
         retries: state.current.retries,
+        model: state.current.model,
+        effort: state.current.effort,
         phase: state.current.phase,
         iteration: state.current.iteration,
         activity: state.current.activity,
@@ -1042,6 +1050,96 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
   await gitx.worktreeRemove({ cwd: root }, target);
   return { path: relative(root, target), removed: !existsSync(target) };
 }
+
+/**
+ * The castle-side statusline aggregate, assembled from the SAME collector cores
+ * the command-backed `statusline` render path uses — `resolveProject`,
+ * `collectStatuslineRepo`, `collectStatuslineDocs`, `collectStatuslineAfk`,
+ * `collectStatuslineFleet` — plus the `fleet_status` and `worker_vitals`
+ * projections, so the tool never grows a parallel implementation.
+ *
+ * Every collector reads local state or the TTL cache the collectors already
+ * own (ADR 0084: no synchronous network fetch in a render path), so this tool
+ * is as cheap as one statusline tick.
+ *
+ * Host-side render inputs (session model/effort, context %, 5h/7d usage) come
+ * from the Claude Code statusline stdin payload and are deliberately absent —
+ * the tool must not fake them.
+ */
+export async function collectStatuslineAggregate(root: string) {
+  const repoCtx = {
+    root,
+    repo: inferGitHubRepoSlug(root),
+    remote: "origin",
+  };
+
+  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers] =
+    await Promise.all([
+      resolveProject(root),
+      collectStatuslineRepo(repoCtx),
+      collectStatuslineDocs(repoCtx).catch(() => undefined),
+      collectStatuslineAfk(repoCtx).catch(() => null),
+      collectStatuslineFleet(repoCtx).catch(() => undefined),
+      fleetStatus(root, {}).catch(() => null),
+      workerVitals(root),
+    ]);
+
+  return {
+    project: {
+      basename: project.basename,
+      branch: project.branch || null,
+      detached_sha: project.detachedSha ?? null,
+      version: project.version ?? readBuildInfo("dev").version,
+      latest_cached_version: project.latestCachedVersion ?? null,
+      pointer_version: project.pointerVersion ?? null,
+      docs_unlanded: docs?.count ?? 0,
+    },
+    repo: {
+      open_prs: repoStats.openPrs ?? 0,
+      today_prs: repoStats.todayPrs ?? 0,
+      open_issues: repoStats.openIssues ?? 0,
+      local_added: repoStats.localAdded ?? 0,
+      local_removed: repoStats.localRemoved ?? 0,
+      cache_age_s: repoStats.cacheAgeS ?? null,
+    },
+    docs: { unlanded: docs?.count ?? 0 },
+    fleet,
+    /** The repo-summary fleet CHIP the header line renders: the two facts the
+     * `fleet_status` snapshot does not carry (supervisor-reported queue depth
+     * and the busy-but-no-fresh-worker `degraded` marker), from the statusline
+     * fleet collector. Null when no fresh supervisor snapshot exists. */
+    fleet_chip: fleetChip
+      ? {
+          runner: fleetChip.runner,
+          busy: fleetChip.busy,
+          total: fleetChip.total,
+          queue: fleetChip.queue,
+          parked: fleetChip.parked ?? 0,
+          degraded: fleetChip.degraded ?? false,
+          churn_deaths: fleetChip.churnDeaths ?? 0,
+          churn_respawns: fleetChip.churnRespawns ?? 0,
+          churn_window_s: fleetChip.churnWindowS ?? 0,
+          bundle_version: fleetChip.bundleVersion ?? null,
+        }
+      : null,
+    workers,
+    /** The aggregated AFK block exactly as the plain single-line form renders
+     * it — summed across live workers, including the fleet runner/model/effort
+     * label the per-worker rows carry individually. Null when no live worker. */
+    afk: afkBlock,
+    queue: {
+      ready_for_agent: afkBlock?.queue ?? 0,
+      ready_for_human: afkBlock?.human ?? 0,
+      cache_age_s: afkBlock?.cacheAgeS ?? null,
+    },
+  };
+}
+
+/** The `statusline_aggregate` payload contract, inferred from its single
+ * producer so a field-coverage test can pin the shape without restating it. */
+export type StatuslineAggregate = Awaited<
+  ReturnType<typeof collectStatuslineAggregate>
+>;
 
 async function registerFleet(root: string, input: FleetRegisterInput) {
   const path = registryPath(root);
@@ -1358,6 +1456,7 @@ export function createCastleMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    statuslineAggregate: () => collectStatuslineAggregate(root),
     eventsSince: (input) => eventsSinceImpl(root, input),
   };
   return withCachedDeps(baseDeps, new ResidentReadCache());
