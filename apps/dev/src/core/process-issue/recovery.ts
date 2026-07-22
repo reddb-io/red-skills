@@ -263,6 +263,38 @@ export function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
   }
   return DEFAULT_GO_VERIFY_RETRIES;
 }
+export const DEFAULT_STALL_CONVERGENCE_BUDGET = 0;
+export function resolveStallConvergenceBudget(deps: ProcessIssueDeps): number {
+  const raw = deps.recoveryEnv?.RED_AFK_STALL_CONVERGENCE_BUDGET;
+  const parsed = raw === undefined ? NaN : Number(raw);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  if (
+    deps.stallConvergenceBudget !== undefined &&
+    Number.isInteger(deps.stallConvergenceBudget) &&
+    deps.stallConvergenceBudget >= 0
+  ) {
+    return deps.stallConvergenceBudget;
+  }
+  return DEFAULT_STALL_CONVERGENCE_BUDGET;
+}
+export function appendAfkGateCorrectionHandoff(
+  handoff: string,
+  opts: { gate: "feedback" | "backpressure"; validation: string; retry: number; cap: number },
+): string {
+  return [
+    handoff.replace(/\n+$/, ""),
+    "",
+    "<afk-gate-correction>",
+    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
+    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    "",
+    "<validation-tail>",
+    tailLines(opts.validation, 80),
+    "</validation-tail>",
+    "</afk-gate-correction>",
+    "",
+  ].join("\n");
+}
 export function tailLines(text: string, maxLines: number): string {
   const lines = text.split("\n");
   return lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
