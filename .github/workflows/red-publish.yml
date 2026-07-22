@@ -102,10 +102,17 @@ jobs:
           }
 
           major_is_ahead() {
-            local candidate="$1" major major_sha pointed pointed_version candidate_version
+            local candidate="$1" major major_sha pointed pointed_version candidate_version newest
             major="$(major_for "$candidate")"
             major_sha="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" 2>/dev/null || true)"
-            [ -n "$major_sha" ] || return 1
+            if [ -z "$major_sha" ]; then
+              # A major line with no moving ref (pre-scheme history, e.g. v0.x)
+              # can never become complete. When the repo has already moved on to
+              # a newer major, the whole line is stale, not pending.
+              newest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1)"
+              [ -n "$newest" ] && [ "$(major_for "$newest")" != "$major" ] && return 0
+              return 1
+            fi
             candidate_version="${candidate#v}"
             while IFS= read -r pointed; do
               [ -n "$pointed" ] || continue
@@ -134,12 +141,19 @@ jobs:
           # FIFO is a correctness rule, not just a retry preference. If tags
           # accumulate during fleet deferral, newest-first would publish an old
           # version second and move npm/latest plus vX backwards.
+          # A stale incomplete release (its major line already moved past it, or
+          # its major line predates the moving-ref scheme entirely) can never be
+          # published — doing so would move npm/latest and vX backwards, which
+          # is exactly what FIFO exists to prevent. Skipping keeps the queue
+          # alive for genuinely pending tags; erroring here wedged EVERY publish
+          # behind hundreds of pre-flow tags that never had a release tail
+          # (first hit: v2.79.1 blocked behind v0.0.1, then v1.2.0 — #2460).
           oldest_pending=""
           while IFS= read -r candidate; do
             if ! release_complete "$candidate"; then
               if major_is_ahead "$candidate"; then
-                echo "::error::refusing stale incomplete release $candidate: its major ref already points to a newer release"
-                exit 1
+                echo "::warning::skipping stale incomplete release $candidate: its major line already points past it"
+                continue
               fi
               oldest_pending="$candidate"
               break
