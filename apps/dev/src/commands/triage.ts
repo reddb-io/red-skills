@@ -31,18 +31,18 @@ import { loadConfig } from "../core/config.js";
 import {
   closeIssue,
   comment,
+  editComment,
   editLabels,
   ensureLabel,
   issueAuthor,
-  issueBody,
-  issueComments,
+  readIssueBody,
+  readIssueComments,
   viewLabels,
   type GhContext,
 } from "../runtime/gh.js";
 import {
-  hasAcceptanceCriteriaRecipeComment,
   lintExecutableAcceptanceCriteria,
-  renderAcceptanceCriteriaRecipeComment,
+  planAcceptanceCriteriaRecipeCommentUpdate,
 } from "../core/executable-acceptance.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { resolveRepoContext } from "../runtime/wire.js";
@@ -60,7 +60,7 @@ export interface TriageOptions {
 
 export interface TriageOutcome {
   issue: number;
-  action: AutoTriageAction | "acceptance-lint-failed";
+  action: AutoTriageAction | "acceptance-lint-failed" | "acceptance-lint-held";
   author?: string;
   /** Set only when the transition was applied. */
   applied?: { decision: TriageDecision; transition: TriageTransition };
@@ -94,15 +94,35 @@ export async function runTriage(
   }
 
   if (opts.decision === "ready-for-agent") {
-    const lint = lintExecutableAcceptanceCriteria((await issueBody(ctx, opts.issue)) ?? "");
+    const bodyRead = await readIssueBody(ctx, opts.issue);
+    if (!bodyRead.ok) {
+      return {
+        issue: opts.issue,
+        action: "acceptance-lint-held",
+        author,
+        reason: `acceptance-criteria lint could not read the issue body: ${bodyRead.reason}`,
+      };
+    }
+    const lint = lintExecutableAcceptanceCriteria(bodyRead.body);
     if (!lint.ok) {
       await ensureLabel(ctx, LABEL_NEEDS_TRIAGE);
       const remove = [LABEL_READY, LABEL_TRIAGE_SUMMON].filter((label) => labels.includes(label));
       const add = labels.includes(LABEL_NEEDS_TRIAGE) ? [] : [LABEL_NEEDS_TRIAGE];
       if (remove.length > 0 || add.length > 0) await editLabels(ctx, opts.issue, remove, add);
-      const comments = await issueComments(ctx, opts.issue);
-      if (!hasAcceptanceCriteriaRecipeComment(comments)) {
-        await comment(ctx, opts.issue, renderAcceptanceCriteriaRecipeComment(lint));
+      const comments = await readIssueComments(ctx, opts.issue);
+      if (!comments.ok) {
+        return {
+          issue: opts.issue,
+          action: "acceptance-lint-failed",
+          author,
+          reason: `${lint.reason}; recipe comment not posted because ${comments.reason}`,
+        };
+      }
+      const plan = planAcceptanceCriteriaRecipeCommentUpdate(comments.comments, lint);
+      if (plan.action === "create") {
+        await comment(ctx, opts.issue, plan.body);
+      } else if (plan.action === "update" && plan.id !== undefined) {
+        await editComment(ctx, plan.id, plan.body);
       }
       return {
         issue: opts.issue,
@@ -237,6 +257,10 @@ export async function triageCommand(
   }
   if (outcome.action === "acceptance-lint-failed") {
     stdout.write(`triage: #${outcome.issue} kept in needs-triage — ${outcome.reason}\n`);
+    return 0;
+  }
+  if (outcome.action === "acceptance-lint-held") {
+    stdout.write(`triage: #${outcome.issue} held — ${outcome.reason}\n`);
     return 0;
   }
   stdout.write(
