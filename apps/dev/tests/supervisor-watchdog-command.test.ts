@@ -97,6 +97,8 @@ describe("persistent supervisor watchdog command (#2442)", () => {
       `#!/bin/sh
 case "$*" in
   *"repo view"*) printf 'owner/repo\\n' ;;
+  *"issue view 2442"*) printf '{"labels":[{"name":"running"}]}\\n' ;;
+  *"issue edit 2442"*) touch "$PWD/.claim-reconciled" ;;
   *"issue list"*)
     if [ -f "$PWD/.ready-once" ]; then
       rm -f "$PWD/.ready-once"
@@ -169,14 +171,17 @@ esac
 
     writeFileSync(join(root, ".ready-once"), "1", "utf8");
     const supervisorExit = once(supervisor, "exit");
+    const killedAt = Date.now();
     supervisor.kill("SIGKILL");
     await supervisorExit;
 
     const replacementPid = await waitFor(() => {
       const pid = pinnedPid(paths.supervisorPidPath, paths.supervisorPidStartPath);
       return pid !== null && pid !== firstPid ? pid : null;
-    });
+    }, 5_000);
+    expect(Date.now() - killedAt).toBeLessThanOrEqual(5_000);
     await waitFor(() => (!existsSync(claim) ? true : null));
+    expect(existsSync(join(root, ".claim-reconciled"))).toBe(true);
 
     expect(replacementPid).not.toBe(firstPid);
     expect(pinnedPid(paths.supervisorWatchdogPidPath, paths.supervisorWatchdogPidStartPath))
