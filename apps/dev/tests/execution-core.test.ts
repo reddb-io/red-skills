@@ -264,6 +264,16 @@ describe("buildRunOptions", () => {
     expect(seen).toEqual([{ mode: "docker", mountPath: "/red/tmp/workers/w1/42-a1" }]);
   });
 
+  it("targets the conventional worktree directly inside the worker workspace", () => {
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      cwd: "/red/tmp/workers/w1/42",
+    });
+
+    expect(opts.cwd).toBe("/red/tmp/workers/w1/42");
+    expect(opts.worktreePath).toBe("/red/tmp/workers/w1/42/worktree");
+  });
+
   it("passes no mount path to sandboxFor when cwd is absent (issue #405)", () => {
     const seen: Array<{ mode: string; mountPath: string | undefined }> = [];
     const deps: SandcastleDeps = {

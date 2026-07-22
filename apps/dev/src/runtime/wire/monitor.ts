@@ -21,6 +21,7 @@ import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
+import { reapableWorktreeUnder } from "../supervisor-fs.js";
 import { afkPaths } from "./paths.js";
 import { readStatuslineCache } from "./statusline-cache.js";
 
@@ -278,7 +279,9 @@ export async function reclaimDeadWorkers(
       Number.isFinite(issue) && issue > 0 ? await isPreserved(issue) : true;
     inputs.push({
       attemptDir,
-      worktreePath: join(attemptDir, "worktree"),
+      // Current workers use the conventional direct child. During rollout,
+      // hygiene may still discover a legacy nested worktree for removal only.
+      worktreePath: reapableWorktreeUnder(attemptDir) ?? join(attemptDir, "worktree"),
       workerPidAlive: alive,
       preserved,
     });

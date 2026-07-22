@@ -17,7 +17,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
-import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
+import {
+  parseReapableWorkerWorktreePath,
+  parseWorkerAttemptPath,
+  workerDir,
+} from "../core/worker-paths.js";
 import { readWorkerState } from "../core/worker-state-reader.js";
 import {
   evaluateLiveness,
@@ -391,6 +395,39 @@ export function parkedSlotWorkFor(
   };
 }
 
+/**
+ * HYGIENE-ONLY worktree resolver for a worker workspace. New workers use the
+ * conventional direct child; the nested castle layout remains discoverable so
+ * a mixed live fleet can still be reaped during the rollout window.
+ */
+export function reapableWorktreeUnder(workerWorkspace: string): string | null {
+  const direct = join(workerWorkspace, "worktree");
+  if (
+    parseReapableWorkerWorktreePath(direct) !== null &&
+    existsSync(join(direct, ".git"))
+  ) {
+    return direct;
+  }
+
+  const legacyRoot = join(workerWorkspace, ".red-castle", "worktrees");
+  let entries: string[];
+  try {
+    entries = readdirSync(legacyRoot);
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const candidate = join(legacyRoot, entry);
+    if (
+      parseReapableWorkerWorktreePath(candidate) !== null &&
+      existsSync(join(candidate, ".git"))
+    ) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /** Best-effort worktree teardown + iter-dir removal for a reaped slot. Mirrors
  * reap_stalled_slot step 4 (git worktree remove + rm -rf).
  *
@@ -403,8 +440,8 @@ export function parkedSlotWorkFor(
  * visibly to stderr but never blocks the teardown. */
 export async function teardownIterDirNative(info: IterDirInfo, root: string): Promise<void> {
   const fsp = await import("node:fs/promises");
-  const worktree = join(info.path, "worktree");
-  if (existsSync(worktree)) {
+  const worktree = reapableWorktreeUnder(info.path);
+  if (worktree !== null) {
     try {
       const { git } = await import("./exec.js");
 

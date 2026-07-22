@@ -14,6 +14,7 @@
 
 import type { AgentStreamEvent, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import { extractAgentOutput } from "@reddb-io/red-castle";
+import { join } from "node:path";
 import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "../host-env-allowlist.js";
 import { isRunnerExhausted } from "../runner-spawn.js";
@@ -727,10 +728,11 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
       ...(input.cwd ? { mountPath: input.cwd } : {}),
       ...(input.sandboxImage ? { imageName: input.sandboxImage } : {}),
     }),
-    // Re-anchor sandcastle's `.red-castle/` dir + git ops at the caller's cwd
-    // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
-    // root. Omitted → sandcastle defaults to process.cwd().
+    // Re-anchor castle state + git ops at the worker workspace and place the
+    // actual worktree at its conventional direct child. Omitting cwd preserves
+    // red-castle's standalone defaults.
     ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.cwd ? { worktreePath: join(input.cwd, "worktree") } : {}),
     // Deliver the handoff INLINE (verbatim), not as a `promptFile` template:
     // red-castle expands `{{KEY}}` + `` !`cmd` `` only for templates, which
     // crashed prompt resolution on opaque issue-body content (#756, #758). AFK
