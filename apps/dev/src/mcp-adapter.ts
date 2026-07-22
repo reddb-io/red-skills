@@ -19,6 +19,7 @@ import {
   upsertFleetProfile,
   RUNNER_SPECS,
   detectRunner,
+  type CastleLaneRecord,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
@@ -26,6 +27,7 @@ import type {
   CastleMcpDependencies,
   ClaimIssueInput,
   DailyReviewInput,
+  EventsSinceInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
@@ -102,6 +104,12 @@ import { collectReapInputs } from "./runtime/wire/reap.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
 import { triageCommand } from "./commands/triage.js";
 import { respondCommand } from "./commands/respond.js";
+import {
+  ResidentReadCache,
+  QUEUE_STATUS_KEY,
+  claimStatusKey,
+  cascadeStatusKey,
+} from "./resident-read-cache.js";
 
 interface DispatchOperationInput extends WorkerDispatchInput {
   request?: string;
@@ -1016,11 +1024,163 @@ async function registerFleet(root: string, input: FleetRegisterInput) {
   return { status: "registered", profile, pid: running.pid };
 }
 
+const CURSOR_VERSION = 1;
+const CURSOR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
+function encodeCursor(at: string): string {
+  return Buffer.from(JSON.stringify({ v: CURSOR_VERSION, at })).toString(
+    "base64url",
+  );
+}
+
+function decodeCursor(
+  cursor: string,
+): { at: string } | { refused: true; reason: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (raw as Record<string, unknown>).v !== CURSOR_VERSION ||
+    typeof (raw as Record<string, unknown>).at !== "string"
+  ) {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  const at = (raw as Record<string, unknown>).at as string;
+  const atMs = Date.parse(at);
+  if (!Number.isFinite(atMs) || Date.now() - atMs > CURSOR_MAX_AGE_MS) {
+    return {
+      refused: true,
+      reason:
+        "Cursor expired; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  return { at };
+}
+
+async function readAllWorkerLaneRecordsSince(
+  paths: ReturnType<typeof createEnginePaths>,
+  since: string,
+): Promise<CastleLaneRecord[]> {
+  const { readdir } = await import("node:fs/promises");
+  let ids: string[];
+  try {
+    ids = (await readdir(paths.workersRoot, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const records: CastleLaneRecord[] = [];
+  for (const id of ids) {
+    const lanePath = castleLanePath(paths, "worker", id);
+    const workerRecords = await readCastleLaneRecords(lanePath);
+    records.push(...workerRecords.filter((r) => r.at >= since));
+  }
+  return records;
+}
+
+async function eventsSinceImpl(
+  root: string,
+  input: EventsSinceInput,
+): Promise<unknown> {
+  if (input.cursor === undefined) {
+    return { history: [], lane_records: [], cursor: encodeCursor(new Date().toISOString()) };
+  }
+  const decoded = decodeCursor(input.cursor);
+  if ("refused" in decoded) return decoded;
+
+  const { at: since } = decoded;
+  const paths = createEnginePaths(join(root, ".red"));
+  const [historyRecords, laneRecords] = await Promise.all([
+    readCastleHistoryRecords(paths.castleHistory),
+    readAllWorkerLaneRecordsSince(paths, since),
+  ]);
+
+  return {
+    history: historyRecords.filter((r) => r.ts >= since),
+    lane_records: laneRecords,
+    cursor: encodeCursor(new Date().toISOString()),
+  };
+}
+
+/**
+ * Wrap the GitHub-backed read deps with a short-TTL cache. Repeated calls
+ * within the TTL cost zero GitHub requests. Mutating tools invalidate the
+ * affected keys so the next read reflects the new state immediately.
+ *
+ * Exported for unit-testing the cache wiring with fake deps.
+ */
+export function withCachedDeps(
+  deps: CastleMcpDependencies,
+  cache: ResidentReadCache,
+): CastleMcpDependencies {
+  return {
+    ...deps,
+    queueStatus: async () => {
+      const cached = cache.get(QUEUE_STATUS_KEY);
+      if (cached !== undefined) return cached;
+      const result = await deps.queueStatus();
+      cache.set(QUEUE_STATUS_KEY, result);
+      return result;
+    },
+    claimStatus: async (input) => {
+      const key = claimStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.claimStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    cascadeStatus: async (input) => {
+      const key = cascadeStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.cascadeStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    claimRelease: async (input) => {
+      cache.invalidate(claimStatusKey(input.issue));
+      return deps.claimRelease(input);
+    },
+    landBranch: async (input) => {
+      cache.invalidate(cascadeStatusKey(input.issue));
+      return deps.landBranch(input);
+    },
+    requeue: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.requeue(input);
+    },
+    unblockSweep: async () => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.unblockSweep();
+    },
+    triage: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.triage(input);
+    },
+  };
+}
+
 export function createDevAfkMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
-  return {
+  const baseDeps: CastleMcpDependencies = {
     fleetList: () => readFleetProfiles(registryPath(root)),
     fleetStatus: (input) => fleetStatus(root, input),
     fleetCreate: (input) => createFleet(root, input),
@@ -1158,5 +1318,7 @@ export function createDevAfkMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    eventsSince: (input) => eventsSinceImpl(root, input),
   };
+  return withCachedDeps(baseDeps, new ResidentReadCache());
 }
