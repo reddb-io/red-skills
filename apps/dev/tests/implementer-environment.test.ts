@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_IMPLEMENTER_DEV_SKILLS,
@@ -12,43 +13,36 @@ const catalog: ImplementerSkill[] = [
     plugin: "dev",
     name: "tdd",
     path: "/plugins/dev/skills/engineering/tdd",
-    payloadBytes: 120,
   },
   {
     plugin: "dev",
     name: "diagnose",
     path: "/plugins/dev/skills/engineering/diagnose",
-    payloadBytes: 140,
   },
   {
     plugin: "dev",
     name: "triage",
     path: "/plugins/dev/skills/engineering/triage",
-    payloadBytes: 160,
   },
   {
     plugin: "dev",
     name: "daily-review",
     path: "/plugins/dev/skills/engineering/daily-review",
-    payloadBytes: 180,
   },
   {
     plugin: "memory",
     name: "recall",
     path: "/plugins/memory/skills/core/recall",
-    payloadBytes: 200,
   },
   {
     plugin: "memory",
     name: "store",
     path: "/plugins/memory/skills/core/store",
-    payloadBytes: 220,
   },
   {
     plugin: "brain",
     name: "search",
     path: "/plugins/brain/skills/core/search",
-    payloadBytes: 240,
   },
 ];
 
@@ -57,6 +51,24 @@ function config(extra = ""): string {
 }
 
 describe("resolveImplementerProjection", () => {
+  it("documents the canonical namespaced allowlist YAML shape", () => {
+    const docs = readFileSync(
+      new URL(
+        "../../../plugins/dev/skills/engineering/afk/docs/CONFIG.md",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(docs).toContain("`plugins.dev.afk.implementer.skills`");
+    expect(docs).toContain(
+      "plugins:\n  dev:\n    afk:\n      implementer:\n        skills: dev:tdd, dev:diagnose",
+    );
+    expect(docs).not.toContain(
+      "afk:\n  implementer:\n    skills: dev:tdd, dev:diagnose",
+    );
+  });
+
   it("loads only the implementer-trimmed dev surface when only dev is enabled", () => {
     expect(DEFAULT_IMPLEMENTER_DEV_SKILLS).toContain("tdd");
     expect(DEFAULT_IMPLEMENTER_DEV_SKILLS).toContain("diagnose");
@@ -126,18 +138,31 @@ describe("resolveImplementerProjection", () => {
 });
 
 describe("buildImplementerMetrics", () => {
-  it("captures boot-time and catalog-payload before/after deltas for run artifacts", () => {
+  it("captures runner-startup and exact manifest before/after deltas for run artifacts", () => {
     const projection = resolveImplementerProjection(config(), catalog);
     const metrics = buildImplementerMetrics(projection, {
-      legacyBootMs: 42,
-      projectedBootMs: 17,
+      legacyProjectionSetupMs: 42,
+      projectedProjectionSetupMs: 17,
+      historicalRunnerStartupMs: 840,
+      projectedRunnerStartupMs: 510,
+      legacySkillManifestBytes: 1_540,
+      projectedSkillManifestBytes: 420,
     });
 
-    expect(metrics.boot_time_ms).toEqual({ before: 42, after: 17, delta: -25 });
-    expect(metrics.payload_bytes).toEqual({
-      before: 1_260,
-      after: 260,
-      delta: -1_000,
+    expect(metrics.projection_setup_time_ms).toEqual({
+      before: 42,
+      after: 17,
+      delta: -25,
+    });
+    expect(metrics.runner_startup_ms).toEqual({
+      before: 840,
+      after: 510,
+      delta: -330,
+    });
+    expect(metrics.skill_manifest_bytes).toEqual({
+      before: 1_540,
+      after: 420,
+      delta: -1_120,
     });
     expect(metrics.skill_count).toEqual({ before: 7, after: 2, delta: -5 });
   });
