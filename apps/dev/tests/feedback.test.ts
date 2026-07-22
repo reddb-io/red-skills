@@ -504,6 +504,20 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
 
+  it("classifies dependency files vanishing mid-gate as INFRA", () => {
+    const missingModule = failedCheck(
+      "test:apps/dev",
+      "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/repo/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool/dist/entry/process.js' imported from /repo/node_modules/.pnpm/vitest@2.1.9/node_modules/vitest/dist/chunks/resolveConfig.js",
+    );
+    const missingFile = failedCheck(
+      "test:apps/dev",
+      "Error: ENOENT: no such file or directory, open '/repo/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool/dist/entry/process.js'",
+    );
+
+    expect(isInfraFeedbackFailure(missingModule)).toBe(true);
+    expect(isInfraFeedbackFailure(missingFile)).toBe(true);
+  });
+
   it("matches the OOM-killer signature (exit 137 / SIGKILL)", () => {
     const a = failedCheck("test:apps/dev", "vitest worker killed by SIGKILL");
     const b = failedCheck("test:apps/dev", "pnpm: signal SIGKILL");

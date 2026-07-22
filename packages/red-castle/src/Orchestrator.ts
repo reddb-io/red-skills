@@ -76,6 +76,11 @@ const invokeAgent = (
     >();
     let timeoutFiber: Fiber.RuntimeFiber<unknown, unknown> | null = null;
     let completionDetected = false;
+    // A streamed tool_call is the agent's proof that it handed work to a child
+    // process. Agent CLIs do not emit a matching completion event while that
+    // child is silent, so keep the text-silence timer renewable until the next
+    // parsed agent event demonstrates that control returned.
+    let toolCallInFlight = false;
 
     // Periodic idle warning state
     let warningFiber: Fiber.RuntimeFiber<unknown, unknown> | null = null;
@@ -101,6 +106,25 @@ const invokeAgent = (
       );
     };
 
+    const armIdleTimer = () => {
+      timeoutFiber = Effect.runFork(
+        Effect.gen(function* () {
+          yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+          if (toolCallInFlight) {
+            armIdleTimer();
+            return;
+          }
+          yield* Deferred.fail(
+            timeoutSignal,
+            new AgentIdleTimeoutError({
+              message: `Agent idle for ${idleTimeoutMs / 1000} seconds — no output received. Consider increasing the idle timeout with --idle-timeout.`,
+              timeoutMs: idleTimeoutMs,
+            }),
+          );
+        }),
+      );
+    };
+
     const resetTimer = () => {
       interruptFiber(timeoutFiber);
       if (completionDetected) {
@@ -117,19 +141,9 @@ const invokeAgent = (
           }),
         );
       } else {
-        // Pre-signal idle window — failure on expiry.
-        timeoutFiber = Effect.runFork(
-          Effect.gen(function* () {
-            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
-            yield* Deferred.fail(
-              timeoutSignal,
-              new AgentIdleTimeoutError({
-                message: `Agent idle for ${idleTimeoutMs / 1000} seconds — no output received. Consider increasing the idle timeout with --idle-timeout.`,
-                timeoutMs: idleTimeoutMs,
-              }),
-            );
-          }),
-        );
+        // Pre-signal idle window — failure on expiry unless a streamed tool
+        // call still owns a live child-operation window.
+        armIdleTimer();
         // Reset warning interval on activity, idle-phase only.
         startWarningInterval();
       }
@@ -172,26 +186,36 @@ const invokeAgent = (
           } catch {
             // Swallow — must not skip parsing/timer logic below.
           }
-          for (const parsed of provider.parseStreamLine(line)) {
+          const parsedEvents = provider.parseStreamLine(line);
+          let sawToolCall = false;
+          let sawAgentProgress = false;
+          for (const parsed of parsedEvents) {
             if (parsed.type === "text") {
+              sawAgentProgress = true;
               onText(parsed.text);
               accumulatedOutput += parsed.text;
             } else if (parsed.type === "result") {
+              sawAgentProgress = true;
               resultText = parsed.result;
               accumulatedOutput += parsed.result;
               onResult?.(parsed.result);
             } else if (parsed.type === "tool_call") {
+              sawToolCall = true;
               onToolCall(parsed.name, parsed.args);
             } else if (parsed.type === "reasoning") {
+              sawAgentProgress = true;
               onReasoning?.(parsed.text ?? "", parsed.tokens);
             } else if (parsed.type === "session_id") {
               sessionId = parsed.sessionId;
               onObservedSessionId?.(parsed.sessionId);
             } else if (parsed.type === "usage") {
+              sawAgentProgress = true;
               usage = parsed.usage;
               onUsage?.(parsed.usage);
             }
           }
+          if (sawToolCall) toolCallInFlight = true;
+          else if (sawAgentProgress) toolCallInFlight = false;
           // Check for the completion signal AFTER parsing this line so the
           // accumulator contains everything seen so far. Flip to the
           // completion-grace timer the first time the signal appears.
