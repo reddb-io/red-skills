@@ -66,11 +66,26 @@ else
   fail "act job must reject Bot-authored comments in its job condition"
 fi
 
+if grep -qF 'contains(fromJSON('\''["filipeforattini"]'\''), github.event.comment.user.login)' "$WORKFLOW"; then
+  pass "act job admits only the explicit human login allowlist"
+else
+  fail "act job must apply the explicit human login allowlist before launch"
+fi
+
 if grep -qF 'COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}' "$WORKFLOW" &&
    grep -qF -- '--author-type "$COMMENT_AUTHOR_TYPE"' "$WORKFLOW"; then
   pass "comment author type is forwarded to the runtime guard"
 else
   fail "act job must forward comment.user.type as --author-type"
+fi
+
+if grep -qF 'HITL_CARD_ALLOWED_AUTHORS: filipeforattini' "$WORKFLOW" &&
+   grep -qF 'HITL_CARD_RECEIPT_IDENTITIES: filipeforattini:User,github-actions[bot]:Bot' "$WORKFLOW" &&
+   grep -qF -- '--allowed-authors "$HITL_CARD_ALLOWED_AUTHORS"' "$WORKFLOW" &&
+   grep -qF -- '--receipt-identities "$HITL_CARD_RECEIPT_IDENTITIES"' "$WORKFLOW"; then
+  pass "runtime receives explicit human and card-receipt identities"
+else
+  fail "act job must forward explicit human and card-receipt identities"
 fi
 
 # Serialize actions for one issue so each invocation observes the prior action
