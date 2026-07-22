@@ -100,6 +100,13 @@ const SURFACE: ReadonlyArray<{
     schema: [],
   },
   {
+    name: "events_since",
+    title: "Poll events since cursor",
+    description:
+      "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+    schema: ["cursor"],
+  },
+  {
     name: "worker_dispatch",
     title: "Dispatch AFK worker",
     description:
