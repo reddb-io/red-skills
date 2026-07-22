@@ -8,6 +8,7 @@ import {
   fleetRegistryPath,
   readCastleLaneRecords,
   readFleetProfile,
+  upsertFleetProfile,
   type CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
 import { afkPaths, collectMonitorInputs, readFleetState, resolveRepoSlug } from "../runtime/wire.js";
@@ -641,6 +642,15 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     }
     throw new Error(`fleet launch failed: supervisor pid file did not appear. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${tail}`);
   }
+
+  // Persist the profile so CLI-launched fleets are always in the registry (#2358).
+  await upsertFleetProfile(fleetRegistryPath(createEnginePaths(join(root, ".red"))), {
+    name: paths.fleet,
+    runner: detection.runner,
+    ...(profile?.selector ? { selector: profile.selector } : {}),
+    ...(profile?.config ? { config: profile.config } : {}),
+    ...(profile?.base ? { base: profile.base } : {}),
+  }).catch(() => undefined);
 
   const named = paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
   stdout.write(`🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);

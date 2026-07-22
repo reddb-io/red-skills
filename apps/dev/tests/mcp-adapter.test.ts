@@ -10,8 +10,10 @@ import {
   castleLanePath,
   createEnginePaths,
   fleetRegistryPath,
+  readFleetProfile,
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
+import { afkPaths } from "../src/runtime/wire.js";
 import {
   buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
@@ -374,6 +376,49 @@ describe("dev:afk MCP host adapter", () => {
     await expect(
       deps.worktreeRemove({ path: join("..", "elsewhere") }),
     ).rejects.toThrow(/escapes/);
+  });
+});
+
+describe("fleet_register — adopt a live unregistered fleet", () => {
+  it("persists the profile for a live fleet without touching the supervisor", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd);
+    await mkdir(paths.supervisorRuntimeDir, { recursive: true });
+    await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+
+    const result = await createDevAfkMcpDependencies(cwd).fleetRegister({
+      runner: "claude",
+      selector: { spec: 2303 },
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({ status: "registered", pid: process.pid });
+    expect(result.profile).toMatchObject({ name: "default", runner: "claude", selector: { spec: 2303 } });
+
+    const profile = await readFleetProfile(
+      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+      "default",
+    );
+    expect(profile).toEqual({ name: "default", runner: "claude", selector: { spec: 2303 } });
+  });
+
+  it("refuses adoption when the fleet supervisor is not running", async () => {
+    const cwd = await root();
+    await expect(
+      createDevAfkMcpDependencies(cwd).fleetRegister({ runner: "claude" }),
+    ).rejects.toThrow(/not running/);
+  });
+
+  it("fleet_edit works immediately after fleet_register persists the profile", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "alpha");
+    await mkdir(paths.supervisorRuntimeDir, { recursive: true });
+    await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+
+    const deps = createDevAfkMcpDependencies(cwd);
+    await deps.fleetRegister({ name: "alpha", runner: "claude" });
+    await expect(
+      deps.fleetEdit({ name: "alpha", runner: "codex" }),
+    ).resolves.toMatchObject({ status: "edited" });
   });
 });
 

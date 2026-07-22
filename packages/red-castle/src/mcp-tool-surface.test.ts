@@ -52,6 +52,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["fleet"],
   },
   {
+    name: "fleet_register",
+    title: "Adopt AFK fleet",
+    description:
+      "MUTATING: persist a profile for an already-running supervisor without restarting it.",
+    schema: ["name", "runner", "selector", "config", "base"],
+  },
+  {
     name: "logs",
     title: "Read Castle logs",
     description:
