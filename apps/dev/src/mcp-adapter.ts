@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
@@ -831,6 +831,14 @@ async function createFleet(root: string, input: FleetCreateInput) {
   }
 
   const profile = await upsertFleetProfile(path, profileForCreate(input));
+  let supervisorLogStart: number | undefined;
+  try {
+    supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      supervisorLogStart = 0;
+    }
+  }
   const pid = await spawnSupervisor({
     root,
     target: input.target,
@@ -841,19 +849,39 @@ async function createFleet(root: string, input: FleetCreateInput) {
       : [],
   });
   if (pid === null) {
-    await removeFleetProfile(path, profile.name).catch(() => false);
-    let tail = "";
+    let rollbackConfirmed = false;
     try {
-      const text = await readFile(paths.supervisorLogPath, "utf8");
-      tail = text.split(/\r?\n/).slice(-20).join("\n");
+      const removed = await removeFleetProfile(path, profile.name);
+      rollbackConfirmed =
+        removed || (await readFleetProfile(path, profile.name)) === undefined;
     } catch {
-      // The explicit no-output marker below still distinguishes an empty boot
-      // from a caller-visible but unexplained registry rollback.
+      // The failure below must not claim that registry rollback succeeded.
+    }
+    let tail = "";
+    if (supervisorLogStart !== undefined) {
+      try {
+        const bytes = await readFile(paths.supervisorLogPath);
+        const launchBytes =
+          bytes.length < supervisorLogStart
+            ? bytes
+            : bytes.subarray(supervisorLogStart);
+        tail = launchBytes
+          .toString("utf8")
+          .split(/\r?\n/)
+          .slice(-20)
+          .join("\n");
+      } catch {
+        // The explicit no-output marker below still distinguishes an empty boot
+        // from a caller-visible but unexplained registry rollback.
+      }
     }
     const evidence = tail || "(no supervisor log output was captured)";
+    const rollback = rollbackConfirmed
+      ? "profile rolled back."
+      : "profile rollback was attempted but could not be confirmed.";
     throw new Error(
       `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
-        `profile rolled back. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+        `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
     );
   }
   return { status: "launched", profile, pid, target: input.target };
