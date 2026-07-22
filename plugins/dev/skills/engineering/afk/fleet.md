@@ -45,6 +45,20 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
 - Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
 - Bare terminal / unknown runner: launch fleet and print the manual-monitor guidance.
 
+**Self-heal is not a monitor side effect.** Every successful fleet launch also
+arms one detached watchdog in that fleet's repo-scoped runtime lane. It probes
+the exact `afk-supervisor.pid` plus `afk-supervisor.pid.start` identity once per
+`RED_AFK_POLL_S` (15 seconds by default), so a same-command supervisor in a
+sibling repo and a recycled PID cannot satisfy the liveness check. A dead
+supervisor with `ready-for-agent > 0` and live workers below target is relaunched
+within one poll window, subject to the existing bounded-restart guard. The new
+supervisor boot runs the stale local/cross-host claim reconciliation before
+draining again. Every catchable terminal path writes one `supervisor.exit`
+record with `reason=signal|exception|explicit-stop|completed`; the process-exit
+hook is the synchronous best-effort fallback for exits that bypass the awaited
+path. SIGKILL cannot run user-space cleanup, so its retained pinned PID plus the
+watchdog recovery record is the forensic signal.
+
 **Release recycle rule.** A fleet supervisor keeps running the exact dev bundle
 version it was launched from. After any RedSkills release that changes AFK or
 castle engine behavior, stop and relaunch the fleet before starting or counting
@@ -59,7 +73,7 @@ not part of the current fleet contract.
 `N` is optional and defaults to `2`. Parse it as a non-negative integer; reject anything else (including `stop`, which is the other subcommand and routes below). Steps the agent must perform, in order:
 
 1. **Resolve runner.** Determine the active runner using the same intent as the normal AFK cascade: explicit user `--runner` if present, else `RED_AFK_RUNNER`, else runner env/process/path signals, else `claude`. The resolved value is carried into the supervisor as `RED_AFK_RUNNER=<runner>` so detached workers do not fall through to the supervisor's historical `claude` fallback. Under Codex, this must resolve to `codex`.
-2. **PID-file pre-check / live directive.** Read `.red/tmp/supervisors/default/afk-supervisor.pid`. If it exists and `kill -0 <pid>` succeeds, do not launch a second supervisor. Instead the bundle command writes the `afk-supervisor.resize` directive file in the supervisor runtime lane (`.red/tmp/supervisors/default/`) as the live directive:
+2. **PID-file pre-check / live directive.** Read `.red/tmp/supervisors/default/afk-supervisor.pid` and its `.pid.start` process-start pin. If the PID is live and the current start token matches, do not launch a second supervisor. Instead the bundle command writes the `afk-supervisor.resize` directive file in the supervisor runtime lane (`.red/tmp/supervisors/default/`) as the live directive:
    - `fleet <N>` changes the desired worker count while keeping the current runner.
    - `fleet <N> --shrink-mode hard-kill|drain-then-retire` changes the resize shrink behavior. The default is `drain-then-retire`.
    - `fleet <N> --runner <runner>` asks the running supervisor to switch runner. A changed runner is applied by re-pinning the supervisor's worker env, marking every live slot `drain-then-retire`, letting in-flight claims finish, then respawning replacement slots on the new runner. An unchanged runner is a no-op.
@@ -75,7 +89,7 @@ not part of the current fleet contract.
    ```bash
    RED_AFK_RUNNER=<runner> red-skills-dev fleet <N> [--request <text>]
    ```
-   The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/supervisors/default/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/supervisors/default/supervisor.log.toonl`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
+   The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/supervisors/default/afk-supervisor.pid` to appear and contain a live pinned PID, then arms the repo-scoped self-heal watchdog and prints both PIDs plus the target. Failure to arm either process fails the launch; supervisor failure reports the tail of `.red/tmp/supervisors/default/supervisor.log.toonl`. Capture the reported supervisor PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
    - Claude Code: no automatic monitor cron. Tell the user to run `/dev:afk monitor` manually or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
    - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/supervisors/default/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
@@ -83,6 +97,7 @@ not part of the current fleet contract.
 5. **Report back.** Print:
    ```
    🚀 fleet launched (supervisor pid=<pid>, target=<N>)
+      self-heal: armed (watchdog pid=<pid>)
       log:   .red/tmp/supervisors/default/supervisor.log.toonl
       stop:  /dev:afk fleet stop
       <monitor-status-line>
