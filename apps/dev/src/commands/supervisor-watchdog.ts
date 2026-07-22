@@ -31,7 +31,7 @@ export async function supervisorWatchdogCommand(
   writeFileSync(paths.supervisorWatchdogPidPath, String(process.pid), "utf8");
 
   const config = resolveSupervisorConfig();
-  const io = buildWatchdogIO(cwd);
+  const io = buildWatchdogIO(cwd, process.stdout, fleet);
   let stopping = false;
   const stop = (): void => {
     stopping = true;
