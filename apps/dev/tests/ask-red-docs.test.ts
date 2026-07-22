@@ -50,6 +50,15 @@ describe("ask-red router docs contract", () => {
     expect(askRedSkill).toContain("memory capabilities");
   });
 
+  it("routes host toolchain drift through red-doctor", async () => {
+    const askRedSkill = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
+
+    expect(askRedSkill).toContain("host toolchain");
+    expect(askRedSkill).toContain("gh >= 2.47.0");
+    expect(askRedSkill).toContain("pinned `tq`");
+    expect(askRedSkill).toContain("/red-doctor --fix");
+  });
+
   it("documents the maintenance rule in both repo agent instruction files", async () => {
     const [claude, agents] = await Promise.all([readRepoFile("CLAUDE.md"), readRepoFile("AGENTS.md")]);
 
