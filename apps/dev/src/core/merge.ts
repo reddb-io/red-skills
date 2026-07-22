@@ -390,6 +390,16 @@ export async function waitForReviewCheck(
  */
 export type MergeReadiness = "merge" | "conflict" | "ci-failed" | "pending";
 
+export interface CiGreenEvidence {
+  checkCount: number;
+  summary: string;
+}
+
+export interface MergeReadinessResult {
+  readiness: MergeReadiness;
+  ciEvidence?: CiGreenEvidence;
+}
+
 /** Opt-in CI-aware merge wait for the UNLOCKED admin-PR landing (#812). Present →
  * the landing polls the PR's merge state until it settles before admin-merging.
  * Absent → admin-merge immediately (the legacy behaviour, fine on a base with no
@@ -404,6 +414,7 @@ export interface CiAwaitInput {
 }
 
 interface RollupEntry {
+  name?: unknown;
   status?: unknown;
   conclusion?: unknown;
   state?: unknown;
@@ -435,7 +446,7 @@ function checkPending(entry: RollupEntry): boolean {
   return false;
 }
 
-interface MergeStateView {
+export interface MergeStateView {
   mergeStateStatus: string;
   /** GitHub `mergeable`: MERGEABLE | CONFLICTING | UNKNOWN (empty when a caller
    * did not fetch it). The settled-vs-computing signal: `mergeStateStatus` alone
@@ -443,6 +454,33 @@ interface MergeStateView {
   mergeable: string;
   anyFailed: boolean;
   anyPending: boolean;
+  checkCount?: number;
+  successfulChecks?: number;
+  skippedOrNeutralChecks?: number;
+}
+
+function checkSucceeded(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return conclusion === "SUCCESS" || state === "SUCCESS";
+}
+
+function checkSkippedOrNeutral(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return ["SKIPPED", "NEUTRAL"].includes(conclusion) || ["SKIPPED", "NEUTRAL"].includes(state);
+}
+
+function emptyMergeStateView(): MergeStateView {
+  return {
+    mergeStateStatus: "",
+    mergeable: "",
+    anyFailed: false,
+    anyPending: false,
+    checkCount: 0,
+    successfulChecks: 0,
+    skippedOrNeutralChecks: 0,
+  };
 }
 
 /** Parse `gh pr view <num> --json mergeStateStatus,statusCheckRollup` stdout.
@@ -450,11 +488,11 @@ interface MergeStateView {
  * keeps polling rather than mis-deciding on a transient gh hiccup. */
 export function parseMergeStateView(stdout: string): MergeStateView {
   const text = stdout.trim();
-  if (text === "") return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+  if (text === "") return emptyMergeStateView();
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) {
-      return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+      return emptyMergeStateView();
     }
     const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
     const mergeable = (parsed as { mergeable?: unknown }).mergeable;
@@ -467,9 +505,12 @@ export function parseMergeStateView(stdout: string): MergeStateView {
       mergeable: typeof mergeable === "string" ? mergeable : "",
       anyFailed: entries.some(checkFailed),
       anyPending: entries.some(checkPending),
+      checkCount: entries.length,
+      successfulChecks: entries.filter(checkSucceeded).length,
+      skippedOrNeutralChecks: entries.filter(checkSkippedOrNeutral).length,
     };
   } catch {
-    return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+    return emptyMergeStateView();
   }
 }
 
@@ -513,6 +554,21 @@ export function classifyMergeState(view: MergeStateView): MergeReadiness {
   return "pending";
 }
 
+function ciEvidenceFor(view: MergeStateView, readiness: MergeReadiness): CiGreenEvidence | undefined {
+  if (readiness !== "merge") return undefined;
+  const checkCount = view.checkCount ?? 0;
+  const successfulChecks = view.successfulChecks ?? 0;
+  const skippedOrNeutralChecks = view.skippedOrNeutralChecks ?? 0;
+  if (checkCount === 0) return undefined;
+  if (view.anyFailed || view.anyPending) return undefined;
+  if (skippedOrNeutralChecks > 0) return undefined;
+  if (successfulChecks !== checkCount) return undefined;
+  return {
+    checkCount,
+    summary: `${checkCount} successful check(s)`,
+  };
+}
+
 /**
  * Poll `gh pr view <num>` until the PR settles to a terminal readiness
  * (`merge` / `conflict` / `ci-failed`) or the poll budget is exhausted. A
@@ -525,6 +581,16 @@ export async function waitForMergeReady(
   prNumber: number,
   input: CiAwaitInput,
 ): Promise<MergeReadiness> {
+  const result = await waitForMergeReadyWithEvidence(exec, repo, prNumber, input);
+  return result.readiness;
+}
+
+export async function waitForMergeReadyWithEvidence(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: CiAwaitInput,
+): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
 
@@ -532,11 +598,14 @@ export async function waitForMergeReady(
     const res = await exec([
       "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,statusCheckRollup",
     ]);
-    const verdict = classifyMergeState(parseMergeStateView(res.stdout));
-    if (verdict !== "pending") return verdict;
+    const view = parseMergeStateView(res.stdout);
+    const verdict = classifyMergeState(view);
+    if (verdict !== "pending") {
+      return { readiness: verdict, ...(ciEvidenceFor(view, verdict) ? { ciEvidence: ciEvidenceFor(view, verdict) } : {}) };
+    }
     if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
   }
-  return "pending";
+  return { readiness: "pending" };
 }
 
 /** Inputs for the UNLOCKED landing path, {@link landPr}. */
@@ -600,6 +669,12 @@ export interface LandPrInput {
    * immediately, the pre-#1337 behaviour.
    */
   mergeQueue?: boolean;
+  /**
+   * Final PR-path validation hook. Called after the PR exists and CI-aware merge
+   * has observed its current readiness, but before `gh pr merge`. Callers use it
+   * to either trust fresh green CI or run their local fallback gate.
+   */
+  beforeMerge?: (input: { prNumber: number; ciEvidence?: CiGreenEvidence }) => Promise<{ ok: true } | { ok: false }>;
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -611,6 +686,7 @@ export type LandPrFailReason =
   | "conflict"
   | "ci-failed"
   | "ci-pending"
+  | "before-merge-failed"
   | "merge-failed";
 
 export interface LandPrResult {
@@ -619,6 +695,8 @@ export interface LandPrResult {
   prNumber?: number;
   /** Forge-reported merge commit for a completed synchronous merge. */
   mergeSha?: string;
+  /** Fresh green CI evidence observed immediately before merge, when usable. */
+  ciEvidence?: CiGreenEvidence;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
 }
@@ -863,7 +941,7 @@ export async function fastForwardLocalTarget(
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
   // `locked` is retained for caller compatibility; mirror promotion is identical
   // for both lock states.
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue, beforeMerge } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -911,11 +989,17 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
   //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
   //   - merge      → fall through to the merge below.
+  let ciEvidence: CiGreenEvidence | undefined;
   if (ciAwait) {
-    const ready = await waitForMergeReady(exec, repo, prNumber, ciAwait);
-    if (ready === "conflict") return { ok: false, prNumber, reason: "conflict" };
-    if (ready === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
-    if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, ciAwait);
+    ciEvidence = ready.ciEvidence;
+    if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+    if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+    if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  }
+
+  if (beforeMerge && !(await beforeMerge({ prNumber, ...(ciEvidence ? { ciEvidence } : {}) })).ok) {
+    return { ok: false, prNumber, reason: "before-merge-failed" };
   }
 
   // 3. Merge: branch protection is honored rather than bypassed (#1103). With a
@@ -931,7 +1015,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // An ENQUEUED PR has not merged yet — the queue lands it asynchronously once it
   // drains, so there is no merge commit on `origin/<target>` to promote to. Skip
   // the local fast-forward rather than pulling a tip that does not carry this work.
-  if (mergeQueue) return { ok: true, prNumber };
+  if (mergeQueue) return { ok: true, prNumber, ...(ciEvidence ? { ciEvidence } : {}) };
 
   const mergedCommit = await exec([
     "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
@@ -942,7 +1026,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // ref-only and decoupled from the primary checkout's branch and working tree.
   await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
 
-  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}) };
+  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
 }
 
 /**
