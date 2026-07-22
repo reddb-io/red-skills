@@ -106,6 +106,11 @@ export async function supervisorWatchdogCommand(
       pollMs: config.pollIntervalS * 1000,
       shouldStop: () => stopping,
       sleep,
+      onPassError: (error) => {
+        io.log(
+          `watchdog: pass failed; recovery remains armed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
       pass: async () => {
         if (existsSync(paths.supervisorStopPath)) {
           stopping = true;
@@ -123,7 +128,11 @@ export async function supervisorWatchdogCommand(
         // A missing repo pid means the supervisor completed its explicit stop
         // and cleaned its identity. A stale recorded pid stays non-null and is
         // exactly the crash case the next pass must keep trying to recover.
-        if (result.health === "absent" && result.pid === null) stopping = true;
+        if (
+          result.health === "absent" &&
+          result.pid === null &&
+          !(await io.isRecoveryPending?.())
+        ) stopping = true;
         if (result.crashLoopSuppressed) stopping = true;
       },
     });
