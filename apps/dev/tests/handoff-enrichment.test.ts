@@ -84,6 +84,20 @@ describe("AFK handoff enrichment", () => {
     expect(rendered).not.toContain("Graph recall");
   });
 
+  it("matches context-map language across simple singular and plural forms", async () => {
+    const rendered = await buildHandoffEnrichment(
+      {
+        title: "AFK handoff enrichment",
+        body: "Resolve ownership through `.red/CONTEXT-MAP.md` for Spec #22.",
+        labels: ["type:task", "spec:22"],
+        specRef: "22",
+      },
+      deps(),
+    );
+
+    expect((decode(rendered) as { context: { name: string } }).context.name).toBe("Dev");
+  });
+
   it("discovers at most two recent path-local PR exemplars and stays within the byte budget", async () => {
     const separator = "\u001e";
     const field = "\u001f";
