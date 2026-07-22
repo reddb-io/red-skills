@@ -6,14 +6,14 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
 import { FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { readPidStartTime } from "../core/state.js";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
-import { reapStaleSupervisorState } from "./supervisor-state.js";
+import { isSupervisorIdentityLive, readSupervisorIdentity, reapStaleSupervisorState } from "./supervisor-state.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -26,21 +26,17 @@ function isLivePid(pid: number): boolean {
   }
 }
 
-async function readPid(path: string): Promise<number | null> {
-  try {
-    const raw = (await readFile(path, "utf8")).trim();
-    if (!/^\d+$/.test(raw)) return null;
-    return Number(raw);
-  } catch {
-    return null;
-  }
-}
-
-async function waitForPidFile(pidFile: string, deadlineMs: number): Promise<number | null> {
+async function waitForPinnedPid(
+  pidFile: string,
+  pidStartFile: string,
+  deadlineMs: number,
+): Promise<number | null> {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
-    const pid = await readPid(pidFile);
-    if (pid && isLivePid(pid)) return pid;
+    const identity = await readSupervisorIdentity(pidFile, pidStartFile);
+    if (identity && isSupervisorIdentityLive(identity, isLivePid, readPidStartTime)) {
+      return identity.pid;
+    }
     await sleep(100);
   }
   return null;
@@ -118,7 +114,9 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     if (stderrFd !== undefined) closeSync(stderrFd);
   }
 
-  return waitForPidFile(pidFile, opts.probeDeadlineMs ?? 15_000);
+  // Pinned-pid probe (#2442) over the boot window main extended for
+  // migrations/reaps (#2470): identity must be live AND start-time-pinned.
+  return waitForPinnedPid(pidFile, paths.supervisorPidStartPath, opts.probeDeadlineMs ?? 15_000);
 }
 
 /**
