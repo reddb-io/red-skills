@@ -6,13 +6,7 @@
  * the stale record when that process is dead. `start_time` pins ownership so a
  * former process cannot renew or release a later holder that reused its PID.
  */
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
@@ -30,7 +24,11 @@ export interface SingletonLease {
 }
 
 export type SingletonLeaseAcquireResult =
-  | { readonly acquired: true; readonly reaped: boolean; readonly lease: SingletonLease }
+  | {
+      readonly acquired: true;
+      readonly reaped: boolean;
+      readonly lease: SingletonLease;
+    }
   | { readonly acquired: false; readonly lease: SingletonLease };
 
 export interface SingletonLeaseFs {
@@ -53,7 +51,10 @@ export interface SingletonLeaseStoreOptions {
 
 export interface SingletonLeaseStore {
   read(name: string): Promise<SingletonLease | undefined>;
-  acquire(name: string, owner: SingletonLeaseOwner): Promise<SingletonLeaseAcquireResult>;
+  acquire(
+    name: string,
+    owner: SingletonLeaseOwner,
+  ): Promise<SingletonLeaseAcquireResult>;
   renew(name: string, owner: SingletonLeaseOwner): Promise<SingletonLease>;
   release(name: string, owner: SingletonLeaseOwner): Promise<boolean>;
 }
