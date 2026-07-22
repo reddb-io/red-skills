@@ -154,6 +154,29 @@ export interface WatchdogResult {
   crashLoopSuppressed: boolean;
 }
 
+export interface SupervisorWatchdogLoopOptions {
+  pollMs: number;
+  pass(): Promise<void>;
+  shouldStop(): boolean;
+  sleep(ms: number): Promise<void>;
+}
+
+/**
+ * Keep the already-existing watchdog decision armed for the whole fleet
+ * lifetime. The loop is deliberately pure over injected process/fs IO so the
+ * command owner can remain repo-scoped and tests can kill the modeled
+ * supervisor without wall-clock sleeps.
+ */
+export async function runSupervisorWatchdogLoop(
+  options: SupervisorWatchdogLoopOptions,
+): Promise<void> {
+  while (!options.shouldStop()) {
+    await options.pass();
+    if (options.shouldStop()) return;
+    await options.sleep(options.pollMs);
+  }
+}
+
 /**
  * Tear down a supervisor proven quiescent: kill its tree, kill its detached
  * workers (#579), clear the control files, then reconcile any claims/labels it
