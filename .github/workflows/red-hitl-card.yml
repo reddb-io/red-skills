@@ -69,8 +69,17 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
+      github.event.comment.user.type == 'User' &&
+      !startsWith(github.event.comment.body, '🤖') &&
+      !startsWith(github.event.comment.body, '⛔') &&
+      !startsWith(github.event.comment.body, '⚠️') &&
+      !startsWith(github.event.comment.body, '<!-- red:hitl-card') &&
+      !startsWith(github.event.comment.body, '<details data-kind="directive">') &&
       !github.event.issue.pull_request &&
       contains(toJSON(github.event.issue.labels), '"ready-for-human"')
+    concurrency:
+      group: red-hitl-card-act-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     # /approve merges the linked PR, which needs contents: write — the
     # workflow-level block stays read-only for render/refresh.
@@ -97,6 +106,7 @@ jobs:
           # Pass via env to avoid shell-injection from public comment text.
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
         run: |
           set -euo pipefail
           LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
@@ -104,6 +114,7 @@ jobs:
             --issue "${{ github.event.issue.number }}" \
             --body "$COMMENT_BODY" \
             --author "$COMMENT_AUTHOR" \
+            --author-type "$COMMENT_AUTHOR_TYPE" \
             --repo "${{ github.repository }}"
 
   # ─── refresh ───────────────────────────────────────────────────────────────
