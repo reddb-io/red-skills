@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readPidStartTime } from "../src/core/state.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 import { afkPaths } from "../src/runtime/wire.js";
+import { supervisorWatchdogCommand } from "../src/commands/supervisor-watchdog.js";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -60,6 +61,26 @@ afterEach(async () => {
 });
 
 describe("persistent supervisor watchdog command (#2442)", () => {
+  it("reclaims a watchdog pid reused by an unrelated live process", async () => {
+    const root = mkdtempSync(join(tmpdir(), "supervisor-watchdog-owner-"));
+    roots.push(root);
+    const paths = afkPaths(root);
+    mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    children.push(unrelated);
+    const unrelatedPid = await waitFor(() => unrelated.pid ?? null);
+    writeFileSync(paths.supervisorWatchdogPidPath, String(unrelatedPid), "utf8");
+    writeFileSync(paths.supervisorWatchdogPidStartPath, "recycled-start", "utf8");
+    writeFileSync(paths.supervisorStopPath, "stop", "utf8");
+
+    await expect(supervisorWatchdogCommand([], root)).resolves.toBe(0);
+
+    expect(existsSync(paths.supervisorWatchdogPidPath)).toBe(false);
+    expect(existsSync(paths.supervisorWatchdogPidStartPath)).toBe(false);
+  });
+
   it("respawns a real steady-state supervisor and reconciles its dead claim", async () => {
     const root = mkdtempSync(join(tmpdir(), "supervisor-watchdog-integration-"));
     roots.push(root);
