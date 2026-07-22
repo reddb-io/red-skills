@@ -185,6 +185,8 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // exactly ONE agent run — the completed work is never re-run.
     expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:satisfied-by-ci"))).toBe(true);
+    expect(trace.workerEvents.some((event) => event.kind === "worker.post_merge_validation" && event.payload?.path === "satisfied-by-ci")).toBe(true);
   });
 
   it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {
@@ -801,6 +803,25 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
+  });
+
+  it("injects repository enrichment and silently keeps the base handoff when discovery fails (#2402)", async () => {
+    const enriched = harness({ outcome: "done" });
+    enriched.deps.lookups.handoffEnrichment = async (metadata) => {
+      expect(metadata).toMatchObject({ issue: 9, labels: ["ready-for-agent"], title: "Fix the thing" });
+      return "context:\n  name: Dev";
+    };
+    await processIssue(enriched.deps, enriched.input);
+    expect(enriched.trace.runAgentCalls[0]?.handoffContent ?? "").toContain(
+      "<handoff-enrichment>\ncontext:\n  name: Dev\n</handoff-enrichment>",
+    );
+
+    const degraded = harness({ outcome: "done" });
+    degraded.deps.lookups.handoffEnrichment = async () => {
+      throw new Error("git log unavailable");
+    };
+    await expect(processIssue(degraded.deps, degraded.input)).resolves.toMatchObject({ outcome: "done" });
+    expect(degraded.trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<handoff-enrichment>");
   });
 
   it("alternates output-shaping steering by issue and stamps the measurement arm (#1638)", async () => {

@@ -105,7 +105,7 @@ function deps(): CastleMcpDependencies {
   };
 }
 
-describe("dev:afk MCP tools", () => {
+describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "fleet_list",

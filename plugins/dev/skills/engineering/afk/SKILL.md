@@ -11,9 +11,9 @@ operandi; `/go` is the ad-hoc-only exception. Drain the agent-ready backlog by
 letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
-## Operate the castle through the `dev:afk` MCP
+## Operate the castle through the `castle` MCP
 
-**The `dev:afk` MCP is the interface; `/afk` is one of its clients.** Every
+**The `castle` MCP is the interface; `/afk` is one of its clients.** Every
 castle capability this skill needs — queue, dispatch, fleet, runners, gate,
 landing, claim, worktrees, hygiene, observability — is an MCP tool returning
 structured TOON. Drive those tools; do not shell out to reimplement what a tool
@@ -58,7 +58,7 @@ contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
 
-Each verb below names the `dev:afk` tool that serves it; the flag form is the
+Each verb below names the `castle` tool that serves it; the flag form is the
 CLI fallback for the same operation.
 
 - `/afk` - drain every open issue labelled `ready-for-agent`. Read the queue
@@ -117,7 +117,7 @@ composite action, or local bundle invocation.
 
 Read the focused reference before touching that concern:
 
-- The `dev:afk` MCP tool surface, host prefixing, mutation modes, and the CLI
+- The `castle` MCP tool surface, host prefixing, mutation modes, and the CLI
   fallback rule: [`MCP.md`](./MCP.md).
 - Runtime, sandcastle substrate, CLI forwarding, bootstrap, hard preconditions,
   issue selection, lifecycle, failure labels, per-issue loop, merge/close,
@@ -145,7 +145,7 @@ Read the focused reference before touching that concern:
 
 ## Load-Bearing Rules
 
-- The `dev:afk` MCP is the canonical castle interface (ADR 0120). `/afk` is a
+- The `castle` MCP is the canonical castle interface (ADR 0120). `/afk` is a
   client of it, so a capability missing from the tools is a gap to file against
   the MCP, never a reason to hand-roll the operation in shell.
 - Tracked work belongs in `/afk`. An empty `ready-for-agent` queue with a

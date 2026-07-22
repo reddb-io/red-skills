@@ -420,7 +420,7 @@ const buildSandboxHandle = (
                 branch,
               });
               return Layer.provide(
-                FileDisplay.layer(resolvedLogging.path),
+                FileDisplay.layer(resolvedLogging.path, resolvedLogging.format),
                 NodeFileSystem.layer,
               );
             })()

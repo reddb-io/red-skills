@@ -2,6 +2,13 @@ import {
   LABEL_TYPE_SPEC,
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
+import {
+  boundedMap,
+  buildAliasedRepositoryQuery,
+  GITHUB_GRAPHQL_BATCH_SIZE,
+  GITHUB_REST_CONCURRENCY,
+  parseAliasedRepositoryResponse,
+} from "@reddb-io/shared/github-batch.js";
 import { scrubOutbound } from "../outbound-redaction.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
 
@@ -33,6 +40,20 @@ export async function editLabels(
 /** `gh issue comment --body …` (best-effort). */
 export async function comment(ctx: GhContext, issue: number, body: string): Promise<void> {
   await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", scrubOutbound(body)]);
+}
+
+/** Edit an existing issue comment by REST id. Returns false when gh refuses the
+ * patch so callers can preserve idempotency instead of posting duplicates. */
+export async function editComment(ctx: GhContext, commentId: number, body: string): Promise<boolean> {
+  const r = await runGh(ctx, [
+    "api",
+    "-X",
+    "PATCH",
+    apiPath(ctx, `issues/comments/${commentId}`),
+    "-f",
+    `body=${scrubOutbound(body)}`,
+  ]);
+  return r.code === 0;
 }
 
 // ---------- atomic GitHub-native claim (ADR 0066) ----------
@@ -227,8 +248,57 @@ async function listNativeSubIssues(ctx: GhContext, spec: number): Promise<number
     "--jq",
     ".[] | {number}",
   ]);
-  if (r.code !== 0) return [];
+  if (r.code !== 0) throw new Error(`gh: failed to list native sub-issues for #${spec} (code ${r.code})`);
   return parseNumberJsonLines(r.stdout);
+}
+
+async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  const [owner, repo] = ctx.repo.split("/", 2);
+  if (!owner || !repo) {
+    const rows = await boundedMap(specs, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
+    return new Map(rows);
+  }
+  for (let start = 0; start < specs.length; start += GITHUB_GRAPHQL_BATCH_SIZE) {
+    const chunk = specs.slice(start, start + GITHUB_GRAPHQL_BATCH_SIZE);
+    const operation = buildAliasedRepositoryQuery("issue", chunk, ["subIssues"]);
+    const response = await runGh(ctx, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${operation.query}`,
+      "-F",
+      `owner=${owner}`,
+      "-F",
+      `repo=${repo}`,
+    ]);
+    if (response.code !== 0) {
+      const fallback = await boundedMap(chunk, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
+      for (const [spec, children] of fallback) out.set(spec, children);
+      continue;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(response.stdout || "{}");
+    } catch {
+      payload = {};
+    }
+    const fallbackSpecs: number[] = [];
+    for (const row of parseAliasedRepositoryResponse(operation, payload)) {
+      const nodes = (row.value?.subIssues as { nodes?: Array<{ number?: unknown }> } | undefined)?.nodes;
+      if (row.error || !Array.isArray(nodes)) {
+        fallbackSpecs.push(row.number);
+        continue;
+      }
+      const children = nodes.map((node) => Number(node.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0);
+      out.set(row.number, children);
+    }
+    const fallback = await boundedMap(fallbackSpecs, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
+    for (const [spec, children] of fallback) {
+      out.set(spec, children);
+    }
+  }
+  return out;
 }
 
 /** List Specs for the sub-issue reconciler: open Specs plus recently closed
@@ -261,20 +331,18 @@ export async function listSpecSubIssueCandidates(
     }))
     .filter((row) => Number.isInteger(row.number) && row.number > 0);
 
-  const candidates: SpecSubIssueCandidate[] = [];
-  for (const spec of specs) {
-    const [labelChildren, nativeSubIssues] = await Promise.all([
-      listSpecLabelChildren(ctx, spec.number),
-      listNativeSubIssues(ctx, spec.number),
-    ]);
-    candidates.push({
+  const [labelChildren, nativeSubIssues] = await Promise.all([
+    Promise.all(specs.map((spec) => listSpecLabelChildren(ctx, spec.number))),
+    listNativeSubIssuesBatch(ctx, specs.map((spec) => spec.number)),
+  ]);
+  return specs.map((spec, index) => {
+    return {
       number: spec.number,
       labels: spec.labels,
-      labelChildren,
-      nativeSubIssues,
-    });
-  }
-  return candidates;
+      labelChildren: labelChildren[index] ?? [],
+      nativeSubIssues: nativeSubIssues.get(spec.number) ?? [],
+    };
+  });
 }
 
 /** Idempotently create the `runner-error` label (best-effort). Mirrors
@@ -351,15 +419,27 @@ export async function viewIssueFull(
   }
 }
 
-/** `gh issue view --json body` → raw body, or undefined when absent. */
-export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
+export type IssueBodyReadResult =
+  | { ok: true; body: string }
+  | { ok: false; reason: string };
+
+/** `gh issue view --json body` → raw body. Distinguishes an empty body from a
+ * failed/unparseable read so readiness lint never mutates on unknown content. */
+export async function readIssueBody(ctx: GhContext, issue: number): Promise<IssueBodyReadResult> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);
-  if (r.code !== 0) return undefined;
+  if (r.code !== 0) return { ok: false, reason: `failed to read issue body (gh exit ${r.code})` };
   try {
-    return String((JSON.parse(r.stdout) as { body?: string }).body ?? "");
+    return { ok: true, body: String((JSON.parse(r.stdout) as { body?: string }).body ?? "") };
   } catch {
-    return undefined;
+    return { ok: false, reason: "failed to parse issue body JSON" };
   }
+}
+
+/** `gh issue view --json body` → raw body, or undefined when absent/unreadable.
+ * Compatibility wrapper for callers that deliberately degrade to best effort. */
+export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
+  const result = await readIssueBody(ctx, issue);
+  return result.ok ? result.body : undefined;
 }
 
 /** `gh issue view --json url` → the resolved issue url. */

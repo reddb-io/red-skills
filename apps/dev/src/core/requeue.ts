@@ -10,9 +10,11 @@
 // command (reached from `/retake`) and `/hitl` (the interactive decision path)
 // are its IO callers.
 //
-// #860 narrows the scope: only `blocked:validation` and `blocked:spec` issues
-// are accepted. Mixed `blocked:*` states and label/body kind mismatches are
-// refused without mutation and direct the maintainer to `/hitl`.
+// #860 narrows the scope to explicitly supported transient parks. Alongside
+// `blocked:validation` and `blocked:spec`, `blocked:infra` is requeueable because
+// a recovered infrastructure fault needs no new human decision. Mixed
+// `blocked:*` states and label/body kind mismatches are refused without mutation
+// and direct the maintainer to `/hitl`.
 
 import {
   clearCurrentBlocker,
@@ -38,7 +40,7 @@ export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-co
  * any other human-input kind still requires `/hitl` (the interactive decision
  * path); those must not be auto-cleared without the full HITL interview.
  */
-export const REQUEUE_SUPPORTED_KINDS = new Set(["validation", "spec"]);
+export const REQUEUE_SUPPORTED_KINDS = new Set(["validation", "spec", "infra"]);
 
 export interface RequeueInput {
   /** The current issue body markdown. */
@@ -52,7 +54,7 @@ export interface RequeueInput {
 }
 
 /**
- * Is `kind` requeueable? The supported set is `{validation, spec}` (#860).
+ * Is `kind` requeueable? The supported set is `{validation, spec, infra}`.
  */
 function kindRequeueable(kind: string): boolean {
   return REQUEUE_SUPPORTED_KINDS.has(kind);
@@ -119,9 +121,9 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
  * labels, and add `ready-for-agent`. The body is always rewritten when a blocker
  * is active so the transition can never degrade into a label-only flip.
  *
- * Narrowed to `blocked:validation` and `blocked:spec` only (#860). Mixed
- * `blocked:*` states and label/body kind mismatches set `refuseForHitl: true`
- * and direct the caller to `/hitl` instead.
+ * Narrowed to explicit transient parks: `blocked:validation`, `blocked:spec`,
+ * and `blocked:infra`. Mixed `blocked:*` states and label/body kind mismatches
+ * set `refuseForHitl: true` and direct the caller to `/hitl` instead.
  */
 export function planRequeue(input: RequeueInput): RequeuePlan {
   const activeBlocker = parseCurrentBlocker(input.body);
@@ -163,7 +165,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   // Unsupported label kind → /hitl handles other human-input blocker types.
   if (labelKind !== null && !kindRequeueable(labelKind)) {
     return refuse(
-      `blocked:${labelKind} is not in the supported set (validation, spec): use /hitl`,
+      `blocked:${labelKind} is not in the supported set (validation, spec, infra): use /hitl`,
       true,
       activeBlocker,
       input.body,
@@ -177,7 +179,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     !kindRequeueable(activeBlocker.kind)
   ) {
     return refuse(
-      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec): use /hitl`,
+      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec, infra): use /hitl`,
       true,
       activeBlocker,
       input.body,

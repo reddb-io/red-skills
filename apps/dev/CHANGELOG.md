@@ -1,5 +1,49 @@
 # @reddb-io/dev
 
+## 2.81.0
+
+### Minor Changes
+
+- b668e65: Attempts now keep their base fresh instead of letting drift accumulate until
+  landing pays for it. A notes-loop attempt merges `origin/<trunk>` into its
+  working branch at every iteration boundary (`afk.notes_loop.trunk_sync`, on by
+  default): uncommitted work is never merged over, and a conflicting merge is
+  aborted and handed to the inner agent as its first instruction in the next
+  iteration. Landing gained the companion refusal — measured after the squash, a
+  branch more than 40 commits ahead of a base more than 12h stale parks with the
+  guard's own actionable reason instead of grinding a rebase that cannot
+  converge. (#2481)
+
+### Patch Changes
+
+- e7ef0d0: Rename the dev plugin's MCP servers to colon-free names: `dev:afk` → `castle` and
+  `code-nav` → `navigator`. Codex rejects `:` in MCP server names, which broke every
+  `dev:*` form. The AFK launcher is now `plugins/dev/hooks/castle-mcp.sh`, the bundle
+  is `castle-mcp.bundle.min.mjs`, and the npm bin is `red-skills-castle-mcp`. Pure
+  rename, zero behavior change; takes effect on the next plugin update.
+  - @reddb-io/shared@2.81.0
+  - @reddb-io/build-info@2.81.0
+
+## 2.80.0
+
+### Minor Changes
+
+- 70b50c3: Landing squashes a worker branch's own micro-history to one commit at its fork
+  point before the pre-merge rebase, so a 60-commit retry chain presents ONE
+  consolidated conflict set instead of replaying every continuous-push commit
+  sequentially onto fresh trunk. Branch adoption (re-claim resume) now opens with
+  a mandatory base sync instruction — fetch + rebase onto origin/<base>, resolving
+  conflicts while the agent is present and drift is smallest. (#2481)
+
+### Patch Changes
+
+- 7ae5d01: Skill docs now teach the npx direct-run form (`npx -y -p @reddb-io/red-skills@<version>
+red-skills-dev ...`) as the canonical invocation everywhere; a bare `red-skills-dev`
+  shim is demoted to a warm-cache optimization. Field installs without the shim
+  followed the old docs into command-not-found failures.
+  - @reddb-io/shared@2.80.0
+  - @reddb-io/build-info@2.80.0
+
 ## 2.79.1
 
 ### Patch Changes

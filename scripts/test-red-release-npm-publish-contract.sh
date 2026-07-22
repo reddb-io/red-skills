@@ -192,10 +192,15 @@ else
   fail "GitHub Release creation must be idempotent while major-tag reconciliation still runs"
 fi
 
-if grep -qF 'scheduled red-publish retry' "$WORKFLOW"; then
-  pass "fleet deferral notice names the scheduled retry path"
+# The fleet-activity deferral was REMOVED (2026-07-22): red-publish never
+# touches main and running workers pin their bundle at spawn, so publishing
+# during a fleet is safe; the old gate repeatedly held releases hostage to
+# orphaned `running` labels.
+if ! grep -qF 'Defer if /afk fleet is active' "$WORKFLOW" &&
+   ! grep -qF "steps.fleet.outputs.running" "$WORKFLOW"; then
+  pass "publish has no fleet-activity deferral gate"
 else
-  fail "fleet deferral notice must tell operators the scheduled retry will resume publication"
+  fail "red-publish must not defer on fleet activity — it never touches main"
 fi
 
 if grep -qF 'for attempt in 1 2 3 4 5 6 7 8 9 10' "$WORKFLOW" &&

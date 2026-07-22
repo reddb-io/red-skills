@@ -244,6 +244,21 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("Never hand-delete `.red/state/afk/`");
   });
 
+  it("reports executable ticket acceptance-criteria lint read-only with triage as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Executable ticket acceptance-criteria lint");
+    expect(skill).toContain("ready-for-agent");
+    expect(skill).toContain("machine-checkable acceptance criteria");
+    expect(skill).toContain("apps/dev/src/core/executable-acceptance.ts");
+    expect(skill).toContain("never edit labels and never post comments");
+    expect(skill).toContain("executable ticket acceptance-criteria lint (check 23)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Executable ticket acceptance-criteria lint (check 23)");
+    expect(apply).toContain("delegate to `/triage`");
+  });
+
   it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {
     const skill = await readDoctorSkill();
 

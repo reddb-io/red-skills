@@ -1,5 +1,19 @@
 # @reddb-io/benchmark-code-understanding
 
+## 2.81.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.81.0
+- @reddb-io/build-info@2.81.0
+
+## 2.80.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.80.0
+- @reddb-io/build-info@2.80.0
+
 ## 2.79.1
 
 ### Patch Changes

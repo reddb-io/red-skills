@@ -20,6 +20,7 @@ export {
   interpretCompletion,
   interpretOutcome,
   isExhaustionError,
+  isHostConfigRunnerError,
   isTransientRunnerError,
   parseIdleTimeout,
   parseMaxIterations,
