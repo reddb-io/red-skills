@@ -249,7 +249,7 @@ export interface HarnessOptions {
   adversarialExtractError?: string;
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
-  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
   /** Exit code for the final `gh pr merge` command. Defaults to 0. */
   prMergeCode?: number;
   /** Spec cascade rebase (#1007): remote afk/* branches returned by
@@ -484,11 +484,12 @@ export function harness(opts: HarnessOptions = {}): {
       }
       // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
       if (j.includes("pr view")) {
-        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
-          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
-          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
-          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
-          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        const map: Record<string, { mergeStateStatus: string; mergeable: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", statusCheckRollup: [] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
