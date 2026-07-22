@@ -14,13 +14,36 @@ const BOLD_ACCEPTANCE_HEADING_RE = /^\s*\*\*acceptance\s+criteria:?\*\*\s*$/i;
 const NEXT_SECTION_RE = /^\s*(?:#{1,6}\s+\S|\*\*[^*]+:?\*\*\s*$)/;
 const CHECKLIST_ITEM_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?(.+?)\s*$/;
 
-const CHECKABLE_PATTERNS = [
+const DIRECT_ARTIFACT_PATTERNS = [
   /`[^`]+`/,
   /\b(?:pnpm|npm|yarn|bun|cargo|go test|pytest|vitest|jest|playwright|make|gh|curl)\b/i,
-  /\b(?:test|tests|fixture|fixtures|snapshot|assert|expect|regression)\b/i,
-  /\b(?:running|run|returns?|exits?|emits?|prints?|contains?|renders?|creates?|updates?|removes?|routes?|labels?|stays?|fails?|passes?|blocks?|allows?|rejects?)\b/i,
-  /\b(?:idempotent|exactly one|no duplicate|machine-checkable)\b/i,
+  /\b(?:test|tests|fixture|fixtures|snapshot|assert|expect|regression|reproduction|command|workflow)\b/i,
 ];
+
+const OBSERVABLE_SURFACE_RE =
+  /\b(?:artifact|behavior|body|branch|comment|exit code|field|file|issue|label|output|pr|request|response|route|state|status|stderr|stdout|url|workflow)\b/i;
+
+const PINNED_BEHAVIOR_RE =
+  /\b(?:at least|at most|blocks?|contains?|does not|emits?|equals?|exactly|exits?|fails?|idempotent|leaves?|machine-checkable|no duplicate|only one|prints?|receives?|rejects?|remains?|returns?|routes?|same observable|stays?|without|with no)\b/i;
+
+const TRUSTED_RECIPE_COMMENT_SOURCES = new Set(["automation", "trusted"]);
+
+export interface AcceptanceCriteriaRecipeComment {
+  id?: number;
+  body: string;
+  sourceTrust?: string;
+}
+
+export interface OwnedAcceptanceCriteriaRecipeComment {
+  id?: number;
+  body: string;
+}
+
+export interface AcceptanceCriteriaRecipeCommentUpdate {
+  action: "none" | "create" | "update";
+  id?: number;
+  body: string;
+}
 
 export function lintExecutableAcceptanceCriteria(body: string): AcceptanceCriteriaLintResult {
   const section = acceptanceCriteriaSection(body);
@@ -74,6 +97,26 @@ export function hasAcceptanceCriteriaRecipeComment(comments: readonly { body: st
   return comments.some((comment) => comment.body.includes(ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER));
 }
 
+export function findOwnedAcceptanceCriteriaRecipeComment(
+  comments: readonly AcceptanceCriteriaRecipeComment[],
+): OwnedAcceptanceCriteriaRecipeComment | undefined {
+  return comments.find((comment) => {
+    if (!comment.body.includes(ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER)) return false;
+    return TRUSTED_RECIPE_COMMENT_SOURCES.has(String(comment.sourceTrust ?? ""));
+  });
+}
+
+export function planAcceptanceCriteriaRecipeCommentUpdate(
+  comments: readonly AcceptanceCriteriaRecipeComment[],
+  lint: AcceptanceCriteriaLintResult,
+): AcceptanceCriteriaRecipeCommentUpdate {
+  const body = renderAcceptanceCriteriaRecipeComment(lint);
+  const existing = findOwnedAcceptanceCriteriaRecipeComment(comments);
+  if (!existing) return { action: "create", body };
+  if (existing.body === body) return { action: "none", id: existing.id, body };
+  return { action: "update", id: existing.id, body };
+}
+
 function acceptanceCriteriaSection(body: string): string | undefined {
   const lines = body.split(/\r?\n/);
   const start = lines.findIndex((line) => ACCEPTANCE_HEADING_RE.test(line) || BOLD_ACCEPTANCE_HEADING_RE.test(line));
@@ -91,5 +134,6 @@ function extractChecklistItems(section: string): string[] {
 }
 
 function isMachineCheckable(item: string): boolean {
-  return CHECKABLE_PATTERNS.some((pattern) => pattern.test(item));
+  if (DIRECT_ARTIFACT_PATTERNS.some((pattern) => pattern.test(item))) return true;
+  return OBSERVABLE_SURFACE_RE.test(item) && PINNED_BEHAVIOR_RE.test(item);
 }
