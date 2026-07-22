@@ -61,7 +61,30 @@ export function runHostPrerequisiteProbe(context: OperationalProbeContext): Oper
   }
 
   const bashVersion = parseBashVersion(input.bashVersion);
-  if (bashVersion && olderThanMinimum(bashVersion)) {
+  if (!bashVersion) {
+    const observed = input.bashVersion?.trim() || "no output";
+    const failure = input.bashVersionError
+      ? input.bashVersionExitCode === undefined
+        ? `bash --version failed: ${input.bashVersionError}`
+        : `bash --version exited ${input.bashVersionExitCode}: ${input.bashVersionError}`
+      : input.bashVersionExitCode === undefined
+        ? `could not determine bash version from: ${observed}`
+        : `bash --version exited ${input.bashVersionExitCode} with no diagnostic`;
+    return {
+      id: HOST_PREREQUISITE_PROBE_ID,
+      name: HOST_PREREQUISITE_PROBE_NAME,
+      verdict: "red",
+      evidence: failure,
+      canonicalFix: `Install a working bash ${MINIMUM_BASH_VERSION} or newer and expose it on PATH. Verify after installation: bash --version`,
+      data: {
+        bashVersionOutput: observed,
+        bashVersionExitCode: input.bashVersionExitCode,
+        bashVersionError: input.bashVersionError,
+        minimumBashVersion: MINIMUM_BASH_VERSION,
+      },
+    };
+  }
+  if (olderThanMinimum(bashVersion)) {
     const observed = bashVersion.join(".");
     return {
       id: HOST_PREREQUISITE_PROBE_ID,
