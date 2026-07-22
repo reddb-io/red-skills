@@ -207,6 +207,10 @@ export interface StageCommon {
   effort?: AgentEffort;
   resolvedBase?: WorkerBaseResolution;
   backpressureChecks?: readonly BackpressureCheck[];
+  /** When true, emitFailure suppresses the `live branch:` link in the envelope
+   * diff section — used for pre-push boot failures where the worker branch was
+   * never pushed to origin. */
+  noBranchLink?: boolean;
 }
 export async function emitBackpressureReview(
   c: StageCommon,
@@ -237,7 +241,7 @@ export async function emitFailure(
     branch: c.branch,
     attempt: input.attempt,
     diff: diffLabel,
-    repo: input.repo,
+    repo: c.noBranchLink ? "" : input.repo,
     repoDir: input.repoDir,
     worktreeRel: input.attemptDir,
     diffstat: "",

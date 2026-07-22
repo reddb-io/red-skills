@@ -1320,3 +1320,26 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(trace.ensuredLabels).not.toContain("blocked:spec");
   });
 });
+
+describe("processIssue — trunk-mirror boot failure (#2436)", () => {
+  it("parks as runner-transient (not base-stale) when resolveFreshBase fails", async () => {
+    // Regression: attempts on issues with prose like "branch: when the PR lands"
+    // in their body caused parseBranchPin to extract "when" as the branch pin,
+    // which made resolveFreshBase({ base: "when" }) fail.  The issue was then
+    // parked as base-stale (non-recoverable → human), misrepresenting an
+    // unstarted issue as finished work awaiting merge.  The fix classifies this
+    // as runner-transient so the fleet auto-retries up to the bounded cap.
+    const { deps, input, trace } = harness({ freshBaseFail: true });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("runner-transient");
+    // No agent work ran — no runAgent calls.
+    expect(trace.runAgentCalls).toEqual([]);
+    // No fresh branch was prepared — the branch was never pushed.
+    expect(trace.freshWorkerBranchCalls).toEqual([]);
+    // Park comment must not contain a live-branch link (branch was never pushed).
+    const envelope = trace.envelopeBodies[0] ?? "";
+    expect(envelope).not.toMatch(/live branch:/);
+  });
+});

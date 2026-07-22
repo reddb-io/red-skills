@@ -15,9 +15,12 @@
 
 // A canonical `branch:` line: optional leading whitespace, an optional markdown
 // list marker (`-`/`*` plus whitespace), the literal lowercase key `branch:`,
-// whitespace, then a single non-whitespace branch token. Prose like
-// "this branch: foo" never matches because the key must start the line.
-const BRANCH_LINE = /^[ \t]*(?:[-*][ \t]+)?branch:[ \t]+(\S+)/;
+// whitespace, then a single non-whitespace branch token, then only optional
+// trailing spaces/tabs and an optional `#…` comment before end-of-line. Prose
+// like "branch: when the PR lands" never matches because trailing words
+// (non-`#` content) fail the anchor; "this branch: foo" never matches because
+// the key must start the line.
+const BRANCH_LINE = /^[ \t]*(?:[-*][ \t]+)?branch:[ \t]+(\S+)[ \t]*(?:#.*)?$/;
 
 // The first `Spec #<n>` reference (the `## Parent` convention from /to-tickets).
 // Not anchored — it matches anywhere on a line and tolerates spaces around `#`.
