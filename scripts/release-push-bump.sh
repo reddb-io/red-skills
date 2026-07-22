@@ -11,7 +11,7 @@
 #
 # Three layered strategies, most-preferred first:
 #
-#   1. RED_RELEASE_TOKEN — a repo-admin PAT or GitHub App installation token
+#   1. RELEASE_PAT — a repo-admin PAT or GitHub App installation token
 #      with contents:write. `enforce_admins` is disabled on main, so an admin
 #      credential pushes straight through while PR protection stays exactly as
 #      strict as it is for everyone else. Set this secret and the release is
@@ -31,8 +31,8 @@
 #   BASE_BRANCH         default: main
 #   PUSH_REMOTE         default: origin
 #   BUMP_PUSH_ATTEMPTS  default: 3
-#   RED_RELEASE_TOKEN   optional bypass-capable token
-#   GITHUB_REPOSITORY   owner/repo, required to use RED_RELEASE_TOKEN
+#   RELEASE_PAT   optional bypass-capable token
+#   GITHUB_REPOSITORY   owner/repo, required to use RELEASE_PAT
 
 set -euo pipefail
 
@@ -42,13 +42,13 @@ PUSH_REMOTE="${PUSH_REMOTE:-origin}"
 ATTEMPTS="${BUMP_PUSH_ATTEMPTS:-3}"
 
 target="$PUSH_REMOTE"
-if [ -n "${RED_RELEASE_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+if [ -n "${RELEASE_PAT:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
   git remote remove release-push >/dev/null 2>&1 || true
-  git remote add release-push "https://x-access-token:${RED_RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+  git remote add release-push "https://x-access-token:${RELEASE_PAT}@github.com/${GITHUB_REPOSITORY}.git"
   target=release-push
-  echo "bump push: using the bypass-capable RED_RELEASE_TOKEN credentials"
+  echo "bump push: using the bypass-capable RELEASE_PAT credentials"
 else
-  echo "bump push: RED_RELEASE_TOKEN absent — using the default workflow credentials"
+  echo "bump push: RELEASE_PAT absent — using the default workflow credentials"
 fi
 
 pushed=0
@@ -94,7 +94,7 @@ fi
 
 branch="release/bump-${NEXT}"
 git push --force "$target" "HEAD:refs/heads/${branch}"
-echo "::warning::branch protection declined the direct $NEXT bump push to $BASE_BRANCH; the bump is parked on ${branch}. Add a bypass-capable RED_RELEASE_TOKEN secret (repo-admin PAT with contents:write) to restore the direct push."
+echo "::warning::branch protection declined the direct $NEXT bump push to $BASE_BRANCH; the bump is parked on ${branch}. Add a bypass-capable RELEASE_PAT secret (repo-admin PAT with contents:write) to restore the direct push."
 
 if command -v gh >/dev/null 2>&1; then
   gh pr create \
@@ -106,7 +106,7 @@ if command -v gh >/dev/null 2>&1; then
       "" \
       "\`${NEXT}\` is already published to npm, tagged, and released — only the in-repo manifest versions are waiting on this merge." \
       "" \
-      "To make this automatic again, add a bypass-capable \`RED_RELEASE_TOKEN\` repository secret (repo-admin PAT or GitHub App installation token with contents:write). \`enforce_admins\` is off on \`${BASE_BRANCH}\`, so an admin credential pushes through without weakening PR protection." \
+      "To make this automatic again, add a bypass-capable \`RELEASE_PAT\` repository secret (repo-admin PAT or GitHub App installation token with contents:write). \`enforce_admins\` is off on \`${BASE_BRANCH}\`, so an admin credential pushes through without weakening PR protection." \
       "" \
       "Note: this PR was opened with \`GITHUB_TOKEN\`, whose events cannot trigger \`pull_request\` workflows, so the required checks will not start on their own — merge it as an admin or re-open it from a user account.")" \
     || echo "no new PR opened for ${branch} (one is probably already open)"
