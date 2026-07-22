@@ -64,6 +64,21 @@ describe("AFK host prerequisite boot probe", () => {
     ]);
   });
 
+  it("preserves a failed bash version command for the operational diagnostic", async () => {
+    const exec: ExecFn = async (command) => {
+      if (command === "bash") {
+        return { code: 2, stdout: "", stderr: "bash: cannot execute" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    await expect(collectHostPrerequisiteProbeInput(exec)).resolves.toMatchObject({
+      bashVersion: "",
+      bashVersionExitCode: 2,
+      bashVersionError: "bash: cannot execute",
+    });
+  });
+
   it("halts before bootstrap with an actionable fix when jq is missing", async () => {
     const { deps, calls } = makeDeps();
 
@@ -125,6 +140,41 @@ describe("AFK host prerequisite boot probe", () => {
       phase: "host-prereq",
       probe: {
         evidence: "bash 3.1.23 is older than required 3.2.0",
+        canonicalFix: expect.stringMatching(/bash --version$/),
+      },
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("halts before bootstrap when the bash version cannot be determined", async () => {
+    const { deps, calls } = makeDeps();
+
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            hostPrerequisites: {
+              commands: {
+                bash: true,
+                git: true,
+                jq: true,
+                gh: true,
+                node: true,
+                timeout: true,
+                ps: true,
+              },
+              bashVersion: "",
+              bashVersionExitCode: 2,
+              bashVersionError: "bash: cannot execute",
+            },
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "host-prereq",
+      probe: {
+        evidence: "bash --version exited 2: bash: cannot execute",
         canonicalFix: expect.stringMatching(/bash --version$/),
       },
     });
