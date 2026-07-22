@@ -168,9 +168,7 @@ async function runEditLabels(
     identities.filter((row) => row.error).map((row) => [row.number, { error: row.error! }]),
   );
   const targets = identities.flatMap((row) => row.nodeId ? [{ number: row.number, nodeId: row.nodeId }] : []);
-  const operationsPerTarget = Number(command.add.length > 0) + Number(command.remove.length > 0);
-  const chunkSize = Math.max(1, Math.floor(GITHUB_GRAPHQL_BATCH_SIZE / operationsPerTarget));
-  for (const targetChunk of chunks(targets, chunkSize)) {
+  for (const targetChunk of chunks(targets, GITHUB_GRAPHQL_BATCH_SIZE)) {
     const mutation = buildAliasedLabelMutation(
       targetChunk,
       command.add.map((name) => labels.get(name)!),
