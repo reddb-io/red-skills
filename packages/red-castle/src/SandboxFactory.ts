@@ -167,6 +167,8 @@ export class SandboxConfig extends Context.Tag("SandboxConfig")<
   {
     readonly env: Record<string, string>;
     readonly hostRepoDir: string;
+    /** Optional explicit target for the run's branch-strategy worktree. */
+    readonly worktreePath?: string;
     /** Paths relative to the host repo root to copy into the worktree before sandbox start. */
     readonly copyToWorktree?: string[];
     /** When specified, the run name is included in the auto-generated branch and worktree names. */
@@ -202,6 +204,7 @@ const printWorktreePreservedMessage = (
  */
 const cleanupWorktree = (
   worktreePath: string,
+  hostRepoDir: string,
   exit: Exit.Exit<unknown, unknown>,
 ): Effect.Effect<string | undefined, WorktreeError> =>
   WorktreeManager.hasUncommittedChanges(worktreePath).pipe(
@@ -219,7 +222,7 @@ const cleanupWorktree = (
       if (!Exit.isSuccess(exit)) {
         console.error(`\nWorktree removed (no uncommitted changes)`);
       }
-      return WorktreeManager.remove(worktreePath).pipe(
+      return WorktreeManager.remove(worktreePath, hostRepoDir).pipe(
         Effect.map(() => undefined as string | undefined),
       );
     }),
@@ -334,6 +337,7 @@ export const WorktreeDockerSandboxFactory = {
       const {
         env,
         hostRepoDir,
+        worktreePath,
         copyToWorktree: copyPaths,
         name,
         sandboxProvider,
@@ -366,8 +370,15 @@ export const WorktreeDockerSandboxFactory = {
           ),
           Effect.andThen(
             branch
-              ? WorktreeManager.create(hostRepoDir, { branch, baseBranch })
-              : WorktreeManager.create(hostRepoDir, { name }),
+              ? WorktreeManager.create(hostRepoDir, {
+                  branch,
+                  baseBranch,
+                  path: worktreePath,
+                })
+              : WorktreeManager.create(hostRepoDir, {
+                  name,
+                  path: worktreePath,
+                }),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
@@ -478,7 +489,7 @@ export const WorktreeDockerSandboxFactory = {
                   ),
                 ) as Effect.Effect<A, E | SandboxError, R>,
               (worktreeInfo, exit) =>
-                cleanupWorktree(worktreeInfo.path, exit).pipe(
+                cleanupWorktree(worktreeInfo.path, hostRepoDir, exit).pipe(
                   Effect.tap((p) => {
                     preservedPath = p;
                   }),
@@ -544,7 +555,7 @@ export const WorktreeDockerSandboxFactory = {
                   ),
                 ) as Effect.Effect<A, E | SandboxError, R>,
               (worktreeInfo, exit) =>
-                cleanupWorktree(worktreeInfo.path, exit).pipe(
+                cleanupWorktree(worktreeInfo.path, hostRepoDir, exit).pipe(
                   Effect.tap((p) => {
                     preservedPath = p;
                   }),
@@ -708,7 +719,7 @@ export const WorktreeDockerSandboxFactory = {
               ) as Effect.Effect<A, E | SandboxError, R>,
             // Release: remove or preserve the worktree based on dirty state.
             (worktreeInfo, exit) =>
-              cleanupWorktree(worktreeInfo.path, exit).pipe(
+              cleanupWorktree(worktreeInfo.path, hostRepoDir, exit).pipe(
                 Effect.tap((p) => {
                   preservedWorktreePath = p;
                 }),

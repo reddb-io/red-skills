@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import { FileSystem } from "@effect/platform";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { basename, join, normalize } from "node:path";
+import { basename, dirname, join, normalize, resolve } from "node:path";
 import { WorktreeError, WorktreeTimeoutError, withTimeout } from "./errors.js";
 import { pruneStale as pruneStaleLocks } from "./WorktreeLock.js";
 
@@ -278,7 +278,8 @@ const fastForwardFromOrigin = (
   });
 
 /**
- * Creates a git worktree at `.red-castle/worktrees/<name>/`.
+ * Creates a git worktree at `opts.path` when supplied, otherwise at
+ * `.red-castle/worktrees/<name>/`.
  *
  * - If `branch` is specified, checks out that branch.
  * - If not, creates a temporary `sandcastle/<timestamp>` branch.
@@ -297,6 +298,8 @@ export const create = (
     branch?: string;
     baseBranch?: string;
     name?: string;
+    /** Explicit worktree target. Relative paths resolve from `repoDir`. */
+    path?: string;
   },
 ): Effect.Effect<
   WorktreeInfo,
@@ -306,8 +309,16 @@ export const create = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const worktreesDir = join(repoDir, ".red-castle", "worktrees");
+    const explicitWorktreePath = opts?.path
+      ? resolve(repoDir, opts.path)
+      : undefined;
     yield* fs
-      .makeDirectory(worktreesDir, { recursive: true })
+      .makeDirectory(
+        explicitWorktreePath ? dirname(explicitWorktreePath) : worktreesDir,
+        {
+          recursive: true,
+        },
+      )
       .pipe(Effect.mapError((e) => new WorktreeError({ message: e.message })));
 
     let branch: string;
@@ -329,7 +340,8 @@ export const create = (
       }
     }
 
-    const worktreePath = join(worktreesDir, worktreeName);
+    const worktreePath =
+      explicitWorktreePath ?? join(worktreesDir, worktreeName);
 
     if (opts?.branch) {
       // Proactively detect collision before git produces a confusing error.
@@ -340,8 +352,12 @@ export const create = (
       const existing = yield* listWorktrees(repoDir);
       const collision = findCollidingWorktree(existing, branch, worktreePath);
       if (collision) {
-        // Only reuse worktrees managed by sandcastle (under .red-castle/worktrees/)
-        if (isManagedWorktreePath(collision.path, worktreesDir)) {
+        // An explicit target is managed only when the collision is at that exact
+        // path. Default runs retain the historical .red-castle subtree rule.
+        const managed = explicitWorktreePath
+          ? toPosix(collision.path) === toPosix(worktreePath)
+          : isManagedWorktreePath(collision.path, worktreesDir);
+        if (managed) {
           const dirty = yield* hasUncommittedChanges(collision.path);
           if (dirty) {
             console.warn(
@@ -359,7 +375,7 @@ export const create = (
           new WorktreeError({
             message:
               `Branch '${branch}' is already checked out in worktree at '${collision.path}'. ` +
-              `Sandcastle's branch and merge-to-head strategies run the agent in a git worktree under .red-castle/worktrees/, ` +
+              `Sandcastle's branch and merge-to-head strategies run the agent in an isolated git worktree, ` +
               `and git refuses to check out the same branch in two worktrees at once (HEAD would become ambiguous). ` +
               `Pick a different branch, or switch the main working tree to a different branch before re-running.`,
           }),
@@ -446,15 +462,15 @@ export const hasUncommittedChanges = (
 /**
  * Removes a worktree and its git metadata.
  *
- * The `worktreePath` must be a path inside `.red-castle/worktrees/` so that
- * the main repository directory can be derived from it.
+ * `repoDir` is required for explicit targets outside `.red-castle/worktrees/`;
+ * legacy callers may omit it and retain the derived nested-layout behavior.
  */
 export const remove = (
   worktreePath: string,
+  repoDir?: string,
 ): Effect.Effect<void, WorktreeError> => {
-  // Derive the main repo dir: worktreePath = <repoDir>/.red-castle/worktrees/<name>
-  const repoDir = join(worktreePath, "..", "..", "..");
-  return execGit(["worktree", "remove", "--force", worktreePath], repoDir).pipe(
+  const owner = repoDir ?? join(worktreePath, "..", "..", "..");
+  return execGit(["worktree", "remove", "--force", worktreePath], owner).pipe(
     Effect.asVoid,
   );
 };

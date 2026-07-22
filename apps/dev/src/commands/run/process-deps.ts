@@ -796,14 +796,11 @@ export function buildProcessDeps(
       const lastProgressAt = new Date(info.lastProgressMs).toISOString();
       const head = info.head ?? "";
       void (async () => {
-        // The castle creates the agent's worktree at
-        // `{attemptDir}/.red-castle/worktrees/{slug}` (keyed workerId-issueId,
-        // ADR 0103 — no attempt level), NOT the legacy `{attemptDir}/worktree`
-        // the state seeds. Source of truth = the path the castle RECORDS from its
+        // The castle creates the agent's worktree at the conventional direct
+        // `{workerWorkspace}/worktree` child. Source of truth = the path it records from its
         // `onWorktreeReady` hook (its `pwd` in the real worktree); reconstructing
-        // it from `attemptDir` (a `git worktree list` probe on the primary + a
-        // filesystem walk) returned the dead legacy path at runtime for
-        // mirror-owned worktrees, so every codex tick read a permanent `+0 -0`.
+        // it from the primary's worktree registry is unreliable for mirror-owned
+        // worktrees, so every codex tick once read a permanent `+0 -0`.
         // The probe/legacy fallbacks stay only for the window before the hook
         // runs. Persist the resolved path into `current.worktree` so the monitor
         // (which reads that field for its own diffstat) gets the live path too.

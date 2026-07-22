@@ -35,8 +35,8 @@ export interface EnginePaths {
   /**
    * Shared pipeline/maintainer worktree lanes root. A WORKER's git worktree
    * does NOT live here: the castle materialises it at the worker's own
-   * workspace, `tmp/workers/{id}/{issue}/.red-castle/worktrees/<slug>`
-   * (ADR 0105 as amended — the ratification of the shipped behavior).
+   * conventional workspace child, `tmp/workers/{id}/{issue}/worktree`
+   * (ADR 0105 as re-amended).
    */
   readonly worktreesRoot: string;
   readonly worktreeLane: (lane: CastleWorktreeLane) => string;

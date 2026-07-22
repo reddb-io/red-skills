@@ -601,23 +601,19 @@ export async function worktreePathForBranch(ctx: GitContext, branch: string): Pr
 }
 
 /**
- * Resolve the worktree path registered under `dirPrefix` (the attempt dir),
- * parsed from `git worktree list --porcelain`. sandcastle creates the agent's
- * worktree at `{attemptDir}/.red-castle/worktrees/{slug}`, but the state file's
- * `current.worktree` is seeded to the legacy `{attemptDir}/worktree` path that
- * never exists — so a `git diff` there fails and the heartbeat / monitor read a
- * permanent `+0 -0` even with a dirty worktree (the sandcastle-blind hazard). An
- * attempt has exactly one worktree, so the first match under `dirPrefix` is it.
- * Returns undefined when none is registered yet (pre-worktree ticks). Routed
- * through the same `runGit` seam so tests drive it without an OS git.
+ * Resolve the conventional worktree registered at `{dirPrefix}/worktree`,
+ * parsed from `git worktree list --porcelain`. Nested castle-branded paths are
+ * intentionally excluded from this normal reader; hygiene owns their rollout
+ * compatibility. Returns undefined when the worktree is not registered yet.
  */
 export async function worktreePathUnder(ctx: GitContext, dirPrefix: string): Promise<string | undefined> {
   const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
   if (r.code !== 0) return undefined;
   const prefix = dirPrefix.replace(/\/+$/, "");
+  const expected = `${prefix}/worktree`;
   for (const line of r.stdout.split("\n")) {
     const w = /^worktree\s+(.+)$/.exec(line.trim());
-    if (w && w[1] && (w[1] === prefix || w[1].startsWith(`${prefix}/`))) return w[1];
+    if (w?.[1] === expected) return w[1];
   }
   return undefined;
 }
