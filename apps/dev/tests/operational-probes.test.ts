@@ -99,7 +99,6 @@ describe("operational probe registry", () => {
       bundleCoherence: {
         installedVersion: "2.79.1",
         pointerVersion: "2.80.0",
-        laneNewestVersion: "2.79.1",
       },
     });
 
