@@ -286,7 +286,7 @@ export async function processIssue(
   const resumeIsGateGreen = resumableBranch !== null && isGateGreenBranch(failureReason);
   const resumeInstruction =
     resumableBranch !== null
-      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen)
+      ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)
       : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
   const handoff = buildHandoff({
