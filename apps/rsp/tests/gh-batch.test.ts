@@ -60,7 +60,8 @@ describe("rsp gh batch", () => {
         return response({ data: { repository: {
           i0: { id: "I_7", number: 7 },
           i1: { id: "I_8", number: 8 },
-          labels: { nodes: [{ id: "L_add", name: "ready" }, { id: "L_remove", name: "crashed" }] },
+          l0: { id: "L_add", name: "ready" },
+          l1: { id: "L_remove", name: "crashed" },
         } } });
       }
       return response({ data: {
