@@ -36,7 +36,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(fetchedBases).toEqual(["main"]);
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
-        branch: "afk/wAAAA/9-fix-the-thing",
+        branch: "afk/9-fix-the-thing",
         baseRef: "red-trunk",
         force: true,
       },
@@ -65,7 +65,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(result.outcome).toBe("done");
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
-        branch: "afk/wAAAA/9-fix-the-thing",
+        branch: "afk/9-fix-the-thing",
         baseRef: "red-trunk",
         force: false,
       },
@@ -79,7 +79,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
     expect(result.outcome).toBe("done");
     expect(result.issue).toBe(9);
-    expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(result.branch).toBe("afk/9-fix-the-thing");
     expect(result.base).toBe("main");
     expect(result.locked).toBe(false);
     expect(result.mergeSha).toBe("forge-merge-sha");
@@ -87,7 +87,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
     // sandcastle ran once, on the worker branch, with the handoff as promptFile.
     expect(trace.runAgentCalls.length).toBe(1);
-    expect(trace.runAgentCalls[0]?.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(trace.runAgentCalls[0]?.branch).toBe("afk/9-fix-the-thing");
     expect(trace.runAgentCalls[0]?.handoffPath).toBe("/tmp/afk/workers/wAAAA/9-a1/handoff.md");
     expect(trace.runAgentCalls[0]?.runner).toBe("claude");
     expect(trace.runAgentCalls[0]?.model).toBe("claude-opus-4-8");
