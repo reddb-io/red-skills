@@ -64,15 +64,19 @@ import {
   applyClaimHygieneFix,
   autoHealableClaimHygiene,
   BASE_FRESHNESS_PROBE_ID,
+  buildLabelBodyCoherenceQuarantineComment,
   CLAIM_HYGIENE_PROBE_ID,
   formatOperationalProbeFinding,
+  LABEL_BODY_COHERENCE_PROBE_ID,
   runOperationalProbes,
   type BaseFreshnessProbeData,
+  type LabelBodyCoherenceAction,
+  type LabelBodyCoherenceProbeData,
   type OperationalProbeContext,
   type OperationalProbeReport,
 } from "./operational-probes.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
-import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -394,6 +398,50 @@ async function tryBootAutoApplyClaimHygiene(
   return true;
 }
 
+/**
+ * Quarantine every incoherent issue found by the label/body coherence probe. An
+ * issue is incoherent when it carries `ready-for-agent` while the body still has an
+ * active `Current blocker`. Quarantine moves each such issue out of the executable
+ * pool (ready-for-agent → needs-triage) and posts ONE comment naming the exact
+ * incoherence and the fix recipe, then continues boot. This prevents a single dirty
+ * issue from halting every worker boot (#2386).
+ *
+ * Returns `true` when ALL incoherent issues were successfully quarantined (the
+ * finding is removed from `redFindings` and boot continues). Returns `false` when
+ * ANY label-edit mutation fails (the finding stays in `redFindings` and boot halts
+ * with the existing diagnostic). Comment failure is best-effort: the label edit
+ * already moved the issue out of the pool, so a failed comment is non-fatal.
+ */
+async function tryBootAutoApplyLabelBodyCoherence(
+  deps: BootDeps,
+  finding: OperationalProbeReport["findings"][number],
+): Promise<boolean> {
+  if (finding.id !== LABEL_BODY_COHERENCE_PROBE_ID) return false;
+  const data = finding.data as Partial<LabelBodyCoherenceProbeData> | undefined;
+  if (!Array.isArray(data?.actions) || data.actions.length === 0) return false;
+
+  let allHealed = true;
+  for (const action of data.actions as readonly LabelBodyCoherenceAction[]) {
+    try {
+      await deps.gh.editLabels(action.issue, [LABEL_READY], [LABEL_NEEDS_TRIAGE]);
+      try {
+        await deps.gh.comment(action.issue, buildLabelBodyCoherenceQuarantineComment(action));
+      } catch {
+        // Comment failure is non-fatal: the label edit already moved the issue out of
+        // the executable pool, which is the safety-critical mutation.
+      }
+      deps.log?.(
+        `boot coherence probe quarantined #${action.issue}: ready-for-agent→needs-triage; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
+      );
+    } catch {
+      // Label edit failed: cannot make the pool coherent for this issue.
+      allHealed = false;
+    }
+  }
+
+  return allHealed;
+}
+
 /** True when this base-freshness finding is safe to downgrade for worker boot.
  * Worker sessions (skipSweeps) can skip the fatal halt for this case because they branch from
  * origin/main directly — a behind local main does not affect their work. */
@@ -653,6 +701,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const redFindings: OperationalProbeReport["findings"][number][] = [];
   for (const finding of operationalProbes.findings) {
     if (await tryBootAutoApplyClaimHygiene(deps, finding)) continue;
+    if (await tryBootAutoApplyLabelBodyCoherence(deps, finding)) continue;
     redFindings.push(finding);
   }
   const redProbe = redFindings[0];

@@ -901,9 +901,9 @@ async function laneLogs(root: string, input: LogsInput) {
   return filtered.length <= limit ? filtered : filtered.slice(-limit);
 }
 
-async function workerVitals(root: string) {
+async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
   const records = await readAllWorkerStates(afkPaths(root).tmpDir);
-  return records.map(({ state, ...record }) => ({
+  const all = records.map(({ state, ...record }) => ({
     worker: {
       id: state.worker_id,
       pid: state.pid,
@@ -941,6 +941,22 @@ async function workerVitals(root: string) {
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
   }));
+  return opts.live_only !== false ? all.filter((r) => r.live === true) : all;
+}
+
+function projectFields(
+  records: Array<Record<string, unknown>>,
+  fields: string[] | undefined,
+): unknown[] {
+  if (!fields || fields.length === 0) return records;
+  const fieldSet = new Set(fields);
+  return records.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const key of fieldSet) {
+      if (Object.prototype.hasOwnProperty.call(r, key)) out[key] = r[key];
+    }
+    return out;
+  });
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
@@ -997,7 +1013,10 @@ export function createDevAfkMcpDependencies(
       return { fleet: input.name ?? "default", ...result };
     },
     logs: (input) => laneLogs(root, input),
-    workerVitals: () => workerVitals(root),
+    workerVitals: async (input) => {
+      const records = await workerVitals(root, { live_only: input.live_only });
+      return projectFields(records as Array<Record<string, unknown>>, input.fields);
+    },
     dashboard: ({ periodDays }) => collectDashboardReport(periodDays, root),
     monitor: () => collectMonitorInputs(root),
     history: async ({ limit }) => {
@@ -1039,11 +1058,12 @@ export function createDevAfkMcpDependencies(
       }
       throw new Error("worker dispatch requires an issue or demand");
     },
-    workerStatus: async ({ worker }) => {
-      const workers = await workerVitals(root);
-      return worker === undefined
-        ? workers
-        : workers.filter((record) => record.worker.id === worker);
+    workerStatus: async ({ worker, live_only, fields }) => {
+      const records = await workerVitals(root, { live_only });
+      const filtered = worker === undefined
+        ? records
+        : records.filter((record) => record.worker.id === worker);
+      return projectFields(filtered as Array<Record<string, unknown>>, fields);
     },
     workerStop: (input) => operations.stopWorker(root, input),
     runnerList: async () =>

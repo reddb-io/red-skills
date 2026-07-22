@@ -4,6 +4,7 @@ import {
   dispatchInput,
   dispatchShape,
   type WorkerDispatchInput,
+  type WorkerInputRefusal,
 } from "./worker.js";
 
 export interface RunnerDetectInput {
@@ -69,11 +70,18 @@ export function createRunnerTools(deps: RunnerDependencies): CastleMcpTool[] {
         ...dispatchShape,
         text: z.string().min(1),
       },
-      invoke: (input) =>
-        deps.workerRequest({
-          ...dispatchInput(input),
-          text: input.text as string,
-        }),
+      invoke: (input) => {
+        let parsed: WorkerDispatchInput;
+        try {
+          parsed = dispatchInput(input);
+        } catch (err) {
+          return Promise.resolve<WorkerInputRefusal>({
+            refused: true,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return deps.workerRequest({ ...parsed, text: input.text as string });
+      },
     },
   ];
 }
