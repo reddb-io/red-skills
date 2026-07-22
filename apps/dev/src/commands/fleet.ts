@@ -1,4 +1,12 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
@@ -8,14 +16,25 @@ import {
   fleetRegistryPath,
   readCastleLaneRecords,
   readFleetProfile,
+  readHostCapabilityProfile,
+  resolveHostCapabilities,
   upsertFleetProfile,
   type CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
-import { afkPaths, collectMonitorInputs, readFleetState, resolveRepoSlug } from "../runtime/wire.js";
+import {
+  afkPaths,
+  collectMonitorInputs,
+  readFleetState,
+  resolveRepoSlug,
+} from "../runtime/wire.js";
 import { migrateLegacyDevPaths } from "../runtime/red-path-migration.js";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
-import { classifySupervisor, resolveSupervisorConfig, type ElasticShrinkMode } from "../core/supervisor.js";
+import {
+  classifySupervisor,
+  resolveSupervisorConfig,
+  type ElasticShrinkMode,
+} from "../core/supervisor.js";
 import { teardownWedgedSupervisor } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
@@ -47,17 +66,32 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function parsePositiveNumber(raw: string | undefined, flag: string): number {
   if (raw === undefined) throw new Error(`${flag} requires a value`);
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`${flag} requires a positive number`);
+  if (!Number.isFinite(n) || n <= 0)
+    throw new Error(`${flag} requires a positive number`);
   return n;
 }
 
-function parseShrinkMode(raw: string | undefined, flag: string): ElasticShrinkMode {
+function parseShrinkMode(
+  raw: string | undefined,
+  flag: string,
+): ElasticShrinkMode {
   if (raw === undefined) throw new Error(`${flag} requires a value`);
   if (raw === "hard-kill" || raw === "drain-then-retire") return raw;
   throw new Error(`${flag} must be hard-kill or drain-then-retire`);
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boolean; fleet: string; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
+function parseFleetArgs(args: readonly string[]): {
+  stop: boolean;
+  status: boolean;
+  fleet: string;
+  target: number;
+  targetExplicit: boolean;
+  request?: string;
+  runnerFlag?: string;
+  drainBudgetUsd?: number;
+  shrinkMode?: ElasticShrinkMode;
+  passthrough: string[];
+} {
   const passthrough: string[] = [];
   let stop = false;
   let status = false;
@@ -95,7 +129,8 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
     }
     if (arg === "--runner") {
       runnerFlag = args[++i];
-      if (runnerFlag === undefined) throw new Error("--runner requires a value");
+      if (runnerFlag === undefined)
+        throw new Error("--runner requires a value");
       continue;
     }
     if (arg.startsWith("--runner=")) {
@@ -107,11 +142,17 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
       continue;
     }
     if (arg.startsWith("--budget-usd=")) {
-      drainBudgetUsd = parsePositiveNumber(arg.slice("--budget-usd=".length), "--budget-usd");
+      drainBudgetUsd = parsePositiveNumber(
+        arg.slice("--budget-usd=".length),
+        "--budget-usd",
+      );
       continue;
     }
     if (arg.startsWith("--drain-budget-usd=")) {
-      drainBudgetUsd = parsePositiveNumber(arg.slice("--drain-budget-usd=".length), "--drain-budget-usd");
+      drainBudgetUsd = parsePositiveNumber(
+        arg.slice("--drain-budget-usd=".length),
+        "--drain-budget-usd",
+      );
       continue;
     }
     if (arg === "--shrink-mode") {
@@ -119,7 +160,10 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
       continue;
     }
     if (arg.startsWith("--shrink-mode=")) {
-      shrinkMode = parseShrinkMode(arg.slice("--shrink-mode=".length), "--shrink-mode");
+      shrinkMode = parseShrinkMode(
+        arg.slice("--shrink-mode=".length),
+        "--shrink-mode",
+      );
       continue;
     }
     if (/^[0-9]+$/.test(arg) && target === undefined) {
@@ -128,7 +172,18 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
     }
     passthrough.push(arg);
   }
-  return { stop, status, fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
+  return {
+    stop,
+    status,
+    fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME,
+    target: target ?? 2,
+    targetExplicit: target !== undefined,
+    request,
+    runnerFlag,
+    drainBudgetUsd,
+    shrinkMode,
+    passthrough,
+  };
 }
 
 export async function writeResizeRequest(
@@ -143,11 +198,7 @@ export async function writeResizeRequest(
     ...(runner !== undefined ? { runner } : {}),
     shrink_mode: shrinkMode,
   };
-  await writeFile(
-    tmp,
-    encodeToon(request),
-    "utf8",
-  );
+  await writeFile(tmp, encodeToon(request), "utf8");
   await rename(tmp, path);
 }
 
@@ -158,8 +209,10 @@ function directiveAck(
   if (!state) return "pending";
   const appliedTarget = state.target ?? state.slotsTotal;
   if (appliedTarget !== request.target) return "pending";
-  if ((state.shrinkMode ?? request.shrinkMode) !== request.shrinkMode) return "pending";
-  if (request.runner !== undefined && state.runner !== request.runner) return "pending";
+  if ((state.shrinkMode ?? request.shrinkMode) !== request.shrinkMode)
+    return "pending";
+  if (request.runner !== undefined && state.runner !== request.runner)
+    return "pending";
   return "applied";
 }
 
@@ -187,7 +240,9 @@ export async function stopFleet(
   ) {
     const watchdogDead = await killTreeAndWait(watchdogIdentity.pid);
     if (!watchdogDead) {
-      stdout.write(`✗ fleet watchdog pid=${watchdogIdentity.pid} survived termination; stop remains armed.\n`);
+      stdout.write(
+        `✗ fleet watchdog pid=${watchdogIdentity.pid} survived termination; stop remains armed.\n`,
+      );
       return { status: "timeout", pid: watchdogIdentity.pid };
     }
   }
@@ -203,16 +258,25 @@ export async function stopFleet(
     const killed = await io.killWorkers();
     if (killed > 0) {
       await io.reconcile();
-      stdout.write(`terminated ${killed} orphaned worker${killed === 1 ? "" : "s"} and reconciled their claims.\n`);
+      stdout.write(
+        `terminated ${killed} orphaned worker${killed === 1 ? "" : "s"} and reconciled their claims.\n`,
+      );
     }
   };
-  const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, { fleet: paths.fleet });
+  const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, {
+    fleet: paths.fleet,
+  });
   if (!liveSupervisor) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
     if (supervisor.status === "stale" && supervisor.pid !== undefined) {
       await sweepOrphans();
-      stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
-      return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
+      stdout.write(
+        `no fleet running (reason=dead supervisor pid; stale files cleaned).\n`,
+      );
+      return {
+        status: "stale",
+        ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}),
+      };
     }
     await sweepOrphans();
     stdout.write("no fleet running (reason=no supervisor pid).\n");
@@ -226,7 +290,9 @@ export async function stopFleet(
       // exit, but sweep detached survivors anyway — a slot the loop lost track of
       // (moved-pid, mid-spawn) would otherwise outlive the "stopped" report.
       await sweepOrphans();
-      stdout.write(`🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`);
+      stdout.write(
+        `🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`,
+      );
       return { status: "stopped", pid };
     }
     await sleep(1_000);
@@ -248,7 +314,9 @@ export async function stopFleet(
     await rm(paths.supervisorRecoveryPath, { force: true });
     // killTree of the supervisor pid misses the detached workers — sweep them.
     await sweepOrphans();
-    stdout.write(`🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`);
+    stdout.write(
+      `🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`,
+    );
     return { status: "stopped", pid };
   }
   stdout.write(
@@ -300,7 +368,10 @@ function parseFleetLogsArgs(args: readonly string[]): FleetLogsArgs {
   let follow = false;
 
   function setMode(next: FleetLogMode): void {
-    if (mode !== undefined) throw new Error("fleet logs accepts only one of --supervisor, --worker, or --all");
+    if (mode !== undefined)
+      throw new Error(
+        "fleet logs accepts only one of --supervisor, --worker, or --all",
+      );
     mode = next;
   }
 
@@ -333,7 +404,10 @@ function parseFleetLogsArgs(args: readonly string[]): FleetLogsArgs {
     throw new Error(`unknown fleet logs argument: ${arg}`);
   }
 
-  if (mode === undefined) throw new Error("fleet logs requires --supervisor, --worker <id>, or --all");
+  if (mode === undefined)
+    throw new Error(
+      "fleet logs requires --supervisor, --worker <id>, or --all",
+    );
   return { mode, follow };
 }
 
@@ -382,13 +456,19 @@ async function supervisorLogSources(root: string): Promise<FleetLogSource[]> {
   return sources;
 }
 
-async function workerLogSources(root: string, mode: Extract<FleetLogMode, { kind: "worker" | "all" }>): Promise<FleetLogSource[]> {
+async function workerLogSources(
+  root: string,
+  mode: Extract<FleetLogMode, { kind: "worker" | "all" }>,
+): Promise<FleetLogSource[]> {
   const paths = createEnginePaths(join(root, ".red"));
-  const workerIds = mode.kind === "worker" ? [mode.workerId] : await childDirs(paths.workersRoot);
+  const workerIds =
+    mode.kind === "worker"
+      ? [mode.workerId]
+      : await childDirs(paths.workersRoot);
   const sources: FleetLogSource[] = [];
   for (const workerId of workerIds) {
     const path = castleLanePath(paths, "worker", workerId);
-    if (mode.kind === "worker" || await readableFile(path)) {
+    if (mode.kind === "worker" || (await readableFile(path))) {
       sources.push({
         id: `worker:${workerId}`,
         path,
@@ -399,7 +479,10 @@ async function workerLogSources(root: string, mode: Extract<FleetLogMode, { kind
   return sources;
 }
 
-async function fleetLogSources(root: string, mode: FleetLogMode): Promise<FleetLogSource[]> {
+async function fleetLogSources(
+  root: string,
+  mode: FleetLogMode,
+): Promise<FleetLogSource[]> {
   if (mode.kind === "supervisor") return supervisorLogSources(root);
   return workerLogSources(root, mode);
 }
@@ -411,7 +494,9 @@ function payloadText(payload: Record<string, unknown> | undefined): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(payload)) {
     if (value === undefined) continue;
-    parts.push(`${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+    parts.push(
+      `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`,
+    );
   }
   return parts.join(" ");
 }
@@ -424,7 +509,9 @@ function renderRecord(record: CastleLaneRecord, prefix: string): string {
   return `${prefix}${parts.join(" ")}${payload ? ` ${payload}` : ""}`;
 }
 
-async function readLogEntries(source: FleetLogSource): Promise<FleetLogEntry[]> {
+async function readLogEntries(
+  source: FleetLogSource,
+): Promise<FleetLogEntry[]> {
   const records = await readCastleLaneRecords(source.path);
   return records.map((record, index) => ({
     sourceId: source.id,
@@ -444,17 +531,22 @@ function sortEntries(entries: FleetLogEntry[]): FleetLogEntry[] {
   });
 }
 
-const wait = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
-  if (signal?.aborted) {
-    resolve();
-    return;
-  }
-  const timer = setTimeout(resolve, ms);
-  signal?.addEventListener("abort", () => {
-    clearTimeout(timer);
-    resolve();
-  }, { once: true });
-});
+const wait = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 
 /**
  * `fleet logs` is the read-only human view over the structured castle lanes.
@@ -514,20 +606,35 @@ export async function statusFleet(
   const paths = afkPaths(root, fleetName);
   const io = buildWatchdogIO(root, stdout, paths.fleet);
   const liveness = await io.liveness();
-  const liveSupervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, { fleet: paths.fleet });
+  const liveSupervisor = await discoverLiveSupervisorPid(
+    paths.supervisorRuntimeDir,
+    isLivePid,
+    { fleet: paths.fleet },
+  );
   if (liveSupervisor) {
     liveness.pid = liveSupervisor.pid;
     liveness.pidAlive = true;
   }
   const cfg = resolveSupervisorConfig();
   const now = Math.floor(Date.now() / 1000);
-  const health = classifySupervisor(liveness, now, cfg.supervisorStaleS, cfg.progressStaleS);
+  const health = classifySupervisor(
+    liveness,
+    now,
+    cfg.supervisorStaleS,
+    cfg.progressStaleS,
+  );
   const repo = await resolveRepoSlug(root).catch(() => "");
   const inputs = await collectMonitorInputs(root, repo);
   const fleet = inputs.fleet;
-  const latestBundleVersion = fleet?.latestBundleVersion || readBuildInfo("dev").version;
-  const liveWorkers = inputs.workers.filter((w) => w.pidLive === true || w.live);
-  const heartbeatAgeS = liveness.lastHeartbeatEpoch !== null ? now - liveness.lastHeartbeatEpoch : -1;
+  const latestBundleVersion =
+    fleet?.latestBundleVersion || readBuildInfo("dev").version;
+  const liveWorkers = inputs.workers.filter(
+    (w) => w.pidLive === true || w.live,
+  );
+  const heartbeatAgeS =
+    liveness.lastHeartbeatEpoch !== null
+      ? now - liveness.lastHeartbeatEpoch
+      : -1;
 
   // A dead supervisor with ready-for-agent work and fewer live workers than the
   // target is what the watchdog would respawn — surface it so an operator who
@@ -546,11 +653,13 @@ export async function statusFleet(
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
       bundle_latest: latestBundleVersion,
-      version_skew: Number(Boolean(
-        fleet?.bundleVersion &&
-        latestBundleVersion &&
-        fleet.bundleVersion !== latestBundleVersion
-      )),
+      version_skew: Number(
+        Boolean(
+          fleet?.bundleVersion &&
+          latestBundleVersion &&
+          fleet.bundleVersion !== latestBundleVersion,
+        ),
+      ),
       heartbeat_age_s: heartbeatAgeS,
       would_respawn: wouldRespawn,
     },
@@ -577,9 +686,13 @@ export async function statusFleet(
   return { status: "reported" };
 }
 
-export async function launchFleet(args: readonly string[], root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetLaunchResult> {
+export async function launchFleet(
+  args: readonly string[],
+  root = process.cwd(),
+  stdout: NodeJS.WritableStream = process.stdout,
+): Promise<FleetLaunchResult> {
   const parsed = parseFleetArgs(args);
-  if (!Number.isInteger(parsed.target) || parsed.target < 0) throw new Error("fleet target must be a non-negative integer");
+  const enginePaths = createEnginePaths(join(root, ".red"));
   const paths = afkPaths(root, parsed.fleet);
   const stateAfk = dirname(paths.supervisorPidPath);
   await mkdir(paths.tmpDir, { recursive: true });
@@ -587,13 +700,21 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   // One-time boot migration: relocate legacy `.red/tmp` / state artifacts to
   // their canonical state or supervisor tmp lane before any supervisor path is read/written.
   await migrateLegacyDevPaths(root).catch(() => undefined);
+  const hostProfile = await readHostCapabilityProfile(enginePaths);
+  const target = parsed.targetExplicit
+    ? parsed.target
+    : resolveHostCapabilities(hostProfile).defaultFleetWidth;
+  if (!Number.isInteger(target) || target < 0)
+    throw new Error("fleet target must be a non-negative integer");
   const pidFile = paths.supervisorPidPath;
   const logFile = paths.supervisorLogPath;
-  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(() => null);
+  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(
+    () => null,
+  );
   // A registered fleet launches from its PROFILE: the registry supplies the
   // runner and the work-scope selector, and explicit flags still override.
   const profile = await readFleetProfile(
-    fleetRegistryPath(createEnginePaths(join(root, ".red"))),
+    fleetRegistryPath(enginePaths),
     paths.fleet,
   ).catch(() => undefined);
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
@@ -611,27 +732,47 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     const cfg = resolveSupervisorConfig();
     const io = buildWatchdogIO(root, stdout, paths.fleet);
     const liveness = await io.liveness();
-    const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
+    const health = classifySupervisor(
+      liveness,
+      io.now(),
+      cfg.supervisorStaleS,
+      cfg.progressStaleS,
+    );
     if (health !== "quiescent") {
-      const watchdogPid = await spawnSupervisorWatchdog({ root, fleet: paths.fleet });
+      const watchdogPid = await spawnSupervisorWatchdog({
+        root,
+        fleet: paths.fleet,
+      });
       if (!watchdogPid) {
-        throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
+        throw new Error(
+          "fleet launch failed: supervisor self-heal watchdog did not arm",
+        );
       }
       const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
-      const directiveRunner = parsed.runnerFlag ? detectRunner({ flag: parsed.runnerFlag }).runner : undefined;
-      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode, directiveRunner);
+      const directiveRunner = parsed.runnerFlag
+        ? detectRunner({ flag: parsed.runnerFlag }).runner
+        : undefined;
+      await writeResizeRequest(
+        paths.supervisorResizePath,
+        target,
+        shrinkMode,
+        directiveRunner,
+      );
       const ack = directiveAck(await readFleetState(paths.fleetStatePath), {
-        target: parsed.target,
+        target,
         shrinkMode,
         ...(directiveRunner !== undefined ? { runner: directiveRunner } : {}),
       });
       stdout.write(
-        `fleet directive ${ack} (supervisor pid=${existing}, target=${parsed.target}` +
+        `fleet directive ${ack} (supervisor pid=${existing}, target=${target}` +
           `${directiveRunner !== undefined ? `, runner=${directiveRunner}` : ""}, shrink-mode=${shrinkMode})\n`,
       );
-      return { status: "resized", pid: existing, target: parsed.target, log: logFile };
+      return { status: "resized", pid: existing, target, log: logFile };
     }
-    const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
+    const staleForS =
+      liveness.lastHeartbeatEpoch !== null
+        ? io.now() - liveness.lastHeartbeatEpoch
+        : null;
     io.log(
       `⚠️  fleet pre-check: supervisor pid=${existing} is QUIESCENT — heartbeat stale ` +
         `${staleForS ?? "?"}s ≥ ${cfg.supervisorStaleS}s; recovering before relaunch.`,
@@ -649,13 +790,19 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   // so this fleet only ever claims issues inside its own scope. An explicit
   // filter flag on the command line wins over the registered scope.
   const scoped =
-    profile?.selector && !parsed.passthrough.some((a) => a.startsWith("--spec") || a.startsWith("--issues") || a.startsWith("--selector"))
+    profile?.selector &&
+    !parsed.passthrough.some(
+      (a) =>
+        a.startsWith("--spec") ||
+        a.startsWith("--issues") ||
+        a.startsWith("--selector"),
+    )
       ? ["--selector", JSON.stringify(profile.selector)]
       : [];
 
   const supervisorPid = await spawnSupervisor({
     root,
-    target: parsed.target,
+    target,
     runner: detection.runner,
     passthrough: [...parsed.passthrough, ...scoped],
     request: parsed.request,
@@ -672,18 +819,27 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     } catch {
       // ignore
     }
-    throw new Error(`fleet launch failed: supervisor pid file did not appear. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${tail}`);
+    throw new Error(
+      `fleet launch failed: supervisor pid file did not appear. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${tail}`,
+    );
   }
-  const watchdogPid = await spawnSupervisorWatchdog({ root, fleet: paths.fleet });
+  const watchdogPid = await spawnSupervisorWatchdog({
+    root,
+    fleet: paths.fleet,
+  });
   if (!watchdogPid) {
     await killTreeAndWait(supervisorPid).catch(() => false);
     await rm(paths.supervisorPidPath, { force: true }).catch(() => undefined);
-    await rm(paths.supervisorPidStartPath, { force: true }).catch(() => undefined);
-    throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
+    await rm(paths.supervisorPidStartPath, { force: true }).catch(
+      () => undefined,
+    );
+    throw new Error(
+      "fleet launch failed: supervisor self-heal watchdog did not arm",
+    );
   }
 
   // Persist the profile so CLI-launched fleets are always in the registry (#2358).
-  await upsertFleetProfile(fleetRegistryPath(createEnginePaths(join(root, ".red"))), {
+  await upsertFleetProfile(fleetRegistryPath(enginePaths), {
     name: paths.fleet,
     runner: detection.runner,
     ...(profile?.selector ? { selector: profile.selector } : {}),
@@ -691,16 +847,26 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     ...(profile?.base ? { base: profile.base } : {}),
   }).catch(() => undefined);
 
-  const named = paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
-  stdout.write(`🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);
+  const named =
+    paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
+  stdout.write(
+    `🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${target})\n`,
+  );
   stdout.write(`   self-heal: armed (watchdog pid=${watchdogPid})\n`);
-  stdout.write(`   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`);
+  stdout.write(
+    `   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`,
+  );
   stdout.write(`   stop:  /dev:afk fleet stop${named}\n`);
-  stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`);
-  return { status: "launched", pid: supervisorPid, target: parsed.target, log: logFile };
+  stdout.write(
+    `   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`,
+  );
+  return { status: "launched", pid: supervisorPid, target, log: logFile };
 }
 
-export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
+export async function fleetCommand(
+  args: string[],
+  cwd = process.cwd(),
+): Promise<number> {
   if (args[0] === "logs") {
     try {
       await logsFleet(args.slice(1), cwd);
