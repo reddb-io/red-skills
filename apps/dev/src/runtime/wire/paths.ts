@@ -42,6 +42,10 @@ export interface AfkPaths {
   monitorLogCursorPath: string;
   /** Supervisor pid file (tmp supervisor lane). */
   supervisorPidPath: string;
+  /** Stable process-start token paired with the supervisor pid lock. */
+  supervisorPidStartPath: string;
+  /** External self-heal watchdog pid file (same repo-scoped fleet lane). */
+  supervisorWatchdogPidPath: string;
   /** Supervisor stop sentinel (tmp supervisor lane). */
   supervisorStopPath: string;
   /** Supervisor human-readable view source (structured TOONL firehose). */
@@ -103,6 +107,8 @@ export function afkPaths(root: string, fleetName?: string): AfkPaths {
     fleetFirehosePath: join(supervisorRuntime, "supervisor.log.toonl"),
     monitorLogCursorPath: join(supervisorRuntime, "monitor-log-cursors.toon"),
     supervisorPidPath: join(supervisorRuntime, "afk-supervisor.pid"),
+    supervisorPidStartPath: join(supervisorRuntime, "afk-supervisor.pid.start"),
+    supervisorWatchdogPidPath: join(supervisorRuntime, "afk-supervisor-watchdog.pid"),
     supervisorStopPath: join(supervisorRuntime, "afk-supervisor.stop"),
     supervisorLogPath: join(supervisorRuntime, "supervisor.log.toonl"),
     supervisorResizePath: join(supervisorRuntime, "resize.toon"),
