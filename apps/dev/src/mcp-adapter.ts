@@ -68,7 +68,6 @@ import {
   collectStatuslineDocs,
   collectStatuslineFleet,
   collectStatuslineRepo,
-  collectStatuslineWorkers,
   inferGitHubRepoSlug,
   readFleetState,
   resolveRepoContext,
