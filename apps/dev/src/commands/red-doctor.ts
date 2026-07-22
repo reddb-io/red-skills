@@ -1,4 +1,5 @@
-import { relative } from "node:path";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
@@ -14,9 +15,19 @@ import {
   type OperationalProbeReport,
 } from "../core/operational-probes.js";
 import { auditCastleStateLane, type CastleStateDoctorReport } from "../core/castle-state-doctor.js";
+import {
+  applyHostToolchainFixes,
+  auditHostToolchain,
+  ghUpgradeRecipe,
+  tqInstallRecipe,
+  type HostToolchainFixReceipt,
+  type HostToolchainReport,
+} from "../core/host-toolchain-doctor.js";
+import { getConfig, loadConfig } from "../core/config.js";
 import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
+import { execTool } from "../runtime/exec.js";
 import * as gitx from "../runtime/git.js";
 import { launchFleet } from "./fleet.js";
 
@@ -73,19 +84,66 @@ function flattenExpired(report: TmpJanitorReport): string[] {
   ].map((entry) => entry.path);
 }
 
+async function readOptional(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+async function collectHostToolchainReport(root: string): Promise<HostToolchainReport> {
+  const [gh, tq, ghPathResult, repoToolVersions, userToolVersions] = await Promise.all([
+    execTool("gh", ["--version"], { cwd: root }),
+    execTool("tq", ["--version"], { cwd: root }),
+    execTool("sh", ["-c", "command -v gh"], { cwd: root }),
+    readOptional(join(root, ".tool-versions")),
+    readOptional(join(homedir(), ".tool-versions")),
+  ]);
+  const ghPath = ghPathResult.code === 0 ? ghPathResult.stdout.trim() : undefined;
+  const [apt, brew] = ghPath
+    ? await Promise.all([
+        execTool("dpkg-query", ["-S", ghPath], { cwd: root }),
+        execTool("brew", ["--prefix", "gh"], { cwd: root }),
+      ])
+    : [{ code: 1 }, { code: 1 }];
+  const config = loadConfig(join(root, ".red", "config.yaml"), {
+    ignoreActivationGate: true,
+    warn: () => undefined,
+  });
+
+  return auditHostToolchain({
+    ghOutput: gh.code === 0 ? gh.stdout : undefined,
+    tqOutput: tq.code === 0 ? tq.stdout : undefined,
+    ghPath,
+    toolVersions: [repoToolVersions, userToolVersions].filter(Boolean).join("\n"),
+    aptManaged: apt.code === 0,
+    brewManaged: brew.code === 0,
+    tqRecordedVersion: getConfig(config, "host_binaries.tq.version") || undefined,
+  });
+}
+
 function renderHuman(
   root: string,
   probeReport: OperationalProbeReport,
   castleReport: CastleStateDoctorReport,
   executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
+  hostReport: HostToolchainReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
+  hostFixes: readonly HostToolchainFixReceipt[] = [],
 ): string {
   const expired = flattenExpired(report).map((path) => rel(root, path));
   const workers = report.staleWorkers.reclaim.map((entry) => rel(root, entry.path));
   const unknown = report.plan.unknownTmpRoots.map((name) => `.red/tmp/${name}`);
   const lines = [
+    "red-doctor host toolchain",
+    ...hostReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.tool} ${row.version} (required ${row.required}; manager ${row.manager})`),
+    ...hostReport.findings.map((finding) => `  ${finding.reason}`),
+    ...hostReport.findings.map((finding) => `  fix: ${finding.remediation}`),
+    ...hostFixes.map((fix) => `  fix ${fix.tool}: ${fix.status} (${fix.reason})`),
+    "",
     "red-doctor operational probes",
     `probes: ${probeReport.probes.length}`,
     ...probeReport.probes.map((probe) => `  ${probe.verdict} ${probe.name}`),
@@ -142,10 +200,31 @@ function renderToon(
   castleReport: CastleStateDoctorReport,
   executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
+  hostReport: HostToolchainReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
+  hostFixes: readonly HostToolchainFixReceipt[] = [],
 ): string {
   return encodeToon({
+    hostToolchain: {
+      binaries: hostReport.rows.map((row) => ({
+        tool: row.tool,
+        version: row.version,
+        required: row.required,
+        manager: row.manager,
+        verdict: row.verdict,
+      })),
+      findings: hostReport.findings.map((finding) => ({
+        tool: finding.tool,
+        kind: finding.kind,
+        remediation: finding.remediation,
+      })),
+      appliedFixes: hostFixes.map((fix) => ({
+        tool: fix.tool,
+        status: fix.status,
+        reason: fix.reason,
+      })),
+    },
     probes: probeReport.probes.map((probe) => ({
       id: probe.id,
       name: probe.name,
@@ -219,6 +298,7 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const precheckFacts = await collectPrecheckFacts(ctx, { includeNpmBundleCoherence: true });
     const probeReport = await runOperationalProbes(precheckFacts);
     const castleReport = await auditCastleStateLane(ctx.root);
+    const hostReport = await collectHostToolchainReport(ctx.root);
     const executableAcceptanceTransportFailures: string[] = [];
     const executableCandidates = await listCandidates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext, LABEL_READY, {
       onTransportFailure: (failure) => executableAcceptanceTransportFailures.push(failure.message ?? "unknown transport failure"),
@@ -275,11 +355,19 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           },
         })
       : [];
+    const hostFixes = await applyHostToolchainFixes(
+      hostReport,
+      { fix: flags.fix, approved: flags.yes },
+      {
+        upgradeGhAsdf: () => execTool("sh", ["-c", ghUpgradeRecipe("asdf")], { cwd: ctx.root }),
+        installTq: () => execTool("sh", ["-c", tqInstallRecipe()], { cwd: ctx.root }),
+      },
+    );
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, applied, probeFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, applied, probeFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes),
     );
     return 0;
   } catch (error) {

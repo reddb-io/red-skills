@@ -566,6 +566,42 @@ export function buildProcessDeps(
       // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
       // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
       discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
+      // Attempt-adoption sanity check (#2416): one cheap open-PR census before
+      // any agent run. The lifecycle owns exact body/head matching and adoption.
+      discoverOpenPullRequests: async () => {
+        const run = exec ?? execTool;
+        const result = await run(
+          "gh",
+          [
+            "pr",
+            "list",
+            "--repo",
+            ctx.repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,headRefName,body",
+          ],
+          { cwd: ctx.root },
+        );
+        if (result.code !== 0) return [];
+        try {
+          const rows = JSON.parse(result.stdout || "[]") as unknown;
+          if (!Array.isArray(rows)) return [];
+          return rows
+            .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
+            .map((row) => ({
+              number: Number(row.number ?? 0),
+              headRefName: String(row.headRefName ?? ""),
+              body: typeof row.body === "string" ? row.body : undefined,
+            }))
+            .filter((row) => row.number > 0 && row.headRefName.length > 0);
+        } catch {
+          return [];
+        }
+      },
     },
     envelope: {
       git: gitx.gitExec(gitCtx),

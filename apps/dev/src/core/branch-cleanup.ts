@@ -67,15 +67,15 @@ export interface BranchRef {
   commitS?: number;
 }
 
-const LIVE_REF_RE = /^afk\/[^/]+\/([0-9]+)-[a-z0-9-]+$/;
+const LIVE_REF_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[^/]+\/([0-9]+)-[a-z0-9-]+)$/;
 const ATTEMPT_REF_RE = /^afk-attempts\/[^/]+\/([0-9]+)-/;
 
-/** Issue number from a local/remote live ref afk/{worker}/{N}-slug. Returns null
- * for malformed or non-live refs (e.g. afk-attempts/*), so cleanup never acts on
- * an adjacent namespace. Mirrors _local_afk_issue_from_branch. */
+/** Issue number from a deterministic `afk/{N}-slug` or legacy
+ * `afk/{worker}/{N}-slug` live ref. Returns null for malformed or non-live refs
+ * (e.g. afk-attempts/*), so cleanup never acts on an adjacent namespace. */
 export function liveIssueFromBranch(branch: string): number | null {
   const m = LIVE_REF_RE.exec(branch);
-  return m ? Number(m[1]) : null;
+  return m ? Number(m[1] ?? m[2]) : null;
 }
 
 /** Issue number from a snapshot ref afk-attempts/{worker}/{N}-slug. Returns null

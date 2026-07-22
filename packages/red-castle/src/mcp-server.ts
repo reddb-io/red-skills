@@ -6,6 +6,7 @@ import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
 import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
 import {
   createObservabilityTools,
+  type EventsSinceInput,
   type ObservabilityDependencies,
 } from "./mcp/observability.js";
 import {
@@ -35,7 +36,7 @@ export type {
   FleetNameInput,
   FleetRegisterInput,
 } from "./mcp/fleet.js";
-export type { LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { EventsSinceInput, LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,

@@ -172,6 +172,20 @@ describe("branch-resume: explicit restart override (issue #2397)", () => {
 });
 
 describe("branch-resume: no prior branch (issue #2397)", () => {
+  it("uses one deterministic branch per issue, independent of worker identity", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => [];
+
+    await import("../src/core/process-issue.js").then((m) =>
+      m.processIssue(deps, { ...input, workerId: "wOTHER" }),
+    );
+
+    expect(trace.freshWorkerBranchCalls).toEqual([
+      { branch: "afk/9-fix-the-thing", baseRef: "red-trunk", force: false },
+    ]);
+    expect(trace.runAgentCalls[0]?.branch).toBe("afk/9-fix-the-thing");
+  });
+
   it("runs the agent and calls prepareFreshWorkerBranch when no prior branch exists", async () => {
     const { deps, input, trace } = harness({});
     deps.lookups.discoverBranches = async () => [];
@@ -208,5 +222,31 @@ describe("branch-resume: no prior branch (issue #2397)", () => {
 
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
+  });
+});
+
+describe("branch-resume: existing open PR adoption (issue #2416)", () => {
+  it("adopts a matching open PR through the gate without creating a branch or running the agent", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => [];
+    Object.assign(deps.lookups, {
+      discoverOpenPullRequests: async () => [
+        { number: 2398, headRefName: "afk/wOLD1/9-first-attempt", body: "Closes #9" },
+        { number: 2408, headRefName: "afk/9-fix-the-thing", body: "Closes #9" },
+      ],
+    });
+
+    const result = await import("../src/core/process-issue.js").then((m) =>
+      m.processIssue(deps, input),
+    );
+
+    expect(result.outcome).toBe("done");
+    expect(result.branch).toBe("afk/9-fix-the-thing");
+    expect(trace.runAgentCalls).toHaveLength(0);
+    expect(trace.freshWorkerBranchCalls).toHaveLength(0);
+    expect(trace.iterLogs.some((line) => line.includes("adopting open PR #2408"))).toBe(true);
+    expect(trace.comments.some((comment) =>
+      comment.body.includes("Attempt PRs for #9: #2398, #2408")
+    )).toBe(true);
   });
 });
