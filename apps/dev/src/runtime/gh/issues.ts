@@ -2,6 +2,11 @@ import {
   LABEL_TYPE_SPEC,
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
+import {
+  buildAliasedRepositoryQuery,
+  GITHUB_GRAPHQL_BATCH_SIZE,
+  parseAliasedRepositoryResponse,
+} from "@reddb-io/shared/github-batch.js";
 import { scrubOutbound } from "../outbound-redaction.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
 
@@ -231,6 +236,48 @@ async function listNativeSubIssues(ctx: GhContext, spec: number): Promise<number
   return parseNumberJsonLines(r.stdout);
 }
 
+async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  const [owner, repo] = ctx.repo.split("/", 2);
+  if (!owner || !repo) {
+    const rows = await Promise.all(specs.map(async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const));
+    return new Map(rows);
+  }
+  for (let start = 0; start < specs.length; start += GITHUB_GRAPHQL_BATCH_SIZE) {
+    const chunk = specs.slice(start, start + GITHUB_GRAPHQL_BATCH_SIZE);
+    const operation = buildAliasedRepositoryQuery("issue", chunk, ["subIssues"]);
+    const response = await runGh(ctx, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${operation.query}`,
+      "-F",
+      `owner=${owner}`,
+      "-F",
+      `repo=${repo}`,
+    ]);
+    if (response.code !== 0) {
+      const fallback = await Promise.all(chunk.map(async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const));
+      for (const [spec, children] of fallback) out.set(spec, children);
+      continue;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(response.stdout || "{}");
+    } catch {
+      payload = {};
+    }
+    for (const row of parseAliasedRepositoryResponse(operation, payload)) {
+      const nodes = (row.value?.subIssues as { nodes?: Array<{ number?: unknown }> } | undefined)?.nodes;
+      const children = Array.isArray(nodes)
+        ? nodes.map((node) => Number(node.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0)
+        : [];
+      out.set(row.number, children);
+    }
+  }
+  return out;
+}
+
 /** List Specs for the sub-issue reconciler: open Specs plus recently closed
  * Specs, with both surfaces injected into the pure reconciler. */
 export async function listSpecSubIssueCandidates(
@@ -261,20 +308,18 @@ export async function listSpecSubIssueCandidates(
     }))
     .filter((row) => Number.isInteger(row.number) && row.number > 0);
 
-  const candidates: SpecSubIssueCandidate[] = [];
-  for (const spec of specs) {
-    const [labelChildren, nativeSubIssues] = await Promise.all([
-      listSpecLabelChildren(ctx, spec.number),
-      listNativeSubIssues(ctx, spec.number),
-    ]);
-    candidates.push({
+  const [labelChildren, nativeSubIssues] = await Promise.all([
+    Promise.all(specs.map((spec) => listSpecLabelChildren(ctx, spec.number))),
+    listNativeSubIssuesBatch(ctx, specs.map((spec) => spec.number)),
+  ]);
+  return specs.map((spec, index) => {
+    return {
       number: spec.number,
       labels: spec.labels,
-      labelChildren,
-      nativeSubIssues,
-    });
-  }
-  return candidates;
+      labelChildren: labelChildren[index] ?? [],
+      nativeSubIssues: nativeSubIssues.get(spec.number) ?? [],
+    };
+  });
 }
 
 /** Idempotently create the `runner-error` label (best-effort). Mirrors
