@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 WORKFLOW=".github/workflows/red-publish.yml"
+WORKSPACE_CI=".github/workflows/red-workspace-ci.yml"
 failures=0
 
 fail() {
@@ -126,6 +127,31 @@ else
   fail "publish workflow must expose workflow_dispatch and schedule retry triggers"
 fi
 
+# changesets/action writes its PR branch with GITHUB_TOKEN. GitHub deliberately
+# suppresses a pull_request workflow run for that push, so the branch itself
+# must be covered by the workspace CI push trigger or the Version Packages PR
+# can never receive the required test/typecheck contexts.
+if grep -qF 'branches: [main, automation/toon-bump, changeset-release/main]' "$WORKSPACE_CI"; then
+  pass "Version Packages PR branch receives workspace CI checks"
+else
+  fail "red-workspace-ci must push-trigger changeset-release/main"
+fi
+
+# Deferred tags form a FIFO publication queue. Publishing newest-first can move
+# npm's latest dist-tag and the moving vX tag backwards on the next retry.
+if grep -qF -- "--sort=v:refname" "$WORKFLOW" &&
+   ! grep -qF -- "--sort=-v:refname" "$WORKFLOW"; then
+  pass "scheduled retries inspect release tags oldest-first"
+else
+  fail "scheduled retries must inspect release tags oldest-first"
+fi
+
+if grep -qF 'oldest incomplete release is $oldest_pending' "$WORKFLOW"; then
+  pass "an explicit target cannot jump ahead of the oldest incomplete release"
+else
+  fail "explicit targets must be rejected when an older release is incomplete"
+fi
+
 # ADR 0121: the tag is the publish trigger. A `push: branches` trigger would put
 # the publish back on every commit to main, which is exactly the design this
 # replaced.
@@ -142,10 +168,18 @@ else
   pass "publish does not trigger on a branch push"
 fi
 
-if grep -qF 'already has a GitHub Release — publish already complete' "$WORKFLOW"; then
-  pass "an already-released tag is a no-op, so the scheduled retry is idempotent"
+if grep -qF 'release_complete()' "$WORKFLOW" &&
+   grep -qF 'major ref already reaches' "$WORKFLOW"; then
+  pass "completion requires both the GitHub Release and a reconciled major tag"
 else
-  fail "publish must no-op when the tag already has a GitHub Release"
+  fail "a GitHub Release alone must not suppress major-tag reconciliation"
+fi
+
+if grep -qF 'already has a GitHub Release — reconciling release tail' "$WORKFLOW" &&
+   grep -qF 'git push --force origin "refs/tags/$major:refs/tags/$major"' "$WORKFLOW"; then
+  pass "a retry can reconcile the major tag after GitHub Release creation"
+else
+  fail "GitHub Release creation must be idempotent while major-tag reconciliation still runs"
 fi
 
 if grep -qF 'scheduled red-publish retry' "$WORKFLOW"; then
