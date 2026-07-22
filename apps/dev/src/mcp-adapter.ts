@@ -842,7 +842,19 @@ async function createFleet(root: string, input: FleetCreateInput) {
   });
   if (pid === null) {
     await removeFleetProfile(path, profile.name).catch(() => false);
-    throw new Error(`fleet ${JSON.stringify(profile.name)} failed to start`);
+    let tail = "";
+    try {
+      const text = await readFile(paths.supervisorLogPath, "utf8");
+      tail = text.split(/\r?\n/).slice(-20).join("\n");
+    } catch {
+      // The explicit no-output marker below still distinguishes an empty boot
+      // from a caller-visible but unexplained registry rollback.
+    }
+    const evidence = tail || "(no supervisor log output was captured)";
+    throw new Error(
+      `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
+        `profile rolled back. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+    );
   }
   return { status: "launched", profile, pid, target: input.target };
 }
