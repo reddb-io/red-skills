@@ -675,7 +675,7 @@ export const createWorktree = async (
                 branch: worktreeInfo.branch,
               });
               return Layer.provide(
-                FileDisplay.layer(resolvedLogging.path),
+                FileDisplay.layer(resolvedLogging.path, resolvedLogging.format),
                 NodeFileSystem.layer,
               );
             })()

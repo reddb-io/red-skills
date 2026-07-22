@@ -19,6 +19,8 @@ export interface SlotState {
   /** Fast-death ring, pruned to the window (SLOT_FAST_DEATHS). */
   deaths: number[];
   parked: boolean;
+  /** Fatal, non-retryable reason that parked this slot outside the circuit. */
+  fatalReason: "host-config" | null;
   tripEpoch: number;
   /** SLOT_SWEPT — the trip sweep fired once. */
   swept: boolean;
@@ -56,6 +58,7 @@ export function freshSlot(): SlotState {
     spawnEpoch: 0,
     deaths: [],
     parked: false,
+    fatalReason: null,
     tripEpoch: 0,
     swept: false,
     stalled: false,

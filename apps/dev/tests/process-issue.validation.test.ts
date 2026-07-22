@@ -1016,6 +1016,27 @@ describe("processIssue — runner transient transport/setup failure", () => {
   });
 });
 
+describe("processIssue — fatal host configuration", () => {
+  it("runs once, never falls back, and escalates with an actionable host-config label", async () => {
+    const { deps, input, trace } = harness({ outcome: "host-config", fallbackRunner: true });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("host-config");
+    expect(result.preserved).toBe(true);
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(labelTrace(trace)).toEqual([
+      "-ready-for-agent|+running",
+      "-running|+ready-for-human+blocked:host-config",
+    ]);
+    expect(trace.ensuredLabels).toContain("blocked:host-config");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.released).toEqual([9]);
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+    expect(trace.bodyEdits[0]?.body).toContain("kind: host-config");
+    expect(trace.bodyEdits[0]?.body).toContain("Install or restore the required shell");
+  });
+});
+
 
 describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
   it("fetches the resolved base and forks the worker branch off it (not HEAD)", async () => {
@@ -1248,4 +1269,3 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.closed).toEqual([]);
   });
 });
-

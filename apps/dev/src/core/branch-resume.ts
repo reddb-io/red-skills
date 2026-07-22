@@ -79,20 +79,34 @@ export function isExplicitRestartRequested(humanGuidance: string): boolean {
  * Build the content for the `<resume-from-branch>` handoff section.
  * Gate-green variant: agent verifies + gates, no re-implementation.
  * Non-gate-green variant: agent continues from where the branch left off.
+ *
+ * Both variants open with a MANDATORY base sync (issue #2481): an adopted
+ * branch carries every prior attempt's commits on an ever-staler base, and
+ * deferring the sync to landing turns small drift into a massive sequential
+ * rebase. Resolving conflicts now — while the agent is present and the drift
+ * is at its smallest — is the cheap moment.
  */
-export function buildResumeInstruction(branch: string, isGateGreen: boolean): string {
+export function buildResumeInstruction(branch: string, isGateGreen: boolean, base = "main"): string {
+  const syncFirst = [
+    `FIRST, before anything else, sync the branch with the current base:`,
+    `run \`git fetch origin ${base}\` then \`git rebase origin/${base}\`.`,
+    "If the rebase conflicts, resolve every conflict NOW (honor both sides),",
+    "`git rebase --continue`, and push the synced branch with",
+    "`git push --force-with-lease`. Only then proceed.",
+  ].join(" ");
   if (isGateGreen) {
     return [
       `Branch \`${branch}\` was pushed in a prior attempt and its gate already passed.`,
-      "Checkout this branch in your worktree, verify the base is still fresh,",
-      "re-run the merge gate, and emit `<promise>DONE</promise>` when it passes.",
+      `Checkout this branch in your worktree. ${syncFirst}`,
+      "Re-run the merge gate, and emit `<promise>DONE</promise>` when it passes.",
       "Do NOT re-implement — the work is already there.",
     ].join(" ");
   }
   return [
     `Branch \`${branch}\` was pushed in a prior attempt.`,
-    "Checkout this branch in your worktree and continue from where it left off —",
-    "do NOT start over. Run `git log --oneline origin/main..HEAD` to see what was",
+    `Checkout this branch in your worktree. ${syncFirst}`,
+    "Continue from where it left off —",
+    `do NOT start over. Run \`git log --oneline origin/${base}..HEAD\` to see what was`,
     "already committed, then satisfy the merge gate and emit `<promise>DONE</promise>`.",
   ].join(" ");
 }

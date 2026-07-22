@@ -3,33 +3,36 @@
 All RedSkills operational-report skills delegate to the dev runtime; they never
 hand-calculate metrics.
 
-## Run shim
+## Canonical invocation: npx direct-run
 
-Resolve the RedSkills dev runtime the same way for every operational skill:
-
-1. Prefer an installed `red-skills-dev` shim on `PATH` when `command -v
-   red-skills-dev` succeeds. This is the short form used by prepared hosts.
-2. Otherwise use the ADR 0091 npm direct-run transport. Pin a known version when
-   the caller or repo provides one; use the current dist-tag only when no pin is
-   available:
+**The npm direct-run form is the canonical invocation** (ADR 0091) — it works
+on EVERY installation, because npm is the one transport every host already has.
+A bare `red-skills-dev` only exists where an installer created the shim, so a
+skill that leads with the bare form breaks on exactly the hosts that need it
+most. Always write and run:
 
 ```bash
 npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand> [args]
 ```
 
-If `red-skills-dev` is missing, do not report a bare command-not-found. Say that
-the host lacks the shim and run, or ask the operator to run, the `npx -y -p
-@reddb-io/red-skills@<version> red-skills-dev ...` fallback.
+Resolve `<version>` from the installed plugin (the statusline `vX.Y.Z`, or the
+plugin's `plugin.json`); use the `latest` dist-tag only when no pin is known.
+
+A host MAY use an installed `red-skills-dev` shim on `PATH` as a warm-cache
+optimization when `command -v red-skills-dev` succeeds — same engine, same
+arguments, faster start. The shim is never required, and its absence is not an
+error: fall through to the npx form silently instead of surfacing a
+command-not-found.
 
 The valid dev CLI subcommands for these skills are explicit: `run`, `fleet`,
 `monitor`, `dashboard`, `daily-review`, `weekly-review`, `retake`, and
 `requeue`. There is no `red-skills-dev afk` subcommand; `/afk` maps to
 `red-skills-dev run` or to the bare run flags documented by the AFK skill.
 
-When the shim is available, run it with the skill-specific subcommand:
+The skill-specific subcommand always rides the canonical form:
 
 ```bash
-red-skills-dev <subcommand> [--json]
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand> [--json]
 ```
 
 When developing inside the red-skills source checkout, this repo-local path is

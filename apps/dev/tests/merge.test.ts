@@ -875,6 +875,75 @@ describe("preMergeRebase (#1006)", () => {
   const base = { repo: "/wt", remote: "origin", base: "main", branch: "afk/w/9-x" };
   const needsRebase = { match: (a: string[]) => a.includes("merge-base"), result: { code: 1 } };
 
+  // #2481 squash rules: fork-point discovery answers a sha, rev-list answers a
+  // multi-commit count, so squashOwnHistory engages. `needsRebase` above matches
+  // ANY argv containing "merge-base", so squash-specific tests use these finer
+  // rules instead.
+  const ancestorCheckFails = {
+    match: (a: string[]) => a.includes("--is-ancestor"),
+    result: { code: 1 },
+  };
+  const forkPoint = {
+    match: (a: string[]) => a.includes("merge-base") && !a.includes("--is-ancestor"),
+    result: { code: 0, stdout: "forksha\n" },
+  };
+  const aheadBy = (n: number) => ({
+    match: (a: string[]) => a.includes("rev-list"),
+    result: { code: 0, stdout: `${n}\n` },
+  });
+
+  it("multi-commit branch squashes to one commit at the fork point before rebasing (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt reset --soft forksha");
+    const commit = calls.find((c) => c.includes("commit"));
+    expect(commit?.join(" ")).toContain("land: squash 65 attempt commits from afk/w/9-x");
+    // Squash happens BEFORE the rebase replays onto the base.
+    const resetIdx = j.findIndex((c) => c.includes("reset --soft forksha"));
+    const rebaseIdx = j.findIndex((c) => c === "git -C /wt rebase origin/main");
+    expect(resetIdx).toBeGreaterThanOrEqual(0);
+    expect(rebaseIdx).toBeGreaterThan(resetIdx);
+  });
+
+  it("single-commit branch does not squash (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(1)]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j.some((c) => c.includes("reset --soft"))).toBe(false);
+    expect(j).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("squashAheadThreshold: Infinity disables the squash entirely (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, { ...base, squashAheadThreshold: Infinity });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls).some((c) => c.includes("reset --soft"))).toBe(false);
+  });
+
+  it("a failed squash commit restores the tip and the plain rebase still runs (#2481)", async () => {
+    const { exec, calls } = fakeExec([
+      ancestorCheckFails,
+      forkPoint,
+      aheadBy(3),
+      { match: (a) => a.includes("commit"), result: { code: 1 } },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt reset --soft HEAD@{1}");
+    expect(j).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("fork-point discovery failure skips the squash silently (#2481)", async () => {
+    const { exec, calls } = fakeExec([needsRebase]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls).some((c) => c.includes("reset --soft"))).toBe(false);
+  });
+
   it("clean rebase → fetches base, rebases, force-pushes the branch, ok", async () => {
     const { exec, calls } = fakeExec([needsRebase]);
     const r = await preMergeRebase(exec, base);

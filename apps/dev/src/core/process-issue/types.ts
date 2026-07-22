@@ -64,6 +64,7 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
+  HOST_CONFIG_EXIT_CODE,
   type AttemptOutcome,
 } from "../attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
@@ -386,6 +387,13 @@ export function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown>
       ...base,
       "current.last_exit_code": CRASH_EXIT_CODE,
       "current.failure_kind": "signal-killed",
+    };
+  }
+  if (outcome === "host-config") {
+    return {
+      ...base,
+      "current.last_exit_code": HOST_CONFIG_EXIT_CODE,
+      "current.failure_kind": "host-config",
     };
   }
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };
