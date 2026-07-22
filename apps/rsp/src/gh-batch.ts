@@ -5,6 +5,7 @@ import {
   buildAliasedRepositoryQuery,
   buildAliasedSubIssueMutation,
   errorsByAlias,
+  GITHUB_GRAPHQL_BATCH_SIZE,
   parseAliasedRepositoryResponse,
   type AliasedRepositoryOperation,
   type GitHubRepositoryBatchField,
@@ -43,6 +44,11 @@ interface ParsedBatchCommand {
   remove: string[];
 }
 
+interface ReadFields {
+  output: string[];
+  query: GitHubRepositoryBatchField[];
+}
+
 const DEFAULT_REST_CONCURRENCY = 4;
 const ISSUE_FIELDS = new Set(["number", "title", "state", "labels", "body"]);
 const PR_FIELDS = new Set(["number", "title", "state", "mergeable", "checks", "checkRollup", "statusCheckRollup", "body"]);
@@ -76,36 +82,37 @@ async function runRead(
 ): Promise<GhBatchResult> {
   const kind = command.verb === "issues" ? "issue" : "pullRequest";
   const fields = readFields(command);
-  const operation = buildAliasedRepositoryQuery(kind, command.numbers, fields);
-  const response = await runGraphql(exec, repo, operation.query);
-  if (isQuotaFailure(response)) {
-    return await readRestFallback(command, repo, exec, concurrency, argv);
+  const rows: Array<{ number: number; value: JsonObject; failed: boolean }> = [];
+  const errors: string[] = [];
+  for (const numbers of chunks(command.numbers, GITHUB_GRAPHQL_BATCH_SIZE)) {
+    const operation = buildAliasedRepositoryQuery(kind, numbers, fields.query);
+    const response = await runGraphql(exec, repo, operation.query);
+    if (isQuotaFailure(response)) {
+      return await readRestFallback(command, repo, exec, concurrency, argv);
+    }
+    if (response.code !== 0) {
+      errors.push(response.stderr);
+      rows.push(...numbers.map((number) => ({
+        number,
+        value: { error: compactError(response) || `failed to read ${number}` },
+        failed: true,
+      })));
+      continue;
+    }
+    rows.push(...parseAliasedRepositoryResponse(operation, parseJson(response.stdout)).map((row) => ({
+      number: row.number,
+      value: row.error ? { error: row.error } : projectRead(command.verb as "issues" | "prs", row.value ?? {}, fields.output),
+      failed: Boolean(row.error),
+    })));
   }
-  if (response.code !== 0) {
-    const key = command.verb;
-    const items = keyed(command.numbers, (number) => ({ error: compactError(response) || `failed to read ${number}` }));
-    return result({
-      command: commandText(argv),
-      transport: "graphql",
-      order: command.numbers,
-      [key]: items,
-      summary: `0/${command.numbers.length} read`,
-    }, 1, response.stderr);
-  }
-  const parsed = parseJson(response.stdout);
-  const rows = parseAliasedRepositoryResponse(operation, parsed);
-  const items = keyedRows(rows.map((row) => ({
-    number: row.number,
-    value: row.error ? { error: row.error } : projectRead(command.verb as "issues" | "prs", row.value ?? {}, fields),
-  })));
-  const failures = rows.filter((row) => row.error).length;
+  const failures = rows.filter((row) => row.failed).length;
   return result({
     command: commandText(argv),
     transport: "graphql",
     order: command.numbers,
-    [command.verb]: items,
+    [command.verb]: keyedRows(rows),
     summary: `${rows.length - failures}/${rows.length} read`,
-  });
+  }, errors.length > 0 ? 1 : 0, errors.filter(Boolean).join("\n"));
 }
 
 async function readRestFallback(
@@ -116,14 +123,11 @@ async function readRestFallback(
   argv: readonly string[],
 ): Promise<GhBatchResult> {
   const fields = readFields(command);
-  const ghFields = command.verb === "issues"
-    ? [...new Set(["number", ...fields])].join(",")
-    : [...new Set(["number", ...fields.map(prRestField)])].join(",");
-  const surface = command.verb === "issues" ? "issue" : "pr";
+  const surface = command.verb === "issues" ? "issues" : "pulls";
   const rows = await boundedMap(command.numbers, concurrency, async (number) => {
-    const response = await exec([surface, "view", String(number), "--repo", repo, "--json", ghFields]);
+    const response = await exec(["api", `repos/${repo}/${surface}/${number}`]);
     if (response.code !== 0) return { number, value: { error: compactError(response) || "REST fallback failed" } };
-    return { number, value: projectRead(command.verb as "issues" | "prs", asRecord(parseJson(response.stdout)), fields) };
+    return { number, value: projectRestRead(command.verb as "issues" | "prs", asRecord(parseJson(response.stdout)), fields.output) };
   });
   const failures = rows.filter((row) => "error" in row.value).length;
   return result({
@@ -294,15 +298,18 @@ function globalMutationFailure(
   }, 1, response.stderr);
 }
 
-function readFields(command: ParsedBatchCommand): GitHubRepositoryBatchField[] {
+function readFields(command: ParsedBatchCommand): ReadFields {
   if (command.verb === "issues") {
     const requested = command.fields.length > 0 ? command.fields : ["title", "state", "labels", "body"];
     validateFields(requested, ISSUE_FIELDS);
-    return requested as GitHubRepositoryBatchField[];
+    return { output: requested, query: requested as GitHubRepositoryBatchField[] };
   }
   const requested = command.fields.length > 0 ? command.fields : ["title", "state", "mergeable", "checks"];
   validateFields(requested, PR_FIELDS);
-  return requested.map((field) => ["checkRollup", "statusCheckRollup"].includes(field) ? "checks" : field) as GitHubRepositoryBatchField[];
+  return {
+    output: requested,
+    query: requested.map((field) => ["checkRollup", "statusCheckRollup"].includes(field) ? "checks" : field) as GitHubRepositoryBatchField[],
+  };
 }
 
 function validateFields(fields: readonly string[], allowed: ReadonlySet<string>): void {
@@ -313,17 +320,37 @@ function validateFields(fields: readonly string[], allowed: ReadonlySet<string>)
 function projectRead(
   verb: "issues" | "prs",
   value: Record<string, unknown>,
-  fields: readonly GitHubRepositoryBatchField[],
+  fields: readonly string[],
 ): JsonObject {
   const out: JsonObject = {};
   for (const field of fields) {
     if (field === "labels") out.labels = nodeRecords(value.labels).map((node) => stringValue(node.name)).filter(Boolean);
-    else if (field === "checks") out.checks = projectChecks(value.commits);
+    else if (["checks", "checkRollup", "statusCheckRollup"].includes(field)) out[field] = projectChecks(value.commits);
     else if (field === "state" || field === "mergeable") out[field] = stringValue(value[field]).toLowerCase();
     else if (field !== "id" && field !== "subIssues") out[field] = scalar(value[field]);
   }
   if (!("number" in out)) out.number = numberValue(value.number);
-  if (verb === "prs" && fields.includes("checks") && !("checks" in out)) out.checks = { state: "", contexts: [] };
+  return out;
+}
+
+function projectRestRead(verb: "issues" | "prs", value: Record<string, unknown>, fields: readonly string[]): JsonObject {
+  const out: JsonObject = {};
+  for (const field of fields) {
+    if (field === "labels") {
+      const labels = Array.isArray(value.labels) ? value.labels.filter(isRecord) : [];
+      out.labels = labels.map((label) => stringValue(label.name)).filter(Boolean);
+    } else if (["checks", "checkRollup", "statusCheckRollup"].includes(field)) {
+      out[field] = { state: "", contexts: [] };
+    } else if (field === "state") {
+      out.state = stringValue(value.state).toLowerCase();
+    } else if (field === "mergeable") {
+      const mergeable = value.mergeable;
+      out.mergeable = typeof mergeable === "boolean" ? (mergeable ? "mergeable" : "conflicting") : "unknown";
+    } else {
+      out[field] = scalar(value[field]);
+    }
+  }
+  if (!("number" in out)) out.number = numberValue(value.number);
   return out;
 }
 
@@ -339,13 +366,15 @@ function projectChecks(commits: unknown): JsonObject {
   };
 }
 
-function prRestField(field: GitHubRepositoryBatchField): string {
-  return field === "checks" ? "statusCheckRollup" : field;
-}
-
 async function runGraphql(exec: GhBatchExec, repo: string, query: string): Promise<GhBatchExecOutput> {
   const [owner, name] = splitRepo(repo);
   return await exec(["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `repo=${name}`]);
+}
+
+function chunks<T>(values: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let start = 0; start < values.length; start += size) out.push(values.slice(start, start + size));
+  return out;
 }
 
 async function boundedMap<T, R>(values: readonly T[], concurrency: number, fn: (value: T) => Promise<R>): Promise<R[]> {
