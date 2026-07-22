@@ -50,6 +50,7 @@ import {
   resolveClaimReaperConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
+import { renderConcedeOnBehalf } from "./claim.js";
 import {
   planDocsSweep,
   renderDocsSweepFileList,
@@ -341,6 +342,8 @@ export interface BootDeps {
   /** Posts an `afk:claim` concede comment. Wired so the boot sweep can
    * auto-heal dead own-machine dangling claims instead of halting (#2321). */
   concedeClaim?: (issue: number, body: string) => Promise<void>;
+  /** Opaque local host identity used for audited concede-on-behalf markers. */
+  claimEvictor?: string;
   /** Current epoch seconds (date +%s), injected so the run is deterministic. */
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
@@ -931,8 +934,25 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
       }
       const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
       const addLabels = parked ? [] : [LABEL_READY];
-      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
       const claimedIssue = claimed.find((c) => c.issue === p.issue);
+      if (deps.concedeClaim && deps.claimEvictor) {
+        for (const owner of p.staleOwners) {
+          const latest = claimedIssue?.records
+            .filter((record) => record.worker === owner)
+            .sort((a, b) => b.commentId - a.commentId)[0];
+          const heartbeatS = latest?.createdAt ? Math.floor(Date.parse(latest.createdAt) / 1000) : Number.NaN;
+          await deps.concedeClaim(
+            p.issue,
+            renderConcedeOnBehalf(
+              owner,
+              deps.claimEvictor,
+              latest?.createdAt,
+              Number.isFinite(heartbeatS) ? Math.max(0, deps.nowS - heartbeatS) : undefined,
+            ),
+          );
+        }
+      }
+      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
       const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
       const concededOwners = p.concededOwners ?? [];
       const body = concededOwners.length > 0
