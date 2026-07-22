@@ -204,6 +204,8 @@ export interface HarnessOptions {
   recoveryEnv?: Record<string, string>;
   /** /go post-DONE machine-gate retry cap injected by run.ts. */
   goVerifyRetries?: number;
+  /** /afk post-DONE gate-correction convergence budget (#2285). */
+  stallConvergenceBudget?: number;
   /** When set, register the ADR 0017 `recordAttempt` port. "throw" makes it
    * reject (proving a memory failure never fails the close); "ok" records the
    * payload; undefined omits the port entirely (older-caller safety). */
@@ -559,6 +561,7 @@ export function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     goVerifyRetries: opts.goVerifyRetries,
+    stallConvergenceBudget: opts.stallConvergenceBudget,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
     sandboxImage: opts.sandboxImage,
