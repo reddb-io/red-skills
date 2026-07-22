@@ -95,17 +95,17 @@ describe("rsp gh batch", () => {
     expect(payload.prs["12"]).not.toHaveProperty("checks");
   });
 
-  it("batches label mutations after one aliased id lookup", async () => {
+  it("edits all labels with one aliased GraphQL mutation", async () => {
     const calls: string[][] = [];
     const exec: GhBatchExec = async (args) => {
       calls.push([...args]);
-      if (calls.length === 1) {
-        return response({ data: { repository: {
-          i0: { id: "I_7", number: 7 },
-          i1: { id: "I_8", number: 8 },
-          l0: { id: "L_add", name: "ready" },
-          l1: { id: "L_remove", name: "crashed" },
-        } } });
+      if (args[1]?.includes("/issues/")) {
+        const number = Number(args[1].match(/issues\/(\d+)$/)?.[1]);
+        return response({ number, node_id: `I_${number}` });
+      }
+      if (args[1]?.includes("/labels/")) {
+        const name = decodeURIComponent(args[1].split("/").at(-1) ?? "");
+        return response({ name, node_id: name === "ready" ? "L_add" : "L_remove" });
       }
       return response({ data: {
         add0: { clientMutationId: "7" }, remove0: { clientMutationId: "7" },
@@ -118,22 +118,21 @@ describe("rsp gh batch", () => {
     ], { exec });
     const payload = decode(result.stdout.toString()) as { transport: string; issues: Record<string, unknown> };
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]!.join(" ")).toContain("i0: issue(number: 7)");
-    expect(calls[1]!.join(" ")).toContain("add0: addLabelsToLabelable");
-    expect(calls[1]!.join(" ")).toContain("remove1: removeLabelsFromLabelable");
+    const graphqlCalls = calls.filter((args) => args.slice(0, 2).join(" ") === "api graphql");
+    expect(graphqlCalls).toHaveLength(1);
+    expect(graphqlCalls[0]!.join(" ")).toContain("add0: addLabelsToLabelable");
+    expect(graphqlCalls[0]!.join(" ")).toContain("remove1: removeLabelsFromLabelable");
     expect(payload.transport).toBe("graphql");
     expect(payload.issues).toEqual({ "7": { ok: true }, "8": { ok: true } });
   });
 
-  it("batches sub-issue links after one aliased id lookup", async () => {
+  it("links all sub-issues with one aliased GraphQL mutation", async () => {
     const calls: string[][] = [];
     const exec: GhBatchExec = async (args) => {
       calls.push([...args]);
-      if (calls.length === 1) {
-        return response({ data: { repository: {
-          i0: { id: "I_parent", number: 42 }, i1: { id: "I_7", number: 7 }, i2: { id: "I_8", number: 8 },
-        } } });
+      if (args[1]?.includes("/issues/")) {
+        const number = Number(args[1].match(/issues\/(\d+)$/)?.[1]);
+        return response({ id: number * 100, number, node_id: number === 42 ? "I_parent" : `I_${number}` });
       }
       return response({ data: { link0: { clientMutationId: "7" }, link1: { clientMutationId: "8" } } });
     };
@@ -141,10 +140,38 @@ describe("rsp gh batch", () => {
     const result = await runGhBatchCommand(["gh", "link-sub-issues", "42", "7", "8", "--repo", "acme/widgets"], { exec });
     const payload = decode(result.stdout.toString()) as { issues: Record<string, unknown> };
 
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.join(" ")).toContain("link0: addSubIssue");
-    expect(calls[1]!.join(" ")).toContain("link1: addSubIssue");
+    const graphqlCalls = calls.filter((args) => args.slice(0, 2).join(" ") === "api graphql");
+    expect(graphqlCalls).toHaveLength(1);
+    expect(graphqlCalls[0]!.join(" ")).toContain("link0: addSubIssue");
+    expect(graphqlCalls[0]!.join(" ")).toContain("link1: addSubIssue");
     expect(payload.issues).toEqual({ "7": { ok: true }, "8": { ok: true } });
+  });
+
+  it("falls back from label mutation quota to bounded REST add/remove endpoints", async () => {
+    const calls: string[][] = [];
+    const exec: GhBatchExec = async (args) => {
+      calls.push([...args]);
+      if (args[1]?.includes("/issues/") && args.length === 2) {
+        const number = Number(args[1].match(/issues\/(\d+)$/)?.[1]);
+        return response({ number, node_id: `I_${number}` });
+      }
+      if (args[1]?.includes("/labels/")) return response({ node_id: "L_any" });
+      if (args.slice(0, 2).join(" ") === "api graphql") return response("", 1, "GraphQL quota exhausted");
+      return response({ ok: true });
+    };
+
+    const result = await runGhBatchCommand([
+      "gh", "edit-labels", "--add", "ready", "--remove", "crashed", "7", "8", "--repo", "acme/widgets",
+    ], { exec, restConcurrency: 2 });
+    const payload = decode(result.stdout.toString()) as { transport: string; degraded: string; issues: Record<string, unknown> };
+
+    expect(payload).toMatchObject({ transport: "rest-fallback", degraded: "graphql-quota" });
+    expect(payload.issues).toEqual({ "7": { ok: true }, "8": { ok: true } });
+    expect(calls.some((args) => args[0] === "api" && args[1] === "-X" && args[2] === "DELETE"
+      && args[3] === "repos/acme/widgets/issues/7/labels/crashed")).toBe(true);
+    expect(calls.some((args) => args[0] === "api" && args[1] === "-X" && args[2] === "POST"
+      && args[3] === "repos/acme/widgets/issues/7/labels" && args.includes("labels[]=ready"))).toBe(true);
+    expect(calls.some((args) => args[0] === "issue" && args[1] === "edit")).toBe(false);
   });
 
   it("surfaces GraphQL quota degradation and uses bounded REST concurrency", async () => {
