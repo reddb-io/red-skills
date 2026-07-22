@@ -102,6 +102,11 @@ import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-s
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
+import {
+  prepareImplementerEnvironment,
+  resolveImplementerPluginRoots,
+  type PreparedImplementerEnvironment,
+} from "../../runtime/implementer-environment.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
@@ -173,6 +178,16 @@ export function buildProcessDeps(
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
+  let configText = "";
+  try {
+    configText = readFileSync(paths.configPath, "utf8");
+  } catch {
+    // The strict activation gate stays closed when config is absent/unreadable.
+  }
+  const implementerPluginRoots = resolveImplementerPluginRoots({
+    repoRoot: ctx.root,
+    env: process.env,
+  });
   // Trust policy for the guidance-channel source-trust projection (issue #1100).
   const trustPolicy = parseTrustPolicy(config);
   // Repo-level container image for the isolation path (#2340) — resolved off the
@@ -427,7 +442,34 @@ export function buildProcessDeps(
     runAgent: (() => {
       const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, sandboxImage);
       const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
-      return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
+      let preparedDir = "";
+      let prepared: PreparedImplementerEnvironment | undefined;
+      return (input: Parameters<typeof inner>[0]) => {
+        const attemptDir = input.cwd ?? current.attemptDir;
+        if (!prepared || preparedDir !== attemptDir) {
+          prepared = prepareImplementerEnvironment({
+            attemptDir,
+            configText,
+            pluginRoots: implementerPluginRoots,
+          });
+          preparedDir = attemptDir;
+          void castleBridge.record("worker.implementer-environment", {
+            artifact: "implementer-runtime.toon",
+            ...prepared.metrics,
+          }).catch(() => {});
+          void updateState(join(attemptDir, "afk.state.toon"), {
+            "current.implementer_payload_before_bytes": prepared.metrics.payload_bytes.before,
+            "current.implementer_payload_after_bytes": prepared.metrics.payload_bytes.after,
+            "current.implementer_boot_before_ms": prepared.metrics.boot_time_ms.before,
+            "current.implementer_boot_after_ms": prepared.metrics.boot_time_ms.after,
+          }).catch(() => {});
+        }
+        return inner({
+          ...input,
+          steerFile: steerFilePath,
+          implementer: prepared.runtime,
+        });
+      };
     })(),
     sandboxMode: sandbox,
     sandboxAvailable: async (mode) => {
