@@ -6,12 +6,13 @@
 
 import { spawn } from "node:child_process";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
 import { FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { readPidStartTime } from "../core/state.js";
+import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -24,21 +25,17 @@ function isLivePid(pid: number): boolean {
   }
 }
 
-async function readPid(path: string): Promise<number | null> {
-  try {
-    const raw = (await readFile(path, "utf8")).trim();
-    if (!/^\d+$/.test(raw)) return null;
-    return Number(raw);
-  } catch {
-    return null;
-  }
-}
-
-async function waitForPidFile(pidFile: string, deadlineMs: number): Promise<number | null> {
+async function waitForPinnedPid(
+  pidFile: string,
+  pidStartFile: string,
+  deadlineMs: number,
+): Promise<number | null> {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
-    const pid = await readPid(pidFile);
-    if (pid && isLivePid(pid)) return pid;
+    const identity = await readSupervisorIdentity(pidFile, pidStartFile);
+    if (identity && isSupervisorIdentityLive(identity, isLivePid, readPidStartTime)) {
+      return identity.pid;
+    }
     await sleep(100);
   }
   return null;
@@ -101,7 +98,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
   });
   child.unref();
 
-  return waitForPidFile(pidFile, 3_000);
+  return waitForPinnedPid(pidFile, paths.supervisorPidStartPath, 3_000);
 }
 
 /**
