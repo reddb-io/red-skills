@@ -149,14 +149,20 @@ function harness(opts: HarnessOptions = {}): {
       if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
         return { code: 0, stdout: "feedfacecafebeef\n", stderr: "" };
       }
+      if (j === "git -C /repo rev-parse origin/main") {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
+      }
       // landPr reuses an open PR via `gh pr list`; reply with a number.
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
       if (j.includes("pr view") && j.includes("mergeStateStatus")) {
         const map = {
-          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
-          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         } as const;
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
