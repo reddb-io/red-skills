@@ -3,8 +3,10 @@ import {
 } from "../../core/triage-labels.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
 import {
+  boundedMap,
   buildAliasedRepositoryQuery,
   GITHUB_GRAPHQL_BATCH_SIZE,
+  GITHUB_REST_CONCURRENCY,
   parseAliasedRepositoryResponse,
 } from "@reddb-io/shared/github-batch.js";
 import { scrubOutbound } from "../outbound-redaction.js";
@@ -232,7 +234,7 @@ async function listNativeSubIssues(ctx: GhContext, spec: number): Promise<number
     "--jq",
     ".[] | {number}",
   ]);
-  if (r.code !== 0) return [];
+  if (r.code !== 0) throw new Error(`gh: failed to list native sub-issues for #${spec} (code ${r.code})`);
   return parseNumberJsonLines(r.stdout);
 }
 
@@ -240,7 +242,7 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
   const out = new Map<number, number[]>();
   const [owner, repo] = ctx.repo.split("/", 2);
   if (!owner || !repo) {
-    const rows = await Promise.all(specs.map(async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const));
+    const rows = await boundedMap(specs, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
     return new Map(rows);
   }
   for (let start = 0; start < specs.length; start += GITHUB_GRAPHQL_BATCH_SIZE) {
@@ -257,7 +259,7 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
       `repo=${repo}`,
     ]);
     if (response.code !== 0) {
-      const fallback = await Promise.all(chunk.map(async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const));
+      const fallback = await boundedMap(chunk, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
       for (const [spec, children] of fallback) out.set(spec, children);
       continue;
     }
@@ -267,12 +269,19 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
     } catch {
       payload = {};
     }
+    const fallbackSpecs: number[] = [];
     for (const row of parseAliasedRepositoryResponse(operation, payload)) {
       const nodes = (row.value?.subIssues as { nodes?: Array<{ number?: unknown }> } | undefined)?.nodes;
-      const children = Array.isArray(nodes)
-        ? nodes.map((node) => Number(node.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0)
-        : [];
+      if (row.error || !Array.isArray(nodes)) {
+        fallbackSpecs.push(row.number);
+        continue;
+      }
+      const children = nodes.map((node) => Number(node.number ?? 0)).filter((number) => Number.isInteger(number) && number > 0);
       out.set(row.number, children);
+    }
+    const fallback = await boundedMap(fallbackSpecs, GITHUB_REST_CONCURRENCY, async (spec) => [spec, await listNativeSubIssues(ctx, spec)] as const);
+    for (const [spec, children] of fallback) {
+      out.set(spec, children);
     }
   }
   return out;
