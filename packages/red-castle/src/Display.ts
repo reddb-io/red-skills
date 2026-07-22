@@ -2,6 +2,7 @@ import * as clack from "@clack/prompts";
 import { FileSystem } from "@effect/platform";
 import { dirname } from "node:path";
 import { Context, Effect, Layer, Ref } from "effect";
+import { encodeLines } from "@reddb-io/toon";
 import { styleText } from "node:util";
 
 export type Severity = "info" | "success" | "warn" | "error";
@@ -141,9 +142,33 @@ export const SilentDisplay = {
     }),
 };
 
+/**
+ * On-disk framing for the file log. `"text"` is the historical plain-text
+ * narrative. `"toonl"` frames every narrative line as one `{at,kind,msg}` TOONL
+ * row under a single segment header — the format RedSkills' per-attempt log lane
+ * requires (ADR 0097). Opt-in: unset means `"text"`, so every existing caller
+ * and its log-content expectations are unchanged.
+ */
+export type FileLogFormat = "text" | "toonl";
+
+/** The TOONL log lane's ONE segment header. Every row carries all three fields,
+ * so the header is written once at file creation and never rotates. */
+export const FILE_LOG_TOONL_HEADER = "[]{at,kind,msg}:";
+
+/** Encode one narrative line as a TOONL row (header-less, newline-terminated). */
+const toonlRow = (kind: string, msg: string): string => {
+  const chunk = encodeLines().push({
+    at: new Date().toISOString(),
+    kind,
+    msg,
+  });
+  return chunk.slice(chunk.indexOf("\n") + 1);
+};
+
 export const FileDisplay = {
   layer: (
     filePath: string,
+    format: FileLogFormat = "text",
   ): Layer.Layer<Display, never, FileSystem.FileSystem> =>
     Layer.effect(
       Display,
@@ -152,7 +177,13 @@ export const FileDisplay = {
         yield* fs
           .makeDirectory(dirname(filePath), { recursive: true })
           .pipe(Effect.orDie);
-        const delimiter = `\n--- Run started: ${new Date().toISOString()} ---\n`;
+        const toonl = format === "toonl";
+        const existing = toonl
+          ? yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false))
+          : false;
+        const delimiter = toonl
+          ? `${existing ? "" : `${FILE_LOG_TOONL_HEADER}\n`}${toonlRow("run-started", "Run started")}`
+          : `\n--- Run started: ${new Date().toISOString()} ---\n`;
         yield* fs
           .writeFileString(filePath, delimiter, { flag: "a" })
           .pipe(Effect.orDie);
@@ -160,25 +191,44 @@ export const FileDisplay = {
         // Tracks whether the last write left the cursor mid-line (a raw chunk
         // with no trailing newline). Line-oriented entries consult this so they
         // always begin on a fresh line, keeping structured output (tool calls,
-        // status, context-window summaries) off the tail of streamed prose.
+        // status, context-window summaries) off the tail of streamed prose. In
+        // TOONL mode the same role is played by `pending`: a partial chunk is
+        // held back until it completes a line, because a row is atomic.
         let midLine = false;
+        let pending = "";
+
+        const write = (text: string): Effect.Effect<void> =>
+          fs.writeFileString(filePath, text, { flag: "a" }).pipe(Effect.ignore);
 
         const appendToLog = (line: string): Effect.Effect<void> =>
           Effect.suspend(() => {
+            if (toonl) {
+              // Flush any half-streamed prose as its own row first, so the
+              // structured entry never lands mid-record.
+              const flushed = pending.length > 0 ? toonlRow("agent", pending) : "";
+              pending = "";
+              return write(
+                flushed + line.split("\n").map((part) => toonlRow("log", part)).join(""),
+              );
+            }
             const prefix = midLine ? "\n" : "";
             midLine = false;
-            return fs
-              .writeFileString(filePath, `${prefix}${line}\n`, { flag: "a" })
-              .pipe(Effect.ignore);
+            return write(`${prefix}${line}\n`);
           });
 
         const appendRaw = (chunk: string): Effect.Effect<void> =>
           Effect.suspend(() => {
             if (chunk.length === 0) return Effect.void;
+            if (toonl) {
+              pending += chunk;
+              const parts = pending.split("\n");
+              pending = parts.pop() ?? "";
+              return parts.length > 0
+                ? write(parts.map((part) => toonlRow("agent", part)).join(""))
+                : Effect.void;
+            }
             midLine = !chunk.endsWith("\n");
-            return fs
-              .writeFileString(filePath, chunk, { flag: "a" })
-              .pipe(Effect.ignore);
+            return write(chunk);
           });
 
         return {

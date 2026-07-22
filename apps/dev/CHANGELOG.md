@@ -1,0 +1,50 @@
+# @reddb-io/dev
+
+## 2.80.0
+
+### Minor Changes
+
+- 70b50c3: Landing squashes a worker branch's own micro-history to one commit at its fork
+  point before the pre-merge rebase, so a 60-commit retry chain presents ONE
+  consolidated conflict set instead of replaying every continuous-push commit
+  sequentially onto fresh trunk. Branch adoption (re-claim resume) now opens with
+  a mandatory base sync instruction — fetch + rebase onto origin/<base>, resolving
+  conflicts while the agent is present and drift is smallest. (#2481)
+
+### Patch Changes
+
+- 7ae5d01: Skill docs now teach the npx direct-run form (`npx -y -p @reddb-io/red-skills@<version>
+red-skills-dev ...`) as the canonical invocation everywhere; a bare `red-skills-dev`
+  shim is demoted to a warm-cache optimization. Field installs without the shim
+  followed the old docs into command-not-found failures.
+  - @reddb-io/shared@2.80.0
+  - @reddb-io/build-info@2.80.0
+
+## 2.79.1
+
+### Patch Changes
+
+- 46aed06: Ship the changesets-flow reliability tail that landed after the v2.79.0 npm
+  publish was cut from the pre-migration branch: ordered publish retries with
+  tail reconciliation, CI running on the `changeset-release/main` branch, the
+  bypass-credential check scoped to the release flow, and the release/README
+  documentation for the Version Packages PR + tag-triggered `red-publish` flow
+  (ADR 0121). This cut also re-aligns the published npm content with `main`,
+  which the transitional v2.79.0 tarball predates.
+  - @reddb-io/shared@2.79.1
+  - @reddb-io/build-info@2.79.1
+
+## 2.79.0
+
+### Minor Changes
+
+- 31b4f21: Releases now flow through a changesets Version Packages PR and a tag-triggered
+  publish workflow (ADR 0121). The version bump lands as a normal reviewed PR
+  instead of being pushed straight to protected `main`, which retires the
+  `RED_RELEASE_TOKEN` admin bypass, the GH006 side-branch fallback,
+  `release-push-bump.sh`, and the conventional-commit bump decider.
+
+### Patch Changes
+
+- @reddb-io/shared@2.79.0
+- @reddb-io/build-info@2.79.0
