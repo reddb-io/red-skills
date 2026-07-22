@@ -363,9 +363,17 @@ export async function processIssue(
       model: deps.model,
       effort: deps.effort,
       resolvedBase: baseResolution,
+      // The worker branch was never pushed — suppress the live-branch link.
+      noBranchLink: true,
     };
-    const message = baseResolution.message ?? "Base is stale; remote is unreachable and local ref is behind.";
-    return await terminalFailure(staleCommon, "base-stale", "base-stale", {
+    const message = baseResolution.message ?? "could not refresh fleet trunk mirror; remote unreachable or ref missing.";
+    // Classify as runner-transient (infrastructure / network failure), not
+    // base-stale.  base-stale implies the base ref exists but the local copy is
+    // behind; a mirror-refresh failure at boot (origin/when, network down, etc.)
+    // is an infra transient that clears on the next attempt.  base-stale is
+    // non-recoverable (escalates to human); runner-transient auto-retries up to
+    // the bounded cap, which is the right policy here.
+    return await terminalFailure(staleCommon, "runner-transient", "runner-transient", {
       notes: message,
       log: message,
     });
