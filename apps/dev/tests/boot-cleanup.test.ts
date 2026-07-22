@@ -54,6 +54,13 @@ describe("runBoot tmp janitor", () => {
       staleWorkers: ["/p/.red/tmp/workers/wOLD"],
       unknownTmpRoots: ["/p/.red/tmp/work-old"],
       protectedLiveWorkers: [],
+      protectedLiveFeedback: [],
+      removals: [
+        { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
+        { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
+        { path: "/p/.red/tmp/workers/wOLD", livenessVerdict: "worker-dead" },
+        { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
+      ],
     });
   });
 
@@ -87,6 +94,32 @@ describe("runBoot tmp janitor", () => {
 
     expect(fsCalls.removeDir).toEqual([]);
     expect(result.tmpJanitor?.protectedLiveWorkers).toEqual(["/p/.red/tmp/workers/wLIVE"]);
+  });
+
+  it("rechecks feedback ownership before removal and records the liveness verdict", async () => {
+    const { deps, fsCalls } = makeDeps();
+    deps.fs.feedbackWorktreeLiveness = async () => "owner-live";
+    const feedback = "/p/.red/tmp/worktrees/feedback/afk-wLIVE-2450-live-gate";
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            logs: { reclaim: [], spare: [] },
+            scratch: { reclaim: [], spare: [] },
+            diagnostics: { reclaim: [], spare: [] },
+            feedbackWorktrees: { reclaim: [{ path: feedback, mtimeS: 1 }], spare: [] },
+            legacySlotLogs: { reclaim: [], spare: [] },
+            unknownTmpRoots: [],
+          },
+          staleWorkers: { reclaim: [], spare: [] },
+        },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveFeedback).toEqual([feedback]);
+    expect(result.tmpJanitor?.removals).toEqual([]);
   });
 });
 
