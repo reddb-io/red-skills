@@ -144,16 +144,20 @@ for retired in \
   fi
 done
 
-# Match the token being USED (a secrets reference or a shell expansion), not the
-# word appearing in prose — this test and the workflow headers both explain why
-# the bypass is gone, and a doc mention must not fail the contract.
-if grep -rqE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
-     .github/workflows scripts --exclude="$(basename "${BASH_SOURCE[0]}")" 2>/dev/null; then
-  fail "the admin-bypass token must not survive anywhere in .github/workflows or scripts"
-  grep -rnE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
-    .github/workflows scripts --exclude="$(basename "${BASH_SOURCE[0]}")" >&2 || true
+# Match the token being USED by the release flow, not the word appearing in
+# prose. RELEASE_PAT remains a legitimate credential for unrelated workflows
+# such as HITL merges; this contract only retires its version-bump bypass path.
+release_workflows=(
+  .github/workflows/red-release.yml
+  .github/workflows/red-publish.yml
+)
+if grep -nE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+     "${release_workflows[@]}" >/dev/null 2>&1; then
+  fail "the admin-bypass token must not survive in the release workflows"
+  grep -nE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+    "${release_workflows[@]}" >&2 || true
 else
-  pass "no RED_RELEASE_TOKEN / RELEASE_PAT credential path survives"
+  pass "no RED_RELEASE_TOKEN / RELEASE_PAT path survives in the release flow"
 fi
 
 # --- the version workflow proposes, it never pushes -------------------------
