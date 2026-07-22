@@ -43,6 +43,7 @@ interface HarnessOptions {
   feedbackOk?: boolean;
   /** Aggregate in-lock post-merge feedback verdict. Defaults to passing. */
   postMergeFeedbackOk?: boolean;
+  ciAware?: "merge" | "skipped";
   changedFiles?: string[];
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
@@ -148,9 +149,22 @@ function harness(opts: HarnessOptions = {}): {
       if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
         return { code: 0, stdout: "feedfacecafebeef\n", stderr: "" };
       }
+      if (j === "git -C /repo rev-parse origin/main") {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
+      }
       // landPr reuses an open PR via `gh pr list`; reply with a number.
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
+      }
+      if (j.includes("pr view") && j.includes("mergeStateStatus")) {
+        const map = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
+        } as const;
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
       // Inject a land failure on the admin merge.
       if (opts.landFail && j.includes("pr merge")) {
@@ -202,6 +216,7 @@ function harness(opts: HarnessOptions = {}): {
     makeRebaseWorktree: async () => "/rwt",
     removeRebaseWorktree: async () => {},
     nowEpoch: () => 1000,
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
     },
@@ -237,7 +252,7 @@ function harness(opts: HarnessOptions = {}): {
 
 describe("reconcile — green → land", () => {
   it("validates the branch green and lands it, closing the issue without re-running the agent", async () => {
-    const { deps, input, trace } = harness({ feedbackOk: true });
+    const { deps, input, trace } = harness({ feedbackOk: true, ciAware: "merge" });
     const result = await reconcile(deps, input);
 
     expect(result.outcome).toBe("landed");
@@ -246,8 +261,9 @@ describe("reconcile — green → land", () => {
       expect(result.locked).toBe(false);
       expect(result.posted).toBe(true);
     }
-    // The feedback gate ran before landing and again on the integrated tree.
-    expect(trace.pnpmCalls).toBe(8);
+    // The feedback gate ran before landing; fresh PR CI satisfied the post-merge validation lane.
+    expect(trace.pnpmCalls).toBe(4);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:satisfied-by-ci"))).toBe(true);
     // Landed → issue closed, remote + local branch removed, attempt dir swept.
     expect(trace.closed).toEqual([9]);
     expect(trace.deletedRemote.length).toBe(1);
@@ -315,6 +331,15 @@ describe("reconcile — green → land", () => {
     const close = trace.labelEdits.at(-1)!;
     expect(close.remove).toEqual(["ready-for-human", "blocked:merge-conflict"]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+  });
+
+  it("falls back to local post-merge validation when CI evidence is skipped", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true, ciAware: "skipped" });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("landed");
+    expect(trace.pnpmCalls).toBe(8);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:local-rerun"))).toBe(true);
   });
 
   it("parks a trusted merge-conflict reland when the in-lock integrated-tree gate fails", async () => {

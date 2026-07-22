@@ -12,6 +12,7 @@ import {
   classifyMergeState,
   parseMergeStateView,
   waitForMergeReady,
+  waitForMergeReadyWithEvidence,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -630,8 +631,44 @@ describe("CI-aware merge classification (#812)", () => {
   });
 
   it("parseMergeStateView tolerates non-JSON / empty stdout", () => {
-    expect(parseMergeStateView("")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
-    expect(parseMergeStateView("not json")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
+    expect(parseMergeStateView("")).toEqual({
+      mergeStateStatus: "",
+      mergeable: "",
+      anyFailed: false,
+      anyPending: false,
+      checkCount: 0,
+      successfulChecks: 0,
+      skippedOrNeutralChecks: 0,
+    });
+    expect(parseMergeStateView("not json")).toEqual({
+      mergeStateStatus: "",
+      mergeable: "",
+      anyFailed: false,
+      anyPending: false,
+      checkCount: 0,
+      successfulChecks: 0,
+      skippedOrNeutralChecks: 0,
+    });
+  });
+
+  it("extracts check counts for successful and skipped rollup entries", () => {
+    const green = parseMergeStateView(JSON.stringify({
+      mergeStateStatus: "CLEAN",
+      mergeable: "MERGEABLE",
+      statusCheckRollup: [{ name: "test", conclusion: "SUCCESS" }, { name: "lint", state: "SUCCESS" }],
+    }));
+    expect(green.checkCount).toBe(2);
+    expect(green.successfulChecks).toBe(2);
+    expect(green.skippedOrNeutralChecks).toBe(0);
+
+    const skipped = parseMergeStateView(JSON.stringify({
+      mergeStateStatus: "CLEAN",
+      mergeable: "MERGEABLE",
+      statusCheckRollup: [{ name: "test", conclusion: "SKIPPED" }],
+    }));
+    expect(skipped.checkCount).toBe(1);
+    expect(skipped.successfulChecks).toBe(0);
+    expect(skipped.skippedOrNeutralChecks).toBe(1);
   });
 });
 
@@ -641,6 +678,9 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     let i = 0;
     const exec: Exec = async (argv) => {
       calls.push(argv);
+      if (argv.includes("api")) {
+        return { code: 0, stdout: JSON.stringify(["test"]), stderr: "" };
+      }
       const out = views[Math.min(i, views.length - 1)] ?? "{}";
       i++;
       return { code: 0, stdout: out, stderr: "" };
@@ -648,22 +688,59 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     return { exec, calls };
   }
   const noSleep = async () => {};
-  const v = (mergeStateStatus: string, rollup: unknown[] = []) =>
-    JSON.stringify({ mergeStateStatus, statusCheckRollup: rollup });
+  const v = (mergeStateStatus: string, rollup: unknown[] = [], mergeable = "") =>
+    JSON.stringify({ mergeStateStatus, mergeable, baseRefOid: "base-sha", statusCheckRollup: rollup });
 
   it("polls until the PR goes CLEAN, then returns merge", async () => {
     const { exec, calls } = pollExec([v("UNKNOWN"), v("BLOCKED", [{ status: "IN_PROGRESS" }]), v("CLEAN")]);
     const r = await waitForMergeReady(exec, "o/r", 77, { sleep: noSleep });
     expect(r).toBe("merge");
     expect(calls.filter((c) => c.join(" ").includes("pr view 77")).length).toBe(3);
-    expect(calls[0].join(" ")).toContain("--json mergeStateStatus,mergeable,statusCheckRollup");
+    expect(calls.find((c) => c.includes("pr") && c.includes("view"))?.join(" ")).toContain("--json mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup");
+  });
+
+  it("returns fresh green CI evidence for all-success rollups", async () => {
+    const { exec } = pollExec([
+      JSON.stringify({
+        mergeStateStatus: "CLEAN",
+        mergeable: "MERGEABLE",
+        baseRefOid: "base-sha",
+        statusCheckRollup: [{ name: "test", conclusion: "SUCCESS" }],
+      }),
+    ]);
+    await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      sleep: noSleep,
+      baseBranch: "main",
+      expectedBaseOid: "base-sha",
+    })).resolves.toEqual({
+      readiness: "merge",
+      ciEvidence: { checkCount: 1, requiredCheckCount: 1, summary: "1 required check(s) green" },
+    });
+  });
+
+  it("does not return CI evidence when checks were skipped", async () => {
+    const { exec } = pollExec([
+      JSON.stringify({
+        mergeStateStatus: "CLEAN",
+        mergeable: "MERGEABLE",
+        baseRefOid: "base-sha",
+        statusCheckRollup: [{ name: "test", conclusion: "SKIPPED" }],
+      }),
+    ]);
+    await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      sleep: noSleep,
+      baseBranch: "main",
+      expectedBaseOid: "base-sha",
+    })).resolves.toEqual({
+      readiness: "merge",
+    });
   });
 
   it("returns ci-failed immediately on a failed required check (no further polls)", async () => {
     const { exec, calls } = pollExec([v("BLOCKED", [{ state: "FAILURE" }])]);
     const r = await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep });
     expect(r).toBe("ci-failed");
-    expect(calls.length).toBe(1);
+    expect(calls.filter((c) => c.join(" ").includes("pr view 1")).length).toBe(1);
   });
 
   it("returns conflict on DIRTY", async () => {
