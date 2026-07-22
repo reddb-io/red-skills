@@ -489,6 +489,26 @@ describe("recordDeath", () => {
 });
 
 describe("circuit trip and sweep", () => {
+  it("parks a fatal host-config death without retrying or feeding the fast-death circuit", async () => {
+    const { deps, io } = makeDeps();
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
+    slot.spawnEpoch = NOW - 5;
+    io.lastExitCode.mockReturnValue(78);
+
+    const { parked } = await handleDeadSlot(0, slot, deps, config());
+
+    expect(parked).toBe(true);
+    expect(slot.parked).toBe(true);
+    expect(slot.fatalReason).toBe("host-config");
+    expect(slot.deaths).toEqual([NOW - 40, NOW - 30, NOW - 20, NOW - 10]);
+    expect(slot.swept).toBe(false);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(io.parkedSlotWork).not.toHaveBeenCalled();
+    expect(io.logLines).toContainEqual(expect.stringContaining("fatal host configuration"));
+  });
+
   it("trips after K fast deaths, parks the slot, and runs the trip sweep", async () => {
     const { deps, io } = makeDeps({
       parkedSlotWork: vi.fn(

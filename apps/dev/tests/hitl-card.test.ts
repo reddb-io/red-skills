@@ -9,7 +9,11 @@ import {
   isHitlCard,
   parseCardCommand,
   classifyNaturalLanguage,
+  evaluateHitlCardActionRate,
+  HITL_CARD_ACTION_MARKER,
+  HITL_CARD_STAND_DOWN_MARKER,
   parseCiChecks,
+  shouldIgnoreHitlCardComment,
   type PrStatus,
 } from "../src/core/hitl-card.js";
 
@@ -184,6 +188,119 @@ describe("parseCardCommand", () => {
 
   it("returns undefined for a blank body", () => {
     expect(parseCardCommand("   \n  ")).toBeUndefined();
+  });
+});
+
+// ---------- self-reaction + runaway guards ----------
+
+describe("HITL card comment guards", () => {
+  it("ignores a bot-authored /requeue-shaped refusal before intent parsing", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "github-actions[bot]",
+      authorType: "Bot",
+      body: "/requeue Cannot requeue: blocked:infra is not in the supported set",
+      allowedAuthors: ["maintainer"],
+    })).toBe(true);
+  });
+
+  it("ignores an unallowlisted PAT-backed User before parsing a plain refusal", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "release-maintainer",
+      authorType: "User",
+      body: "/requeue Cannot requeue: blocked:infra is not supported",
+      allowedAuthors: ["maintainer"],
+    })).toBe(true);
+  });
+
+  it("ignores the card's bot-marker reply even when its author is allowlisted", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "maintainer",
+      authorType: "User",
+      body: "🤖 **requeue**: Cannot requeue: use /hitl",
+      allowedAuthors: ["maintainer"],
+    })).toBe(true);
+  });
+
+  it("allows a human maintainer directive", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "maintainer",
+      authorType: "User",
+      body: "/requeue retry after the runner recovered",
+      allowedAuthors: ["maintainer"],
+    })).toBe(false);
+  });
+
+  it("caps actions at three per issue in ten minutes and requests one stand-down comment", () => {
+    const now = new Date("2026-07-22T08:00:00Z");
+    const comments = [0, 1, 2].map((minute) => ({
+      body: `${HITL_CARD_ACTION_MARKER}\naction ${minute}`,
+      createdAt: `2026-07-22T07:5${minute}:00Z`,
+      author: "github-actions[bot]",
+      authorType: "Bot",
+    }));
+
+    expect(evaluateHitlCardActionRate(comments, now, [
+      { login: "github-actions[bot]", type: "Bot" },
+    ])).toEqual({
+      actionCount: 3,
+      limited: true,
+      shouldPostStandDown: true,
+    });
+  });
+
+  it("does not count pasted or quoted markers from non-card identities", () => {
+    const now = new Date("2026-07-22T08:00:00Z");
+    const comments = [
+      {
+        body: `${HITL_CARD_ACTION_MARKER}\npasted by a human`,
+        createdAt: "2026-07-22T07:55:00Z",
+        author: "contributor",
+        authorType: "User",
+      },
+      {
+        body: `quoted receipt: ${HITL_CARD_ACTION_MARKER}`,
+        createdAt: "2026-07-22T07:56:00Z",
+        author: "github-actions[bot]",
+        authorType: "Bot",
+      },
+      {
+        body: "<summary>HITL card: requeue</summary>",
+        createdAt: "2026-07-22T07:57:00Z",
+        author: "github-actions[bot]",
+        authorType: "Bot",
+      },
+    ];
+
+    expect(evaluateHitlCardActionRate(comments, now, [
+      { login: "github-actions[bot]", type: "Bot" },
+    ])).toEqual({
+      actionCount: 0,
+      limited: false,
+      shouldPostStandDown: false,
+    });
+  });
+
+  it("does not post a second stand-down comment in the same window", () => {
+    const now = new Date("2026-07-22T08:00:00Z");
+    const comments = [0, 1, 2].map((minute) => ({
+      body: `${HITL_CARD_ACTION_MARKER}\naction ${minute}`,
+      createdAt: `2026-07-22T07:5${minute}:00Z`,
+      author: "github-actions[bot]",
+      authorType: "Bot",
+    }));
+    comments.push({
+      body: `${HITL_CARD_STAND_DOWN_MARKER}\n🤖 HITL card loop suspected; standing down.`,
+      createdAt: "2026-07-22T07:59:00Z",
+      author: "github-actions[bot]",
+      authorType: "Bot",
+    });
+
+    expect(evaluateHitlCardActionRate(comments, now, [
+      { login: "github-actions[bot]", type: "Bot" },
+    ])).toMatchObject({
+      limited: true,
+      shouldPostStandDown: false,
+    });
   });
 });
 
