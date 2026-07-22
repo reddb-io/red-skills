@@ -22,10 +22,12 @@ function seedPidFile(root: string, fleet: string, pid: number): string {
   const paths = afkPaths(root, fleet);
   mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
   writeFileSync(paths.supervisorPidPath, String(pid), "utf8");
+  writeFileSync(paths.supervisorPidStartPath, `start-${pid}`, "utf8");
   return paths.supervisorRuntimeDir;
 }
 
 const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
+const pinnedStart = (pid: number) => `start-${pid}`;
 
 describe("afkPaths — named fleet lanes", () => {
   it("defaults to the `default` lane when unnamed", () => {
@@ -86,11 +88,11 @@ describe("discoverLiveSupervisorPid — per-fleet pid locks", () => {
     const betaDir = seedPidFile(root, "beta", 222);
     const isLive = alive([111, 222]);
 
-    expect(await discoverLiveSupervisorPid(alphaDir, isLive, { fleet: "alpha" })).toMatchObject({
+    expect(await discoverLiveSupervisorPid(alphaDir, isLive, { fleet: "alpha", pidStartTime: pinnedStart })).toMatchObject({
       pid: 111,
       source: "pid-file",
     });
-    expect(await discoverLiveSupervisorPid(betaDir, isLive, { fleet: "beta" })).toMatchObject({
+    expect(await discoverLiveSupervisorPid(betaDir, isLive, { fleet: "beta", pidStartTime: pinnedStart })).toMatchObject({
       pid: 222,
       source: "pid-file",
     });
@@ -100,10 +102,10 @@ describe("discoverLiveSupervisorPid — per-fleet pid locks", () => {
     const root = scratch();
     const alphaDir = seedPidFile(root, "alpha", 111);
     seedPidFile(root, "beta", 222);
-    expect(await discoverLiveSupervisorPid(alphaDir, alive([222]), { fleet: "alpha" })).toBeNull();
+    expect(await discoverLiveSupervisorPid(alphaDir, alive([222]), { fleet: "alpha", pidStartTime: pinnedStart })).toBeNull();
   });
 
-  it("never crosses fleets through the s<pid> lane-dir fallback", async () => {
+  it("ignores unpinned s<pid> lane dirs in every named fleet", async () => {
     const root = scratch();
     const alphaDir = afkPaths(root, "alpha").supervisorRuntimeDir;
     const betaDir = afkPaths(root, "beta").supervisorRuntimeDir;
@@ -111,13 +113,10 @@ describe("discoverLiveSupervisorPid — per-fleet pid locks", () => {
     // beta's supervisor lane exists and is live; alpha has no pid file at all.
     mkdirSync(join(betaDir, "s999"), { recursive: true });
     expect(await discoverLiveSupervisorPid(alphaDir, alive([999]), { fleet: "alpha" })).toBeNull();
-    expect(await discoverLiveSupervisorPid(betaDir, alive([999]), { fleet: "beta" })).toMatchObject({
-      pid: 999,
-      source: "snapshot-dir",
-    });
+    expect(await discoverLiveSupervisorPid(betaDir, alive([999]), { fleet: "beta" })).toBeNull();
   });
 
-  it("still honours the legacy flat s<pid> layout for the default fleet only", async () => {
+  it("ignores the legacy flat s<pid> layout without a pinned identity", async () => {
     const root = scratch();
     const defaultDir = afkPaths(root, "default").supervisorRuntimeDir;
     const alphaDir = afkPaths(root, "alpha").supervisorRuntimeDir;
@@ -125,10 +124,7 @@ describe("discoverLiveSupervisorPid — per-fleet pid locks", () => {
     mkdirSync(alphaDir, { recursive: true });
     // A pre-named-fleet supervisor lane, a sibling of the fleet dirs.
     mkdirSync(join(defaultDir, "..", "s777"), { recursive: true });
-    expect(await discoverLiveSupervisorPid(defaultDir, alive([777]))).toMatchObject({
-      pid: 777,
-      source: "snapshot-dir",
-    });
+    expect(await discoverLiveSupervisorPid(defaultDir, alive([777]))).toBeNull();
     expect(await discoverLiveSupervisorPid(alphaDir, alive([777]), { fleet: "alpha" })).toBeNull();
   });
 });

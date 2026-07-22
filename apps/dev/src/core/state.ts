@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { type JsonValue as ToonValue } from "@reddb-io/toon";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "./toon-snapshot.js";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
@@ -286,17 +287,34 @@ export async function updateState(
 
 export type PidStartTimeProbe = (pid: number) => string | null;
 
-export function readPidStartTime(pid: number): string | null {
+export interface PidStartTimeSources {
+  readProcStat?(pid: number): string;
+  readPsStart?(pid: number): string | null;
+}
+
+function portablePsStartTime(pid: number): string | null {
+  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return null;
+  const value = result.stdout.trim().replace(/\s+/g, " ");
+  return value || null;
+}
+
+export function readPidStartTime(pid: number, sources: PidStartTimeSources = {}): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = (sources.readProcStat ?? ((candidate) => readFileSync(`/proc/${candidate}/stat`, "utf8")))(pid);
     const commEnd = stat.lastIndexOf(")");
     if (commEnd === -1) return null;
     const fields = stat.slice(commEnd + 2).trim().split(/\s+/);
     const startTime = fields[19];
     return startTime && /^\d+$/.test(startTime) ? startTime : null;
   } catch {
-    return null;
+    const psStart = (sources.readPsStart ?? portablePsStartTime)(pid)?.trim().replace(/\s+/g, " ");
+    return psStart ? `ps:${psStart}` : null;
   }
 }
 
