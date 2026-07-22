@@ -52,6 +52,49 @@ describe("rsp gh batch", () => {
     expect(payload.prs["12"]).toMatchObject({ mergeable: "mergeable", checks: { state: "success" } });
   });
 
+  it("chunks reads at 100 nodes while preserving global input order", async () => {
+    const calls: string[][] = [];
+    const exec: GhBatchExec = async (args) => {
+      calls.push([...args]);
+      const query = args.find((arg) => arg.startsWith("query=")) ?? "";
+      const repository = Object.fromEntries(
+        [...query.matchAll(/(i\d+): issue\(number: (\d+)\)/g)].map((match) => [
+          match[1],
+          { id: `I_${match[2]}`, number: Number(match[2]), title: `issue ${match[2]}`, state: "OPEN" },
+        ]),
+      );
+      return response({ data: { repository } });
+    };
+    const numbers = Array.from({ length: 101 }, (_, index) => String(200 - index));
+
+    const result = await runGhBatchCommand(["gh", "issues", ...numbers, "--json", "title", "--repo", "acme/widgets"], { exec });
+    const payload = decode(result.stdout.toString()) as { order: number[]; issues: Record<string, unknown> };
+
+    expect(calls).toHaveLength(2);
+    expect(calls.every((args) => args.slice(0, 2).join(" ") === "api graphql")).toBe(true);
+    expect(payload.order).toEqual(numbers.map(Number));
+    expect(payload.order.map((number) => payload.issues[String(number)])).toEqual(
+      numbers.map((number) => ({ number: Number(number), title: `issue ${number}` })),
+    );
+  });
+
+  it("preserves the requested PR rollup field name", async () => {
+    const exec: GhBatchExec = async () => response({ data: { repository: {
+      p0: {
+        id: "P_12", number: 12,
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS", contexts: { nodes: [] } } } }] },
+      },
+    } } });
+
+    const result = await runGhBatchCommand([
+      "gh", "prs", "12", "--json", "statusCheckRollup", "--repo", "acme/widgets",
+    ], { exec });
+    const payload = decode(result.stdout.toString()) as { prs: Record<string, Record<string, unknown>> };
+
+    expect(payload.prs["12"]).toHaveProperty("statusCheckRollup", { state: "success", contexts: [] });
+    expect(payload.prs["12"]).not.toHaveProperty("checks");
+  });
+
   it("batches label mutations after one aliased id lookup", async () => {
     const calls: string[][] = [];
     const exec: GhBatchExec = async (args) => {
@@ -107,14 +150,16 @@ describe("rsp gh batch", () => {
   it("surfaces GraphQL quota degradation and uses bounded REST concurrency", async () => {
     let active = 0;
     let maxActive = 0;
+    const calls: string[][] = [];
     const exec: GhBatchExec = async (args) => {
+      calls.push([...args]);
       if (args[0] === "api" && args[1] === "graphql") return response("", 1, "GraphQL: API rate limit exceeded");
       active += 1;
       maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setTimeout(resolve, 2));
       active -= 1;
-      const number = Number(args[2]);
-      return response({ number, title: `issue ${number}`, state: "OPEN", body: "", labels: [] });
+      const number = Number(args[1]?.match(/issues\/(\d+)$/)?.[1]);
+      return response({ number, title: `issue ${number}`, state: "open", body: "", labels: [] });
     };
 
     const ids = Array.from({ length: 9 }, (_, i) => String(i + 1));
@@ -123,6 +168,7 @@ describe("rsp gh batch", () => {
 
     expect(result.status).toBe(0);
     expect(payload).toMatchObject({ transport: "rest-fallback", degraded: "graphql-quota", concurrency: 3 });
+    expect(calls.slice(1).every((args) => args[0] === "api" && args[1]?.startsWith("repos/acme/widgets/issues/"))).toBe(true);
     expect(maxActive).toBeLessThanOrEqual(3);
     expect(maxActive).toBeGreaterThan(1);
   });
