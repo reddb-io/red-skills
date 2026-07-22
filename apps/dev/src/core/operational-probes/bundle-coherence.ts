@@ -15,6 +15,7 @@ const DEFAULT_STALE_FAILURE_MS = 4 * 60 * 60 * 1000;
 
 export type BundleCoherenceFindingKind =
   | "pointer-behind-lane"
+  | "pointer-ahead-of-lane"
   | "pointer-behind-npm"
   | "lane-behind-npm"
   | "stale-failed-check";
@@ -28,6 +29,13 @@ function findings(input: BundleCoherenceProbeInput): BundleCoherenceFindingKind[
   const pointer = effectivePointer(input);
   if (pointer && input.laneNewestVersion && compareSemver(input.laneNewestVersion, pointer) > 0) {
     out.push("pointer-behind-lane");
+  }
+  if (
+    input.pointerVersion &&
+    input.laneNewestVersion &&
+    compareSemver(input.pointerVersion, input.laneNewestVersion) > 0
+  ) {
+    out.push("pointer-ahead-of-lane");
   }
   if (pointer && input.npmNewestVersion && compareSemver(input.npmNewestVersion, pointer) > 0) {
     out.push("pointer-behind-npm");
@@ -78,13 +86,15 @@ export function runBundleCoherenceProbe(context: OperationalProbeContext): Opera
     };
   }
   const fs = findings(input);
+  const selfHealable = fs.filter((finding) => finding === "pointer-behind-lane");
+  const blocking = fs.filter((finding) => finding !== "pointer-behind-lane");
   return {
     id: BUNDLE_COHERENCE_PROBE_ID,
     name: BUNDLE_COHERENCE_PROBE_NAME,
-    verdict: fs.length > 0 ? "red" : "ok",
+    verdict: blocking.length > 0 ? "red" : "ok",
     evidence: evidence(input, fs),
     canonicalFix: BUNDLE_COHERENCE_CANONICAL_FIX,
-    data: { findings: fs },
+    data: { findings: fs, ...(selfHealable.length > 0 ? { selfHealable } : {}) },
   };
 }
 
