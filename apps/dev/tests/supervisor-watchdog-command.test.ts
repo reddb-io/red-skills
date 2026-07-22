@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRequire } from "node:module";
+import { buildSync } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 import { readPidStartTime } from "../src/core/state.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
@@ -114,12 +114,27 @@ esac
     );
     chmodSync(gh, 0o755);
 
-    const cli = join(process.cwd(), "src", "cli.ts");
-    const tsxImport = createRequire(import.meta.url).resolve("tsx");
+    const cli = join(root, "dev-cli.mjs");
+    buildSync({
+      entryPoints: [join(process.cwd(), "src", "cli.ts")],
+      outfile: cli,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+      define: {
+        __RED_BUILD_VERSION__: JSON.stringify("0.0.0-test"),
+        __RED_BUILD_GIT_SHA__: JSON.stringify("test"),
+        __RED_BUILD_TIME__: JSON.stringify("2026-07-22T00:00:00.000Z"),
+        __RED_BUNDLE_ASSET__: JSON.stringify("dev.bundle.min.mjs"),
+        __REDDB_SDK_VERSION__: JSON.stringify(""),
+        __REDDB_BINARY_TAG__: JSON.stringify(""),
+      },
+    });
     const env = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${tsxImport}`.trim(),
       RED_AFK_POLL_S: "1",
       RED_AFK_WAKE_FALLBACK_S: "1",
       RED_AFK_TARGET: "1",
@@ -162,12 +177,22 @@ esac
     const watchdog = spawn(process.execPath, [cli, "__watchdog"], {
       cwd: root,
       env,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(watchdog);
-    await waitFor(() =>
-      pinnedPid(paths.supervisorWatchdogPidPath, paths.supervisorWatchdogPidStartPath),
-    );
+    let watchdogOutput = "";
+    watchdog.stdout?.on("data", (chunk) => {
+      watchdogOutput += String(chunk);
+    });
+    watchdog.stderr?.on("data", (chunk) => {
+      watchdogOutput += String(chunk);
+    });
+    await waitFor(() => {
+      if (watchdog.exitCode !== null || watchdog.signalCode !== null) {
+        throw new Error(`watchdog exited during startup: ${watchdogOutput}`);
+      }
+      return pinnedPid(paths.supervisorWatchdogPidPath, paths.supervisorWatchdogPidStartPath);
+    });
 
     writeFileSync(join(root, ".ready-once"), "1", "utf8");
     const supervisorExit = once(supervisor, "exit");
@@ -175,12 +200,20 @@ esac
     supervisor.kill("SIGKILL");
     await supervisorExit;
 
-    const replacementPid = await waitFor(() => {
-      const pid = pinnedPid(paths.supervisorPidPath, paths.supervisorPidStartPath);
-      return pid !== null && pid !== firstPid ? pid : null;
-    }, 5_000);
+    let replacementPid: number;
+    try {
+      replacementPid = await waitFor(() => {
+        if (watchdog.exitCode !== null || watchdog.signalCode !== null) {
+          throw new Error(`watchdog exited before recovery: ${watchdogOutput}`);
+        }
+        const pid = pinnedPid(paths.supervisorPidPath, paths.supervisorPidStartPath);
+        return pid !== null && pid !== firstPid ? pid : null;
+      }, 5_000);
+    } catch (error) {
+      throw new Error(`${String(error)}; watchdog output: ${watchdogOutput}`);
+    }
     expect(Date.now() - killedAt).toBeLessThanOrEqual(5_000);
-    await waitFor(() => (!existsSync(claim) ? true : null));
+    await waitFor(() => (!existsSync(claim) ? true : null), 60_000);
     expect(existsSync(join(root, ".claim-reconciled"))).toBe(true);
 
     expect(replacementPid).not.toBe(firstPid);
@@ -188,5 +221,5 @@ esac
       .not.toBeNull();
 
     process.kill(replacementPid, "SIGKILL");
-  }, 90_000);
+  }, 120_000);
 });
