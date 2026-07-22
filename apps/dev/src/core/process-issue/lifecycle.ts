@@ -1036,6 +1036,7 @@ export async function processIssue(
         validationSidecar = mergedFeedback.sidecar;
         return { ok: true };
       },
+      requirePostMergeValidation: true,
       landingPhase: markLandingPhase,
     },
     {
