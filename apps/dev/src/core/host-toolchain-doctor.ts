@@ -176,7 +176,7 @@ export function auditHostToolchain(facts: HostToolchainFacts): HostToolchainRepo
 function commandReceipt(tool: "gh" | "tq", result: FixCommandResult): HostToolchainFixReceipt {
   return result.code === 0
     ? { tool, status: "applied", reason: "command completed" }
-    : { tool, status: "failed", reason: result.stderr.trim() || `command exited ${result.code}` };
+    : { tool, status: "failed", reason: `command exited ${result.code}` };
 }
 
 export async function applyHostToolchainFixes(
