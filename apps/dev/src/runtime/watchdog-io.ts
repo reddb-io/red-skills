@@ -1,5 +1,6 @@
 // watchdog-io — REAL process / fs IO backing the external supervisor watchdog
-// (core/watchdog.ts). Built once per surface (fleet pre-check / monitor tick),
+// (core/watchdog.ts). Built for the persistent repo-scoped watchdog and reused
+// by the fleet pre-check / opt-in monitor recovery surfaces,
 // bound to a repo root. Every closure is best-effort, mirroring the supervisor's
 // own injected IO: a failed kill / stat / spawn degrades to the safe value and
 // never throws out of the closure.
