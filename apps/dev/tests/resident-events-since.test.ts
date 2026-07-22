@@ -125,6 +125,7 @@ describe("events_since tool", () => {
     const tool = tools.find((t) => t.name === "events_since")!;
 
     const result = await tool.invoke({ cursor }) as {
+      refused?: boolean;
       history: Array<{ ts: string; issue: number }>;
       lane_records: unknown[];
       cursor: string;
