@@ -90,6 +90,7 @@ import {
 import { getConfig } from "../config.js";
 import type { AfkModelTier, ConfigValues } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
+import { renderTrunkSyncNote, syncTrunkIntoBranch } from "../trunk-sync.js";
 import {
   buildIssueClassificationMetadata,
   shouldRequestReview,
@@ -531,6 +532,7 @@ export async function processIssue(
         innerMaxIterations: 0,
         tokenBudget: 0,
         wallClockS: 0,
+        trunkSync: true,
       };
       const notesOutcome = await runNotesLoop({
         config: notesLoopCfg,
@@ -544,6 +546,17 @@ export async function processIssue(
               : {}),
           }),
         persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
+        // In-attempt trunk sync (#2481): between iterations the attempt worktree
+        // is quiet, so merging the moved trunk in costs one small conflict pass
+        // instead of the enormous one the landing rebase would otherwise pay.
+        syncTrunk: async () => {
+          const sync = await syncTrunkIntoBranch(deps.mergeExec, {
+            repo: input.attemptDir,
+            remote: input.remote,
+            base,
+          });
+          return renderTrunkSyncNote(sync, base);
+        },
         now: () => deps.nowEpoch() * 1000,
         tokensSpent: () => {
           const vitals = deps.heartbeatVitals?.();
