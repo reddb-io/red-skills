@@ -1129,7 +1129,9 @@ export async function processIssue(
         common,
         "merge-conflict",
         landing.prNumber,
-        `the open PR has merge conflicts and could not be landed`,
+        // #2481: the stale-branch guard parks here with its own reason, so the
+        // note names the real refusal instead of a conflict that never happened.
+        landing.message ?? `the open PR has merge conflicts and could not be landed`,
       );
     }
     if (landing.reason === "pr-merge-failed") {
