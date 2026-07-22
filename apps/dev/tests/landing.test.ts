@@ -708,7 +708,15 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
   it("direct path: gate wired + passes → lands successfully, gate called with the landing worktree", async () => {
     const h = harness({ locked: true, openPr: false, postMergeGate: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: true,
+      locked: true,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "local-rerun",
+        reason: "Direct landing bypassed PR CI; local post-merge validation fallback ran.",
+      },
+    });
     // Gate was called exactly once with the landing worktree (WT), not the primary.
     expect(h.postMergeGateDirs).toEqual([WT]);
     // The merge still happened (gate passed, not a no-merge).
@@ -716,15 +724,41 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.landingPhases).toEqual(["gate", "gate", "merge", "cascade"]);
   });
 
-  it("PR path: gate wired + passes → lands successfully, gate called with the rebase worktree", async () => {
-    const h = harness({ locked: false, openPr: true, postMergeGate: true });
+  it("PR path: usable CI evidence → records satisfied-by-CI and skips the local gate", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true, ciAware: "merge" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
-    // Gate was called exactly once with the rebase worktree (RWT), not the primary.
-    expect(h.postMergeGateDirs).toEqual([RWT]);
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "satisfied-by-ci",
+        reason: "PR #42 had fresh green CI evidence from 1 successful check(s); local post-merge validation skipped.",
+        prNumber: 42,
+        checkCount: 1,
+      },
+    });
+    expect(h.postMergeGateDirs).toEqual([]);
     // The admin-merge still happened.
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(true);
-    expect(h.landingPhases).toEqual(["gate", "gate", "push-pr", "cascade"]);
+    expect(h.landingPhases).toEqual(["gate", "push-pr", "cascade"]);
+  });
+
+  it("PR path: skipped CI evidence → falls back to the local rebase-worktree gate", async () => {
+    const h = harness({ locked: false, openPr: true, postMergeGate: true, ciAware: "skipped" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "local-rerun",
+        reason: "PR #42 CI evidence was absent or unusable; local post-merge validation fallback ran.",
+        prNumber: 42,
+      },
+    });
+    expect(h.postMergeGateDirs).toEqual([RWT]);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(true);
   });
 
   it("direct path: gate wired + fails → returns post-merge-gate, nothing pushed to remote", async () => {
@@ -743,7 +777,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
   it("PR path: gate wired + fails → returns post-merge-gate, no admin-merge attempted", async () => {
     const h = harness({ locked: false, openPr: true, postMergeGate: true, postMergeGateFails: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: false });
+    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: false, prNumber: 42 });
     // Gate was called with the rebase worktree.
     expect(h.postMergeGateDirs).toEqual([RWT]);
     // No admin-merge was attempted.
