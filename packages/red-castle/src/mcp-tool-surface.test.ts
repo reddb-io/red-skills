@@ -5,7 +5,7 @@ import {
 } from "./mcp-server.js";
 
 /**
- * Frozen snapshot of the aggregated dev:afk MCP tool surface.
+ * Frozen snapshot of the aggregated castle MCP tool surface.
  *
  * Domain modules may be split, merged, or reordered internally; this table is
  * the contract that the composed surface — order, names, titles, descriptions,
@@ -280,7 +280,7 @@ const SURFACE: ReadonlyArray<{
   },
 ];
 
-describe("aggregated dev:afk MCP tool surface", () => {
+describe("aggregated castle MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {

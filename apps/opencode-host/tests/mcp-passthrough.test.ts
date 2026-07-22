@@ -136,15 +136,20 @@ describe("rewriteServer (Claude/Codex → opencode)", () => {
 });
 
 describe("planPluginMcp against the real source tree", () => {
-  it("plans the dev plugin's code-nav MCP", () => {
+  it("plans the dev plugin's navigator and castle MCPs", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "dev");
     expect(plans.length).toBeGreaterThanOrEqual(1);
-    const codeNav = plans.find((p) => p.name === "code-nav");
+    const codeNav = plans.find((p) => p.name === "navigator");
     expect(codeNav).toBeDefined();
     expect(codeNav!.entry.type).toBe("local");
     // The source dev checkout ships the launcher; the resolved
     // command must point at the absolute script path.
     expect(codeNav!.entry.command[1]).toMatch(/code-nav-mcp\.sh$/);
+
+    const castle = plans.find((p) => p.name === "castle");
+    expect(castle).toBeDefined();
+    expect(castle!.entry.type).toBe("local");
+    expect(castle!.entry.command[1]).toMatch(/castle-mcp\.sh$/);
   });
 
   it("plans the memory plugin's red-memory and red-ui MCPs", () => {

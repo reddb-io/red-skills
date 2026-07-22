@@ -94,6 +94,7 @@ import {
 import { getConfig } from "../config.js";
 import type { AfkModelTier, ConfigValues } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
+import { renderTrunkSyncNote, syncTrunkIntoBranch } from "../trunk-sync.js";
 import {
   buildIssueClassificationMetadata,
   shouldRequestReview,
@@ -323,6 +324,17 @@ export async function processIssue(
       ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)
       : undefined;
   const outputShaping = assignOutputShaping(issue, deps.outputShaping ?? { terseSteering: false });
+  const enrichment = deps.lookups.handoffEnrichment
+    ? await deps.lookups
+        .handoffEnrichment({
+          issue,
+          title: input.title,
+          body: input.body,
+          labels,
+          specRef: input.specRef,
+        })
+        .catch(() => undefined)
+    : undefined;
   const handoff = buildHandoff({
     issue,
     title: input.title,
@@ -337,6 +349,7 @@ export async function processIssue(
     mergeGateCommands: deps.backpressureCommands ?? [],
     outputShaping,
     resumeFromBranch: resumeInstruction,
+    enrichment,
   });
   deps.markState?.({
     "current.output_shaping_enabled": outputShaping.enabled,
@@ -565,6 +578,7 @@ export async function processIssue(
         innerMaxIterations: 0,
         tokenBudget: 0,
         wallClockS: 0,
+        trunkSync: true,
       };
       const notesOutcome = await runNotesLoop({
         config: notesLoopCfg,
@@ -578,6 +592,17 @@ export async function processIssue(
               : {}),
           }),
         persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
+        // In-attempt trunk sync (#2481): between iterations the attempt worktree
+        // is quiet, so merging the moved trunk in costs one small conflict pass
+        // instead of the enormous one the landing rebase would otherwise pay.
+        syncTrunk: async () => {
+          const sync = await syncTrunkIntoBranch(deps.mergeExec, {
+            repo: input.attemptDir,
+            remote: input.remote,
+            base,
+          });
+          return renderTrunkSyncNote(sync, base);
+        },
         now: () => deps.nowEpoch() * 1000,
         tokensSpent: () => {
           const vitals = deps.heartbeatVitals?.();
@@ -1170,7 +1195,9 @@ export async function processIssue(
         common,
         "merge-conflict",
         landing.prNumber,
-        `the open PR has merge conflicts and could not be landed`,
+        // #2481: the stale-branch guard parks here with its own reason, so the
+        // note names the real refusal instead of a conflict that never happened.
+        landing.message ?? `the open PR has merge conflicts and could not be landed`,
       );
     }
     if (landing.reason === "pr-merge-failed") {

@@ -133,6 +133,13 @@ export interface Opts {
   nativeMergeQueue?: boolean;
   /** Explicit PR-resolved callback abort used by adversarial correction before merge. */
   onPrResolvedAbort?: boolean;
+  /**
+   * Stale-branch landing guard (#2481). Present → the rebase worktree answers a
+   * fork point, this many commits ahead of it, and a fork commit this many hours
+   * old, so `preMergeRebase` can evaluate the refusal. Absent → the fork probe
+   * answers nothing, the guard is unmeasurable, and the landing behaves as before.
+   */
+  staleBranch?: { ahead: number; ageHours: number };
 }
 
 export function harness(opts: Opts = {}): Harness {
@@ -153,6 +160,20 @@ export function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      // #2481 stale-branch guard probes, answered only in the rebase worktree so
+      // no other path's git surface changes shape.
+      if (opts.staleBranch && j.startsWith(`git -C ${RWT} `)) {
+        if (j === `git -C ${RWT} merge-base origin/main HEAD`) {
+          return { code: 0, stdout: "forksha\n", stderr: "" };
+        }
+        if (j.includes("rev-list") && j.includes("--count")) {
+          return { code: 0, stdout: `${opts.staleBranch.ahead}\n`, stderr: "" };
+        }
+        if (j.includes("log -1 --format=%ct")) {
+          const forkEpochS = Math.floor(Date.now() / 1000) - opts.staleBranch.ageHours * 3600;
+          return { code: 0, stdout: `${forkEpochS}\n`, stderr: "" };
+        }
+      }
       // Legacy primary-promotion probes. They stay here so tests can fail if a
       // path accidentally reintroduces the old primary fast-forward.
       if (j.includes("symbolic-ref --short HEAD")) {

@@ -468,6 +468,26 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     expect(h.removedRebaseWorktrees).toEqual([RWT]);
   });
 
+  it("#2481: a far-ahead, base-stale branch parks with the guard's reason and never rebases", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true, staleBranch: { ahead: 65, ageHours: 15 } });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r.ok).toBe(false);
+    expect(r).toMatchObject({ reason: "pr-conflict", locked: false });
+    expect((r as { message?: string }).message).toContain("65 commits ahead");
+    const j = joined(h.mergeCalls);
+    // The doomed sequential rebase never starts, and nothing is merged.
+    expect(j.some((c) => c === `git -C ${RWT} rebase origin/main`)).toBe(false);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(h.removedRebaseWorktrees).toEqual([RWT]);
+  });
+
+  it("#2481: a far-ahead branch on a FRESH base still lands normally", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true, staleBranch: { ahead: 65, ageHours: 1 } });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r.ok).toBe(true);
+    expect(joined(h.mergeCalls)).toContain(`git -C ${RWT} rebase origin/main`);
+  });
+
   it("force-with-lease rejected on every attempt → parks blocked:merge-conflict after the bounded retry", async () => {
     const h = harness({ locked: false, rebaseWorktree: true, rebasePushCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);

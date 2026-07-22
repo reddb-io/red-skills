@@ -805,6 +805,25 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
   });
 
+  it("injects repository enrichment and silently keeps the base handoff when discovery fails (#2402)", async () => {
+    const enriched = harness({ outcome: "done" });
+    enriched.deps.lookups.handoffEnrichment = async (metadata) => {
+      expect(metadata).toMatchObject({ issue: 9, labels: ["ready-for-agent"], title: "Fix the thing" });
+      return "context:\n  name: Dev";
+    };
+    await processIssue(enriched.deps, enriched.input);
+    expect(enriched.trace.runAgentCalls[0]?.handoffContent ?? "").toContain(
+      "<handoff-enrichment>\ncontext:\n  name: Dev\n</handoff-enrichment>",
+    );
+
+    const degraded = harness({ outcome: "done" });
+    degraded.deps.lookups.handoffEnrichment = async () => {
+      throw new Error("git log unavailable");
+    };
+    await expect(processIssue(degraded.deps, degraded.input)).resolves.toMatchObject({ outcome: "done" });
+    expect(degraded.trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<handoff-enrichment>");
+  });
+
   it("alternates output-shaping steering by issue and stamps the measurement arm (#1638)", async () => {
     const steered = harness({ outcome: "done", outputShaping: { terseSteering: true } });
     steered.input.issue = 10;

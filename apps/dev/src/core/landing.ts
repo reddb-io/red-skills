@@ -612,8 +612,19 @@ async function preparePrRebaseWorktree(
     });
     if (!rebased.ok) {
       // Real conflict / exhausted force-with-lease retries → park merge-conflict.
+      // A `stale-branch` refusal (#2481) parks through the same route but carries
+      // its own actionable text, so the human sees WHY the landing declined to
+      // replay a fat branch onto a base that moved hours ago.
       await deps.removeRebaseWorktree?.(dir);
-      return { ok: false, result: { ok: false, reason: "pr-conflict", locked: input.locked } };
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          reason: "pr-conflict",
+          locked: input.locked,
+          ...(rebased.reason === "stale-branch" && rebased.message ? { message: rebased.message } : {}),
+        },
+      };
     }
     return { ok: true, dir };
   } catch (error) {
