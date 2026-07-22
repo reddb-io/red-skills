@@ -23,6 +23,12 @@ export interface ToonPinSite {
 
 export const TOON_PIN_SITES: readonly ToonPinSite[] = [
   {
+    name: "red-doctor.runtime.host-toolchain-pin",
+    path: "apps/dev/src/core/host-toolchain-doctor.ts",
+    form: "version",
+    pattern: /TQ_PINNED_VERSION = "(\d+\.\d+\.\d+)"/,
+  },
+  {
     name: "workflow.red-workspace-ci.tq-install-version",
     path: ".github/workflows/red-workspace-ci.yml",
     form: "tag",
