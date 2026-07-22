@@ -18,7 +18,7 @@
 //
 // Top-level XML wrappers appear in template order, and any section that would
 // be empty is omitted entirely — byte-for-byte matching the bash:
-//   <issue-body> · <previous-attempts> · <human-guidance-thread> ·
+//   <issue-body> · <handoff-enrichment> · <previous-attempts> · <human-guidance-thread> ·
 //   <prior-attempt-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
@@ -105,6 +105,12 @@ export interface HandoffInput {
    * detects the branch's prior gate already passed.
    */
   resumeFromBranch?: string;
+  /**
+   * Best-effort, budget-bounded TOON repository doctrine selected from the
+   * owning context plus recent path-local exemplars (#2402). Empty/undefined
+   * omits the section, preserving the base handoff when discovery fails.
+   */
+  enrichment?: string;
 }
 
 /** Trimmed-of-all-whitespace emptiness test (bash `[[ -n "$x" ]]` after capture). */
@@ -335,6 +341,13 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push('<issue-body data-untrusted="true">');
   lines.push(input.body);
   lines.push("</issue-body>");
+
+  if (isPresent(input.enrichment)) {
+    lines.push("");
+    lines.push("<handoff-enrichment>");
+    lines.push(input.enrichment);
+    lines.push("</handoff-enrichment>");
+  }
 
   if (isPresent(input.resumeFromBranch)) {
     lines.push("");
