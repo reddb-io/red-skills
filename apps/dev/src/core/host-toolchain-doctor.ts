@@ -82,7 +82,7 @@ export function compareVersions(left: string, right: string): number {
 
 export function detectGhInstallManager(facts: GhManagerFacts): GhInstallManager {
   const asdfPin = /^(?:\s*)github-cli(?:\s|$)/m.test(facts.toolVersions ?? "");
-  const asdfShim = /(?:^|\/)asdf\/shims\/gh$/.test(facts.ghPath ?? "");
+  const asdfShim = /(?:^|\/)\.?asdf\/shims\/gh$/.test(facts.ghPath ?? "");
   if (asdfPin || asdfShim) return "asdf";
   if (facts.brewManaged) return "brew";
   if (facts.aptManaged) return "apt";
