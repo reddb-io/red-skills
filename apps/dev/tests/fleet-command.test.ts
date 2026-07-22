@@ -19,9 +19,14 @@ vi.mock("../src/runtime/supervisor-spawn.js", () => ({
   spawnSupervisor: vi.fn(async () => 43210),
 }));
 
+vi.mock("../src/runtime/supervisor-watchdog-spawn.js", () => ({
+  spawnSupervisorWatchdog: vi.fn(async () => 43211),
+}));
+
 import { launchFleet, logsFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
+import { spawnSupervisorWatchdog } from "../src/runtime/supervisor-watchdog-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 function scratch(): string {
@@ -57,6 +62,8 @@ describe("fleet command stale supervisor state", () => {
     killTreeMocks.killTreeAndWait.mockResolvedValue(false);
     vi.mocked(spawnSupervisor).mockClear();
     vi.mocked(spawnSupervisor).mockResolvedValue(43210);
+    vi.mocked(spawnSupervisorWatchdog).mockClear();
+    vi.mocked(spawnSupervisorWatchdog).mockResolvedValue(43211);
   });
 
   it("launchFleet removes dead supervisor pid/state/log files before spawning", async () => {
@@ -67,6 +74,7 @@ describe("fleet command stale supervisor state", () => {
       await launchFleet(["1"], root, stream());
 
       expect(spawnSupervisor).toHaveBeenCalledTimes(1);
+      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root, fleet: "default" });
       expect(existsSync(paths.pid)).toBe(false);
       expect(existsSync(paths.state)).toBe(false);
       expect(existsSync(paths.log)).toBe(false);
