@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER,
   lintExecutableAcceptanceCriteria,
+  planAcceptanceCriteriaRecipeCommentUpdate,
   renderAcceptanceCriteriaRecipeComment,
 } from "../src/core/executable-acceptance.js";
 
@@ -42,6 +43,22 @@ Make the agent better.
     expect(result.reason).toBe("acceptance criteria item is not machine-checkable: The implementation is clean and intuitive.");
   });
 
+  it("rejects generic verb-only criteria without a test, command, fixture, or pinned behavior", () => {
+    for (const item of [
+      "The implementation passes review.",
+      "The UI renders nicely.",
+      "The code updates correctly.",
+    ]) {
+      const result = lintExecutableAcceptanceCriteria(`## Acceptance criteria
+
+- [ ] ${item}
+`);
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe(`acceptance criteria item is not machine-checkable: ${item}`);
+    }
+  });
+
   it("accepts pinned observable behavior even when no shell command is named", () => {
     const result = lintExecutableAcceptanceCriteria(`## Acceptance criteria
 
@@ -63,5 +80,34 @@ Make the agent better.
     expect(comment).toContain("missing acceptance-criteria section");
     expect(comment).toContain("## Acceptance criteria");
     expect(comment).toContain("pnpm --filter");
+  });
+
+  it("updates a trusted stale recipe comment when the lint reason changes", () => {
+    const stale = renderAcceptanceCriteriaRecipeComment({
+      ok: false,
+      reason: "missing acceptance-criteria section",
+      items: [],
+    });
+    const plan = planAcceptanceCriteriaRecipeCommentUpdate(
+      [{ id: 123, body: stale, sourceTrust: "trusted" }],
+      {
+        ok: false,
+        reason: "acceptance criteria item is not machine-checkable: The UI renders nicely.",
+        items: ["The UI renders nicely."],
+      },
+    );
+
+    expect(plan.action).toBe("update");
+    expect(plan.id).toBe(123);
+    expect(plan.body).toContain("The UI renders nicely.");
+  });
+
+  it("ignores copied recipe markers from dubious commenters", () => {
+    const plan = planAcceptanceCriteriaRecipeCommentUpdate(
+      [{ id: 123, body: ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER, sourceTrust: "dubious" }],
+      { ok: false, reason: "missing acceptance-criteria section", items: [] },
+    );
+
+    expect(plan.action).toBe("create");
   });
 });
