@@ -240,6 +240,7 @@ export interface ProcessIssueDeps {
   outputShaping?: OutputShapingConfig;
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   goVerifyRetries?: number;
+  stallConvergenceBudget?: number;
   postAttemptFormat?: PostAttemptFormatExec;
   postAttemptFormatCommands?: readonly string[];
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
