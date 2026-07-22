@@ -411,6 +411,11 @@ export function buildProcessDeps(
       await ghx.comment(ghCtx, issue, body);
     },
     goVerifyRetries,
+    stallConvergenceBudget: (() => {
+      const raw = getConfig(config, "afk.stallConvergenceBudget");
+      const parsed = raw === undefined ? NaN : Number(raw);
+      return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+    })(),
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
