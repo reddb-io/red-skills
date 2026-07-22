@@ -165,6 +165,28 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  it("stopFleet writes the stop sentinel and terminates the repo watchdog before reporting none", async () => {
+    const root = scratch();
+    try {
+      const paths = afkPaths(root);
+      mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+      writeFileSync(paths.supervisorWatchdogPidPath, "24680", "utf8");
+      writeFileSync(paths.supervisorWatchdogPidStartPath, "start-24680", "utf8");
+      vi.mocked(isLivePid).mockImplementation((pid) => pid === 24680);
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
+
+      const result = await stopFleet(root, stream());
+
+      expect(result).toEqual({ status: "none" });
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(24680);
+      expect(existsSync(paths.supervisorWatchdogPidPath)).toBe(false);
+      expect(existsSync(paths.supervisorWatchdogPidStartPath)).toBe(false);
+      expect(existsSync(paths.supervisorStopPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("statusFleet reports supervisor + slots ground truth read-only, no supervisor → absent (#2060)", async () => {
     const root = scratch();
     try {
@@ -322,7 +344,7 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("stopFleet discovers a live supervisor from the structured lane when the pid anchor is missing", async () => {
+  it("stopFleet ignores an unpinned structured lane when the pid anchor is missing", async () => {
     const root = scratch();
     try {
       const paths = afkPaths(root);
@@ -334,8 +356,8 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream());
 
-      expect(result).toEqual({ status: "stopped", pid: 12345 });
-      expect(existsSync(paths.supervisorStopPath)).toBe(true);
+      expect(result).toEqual({ status: "none" });
+      expect(existsSync(paths.supervisorStopPath)).toBe(false);
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
