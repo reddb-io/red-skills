@@ -25,7 +25,7 @@ import {
   type TriageDecision,
   type TriageTransition,
 } from "../core/auto-triage.js";
-import { LABEL_TRIAGE_SUMMON } from "../core/triage-labels.js";
+import { LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_TRIAGE_SUMMON } from "../core/triage-labels.js";
 import { parseTrustPolicy, type TrustPolicy } from "../core/trust-gate.js";
 import { loadConfig } from "../core/config.js";
 import {
@@ -34,9 +34,16 @@ import {
   editLabels,
   ensureLabel,
   issueAuthor,
+  issueBody,
+  issueComments,
   viewLabels,
   type GhContext,
 } from "../runtime/gh.js";
+import {
+  hasAcceptanceCriteriaRecipeComment,
+  lintExecutableAcceptanceCriteria,
+  renderAcceptanceCriteriaRecipeComment,
+} from "../core/executable-acceptance.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { resolveRepoContext } from "../runtime/wire.js";
 
@@ -53,7 +60,7 @@ export interface TriageOptions {
 
 export interface TriageOutcome {
   issue: number;
-  action: AutoTriageAction;
+  action: AutoTriageAction | "acceptance-lint-failed";
   author?: string;
   /** Set only when the transition was applied. */
   applied?: { decision: TriageDecision; transition: TriageTransition };
@@ -84,6 +91,26 @@ export async function runTriage(
       author,
       reason: `untrusted author ${author ? `'${author}'` : "(unknown)"} — held for a maintainer summon (\`dev triage --summon\` or the \`${LABEL_TRIAGE_SUMMON}\` label)`,
     };
+  }
+
+  if (opts.decision === "ready-for-agent") {
+    const lint = lintExecutableAcceptanceCriteria((await issueBody(ctx, opts.issue)) ?? "");
+    if (!lint.ok) {
+      await ensureLabel(ctx, LABEL_NEEDS_TRIAGE);
+      const remove = [LABEL_READY, LABEL_TRIAGE_SUMMON].filter((label) => labels.includes(label));
+      const add = labels.includes(LABEL_NEEDS_TRIAGE) ? [] : [LABEL_NEEDS_TRIAGE];
+      if (remove.length > 0 || add.length > 0) await editLabels(ctx, opts.issue, remove, add);
+      const comments = await issueComments(ctx, opts.issue);
+      if (!hasAcceptanceCriteriaRecipeComment(comments)) {
+        await comment(ctx, opts.issue, renderAcceptanceCriteriaRecipeComment(lint));
+      }
+      return {
+        issue: opts.issue,
+        action: "acceptance-lint-failed",
+        author,
+        reason: lint.reason,
+      };
+    }
   }
 
   const transition = planTriageTransition(opts.decision);
@@ -206,6 +233,10 @@ export async function triageCommand(
 
   if (outcome.action === "hold-for-summon") {
     stdout.write(`triage: #${outcome.issue} held — ${outcome.reason}\n`);
+    return 0;
+  }
+  if (outcome.action === "acceptance-lint-failed") {
+    stdout.write(`triage: #${outcome.issue} kept in needs-triage — ${outcome.reason}\n`);
     return 0;
   }
   stdout.write(
