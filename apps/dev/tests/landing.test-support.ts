@@ -77,7 +77,7 @@ export interface Opts {
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
   /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
-  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
   /** rc the final `gh pr merge` returns (1 → PR exists but merge is rejected). */
   prMergeCode?: number;
   /** Make the landing-worktree provisioner fail (returns null). */
@@ -235,11 +235,12 @@ export function harness(opts: Opts = {}): Harness {
       }
       if (j.includes("pr view")) {
         // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
-        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
-          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
-          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
-          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
-          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        const map: Record<string, { mergeStateStatus: string; mergeable: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", statusCheckRollup: [] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
