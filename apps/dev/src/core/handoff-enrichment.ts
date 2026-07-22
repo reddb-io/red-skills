@@ -54,6 +54,10 @@ function words(value: string): string[] {
     .filter((word) => word.length >= 3);
 }
 
+function lexicalWords(value: string): string[] {
+  return words(value).map((word) => (word.length >= 5 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word));
+}
+
 function includesWord(haystack: string, needle: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(
     haystack,
@@ -106,8 +110,9 @@ function contextScore(entry: ContextEntry, issueText: string, paths: readonly st
       score += 30;
     }
   }
-  const descriptionHits = [...new Set(words(entry.description).filter((word) => word.length >= 5))]
-    .filter((word) => includesWord(issueText, word)).length;
+  const issueWords = new Set(lexicalWords(issueText));
+  const descriptionHits = [...new Set(lexicalWords(entry.description).filter((word) => word.length >= 5))]
+    .filter((word) => issueWords.has(word)).length;
   return score + Math.min(descriptionHits, 8);
 }
 
