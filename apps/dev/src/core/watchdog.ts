@@ -41,8 +41,9 @@ export interface WatchdogIO {
    * in `running` across the restart (reuse the trip-sweep / reap cleanup). */
   reconcile(): Promise<void>;
   /** Spawn a fresh `__supervise` and stamp a fresh heartbeat so the next tick is
-   * not itself misread as quiescent during the boot window. */
-  relaunch(): Promise<void>;
+   * not itself misread as quiescent during the boot window. Returns true only
+   * after the new pinned supervisor identity is observable. */
+  relaunch(): Promise<boolean>;
   /**
    * Point-in-time signals for the DEAD-supervisor respawn decision (#1097),
    * gathered only when the supervisor is found dead (pid file present but its pid
@@ -275,10 +276,15 @@ export async function runWatchdog(
     `⚠️  watchdog: supervisor pid=${liveness.pid ?? "?"} is QUIESCENT — ${reason}. Recovering.`,
   );
   await teardownWedgedSupervisor(io, liveness.pid);
+  let relaunched = false;
   try {
-    await io.relaunch();
+    relaunched = await io.relaunch();
   } catch (err) {
     io.log(`watchdog: relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!relaunched) {
+    io.log("watchdog: relaunch failed: no pinned supervisor identity appeared; recovery remains armed.");
+    return base;
   }
   io.log(`watchdog: wedged supervisor recovered — fresh fleet relaunched.`);
   return { ...base, recovered: true };
@@ -289,8 +295,10 @@ export async function runWatchdog(
  * the supervisor is classified absent WITH a recorded (dead) pid: a silent
  * mid-drain crash. Gathers the observable fleet state, runs the pure
  * {@link decideDeadSupervisorRespawn} decision, and — on "respawn" — records the
- * restart, clears the stale control files, reconciles stranded claims, and
- * relaunches. Unlike the quiescent path it does NOT kill workers: detached workers
+ * restart, reconciles stranded claims, and relaunches. The stale pinned identity
+ * deliberately remains until the new supervisor atomically replaces it, so a
+ * failed boot is still visible to the next watchdog pass. Unlike the quiescent
+ * path it does NOT kill workers: detached workers
  * that outlived the crash are still legitimately draining their claims, so killing
  * them would throw away in-flight work. Every step is best-effort.
  *
@@ -354,24 +362,24 @@ async function recoverDeadSupervisor(
   );
 
   try {
-    await io.writeRestartLedger?.(decision.restarts);
-  } catch {
-    // best-effort: a failed ledger write only weakens the crash-loop bound.
-  }
-  try {
-    await io.clearControlFiles();
-  } catch {
-    // best-effort: the stale pid file may already be gone.
-  }
-  try {
     await io.reconcile();
   } catch {
     // best-effort: the relaunched workers' boot sweep also reconciles.
   }
+  let relaunched = false;
   try {
-    await io.relaunch();
+    relaunched = await io.relaunch();
   } catch (err) {
     io.log(`watchdog: relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!relaunched) {
+    io.log("watchdog: relaunch failed: no pinned supervisor identity appeared; recovery remains armed.");
+    return base;
+  }
+  try {
+    await io.writeRestartLedger?.(decision.restarts);
+  } catch {
+    // best-effort: a failed ledger write only weakens the crash-loop bound.
   }
   io.log(
     `watchdog: dead supervisor respawned — reason=${signals.readyForAgent} ready stranded, ` +
