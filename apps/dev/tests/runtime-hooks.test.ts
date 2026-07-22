@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { hookEnv, makeHookResolveOptions } from "../src/runtime/hooks.js";
+import { hookEnv, makeHookExec, makeHookResolveOptions } from "../src/runtime/hooks.js";
 import { skillDirFromModule } from "../src/platform/skill-paths.js";
 import { resolveHooks } from "../src/core/hook-config.js";
 
@@ -103,5 +103,15 @@ describe("hookEnv (per-slot RED_AFK_SLOT in hook environment)", () => {
   it("each slot gets a distinct RED_AFK_SLOT value", () => {
     const slots = [0, 1, 2].map((s) => hookEnv("owner/repo", "/repo", s).RED_AFK_SLOT);
     expect(slots).toEqual(["0", "1", "2"]);
+  });
+});
+
+describe("makeHookExec", () => {
+  it("runs bash-only lifecycle hooks with bash instead of the host sh interpreter", async () => {
+    const exec = makeHookExec(process.cwd());
+
+    await expect(
+      exec('read -r _; shopt -s extglob; [[ foobar == +(foo|bar) ]] && printf \'extglob-ok\'', {}, "{}\n"),
+    ).resolves.toEqual({ code: 0, stdout: "extglob-ok" });
   });
 });

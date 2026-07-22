@@ -178,6 +178,11 @@ export interface CompactState {
    * Absent / `""` means unknown (pre-field or origin flag not passed). The
    * dashboard header aggregates non-empty values into per-source counts. */
   origin?: string;
+  /** Named fleet the worker was spawned by (from the castle snapshot's
+   * `supervisor_id`). Absent for standalone runs and legacy workers that
+   * pre-date the fleet stamp. Used by `fleet_status` to partition workers
+   * across fleets (issue #2345). */
+  fleet?: string;
   total: number;
   done: number;
   blocked: number;

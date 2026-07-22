@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
@@ -29,6 +29,7 @@ import type {
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  FleetRegisterInput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
@@ -241,11 +242,11 @@ async function launchDetachedRun(
 
 export function resolveDevCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "dev.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "dev-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "dev-"));
   }
   throw new Error(
     `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -254,11 +255,11 @@ export function resolveDevCliBundle(mcpBundle: string): string {
 
 export function resolveRspCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "rsp-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
   }
   throw new Error(
     `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -752,9 +753,25 @@ async function fleetStatus(root: string, input: FleetNameInput) {
     config.supervisorStaleS,
     config.progressStaleS,
   );
-  const liveWorkers = monitor.workers.filter(
+  // Build a PID set for the slot-pid fallback: workers without a fleet stamp
+  // (legacy or pre-stamp) are attributed to this fleet if their pid appears in
+  // the supervisor's slot map. Workers with a stamp that differs from this fleet
+  // name go to the unattributed bucket even if their pid matches.
+  const fleetPidSet = new Set(
+    (fleet?.slotPids ?? []).map((sp) => sp.pid).filter((pid) => pid > 0),
+  );
+  const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
+  function attributedToThisFleet(worker: (typeof allLiveWorkers)[number]): boolean {
+    const stampedFleet = worker.state.fleet;
+    // Stamped workers: use the stamp as the definitive source of truth.
+    if (stampedFleet !== undefined) return stampedFleet === paths.fleet;
+    // Legacy/unstamped workers: fall back to the supervisor's slot-pid map.
+    return fleetPidSet.has(worker.state.pid);
+  }
+  const liveWorkers = allLiveWorkers.filter(attributedToThisFleet);
+  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisFleet(w));
   const latestBundleVersion =
     fleet?.latestBundleVersion ?? readBuildInfo("dev").version;
   return {
@@ -794,6 +811,14 @@ async function fleetStatus(root: string, input: FleetNameInput) {
       activity: worker.state.current.activity,
       origin: worker.state.origin ?? "afk",
     })),
+    unattributed_workers: unattributedWorkers.map((worker) => ({
+      id: worker.state.worker_id,
+      pid: worker.state.pid,
+      issue: String(worker.state.current.number),
+      activity: worker.state.current.activity,
+      origin: worker.state.origin ?? "afk",
+      fleet: worker.state.fleet ?? null,
+    })),
   };
 }
 
@@ -813,6 +838,14 @@ async function createFleet(root: string, input: FleetCreateInput) {
   }
 
   const profile = await upsertFleetProfile(path, profileForCreate(input));
+  let supervisorLogStart: number | undefined;
+  try {
+    supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      supervisorLogStart = 0;
+    }
+  }
   const pid = await spawnSupervisor({
     root,
     target: input.target,
@@ -823,8 +856,40 @@ async function createFleet(root: string, input: FleetCreateInput) {
       : [],
   });
   if (pid === null) {
-    await removeFleetProfile(path, profile.name).catch(() => false);
-    throw new Error(`fleet ${JSON.stringify(profile.name)} failed to start`);
+    let rollbackConfirmed = false;
+    try {
+      const removed = await removeFleetProfile(path, profile.name);
+      rollbackConfirmed =
+        removed || (await readFleetProfile(path, profile.name)) === undefined;
+    } catch {
+      // The failure below must not claim that registry rollback succeeded.
+    }
+    let tail = "";
+    if (supervisorLogStart !== undefined) {
+      try {
+        const bytes = await readFile(paths.supervisorLogPath);
+        const launchBytes =
+          bytes.length < supervisorLogStart
+            ? bytes
+            : bytes.subarray(supervisorLogStart);
+        tail = launchBytes
+          .toString("utf8")
+          .split(/\r?\n/)
+          .slice(-20)
+          .join("\n");
+      } catch {
+        // The explicit no-output marker below still distinguishes an empty boot
+        // from a caller-visible but unexplained registry rollback.
+      }
+    }
+    const evidence = tail || "(no supervisor log output was captured)";
+    const rollback = rollbackConfirmed
+      ? "profile rolled back."
+      : "profile rollback was attempted but could not be confirmed.";
+    throw new Error(
+      `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
+        `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+    );
   }
   return { status: "launched", profile, pid, target: input.target };
 }
@@ -884,9 +949,9 @@ async function laneLogs(root: string, input: LogsInput) {
   return filtered.length <= limit ? filtered : filtered.slice(-limit);
 }
 
-async function workerVitals(root: string) {
+async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
   const records = await readAllWorkerStates(afkPaths(root).tmpDir);
-  return records.map(({ state, ...record }) => ({
+  const all = records.map(({ state, ...record }) => ({
     worker: {
       id: state.worker_id,
       pid: state.pid,
@@ -926,6 +991,22 @@ async function workerVitals(root: string) {
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
   }));
+  return opts.live_only !== false ? all.filter((r) => r.live === true) : all;
+}
+
+function projectFields(
+  records: Array<Record<string, unknown>>,
+  fields: string[] | undefined,
+): unknown[] {
+  if (!fields || fields.length === 0) return records;
+  const fieldSet = new Set(fields);
+  return records.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const key of fieldSet) {
+      if (Object.prototype.hasOwnProperty.call(r, key)) out[key] = r[key];
+    }
+    return out;
+  });
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
@@ -1053,7 +1134,28 @@ export type StatuslineAggregate = Awaited<
   ReturnType<typeof collectStatuslineAggregate>
 >;
 
-export function createDevAfkMcpDependencies(
+async function registerFleet(root: string, input: FleetRegisterInput) {
+  const path = registryPath(root);
+  const paths = afkPaths(root, input.name);
+  const running = await discoverLiveSupervisorPid(
+    paths.supervisorRuntimeDir,
+    isLivePid,
+    { fleet: paths.fleet },
+  );
+  if (!running) {
+    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is not running`);
+  }
+  const profile = await upsertFleetProfile(path, {
+    name: paths.fleet,
+    runner: input.runner,
+    ...(input.selector ? { selector: input.selector } : {}),
+    ...(input.config ? { config: input.config } : {}),
+    ...(input.base ? { base: input.base } : {}),
+  });
+  return { status: "registered", profile, pid: running.pid };
+}
+
+export function createCastleMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
@@ -1071,8 +1173,12 @@ export function createDevAfkMcpDependencies(
       const result = await stopFleet(root, silent, input.name);
       return { fleet: input.name ?? "default", ...result };
     },
+    fleetRegister: (input) => registerFleet(root, input),
     logs: (input) => laneLogs(root, input),
-    workerVitals: () => workerVitals(root),
+    workerVitals: async (input) => {
+      const records = await workerVitals(root, { live_only: input.live_only });
+      return projectFields(records as Array<Record<string, unknown>>, input.fields);
+    },
     dashboard: ({ periodDays }) => collectDashboardReport(periodDays, root),
     monitor: () => collectMonitorInputs(root),
     history: async ({ limit }) => {
@@ -1114,11 +1220,12 @@ export function createDevAfkMcpDependencies(
       }
       throw new Error("worker dispatch requires an issue or demand");
     },
-    workerStatus: async ({ worker }) => {
-      const workers = await workerVitals(root);
-      return worker === undefined
-        ? workers
-        : workers.filter((record) => record.worker.id === worker);
+    workerStatus: async ({ worker, live_only, fields }) => {
+      const records = await workerVitals(root, { live_only });
+      const filtered = worker === undefined
+        ? records
+        : records.filter((record) => record.worker.id === worker);
+      return projectFields(filtered as Array<Record<string, unknown>>, fields);
     },
     workerStop: (input) => operations.stopWorker(root, input),
     runnerList: async () =>

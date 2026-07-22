@@ -4,7 +4,7 @@ This file serves the `afk monitor` branch: the readonly aggregated dashboard
 across all live workers, the native-task mirror and its self-cancel teardown, and
 the Codex monitor agent. Reached from *When To Use* (`/afk monitor`).
 
-## Observability reads come from the `dev:afk` MCP
+## Observability reads come from the `castle` MCP
 
 **Every observability verb is a read tool — free to call, and never a reason to
 touch a mutating one.** The tools return structured TOON; the bundle's `monitor`
@@ -42,7 +42,7 @@ non-empty open backlog is a flow bug to diagnose, never a clean stop.
 To invoke, from the project root:
 
 ```bash
-RED_AFK_RUNNER=<runner> red-skills-dev monitor
+RED_AFK_RUNNER=<runner> npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor
 ```
 
 The command has **two modes**, auto-selected by stdout type:
@@ -171,7 +171,7 @@ supervisor under Codex:
    single worker, `--mode fleet` for a supervisor, so the read-only rules stay
    identical across launches):
    ```bash
-   RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
+   RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
    presentation consumer only: it periodically runs `/dev:afk monitor --once`,

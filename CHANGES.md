@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## afk / go / ask-red / red-doctor (engineering) — MCP servers get colon-free names (issue #2405)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Codex rejects `:` in MCP server names, so every `dev:*` form was unusable. The MCP is the castle manager and `afk` names only one of its clients, so the AFK server becomes `castle`; `code-nav` becomes `navigator` for the same colon-free, role-named treatment.
+- **what changed**:
+  - `plugins/dev/.mcp.json`: `dev:afk` → `castle`, `code-nav` → `navigator`; error strings follow. Host tool prefix becomes `mcp__plugin_dev_castle__*`.
+  - Launcher `hooks/afk-mcp.sh` → `hooks/castle-mcp.sh`; bundle `afk-mcp.bundle.min.mjs` → `castle-mcp.bundle.min.mjs`; npm bin `red-skills-afk-mcp` → `red-skills-castle-mcp`; `readBuildInfo("afk")` → `"castle"` and `readBuildInfo("code-nav")` → `"navigator"`.
+  - `afk/MCP.md`, `afk/SKILL.md`, `afk/fleet.md`, `afk/monitor.md`, `go/SKILL.md`, `ask-red/SKILL.md`, `red-doctor/SKILL.md`, and `README.md` name the new servers; `/dev:afk …` slash-command forms are untouched (they name the skill, not the server).
+  - Codex and Pi manifests regenerated; `scripts/validate-install-metadata.sh` now asserts both the `navigator` and `castle` launcher entries.
+
 ## afk / go / ask-red (engineering) — CLI and skills become `dev:afk` MCP clients (issue #2309)
 
 - **status**: modified

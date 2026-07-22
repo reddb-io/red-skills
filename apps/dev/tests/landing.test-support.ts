@@ -77,7 +77,7 @@ export interface Opts {
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
   /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
-  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
   /** rc the final `gh pr merge` returns (1 → PR exists but merge is rejected). */
   prMergeCode?: number;
   /** Make the landing-worktree provisioner fail (returns null). */
@@ -107,19 +107,6 @@ export interface Opts {
    * Unset → the local trunk reads as an ancestor of origin → proceeds.
    */
   trunk?: "diverged" | "absent";
-  /**
-   * Sensitive-path guard (issue #1102): inject getDiffPaths.
-   *   - undefined → guard not wired (safe default, no-op, existing tests unaffected)
-   *   - "hit"  → getDiffPaths returns a diff that touches .github/workflows/ci.yml
-   *   - "clean"→ getDiffPaths returns a diff with no sensitive paths
-   */
-  sensitivePaths?: "hit" | "clean";
-  /**
-   * Sensitive-path guard bypass (#1171). When true, `input.sensitivePathApproved`
-   * is set so the step-0a guard is skipped even on a "hit" diff. Models the
-   * `/requeue --adopt-branch` human land of a reviewed protected diff.
-   */
-  sensitivePathApproved?: boolean;
   /** Issue labels used to derive the landing-created conventional merge title. */
   labels?: string[];
   /** Changed files used for fallback conventional-title classification (#1373). */
@@ -134,6 +121,8 @@ export interface Opts {
   postMergeGate?: boolean;
   /** When true AND `postMergeGate` is wired, the gate returns `{ ok: false }`. */
   postMergeGateFails?: boolean;
+  /** Require post-merge validation even when the postMergeGate dep is absent. */
+  requirePostMergeValidation?: boolean;
   /**
    * Global land-lock (#1337). Present → wire `deps.landLock` with this port, so a
    * test can observe when the landing entered and left the critical section.
@@ -144,6 +133,13 @@ export interface Opts {
   nativeMergeQueue?: boolean;
   /** Explicit PR-resolved callback abort used by adversarial correction before merge. */
   onPrResolvedAbort?: boolean;
+  /**
+   * Stale-branch landing guard (#2481). Present → the rebase worktree answers a
+   * fork point, this many commits ahead of it, and a fork commit this many hours
+   * old, so `preMergeRebase` can evaluate the refusal. Absent → the fork probe
+   * answers nothing, the guard is unmeasurable, and the landing behaves as before.
+   */
+  staleBranch?: { ahead: number; ageHours: number };
 }
 
 export function harness(opts: Opts = {}): Harness {
@@ -164,6 +160,20 @@ export function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      // #2481 stale-branch guard probes, answered only in the rebase worktree so
+      // no other path's git surface changes shape.
+      if (opts.staleBranch && j.startsWith(`git -C ${RWT} `)) {
+        if (j === `git -C ${RWT} merge-base origin/main HEAD`) {
+          return { code: 0, stdout: "forksha\n", stderr: "" };
+        }
+        if (j.includes("rev-list") && j.includes("--count")) {
+          return { code: 0, stdout: `${opts.staleBranch.ahead}\n`, stderr: "" };
+        }
+        if (j.includes("log -1 --format=%ct")) {
+          const forkEpochS = Math.floor(Date.now() / 1000) - opts.staleBranch.ageHours * 3600;
+          return { code: 0, stdout: `${forkEpochS}\n`, stderr: "" };
+        }
+      }
       // Legacy primary-promotion probes. They stay here so tests can fail if a
       // path accidentally reintroduces the old primary fast-forward.
       if (j.includes("symbolic-ref --short HEAD")) {
@@ -191,6 +201,9 @@ export function harness(opts: Opts = {}): Harness {
         return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
       }
       if (j === `git -C /repo rev-parse --verify --quiet origin/${input.base}`) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j === `git -C /repo rev-parse origin/${input.base}`) {
         return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
       }
       // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
@@ -248,13 +261,17 @@ export function harness(opts: Opts = {}): Harness {
       }
       if (j.includes("pr view")) {
         // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
-        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
-          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
-          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
-          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
-          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        const map: Record<string, { mergeStateStatus: string; mergeable: string; baseRefOid: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", baseRefOid: "0r1g1nsha", statusCheckRollup: [] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
       }
       if (j.includes("pr merge")) {
         return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
@@ -302,17 +319,6 @@ export function harness(opts: Opts = {}): Harness {
           return opts.agentConflictResolve === "resolve";
         }
       : undefined,
-    // #1102/#1373: only wired when the test opts in (opt-in — absent → guard skipped).
-    getDiffPaths: opts.sensitivePaths || opts.changedFiles
-      ? async () => ({
-          changedFiles:
-            opts.changedFiles ??
-            (opts.sensitivePaths === "hit"
-              ? [".github/workflows/ci.yml", "src/index.ts"]
-              : ["src/index.ts", "apps/dev/src/core/landing.ts"]),
-          packageJsonDiff: "",
-        })
-      : undefined,
     onPrResolved: opts.onPrResolvedAbort ? async () => "abort" : undefined,
     // Post-merge-integration gate (#1335): only wired when the test opts in.
     postMergeGate: opts.postMergeGate
@@ -321,6 +327,7 @@ export function harness(opts: Opts = {}): Harness {
           return { ok: !opts.postMergeGateFails };
         }
       : undefined,
+    requirePostMergeValidation: opts.requirePostMergeValidation,
     // Global land-lock (#1337): only wired when the test opts in.
     landLock: opts.landLock,
     landingPhase: async (phase) => {
@@ -346,9 +353,7 @@ export function harness(opts: Opts = {}): Harness {
     issue: 9,
     title: "Fix the thing",
     ...(opts.labels ? { labels: opts.labels } : {}),
-    // #1171: only set when the test opts in; default undefined keeps the guard
-    // armed for every existing landing assertion.
-    sensitivePathApproved: opts.sensitivePathApproved,
+    ...(opts.changedFiles ? { changedFiles: opts.changedFiles } : {}),
     nativeMergeQueue: opts.nativeMergeQueue,
   };
 

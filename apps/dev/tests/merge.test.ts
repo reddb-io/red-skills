@@ -12,6 +12,7 @@ import {
   classifyMergeState,
   parseMergeStateView,
   waitForMergeReady,
+  waitForMergeReadyWithEvidence,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -630,8 +631,44 @@ describe("CI-aware merge classification (#812)", () => {
   });
 
   it("parseMergeStateView tolerates non-JSON / empty stdout", () => {
-    expect(parseMergeStateView("")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
-    expect(parseMergeStateView("not json")).toEqual({ mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false });
+    expect(parseMergeStateView("")).toEqual({
+      mergeStateStatus: "",
+      mergeable: "",
+      anyFailed: false,
+      anyPending: false,
+      checkCount: 0,
+      successfulChecks: 0,
+      skippedOrNeutralChecks: 0,
+    });
+    expect(parseMergeStateView("not json")).toEqual({
+      mergeStateStatus: "",
+      mergeable: "",
+      anyFailed: false,
+      anyPending: false,
+      checkCount: 0,
+      successfulChecks: 0,
+      skippedOrNeutralChecks: 0,
+    });
+  });
+
+  it("extracts check counts for successful and skipped rollup entries", () => {
+    const green = parseMergeStateView(JSON.stringify({
+      mergeStateStatus: "CLEAN",
+      mergeable: "MERGEABLE",
+      statusCheckRollup: [{ name: "test", conclusion: "SUCCESS" }, { name: "lint", state: "SUCCESS" }],
+    }));
+    expect(green.checkCount).toBe(2);
+    expect(green.successfulChecks).toBe(2);
+    expect(green.skippedOrNeutralChecks).toBe(0);
+
+    const skipped = parseMergeStateView(JSON.stringify({
+      mergeStateStatus: "CLEAN",
+      mergeable: "MERGEABLE",
+      statusCheckRollup: [{ name: "test", conclusion: "SKIPPED" }],
+    }));
+    expect(skipped.checkCount).toBe(1);
+    expect(skipped.successfulChecks).toBe(0);
+    expect(skipped.skippedOrNeutralChecks).toBe(1);
   });
 });
 
@@ -641,6 +678,9 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     let i = 0;
     const exec: Exec = async (argv) => {
       calls.push(argv);
+      if (argv.includes("api")) {
+        return { code: 0, stdout: JSON.stringify(["test"]), stderr: "" };
+      }
       const out = views[Math.min(i, views.length - 1)] ?? "{}";
       i++;
       return { code: 0, stdout: out, stderr: "" };
@@ -648,22 +688,59 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     return { exec, calls };
   }
   const noSleep = async () => {};
-  const v = (mergeStateStatus: string, rollup: unknown[] = []) =>
-    JSON.stringify({ mergeStateStatus, statusCheckRollup: rollup });
+  const v = (mergeStateStatus: string, rollup: unknown[] = [], mergeable = "") =>
+    JSON.stringify({ mergeStateStatus, mergeable, baseRefOid: "base-sha", statusCheckRollup: rollup });
 
   it("polls until the PR goes CLEAN, then returns merge", async () => {
     const { exec, calls } = pollExec([v("UNKNOWN"), v("BLOCKED", [{ status: "IN_PROGRESS" }]), v("CLEAN")]);
     const r = await waitForMergeReady(exec, "o/r", 77, { sleep: noSleep });
     expect(r).toBe("merge");
     expect(calls.filter((c) => c.join(" ").includes("pr view 77")).length).toBe(3);
-    expect(calls[0].join(" ")).toContain("--json mergeStateStatus,mergeable,statusCheckRollup");
+    expect(calls.find((c) => c.includes("pr") && c.includes("view"))?.join(" ")).toContain("--json mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup");
+  });
+
+  it("returns fresh green CI evidence for all-success rollups", async () => {
+    const { exec } = pollExec([
+      JSON.stringify({
+        mergeStateStatus: "CLEAN",
+        mergeable: "MERGEABLE",
+        baseRefOid: "base-sha",
+        statusCheckRollup: [{ name: "test", conclusion: "SUCCESS" }],
+      }),
+    ]);
+    await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      sleep: noSleep,
+      baseBranch: "main",
+      expectedBaseOid: "base-sha",
+    })).resolves.toEqual({
+      readiness: "merge",
+      ciEvidence: { checkCount: 1, requiredCheckCount: 1, summary: "1 required check(s) green" },
+    });
+  });
+
+  it("does not return CI evidence when checks were skipped", async () => {
+    const { exec } = pollExec([
+      JSON.stringify({
+        mergeStateStatus: "CLEAN",
+        mergeable: "MERGEABLE",
+        baseRefOid: "base-sha",
+        statusCheckRollup: [{ name: "test", conclusion: "SKIPPED" }],
+      }),
+    ]);
+    await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      sleep: noSleep,
+      baseBranch: "main",
+      expectedBaseOid: "base-sha",
+    })).resolves.toEqual({
+      readiness: "merge",
+    });
   });
 
   it("returns ci-failed immediately on a failed required check (no further polls)", async () => {
     const { exec, calls } = pollExec([v("BLOCKED", [{ state: "FAILURE" }])]);
     const r = await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep });
     expect(r).toBe("ci-failed");
-    expect(calls.length).toBe(1);
+    expect(calls.filter((c) => c.join(" ").includes("pr view 1")).length).toBe(1);
   });
 
   it("returns conflict on DIRTY", async () => {
@@ -874,6 +951,158 @@ describe("resolveMergeConflict (one-shot self-resolver)", () => {
 describe("preMergeRebase (#1006)", () => {
   const base = { repo: "/wt", remote: "origin", base: "main", branch: "afk/w/9-x" };
   const needsRebase = { match: (a: string[]) => a.includes("merge-base"), result: { code: 1 } };
+
+  // #2481 squash rules: fork-point discovery answers a sha, rev-list answers a
+  // multi-commit count, so squashOwnHistory engages. `needsRebase` above matches
+  // ANY argv containing "merge-base", so squash-specific tests use these finer
+  // rules instead.
+  const ancestorCheckFails = {
+    match: (a: string[]) => a.includes("--is-ancestor"),
+    result: { code: 1 },
+  };
+  const forkPoint = {
+    match: (a: string[]) => a.includes("merge-base") && !a.includes("--is-ancestor"),
+    result: { code: 0, stdout: "forksha\n" },
+  };
+  const aheadBy = (n: number) => ({
+    match: (a: string[]) => a.includes("rev-list"),
+    result: { code: 0, stdout: `${n}\n` },
+  });
+
+  it("multi-commit branch squashes to one commit at the fork point before rebasing (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt reset --soft forksha");
+    const commit = calls.find((c) => c.includes("commit"));
+    expect(commit?.join(" ")).toContain("land: squash 65 attempt commits from afk/w/9-x");
+    // Squash happens BEFORE the rebase replays onto the base.
+    const resetIdx = j.findIndex((c) => c.includes("reset --soft forksha"));
+    const rebaseIdx = j.findIndex((c) => c === "git -C /wt rebase origin/main");
+    expect(resetIdx).toBeGreaterThanOrEqual(0);
+    expect(rebaseIdx).toBeGreaterThan(resetIdx);
+  });
+
+  it("single-commit branch does not squash (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(1)]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j.some((c) => c.includes("reset --soft"))).toBe(false);
+    expect(j).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("squashAheadThreshold: Infinity disables the squash entirely (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, { ...base, squashAheadThreshold: Infinity });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls).some((c) => c.includes("reset --soft"))).toBe(false);
+  });
+
+  it("a failed squash commit restores the tip and the plain rebase still runs (#2481)", async () => {
+    const { exec, calls } = fakeExec([
+      ancestorCheckFails,
+      forkPoint,
+      aheadBy(3),
+      { match: (a) => a.includes("commit"), result: { code: 1 } },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt reset --soft HEAD@{1}");
+    expect(j).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("fork-point discovery failure skips the squash silently (#2481)", async () => {
+    const { exec, calls } = fakeExec([needsRebase]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls).some((c) => c.includes("reset --soft"))).toBe(false);
+  });
+
+  // #2481 item 4: the stale-branch guard. Measurement needs a fork sha, a
+  // post-squash ahead count, and the fork point's commit date; `nowEpochS` is
+  // injected so the age arithmetic is deterministic.
+  const NOW = 1_800_000_000;
+  const forkAgedHours = (h: number) => ({
+    match: (a: string[]) => a.includes("log") && a.includes("--format=%ct"),
+    result: { code: 0, stdout: `${NOW - h * 3600}\n` },
+  });
+
+  it("refuses a branch that is both far ahead and base-stale, before rebasing (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(15)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("stale-branch");
+    expect(r.message).toContain("65 commits ahead");
+    expect(r.message).toContain("15h");
+    expect(joined(calls).some((c) => c === "git -C /wt rebase origin/main")).toBe(false);
+  });
+
+  it("a squash that collapses the micro-history keeps the guard quiet (#2481)", async () => {
+    // The squash runs first, so the guard measures ONE commit — the whole point
+    // of squashing is that a fat branch stops being a doomed sequential rebase.
+    let revListCalls = 0;
+    const { exec, calls } = fakeExec([
+      ancestorCheckFails,
+      forkPoint,
+      {
+        match: (a: string[]) => a.includes("rev-list"),
+        result: { code: 0, stdout: "" },
+      },
+      forkAgedHours(15),
+    ]);
+    const counting: Exec = async (argv) => {
+      if (argv.includes("rev-list")) {
+        revListCalls += 1;
+        return { code: 0, stdout: revListCalls === 1 ? "65\n" : "1\n", stderr: "" };
+      }
+      return await exec(argv);
+    };
+    const r = await preMergeRebase(counting, { ...base, nowEpochS: () => NOW });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("far ahead but a FRESH base still rebases — both conditions must hold (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(1)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("an unmeasurable base age never refuses the landing (#2481)", async () => {
+    // No `%ct` answer → the guard cannot prove staleness → proceed as before.
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
+
+  it("staleBranchGuard: null disables the refusal entirely (#2481)", async () => {
+    const { exec, calls } = fakeExec([ancestorCheckFails, forkPoint, aheadBy(65), forkAgedHours(99)]);
+    const r = await preMergeRebase(exec, {
+      ...base,
+      squashAheadThreshold: Infinity,
+      staleBranchGuard: null,
+      nowEpochS: () => NOW,
+    });
+    expect(r).toEqual({ ok: true });
+    expect(joined(calls)).toContain("git -C /wt rebase origin/main");
+  });
 
   it("clean rebase → fetches base, rebases, force-pushes the branch, ok", async () => {
     const { exec, calls } = fakeExec([needsRebase]);

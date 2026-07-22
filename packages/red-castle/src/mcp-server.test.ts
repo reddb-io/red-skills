@@ -23,10 +23,11 @@ function deps(): CastleMcpDependencies {
       status: "stopped",
       name: input.name,
     })),
+    fleetRegister: vi.fn(async () => ({ status: "registered" })),
     logs: vi.fn(async () => [
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]),
-    workerVitals: vi.fn(async () => []),
+    workerVitals: vi.fn(async (_input) => []),
     dashboard: vi.fn(async () => ({ schema_version: "red.dev.dashboard.v1" })),
     monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
     history: vi.fn(async () => []),
@@ -105,7 +106,7 @@ function deps(): CastleMcpDependencies {
   };
 }
 
-describe("dev:afk MCP tools", () => {
+describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "fleet_list",
@@ -113,6 +114,7 @@ describe("dev:afk MCP tools", () => {
       "fleet_create",
       "fleet_edit",
       "fleet_stop",
+      "fleet_register",
       "logs",
       "worker_vitals",
       "dashboard",
@@ -373,6 +375,73 @@ describe("dev:afk MCP tools", () => {
       queue: { ready_for_agent: 2, ready_for_human: 1 },
     });
     expect(d.statuslineAggregate).toHaveBeenCalledOnce();
+  });
+
+  it("passes live_only and fields through to the worker_vitals dep", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools.find((tool) => tool.name === "worker_vitals")!.invoke({});
+    expect(d.workerVitals).toHaveBeenCalledWith(
+      expect.objectContaining({ live_only: true }),
+    );
+
+    await tools
+      .find((tool) => tool.name === "worker_vitals")!
+      .invoke({ live_only: false, fields: ["worker", "live"] });
+    expect(d.workerVitals).toHaveBeenLastCalledWith({
+      live_only: false,
+      fields: ["worker", "live"],
+    });
+  });
+
+  it("passes live_only and fields through to the worker_status dep", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools.find((tool) => tool.name === "worker_status")!.invoke({});
+    expect(d.workerStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ live_only: true }),
+    );
+
+    await tools
+      .find((tool) => tool.name === "worker_status")!
+      .invoke({ worker: "wVM2Z", live_only: false, fields: ["worker"] });
+    expect(d.workerStatus).toHaveBeenLastCalledWith({
+      worker: "wVM2Z",
+      live_only: false,
+      fields: ["worker"],
+    });
+  });
+
+  it("returns a terse refusal when worker_dispatch receives both issue and demand", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "worker_dispatch")!
+        .invoke({ issue: 2306, demand: "fix the gate" }),
+    ).resolves.toMatchObject({
+      refused: true,
+      reason: expect.stringContaining("exactly one"),
+    });
+    expect(d.workerDispatch).not.toHaveBeenCalled();
+  });
+
+  it("returns a terse refusal when worker_request receives both issue and demand", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "worker_request")!
+        .invoke({ issue: 2306, demand: "fix the gate", text: "Use TDD." }),
+    ).resolves.toMatchObject({
+      refused: true,
+      reason: expect.stringContaining("exactly one"),
+    });
+    expect(d.workerRequest).not.toHaveBeenCalled();
   });
 
   it("enumerates and removes disposable worktrees", async () => {

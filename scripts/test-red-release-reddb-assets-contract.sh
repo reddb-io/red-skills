@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Static contract test for the red-release guard that catches dead reddb binary pointers.
+# Static contract test for the red-publish guard that catches dead reddb binary pointers.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-WORKFLOW=".github/workflows/red-release.yml"
+WORKFLOW=".github/workflows/red-publish.yml"
 SCRIPT="scripts/verify-reddb-release-assets.mjs"
 failures=0
 
@@ -42,15 +42,15 @@ assert_before() {
 
 memory_manifest_line="$(line_of_step "Build memory runtime bundle + manifest")"
 verify_line="$(line_of_step "Verify reddb release assets")"
-tag_line="$(line_of_step "Tag + GitHub Release")"
+tag_line="$(line_of_step "GitHub Release")"
 
 assert_before "memory runtime manifest build" "$memory_manifest_line" "reddb asset verification" "$verify_line"
 assert_before "reddb asset verification" "$verify_line" "tag/GitHub release" "$tag_line"
 
 if grep -qF "node scripts/verify-reddb-release-assets.mjs dist/memory-runtime-manifest.json" "$WORKFLOW"; then
-  pass "release workflow verifies the generated memory runtime manifest"
+  pass "publish workflow verifies the generated memory runtime manifest"
 else
-  fail "release workflow must verify dist/memory-runtime-manifest.json"
+  fail "publish workflow must verify dist/memory-runtime-manifest.json"
 fi
 
 if grep -qF 'method: "HEAD"' "$SCRIPT" &&
@@ -66,4 +66,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 
-printf '\nred-release reddb asset contract ok\n'
+printf '\nred-publish reddb asset contract ok\n'

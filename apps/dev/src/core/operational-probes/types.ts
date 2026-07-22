@@ -19,6 +19,16 @@ export interface OperationalProbeContext {
   readonly claimHygiene?: ClaimHygieneProbeInput;
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
   readonly baseFreshness?: BaseFreshnessProbeInput;
+  readonly hostPrerequisites?: HostPrerequisiteProbeInput;
+}
+
+export type HostPrerequisiteCommand = "bash" | "git" | "jq" | "gh" | "node" | "timeout" | "ps";
+
+export interface HostPrerequisiteProbeInput {
+  readonly commands: Readonly<Record<HostPrerequisiteCommand, boolean>>;
+  readonly bashVersion?: string;
+  readonly bashVersionExitCode?: number;
+  readonly bashVersionError?: string;
 }
 
 export interface ConfigNamespacingProbeInput {

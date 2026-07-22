@@ -81,6 +81,9 @@ export const LABEL_DEPENDENCY = "blocked:dependency";
 export const LABEL_SPEC = "blocked:spec";
 export const LABEL_QUOTA = "blocked:quota";
 export const LABEL_RUNNER_TRANSIENT = "blocked:runner-transient";
+// Permanent host prerequisite/configuration failure (for example a missing
+// `sh` interpreter or vanished worker cwd). Never auto-retried.
+export const LABEL_HOST_CONFIG = "blocked:host-config";
 export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
 // AFK runner improvement (#812): an UNLOCKED admin-merge cannot bypass required
 // status checks on an `enforce_admins` base. A completed, MERGEABLE PR whose
@@ -100,11 +103,6 @@ export const LABEL_INFRA = "blocked:infra";
 // is human-only (non-recoverable): a bounded auto-retry cannot fix a diverged
 // local branch, and re-running the agent would just re-hit the same precondition.
 export const LABEL_TRUNK_DIVERGED = "blocked:trunk-diverged";
-// Sensitive-path guard (issue #1102): the landing diff touched a CI workflow
-// file, a package.json lifecycle script, a git hook, or `.red/` trust/gate
-// configuration — an intent-class change that can never auto-land. A human
-// must review the change before it reaches the base branch.
-export const LABEL_SENSITIVE_PATH = "blocked:sensitive-path";
 // Attempt base resolution guard (#1380): the remote base could not be fetched and
 // the local base branch is behind the last-known remote-tracking tip. A worker
 // must never branch from that stale local base because it can revert already

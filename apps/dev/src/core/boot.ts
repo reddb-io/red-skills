@@ -64,15 +64,20 @@ import {
   applyClaimHygieneFix,
   autoHealableClaimHygiene,
   BASE_FRESHNESS_PROBE_ID,
+  buildLabelBodyCoherenceQuarantineComment,
   CLAIM_HYGIENE_PROBE_ID,
   formatOperationalProbeFinding,
+  LABEL_BODY_COHERENCE_PROBE_ID,
   runOperationalProbes,
   type BaseFreshnessProbeData,
+  type LabelBodyCoherenceAction,
+  type LabelBodyCoherenceProbeData,
   type OperationalProbeContext,
   type OperationalProbeReport,
 } from "./operational-probes.js";
+import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
-import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -150,6 +155,8 @@ export interface PrecheckFacts {
   labelBodyCoherence?: OperationalProbeContext["labelBodyCoherence"];
   /** Optional local trunk freshness probe facts for red-doctor and boot visibility. */
   baseFreshness?: OperationalProbeContext["baseFreshness"];
+  /** Required command availability and Bash version facts for the earliest boot probe. */
+  hostPrerequisites?: OperationalProbeContext["hostPrerequisites"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
@@ -286,14 +293,17 @@ export class BootHaltError extends Error {
 
   constructor(phase: "docs-sweep", plan: DocsSweepPlan);
   constructor(phase: "operational-probe", probe: OperationalProbeReport["findings"][number]);
+  constructor(phase: "host-prereq", probe: OperationalProbeReport["findings"][number]);
   constructor(
-    readonly phase: "docs-sweep" | "operational-probe",
+    readonly phase: "docs-sweep" | "operational-probe" | "host-prereq",
     detail: DocsSweepPlan | OperationalProbeReport["findings"][number],
   ) {
     super(
       phase === "docs-sweep"
         ? `Docs Sweep halted (${(detail as DocsSweepPlan).haltReason ?? "unknown"}): ${renderDocsSweepFileList((detail as DocsSweepPlan).files)}`
-        : `Operational probe red: ${formatOperationalProbeFinding(detail as OperationalProbeReport["findings"][number])}`,
+        : `${phase === "host-prereq" ? "Host prerequisite probe red" : "Operational probe red"}: ${formatOperationalProbeFinding(
+            detail as OperationalProbeReport["findings"][number],
+          )}`,
     );
     this.name = "BootHaltError";
     if (phase === "docs-sweep") this.plan = detail as DocsSweepPlan;
@@ -392,6 +402,50 @@ async function tryBootAutoApplyClaimHygiene(
   if (result.status !== "applied") return false;
   deps.log?.(`boot operational probe auto-fix applied: ${finding.id}; ${result.evidence}`);
   return true;
+}
+
+/**
+ * Quarantine every incoherent issue found by the label/body coherence probe. An
+ * issue is incoherent when it carries `ready-for-agent` while the body still has an
+ * active `Current blocker`. Quarantine moves each such issue out of the executable
+ * pool (ready-for-agent → needs-triage) and posts ONE comment naming the exact
+ * incoherence and the fix recipe, then continues boot. This prevents a single dirty
+ * issue from halting every worker boot (#2386).
+ *
+ * Returns `true` when ALL incoherent issues were successfully quarantined (the
+ * finding is removed from `redFindings` and boot continues). Returns `false` when
+ * ANY label-edit mutation fails (the finding stays in `redFindings` and boot halts
+ * with the existing diagnostic). Comment failure is best-effort: the label edit
+ * already moved the issue out of the pool, so a failed comment is non-fatal.
+ */
+async function tryBootAutoApplyLabelBodyCoherence(
+  deps: BootDeps,
+  finding: OperationalProbeReport["findings"][number],
+): Promise<boolean> {
+  if (finding.id !== LABEL_BODY_COHERENCE_PROBE_ID) return false;
+  const data = finding.data as Partial<LabelBodyCoherenceProbeData> | undefined;
+  if (!Array.isArray(data?.actions) || data.actions.length === 0) return false;
+
+  let allHealed = true;
+  for (const action of data.actions as readonly LabelBodyCoherenceAction[]) {
+    try {
+      await deps.gh.editLabels(action.issue, [LABEL_READY], [LABEL_NEEDS_TRIAGE]);
+      try {
+        await deps.gh.comment(action.issue, buildLabelBodyCoherenceQuarantineComment(action));
+      } catch {
+        // Comment failure is non-fatal: the label edit already moved the issue out of
+        // the executable pool, which is the safety-critical mutation.
+      }
+      deps.log?.(
+        `boot coherence probe quarantined #${action.issue}: ready-for-agent→needs-triage; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
+      );
+    } catch {
+      // Label edit failed: cannot make the pool coherent for this issue.
+      allHealed = false;
+    }
+  }
+
+  return allHealed;
 }
 
 /** True when this base-freshness finding is safe to downgrade for worker boot.
@@ -607,6 +661,7 @@ export interface BootResult {
  * its plan through injected IO. The order is the parity target (afk.sh top-level
  * startup):
  *
+ *   0. host prerequisites   — required commands + Bash baseline; failure halts.
  *   1. precheck             — hard preconditions; a failure aborts the run.
  *   2. bootstrap            — ensure .red/tmp + .red/state, gitignore lines,
  *                             per-worker dir + worker.pid (via fs).
@@ -640,6 +695,9 @@ export interface BootResult {
  * bootstrap+claim only and never races peers over `.red/tmp` / branch / gh state.
  */
 export async function runBoot(deps: BootDeps, options: BootOptions): Promise<BootResult> {
+  const hostPrerequisite = runHostPrerequisiteProbe(options.operationalProbes ?? options.precheck);
+  if (hostPrerequisite.verdict === "red") throw new BootHaltError("host-prereq", hostPrerequisite);
+
   // ---- 1. precheck ----
   const pre = precheck(options.precheck);
   if (!pre.ok) return { precheck: pre };
@@ -653,6 +711,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const redFindings: OperationalProbeReport["findings"][number][] = [];
   for (const finding of operationalProbes.findings) {
     if (await tryBootAutoApplyClaimHygiene(deps, finding)) continue;
+    if (await tryBootAutoApplyLabelBodyCoherence(deps, finding)) continue;
     redFindings.push(finding);
   }
   const redProbe = redFindings[0];

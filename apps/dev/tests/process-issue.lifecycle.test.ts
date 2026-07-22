@@ -185,6 +185,8 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // exactly ONE agent run — the completed work is never re-run.
     expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:satisfied-by-ci"))).toBe(true);
+    expect(trace.workerEvents.some((event) => event.kind === "worker.post_merge_validation" && event.payload?.path === "satisfied-by-ci")).toBe(true);
   });
 
   it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {
@@ -803,6 +805,25 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
   });
 
+  it("injects repository enrichment and silently keeps the base handoff when discovery fails (#2402)", async () => {
+    const enriched = harness({ outcome: "done" });
+    enriched.deps.lookups.handoffEnrichment = async (metadata) => {
+      expect(metadata).toMatchObject({ issue: 9, labels: ["ready-for-agent"], title: "Fix the thing" });
+      return "context:\n  name: Dev";
+    };
+    await processIssue(enriched.deps, enriched.input);
+    expect(enriched.trace.runAgentCalls[0]?.handoffContent ?? "").toContain(
+      "<handoff-enrichment>\ncontext:\n  name: Dev\n</handoff-enrichment>",
+    );
+
+    const degraded = harness({ outcome: "done" });
+    degraded.deps.lookups.handoffEnrichment = async () => {
+      throw new Error("git log unavailable");
+    };
+    await expect(processIssue(degraded.deps, degraded.input)).resolves.toMatchObject({ outcome: "done" });
+    expect(degraded.trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<handoff-enrichment>");
+  });
+
   it("alternates output-shaping steering by issue and stamps the measurement arm (#1638)", async () => {
     const steered = harness({ outcome: "done", outputShaping: { terseSteering: true } });
     steered.input.issue = 10;
@@ -1318,5 +1339,28 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(labelTrace(trace)[0]).toBe("-ready-for-agent+blocked:stalled|+running");
     expect(trace.comments.map((c) => c.body).some((body) => body.includes("preflight stopped"))).toBe(false);
     expect(trace.ensuredLabels).not.toContain("blocked:spec");
+  });
+});
+
+describe("processIssue — trunk-mirror boot failure (#2436)", () => {
+  it("parks as runner-transient (not base-stale) when resolveFreshBase fails", async () => {
+    // Regression: attempts on issues with prose like "branch: when the PR lands"
+    // in their body caused parseBranchPin to extract "when" as the branch pin,
+    // which made resolveFreshBase({ base: "when" }) fail.  The issue was then
+    // parked as base-stale (non-recoverable → human), misrepresenting an
+    // unstarted issue as finished work awaiting merge.  The fix classifies this
+    // as runner-transient so the fleet auto-retries up to the bounded cap.
+    const { deps, input, trace } = harness({ freshBaseFail: true });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("runner-transient");
+    // No agent work ran — no runAgent calls.
+    expect(trace.runAgentCalls).toEqual([]);
+    // No fresh branch was prepared — the branch was never pushed.
+    expect(trace.freshWorkerBranchCalls).toEqual([]);
+    // Park comment must not contain a live-branch link (branch was never pushed).
+    const envelope = trace.envelopeBodies[0] ?? "";
+    expect(envelope).not.toMatch(/live branch:/);
   });
 });

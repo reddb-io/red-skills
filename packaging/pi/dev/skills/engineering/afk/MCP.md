@@ -1,6 +1,6 @@
-# The `dev:afk` MCP — the castle's complete capability interface
+# The `castle` MCP — the castle's complete capability interface
 
-**red-castle is the AFK MCP: `dev:afk` is the one canonical interface to every
+**red-castle is the AFK MCP: `castle` is the one canonical interface to every
 castle capability, and every other surface is a client of it.** `/afk`, `/go`,
 the `red-skills-dev` CLI, and any future command-center UI all drive the same
 tools over the same value-returning cores (ADR 0120). This file is the client
@@ -8,13 +8,15 @@ contract; the skills that reference it never restate the tool list.
 
 ## How to reach the tools
 
-The server is registered as `dev:afk` in `plugins/dev/.mcp.json`, so a host that
+The server is registered as `castle` in `plugins/dev/.mcp.json`, so a host that
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__…__fleet_status`); resolve the exact identifier with a tool search for the
-bare name in the table below before the first call, then reuse it for the rest
-of the session. Tables and prose here always use the bare name.
+`mcp__plugin_dev_castle__fleet_status` under Claude Code); the slug is derived
+from the server name, so it never contains a colon — codex rejects `:` in server
+names. Resolve the exact identifier with a tool search for the bare name in the
+table below before the first call, then reuse it for the rest of the session.
+Tables and prose here always use the bare name.
 
 Every tool returns TOON, never prose: one structured document per call, encoded
 by the server. Read the fields; do not re-parse rendered text.
@@ -23,8 +25,10 @@ by the server. Read the fields; do not re-parse rendered text.
 CLI — never hand-roll the operation.** The CLI is the same engine behind the
 same cores, so the fallback is a transport change, not a behavior change.
 Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
-an installed `red-skills-dev` shim on `PATH` first, otherwise the ADR 0091
-npm direct-run form `npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`.
+the canonical ADR 0091 npm direct-run form
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
+every installation; an installed shim on `PATH` is only a warm-cache
+optimization for the same command.
 
 ## Mutation modes are binding
 
@@ -49,9 +53,13 @@ claim keeps two fleets on the same backlog from double-claiming an issue.
 | `fleet_create` | mutating | Persist a named profile and spawn its supervisor. |
 | `fleet_edit` | mutating | Update a profile; sends a live resize directive when asked. |
 | `fleet_stop` | mutating | Stop one named fleet and its detached workers. |
+| `fleet_register` | mutating | Adopt an already-running supervisor into the registry without restarting it. |
 
 `selector` scopes what a fleet drains — `{spec, lane, label, issues}`. Omit
-`fleet` on the read and stop tools to address the `default` fleet.
+`fleet` on the read and stop tools to address the `default` fleet. Use
+`fleet_register` when a CLI-launched fleet shows up in `fleet_status` but
+not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
+immediately after.
 
 ### Worker — one worker's lifecycle
 

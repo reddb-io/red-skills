@@ -5,7 +5,7 @@ import {
 } from "./mcp-server.js";
 
 /**
- * Frozen snapshot of the aggregated dev:afk MCP tool surface.
+ * Frozen snapshot of the aggregated castle MCP tool surface.
  *
  * Domain modules may be split, merged, or reordered internally; this table is
  * the contract that the composed surface — order, names, titles, descriptions,
@@ -52,6 +52,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["fleet"],
   },
   {
+    name: "fleet_register",
+    title: "Adopt AFK fleet",
+    description:
+      "MUTATING: persist a profile for an already-running supervisor without restarting it.",
+    schema: ["name", "runner", "selector", "config", "base"],
+  },
+  {
     name: "logs",
     title: "Read Castle logs",
     description:
@@ -61,8 +68,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "worker_vitals",
     title: "Read worker vitals",
-    description: "Return the liveness-qualified state of all local workers.",
-    schema: [],
+    description:
+      "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+    schema: ["live_only", "fields"],
   },
   {
     name: "dashboard",
@@ -102,8 +110,8 @@ const SURFACE: ReadonlyArray<{
     name: "worker_status",
     title: "Read worker status",
     description:
-      "Return normalized, liveness-qualified state for one worker or every local worker.",
-    schema: ["worker"],
+      "Return normalized, liveness-qualified state for one worker or every local worker. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers.",
+    schema: ["worker", "live_only", "fields"],
   },
   {
     name: "worker_stop",
@@ -279,7 +287,7 @@ const SURFACE: ReadonlyArray<{
   },
 ];
 
-describe("aggregated dev:afk MCP tool surface", () => {
+describe("aggregated castle MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {

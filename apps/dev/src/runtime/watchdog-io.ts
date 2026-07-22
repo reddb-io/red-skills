@@ -1,5 +1,6 @@
 // watchdog-io — REAL process / fs IO backing the external supervisor watchdog
-// (core/watchdog.ts). Built once per surface (fleet pre-check / monitor tick),
+// (core/watchdog.ts). Built for the persistent repo-scoped watchdog and reused
+// by the fleet pre-check / opt-in monitor recovery surfaces,
 // bound to a repo root. Every closure is best-effort, mirroring the supervisor's
 // own injected IO: a failed kill / stat / spawn degrades to the safe value and
 // never throws out of the closure.
@@ -13,6 +14,8 @@ import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
+import { editLabels, viewLabels } from "./gh.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
@@ -24,6 +27,8 @@ import { appendRecordToonl } from "../core/jsonl-log.js";
 // files on exit, so the relaunch must not write a fresh pid file until the dying
 // process has finished cleaning up — otherwise it would clobber the new one.
 import { isLivePid, killTreeAndWait } from "./kill-tree.js";
+import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
+import { readPidStartTime } from "../core/state.js";
 
 async function readPid(path: string): Promise<number | null> {
   try {
@@ -54,9 +59,11 @@ async function fileExists(path: string): Promise<boolean> {
 export function buildWatchdogIO(
   root: string,
   stdout: NodeJS.WritableStream = process.stdout,
+  fleet?: string,
 ): WatchdogIO {
-  const paths = afkPaths(root);
+  const paths = afkPaths(root, fleet);
   const pidFile = paths.supervisorPidPath;
+  const pidStartFile = paths.supervisorPidStartPath;
   const stopFile = paths.supervisorStopPath;
   const logFile = paths.supervisorLogPath;
   const restartLedgerFile = paths.supervisorRestartsPath;
@@ -97,6 +104,7 @@ export function buildWatchdogIO(
 
     liveness: async (): Promise<SupervisorLiveness> => {
       const pid = await readPid(pidFile);
+      const startTime = await readFile(pidStartFile, "utf8").then((value) => value.trim()).catch(() => "");
       const fleet = await readFleetState(paths.fleetStatePath);
       if (fleet) {
         if (fleet.slotsTotal > 0) lastTarget = fleet.slotsTotal;
@@ -105,7 +113,9 @@ export function buildWatchdogIO(
       }
       return {
         pid,
-        pidAlive: pid !== null && isLivePid(pid),
+        pidAlive:
+          pid !== null &&
+          isSupervisorIdentityLive({ pid, startTime }, isLivePid, readPidStartTime),
         lastHeartbeatEpoch: fleet ? fleet.epoch : null,
         lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
         slotsBusy: fleet?.slotsBusy ?? 0,
@@ -148,18 +158,40 @@ export function buildWatchdogIO(
 
     clearControlFiles: async () => {
       await rm(pidFile, { force: true });
+      await rm(pidStartFile, { force: true });
       await rm(stopFile, { force: true });
     },
 
-    // Reconcile stranded claims: drop every claim-lock dir whose owning worker
-    // pid is dead, so no issue stays claimed (and unre-grabbable) across the
-    // restart. listStaleClaimDirs already gates on liveness, so a claim a still-
-    // live orphaned worker holds is left untouched. The relaunched fleet's
-    // worker boot finishes the gh label rotation (the trip-sweep / orphan path).
+    // Reconcile GitHub before deleting local claim evidence. A failed remote
+    // read/edit leaves the directory intact for the replacement supervisor's
+    // boot sweep; only a completed remote decision consumes the issue number.
     reconcile: async () => {
       const stale = await listStaleClaimDirs(paths.tmpDir).catch(() => []);
-      for (const dir of stale) {
-        await removeDir(dir.path).catch(() => {});
+      const repo = await resolveRepoSlug(root);
+      const gh = { cwd: root, repo };
+      for (const claim of stale) {
+        if (claim.issue === undefined) continue;
+        try {
+          const labels = await viewLabels(gh, claim.issue);
+          const parked = labels.includes(LABEL_HUMAN) || labels.some((label) => label.startsWith("blocked:"));
+          if (labels.includes(LABEL_RUNNING) && !parked) {
+            const edited = await editLabels(gh, claim.issue, [LABEL_RUNNING], [LABEL_READY]);
+            if (!edited) continue;
+          }
+          await removeDir(claim.path);
+        } catch {
+          // Preserve the claim for boot when GitHub reconciliation is uncertain.
+        }
+      }
+    },
+
+    isRecoveryPending: async () => fileExists(paths.supervisorRecoveryPath),
+
+    setRecoveryPending: async (pending) => {
+      if (pending) {
+        await writeFile(paths.supervisorRecoveryPath, "quiescent-relaunch\n", "utf8");
+      } else {
+        await rm(paths.supervisorRecoveryPath, { force: true });
       }
     },
 
@@ -170,7 +202,22 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
-      await spawnSupervisor({ root, target: lastTarget, runner, adoptSlotPids: lastSlotPids });
+      const spawnedPid = await spawnSupervisor({
+        root,
+        target: lastTarget,
+        runner,
+        adoptSlotPids: lastSlotPids,
+        fleet: paths.fleet,
+      });
+      if (spawnedPid === null) return false;
+      const identity = await readSupervisorIdentity(pidFile, pidStartFile);
+      if (
+        identity === null ||
+        identity.pid !== spawnedPid ||
+        !isSupervisorIdentityLive(identity, isLivePid, readPidStartTime)
+      ) {
+        return false;
+      }
       // Stamp a fresh heartbeat so the very next watchdog pass (a monitor cron
       // tick firing every poll) sees the new supervisor as healthy and does not
       // double-fire while it boots.
@@ -179,6 +226,7 @@ export function buildWatchdogIO(
       } catch {
         // best-effort
       }
+      return true;
     },
 
     deadSupervisorSignals: async (): Promise<DeadSupervisorSignals> => {

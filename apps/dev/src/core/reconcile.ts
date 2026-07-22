@@ -26,6 +26,8 @@
 // passes its own `deps` (plus the landing `fireHook`) straight through.
 
 import {
+  buildValidationRecord,
+  formatValidationLine,
   relevantScopes,
   runFeedback,
   isInfraFeedbackFailure,
@@ -34,8 +36,8 @@ import {
   type PackageLayout,
   type RunFeedbackResult,
 } from "./feedback.js";
-import { doLanding } from "./landing.js";
-import { type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
+import { doLanding, type LandingPostMergeValidation } from "./landing.js";
+import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import {
   deleteRemote,
   pushAttempt,
@@ -193,6 +195,8 @@ export interface ReconcileDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   /** Opt-in advisory-review wait for the admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
+  /** Opt-in CI-aware merge wait for the admin-PR landing (optional). */
+  ciAwait?: CiAwaitInput;
   /** Global AFK land-lock (#1337), threaded into no-agent relands too. */
   landLock?: LandLock;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
@@ -268,15 +272,6 @@ export interface ReconcileInput {
    * reconcile runs the scoped gate as its verdict, unchanged.
    */
   trustPriorValidation?: boolean;
-  /**
-   * Sensitive-path guard bypass (#1171). Threaded straight into {@link doLanding}
-   * as `sensitivePathApproved`. Set true EXCLUSIVELY by the `/requeue
-   * --adopt-branch` operator path, after a maintainer reviewed the protected diff,
-   * so a `blocked:sensitive-path` park can land through this no-agent lane without
-   * the landing guard re-parking it. Defaults false/undefined: the autonomous
-   * process-issue caller never sets it, so its landing guard keeps firing.
-   */
-  sensitivePathApproved?: boolean;
 }
 
 // ---------- result ----------
@@ -455,6 +450,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       resolveAgentConflict: deps.resolveAgentConflict,
       maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
+      ciAwait: deps.ciAwait,
       landLock: deps.landLock,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
@@ -476,6 +472,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
         await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
         return { ok: true };
       },
+      requirePostMergeValidation: true,
     },
     {
       openPr,
@@ -490,10 +487,6 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       issue,
       title: input.title,
       labels: input.labels,
-      // #1171: the operator adopt-branch path passes this true after reviewing a
-      // protected diff, so doLanding's sensitive-path guard is skipped ONLY here.
-      // Undefined for every autonomous caller → the guard fires as before.
-      sensitivePathApproved: input.sensitivePathApproved,
     },
     {
       preMerge: () => landingHookContext(input, branch, { mergeBase: input.base }),
@@ -512,6 +505,14 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // The land path's own gates (drift-guard + integrate/rebase) rejected the
     // branch — park it as a merge conflict, exactly like the DONE path does.
     return await parkMergeConflict(deps, input, landing.reason, startedEpoch);
+  }
+
+  if (landing.postMergeValidation) {
+    feedback = {
+      ...feedback,
+      sidecar: [...feedback.sidecar, postMergeValidationSidecarLine(landing.postMergeValidation)],
+    };
+    await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
   }
 
   // ---- close: done envelope → gh close + drop routing/blocked labels → cleanup ----
@@ -859,6 +860,14 @@ async function writeValidationSidecar(deps: ReconcileDeps, attemptDir: string, l
   } catch {
     // best-effort: the sidecar is a Memory optimisation; never fail the reconcile.
   }
+}
+
+function postMergeValidationSidecarLine(validation: LandingPostMergeValidation): string {
+  return formatValidationLine(buildValidationRecord({
+    name: `post-merge:${validation.path}`,
+    status: "passed",
+    summary: validation.reason,
+  }));
 }
 
 // ---------- close cascade (event-driven auto-unblock) ----------

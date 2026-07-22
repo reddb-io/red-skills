@@ -28,7 +28,15 @@ import {
   isHitlCard,
   parseCardCommand,
   classifyNaturalLanguage,
+  evaluateHitlCardActionRate,
+  HITL_CARD_ACTION_LIMIT,
+  HITL_CARD_ACTION_MARKER,
+  HITL_CARD_ACTION_WINDOW_MS,
+  HITL_CARD_STAND_DOWN_MARKER,
   parseCiChecks,
+  shouldIgnoreHitlCardComment,
+  type HitlCardActionComment,
+  type HitlCardActorIdentity,
   type PrStatus,
   type CardCommand,
 } from "../core/hitl-card.js";
@@ -38,11 +46,19 @@ const FLAG_SCHEMA = {
   issue: { kind: "value", coerce: (raw: string): number => Number(raw) },
   body: { kind: "value", coerce: (raw: string): string => raw },
   author: { kind: "value", coerce: (raw: string): string => raw },
+  "author-type": { kind: "value", coerce: (raw: string): string => raw },
+  "allowed-authors": { kind: "value", coerce: (raw: string): string => raw },
+  "receipt-identities": { kind: "value", coerce: (raw: string): string => raw },
   repo: { kind: "value", aliases: ["R"], coerce: (raw: string): string => raw },
   root: { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
-type Exec = (args: readonly string[], opts?: { cwd?: string }) => Promise<{ code: number; stdout: string; stderr: string }>;
+export type HitlCardExec = (
+  args: readonly string[],
+  opts?: { cwd?: string },
+) => Promise<{ code: number; stdout: string; stderr: string }>;
+
+type Exec = HitlCardExec;
 
 function makeExec(cwd: string): Exec {
   const run: ExecFn = (cmd, args, opts) =>
@@ -66,7 +82,7 @@ interface IssueData {
   url: string;
   body: string;
   labels: string[];
-  comments: Array<{ id: number; body: string; databaseId?: number }>;
+  comments: Array<{ id: number; body: string; databaseId?: number; createdAt?: string }>;
 }
 
 async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<IssueData> {
@@ -82,7 +98,7 @@ async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<Issu
     url?: string;
     body?: string;
     labels?: Array<{ name?: string }>;
-    comments?: Array<{ id?: number; body?: string; databaseId?: number }>;
+    comments?: Array<{ id?: number; body?: string; databaseId?: number; createdAt?: string }>;
   };
   return {
     number: Number(raw.number ?? issue),
@@ -94,8 +110,57 @@ async function fetchIssue(exec: Exec, repo: string, issue: number): Promise<Issu
       id: Number(c.id ?? 0),
       databaseId: c.databaseId,
       body: String(c.body ?? ""),
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
     })),
   };
+}
+
+async function fetchActionComments(
+  exec: Exec,
+  repo: string,
+  issue: number,
+): Promise<HitlCardActionComment[]> {
+  const repoPath = repo || "{owner}/{repo}";
+  const r = await exec([
+    "gh", "api",
+    `repos/${repoPath}/issues/${issue}/comments?per_page=100`,
+    "--paginate", "--slurp",
+  ]);
+  if (r.code !== 0) throw new Error(`fetch issue #${issue} comment identities failed: ${r.stderr.trim()}`);
+  const parsed = JSON.parse(r.stdout) as unknown;
+  const pages = Array.isArray(parsed) && parsed.every(Array.isArray)
+    ? parsed.flat()
+    : Array.isArray(parsed) ? parsed : [];
+  return pages.map((value) => {
+    const comment = value as {
+      body?: string;
+      created_at?: string;
+      user?: { login?: string; type?: string };
+    };
+    return {
+      body: String(comment.body ?? ""),
+      createdAt: comment.created_at ? String(comment.created_at) : undefined,
+      author: comment.user?.login ? String(comment.user.login) : undefined,
+      authorType: comment.user?.type ? String(comment.user.type) : undefined,
+    };
+  });
+}
+
+function parseLoginList(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(/[\s,]+/)
+    .map((login) => login.trim().replace(/^@/, ""))
+    .filter(Boolean);
+}
+
+function parseActorIdentities(raw: string | undefined): HitlCardActorIdentity[] {
+  return (raw ?? "").split(",").flatMap((entry) => {
+    const separator = entry.lastIndexOf(":");
+    if (separator <= 0) return [];
+    const login = entry.slice(0, separator).trim();
+    const type = entry.slice(separator + 1).trim();
+    return login && type ? [{ login, type }] : [];
+  });
 }
 
 async function fetchIssueReference(exec: Exec, repo: string, issue: number): Promise<{ number: number; title?: string; url?: string } | undefined> {
@@ -183,6 +248,39 @@ function nowUtc(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
 }
 
+/**
+ * Apply the per-issue action backstop. Returns true when the caller must stop.
+ * Kept at the command boundary so the regression test covers the observable
+ * one-comment stand-down behavior as well as the pure rolling-window count.
+ */
+export async function enforceHitlCardActionRate(
+  exec: HitlCardExec,
+  repo: string,
+  issueNumber: number,
+  comments: readonly HitlCardActionComment[],
+  stdout: NodeJS.WritableStream,
+  now = new Date(),
+  cardAuthors: readonly HitlCardActorIdentity[] = [],
+): Promise<boolean> {
+  const rate = evaluateHitlCardActionRate(comments, now, cardAuthors);
+  if (!rate.limited) return false;
+
+  if (rate.shouldPostStandDown) {
+    const minutes = HITL_CARD_ACTION_WINDOW_MS / 60_000;
+    await exec([
+      "gh", "issue", "comment", String(issueNumber),
+      ...repoArgs(repo),
+      "--body",
+      scrubOutbound([
+        HITL_CARD_STAND_DOWN_MARKER,
+        `🤖 HITL card loop suspected: ${HITL_CARD_ACTION_LIMIT} actions already ran in ${minutes} minutes; standing down.`,
+      ].join("\n")),
+    ]);
+  }
+  stdout.write(`hitl-card act #${issueNumber}: action rate cap reached; standing down.\n`);
+  return true;
+}
+
 // ---------- render ----------
 
 async function cmdRender(
@@ -254,6 +352,7 @@ function directiveComment(action: CardCommand): string {
     ? `rejected (PR closed without merging)\n\nReason:\n${guidance}`
     : `approved — PR merged`;
   return [
+    HITL_CARD_ACTION_MARKER,
     '<details data-kind="directive">',
     `<summary>HITL card: ${verb}</summary>`,
     "",
@@ -328,15 +427,31 @@ async function executeRequeue(exec: Exec, repo: string, issue: IssueData, guidan
   return `Issue #${issue.number} requeued to ready-for-agent with guidance.`;
 }
 
-async function cmdAct(
+export async function cmdAct(
   exec: Exec,
   repo: string,
   issueNumber: number,
   commentBody: string,
   commentAuthor: string | undefined,
+  commentAuthorType: string | undefined,
+  allowedAuthors: readonly string[],
+  receiptIdentities: readonly HitlCardActorIdentity[],
   cwd: string,
   stdout: NodeJS.WritableStream,
 ): Promise<number> {
+  // 0. Refuse automation before trust resolution or intent parsing. A PAT can
+  // make workflow comments look human, so type/login and marker checks are all
+  // required layers rather than interchangeable heuristics.
+  if (shouldIgnoreHitlCardComment({
+    author: commentAuthor,
+    authorType: commentAuthorType,
+    body: commentBody,
+    allowedAuthors,
+  })) {
+    stdout.write(`hitl-card act #${issueNumber}: ignored automation-authored comment.\n`);
+    return 0;
+  }
+
   // 1. Trust-check the author.
   const config = loadConfig(resolveConfigPath(cwd), { warn: () => undefined });
   const policy = parseTrustPolicy(config);
@@ -367,7 +482,20 @@ async function cmdAct(
   }
 
   // 3. Fetch issue state and find linked PR.
-  const issue = await fetchIssue(exec, repo, issueNumber);
+  const [issue, actionComments] = await Promise.all([
+    fetchIssue(exec, repo, issueNumber),
+    fetchActionComments(exec, repo, issueNumber),
+  ]);
+  if (await enforceHitlCardActionRate(
+    exec,
+    repo,
+    issueNumber,
+    actionComments,
+    stdout,
+    new Date(),
+    receiptIdentities,
+  )) return 0;
+
   const blocker = parseCurrentBlocker(issue.body);
   const prNumber = await findLinkedPr(exec, repo, issueNumber, blocker?.ref);
 
@@ -446,7 +574,21 @@ export async function hitlCardCommand(
     // act
     const body = (values.body as string | undefined) ?? "";
     const author = (values.author as string | undefined)?.trim() || undefined;
-    return await cmdAct(exec, repo, issueNumber, body, author, root, stdout);
+    const authorType = (values["author-type"] as string | undefined)?.trim() || undefined;
+    const allowedAuthors = parseLoginList(values["allowed-authors"] as string | undefined);
+    const receiptIdentities = parseActorIdentities(values["receipt-identities"] as string | undefined);
+    return await cmdAct(
+      exec,
+      repo,
+      issueNumber,
+      body,
+      author,
+      authorType,
+      allowedAuthors,
+      receiptIdentities,
+      root,
+      stdout,
+    );
   } catch (error) {
     process.stderr.write(`[afk] hitl-card ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

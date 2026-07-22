@@ -11,9 +11,9 @@ operandi; `/go` is the ad-hoc-only exception. Drain the agent-ready backlog by
 letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
-## Operate the castle through the `dev:afk` MCP
+## Operate the castle through the `castle` MCP
 
-**The `dev:afk` MCP is the interface; `/afk` is one of its clients.** Every
+**The `castle` MCP is the interface; `/afk` is one of its clients.** Every
 castle capability this skill needs — queue, dispatch, fleet, runners, gate,
 landing, claim, worktrees, hygiene, observability — is an MCP tool returning
 structured TOON. Drive those tools; do not shell out to reimplement what a tool
@@ -36,16 +36,16 @@ CLI** — the same engine over the same cores, so the fallback changes transport
 not behavior. The invoking LLM is responsible for setting `RED_AFK_RUNNER` to
 its own host runner (`codex` from Codex, `claude` from Claude Code). Resolve the
 runtime through the shared contract in
-[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
-installed `red-skills-dev` shim on `PATH` first, otherwise use the ADR 0091 npm
-direct-run fallback
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev ...`. If the shim is
-missing, name that fallback instead of surfacing a bare command-not-found.
+[`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): the canonical
+form is the ADR 0091 npm direct-run
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev ...`, which works on
+every installation; an installed `red-skills-dev` shim on `PATH` is only a
+warm-cache optimization for the same command.
 
 Run the bundle, not the source:
 
 ```bash
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev <command> [params]
+RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> red-skills-dev <command> [params]
 ```
 
 `afk.mjs` is a dedicated forwarder to the `dev` bundle. Every argument reaches
@@ -58,7 +58,7 @@ contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
 
-Each verb below names the `dev:afk` tool that serves it; the flag form is the
+Each verb below names the `castle` tool that serves it; the flag form is the
 CLI fallback for the same operation.
 
 - `/afk` - drain every open issue labelled `ready-for-agent`. Read the queue
@@ -117,7 +117,7 @@ composite action, or local bundle invocation.
 
 Read the focused reference before touching that concern:
 
-- The `dev:afk` MCP tool surface, host prefixing, mutation modes, and the CLI
+- The `castle` MCP tool surface, host prefixing, mutation modes, and the CLI
   fallback rule: [`MCP.md`](./MCP.md).
 - Runtime, sandcastle substrate, CLI forwarding, bootstrap, hard preconditions,
   issue selection, lifecycle, failure labels, per-issue loop, merge/close,
@@ -145,7 +145,7 @@ Read the focused reference before touching that concern:
 
 ## Load-Bearing Rules
 
-- The `dev:afk` MCP is the canonical castle interface (ADR 0120). `/afk` is a
+- The `castle` MCP is the canonical castle interface (ADR 0120). `/afk` is a
   client of it, so a capability missing from the tools is a gap to file against
   the MCP, never a reason to hand-roll the operation in shell.
 - Tracked work belongs in `/afk`. An empty `ready-for-agent` queue with a

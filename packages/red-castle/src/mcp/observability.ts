@@ -8,9 +8,14 @@ export interface LogsInput {
   kind?: string;
 }
 
+export interface WorkerVitalsInput {
+  live_only?: boolean;
+  fields?: string[];
+}
+
 export interface ObservabilityDependencies {
   logs(input: LogsInput): Promise<unknown>;
-  workerVitals(): Promise<unknown>;
+  workerVitals(input: WorkerVitalsInput): Promise<unknown>;
   dashboard(input: { periodDays: number }): Promise<unknown>;
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
@@ -37,9 +42,17 @@ export function createObservabilityTools(
     {
       name: "worker_vitals",
       title: "Read worker vitals",
-      description: "Return the liveness-qualified state of all local workers.",
-      inputSchema: {},
-      invoke: () => deps.workerVitals(),
+      description:
+        "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+      inputSchema: {
+        live_only: z.boolean().default(true),
+        fields: z.array(z.string().min(1)).optional(),
+      },
+      invoke: (input) =>
+        deps.workerVitals({
+          live_only: (input.live_only ?? true) as boolean,
+          fields: input.fields as string[] | undefined,
+        }),
     },
     {
       name: "dashboard",

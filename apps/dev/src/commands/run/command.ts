@@ -1,4 +1,5 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
+import { FLEET_NAME_ENV } from "../../core/fleet-name.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
   runModeForCandidate,
@@ -97,6 +98,7 @@ import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 import { renderClaimComment } from "../../core/claim.js";
+import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
@@ -276,6 +278,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
+    fleetName: process.env[FLEET_NAME_ENV] || undefined,
   });
 
   // --request/-r special block, threaded into the handoff the agent reads.
@@ -515,6 +518,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (summary.runnerTransient) {
     process.stderr.write(`[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`);
     return 75;
+  }
+  if (summary.hostConfig) {
+    process.stderr.write(
+      `[afk] fatal host configuration — exiting ${HOST_CONFIG_EXIT_CODE} (EX_CONFIG); fix the required shell/workspace before restarting this worker\n`,
+    );
+    return HOST_CONFIG_EXIT_CODE;
   }
 
   // A targeted dispatch that attempted nothing is a failure, never a clean drain

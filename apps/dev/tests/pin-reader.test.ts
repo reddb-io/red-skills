@@ -30,6 +30,18 @@ describe("parseBranchPin", () => {
   it("does not match prose 'branch:' mid-sentence", () => {
     expect(parseBranchPin("This branch: is a sentence, not a pin.\nWe will branch: later maybe")).toBeUndefined();
   });
+
+  it("does not match a branch: line whose value is followed by more words", () => {
+    // Regression for #2436: "branch: when the PR lands" at line start captured
+    // "when" as the branch name and poisoned the fleet trunk mirror refresh.
+    expect(parseBranchPin("branch: when the PR lands")).toBeUndefined();
+    expect(parseBranchPin("branch: after we merge")).toBeUndefined();
+    expect(parseBranchPin("branch: once all tests pass")).toBeUndefined();
+  });
+
+  it("accepts a branch: line with a trailing # comment", () => {
+    expect(parseBranchPin("branch: main # the trunk")).toBe("main");
+  });
 });
 
 describe("parseParentSpec", () => {

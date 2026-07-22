@@ -10,6 +10,7 @@ import type { GitExec, GitExecResult } from "../core/remote-branch.js";
 import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/merge.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import type { RemoteUrlFact } from "../core/operational-probes.js";
+import { withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./gh/quota.js";
 
 export const FLEET_TRUNK = "red-trunk";
 export const FLEET_TRUNK_REF = `refs/heads/${FLEET_TRUNK}`;
@@ -24,6 +25,15 @@ export interface GitContext {
    * through — can be driven without touching the OS. See exec.ts::ExecFn.
    */
   exec?: ExecFn;
+  /**
+   * When present, `gh`-headed commands routed through {@link mergeExec} retry
+   * on rate-limit responses (REST 403/429, GraphQL RATE_LIMITED) with a bounded
+   * wait instead of returning failure immediately. onWait emits 'quota-wait'
+   * activity so the wait is visible in worker vitals/lane records. After the
+   * cap, the failing response is returned so the caller can park with an
+   * explicit quota reason.
+   */
+  quotaBackoff?: GhQuotaBackoffOpts;
 }
 
 function opts(ctx: GitContext): ExecOptions {
@@ -509,6 +519,15 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
+/**
+ * Run `git worktree prune` to drop stale entries from git's internal worktree
+ * registry after orphaned worktree dirs have been removed from disk. Best-effort:
+ * never throws so a prune failure does not abort the janitor sweep.
+ */
+export async function worktreePrune(ctx: GitContext): Promise<void> {
+  await runGit(ctx, ["worktree", "prune"]);
+}
+
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
@@ -525,7 +544,12 @@ export function mergeExec(ctx: GitContext): MergeExec {
     // commands (git push / gh pr merge) the close path issues.
     const [head, ...rest] = args;
     const exec = ctx.exec ?? execTool;
-    const r = await exec(head ?? "git", rest, opts(ctx));
+    const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, opts(ctx));
+    // Apply quota backoff only to `gh`-headed commands: git commands do not
+    // make GitHub API calls and must never be silently delayed.
+    const r = (ctx.quotaBackoff && head === "gh")
+      ? await withGhQuotaBackoff(fn, ctx.quotaBackoff)
+      : await fn();
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 }

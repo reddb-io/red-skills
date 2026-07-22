@@ -8,6 +8,7 @@ import {
   type GitExec,
 } from "../remote-branch.js";
 import { buildHandoff, exitProtocolFor, type HandoffComment } from "../handoff.js";
+import type { HandoffEnrichmentInput } from "../handoff-enrichment.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
 import {
@@ -64,6 +65,7 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
+  HOST_CONFIG_EXIT_CODE,
   type AttemptOutcome,
 } from "../attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
@@ -109,7 +111,6 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
-  LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import {
@@ -117,7 +118,6 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 export type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 export interface ProcessGh {
   viewLabels(issue: number): Promise<string[]>;
@@ -170,6 +170,8 @@ export interface ProcessLookups {
   comments(issue: number): Promise<HandoffComment[]>;
   issueUrl(issue: number): Promise<string>;
   priorAttemptContext(issue: number): Promise<string | undefined>;
+  /** Best-effort owning-glossary and path-local exemplar supplement (#2402). */
+  handoffEnrichment?(input: HandoffEnrichmentInput & { issue: number }): Promise<string | undefined>;
   changedFiles(branch: string, base: string): Promise<string[]>;
   diffstat(branch: string, base: string): Promise<string>;
   branchPresent?(branch: string): Promise<boolean>;
@@ -242,6 +244,7 @@ export interface ProcessIssueDeps {
   outputShaping?: OutputShapingConfig;
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   goVerifyRetries?: number;
+  stallConvergenceBudget?: number;
   postAttemptFormat?: PostAttemptFormatExec;
   postAttemptFormatCommands?: readonly string[];
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
@@ -387,6 +390,13 @@ export function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown>
       ...base,
       "current.last_exit_code": CRASH_EXIT_CODE,
       "current.failure_kind": "signal-killed",
+    };
+  }
+  if (outcome === "host-config") {
+    return {
+      ...base,
+      "current.last_exit_code": HOST_CONFIG_EXIT_CODE,
+      "current.failure_kind": "host-config",
     };
   }
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };

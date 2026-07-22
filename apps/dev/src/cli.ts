@@ -25,6 +25,7 @@ import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { rspInstructionsCommand } from "./commands/rsp-instructions.js";
 import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
+import { supervisorWatchdogCommand } from "./commands/supervisor-watchdog.js";
 import { triageCommand } from "./commands/triage.js";
 import { toonBumpCommand } from "./commands/toon-bump.js";
 import { toonMigrateCommand } from "./commands/toon-migrate.js";
@@ -63,7 +64,8 @@ export type CliCommand =
   | "toon-bump"
   | "toon-migrate"
   | "version"
-  | "__supervise";
+  | "__supervise"
+  | "__watchdog";
 
 export interface ParsedCli {
   command: CliCommand;
@@ -113,6 +115,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "toon-migrate": {},
     version: {},
     __supervise: {},
+    __watchdog: {},
   },
   default: "run",
   keepArgvOnDefault: true,
@@ -170,6 +173,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "toon-bump") return toonBumpCommand(parsed.args);
   if (parsed.command === "toon-migrate") return toonMigrateCommand(parsed.args);
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
+  if (parsed.command === "__watchdog") return supervisorWatchdogCommand(parsed.args);
   return runCommand({ args: parsed.args });
 }
 

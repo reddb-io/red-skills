@@ -40,7 +40,7 @@ export interface McpEntry {
 /** A planned `mcp:` entry. The emit step merges it into the Slice 1
  *  `opencode.json`'s `mcp:` block. */
 export interface McpPlan {
-  /** The MCP server name (e.g. `red-memory`, `code-nav`). */
+  /** The MCP server name (e.g. `red-memory`, `navigator`). */
   name: string;
   /** The opencode-shaped entry. */
   entry: McpEntry;

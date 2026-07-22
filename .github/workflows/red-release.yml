@@ -1,36 +1,34 @@
 name: red-release
 
-# Auto-release on push to main:
-#   1. Defer if any open issue carries the `running` label (a /afk fleet is
-#      mid-iteration — auto-pushing a release commit would yank origin/main
-#      out from under in-flight workers, causing merge-conflict cascades).
-#   2. Parse conventional commits since the last vX.Y.Z tag.
-#      - BREAKING CHANGE / `feat!:` / `fix!:` → major bump only when the
-#        maintainer has set repository variable `RED_RELEASE_ALLOW_MAJOR=true`;
-#        otherwise the request degrades to minor with a warning naming the
-#        commits that asked for a major.
-#      - `feat:`                              → minor bump
-#      - anything else (`fix:`, `chore:`, …) → patch bump
-#      - no `feat`/`fix`/`!` commits          → skip (no release)
-#   3. Build, pack, contract-check, publish, and registry-smoke the npm package.
-#   4. Sync plugin/package manifest versions and commit the bump back to main
-#      (marker `[skip release]` to avoid loop).
-#   5. Create the git tag and a GitHub Release with auto-generated notes.
-#   6. Move the matching major tag (for example `v1`) to the same commit so
-#      reusable workflows and actions pinned to `@v1` keep receiving releases.
+# Maintain the Version Packages PR (ADR 0121).
+#
+# This workflow decides *what the next version is*; it never publishes and it
+# never pushes to main. Every push to main it:
+#
+#   1. Collects the pending changesets under .changeset/.
+#   2. Runs `pnpm release:version` (changeset version + scripts/sync-version.mjs)
+#      on a bot branch and opens/updates the "chore(release): version packages"
+#      PR against main. That PR passes branch protection exactly like any human
+#      PR — no admin bypass token, no GH006 fallback, no direct push.
+#   3. When the Version Packages PR itself merges, main arrives here with ZERO
+#      pending changesets and a version no tag points at yet. That is the cut
+#      signal: tag `vX.Y.Z` and hand off to red-publish.yml, which owns the
+#      bundles, the npm publish, and the GitHub Release.
+#
+# Why the explicit `gh workflow run` handoff: a tag pushed with GITHUB_TOKEN
+# does NOT start a workflow run (GitHub suppresses recursive triggers), so the
+# `on: push: tags` trigger in red-publish.yml would never fire for the automated
+# cut. Dispatching it by name makes the automated path immediate while a tag
+# pushed by a human still triggers the same workflow the advertised way.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    # Retry deferred releases after /afk running labels drain. The job's bump
-    # decider still requires main to be ahead of the latest vX.Y.Z tag.
-    - cron: "17 * * * *"
 
 permissions:
   contents: write
-  id-token: write
+  pull-requests: write
   actions: write
 
 concurrency:
@@ -38,785 +36,69 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip release]') }}
-    # Repository settings protect the red-release environment with required
-    # reviewers. Approval happens before this job can build, publish assets, or
-    # move the matching major tag.
-    environment:
-      name: red-release
+    outputs:
+      published: ${{ steps.cut.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Defer if /afk fleet is active
-        id: fleet
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          running=$(gh issue list --label running --state open --json number --jq 'length' 2>/dev/null || echo "0")
-          echo "running=$running" >> "$GITHUB_OUTPUT"
-          if [ "$running" -gt 0 ]; then
-            echo "::notice::🛑 fleet active — $running issue(s) carry the 'running' label. Release deferred; the scheduled red-release retry will publish after the running issues drain if main remains ahead of the latest tag."
-          else
-            echo "no running issues — proceeding"
-          fi
-
-      - name: Validate install metadata
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/validate-install-metadata.sh
-
-      - name: Test workflow security pins
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-workflow-security-pins.sh
-
-      - name: Test canary channel promotion contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-afk-promote-channel.sh
-
-      - name: Test red-release npm publish contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-red-release-npm-publish-contract.sh
-
-      - name: Test red-castle vendor contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-red-castle-vendor-contract.sh
-
-      - name: Test red-release bump push contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-red-release-bump-push-contract.sh
-
-      - name: Test red-release bump-kind contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-red-release-bump-kind.sh
-
-      - name: Test red-release reddb asset contract
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-red-release-reddb-assets-contract.sh
-
-      - name: Test agent metadata fixtures
-        if: steps.fleet.outputs.running == '0'
-        run: scripts/test-validate-agent-metadata.sh
-
-      - name: Decide bump kind
-        id: bump
-        if: steps.fleet.outputs.running == '0'
-        env:
-          RED_RELEASE_ALLOW_MAJOR: ${{ vars.RED_RELEASE_ALLOW_MAJOR }}
-        run: |
-          set -euo pipefail
-          node scripts/decide-release-bump-kind.mjs
-
-      - name: Consume major bump opt-in
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.consume_major_opt_in == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh variable delete RED_RELEASE_ALLOW_MAJOR --repo "$GITHUB_REPOSITORY"
-
-      - name: Skip if no releasable commits
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind == 'none'
-        run: |
-          echo "No feat/fix commits since ${{ steps.bump.outputs.previous }} — nothing to release."
-
-      - name: Compute next version
-        id: version
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          KIND: ${{ steps.bump.outputs.kind }}
-          PREVIOUS: ${{ steps.bump.outputs.previous }}
-        run: |
-          set -euo pipefail
-          if [ -z "$PREVIOUS" ]; then
-            next="v0.1.0"
-          else
-            IFS='.' read -r major minor patch <<<"${PREVIOUS#v}"
-            case "$KIND" in
-              major) next="v$((major + 1)).0.0" ;;
-              minor) next="v${major}.$((minor + 1)).0" ;;
-              patch) next="v${major}.${minor}.$((patch + 1))" ;;
-            esac
-          fi
-          echo "next=$next" >> "$GITHUB_OUTPUT"
-          echo "Releasing $next"
 
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         with:
           node-version: 22
 
       - name: Install workspace dependencies
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
-          # The release job builds JS bundles and manifests; it does not execute
-          # the @reddb-io/sdk-backed memory/brain runtimes during install. Skip
-          # the SDK postinstall binary download so release is not blocked when
-          # the matching reddb binary asset is unavailable.
+          # Versioning touches manifests only; it never runs the @reddb-io/sdk
+          # backed runtimes, so the postinstall binary download is dead weight
+          # and an unavailable reddb asset must not block a version PR.
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
-      # ADR 0091: the plugin bundles are distributed over npm with npm's own
-      # tarball shasum/provenance for integrity — the client no longer verifies a
-      # hand-rolled sigstore manifest signature, so cosign is not installed and
-      # manifests are not signed.
+      # Guard the invariant before proposing a bump: if the checkout is already
+      # drifted, `changeset version` would bake the drift into the release PR.
+      - name: Check version sync
+        run: pnpm version:sync:check
 
-      # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
-      # from apps/dev (which lives outside the plugin tree) so the shipped
-      # bin/afk.mjs is always byte-for-byte the build of the released source,
-      # then stage it into the version-bump commit below. esbuild output is
-      # deterministic, so unchanged source rebuilds to identical bytes and the
-      # git add is a no-op.
-      - name: Build dev runtime bundle
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/dev
+      - name: Maintain the Version Packages PR
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
+        with:
+          version: pnpm release:version
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+          setupGitUser: true
         env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          # ADR 0038: the dev runtime ships as a Release asset (dev.bundle.min.mjs),
-          # NOT a committed bundle. ADR 0039: the two committed, dependency-free
-          # entrypoints — plugins/dev/hooks/red-fetch.mjs (fetch role) and
-          # plugins/dev/skills/engineering/afk/bin/afk.mjs (run:dev role) — are built
-          # from ONE source, packages/shared/entrypoint-cli.ts. `build` emits the
-          # dist/dev.bundle.min.mjs asset (ADR 0034) plus both entrypoints. They carry
-          # no version, so esbuild's deterministic output rebuilds to identical bytes
-          # and the git add below is a no-op unless the source actually changed.
-          pnpm build
-          # Checksum manifest the dynamic-fetch hook (packages/shared/bundle-fetch.ts)
-          # verifies before caching. Mirrors memory-runtime-manifest.json.
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const bytes = readFileSync('../../dist/dev.bundle.min.mjs');
-          const manifest = {
-            plugin: 'dev',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('dev runtime manifest:', JSON.stringify(manifest));
-          EOF
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ADR 0029: the Memory runtime ships as release assets, not committed
-      # build output. esbuild bundles the CLI (all JS deps inlined) into one
-      # platform-independent file; a manifest pins its checksum + the reddb tag
-      # whose per-platform `red` binaries the bootstrap reuses. Assets are
-      # attached at `gh release create` so they exist the moment the Release
-      # publishes. pnpm/node are already set up above for the AFK bundle.
-      - name: Build memory runtime bundle + manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/memory
+      # No pending changesets means the Version Packages PR has already merged
+      # (or there was nothing to release). Cut the tag only when the version in
+      # the tree is genuinely new.
+      - name: Cut the release tag
+        id: cut
+        if: steps.changesets.outputs.hasChangesets == 'false'
         env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # ADR 0052: one canonical, minified bundle per entrypoint, all under
-          # ./dist/ (memory.bundle.min.mjs = CLI, memory-mcp.bundle.min.mjs = MCP).
-          # The legacy dist-bundle/*-cli.mjs model was removed; the bootstrap reads
-          # the asset names from this manifest, so the rename follows per-version.
-          pnpm bundle
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          const sdk = pkg.dependencies['@reddb-io/sdk'];
-          const reddb = {
-            repo: 'reddb-io/reddb',
-            tag: `v${sdk}`,
-          };
-          const assetNames = {
-            'linux-x86_64': 'red-linux-x86_64',
-            'linux-aarch64': 'red-linux-aarch64',
-            'linux-armv7': 'red-linux-armv7',
-            'macos-x86_64': 'red-macos-x86_64',
-            'macos-aarch64': 'red-macos-aarch64',
-            'windows-x86_64': 'red-windows-x86_64.exe',
-          };
-          // Checksums carried forward from the last manifest, usable only while the
-          // pin is unchanged. When the pin moves, the old checksums describe a
-          // different binary, so there is no fallback and every asset must resolve
-          // live from the new tag. Carrying them across a bump is how a dead pointer
-          // survived unnoticed: reddb aged out the pinned release, the live .sha256
-          // 404'd, and the stale checksums were copied forward release after release.
-          async function previousRedAssets() {
-            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/memory-runtime-manifest.json';
-            const response = await fetch(url, { redirect: 'follow' });
-            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
-            const previous = await response.json();
-            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
-            return previous.reddb.assets ?? {};
-          }
-          const fallbackAssets = await previousRedAssets();
-          const redAssets = {};
-          for (const [platform, asset] of Object.entries(assetNames)) {
-            const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
-            const response = await fetch(url, { redirect: 'follow' });
-            let sha256 = "";
-            if (response.ok) {
-              sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase() ?? "";
-            } else {
-              const fallback = fallbackAssets[platform];
-              if (fallback?.asset !== asset || !fallback?.sha256) throw new Error(`GET ${url} -> ${response.status}`);
-              sha256 = fallback.sha256;
-            }
-            if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
-            redAssets[platform] = { asset, sha256 };
-          }
-          const cli = readFileSync('../../dist/memory.bundle.min.mjs');
-          const mcp = readFileSync('../../dist/memory-mcp.bundle.min.mjs');
-          const manifest = {
-            schema: 'red.memory.runtime.v1',
-            version: process.env.NEXT.replace(/^v/, ''),
-            cli: { asset: 'memory.bundle.min.mjs', sha256: createHash('sha256').update(cli).digest('hex') },
-            mcp: { asset: 'memory-mcp.bundle.min.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
-            reddb: { ...reddb, sdk, assets: redAssets },
-          };
-          writeFileSync('../../dist/memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('runtime manifest:', JSON.stringify(manifest));
-          EOF
-
-      # ADR 0029/0038: the Brain runtime ships as release assets, not committed
-      # build output (mirrors memory). esbuild bundles the CLI + MCP (all JS deps
-      # inlined); a manifest pins their checksums + the reddb tag whose
-      # per-platform `red` binaries the bootstrap reuses. Attached at
-      # `gh release create`; fetched by plugins/brain/scripts/bootstrap.mjs.
-      - name: Build brain runtime bundle + manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/brain
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          # ADR 0052: canonical minified bundles under ./dist/ (brain.bundle.min.mjs
-          # = CLI, brain-mcp.bundle.min.mjs = MCP); legacy dist-bundle removed.
-          pnpm bundle
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          const sdk = pkg.dependencies['@reddb-io/sdk'];
-          const reddb = {
-            repo: 'reddb-io/reddb',
-            tag: `v${sdk}`,
-          };
-          const assetNames = {
-            'linux-x86_64': 'red-linux-x86_64',
-            'linux-aarch64': 'red-linux-aarch64',
-            'linux-armv7': 'red-linux-armv7',
-            'macos-x86_64': 'red-macos-x86_64',
-            'macos-aarch64': 'red-macos-aarch64',
-            'windows-x86_64': 'red-windows-x86_64.exe',
-          };
-          // No fallback across a pin bump — see the memory manifest step above.
-          async function previousRedAssets() {
-            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/brain-runtime-manifest.json';
-            const response = await fetch(url, { redirect: 'follow' });
-            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
-            const previous = await response.json();
-            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
-            return previous.reddb.assets ?? {};
-          }
-          const fallbackAssets = await previousRedAssets();
-          const redAssets = {};
-          for (const [platform, asset] of Object.entries(assetNames)) {
-            const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
-            const response = await fetch(url, { redirect: 'follow' });
-            let sha256 = "";
-            if (response.ok) {
-              sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase() ?? "";
-            } else {
-              const fallback = fallbackAssets[platform];
-              if (fallback?.asset !== asset || !fallback?.sha256) throw new Error(`GET ${url} -> ${response.status}`);
-              sha256 = fallback.sha256;
-            }
-            if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
-            redAssets[platform] = { asset, sha256 };
-          }
-          const cli = readFileSync('../../dist/brain.bundle.min.mjs');
-          const mcp = readFileSync('../../dist/brain-mcp.bundle.min.mjs');
-          const manifest = {
-            schema: 'red.brain.runtime.v1',
-            version: process.env.NEXT.replace(/^v/, ''),
-            cli: { asset: 'brain.bundle.min.mjs', sha256: createHash('sha256').update(cli).digest('hex') },
-            mcp: { asset: 'brain-mcp.bundle.min.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
-            reddb: { ...reddb, sdk, assets: redAssets },
-          };
-          writeFileSync('../../dist/brain-runtime-manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('brain runtime manifest:', JSON.stringify(manifest));
-          EOF
-
-      - name: Verify reddb release assets
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        run: |
-          set -euo pipefail
-          node scripts/verify-reddb-release-assets.mjs dist/memory-runtime-manifest.json
-          node scripts/verify-reddb-release-assets.mjs dist/brain-runtime-manifest.json
-
-      # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
-      # the dev/memory runtimes. Its package lives under apps/code-nav.
-      # `build` (typecheck + bundle) emits the dev-checkout
-      # file dist/code-nav-mcp.bundle.min.mjs; the release asset the dynamic fetch
-      # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
-      # with a code-nav.manifest.json mirroring dev.manifest.json.
-      - name: Build code-nav MCP bundle + manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/code-nav
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          pnpm typecheck
-          pnpm bundle
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
-          const built = '../../dist/code-nav-mcp.bundle.min.mjs';
-          // Publish the fetch-resolvable asset name code-nav.bundle.min.mjs.
-          const asset = '../../dist/code-nav.bundle.min.mjs';
-          copyFileSync(built, asset);
-          const bytes = readFileSync(asset);
-          const manifest = {
-            plugin: 'code-nav',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('code-nav bundle manifest:', JSON.stringify(manifest));
-          EOF
-
-      - name: Build benchmark-memory bundle + manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/benchmark-memory
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          pnpm build
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const asset = '../../dist/benchmark-memory.bundle.min.mjs';
-          const bytes = readFileSync(asset);
-          const manifest = {
-            plugin: 'benchmark-memory',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../dist/benchmark-memory.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('benchmark-memory bundle manifest:', JSON.stringify(manifest));
-          EOF
-
-      - name: Build OpenCode host installer bundle
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/opencode-host
-        env:
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          pnpm build
-          node ../../dist/opencode-host.bundle.min.mjs \
-            --config ../../.red/config.yaml \
-            --plugins-root ../../plugins \
-            --out ../../dist/opencode.json \
-            --out-dir ../../dist/opencode \
-            --copy
-          touch ../../dist/opencode/.release-generated
-          tar -czf ../../dist/opencode-host.generated.tgz -C ../.. dist/opencode
-
-      - name: Build benchmark-code-understanding bundle + manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/benchmark-code-understanding
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          pnpm build
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const asset = '../../dist/benchmark-code-understanding.bundle.min.mjs';
-          const bytes = readFileSync(asset);
-          const manifest = {
-            plugin: 'benchmark-code-understanding',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../dist/benchmark-code-understanding.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
-          EOF
-
-      # The rsp CLI ships its single bundle (dist/rsp.bundle.min.mjs) INSIDE the
-      # npm package (bin/rsp.mjs resolves it), not as a release-fetched runtime,
-      # so it needs no checksum manifest. Every other runtime app has its own
-      # per-app bundle step; rsp had a bin + prepare/verify entry but no build
-      # step, so the pack contract check failed on a genuinely-missing bundle.
-      # Build it from its own app dir so pnpm bundle emits ../../dist/rsp.bundle.min.mjs.
-      - name: Build rsp runtime bundle
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: apps/rsp
-        env:
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          pnpm bundle
-
-      # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
-      # the packaging/npm package, pnpm pack it, then run the REAL client resolver
-      # (the packaged bin) against the packed tarball as a producer/consumer
-      # contract check BEFORE publishing. Publish and a real registry smoke both
-      # complete BEFORE any tag or manifest-stamp side effect, so a missing token,
-      # failed publish, or stale registry aborts the release while history still
-      # points at the previous working version.
-      - name: Pack npm package + producer/consumer contract check
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          # Pin the package version to the release's computed next version
-          # (versioning stays on the 1.x line — the release auto-bump owns it).
-          node -e "const fs=require('fs');const p='packaging/npm/package.json';const j=JSON.parse(fs.readFileSync(p));j.version=process.env.NEXT.replace(/^v/,'');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
-          # Stage the platform-independent JS bundles into the package's dist/.
-          node packaging/npm/scripts/prepare.mjs
-          cd packaging/npm
-          pnpm pack --pack-destination .
-          tarball="$(ls reddb-io-red-skills-*.tgz | head -n1)"
-          echo "packed $tarball"
-          # Materialize the tar listing ONCE. Never pipe `tar -tzf` straight into
-          # `grep -q`: grep closes the pipe on its first match, tar then dies with
-          # SIGPIPE (exit 141), and `pipefail` propagates that failure — so once the
-          # tarball grew past the pipe buffer the check misreported a present bundle
-          # as missing. Matching each expected entry against the captured listing with
-          # a here-string (no pipe) lets tar always read to completion.
-          listing="$(tar -tzf "$tarball")"
-          for expected in \
-            package/dist/dev.bundle.min.mjs \
-            package/dist/code-nav.bundle.min.mjs \
-            package/dist/memory.bundle.min.mjs \
-            package/dist/brain.bundle.min.mjs \
-            package/dist/rsp.bundle.min.mjs; do
-            if ! grep -qxF "$expected" <<<"$listing"; then
-              echo "::error::npm tarball missing $expected"
-              exit 1
-            fi
-          done
-          # Contract check: install the packed tarball into a throwaway prefix and
-          # run the REAL packaged clients (the bins the launcher execs) — proves the
-          # tarball resolves and runs before we publish it.
-          smoke="$(mktemp -d)"
-          npm install "./$tarball" --prefix "$smoke" --no-audit --no-fund --ignore-scripts --loglevel=error
-          pkg="$smoke/node_modules/@reddb-io/red-skills"
-          node "$pkg/bin/red-skills-dev.mjs" --version
-          # code-nav launches via an npm-shim bin (#1396) that resolves the packaged
-          # code-nav bundle; smoke both the shim and the bundle it resolves.
-          test -x "$smoke/node_modules/.bin/red-skills-code-nav"
-          test -f "$smoke/node_modules/@reddb-io/red-skills/dist/code-nav.bundle.min.mjs"
-          # rsp needs a provisioned RedDB store (the `red` binary is not present under
-          # --ignore-scripts), so it cannot reach exit 0 here. What we DO smoke is that
-          # the packaged rsp bin resolves its bundle: a bin-without-bundle makes the
-          # shim print "packaged bundle missing" and exit before ever loading the
-          # runtime. Fail iff that guard fires — that is the exact "dangling bin" defect.
-          rsp_out="$(node "$pkg/bin/rsp.mjs" --store-uri "file://$smoke/rsp-store" 2>&1 || true)"
-          if grep -qF 'packaged bundle missing' <<<"$rsp_out"; then
-            echo "::error::packaged rsp bin shipped without its dist/rsp.bundle.min.mjs bundle"
-            printf '%s\n' "$rsp_out"
-            exit 1
-          fi
-          echo "packaged rsp bin resolved its bundle"
-          rm -rf "$smoke"
-
-      - name: Publish to npm
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NEXT: ${{ steps.version.outputs.next }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills@${version}"
-            exit 1
-          fi
-          cd packaging/npm
-          npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
-          # Publish must be idempotent so a re-run after a transient
-          # post-publish failure (for example registry-propagation lag in the
-          # smoke step) can resume the release tail instead of dying on a
-          # publish-over-published conflict. npm versions are immutable, so an
-          # already-served version IS the successful publish outcome.
-          if npm view "@reddb-io/red-skills@${version}" version >/dev/null 2>&1; then
-            echo "@reddb-io/red-skills@${version} already on the registry — publish already complete, resuming release tail"
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already tagged — nothing to cut"
             exit 0
           fi
-          # Stable releases publish to npm's default `latest` tag. The opt-in
-          # canary channel is moved later with scripts/afk-promote-channel.sh,
-          # which points npm dist-tag `canary` at an already-published version.
-          pnpm publish --access public --no-git-checks
-
-      - name: Build + publish Pi packages to npm
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NEXT: ${{ steps.version.outputs.next }}
-          # Stamp the resolved NEXT onto the built Pi packages: the plugin
-          # manifest sync/bump runs AFTER this step, so build-pi-packages must
-          # publish NEXT rather than the still-previous manifest version, or the
-          # registry smoke below fails on the missing NEXT tag.
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN secret absent — cannot publish @reddb-io/red-skills-<plugin>@${version}"
-            exit 1
-          fi
-          # Stage the npm-ready Pi packages from plugins/<name>/skills/<bucket>/
-          # into packaging/pi/<name>/. The build runs before publish so the
-          # tarball carries the current source, not a stale staging.
-          pnpm pi:packages:build
-          # Idempotent on already-published (same shape as @reddb-io/red-skills):
-          # a re-run after transient post-publish failure resumes the release
-          # tail instead of dying on publish-over-published conflict.
-          pnpm pi:packages:publish
-
-      - name: Smoke published Pi packages from registry
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          # Registry read replicas can lag the publish by several minutes
-          # (same budget as the @reddb-io/red-skills smoke above).
-          for plugin in dev memory brain; do
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              # `npm view <pkg>@<version> version` prints just the resolved
-              # version string (e.g. `2.76.0`); compare it exactly. The prior
-              # `name version` + grep for "<name> <version>" never matched npm's
-              # multi-field `field = 'value'` output, so the smoke always failed
-              # even after the packages were published.
-              if resolved="$(npm view "@reddb-io/red-skills-${plugin}@${version}" version 2>/dev/null)" && [ "$resolved" = "${version}" ]; then
-                echo "registry smoke returned @reddb-io/red-skills-${plugin}@${version}"
-                continue 2
-              fi
-              echo "registry smoke attempt ${attempt}/10 for @reddb-io/red-skills-${plugin}@${version} not yet resolvable; sleeping ${attempt}*15s"
-              sleep "$((attempt * 15))"
-            done
-            echo "::error::registry smoke failed for @reddb-io/red-skills-${plugin}@${version} after 10 attempts"
-            exit 1
-          done
-
-      - name: Smoke published npm package from registry
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-        run: |
-          set -euo pipefail
-          version="${NEXT#v}"
-          smoke="$(mktemp -d)"
-          trap 'rm -rf "$smoke"' EXIT
-          export npm_config_cache="$smoke/npm-cache"
-          export npm_config_prefix="$smoke/npm-prefix"
-          # Registry read replicas can lag the publish by several minutes
-          # (v2.0.1 took >2min to become resolvable, exhausting the previous
-          # ~105s budget). 10 attempts at attempt*15s ≈ 11min total budget.
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if output="$(npx -y -p "@reddb-io/red-skills@${version}" red-skills-dev --version 2>&1)"; then
-              printf '%s\n' "$output"
-              if grep -qF "dev ${version} " <<<"$output"; then
-                echo "registry smoke returned @reddb-io/red-skills@${version}"
-                exit 0
-              fi
-              echo "::error::registry smoke returned unexpected version output for @reddb-io/red-skills@${version}"
-              exit 1
-            fi
-            printf '%s\n' "$output" >&2
-            if [ "$attempt" -eq 10 ]; then
-              echo "::error::registry did not serve @reddb-io/red-skills@${version} after publish"
-              exit 1
-            fi
-            sleep $((attempt * 15))
-          done
-
-      - name: Sync plugin manifest versions
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          NEXT: ${{ steps.version.outputs.next }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional. A repo-admin PAT / GitHub App installation token with
-          # contents:write pushes the bump straight to protected main; absent,
-          # the helper degrades to a side-branch PR instead of failing the cut.
-          # The org provisions this as RELEASE_PAT; a repo-level
-          # RED_RELEASE_TOKEN, when present, still wins.
-          RED_RELEASE_TOKEN: ${{ secrets.RED_RELEASE_TOKEN || secrets.RELEASE_PAT }}
-          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
-          RED_BUILD_GIT_SHA: ${{ github.sha }}
-          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          manifests=(
-            plugins/dev/.claude-plugin/plugin.json
-            plugins/dev/.codex-plugin/plugin.json
-            plugins/memory/.claude-plugin/plugin.json
-            plugins/memory/.codex-plugin/plugin.json
-            plugins/brain/.claude-plugin/plugin.json
-            plugins/brain/.codex-plugin/plugin.json
-          )
-          package_jsons=(
-            package.json
-            apps/dev/package.json
-            apps/memory/package.json
-            apps/brain/package.json
-            apps/opencode-host/package.json
-            apps/benchmark-memory/package.json
-            apps/benchmark-code-understanding/package.json
-            apps/code-nav/package.json
-            packages/shared/package.json
-            packages/build-info/package.json
-            plugins/dev/package.json
-            plugins/memory/package.json
-            plugins/brain/package.json
-          )
-          # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
-          # `pnpm build` above. Stage both so a source change ships; they carry no
-          # version, so an unchanged source leaves them byte-identical (git add no-op).
-          fetch_bundle=plugins/dev/hooks/red-fetch.mjs
-          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
-          new="${NEXT#v}"
-          for manifest in "${manifests[@]}"; do
-            tmp=$(mktemp)
-            jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
-            mv "$tmp" "$manifest"
-          done
-          for package_json in "${package_jsons[@]}"; do
-            tmp=$(mktemp)
-            jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
-            mv "$tmp" "$package_json"
-          done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # The bump commit stages ZERO files under .github/workflows/: the
-          # GITHUB_TOKEN cannot push commits that touch workflow files, so the
-          # first-party afk-attempt pin lives on the moving major @v1 tag (force-
-          # moved to HEAD each cut below) instead of being rewritten here.
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
-            echo "plugin/package manifests already at $new and entrypoints unchanged"
-          else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
-            git commit -m "chore(release): $NEXT [skip release]"
-            # The bump push is layered (bypass token → rebase-and-retry →
-            # side-branch PR) because main's required status checks decline any
-            # freshly created commit and npm is ALREADY published by this point.
-            # See scripts/release-push-bump.sh for the full rationale.
-            scripts/release-push-bump.sh
-          fi
-
-      - name: Build release manifest
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          RED_RELEASE_VERSION: ${{ steps.version.outputs.next }}
-          RED_RELEASE_GIT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          node scripts/release-manifest.mjs \
-            dist/dev.bundle.min.mjs \
-            dist/dev.manifest.json \
-            dist/code-nav.bundle.min.mjs \
-            dist/code-nav.manifest.json \
-            dist/benchmark-memory.bundle.min.mjs \
-            dist/benchmark-memory.manifest.json \
-            dist/opencode-host.bundle.min.mjs \
-            dist/opencode-host.generated.tgz \
-            dist/benchmark-code-understanding.bundle.min.mjs \
-            dist/benchmark-code-understanding.manifest.json \
-            dist/memory.bundle.min.mjs \
-            dist/memory-mcp.bundle.min.mjs \
-            dist/memory-runtime-manifest.json \
-            dist/brain.bundle.min.mjs \
-            dist/brain-mcp.bundle.min.mjs \
-            dist/brain-runtime-manifest.json
-
-      - name: Tag + GitHub Release
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT: ${{ steps.version.outputs.next }}
-          PREVIOUS: ${{ steps.bump.outputs.previous }}
-        run: |
-          set -euo pipefail
-          major="v${NEXT#v}"
-          major="${major%%.*}"
-
-          git tag -a "$NEXT" -m "Release $NEXT"
-          git push origin "$NEXT"
-          # ADR 0091: the client resolves bundles over npm; these Release assets
-          # are kept as an INERT backup artifact the client never reads. No
-          # sigstore signatures are uploaded (client signature verification
-          # removed).
-          assets=(
-            dist/dev.bundle.min.mjs
-            dist/dev.manifest.json
-            dist/code-nav.bundle.min.mjs
-            dist/code-nav.manifest.json
-            dist/benchmark-memory.bundle.min.mjs
-            dist/benchmark-memory.manifest.json
-            dist/opencode-host.bundle.min.mjs
-            dist/opencode-host.generated.tgz
-            dist/benchmark-code-understanding.bundle.min.mjs
-            dist/benchmark-code-understanding.manifest.json
-            dist/memory.bundle.min.mjs
-            dist/memory-mcp.bundle.min.mjs
-            dist/memory-runtime-manifest.json
-            dist/brain.bundle.min.mjs
-            dist/brain-mcp.bundle.min.mjs
-            dist/brain-runtime-manifest.json
-            dist/release-manifest.json
-          )
-          if [ -n "$PREVIOUS" ]; then
-            gh release create "$NEXT" "${assets[@]}" \
-              --title "$NEXT" \
-              --generate-notes \
-              --notes-start-tag "$PREVIOUS"
-          else
-            gh release create "$NEXT" "${assets[@]}" \
-              --title "$NEXT" \
-              --generate-notes
-          fi
-
-          # `vX.Y.Z` is immutable release history; `vX` is the moving major ref
-          # GitHub reusable workflows/actions consume via `uses: ...@vX`.
-          git tag -f "$major" HEAD
-          git push --force origin "refs/tags/$major:refs/tags/$major"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "::notice::cut ${tag}; dispatching red-publish"
+          # See the header: a GITHUB_TOKEN tag push cannot trigger `on: push:
+          # tags`, so start the publish workflow explicitly.
+          gh workflow run red-publish.yml --ref main -f tag="$tag"

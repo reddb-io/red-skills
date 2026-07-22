@@ -35,6 +35,7 @@ const ROWS: Row[] = [
   // non-recoverable: always escalate, no retry budget
   { outcome: "blocked", typedLabel: "blocked:spec", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "feedback-failed", typedLabel: "blocked:validation", envelopeStatus: "blocked", policyKey: null, cap: null },
+  { outcome: "host-config", typedLabel: "blocked:host-config", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "infra", typedLabel: "blocked:infra", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "done", typedLabel: null, envelopeStatus: "done", policyKey: null, cap: null },
   { outcome: "claim-lost", typedLabel: null, envelopeStatus: "blocked", policyKey: null, cap: null },

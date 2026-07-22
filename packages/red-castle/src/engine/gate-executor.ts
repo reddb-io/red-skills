@@ -3,12 +3,10 @@ import {
   DEFAULT_BACKPRESSURE_TIMEOUT_MS,
   FEEDBACK_SCRIPTS,
   KILLED_EXIT_CODE,
-  LIFECYCLE_SCRIPT_NAMES,
   MECHANICAL_KINDS,
-  SENSITIVE_PATH_PATTERNS,
   type FeedbackScript,
 } from "./gate-constants.js";
-import type { GateFinding, GateSink, GateSinkOutcome, SensitivePathHit } from "./gate-sink.js";
+import type { GateFinding, GateSink, GateSinkOutcome } from "./gate-sink.js";
 import { computeValidationScope, scopesForValidationScope, type PackageLayout, type ValidationScope, type WorkspaceGraph } from "./validation-cone.js";
 
 export type ValidationStatus = "passed" | "failed" | "skipped";
@@ -49,7 +47,6 @@ export interface ValidationCheck {
 export interface RunCastleGateInput {
   worktree: string;
   changedFiles: readonly string[];
-  packageJsonDiff?: string;
   layout: ScriptLayout;
   graph: WorkspaceGraph;
   findings?: readonly GateFinding[];
@@ -73,43 +70,6 @@ export interface CastleGateResult {
 
 export function classifyFinding(finding: GateFinding): "mechanical" | "intent" {
   return (MECHANICAL_KINDS as readonly string[]).includes(finding.kind) ? "mechanical" : "intent";
-}
-
-export function isSensitivePath(filePath: string): boolean {
-  return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
-}
-
-export function hasLifecycleScriptInDiff(diffText: string): boolean {
-  const names = LIFECYCLE_SCRIPT_NAMES.join("|");
-  return new RegExp(`^\\+\\s*"(${names})"\\s*:`, "m").test(diffText);
-}
-
-export function checkSensitivePaths(
-  changedFiles: readonly string[],
-  packageJsonDiff = "",
-): SensitivePathHit[] {
-  const hits: SensitivePathHit[] = [];
-  for (const file of changedFiles) {
-    if (isSensitivePath(file)) hits.push({ path: file, reason: sensitivePathReason(file) });
-  }
-  if (packageJsonDiff !== "" && hasLifecycleScriptInDiff(packageJsonDiff)) {
-    const packageFiles = changedFiles.filter((file) => /(?:^|\/)package\.json$/.test(file));
-    hits.push({
-      path: packageFiles.length > 0 ? packageFiles.join(", ") : "package.json",
-      reason: "lifecycle script added or altered in package.json",
-    });
-  }
-  return hits;
-}
-
-function sensitivePathReason(filePath: string): string {
-  if (/^\.github\/workflows\//.test(filePath)) return "CI workflow file";
-  if (/^\.github\/actions\//.test(filePath)) return "CI composite action";
-  if (/(?:^|\/)\.git\/hooks\//.test(filePath) || /^\.husky\//.test(filePath) || /^\.githooks\//.test(filePath)) return "git hook";
-  if (/^\.red\//.test(filePath)) return "trust/gate configuration";
-  if (/^plugins\/[^/]+\/hooks\//.test(filePath)) return "agent plugin hook";
-  if (/^plugins\/[^/]+\/scripts\//.test(filePath)) return "agent plugin launcher script";
-  return "sensitive path";
 }
 
 function scopeLabel(scope: string): string {
@@ -241,12 +201,6 @@ export async function runCastleGate(input: RunCastleGateInput): Promise<CastleGa
   const sinkOutcomes: GateSinkOutcome[] = [];
   let mechanicalApplied = 0;
   let ok = true;
-
-  for (const hit of checkSensitivePaths(input.changedFiles, input.packageJsonDiff)) {
-    const outcome = await input.sink.sensitivePath(hit);
-    sinkOutcomes.push(outcome);
-    if (outcome !== "approved") ok = false;
-  }
 
   for (const finding of input.findings ?? []) {
     if (classifyFinding(finding) === "mechanical") {

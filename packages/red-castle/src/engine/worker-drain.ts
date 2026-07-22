@@ -133,6 +133,7 @@ export type CastleWorkerOutcome =
   | "hook-aborted"
   | "exhausted"
   | "runner-transient"
+  | "host-config"
   | (string & {});
 
 export interface CastleWorkerProcessResult {
@@ -162,6 +163,7 @@ export type CastleWorkerStopReason =
   | "iter-cap"
   | "once"
   | "runner-unavailable"
+  | "host-config"
   | "exhausted";
 
 export type CastleSessionHookName =
@@ -202,6 +204,7 @@ export interface CastleWorkerDrainSummary<TBootResult = unknown> {
   drained: boolean;
   exhausted: boolean;
   runnerTransient: boolean;
+  hostConfig: boolean;
   sessionHooksFired: CastleSessionHookName[];
   stopReason?: CastleWorkerStopReason;
 }
@@ -312,6 +315,7 @@ export async function runCastleWorkerDrain<
     drained: false,
     exhausted: false,
     runnerTransient: false,
+    hostConfig: false,
     sessionHooksFired,
   };
 
@@ -349,6 +353,7 @@ export async function runCastleWorkerDrain<
     let failed = 0;
     let exhaustedStop = false;
     let runnerTransientStop = false;
+    let hostConfigStop = false;
     let stopReason: CastleWorkerStopReason | undefined;
     let activeRunner: Runner = ctx.runner;
 
@@ -407,6 +412,11 @@ export async function runCastleWorkerDrain<
         stopReason = "runner-unavailable";
         break;
       }
+      if (result.outcome === "host-config") {
+        hostConfigStop = true;
+        stopReason = "host-config";
+        break;
+      }
       if (ctx.once && result.outcome !== "claim-lost") {
         stopReason = "once";
         break;
@@ -433,6 +443,7 @@ export async function runCastleWorkerDrain<
       drained: false,
       exhausted: exhaustedStop,
       runnerTransient: runnerTransientStop,
+      hostConfig: hostConfigStop,
       sessionHooksFired,
       stopReason,
     };

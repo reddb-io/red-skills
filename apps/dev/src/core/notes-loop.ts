@@ -47,6 +47,12 @@ export interface NotesLoopConfig {
   tokenBudget: number;
   /** Wall-clock ceiling in seconds; `0` → unlimited. */
   wallClockS: number;
+  /**
+   * Sync trunk into the working branch at every iteration boundary (#2481).
+   * Default true: drift that is never pulled in only ever grows, and the
+   * landing rebase pays for all of it at once.
+   */
+  trunkSync: boolean;
 }
 
 /**
@@ -77,6 +83,9 @@ export function resolveNotesLoopConfig(values: ConfigValues): NotesLoopConfig {
     innerMaxIterations: nonNegInt("afk.notes_loop.inner_max_iterations", NOTES_LOOP_DEFAULT_INNER_MAX_ITERATIONS),
     tokenBudget: nonNegInt("afk.notes_loop.token_budget", NOTES_LOOP_DEFAULT_TOKEN_BUDGET),
     wallClockS: nonNegInt("afk.notes_loop.wall_clock_s", NOTES_LOOP_DEFAULT_WALL_CLOCK_S),
+    // Opt-OUT, unlike every other knob here: skipping the sync is what produced
+    // the 65-commit stale-base branches (#2481), so only an explicit `false` does.
+    trunkSync: getConfig(values, "afk.notes_loop.trunk_sync") !== "false",
   };
 }
 
@@ -118,6 +127,12 @@ export interface NotesLoopDeps {
   tokensSpent?(): number;
   /** Optional progress log sink. */
   log?(message: string): void;
+  /**
+   * Sync trunk into the working branch at an iteration boundary (#2481).
+   * Returns the note to carry into the next iteration's handoff, or `undefined`
+   * when nothing happened. Absent → no sync, exactly as before this existed.
+   */
+  syncTrunk?(iteration: number): Promise<string | undefined>;
 }
 
 export interface NotesLoopOutcome {
@@ -245,6 +260,17 @@ export async function runNotesLoop(deps: NotesLoopDeps): Promise<NotesLoopOutcom
 
     // Continuable: record progress and seed the next iteration.
     notes = appendNotesEntry(notes, iteration, run);
+    // Trunk sync at the iteration boundary (#2481): the branch just took a
+    // committed step, so this is the one moment the worktree is quiet. Whatever
+    // the sync has to say rides into the next handoff as a note — a conflict
+    // becomes the agent's first instruction while the drift is still small.
+    if (cfg.trunkSync && deps.syncTrunk) {
+      const syncNote = await deps.syncTrunk(iteration);
+      if (syncNote) {
+        notes = `${notes}\n${syncNote}\n`;
+        deps.log?.(`[afk] notes-loop: trunk sync after iteration ${iteration} — ${syncNote}`);
+      }
+    }
     deps.persistNotes?.(notes);
     deps.log?.(`[afk] notes-loop: iteration ${iteration}/${cap} produced no completion; carrying notes forward`);
   }

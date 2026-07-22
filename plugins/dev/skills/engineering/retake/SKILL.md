@@ -19,13 +19,14 @@ the label claims `ready-for-human`, but the truth is in the worktree.
 
 Resolve the `red-skills-dev` runtime through the shared contract in
 [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md): use an
-installed shim on `PATH` first, otherwise use the ADR 0091 npm direct-run form
+canonical ADR 0091 npm direct-run form (an installed shim on `PATH` is only a
+warm-cache optimization for the same command):
 `npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake ...`. If the
 shim is missing, name that fallback instead of surfacing a bare
 command-not-found.
 
 ```bash
-red-skills-dev retake 123
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123
 ```
 
 The runtime accepts `123` and `#123`; quote `'#123'` when a shell would read it
@@ -46,8 +47,7 @@ The report answers six questions, in this order:
    work; a branch ahead of its remote holds unpushed commits. Either one means
    **the code exists and nobody knows** — say so loudly.
 6. **What is the blocker really?** `blocked:validation` and `blocked:spec` are
-   retryable. `blocked:sensitive-path` is a landing gate, not a retry gate.
-   Anything else is a pending human decision.
+   retryable. Anything else is a pending human decision.
 
 ## 2. Report — Say Where The Issue Stands
 
@@ -76,14 +76,13 @@ Pick by verdict, never by label alone:
 | Pending human decision, mixed `blocked:*` labels, or label/body mismatch | `/hitl #ISSUE` — stop here, do not requeue |
 | Parked `blocked:validation` / `blocked:spec`, work unstarted, guidance in hand | plain requeue (below) |
 | Work done on a branch — committed and pushed | adopt-branch landing (below) |
-| `blocked:sensitive-path`, and you have **reviewed** the protected diff | adopt-branch landing (a bare requeue refuses) |
 | Open PR with failing checks or changes requested | fix the PR branch first; neither command lands a red PR |
 | Dirty worktree | commit and push inside that worktree, then re-run `/retake` |
 
 ### Plain requeue — put a parked issue back in the queue
 
 ```bash
-red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
 ```
 
 One atomic transition: archive the active `## Current blocker` into
@@ -93,7 +92,7 @@ drop `ready-for-human` and every `blocked:*` label, add `ready-for-agent`.
 ### Adopt-branch landing — validate and land hand-done work
 
 ```bash
-red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue 123 --adopt-branch my-feature-branch --guidance "Manual implementation complete; run gate."
 ```
 
 After the requeue transition, the branch routes through the **no-agent landing
@@ -133,22 +132,6 @@ is re-parked immediately. The blocker must clear in the same transition that
 flips the labels. Producing that single transition is what the `requeue` command
 exists for.
 
-## Clearing a `blocked:sensitive-path` park (#1171)
-
-A sensitive-path park means the diff touches a protected path — a CI workflow, a
-lifecycle script, a git hook, `.red/` config. It gates **landing**, so it
-re-fires on every fresh attempt: bare requeue → `/hitl` → a new attempt
-reproduces the same protected diff → re-parks. An infinite loop.
-
-`--adopt-branch` breaks it. On a `blocked:sensitive-path` issue, requeue clears
-the blocker, drops `ready-for-human` and `blocked:sensitive-path`, and adopts the
-reviewed branch **with the sensitive-path landing guard bypassed for that land
-only**. An audit comment records who approved the diff and when — the bypass is
-never silent. The guard is never weakened for the autonomous path: every normal
-AFK or `/go` attempt still parks. The bypass is reachable only from this
-explicit human command, and a bare requeue of a sensitive-path park still
-refuses.
-
 ## `/retake` vs `/hitl` — the decision boundary
 
 **Stay in `/retake`** when the decision is already made: the issue is
@@ -160,7 +143,7 @@ and want to land it.
 **Hand to `/hitl`** when the pending human decision still has to be *extracted* —
 it interviews the maintainer, decides delegability, then clears the blocker and
 requeues. Hand over any issue carrying mixed `blocked:*` labels, a label/body
-mismatch, or a blocked kind outside `validation` / `spec` / `sensitive-path`
+mismatch, or a blocked kind outside `validation` / `spec`
 (`blocked:decision`, `blocked:stalled`). Both paths end in the same safe state;
 `/retake` is the informed shortcut, `/hitl` is the interview.
 

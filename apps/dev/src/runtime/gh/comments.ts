@@ -1,11 +1,12 @@
 import type { HandoffComment } from "../../core/handoff.js";
-import { classifySourceTrust, TRUSTED_ASSOCIATIONS } from "../../core/source-trust.js";
+import { classifySourceTrust, TRUSTED_ASSOCIATIONS, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { ActorTrustVerdict } from "../../core/trust-gate.js";
 import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
 
 export type CommentTrustResolver = (actor: string) => Promise<ActorTrustVerdict>;
 
 interface RawGhComment {
+  id?: number;
   body?: string;
   author?: { login?: string; is_bot?: boolean };
   authorAssociation?: string;
@@ -15,6 +16,18 @@ interface RawGhComment {
     users?: { nodes?: Array<{ login?: string }> };
   }>;
 }
+
+export interface IssueCommentForUpdate {
+  id: number;
+  body: string;
+  author?: string;
+  createdAt?: string;
+  sourceTrust: SourceTrustLevel;
+}
+
+export type IssueCommentsReadResult =
+  | { ok: true; comments: IssueCommentForUpdate[] }
+  | { ok: false; reason: string };
 
 function parseJsonLines(stdout: string): unknown[] {
   const out: unknown[] = [];
@@ -135,6 +148,52 @@ export async function issueComments(
 
 function restCommentJq(): string {
   return '.[] | {body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}';
+}
+
+function restCommentWithIdJq(): string {
+  return '.[] | {id: .id, body: .body, author: {login: .user.login, is_bot: (.user.type == "Bot")}, authorAssociation: .author_association, createdAt: .created_at}';
+}
+
+function parseStrictCommentJsonLines(stdout: string): RawGhComment[] | undefined {
+  const out: RawGhComment[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as RawGhComment;
+      if (!Number.isFinite(Number(parsed.id))) return undefined;
+      out.push(parsed);
+    } catch {
+      return undefined;
+    }
+  }
+  return out;
+}
+
+/** REST-backed issue comments for mutation-sensitive idempotency checks. Unlike
+ * issueComments(), this preserves the numeric REST id and reports read/parse
+ * failure separately from a successful empty list. */
+export async function readIssueComments(
+  ctx: GhContext,
+  issue: number,
+): Promise<IssueCommentsReadResult> {
+  const r = await runGh(ctx, ["api", "--paginate", apiPath(ctx, `issues/${issue}/comments`), "--jq", restCommentWithIdJq()]);
+  if (r.code !== 0) return { ok: false, reason: `failed to read issue comments (gh exit ${r.code})` };
+  const raw = parseStrictCommentJsonLines(r.stdout ?? "");
+  if (!raw) return { ok: false, reason: "failed to parse issue comments JSON" };
+  return {
+    ok: true,
+    comments: raw.map((comment) => ({
+      id: Number(comment.id),
+      body: String(comment.body ?? ""),
+      author: comment.author?.login ? String(comment.author.login) : undefined,
+      createdAt: comment.createdAt ? String(comment.createdAt) : undefined,
+      sourceTrust: classifySourceTrust({
+        authorAssociation: comment.authorAssociation,
+        isBot: comment.author?.is_bot === true,
+      }),
+    })),
+  };
 }
 
 /** PR top-level comments use GitHub's issue-comment API. Project them with the
