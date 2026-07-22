@@ -94,4 +94,24 @@ describe("host toolchain doctor", () => {
     expect(receipts).toEqual([expect.objectContaining({ tool: "gh", status: "instruction", reason: "sudo-backed apt upgrade is report-only" })]);
     expect(upgradeGhAsdf).not.toHaveBeenCalled();
   });
+
+  it("does not echo command stderr into public fix receipts", async () => {
+    const report = auditHostToolchain({
+      ghOutput: "gh version 2.25.1",
+      ghPath: "/opt/asdf/shims/gh",
+      toolVersions: "github-cli 2.25.1\n",
+      tqOutput: `tq ${TQ_PINNED_VERSION}`,
+      tqRecordedVersion: TQ_PINNED_VERSION,
+    });
+    const receipts = await applyHostToolchainFixes(
+      report,
+      { fix: true, approved: true },
+      {
+        upgradeGhAsdf: async () => ({ code: 7, stdout: "", stderr: "sensitive host path [REDACTED_HOME]" }),
+        installTq: async () => ({ code: 0, stdout: "", stderr: "" }),
+      },
+    );
+
+    expect(receipts).toEqual([{ tool: "gh", status: "failed", reason: "command exited 7" }]);
+  });
 });
