@@ -134,15 +134,73 @@ export interface PreMergeRebaseInput {
    * `Infinity` disables.
    */
   squashAheadThreshold?: number;
+  /**
+   * Stale-branch refusal thresholds (issue #2481). `null` disables the guard;
+   * absent uses {@link DEFAULT_STALE_BRANCH_GUARD}.
+   */
+  staleBranchGuard?: StaleBranchGuard | null;
+  /** Epoch-seconds clock for the base-age arithmetic; defaults to the wall clock. */
+  nowEpochS?: () => number;
+}
+
+/**
+ * Thresholds for the stale-branch landing refusal (issue #2481, item 4). A
+ * branch that is BOTH far ahead and forked from a long-stale base is a doomed
+ * sequential rebase: every commit replays onto a trunk that moved under it, so
+ * the same conflicts re-surface file by file for tens of minutes. Refusing up
+ * front parks it with an actionable reason instead of grinding.
+ */
+export interface StaleBranchGuard {
+  /** Refuse only when the branch is MORE than this many commits ahead of its fork point. */
+  maxAhead: number;
+  /** …AND its fork point is older than this many hours. */
+  maxBaseAgeHours: number;
+}
+
+/** Both conditions must hold, so a fat-but-fresh or old-but-thin branch still lands. */
+export const DEFAULT_STALE_BRANCH_GUARD: StaleBranchGuard = { maxAhead: 40, maxBaseAgeHours: 12 };
+
+/** What the guard measured about a branch, in the units it refuses on. */
+export interface StaleBranchObservation {
+  /** Commits the branch carries beyond its fork point, AFTER any squash. */
+  ahead: number;
+  /** Hours since the fork point commit; `undefined` when unmeasurable. */
+  baseAgeHours?: number;
+}
+
+/**
+ * The pure refusal decision (issue #2481). An unmeasurable observation NEVER
+ * refuses — the guard only speaks when it can prove both halves of the
+ * pathology, so a mocked/limited git surface degrades to the historical path.
+ */
+export function evaluateStaleBranchGuard(
+  observation: StaleBranchObservation,
+  guard: StaleBranchGuard = DEFAULT_STALE_BRANCH_GUARD,
+): { park: boolean; message?: string } {
+  const { ahead, baseAgeHours } = observation;
+  if (!Number.isFinite(ahead) || baseAgeHours === undefined || !Number.isFinite(baseAgeHours)) {
+    return { park: false };
+  }
+  if (ahead <= guard.maxAhead || baseAgeHours <= guard.maxBaseAgeHours) return { park: false };
+  return {
+    park: true,
+    message:
+      `the branch is ${ahead} commits ahead of a base that is ${Math.round(baseAgeHours)}h stale ` +
+      `(limits: ${guard.maxAhead} commits / ${guard.maxBaseAgeHours}h); ` +
+      "rebasing that micro-history onto current trunk would replay the same conflicts commit by commit. " +
+      "Rebuild the slice on a fresh base, or squash the branch to its net diff and re-run the landing.",
+  };
 }
 
 /** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
-export type PreMergeRebaseFailReason = "fetch-failed" | "conflict" | "push-rejected";
+export type PreMergeRebaseFailReason = "fetch-failed" | "conflict" | "push-rejected" | "stale-branch";
 
 export interface PreMergeRebaseResult {
   ok: boolean;
   /** Set on `ok:false` — the distinct failure mode. */
   reason?: PreMergeRebaseFailReason;
+  /** Actionable refusal text, set on `stale-branch`. */
+  message?: string;
 }
 
 /**
@@ -200,6 +258,26 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     }
   };
 
+  // Stale-branch refusal (issue #2481, item 4). Measured AFTER the squash, so a
+  // branch whose micro-history just collapsed to one commit is no longer the
+  // doomed sequential rebase the guard exists to stop. Every measurement is
+  // best-effort: a git surface that cannot answer leaves `baseAgeHours`
+  // undefined and the guard stays silent.
+  const staleGuard = input.staleBranchGuard === undefined ? DEFAULT_STALE_BRANCH_GUARD : input.staleBranchGuard;
+  const nowEpochS = input.nowEpochS ?? (() => Math.floor(Date.now() / 1000));
+  const measureStaleBranch = async (): Promise<StaleBranchObservation> => {
+    const fork = await exec(["git", "-C", repo, "merge-base", baseRef, "HEAD"]);
+    const forkSha = fork.stdout.trim();
+    if (fork.code !== 0 || forkSha.length === 0) return { ahead: Number.NaN };
+    const count = await exec(["git", "-C", repo, "rev-list", "--count", `${forkSha}..HEAD`]);
+    const ahead = Number.parseInt(count.stdout.trim(), 10);
+    if (count.code !== 0) return { ahead: Number.NaN };
+    const forkDate = await exec(["git", "-C", repo, "log", "-1", "--format=%ct", forkSha]);
+    const forkEpochS = Number.parseInt(forkDate.stdout.trim(), 10);
+    if (forkDate.code !== 0 || !Number.isFinite(forkEpochS)) return { ahead };
+    return { ahead, baseAgeHours: (nowEpochS() - forkEpochS) / 3600 };
+  };
+
   // Fetch the base tip and rebase the worker branch onto it. Reused by the
   // push-retry loop so a racing base advance is re-integrated before each retry.
   const rebaseOntoBase = async (): Promise<PreMergeRebaseResult & { alreadyIntegrated?: boolean }> => {
@@ -208,6 +286,10 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
     const alreadyIntegrated = await exec(["git", "-C", repo, "merge-base", "--is-ancestor", baseRef, "HEAD"]);
     if (alreadyIntegrated.code === 0) return { ok: true, alreadyIntegrated: true };
     await squashOwnHistory();
+    if (staleGuard) {
+      const verdict = evaluateStaleBranchGuard(await measureStaleBranch(), staleGuard);
+      if (verdict.park) return { ok: false, reason: "stale-branch", message: verdict.message };
+    }
     const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
     if (rebase.code !== 0) {
       // #1095: give the opt-in mechanical resolver a chance to auto-resolve
@@ -435,6 +517,17 @@ export async function waitForReviewCheck(
  */
 export type MergeReadiness = "merge" | "conflict" | "ci-failed" | "pending";
 
+export interface CiGreenEvidence {
+  checkCount: number;
+  requiredCheckCount: number;
+  summary: string;
+}
+
+export interface MergeReadinessResult {
+  readiness: MergeReadiness;
+  ciEvidence?: CiGreenEvidence;
+}
+
 /** Opt-in CI-aware merge wait for the UNLOCKED admin-PR landing (#812). Present →
  * the landing polls the PR's merge state until it settles before admin-merging.
  * Absent → admin-merge immediately (the legacy behaviour, fine on a base with no
@@ -446,9 +539,15 @@ export interface CiAwaitInput {
   maxPolls?: number;
   /** Delay between polls, in ms. Default 10000. */
   intervalMs?: number;
+  /** Base branch whose required checks must be proven green before CI evidence is usable. */
+  baseBranch?: string;
+  /** Current fetched base SHA; CI evidence is usable only when GitHub sees this base. */
+  expectedBaseOid?: string;
 }
 
 interface RollupEntry {
+  name?: unknown;
+  context?: unknown;
   status?: unknown;
   conclusion?: unknown;
   state?: unknown;
@@ -480,14 +579,53 @@ function checkPending(entry: RollupEntry): boolean {
   return false;
 }
 
-interface MergeStateView {
+export interface MergeStateView {
   mergeStateStatus: string;
   /** GitHub `mergeable`: MERGEABLE | CONFLICTING | UNKNOWN (empty when a caller
    * did not fetch it). The settled-vs-computing signal: `mergeStateStatus` alone
    * can read a transient value before GitHub finishes computing mergeability. */
   mergeable: string;
+  baseRefOid?: string;
+  headRefOid?: string;
   anyFailed: boolean;
   anyPending: boolean;
+  checkCount?: number;
+  successfulChecks?: number;
+  skippedOrNeutralChecks?: number;
+  successfulCheckNames?: string[];
+  skippedOrNeutralCheckNames?: string[];
+  failedCheckNames?: string[];
+  pendingCheckNames?: string[];
+}
+
+function checkSucceeded(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return conclusion === "SUCCESS" || state === "SUCCESS";
+}
+
+function checkSkippedOrNeutral(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return ["SKIPPED", "NEUTRAL"].includes(conclusion) || ["SKIPPED", "NEUTRAL"].includes(state);
+}
+
+function checkLabel(entry: RollupEntry): string {
+  const name = typeof entry.name === "string" ? entry.name.trim() : "";
+  if (name) return name;
+  return typeof entry.context === "string" ? entry.context.trim() : "";
+}
+
+function emptyMergeStateView(): MergeStateView {
+  return {
+    mergeStateStatus: "",
+    mergeable: "",
+    anyFailed: false,
+    anyPending: false,
+    checkCount: 0,
+    successfulChecks: 0,
+    skippedOrNeutralChecks: 0,
+  };
 }
 
 /** Parse `gh pr view <num> --json mergeStateStatus,statusCheckRollup` stdout.
@@ -495,26 +633,57 @@ interface MergeStateView {
  * keeps polling rather than mis-deciding on a transient gh hiccup. */
 export function parseMergeStateView(stdout: string): MergeStateView {
   const text = stdout.trim();
-  if (text === "") return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+  if (text === "") return emptyMergeStateView();
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) {
-      return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+      return emptyMergeStateView();
     }
     const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
     const mergeable = (parsed as { mergeable?: unknown }).mergeable;
+    const baseRefOid = (parsed as { baseRefOid?: unknown }).baseRefOid;
+    const headRefOid = (parsed as { headRefOid?: unknown }).headRefOid;
     const rollup = (parsed as { statusCheckRollup?: unknown }).statusCheckRollup;
     const entries: RollupEntry[] = Array.isArray(rollup)
       ? rollup.filter((e): e is RollupEntry => typeof e === "object" && e !== null)
       : [];
+    const names = (predicate: (entry: RollupEntry) => boolean): string[] =>
+      entries.filter(predicate).map(checkLabel).filter((name) => name !== "");
     return {
       mergeStateStatus: typeof mergeStateStatus === "string" ? mergeStateStatus : "",
       mergeable: typeof mergeable === "string" ? mergeable : "",
+      ...(typeof baseRefOid === "string" ? { baseRefOid } : {}),
+      ...(typeof headRefOid === "string" ? { headRefOid } : {}),
       anyFailed: entries.some(checkFailed),
       anyPending: entries.some(checkPending),
+      checkCount: entries.length,
+      successfulChecks: entries.filter(checkSucceeded).length,
+      skippedOrNeutralChecks: entries.filter(checkSkippedOrNeutral).length,
+      ...(entries.length > 0
+        ? {
+            successfulCheckNames: names(checkSucceeded),
+            skippedOrNeutralCheckNames: names(checkSkippedOrNeutral),
+            failedCheckNames: names(checkFailed),
+            pendingCheckNames: names(checkPending),
+          }
+        : {}),
     };
   } catch {
-    return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+    return emptyMergeStateView();
+  }
+}
+
+async function requiredCheckContexts(exec: Exec, repo: string, baseBranch: string | undefined): Promise<string[]> {
+  if (!baseBranch) return [];
+  const res = await exec([
+    "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
+  ]);
+  if (res.code !== 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(res.stdout);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string" && v.trim() !== "") : [];
+  } catch {
+    return [];
   }
 }
 
@@ -558,6 +727,31 @@ export function classifyMergeState(view: MergeStateView): MergeReadiness {
   return "pending";
 }
 
+function ciEvidenceFor(
+  view: MergeStateView,
+  readiness: MergeReadiness,
+  requiredChecks: readonly string[],
+  expectedBaseOid: string | undefined,
+): CiGreenEvidence | undefined {
+  if (readiness !== "merge") return undefined;
+  if (up(view.mergeStateStatus) !== "CLEAN" || up(view.mergeable) !== "MERGEABLE") return undefined;
+  if (!expectedBaseOid || view.baseRefOid !== expectedBaseOid) return undefined;
+  if (requiredChecks.length === 0) return undefined;
+  const successful = new Set(view.successfulCheckNames ?? []);
+  const skippedOrNeutral = new Set(view.skippedOrNeutralCheckNames ?? []);
+  const failed = new Set(view.failedCheckNames ?? []);
+  const pending = new Set(view.pendingCheckNames ?? []);
+  for (const required of requiredChecks) {
+    if (!successful.has(required)) return undefined;
+    if (failed.has(required) || pending.has(required) || skippedOrNeutral.has(required)) return undefined;
+  }
+  return {
+    checkCount: requiredChecks.length,
+    requiredCheckCount: requiredChecks.length,
+    summary: `${requiredChecks.length} required check(s) green`,
+  };
+}
+
 /**
  * Poll `gh pr view <num>` until the PR settles to a terminal readiness
  * (`merge` / `conflict` / `ci-failed`) or the poll budget is exhausted. A
@@ -570,18 +764,33 @@ export async function waitForMergeReady(
   prNumber: number,
   input: CiAwaitInput,
 ): Promise<MergeReadiness> {
+  const result = await waitForMergeReadyWithEvidence(exec, repo, prNumber, input);
+  return result.readiness;
+}
+
+export async function waitForMergeReadyWithEvidence(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: CiAwaitInput,
+): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
+  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch);
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
     const res = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,statusCheckRollup",
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
     ]);
-    const verdict = classifyMergeState(parseMergeStateView(res.stdout));
-    if (verdict !== "pending") return verdict;
+    const view = parseMergeStateView(res.stdout);
+    const verdict = classifyMergeState(view);
+    if (verdict !== "pending") {
+      const ciEvidence = ciEvidenceFor(view, verdict, requiredChecks, input.expectedBaseOid);
+      return { readiness: verdict, ...(ciEvidence ? { ciEvidence } : {}) };
+    }
     if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
   }
-  return "pending";
+  return { readiness: "pending" };
 }
 
 /** Inputs for the UNLOCKED landing path, {@link landPr}. */
@@ -645,6 +854,12 @@ export interface LandPrInput {
    * immediately, the pre-#1337 behaviour.
    */
   mergeQueue?: boolean;
+  /**
+   * Final PR-path validation hook. Called after the PR exists and CI-aware merge
+   * has observed its current readiness, but before `gh pr merge`. Callers use it
+   * to either trust fresh green CI or run their local fallback gate.
+   */
+  beforeMerge?: (input: { prNumber: number; ciEvidence?: CiGreenEvidence }) => Promise<{ ok: true } | { ok: false }>;
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -656,6 +871,7 @@ export type LandPrFailReason =
   | "conflict"
   | "ci-failed"
   | "ci-pending"
+  | "before-merge-failed"
   | "merge-failed";
 
 export interface LandPrResult {
@@ -664,6 +880,8 @@ export interface LandPrResult {
   prNumber?: number;
   /** Forge-reported merge commit for a completed synchronous merge. */
   mergeSha?: string;
+  /** Fresh green CI evidence observed immediately before merge, when usable. */
+  ciEvidence?: CiGreenEvidence;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
 }
@@ -908,7 +1126,7 @@ export async function fastForwardLocalTarget(
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
   // `locked` is retained for caller compatibility; mirror promotion is identical
   // for both lock states.
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue, beforeMerge } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -956,11 +1174,23 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
   //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
   //   - merge      → fall through to the merge below.
+  let ciEvidence: CiGreenEvidence | undefined;
   if (ciAwait) {
-    const ready = await waitForMergeReady(exec, repo, prNumber, ciAwait);
-    if (ready === "conflict") return { ok: false, prNumber, reason: "conflict" };
-    if (ready === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
-    if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+    const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
+    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+      ...ciAwait,
+      baseBranch: ciAwait.baseBranch ?? target,
+      expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
+    });
+    ciEvidence = ready.ciEvidence;
+    if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+    if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+    if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  }
+
+  const beforeMergeCiEvidence = mergeQueue ? undefined : ciEvidence;
+  if (beforeMerge && !(await beforeMerge({ prNumber, ...(beforeMergeCiEvidence ? { ciEvidence: beforeMergeCiEvidence } : {}) })).ok) {
+    return { ok: false, prNumber, reason: "before-merge-failed" };
   }
 
   // 3. Merge: branch protection is honored rather than bypassed (#1103). With a
@@ -987,7 +1217,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // ref-only and decoupled from the primary checkout's branch and working tree.
   await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
 
-  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}) };
+  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
 }
 
 /**

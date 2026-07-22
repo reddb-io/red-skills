@@ -281,7 +281,7 @@ Known limitations versus the other hosts:
 - Pi does not run lifecycle hooks, so the Codex/Claude `SessionStart`/`Stop`
   hooks (the rsp interception bridge, red-fetch, command-guard, branch-lock,
   statusline wiring) are not active in Pi. Skills that depend on those hooks
-  lose telemetry but stay navigable; AFK runners and code-nav MCP servers are
+  lose telemetry but stay navigable; AFK runners and `navigator` MCP servers are
   unaffected.
 - Two plugins (`memory` and `brain`) ship a skill with the same `name: view`.
   Pi warns on duplicate skill names and keeps the first one registered, so
@@ -476,7 +476,7 @@ knowledge the human wants preserved, searched, and cited later.
 
 `dev` owns the engineering workflow: issue pipeline, AFK runtime, interactive
 landing, process visibility, setup/adoption checks, codebase orientation, and
-the [code-nav MCP server](./apps/code-nav/README.md).
+the [`navigator` MCP server](./apps/code-nav/README.md).
 
 Core responsibilities:
 
@@ -711,7 +711,7 @@ This is a map, not a replacement for the skill files. Open the linked
 | Dev knowledge, productivity, and utilities | [`research`](./plugins/dev/skills/knowledge/research/SKILL.md), [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md), [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md), [`write-a-skill`](./plugins/dev/skills/productivity/write-a-skill/SKILL.md), [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md), [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md), [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md), [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) |
 | Memory | [`init`](./plugins/memory/skills/core/init/SKILL.md), [`store`](./plugins/memory/skills/core/store/SKILL.md), [`recall`](./plugins/memory/skills/core/recall/SKILL.md), [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md), [`extract`](./plugins/memory/skills/core/extract/SKILL.md), [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md), [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md), [`health`](./plugins/memory/skills/core/health/SKILL.md), [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md), [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md), [`export`](./plugins/memory/skills/core/export/SKILL.md), [`view`](./plugins/memory/skills/core/view/SKILL.md), [`wiki-init`](./plugins/memory/skills/core/wiki-init/SKILL.md), [`wiki`](./plugins/memory/skills/core/wiki/SKILL.md) |
 | Brain | [`capture`](./plugins/brain/skills/core/capture/SKILL.md), [`search`](./plugins/brain/skills/core/search/SKILL.md), [`think`](./plugins/brain/skills/core/think/SKILL.md), [`status`](./plugins/brain/skills/core/status/SKILL.md), [`view`](./plugins/brain/skills/core/view/SKILL.md) |
-| MCP servers | [`code-nav`](./apps/code-nav/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
+| MCP servers | [`castle`](./plugins/dev/skills/engineering/afk/MCP.md), [`navigator`](./apps/code-nav/README.md), [`memory-mcp`](./plugins/memory/.mcp.json), [`brain`](./plugins/brain/.mcp.json) |
 
 ## Development In This Repo
 

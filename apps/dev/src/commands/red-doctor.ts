@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
-import { editBody, listIssueStates, postClaimComment, type GhContext } from "../runtime/gh.js";
+import { editBody, listCandidates, listIssueStates, postClaimComment, type GhContext } from "../runtime/gh.js";
 import { applyTmpJanitorReport, collectTmpJanitorReport, type TmpJanitorApplyResult, type TmpJanitorReport } from "../runtime/tmp-janitor.js";
 import { branchLockPath, clearBranchLock, writeBranchLock } from "../runtime/lock.js";
 import {
@@ -24,6 +24,8 @@ import {
   type HostToolchainReport,
 } from "../core/host-toolchain-doctor.js";
 import { getConfig, loadConfig } from "../core/config.js";
+import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
+import { LABEL_READY } from "../core/triage-labels.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
 import { execTool } from "../runtime/exec.js";
 import * as gitx from "../runtime/git.js";
@@ -125,6 +127,7 @@ function renderHuman(
   root: string,
   probeReport: OperationalProbeReport,
   castleReport: CastleStateDoctorReport,
+  executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
   applied?: TmpJanitorApplyResult,
@@ -156,6 +159,18 @@ function renderHuman(
     ...castleReport.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.path} — ${finding.reason}`),
     ...castleReport.findings.map((finding) => `  fix: ${finding.canonicalFix}`),
     "",
+    "red-doctor executable acceptance criteria",
+    `candidates: ${executableAcceptanceReport.checked.candidates}`,
+    `verdict: ${executableAcceptanceReport.row.verdict}`,
+    `evidence: ${executableAcceptanceReport.row.evidence}`,
+    `acceptance findings: ${executableAcceptanceReport.findings.length}`,
+    ...executableAcceptanceReport.findings.map((finding) => (
+      finding.issue > 0
+        ? `  ${finding.verdict} #${finding.issue}: ${finding.reason}`
+        : `  ${finding.verdict}: ${finding.reason}`
+    )),
+    ...executableAcceptanceReport.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
     "red-doctor tmp janitor",
     `expired lanes: ${expired.length}`,
     ...expired.map((path) => `  ${path}`),
@@ -179,6 +194,7 @@ function renderToon(
   root: string,
   probeReport: OperationalProbeReport,
   castleReport: CastleStateDoctorReport,
+  executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
   applied?: TmpJanitorApplyResult,
@@ -237,6 +253,21 @@ function renderToon(
         fix: finding.canonicalFix,
       })),
     },
+    executableAcceptance: {
+      scorecard: {
+        check: executableAcceptanceReport.row.check,
+        verdict: executableAcceptanceReport.row.verdict,
+        evidence: executableAcceptanceReport.row.evidence,
+        fixHome: executableAcceptanceReport.row.fixHome,
+      },
+      candidates: executableAcceptanceReport.checked.candidates,
+      findings: executableAcceptanceReport.findings.map((finding) => ({
+        issue: finding.issue,
+        verdict: finding.verdict,
+        reason: finding.reason,
+        remediation: finding.remediation,
+      })),
+    },
     appliedTmpJanitor: applied
       ? {
           expiredLanes: applied.expiredLanes.map((path) => rel(root, path)),
@@ -259,6 +290,13 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const probeReport = await runOperationalProbes(precheckFacts);
     const castleReport = await auditCastleStateLane(ctx.root);
     const hostReport = await collectHostToolchainReport(ctx.root);
+    const executableAcceptanceTransportFailures: string[] = [];
+    const executableCandidates = await listCandidates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext, LABEL_READY, {
+      onTransportFailure: (failure) => executableAcceptanceTransportFailures.push(failure.message ?? "unknown transport failure"),
+    });
+    const executableAcceptanceReport = auditExecutableAcceptanceCriteria(executableCandidates, {
+      transportFailures: executableAcceptanceTransportFailures,
+    });
     const issueStates = ctx.repo
       ? await listIssueStates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext)
       : new Map();
@@ -319,8 +357,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, report, hostReport, applied, probeFixes, hostFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, report, hostReport, applied, probeFixes, hostFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes),
     );
     return 0;
   } catch (error) {
