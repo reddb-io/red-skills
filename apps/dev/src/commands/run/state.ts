@@ -65,7 +65,13 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
+import {
+  createCastleLaneWriters,
+  createEnginePaths,
+  runCastleWorkerDrain,
+  type CastleSessionHookName,
+  type CastleWorkerDrainDeps,
+} from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -83,7 +89,7 @@ import {
   safetyLogPath,
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
@@ -150,6 +156,13 @@ export async function recordBootError(workerDir: string, type: "boot-error" | "s
   };
   await fsx.ensureDir(workerDir);
   await writeFile(join(workerDir, `${type}.log`), encodeBootErrorPayload(payload), "utf8");
+  const workerId = basename(workerDir);
+  const redRoot = dirname(dirname(dirname(workerDir)));
+  await createCastleLaneWriters(createEnginePaths(redRoot)).worker(workerId).append({
+    kind: `worker.${type}`,
+    worker_id: workerId,
+    payload: { type, at: payload.at, message },
+  });
   process.stderr.write(`[afk] ${type}: ${message}\n`);
 }
 
