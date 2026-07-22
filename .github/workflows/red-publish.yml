@@ -6,14 +6,17 @@ name: red-publish
 # reviewed Version Packages PR. THIS workflow owns everything downstream of the
 # tag and nothing upstream of it:
 #
-#   1. Defer if any open issue carries the `running` label (a /afk fleet is
-#      mid-iteration). The hourly retry resumes once the fleet drains — the same
-#      deferral contract the pre-changesets release had.
-#   2. Build every plugin/runtime bundle + checksum manifest at the tagged tree.
-#   3. Pack the npm package, run the REAL packaged client against the packed
+#   1. Build every plugin/runtime bundle + checksum manifest at the tagged tree.
+#   2. Pack the npm package, run the REAL packaged client against the packed
 #      tarball as a producer/consumer contract check, publish, and smoke the
 #      published package from the registry.
-#   4. Cut the GitHub Release with the assets and move the matching major tag.
+#   3. Cut the GitHub Release with the assets and move the matching major tag.
+#
+# There is NO fleet-activity deferral here (removed 2026-07-22): the old flow
+# deferred because it pushed a bump commit to main mid-fleet; this workflow
+# never touches main, and running workers pin their bundle at spawn, so a new
+# npm latest cannot retarget an in-flight fleet. Orphaned `running` labels
+# repeatedly held releases hostage under the old gate.
 #
 # It never writes a version and never pushes a commit: the tagged tree already
 # carries the synced manifests, and `Verify the tag matches the tree` fails the
@@ -187,64 +190,49 @@ jobs:
           echo "built_at=$(git log -1 --format=%cI "refs/tags/$tag^{commit}")" >> "$GITHUB_OUTPUT"
           echo "publishing $tag (previous=${previous:-none})"
 
-      - name: Defer if /afk fleet is active
-        id: fleet
-        if: steps.target.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          running=$(gh issue list --label running --state open --json number --jq 'length' 2>/dev/null || echo "0")
-          echo "running=$running" >> "$GITHUB_OUTPUT"
-          if [ "$running" -gt 0 ]; then
-            echo "::notice::🛑 fleet active — $running issue(s) carry the 'running' label. Publish deferred; the scheduled red-publish retry will publish ${{ steps.target.outputs.tag }} after the running issues drain."
-          else
-            echo "no running issues — proceeding"
-          fi
-
       # Everything below runs against the TAGGED tree, not main's HEAD.
       - name: Check out the release tag
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: git checkout --detach "refs/tags/${{ steps.target.outputs.tag }}"
 
       - name: Validate install metadata
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/validate-install-metadata.sh
 
       - name: Test workflow security pins
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-workflow-security-pins.sh
 
       - name: Test canary channel promotion contract
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-afk-promote-channel.sh
 
       - name: Test red-release npm publish contract
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-red-release-npm-publish-contract.sh
 
       - name: Test red-castle vendor contract
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-red-castle-vendor-contract.sh
 
       - name: Test red-release reddb asset contract
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-red-release-reddb-assets-contract.sh
 
       - name: Test agent metadata fixtures
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: scripts/test-validate-agent-metadata.sh
 
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         with:
           node-version: 22
 
       - name: Install workspace dependencies
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           # The publish job builds JS bundles and manifests; it does not execute
           # the @reddb-io/sdk-backed memory/brain runtimes during install. Skip
@@ -258,7 +246,7 @@ jobs:
       # the tree means someone tagged by hand at the wrong commit — fail before
       # publishing bundles stamped with a version nothing else carries.
       - name: Verify the tag matches the tree
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           VERSION: ${{ steps.target.outputs.version }}
         run: |
@@ -284,7 +272,7 @@ jobs:
       # (ADR 0034); esbuild output is deterministic, so the tagged tree already
       # carries the bytes this rebuild produces.
       - name: Build dev runtime bundle
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/dev
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -316,7 +304,7 @@ jobs:
       # attached at `gh release create` so they exist the moment the Release
       # publishes.
       - name: Build memory runtime bundle + manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/memory
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -396,7 +384,7 @@ jobs:
       # per-platform `red` binaries the bootstrap reuses. Attached at
       # `gh release create`; fetched by plugins/brain/scripts/bootstrap.mjs.
       - name: Build brain runtime bundle + manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/brain
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -464,7 +452,7 @@ jobs:
           EOF
 
       - name: Verify reddb release assets
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         run: |
           set -euo pipefail
           node scripts/verify-reddb-release-assets.mjs dist/memory-runtime-manifest.json
@@ -477,7 +465,7 @@ jobs:
       # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
       # with a code-nav.manifest.json mirroring dev.manifest.json.
       - name: Build code-nav MCP bundle + manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/code-nav
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -506,7 +494,7 @@ jobs:
           EOF
 
       - name: Build benchmark-memory bundle + manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/benchmark-memory
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -531,7 +519,7 @@ jobs:
           EOF
 
       - name: Build OpenCode host installer bundle
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/opencode-host
         env:
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -550,7 +538,7 @@ jobs:
           tar -czf ../../dist/opencode-host.generated.tgz -C ../.. dist/opencode
 
       - name: Build benchmark-code-understanding bundle + manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/benchmark-code-understanding
         env:
           NEXT: ${{ steps.target.outputs.tag }}
@@ -581,7 +569,7 @@ jobs:
       # step, so the pack contract check failed on a genuinely-missing bundle.
       # Build it from its own app dir so pnpm bundle emits ../../dist/rsp.bundle.min.mjs.
       - name: Build rsp runtime bundle
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         working-directory: apps/rsp
         env:
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
@@ -599,7 +587,7 @@ jobs:
       # publish, or stale registry aborts the publish while the Release (and the
       # moving major tag) still point at the previous working version.
       - name: Pack npm package + producer/consumer contract check
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           NEXT: ${{ steps.target.outputs.tag }}
         run: |
@@ -660,7 +648,7 @@ jobs:
           rm -rf "$smoke"
 
       - name: Publish to npm
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NEXT: ${{ steps.target.outputs.tag }}
@@ -688,7 +676,7 @@ jobs:
           pnpm publish --access public --no-git-checks
 
       - name: Build + publish Pi packages to npm
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NEXT: ${{ steps.target.outputs.tag }}
@@ -710,7 +698,7 @@ jobs:
           pnpm pi:packages:publish
 
       - name: Smoke published Pi packages from registry
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           NEXT: ${{ steps.target.outputs.tag }}
         run: |
@@ -737,7 +725,7 @@ jobs:
           done
 
       - name: Smoke published npm package from registry
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           NEXT: ${{ steps.target.outputs.tag }}
         run: |
@@ -769,7 +757,7 @@ jobs:
           done
 
       - name: Build release manifest
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           RED_RELEASE_VERSION: ${{ steps.target.outputs.tag }}
           RED_RELEASE_GIT_SHA: ${{ steps.target.outputs.sha }}
@@ -794,7 +782,7 @@ jobs:
             dist/brain-runtime-manifest.json
 
       - name: GitHub Release
-        if: steps.target.outputs.publish == 'true' && steps.fleet.outputs.running == '0'
+        if: steps.target.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.target.outputs.tag }}
