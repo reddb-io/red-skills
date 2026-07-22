@@ -472,6 +472,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
         await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
         return { ok: true };
       },
+      requirePostMergeValidation: true,
     },
     {
       openPr,
