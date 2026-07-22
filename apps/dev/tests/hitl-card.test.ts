@@ -9,7 +9,11 @@ import {
   isHitlCard,
   parseCardCommand,
   classifyNaturalLanguage,
+  evaluateHitlCardActionRate,
+  HITL_CARD_ACTION_MARKER,
+  HITL_CARD_STAND_DOWN_MARKER,
   parseCiChecks,
+  shouldIgnoreHitlCardComment,
   type PrStatus,
 } from "../src/core/hitl-card.js";
 
@@ -184,6 +188,65 @@ describe("parseCardCommand", () => {
 
   it("returns undefined for a blank body", () => {
     expect(parseCardCommand("   \n  ")).toBeUndefined();
+  });
+});
+
+// ---------- self-reaction + runaway guards ----------
+
+describe("HITL card comment guards", () => {
+  it("ignores a bot-authored /requeue-shaped refusal before intent parsing", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "github-actions[bot]",
+      authorType: "Bot",
+      body: "/requeue Cannot requeue: blocked:infra is not in the supported set",
+    })).toBe(true);
+  });
+
+  it("ignores the card's bot-marker reply even when a PAT makes the author look human", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "release-maintainer",
+      authorType: "User",
+      body: "🤖 **requeue**: Cannot requeue: use /hitl",
+    })).toBe(true);
+  });
+
+  it("allows a human maintainer directive", () => {
+    expect(shouldIgnoreHitlCardComment({
+      author: "maintainer",
+      authorType: "User",
+      body: "/requeue retry after the runner recovered",
+    })).toBe(false);
+  });
+
+  it("caps actions at three per issue in ten minutes and requests one stand-down comment", () => {
+    const now = new Date("2026-07-22T08:00:00Z");
+    const comments = [0, 1, 2].map((minute) => ({
+      body: `${HITL_CARD_ACTION_MARKER}\naction ${minute}`,
+      createdAt: `2026-07-22T07:5${minute}:00Z`,
+    }));
+
+    expect(evaluateHitlCardActionRate(comments, now)).toEqual({
+      actionCount: 3,
+      limited: true,
+      shouldPostStandDown: true,
+    });
+  });
+
+  it("does not post a second stand-down comment in the same window", () => {
+    const now = new Date("2026-07-22T08:00:00Z");
+    const comments = [0, 1, 2].map((minute) => ({
+      body: `${HITL_CARD_ACTION_MARKER}\naction ${minute}`,
+      createdAt: `2026-07-22T07:5${minute}:00Z`,
+    }));
+    comments.push({
+      body: `${HITL_CARD_STAND_DOWN_MARKER}\n🤖 HITL card loop suspected; standing down.`,
+      createdAt: "2026-07-22T07:59:00Z",
+    });
+
+    expect(evaluateHitlCardActionRate(comments, now)).toMatchObject({
+      limited: true,
+      shouldPostStandDown: false,
+    });
   });
 });
 
