@@ -435,6 +435,33 @@ describe("rsp cli", () => {
     expect((decode(runRsp(root, ["wait", "ls"], {}).stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
   });
 
+  it("wait ls sweeps the registry record left by an externally killed wait", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    const fakeGh = await fakeGhPath(root, [{}]);
+    const child = spawn(process.execPath, [
+      "--import", tsxLoader, cli, "wait", "release", "--tag", "never-*",
+      "--reason", "external kill probe", "--timeout", "60s",
+    ], {
+      cwd: root,
+      env: { ...process.env, PATH: fakeGh.path, GH_FAKE_RESPONSES: fakeGh.responsesDir },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.resume();
+    child.stderr.resume();
+
+    await waitForActiveWait(root, "external kill probe");
+    child.kill("SIGKILL");
+    await closeWithTimeout(child, normalizedDurationMs(10_000));
+    const waitsDir = join(root, ".red", "tmp", "waits");
+    expect(await readdir(waitsDir)).toHaveLength(1);
+
+    const listed = runRsp(root, ["wait", "ls"], {});
+    expect(listed.status).toBe(0);
+    expect((decode(listed.stdout.toString("utf8")) as { waits: unknown[] }).waits).toEqual([]);
+    expect(await readdir(waitsDir)).toEqual([]);
+  });
+
   it("wait reports notify delivery failure without losing the successful target verdict", async () => {
     const root = await tempRoot();
     const command = `${shellQuote(process.execPath)} -e "process.exit(0)"`;
