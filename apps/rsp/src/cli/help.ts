@@ -31,12 +31,19 @@ function commandHelpLines(command: string | undefined): string[] {
         "--full           keep full supported wrapper detail",
       ], ["rsp git status --brief", "rsp git log --terse", "rsp git diff --query <path>"]);
     case "gh":
-      return scopedHelp("rsp gh <pr|issue|run> <list|view> [options]", [
+      return scopedHelp("rsp gh <pr|issue|run> <list|view> [options] | <issues|prs|edit-labels|link-sub-issues> ...", [
         "--brief          compact output, default lossless",
         "--terse          aggressively summarize and mint recovery handles",
         "--query <text>   filter rendered rows",
         "--full           keep full supported wrapper detail",
-      ], ["rsp gh pr list --query <title-or-label>", "rsp gh issue view <number>", "rsp gh run list --limit 20"]);
+        "--json <fields>  select fields for batched issues/prs",
+        "--repo <slug>    owner/repo override for batched operations",
+      ], [
+        "rsp gh issues 42 43 --json state,title,labels,body",
+        "rsp gh prs 12 13 --json state,mergeable,statusCheckRollup",
+        "rsp gh edit-labels --add ready-for-agent --remove blocked:crashed 42 43",
+        "rsp gh link-sub-issues 100 101 102",
+      ]);
     case "vitest":
       return scopedHelp("rsp vitest [run] [vitest-options]", [
         "--brief          compact output, default lossless",
