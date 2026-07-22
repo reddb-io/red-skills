@@ -435,6 +435,17 @@ export async function waitForReviewCheck(
  */
 export type MergeReadiness = "merge" | "conflict" | "ci-failed" | "pending";
 
+export interface CiGreenEvidence {
+  checkCount: number;
+  requiredCheckCount: number;
+  summary: string;
+}
+
+export interface MergeReadinessResult {
+  readiness: MergeReadiness;
+  ciEvidence?: CiGreenEvidence;
+}
+
 /** Opt-in CI-aware merge wait for the UNLOCKED admin-PR landing (#812). Present →
  * the landing polls the PR's merge state until it settles before admin-merging.
  * Absent → admin-merge immediately (the legacy behaviour, fine on a base with no
@@ -446,9 +457,15 @@ export interface CiAwaitInput {
   maxPolls?: number;
   /** Delay between polls, in ms. Default 10000. */
   intervalMs?: number;
+  /** Base branch whose required checks must be proven green before CI evidence is usable. */
+  baseBranch?: string;
+  /** Current fetched base SHA; CI evidence is usable only when GitHub sees this base. */
+  expectedBaseOid?: string;
 }
 
 interface RollupEntry {
+  name?: unknown;
+  context?: unknown;
   status?: unknown;
   conclusion?: unknown;
   state?: unknown;
@@ -480,14 +497,53 @@ function checkPending(entry: RollupEntry): boolean {
   return false;
 }
 
-interface MergeStateView {
+export interface MergeStateView {
   mergeStateStatus: string;
   /** GitHub `mergeable`: MERGEABLE | CONFLICTING | UNKNOWN (empty when a caller
    * did not fetch it). The settled-vs-computing signal: `mergeStateStatus` alone
    * can read a transient value before GitHub finishes computing mergeability. */
   mergeable: string;
+  baseRefOid?: string;
+  headRefOid?: string;
   anyFailed: boolean;
   anyPending: boolean;
+  checkCount?: number;
+  successfulChecks?: number;
+  skippedOrNeutralChecks?: number;
+  successfulCheckNames?: string[];
+  skippedOrNeutralCheckNames?: string[];
+  failedCheckNames?: string[];
+  pendingCheckNames?: string[];
+}
+
+function checkSucceeded(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return conclusion === "SUCCESS" || state === "SUCCESS";
+}
+
+function checkSkippedOrNeutral(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  return ["SKIPPED", "NEUTRAL"].includes(conclusion) || ["SKIPPED", "NEUTRAL"].includes(state);
+}
+
+function checkLabel(entry: RollupEntry): string {
+  const name = typeof entry.name === "string" ? entry.name.trim() : "";
+  if (name) return name;
+  return typeof entry.context === "string" ? entry.context.trim() : "";
+}
+
+function emptyMergeStateView(): MergeStateView {
+  return {
+    mergeStateStatus: "",
+    mergeable: "",
+    anyFailed: false,
+    anyPending: false,
+    checkCount: 0,
+    successfulChecks: 0,
+    skippedOrNeutralChecks: 0,
+  };
 }
 
 /** Parse `gh pr view <num> --json mergeStateStatus,statusCheckRollup` stdout.
@@ -495,26 +551,57 @@ interface MergeStateView {
  * keeps polling rather than mis-deciding on a transient gh hiccup. */
 export function parseMergeStateView(stdout: string): MergeStateView {
   const text = stdout.trim();
-  if (text === "") return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+  if (text === "") return emptyMergeStateView();
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) {
-      return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+      return emptyMergeStateView();
     }
     const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
     const mergeable = (parsed as { mergeable?: unknown }).mergeable;
+    const baseRefOid = (parsed as { baseRefOid?: unknown }).baseRefOid;
+    const headRefOid = (parsed as { headRefOid?: unknown }).headRefOid;
     const rollup = (parsed as { statusCheckRollup?: unknown }).statusCheckRollup;
     const entries: RollupEntry[] = Array.isArray(rollup)
       ? rollup.filter((e): e is RollupEntry => typeof e === "object" && e !== null)
       : [];
+    const names = (predicate: (entry: RollupEntry) => boolean): string[] =>
+      entries.filter(predicate).map(checkLabel).filter((name) => name !== "");
     return {
       mergeStateStatus: typeof mergeStateStatus === "string" ? mergeStateStatus : "",
       mergeable: typeof mergeable === "string" ? mergeable : "",
+      ...(typeof baseRefOid === "string" ? { baseRefOid } : {}),
+      ...(typeof headRefOid === "string" ? { headRefOid } : {}),
       anyFailed: entries.some(checkFailed),
       anyPending: entries.some(checkPending),
+      checkCount: entries.length,
+      successfulChecks: entries.filter(checkSucceeded).length,
+      skippedOrNeutralChecks: entries.filter(checkSkippedOrNeutral).length,
+      ...(entries.length > 0
+        ? {
+            successfulCheckNames: names(checkSucceeded),
+            skippedOrNeutralCheckNames: names(checkSkippedOrNeutral),
+            failedCheckNames: names(checkFailed),
+            pendingCheckNames: names(checkPending),
+          }
+        : {}),
     };
   } catch {
-    return { mergeStateStatus: "", mergeable: "", anyFailed: false, anyPending: false };
+    return emptyMergeStateView();
+  }
+}
+
+async function requiredCheckContexts(exec: Exec, repo: string, baseBranch: string | undefined): Promise<string[]> {
+  if (!baseBranch) return [];
+  const res = await exec([
+    "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
+  ]);
+  if (res.code !== 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(res.stdout);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string" && v.trim() !== "") : [];
+  } catch {
+    return [];
   }
 }
 
@@ -558,6 +645,31 @@ export function classifyMergeState(view: MergeStateView): MergeReadiness {
   return "pending";
 }
 
+function ciEvidenceFor(
+  view: MergeStateView,
+  readiness: MergeReadiness,
+  requiredChecks: readonly string[],
+  expectedBaseOid: string | undefined,
+): CiGreenEvidence | undefined {
+  if (readiness !== "merge") return undefined;
+  if (up(view.mergeStateStatus) !== "CLEAN" || up(view.mergeable) !== "MERGEABLE") return undefined;
+  if (!expectedBaseOid || view.baseRefOid !== expectedBaseOid) return undefined;
+  if (requiredChecks.length === 0) return undefined;
+  const successful = new Set(view.successfulCheckNames ?? []);
+  const skippedOrNeutral = new Set(view.skippedOrNeutralCheckNames ?? []);
+  const failed = new Set(view.failedCheckNames ?? []);
+  const pending = new Set(view.pendingCheckNames ?? []);
+  for (const required of requiredChecks) {
+    if (!successful.has(required)) return undefined;
+    if (failed.has(required) || pending.has(required) || skippedOrNeutral.has(required)) return undefined;
+  }
+  return {
+    checkCount: requiredChecks.length,
+    requiredCheckCount: requiredChecks.length,
+    summary: `${requiredChecks.length} required check(s) green`,
+  };
+}
+
 /**
  * Poll `gh pr view <num>` until the PR settles to a terminal readiness
  * (`merge` / `conflict` / `ci-failed`) or the poll budget is exhausted. A
@@ -570,18 +682,33 @@ export async function waitForMergeReady(
   prNumber: number,
   input: CiAwaitInput,
 ): Promise<MergeReadiness> {
+  const result = await waitForMergeReadyWithEvidence(exec, repo, prNumber, input);
+  return result.readiness;
+}
+
+export async function waitForMergeReadyWithEvidence(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: CiAwaitInput,
+): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
+  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch);
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
     const res = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,statusCheckRollup",
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
     ]);
-    const verdict = classifyMergeState(parseMergeStateView(res.stdout));
-    if (verdict !== "pending") return verdict;
+    const view = parseMergeStateView(res.stdout);
+    const verdict = classifyMergeState(view);
+    if (verdict !== "pending") {
+      const ciEvidence = ciEvidenceFor(view, verdict, requiredChecks, input.expectedBaseOid);
+      return { readiness: verdict, ...(ciEvidence ? { ciEvidence } : {}) };
+    }
     if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
   }
-  return "pending";
+  return { readiness: "pending" };
 }
 
 /** Inputs for the UNLOCKED landing path, {@link landPr}. */
@@ -645,6 +772,12 @@ export interface LandPrInput {
    * immediately, the pre-#1337 behaviour.
    */
   mergeQueue?: boolean;
+  /**
+   * Final PR-path validation hook. Called after the PR exists and CI-aware merge
+   * has observed its current readiness, but before `gh pr merge`. Callers use it
+   * to either trust fresh green CI or run their local fallback gate.
+   */
+  beforeMerge?: (input: { prNumber: number; ciEvidence?: CiGreenEvidence }) => Promise<{ ok: true } | { ok: false }>;
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -656,6 +789,7 @@ export type LandPrFailReason =
   | "conflict"
   | "ci-failed"
   | "ci-pending"
+  | "before-merge-failed"
   | "merge-failed";
 
 export interface LandPrResult {
@@ -664,6 +798,8 @@ export interface LandPrResult {
   prNumber?: number;
   /** Forge-reported merge commit for a completed synchronous merge. */
   mergeSha?: string;
+  /** Fresh green CI evidence observed immediately before merge, when usable. */
+  ciEvidence?: CiGreenEvidence;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
 }
@@ -908,7 +1044,7 @@ export async function fastForwardLocalTarget(
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
   // `locked` is retained for caller compatibility; mirror promotion is identical
   // for both lock states.
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue, beforeMerge } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -956,11 +1092,23 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
   //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
   //   - merge      → fall through to the merge below.
+  let ciEvidence: CiGreenEvidence | undefined;
   if (ciAwait) {
-    const ready = await waitForMergeReady(exec, repo, prNumber, ciAwait);
-    if (ready === "conflict") return { ok: false, prNumber, reason: "conflict" };
-    if (ready === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
-    if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+    const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
+    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+      ...ciAwait,
+      baseBranch: ciAwait.baseBranch ?? target,
+      expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
+    });
+    ciEvidence = ready.ciEvidence;
+    if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+    if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+    if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  }
+
+  const beforeMergeCiEvidence = mergeQueue ? undefined : ciEvidence;
+  if (beforeMerge && !(await beforeMerge({ prNumber, ...(beforeMergeCiEvidence ? { ciEvidence: beforeMergeCiEvidence } : {}) })).ok) {
+    return { ok: false, prNumber, reason: "before-merge-failed" };
   }
 
   // 3. Merge: branch protection is honored rather than bypassed (#1103). With a
@@ -987,7 +1135,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // ref-only and decoupled from the primary checkout's branch and working tree.
   await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
 
-  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}) };
+  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
 }
 
 /**

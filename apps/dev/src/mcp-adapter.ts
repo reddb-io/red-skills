@@ -842,7 +842,17 @@ async function createFleet(root: string, input: FleetCreateInput) {
   });
   if (pid === null) {
     await removeFleetProfile(path, profile.name).catch(() => false);
-    throw new Error(`fleet ${JSON.stringify(profile.name)} failed to start`);
+    let tail = "";
+    try {
+      const log = await readFile(paths.supervisorLogPath, "utf8");
+      tail = log.split(/\r?\n/).slice(-20).join("\n").trim();
+    } catch {
+      // A missing log preserves the concise legacy error; spawn is best-effort
+      // about opening the stderr sink so diagnostics must be best-effort too.
+    }
+    throw new Error(
+      `fleet ${JSON.stringify(profile.name)} failed to start${tail ? `\n${tail}` : ""}`,
+    );
   }
   return { status: "launched", profile, pid, target: input.target };
 }
