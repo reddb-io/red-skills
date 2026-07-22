@@ -26,13 +26,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (default: the newest vX.Y.Z tag without a Release)"
+        description: "Release tag to publish (default: the oldest incomplete vX.Y.Z release)"
         required: false
         type: string
   schedule:
-    # Retry a publish deferred by an active /afk fleet. The resolver below picks
-    # the newest vX.Y.Z tag that has no GitHub Release yet, so a quiet hour is a
-    # no-op.
+    # Retry a publish deferred by an active /afk fleet. The resolver below
+    # drains incomplete vX.Y.Z releases oldest-first, so npm's latest dist-tag
+    # and the moving major tag can only advance.
     - cron: "17 * * * *"
 
 permissions:
@@ -68,34 +68,102 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag=""
-          if [ -n "${INPUT_TAG:-}" ]; then
-            tag="$INPUT_TAG"
-          elif [ "$EVENT_NAME" = "push" ]; then
-            tag="$REF_NAME"
-          else
-            # Scheduled retry: the newest vX.Y.Z tag with no GitHub Release yet.
-            for candidate in $(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname); do
-              if ! gh release view "$candidate" >/dev/null 2>&1; then
-                tag="$candidate"
-                break
+
+          major_for() {
+            local version="${1#v}"
+            printf 'v%s\n' "${version%%.*}"
+          }
+
+          # A GitHub Release is not the whole completion marker: the workflow
+          # creates it before moving vX, and a failure in that final push must
+          # remain retryable. A major ref at this release OR a newer release in
+          # the same major means this tag's tail was reconciled successfully.
+          major_reaches() {
+            local candidate="$1" major major_sha pointed pointed_version candidate_version
+            major="$(major_for "$candidate")"
+            major_sha="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" 2>/dev/null || true)"
+            [ -n "$major_sha" ] || return 1
+            candidate_version="${candidate#v}"
+            while IFS= read -r pointed; do
+              [ -n "$pointed" ] || continue
+              [ "$(major_for "$pointed")" = "$major" ] || continue
+              pointed_version="${pointed#v}"
+              if [ "$(printf '%s\n%s\n' "$candidate_version" "$pointed_version" | sort -V | tail -n1)" = "$pointed_version" ]; then
+                echo "::notice::$candidate has a GitHub Release and $major ref already reaches $pointed"
+                return 0
               fi
-            done
+            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --points-at "$major_sha")
+            return 1
+          }
+
+          release_complete() {
+            local candidate="$1"
+            gh release view "$candidate" >/dev/null 2>&1 && major_reaches "$candidate"
+          }
+
+          major_is_ahead() {
+            local candidate="$1" major major_sha pointed pointed_version candidate_version
+            major="$(major_for "$candidate")"
+            major_sha="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" 2>/dev/null || true)"
+            [ -n "$major_sha" ] || return 1
+            candidate_version="${candidate#v}"
+            while IFS= read -r pointed; do
+              [ -n "$pointed" ] || continue
+              [ "$(major_for "$pointed")" = "$major" ] || continue
+              pointed_version="${pointed#v}"
+              if [ "$pointed_version" != "$candidate_version" ] &&
+                 [ "$(printf '%s\n%s\n' "$candidate_version" "$pointed_version" | sort -V | tail -n1)" = "$pointed_version" ]; then
+                return 0
+              fi
+            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --points-at "$major_sha")
+            return 1
+          }
+
+          requested=""
+          if [ -n "${INPUT_TAG:-}" ]; then
+            requested="$INPUT_TAG"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            requested="$REF_NAME"
           fi
-          if [ -z "$tag" ]; then
-            echo "no unpublished vX.Y.Z tag — nothing to do"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "::error::tag $tag does not exist"
+
+          if [ -n "$requested" ] && ! git rev-parse -q --verify "refs/tags/$requested" >/dev/null; then
+            echo "::error::tag $requested does not exist"
             exit 1
           fi
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "::notice::$tag already has a GitHub Release — publish already complete"
+
+          # FIFO is a correctness rule, not just a retry preference. If tags
+          # accumulate during fleet deferral, newest-first would publish an old
+          # version second and move npm/latest plus vX backwards.
+          oldest_pending=""
+          while IFS= read -r candidate; do
+            if ! release_complete "$candidate"; then
+              if major_is_ahead "$candidate"; then
+                echo "::error::refusing stale incomplete release $candidate: its major ref already points to a newer release"
+                exit 1
+              fi
+              oldest_pending="$candidate"
+              break
+            fi
+          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname)
+
+          if [ -z "$oldest_pending" ]; then
+            echo "no incomplete vX.Y.Z release — nothing to do"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          if [ -n "$requested" ] && release_complete "$requested"; then
+            echo "::notice::$requested release tail already complete"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$requested" ] && [ "$requested" != "$oldest_pending" ]; then
+            echo "::error::cannot publish $requested: oldest incomplete release is $oldest_pending"
+            exit 1
+          fi
+
+          tag="${requested:-$oldest_pending}"
           previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${tag}^" 2>/dev/null || true)"
           echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -745,15 +813,19 @@ jobs:
             dist/brain-runtime-manifest.json
             dist/release-manifest.json
           )
-          if [ -n "$PREVIOUS" ]; then
-            gh release create "$NEXT" "${assets[@]}" \
-              --title "$NEXT" \
-              --generate-notes \
-              --notes-start-tag "$PREVIOUS"
+          if gh release view "$NEXT" >/dev/null 2>&1; then
+            echo "::notice::$NEXT already has a GitHub Release — reconciling release tail"
           else
-            gh release create "$NEXT" "${assets[@]}" \
-              --title "$NEXT" \
-              --generate-notes
+            if [ -n "$PREVIOUS" ]; then
+              gh release create "$NEXT" "${assets[@]}" \
+                --title "$NEXT" \
+                --generate-notes \
+                --notes-start-tag "$PREVIOUS"
+            else
+              gh release create "$NEXT" "${assets[@]}" \
+                --title "$NEXT" \
+                --generate-notes
+            fi
           fi
 
           # `vX.Y.Z` is immutable release history; `vX` is the moving major ref
