@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -79,17 +80,38 @@ describe("prepareImplementerEnvironment", () => {
       configText:
         "plugins:\n  dev:\n    enabled: true\n  memory:\n    enabled: true\n",
       pluginRoots,
+      historicalRunnerStartupMs: 840,
       nowMs: () => ticks.shift() ?? 13,
     });
+    prepared.recordRunnerStartup(510);
 
     expect(prepared.runtime.claudePluginDirs).toEqual([
       join(attemptDir, "implementer", "plugins", "dev"),
       join(attemptDir, "implementer", "plugins", "memory"),
     ]);
     expect(prepared.runtime.codexConfigOverrides).toContain(
+      'plugins."dev@red-skills".enabled=false',
+    );
+    expect(prepared.runtime.codexConfigOverrides).toContain(
+      'plugins."memory@red-skills".enabled=false',
+    );
+    expect(prepared.runtime.codexConfigOverrides).toContain(
       'plugins."brain@red-skills".enabled=false',
     );
-    expect(prepared.runtime.codexConfigOverrides.join("\n")).toContain(
+    expect(prepared.runtime.codexConfigOverrides).toContain(
+      `skills.config=[{path=${JSON.stringify(
+        join(
+          attemptDir,
+          "implementer/plugins/dev/skills/engineering/tdd/SKILL.md",
+        ),
+      )},enabled=true},{path=${JSON.stringify(
+        join(
+          attemptDir,
+          "implementer/plugins/memory/skills/core/recall/SKILL.md",
+        ),
+      )},enabled=true}]`,
+    );
+    expect(prepared.runtime.codexConfigOverrides.join("\n")).not.toContain(
       "triage/SKILL.md",
     );
     expect(prepared.runtime.opencodeConfigDir).toBe(
@@ -121,14 +143,40 @@ describe("prepareImplementerEnvironment", () => {
     ).toBe(true);
 
     const artifact = decode(readFileSync(prepared.artifactPath, "utf8")) as {
-      boot_time_ms: { before: number; after: number; delta: number };
-      payload_bytes: { before: number; after: number; delta: number };
+      projection_setup_time_ms: {
+        before: number;
+        after: number;
+        delta: number;
+      };
+      runner_startup_ms: { before: number; after: number; delta: number };
+      skill_manifest_bytes: { before: number; after: number; delta: number };
       skills: string[];
     };
-    expect(artifact.boot_time_ms).toEqual({ before: 8, after: 3, delta: -5 });
-    expect(artifact.payload_bytes.after).toBeLessThan(
-      artifact.payload_bytes.before,
+    expect(artifact.projection_setup_time_ms).toEqual({
+      before: 8,
+      after: 3,
+      delta: -5,
+    });
+    expect(artifact.runner_startup_ms).toEqual({
+      before: 840,
+      after: 510,
+      delta: -330,
+    });
+    const exactBeforeBytes = Object.values(pluginRoots).reduce(
+      (total, root) =>
+        total + statSync(join(root, ".codex-plugin/plugin.json")).size,
+      0,
     );
+    const exactAfterBytes = prepared.runtime.claudePluginDirs.reduce(
+      (total, root) =>
+        total + statSync(join(root, ".codex-plugin/plugin.json")).size,
+      0,
+    );
+    expect(artifact.skill_manifest_bytes).toEqual({
+      before: exactBeforeBytes,
+      after: exactAfterBytes,
+      delta: exactAfterBytes - exactBeforeBytes,
+    });
     expect(artifact.skills).toEqual(["dev:tdd", "memory:recall"]);
   });
 });
