@@ -28,8 +28,6 @@ export interface ImplementerSkill {
   name: string;
   /** Absolute path to the skill directory in the installed/source plugin. */
   path: string;
-  /** Bytes placed in the runner's initial skill catalog entry. */
-  payloadBytes: number;
 }
 
 export interface ImplementerProjection {
@@ -50,8 +48,12 @@ export interface ImplementerMetrics {
   version: 1;
   projection: ImplementerProjection["source"];
   enabled_plugins: ImplementerPluginName[];
-  boot_time_ms: BeforeAfterDelta;
-  payload_bytes: BeforeAfterDelta;
+  /** Catalog discovery/projection construction only; not runner boot. */
+  projection_setup_time_ms: BeforeAfterDelta;
+  /** Invocation to first runner stream event, against a historical baseline. */
+  runner_startup_ms: BeforeAfterDelta;
+  /** Exact bytes of the serialized plugin manifests read at runner discovery. */
+  skill_manifest_bytes: BeforeAfterDelta;
   skill_count: BeforeAfterDelta;
 }
 
@@ -118,22 +120,31 @@ function delta(before: number, after: number): BeforeAfterDelta {
 /** Build the stable, dashboard-readable metrics payload written per run. */
 export function buildImplementerMetrics(
   projection: ImplementerProjection,
-  boot: { legacyBootMs: number; projectedBootMs: number },
+  measurements: {
+    legacyProjectionSetupMs: number;
+    projectedProjectionSetupMs: number;
+    historicalRunnerStartupMs: number;
+    projectedRunnerStartupMs: number;
+    legacySkillManifestBytes: number;
+    projectedSkillManifestBytes: number;
+  },
 ): ImplementerMetrics {
-  const beforeBytes = projection.catalog.reduce(
-    (total, skill) => total + skill.payloadBytes,
-    0,
-  );
-  const afterBytes = projection.skills.reduce(
-    (total, skill) => total + skill.payloadBytes,
-    0,
-  );
   return {
     version: 1,
     projection: projection.source,
     enabled_plugins: projection.enabledPlugins,
-    boot_time_ms: delta(boot.legacyBootMs, boot.projectedBootMs),
-    payload_bytes: delta(beforeBytes, afterBytes),
+    projection_setup_time_ms: delta(
+      measurements.legacyProjectionSetupMs,
+      measurements.projectedProjectionSetupMs,
+    ),
+    runner_startup_ms: delta(
+      measurements.historicalRunnerStartupMs,
+      measurements.projectedRunnerStartupMs,
+    ),
+    skill_manifest_bytes: delta(
+      measurements.legacySkillManifestBytes,
+      measurements.projectedSkillManifestBytes,
+    ),
     skill_count: delta(projection.catalog.length, projection.skills.length),
   };
 }
