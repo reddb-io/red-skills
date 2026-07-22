@@ -1,0 +1,31 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "privatePackages": { "version": true, "tag": false },
+  "fixed": [
+    [
+      "@reddb-io/dev",
+      "@reddb-io/memory",
+      "@reddb-io/brain",
+      "@reddb-io/code-nav-mcp",
+      "@reddb-io/benchmark-memory",
+      "@reddb-io/benchmark-code-understanding",
+      "@reddb-io/shared",
+      "@reddb-io/build-info",
+      "@reddb-io/red-skills"
+    ]
+  ],
+  "linked": [],
+  "ignore": [
+    "@reddb-io/red-castle",
+    "@reddb-io/red-browser",
+    "@reddb-io/rsp",
+    "@reddb-io/afk-container",
+    "@reddb-io/cdp-driver",
+    "@reddb-io/browser-bridge"
+  ]
+}

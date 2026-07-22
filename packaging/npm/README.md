@@ -28,5 +28,8 @@ cannot live in the tarball; those plugins resolve it separately at runtime.)
 
 ## Publishing
 
-This package is published by `.github/workflows/red-release.yml`. Built bundles
-are staged into `dist/` by `scripts/prepare.mjs` before `pnpm pack` / publish.
+This package is published by `.github/workflows/red-publish.yml` when a
+`vX.Y.Z` tag is pushed (ADR 0121). Built bundles are staged into `dist/` by
+`scripts/prepare.mjs` before `pnpm pack` / publish. The version comes from the
+tag; `red-release.yml` decided it earlier through the changesets Version
+Packages PR.
