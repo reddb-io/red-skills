@@ -33,8 +33,8 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 
 ## 2. Route By On-Ramp
 
-- **Incoming bugs or requests** -> `/triage`, then `/afk` once Tickets become
-  ready for agents.
+- **Incoming bugs, requests, or executable ticket readiness** -> `/triage`, then `/afk` once Tickets become
+  ready for agents. `/triage` owns the acceptance-criteria lint for `ready-for-agent` candidates; `/red-doctor` reports the same check read-only when auditing queue health.
 - **A bug you can reproduce or diagnose now** -> `/diagnose`; if the user is
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
