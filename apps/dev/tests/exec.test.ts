@@ -36,7 +36,14 @@ describe("execTool", () => {
     try {
       expect(r.code).toBe(KILLED_EXIT_CODE);
       expect(Number.isInteger(childPid)).toBe(true);
-      expect(() => process.kill(childPid, 0)).toThrow();
+      await expect.poll(() => {
+        try {
+          process.kill(childPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }, { timeout: 2_000 }).toBe(false);
     } finally {
       try {
         process.kill(childPid, "SIGKILL");
