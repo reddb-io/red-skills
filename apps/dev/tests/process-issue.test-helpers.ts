@@ -436,13 +436,13 @@ export function harness(opts: HarnessOptions = {}): {
     },
     mergeExec: async (argv) => {
       const j = argv.join(" ");
-      if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
+      if (/^git -C \/repo fetch origin afk\/.*9-.* --quiet$/.test(j)) {
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+      if (/^git -C \/repo rev-parse --verify --quiet origin\/afk\/.*9-/.test(j)) {
         return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
-      if (j === "git -C /wt rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+      if (/^git -C \/wt rev-parse --verify --quiet origin\/afk\/.*9-/.test(j)) {
         return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
       if (j.includes("merge-base --is-ancestor origin/")) {

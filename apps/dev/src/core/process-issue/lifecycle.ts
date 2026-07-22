@@ -13,6 +13,8 @@ import {
   extractFailureReason,
   isExplicitRestartRequested,
   isGateGreenBranch,
+  pullRequestMatchesAttempt,
+  selectAttemptPullRequest,
 } from "../branch-resume.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
@@ -279,14 +281,44 @@ export async function processIssue(
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
   const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
+  // Attempt adoption (#2416): inspect open PRs before the worker branch is
+  // materialised. A matching PR is authoritative existing work and takes the
+  // no-agent validate-and-land path. The issue comment makes every concurrent
+  // historical attempt visible to a human instead of silently selecting one.
+  const openPullRequests = await deps.lookups.discoverOpenPullRequests?.(issue) ?? [];
+  const matchingPullRequests = openPullRequests
+    .filter((pr) => pullRequestMatchesAttempt(pr, issue))
+    .sort((a, b) => a.number - b.number);
+  const adoptedPullRequest = selectAttemptPullRequest(matchingPullRequests, issue);
+  if (matchingPullRequests.length > 0) {
+    await deps.gh.comment(
+      issue,
+      `🤖 /afk Attempt PRs for #${issue}: ${matchingPullRequests.map((pr) => `#${pr.number}`).join(", ")}. ` +
+        (adoptedPullRequest
+          ? `Adopting #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\` through the no-agent gate.`
+          : "No adoptable head was found."),
+    );
+  }
+
   // Branch-resume logic (issue #2397): discover a prior pushed branch so re-claim
-  // can continue instead of rebuilding from scratch. Explicit restart overrides.
+  // can continue instead of rebuilding from scratch. Explicit restart overrides a
+  // branch-only resume, but never silently supersedes an existing open PR.
   const allBranches = await deps.lookups.discoverBranches?.() ?? [];
   const humanGuidanceForResume = buildHumanGuidance(comments);
   const explicitRestart = isExplicitRestartRequested(humanGuidanceForResume);
-  const resumableBranch = explicitRestart ? null : discoverResumableBranch(allBranches, issue);
+  const resumableBranch = adoptedPullRequest
+    ? { branch: adoptedPullRequest.headRefName }
+    : explicitRestart
+      ? null
+      : discoverResumableBranch(allBranches, issue);
   const failureReason = extractFailureReason(priorAttemptContext);
-  const resumeIsGateGreen = resumableBranch !== null && isGateGreenBranch(failureReason);
+  const resumeIsGateGreen = adoptedPullRequest !== null ||
+    (resumableBranch !== null && isGateGreenBranch(failureReason));
+  if (adoptedPullRequest) {
+    deps.appendIterLog(
+      `🤖 /afk #${issue}: adopting open PR #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\`; agent skipped.`,
+    );
+  }
   const resumeInstruction =
     resumableBranch !== null
       ? buildResumeInstruction(resumableBranch.branch, resumeIsGateGreen, base)

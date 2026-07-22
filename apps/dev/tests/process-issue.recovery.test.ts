@@ -283,7 +283,7 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(p.modelTier).toBe("simple");
     expect(p.outcome).toBe("success");
     expect(p.issueTitle).toBe("Fix the thing");
-    expect(p.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(p.branch).toBe("afk/9-fix-the-thing");
     expect(p.mergeCommit).toBe("forge-merge-sha");
     expect(p.workerId).toBe("wAAAA");
     expect(p.validationSummary).toBeTruthy();
@@ -384,7 +384,7 @@ describe("processIssue — AFK→Brain outcome-event recording", () => {
         attemptNumber: 1,
         issueType: "bug",
         workerId: "wAAAA",
-        branch: "afk/wAAAA/9-fix-the-thing",
+        branch: "afk/9-fix-the-thing",
         durationMs: 0,
         status: "done",
       },
@@ -864,7 +864,7 @@ describe("Spec cascade rebase after DONE landing", () => {
 // fail these.
 
 describe("processIssue — terminal disposition without an exit barrier (ADR 0103)", () => {
-  const BRANCH = "afk/wAAAA/9-fix-the-thing";
+  const BRANCH = "afk/9-fix-the-thing";
   const noReceipt = (result: object, trace: { iterLogs: string[] }): void => {
     expect("exitReceipt" in result).toBe(false);
     expect(trace.iterLogs.some((l) => l.includes("exit barrier"))).toBe(false);

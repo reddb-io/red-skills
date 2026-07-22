@@ -1072,7 +1072,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
 
     expect(result.outcome).toBe("done");
     expect(trace.changedFileCalls).toContainEqual({
-      branch: "afk/wAAAA/9-fix-the-thing",
+      branch: "afk/9-fix-the-thing",
       base: "red-trunk",
     });
     const pnpmDirs = trace.pnpmArgs
@@ -1081,8 +1081,8 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
         return idx >= 0 ? args[idx + 1] : undefined;
       })
       .filter(Boolean);
-    expect(pnpmDirs).toContain("afk/wAAAA/9-fix-the-thing/packages/fresh");
-    expect(pnpmDirs).not.toContain("afk/wAAAA/9-fix-the-thing/packages/stale");
+    expect(pnpmDirs).toContain("afk/9-fix-the-thing/packages/fresh");
+    expect(pnpmDirs).not.toContain("afk/9-fix-the-thing/packages/stale");
   });
 
   it("resolves an unlocked, pinless issue to the configured Trunk and forks off red-trunk", async () => {
