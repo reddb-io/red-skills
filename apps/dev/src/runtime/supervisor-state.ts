@@ -20,8 +20,9 @@ export function isSupervisorIdentityLive(
   pidStartTime: (pid: number) => string | null = readPidStartTime,
 ): boolean {
   if (!isLivePid(identity.pid)) return false;
-  if (identity.startTime === "") return true;
-  return pidStartTime(identity.pid) === identity.startTime;
+  if (identity.startTime === "") return false;
+  const actualStartTime = pidStartTime(identity.pid);
+  return actualStartTime !== null && actualStartTime === identity.startTime;
 }
 
 export interface SupervisorStateReapResult {
@@ -41,6 +42,20 @@ export async function readSupervisorPid(pidFile: string): Promise<number | null>
   }
 }
 
+export async function readSupervisorIdentity(
+  pidFile: string,
+  pidStartFile = `${pidFile}.start`,
+): Promise<SupervisorIdentity | null> {
+  const pid = await readSupervisorPid(pidFile);
+  if (pid === null) return null;
+  try {
+    const startTime = (await readFile(pidStartFile, "utf8")).trim();
+    return { pid, startTime };
+  } catch {
+    return { pid, startTime: "" };
+  }
+}
+
 export interface SupervisorPidDiscovery {
   pid: number;
   source: "pid-file" | "snapshot-dir";
@@ -56,6 +71,8 @@ export interface DiscoverSupervisorPidOptions {
    * can never report fleet B's pid.
    */
   fleet?: string;
+  /** Injectable stable process-start lookup for deterministic identity tests. */
+  pidStartTime?: (pid: number) => string | null;
 }
 
 /** Collect the live `s<pid>` supervisor-lane dirs directly under `dir`, newest
@@ -97,9 +114,12 @@ export async function discoverLiveSupervisorPid(
   options: DiscoverSupervisorPidOptions = {},
 ): Promise<SupervisorPidDiscovery | null> {
   const pidFile = join(supervisorRuntimeDir, "afk-supervisor.pid");
-  const pid = await readSupervisorPid(pidFile);
-  if (pid !== null && isLivePid(pid)) {
-    return { pid, source: "pid-file", path: pidFile };
+  const identity = await readSupervisorIdentity(pidFile);
+  if (
+    identity !== null &&
+    isSupervisorIdentityLive(identity, isLivePid, options.pidStartTime ?? readPidStartTime)
+  ) {
+    return { pid: identity.pid, source: "pid-file", path: pidFile };
   }
 
   const own = await liveLaneDirs(supervisorRuntimeDir, isLivePid);
@@ -151,14 +171,19 @@ async function supervisorArtifactPaths(dir: string): Promise<string[]> {
 export async function reapStaleSupervisorState(
   dirs: string | readonly string[],
   isLivePid: (pid: number) => boolean = defaultIsLivePid,
+  pidStartTime: (pid: number) => string | null = readPidStartTime,
 ): Promise<SupervisorStateReapResult> {
   const dirList = typeof dirs === "string" ? [dirs] : [...dirs];
   let pid: number | null = null;
   for (const dir of dirList) {
-    pid = await readSupervisorPid(join(dir, "afk-supervisor.pid"));
-    if (pid !== null) break;
+    const identity = await readSupervisorIdentity(join(dir, "afk-supervisor.pid"));
+    if (identity === null) continue;
+    pid = identity.pid;
+    if (isSupervisorIdentityLive(identity, isLivePid, pidStartTime)) {
+      return { status: "live", pid, removed: [] };
+    }
+    break;
   }
-  if (pid !== null && isLivePid(pid)) return { status: "live", pid, removed: [] };
 
   const artifacts = (await Promise.all(dirList.map((d) => supervisorArtifactPaths(d)))).flat();
   const present: string[] = [];
