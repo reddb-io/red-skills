@@ -19,6 +19,7 @@ import { classifySupervisor, resolveSupervisorConfig, type ElasticShrinkMode } f
 import { teardownWedgedSupervisor } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
+import { spawnSupervisorWatchdog } from "../runtime/supervisor-watchdog-spawn.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import { discoverLiveSupervisorPid, reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 import { parseFleetFlag, DEFAULT_FLEET_NAME } from "../core/fleet-name.js";
@@ -642,6 +643,10 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     }
     throw new Error(`fleet launch failed: supervisor pid file did not appear. log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${tail}`);
   }
+  const watchdogPid = await spawnSupervisorWatchdog({ root, fleet: paths.fleet });
+  if (!watchdogPid) {
+    throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
+  }
 
   // Persist the profile so CLI-launched fleets are always in the registry (#2358).
   await upsertFleetProfile(fleetRegistryPath(createEnginePaths(join(root, ".red"))), {
@@ -654,6 +659,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 
   const named = paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
   stdout.write(`🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);
+  stdout.write(`   self-heal: armed (watchdog pid=${watchdogPid})\n`);
   stdout.write(`   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`);
   stdout.write(`   stop:  /dev:afk fleet stop${named}\n`);
   stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`);
