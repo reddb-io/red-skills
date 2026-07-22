@@ -219,6 +219,10 @@ export interface BootFs {
   removeDir(path: string): Promise<void>;
   /** Final worker.pid liveness guard before removing a whole worker dir. */
   workerPidLive?(workerDir: string): Promise<boolean>;
+  /** Fresh owner-liveness verdict before removing a feedback worktree. */
+  feedbackWorktreeLiveness?(
+    path: string,
+  ): Promise<"owner-live" | "owner-dead" | "no-live-workers">;
   /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
   reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
 }
@@ -633,6 +637,11 @@ export interface TmpJanitorSweepResult {
   staleWorkers: string[];
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
+  protectedLiveFeedback: string[];
+  removals: Array<{
+    path: string;
+    livenessVerdict: "not-worker-workspace" | "worker-dead" | "owner-dead" | "no-live-workers";
+  }>;
 }
 
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
@@ -809,6 +818,8 @@ async function runTmpJanitorSweep(
     staleWorkers: [],
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
+    protectedLiveFeedback: [],
+    removals: [],
   };
   if (!sweep) return result;
 
@@ -819,8 +830,22 @@ async function runTmpJanitorSweep(
     ...sweep.plan.feedbackWorktrees.reclaim,
     ...sweep.plan.legacySlotLogs.reclaim,
   ];
+  const feedbackPaths = new Set(sweep.plan.feedbackWorktrees.reclaim.map((entry) => entry.path));
   for (const entry of expired) {
+    if (feedbackPaths.has(entry.path)) {
+      const verdict = await deps.fs.feedbackWorktreeLiveness?.(entry.path).catch(() => "owner-live" as const)
+        ?? "owner-live";
+      if (verdict === "owner-live") {
+        result.protectedLiveFeedback.push(entry.path);
+        continue;
+      }
+      await deps.fs.removeDir(entry.path);
+      result.removals.push({ path: entry.path, livenessVerdict: verdict });
+      result.expiredLanes.push(entry.path);
+      continue;
+    }
     await deps.fs.removeDir(entry.path);
+    result.removals.push({ path: entry.path, livenessVerdict: "not-worker-workspace" });
     result.expiredLanes.push(entry.path);
   }
 
@@ -831,12 +856,14 @@ async function runTmpJanitorSweep(
       continue;
     }
     await deps.fs.removeDir(worker.path);
+    result.removals.push({ path: worker.path, livenessVerdict: "worker-dead" });
     result.staleWorkers.push(worker.path);
   }
 
   for (const name of sweep.plan.unknownTmpRoots) {
     const path = join(options.bootstrap.tmpDir, name);
     await deps.fs.removeDir(path);
+    result.removals.push({ path, livenessVerdict: "not-worker-workspace" });
     result.unknownTmpRoots.push(path);
   }
 
