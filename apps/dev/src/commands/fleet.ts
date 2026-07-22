@@ -586,6 +586,10 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     const liveness = await io.liveness();
     const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
     if (health !== "quiescent") {
+      const watchdogPid = await spawnSupervisorWatchdog({ root, fleet: paths.fleet });
+      if (!watchdogPid) {
+        throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
+      }
       const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
       const directiveRunner = parsed.runnerFlag ? detectRunner({ flag: parsed.runnerFlag }).runner : undefined;
       await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode, directiveRunner);
@@ -645,6 +649,9 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
   const watchdogPid = await spawnSupervisorWatchdog({ root, fleet: paths.fleet });
   if (!watchdogPid) {
+    await killTreeAndWait(supervisorPid).catch(() => false);
+    await rm(paths.supervisorPidPath, { force: true }).catch(() => undefined);
+    await rm(paths.supervisorPidStartPath, { force: true }).catch(() => undefined);
     throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
   }
 
