@@ -59,11 +59,7 @@ describe("CLI fleet N launch — profile upsert", () => {
     const cwd = await root();
     const silent = { write: () => true } as unknown as NodeJS.WritableStream;
 
-    await launchFleet(
-      ["2", "--runner", "codex", "--fleet", "alpha"],
-      cwd,
-      silent,
-    );
+    await launchFleet(["2", "--runner", "codex", "--fleet", "alpha"], cwd, silent);
 
     const profile = await readFleetProfile(
       fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
