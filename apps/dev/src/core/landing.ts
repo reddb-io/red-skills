@@ -141,6 +141,12 @@ export interface LandingDeps {
    */
   postMergeGate?: (mergedTreeDir: string) => Promise<{ ok: boolean }>;
   /**
+   * When true, a landing that cannot use fresh PR CI must have `postMergeGate`.
+   * This lets validation-aware callers fail as infra instead of silently landing
+   * without either CI provenance or a local fallback.
+   */
+  requirePostMergeValidation?: boolean;
+  /**
    * Global AFK land-lock (#1337). Present → the landing critical section
    * (integrate/rebase → revalidate → merge → push) runs under mutual exclusion, so
    * only one worker at a time lands into `<base>` and each one rebases onto a tip
@@ -464,6 +470,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   if (!prepared.ok) return prepared.result;
 
   let postMergeValidation: LandingPostMergeValidation | undefined;
+  let missingPostMergeFallback = false;
   try {
     await deps.landingPhase?.("push-pr");
     const r = await landPr(deps.mergeExec, {
@@ -487,11 +494,15 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       // not a local primary branch. `locked` is observability only.
       locked: input.locked,
       beforeMerge: async ({ prNumber, ciEvidence }) => {
-        if (!deps.postMergeGate) return { ok: true };
         if (ciEvidence) {
           postMergeValidation = ciSatisfiedValidation(prNumber, ciEvidence);
           return { ok: true };
         }
+        if (!deps.postMergeGate && (deps.requirePostMergeValidation || deps.ciAwait)) {
+          missingPostMergeFallback = true;
+          return { ok: false };
+        }
+        if (!deps.postMergeGate) return { ok: true };
         await deps.landingPhase?.("gate");
         const gateResult = await deps.postMergeGate!(prepared.dir);
         postMergeValidation = {
@@ -521,7 +532,18 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     if (r.reason === "pr-resolved-abort") {
       return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: r.prNumber };
     }
-    if (r.reason === "before-merge-failed") return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: r.prNumber };
+    if (r.reason === "before-merge-failed") {
+      if (missingPostMergeFallback) {
+        return {
+          ok: false,
+          reason: "infra",
+          locked: input.locked,
+          prNumber: r.prNumber,
+          infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
+        };
+      }
+      return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: r.prNumber };
+    }
     if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
     if (r.reason === "merge-failed" && r.prNumber !== undefined) {
       return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
@@ -545,7 +567,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
 function ciSatisfiedValidation(prNumber: number, evidence: CiGreenEvidence): LandingPostMergeValidation {
   return {
     path: "satisfied-by-ci",
-    reason: `PR #${prNumber} had fresh green CI evidence from ${evidence.checkCount} successful check(s); local post-merge validation skipped.`,
+    reason: `PR #${prNumber} had fresh green CI evidence from ${evidence.requiredCheckCount} required check(s); local post-merge validation skipped.`,
     prNumber,
     checkCount: evidence.checkCount,
   };
@@ -632,7 +654,17 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // already-integrated worktree (worker branch merged with current
     // origin/<base>) before pushing anything to the remote. A failure aborts
     // here so a stale-main-broken result is never merged.
-    if (deps.postMergeGate) {
+    if (!deps.postMergeGate && deps.requirePostMergeValidation) {
+      return {
+        ok: false,
+        reason: "infra",
+        locked: input.locked,
+        infraReason: "Post-merge validation fallback is not configured for a direct landing that bypassed PR CI.",
+      };
+    }
+    if (!deps.postMergeGate) {
+      postMergeValidation = undefined;
+    } else {
       await deps.landingPhase?.("gate");
       const gateResult = await deps.postMergeGate(landDir);
       if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
