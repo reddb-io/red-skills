@@ -24,6 +24,8 @@ import { appendRecordToonl } from "../core/jsonl-log.js";
 // files on exit, so the relaunch must not write a fresh pid file until the dying
 // process has finished cleaning up — otherwise it would clobber the new one.
 import { isLivePid, killTreeAndWait } from "./kill-tree.js";
+import { isSupervisorIdentityLive } from "./supervisor-state.js";
+import { readPidStartTime } from "../core/state.js";
 
 async function readPid(path: string): Promise<number | null> {
   try {
@@ -57,6 +59,7 @@ export function buildWatchdogIO(
 ): WatchdogIO {
   const paths = afkPaths(root);
   const pidFile = paths.supervisorPidPath;
+  const pidStartFile = paths.supervisorPidStartPath;
   const stopFile = paths.supervisorStopPath;
   const logFile = paths.supervisorLogPath;
   const restartLedgerFile = paths.supervisorRestartsPath;
@@ -97,6 +100,7 @@ export function buildWatchdogIO(
 
     liveness: async (): Promise<SupervisorLiveness> => {
       const pid = await readPid(pidFile);
+      const startTime = await readFile(pidStartFile, "utf8").then((value) => value.trim()).catch(() => "");
       const fleet = await readFleetState(paths.fleetStatePath);
       if (fleet) {
         if (fleet.slotsTotal > 0) lastTarget = fleet.slotsTotal;
@@ -105,7 +109,9 @@ export function buildWatchdogIO(
       }
       return {
         pid,
-        pidAlive: pid !== null && isLivePid(pid),
+        pidAlive:
+          pid !== null &&
+          isSupervisorIdentityLive({ pid, startTime }, isLivePid, readPidStartTime),
         lastHeartbeatEpoch: fleet ? fleet.epoch : null,
         lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
         slotsBusy: fleet?.slotsBusy ?? 0,
@@ -148,6 +154,7 @@ export function buildWatchdogIO(
 
     clearControlFiles: async () => {
       await rm(pidFile, { force: true });
+      await rm(pidStartFile, { force: true });
       await rm(stopFile, { force: true });
     },
 
