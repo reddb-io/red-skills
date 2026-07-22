@@ -51,6 +51,20 @@ grep -qF 'ref: ${{ github.event.pull_request.base.sha || github.event.repository
 grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/red-hitl-card.yml ||
   fail "red-hitl-card.yml must checkout the base PR SHA before running the launcher"
 
+for workflow in \
+  .github/workflows/red-workspace-ci.yml \
+  .github/workflows/red-rsp-benchmark-ci.yml; do
+  grep -qF 'https://api.github.com/repos/reddb-io/toon/contents/install.sh?ref=${TQ_VERSION}' "$workflow" ||
+    fail "$workflow must fetch the pinned tq installer through the GitHub API"
+  grep -qF 'Authorization: Bearer ${GH_TOKEN}' "$workflow" ||
+    fail "$workflow must authenticate the pinned tq installer fetch"
+  grep -qF 'GH_TOKEN: ${{ github.token }}' "$workflow" ||
+    fail "$workflow must source tq installer authentication from github.token"
+  if grep -qF 'raw.githubusercontent.com/reddb-io/toon/${TQ_VERSION}/install.sh' "$workflow"; then
+    fail "$workflow must not fetch the pinned tq installer anonymously"
+  fi
+done
+
 if (( failures > 0 )); then
   exit 1
 fi
