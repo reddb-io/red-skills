@@ -6,7 +6,7 @@ import {
   appendCastleHistoryRecord,
   createEnginePaths,
 } from "@reddb-io/red-castle/engine";
-import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
+import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
 
 let tempRoot: string | undefined;
@@ -33,7 +33,7 @@ function encodeCursor(at: string): string {
 describe("events_since tool", () => {
   it("returns a baseline cursor and no events when cursor is omitted", async () => {
     const root = await makeRoot();
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
@@ -50,7 +50,7 @@ describe("events_since tool", () => {
 
   it("returns a terse refusal for an unknown cursor, not a full dump", async () => {
     const root = await makeRoot();
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
@@ -65,7 +65,7 @@ describe("events_since tool", () => {
 
   it("returns a terse refusal for a validly-encoded but unknown-version cursor", async () => {
     const root = await makeRoot();
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
@@ -78,7 +78,7 @@ describe("events_since tool", () => {
 
   it("returns a terse refusal for an expired cursor (> 7 days old)", async () => {
     const root = await makeRoot();
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
@@ -120,7 +120,7 @@ describe("events_since tool", () => {
     const between = new Date(Date.now() - 2_500).toISOString();
     const cursor = encodeCursor(between);
 
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
@@ -146,12 +146,12 @@ describe("events_since tool", () => {
     const root = await makeRoot();
     const cursor = encodeCursor(new Date(Date.now() - 1_000).toISOString());
 
-    const deps1 = createDevAfkMcpDependencies(root);
+    const deps1 = createCastleMcpDependencies(root);
     const tools1 = createCastleMcpTools(deps1);
     const r1 = await tools1.find((t) => t.name === "events_since")!.invoke({ cursor }) as Record<string, unknown>;
     expect(r1.refused).toBeUndefined();
 
-    const deps2 = createDevAfkMcpDependencies(root);
+    const deps2 = createCastleMcpDependencies(root);
     const tools2 = createCastleMcpTools(deps2);
     const r2 = await tools2.find((t) => t.name === "events_since")!.invoke({ cursor }) as Record<string, unknown>;
     expect(r2.refused).toBeUndefined();
@@ -159,7 +159,7 @@ describe("events_since tool", () => {
 
   it("next cursor is monotonically advancing across two calls", async () => {
     const root = await makeRoot();
-    const deps = createDevAfkMcpDependencies(root);
+    const deps = createCastleMcpDependencies(root);
     const tools = createCastleMcpTools(deps);
     const tool = tools.find((t) => t.name === "events_since")!;
 
