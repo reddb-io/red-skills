@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { CASTLE_VALIDATION_SCHEMA } from "./gate-constants.js";
 import { makeHeadlessGateSink, makeInteractiveGateSink } from "./gate-sink.js";
-import { classifyFinding, runCastleGate, type RunCastleGateInput } from "./gate-executor.js";
+import {
+  classifyFinding,
+  runCastleGate,
+  type RunCastleGateInput,
+} from "./gate-executor.js";
 
 function baseInput(): RunCastleGateInput {
   let tick = 0;
@@ -13,7 +17,9 @@ function baseInput(): RunCastleGateInput {
         return [".", "packages/core", "apps/dev"].includes(scope);
       },
       hasScript(scope, script) {
-        return scope === "packages/core" && ["test", "typecheck"].includes(script);
+        return (
+          scope === "packages/core" && ["test", "typecheck"].includes(script)
+        );
       },
     },
     graph: {
@@ -26,7 +32,11 @@ function baseInput(): RunCastleGateInput {
       askIntent: async () => "approved",
     }),
     feedbackExec: vi.fn(async () => ({ code: 0, stdout: "ok", stderr: "" })),
-    backpressureExec: vi.fn(async () => ({ code: 0, stdout: "ok", stderr: "" })),
+    backpressureExec: vi.fn(async () => ({
+      code: 0,
+      stdout: "ok",
+      stderr: "",
+    })),
     applyMechanical: vi.fn(async () => {}),
     now: () => ++tick,
   };
@@ -34,8 +44,12 @@ function baseInput(): RunCastleGateInput {
 
 describe("castle gate executor", () => {
   it("classifies only versioned mechanical kinds as mechanical", () => {
-    expect(classifyFinding({ kind: "formatter", description: "format" })).toBe("mechanical");
-    expect(classifyFinding({ kind: "refactor", description: "logic changed" })).toBe("intent");
+    expect(classifyFinding({ kind: "formatter", description: "format" })).toBe(
+      "mechanical",
+    );
+    expect(
+      classifyFinding({ kind: "refactor", description: "logic changed" }),
+    ).toBe("intent");
   });
 
   it("runs scoped feedback, skips missing scripts, then runs configured backpressure", async () => {
@@ -50,14 +64,23 @@ describe("castle gate executor", () => {
       triggerPackages: ["packages/core"],
       packages: ["apps/dev", "packages/core"],
     });
-    expect(input.feedbackExec).toHaveBeenCalledWith(["pnpm", "-C", "/repo/packages/core", "test"]);
+    expect(input.feedbackExec).toHaveBeenCalledWith([
+      "pnpm",
+      "-C",
+      "/repo/packages/core",
+      "test",
+    ]);
     expect(input.backpressureExec).toHaveBeenCalledWith({
       command: "pnpm smoke",
       cwd: "/repo",
       timeoutMs: 600000,
     });
-    expect(result.checks.map((check) => check.name)).toContain("backpressure:pnpm smoke");
-    expect(JSON.parse(result.sidecar[0]!).schema).toBe(CASTLE_VALIDATION_SCHEMA);
+    expect(result.checks.map((check) => check.name)).toContain(
+      "backpressure:pnpm smoke",
+    );
+    expect(JSON.parse(result.sidecar[0]!).schema).toBe(
+      CASTLE_VALIDATION_SCHEMA,
+    );
   });
 
   it("blocks through the headless sink on intent findings before validation evidence is recorded", async () => {
@@ -77,7 +100,11 @@ describe("castle gate executor", () => {
 
   it("does not run backpressure when feedback fails", async () => {
     const input = baseInput();
-    input.feedbackExec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "failed" }));
+    input.feedbackExec = vi.fn(async () => ({
+      code: 1,
+      stdout: "",
+      stderr: "failed",
+    }));
     input.backpressureCommands = ["pnpm smoke"];
 
     const result = await runCastleGate(input);
@@ -86,9 +113,40 @@ describe("castle gate executor", () => {
     expect(input.backpressureExec).not.toHaveBeenCalled();
   });
 
+  it("refuses an over-class gate with an explicit verdict before executing commands", async () => {
+    const input = baseInput();
+    input.hostProfile = {
+      machineIdHash: "8cb3eafdcbd2",
+      runners: ["codex"],
+      maxGateWeight: "light-cone",
+      defaultFleetWidth: 1,
+    };
+    input.gateWeight = "heavy-cone";
+    input.backpressureCommands = ["pnpm smoke"];
+
+    const result = await runCastleGate(input);
+
+    expect(result).toMatchObject({
+      ok: false,
+      admission: {
+        admitted: false,
+        verdict: "refused-over-class",
+        required: "heavy-cone",
+        maximum: "light-cone",
+      },
+      checks: [],
+      sidecar: [],
+    });
+    expect(input.feedbackExec).not.toHaveBeenCalled();
+    expect(input.backpressureExec).not.toHaveBeenCalled();
+  });
+
   it("a diff touching .github/workflows/ passes through the gate without blocking", async () => {
     const input = baseInput();
-    input.changedFiles = [".github/workflows/ci.yml", "packages/core/src/index.ts"];
+    input.changedFiles = [
+      ".github/workflows/ci.yml",
+      "packages/core/src/index.ts",
+    ];
 
     const result = await runCastleGate(input);
 
