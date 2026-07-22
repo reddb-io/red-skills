@@ -185,6 +185,8 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // exactly ONE agent run — the completed work is never re-run.
     expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:satisfied-by-ci"))).toBe(true);
+    expect(trace.workerEvents.some((event) => event.kind === "worker.post_merge_validation" && event.payload?.path === "satisfied-by-ci")).toBe(true);
   });
 
   it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {

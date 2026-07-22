@@ -35,6 +35,7 @@ import {
   resolveMergeConflict,
   type ConflictResolver,
   type CiAwaitInput,
+  type CiGreenEvidence,
   type Exec as MergeExec,
   type WaitForReviewInput,
 } from "./merge.js";
@@ -139,6 +140,12 @@ export interface LandingDeps {
    *   - PR path: the isolated rebase worktree after `preMergeRebase`
    */
   postMergeGate?: (mergedTreeDir: string) => Promise<{ ok: boolean }>;
+  /**
+   * When true, a landing that cannot use fresh PR CI must have `postMergeGate`.
+   * This lets validation-aware callers fail as infra instead of silently landing
+   * without either CI provenance or a local fallback.
+   */
+  requirePostMergeValidation?: boolean;
   /**
    * Global AFK land-lock (#1337). Present → the landing critical section
    * (integrate/rebase → revalidate → merge → push) runs under mutual exclusion, so
@@ -287,7 +294,7 @@ export interface LandingHookContexts {
  * session's lock state (input.locked) for the caller's result shape — it is
  * observational and no longer implies the landing mode (#842). */
 export type LandingResult =
-  | { ok: true; locked: boolean; mergeSha?: string }
+  | { ok: true; locked: boolean; mergeSha?: string; postMergeValidation?: LandingPostMergeValidation }
   | {
       ok: false;
       // `ci-failed` / `ci-pending` (#812) are UNLOCKED-only: a completed,
@@ -326,6 +333,19 @@ export type LandingResult =
       message?: string;
       /** Infra failure (`infra`): actionable refusal text for the terminal note. */
       infraReason?: string;
+    };
+
+export type LandingPostMergeValidation =
+  | {
+      path: "satisfied-by-ci";
+      reason: string;
+      prNumber: number;
+      checkCount: number;
+    }
+  | {
+      path: "local-rerun";
+      reason: string;
+      prNumber?: number;
     };
 
 /**
@@ -446,48 +466,92 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   // --force-with-lease reject that survives the bounded retry — parks
   // blocked:merge-conflict through the existing `pr-conflict` route. Missing or
   // failed provisioning is infra, never a silent skip (#1212).
-  const rebaseFail = await preMergeRebaseInWorktree(deps, input);
-  if (rebaseFail) return rebaseFail;
+  const prepared = await preparePrRebaseWorktree(deps, input);
+  if (!prepared.ok) return prepared.result;
 
-  await deps.landingPhase?.("push-pr");
-  const r = await landPr(deps.mergeExec, {
-    repo: input.repo,
-    gitRepo: input.repoDir,
-    remote: input.remote,
-    branch: input.branch,
-    target: input.base,
-    n: input.issue,
-    title: input.title,
-    mergeTitle: landingMergeTitle(input),
-    waitForReview: deps.waitForReview,
-    ciAwait: deps.ciAwait,
-    // Non-blocking backpressure evidence review (#1279): threaded through so
-    // landPr can attach the ledger the moment it resolves the PR number.
-    onPrResolved: deps.onPrResolved,
-    // Native merge queue (#1337): enqueue rather than merge on the spot, letting
-    // the forge serialize + rebase + revalidate every entry onto the current tip.
-    mergeQueue: input.nativeMergeQueue === true,
-    // Untouchable primary (ADR 0083 / 0108): landPr promotes the fleet mirror,
-    // not a local primary branch. `locked` is observability only.
-    locked: input.locked,
-  });
-  if (r.ok) return { ok: true, locked: input.locked, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}) };
-  // Route the CI-aware failure modes (#812) distinctly. A failed required check
-  // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
-  // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything
-  // else (real conflict / push / no-PR / admin-merge rejection) stays land-failed.
-  // `locked` echoes the session's lock state (#842): the admin-PR path is no
-  // longer unlocked-only — lock=X + openPr=true also lands through here.
-  if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: r.prNumber };
-  if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: r.prNumber };
-  if (r.reason === "pr-resolved-abort") {
-    return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: r.prNumber };
+  let postMergeValidation: LandingPostMergeValidation | undefined;
+  let missingPostMergeFallback = false;
+  try {
+    await deps.landingPhase?.("push-pr");
+    const r = await landPr(deps.mergeExec, {
+      repo: input.repo,
+      gitRepo: input.repoDir,
+      remote: input.remote,
+      branch: input.branch,
+      target: input.base,
+      n: input.issue,
+      title: input.title,
+      mergeTitle: landingMergeTitle(input),
+      waitForReview: deps.waitForReview,
+      ciAwait: deps.ciAwait,
+      // Non-blocking backpressure evidence review (#1279): threaded through so
+      // landPr can attach the ledger the moment it resolves the PR number.
+      onPrResolved: deps.onPrResolved,
+      // Native merge queue (#1337): enqueue rather than merge on the spot, letting
+      // the forge serialize + rebase + revalidate every entry onto the current tip.
+      mergeQueue: input.nativeMergeQueue === true,
+      // Untouchable primary (ADR 0083 / 0108): landPr promotes the fleet mirror,
+      // not a local primary branch. `locked` is observability only.
+      locked: input.locked,
+      beforeMerge: async ({ prNumber, ciEvidence }) => {
+        if (ciEvidence) {
+          postMergeValidation = ciSatisfiedValidation(prNumber, ciEvidence);
+          return { ok: true };
+        }
+        if (!deps.postMergeGate && (deps.requirePostMergeValidation || deps.ciAwait)) {
+          missingPostMergeFallback = true;
+          return { ok: false };
+        }
+        if (!deps.postMergeGate) return { ok: true };
+        await deps.landingPhase?.("gate");
+        const gateResult = await deps.postMergeGate!(prepared.dir);
+        postMergeValidation = {
+          path: "local-rerun",
+          reason: `PR #${prNumber} CI evidence was absent or unusable; local post-merge validation fallback ran.`,
+          prNumber,
+        };
+        return gateResult.ok ? { ok: true } : { ok: false };
+      },
+    });
+    if (r.ok) {
+      return {
+        ok: true,
+        locked: input.locked,
+        ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}),
+        ...(postMergeValidation ? { postMergeValidation } : {}),
+      };
+    }
+    // Route the CI-aware failure modes (#812) distinctly. A failed required check
+    // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
+    // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything
+    // else (real conflict / push / no-PR / admin-merge rejection) stays land-failed.
+    // `locked` echoes the session's lock state (#842): the admin-PR path is no
+    // longer unlocked-only — lock=X + openPr=true also lands through here.
+    if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: r.prNumber };
+    if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: r.prNumber };
+    if (r.reason === "pr-resolved-abort") {
+      return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: r.prNumber };
+    }
+    if (r.reason === "before-merge-failed") {
+      if (missingPostMergeFallback) {
+        return {
+          ok: false,
+          reason: "infra",
+          locked: input.locked,
+          prNumber: r.prNumber,
+          infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
+        };
+      }
+      return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: r.prNumber };
+    }
+    if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
+    if (r.reason === "merge-failed" && r.prNumber !== undefined) {
+      return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
+    }
+    return { ok: false, reason: "land-failed", locked: input.locked, prNumber: r.prNumber };
+  } finally {
+    await deps.removeRebaseWorktree?.(prepared.dir);
   }
-  if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
-  if (r.reason === "merge-failed" && r.prNumber !== undefined) {
-    return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
-  }
-  return { ok: false, reason: "land-failed", locked: input.locked, prNumber: r.prNumber };
 }
 
 /**
@@ -500,25 +564,40 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
  * `undefined` — "proceed to the admin-merge" — only on completed integration.
  * The worktree is always torn down.
  */
-async function preMergeRebaseInWorktree(
+function ciSatisfiedValidation(prNumber: number, evidence: CiGreenEvidence): LandingPostMergeValidation {
+  return {
+    path: "satisfied-by-ci",
+    reason: `PR #${prNumber} had fresh green CI evidence from ${evidence.requiredCheckCount} required check(s); local post-merge validation skipped.`,
+    prNumber,
+    checkCount: evidence.checkCount,
+  };
+}
+
+async function preparePrRebaseWorktree(
   deps: LandingDeps,
   input: LandingInput,
-): Promise<LandingResult | undefined> {
+): Promise<{ ok: true; dir: string } | { ok: false; result: LandingResult }> {
   if (!deps.makeRebaseWorktree) {
     return {
       ok: false,
-      reason: "infra",
-      infraReason: "pre-merge rebase worktree could not be provisioned",
-      locked: input.locked,
+      result: {
+        ok: false,
+        reason: "infra",
+        infraReason: "pre-merge rebase worktree could not be provisioned",
+        locked: input.locked,
+      },
     };
   }
   const dir = await deps.makeRebaseWorktree(input.branch);
   if (!dir) {
     return {
       ok: false,
-      reason: "infra",
-      infraReason: "pre-merge rebase worktree could not be provisioned",
-      locked: input.locked,
+      result: {
+        ok: false,
+        reason: "infra",
+        infraReason: "pre-merge rebase worktree could not be provisioned",
+        locked: input.locked,
+      },
     };
   }
   try {
@@ -533,20 +612,13 @@ async function preMergeRebaseInWorktree(
     });
     if (!rebased.ok) {
       // Real conflict / exhausted force-with-lease retries → park merge-conflict.
-      return { ok: false, reason: "pr-conflict", locked: input.locked };
+      await deps.removeRebaseWorktree?.(dir);
+      return { ok: false, result: { ok: false, reason: "pr-conflict", locked: input.locked } };
     }
-    // Post-merge-integration gate (#1335): re-run the feedback gate on the
-    // rebased worktree (worker branch rebased onto current origin/<base>)
-    // before the admin-merge. A failure aborts here so a stale-main-broken
-    // result is never merged.
-    if (deps.postMergeGate) {
-      await deps.landingPhase?.("gate");
-      const gateResult = await deps.postMergeGate(dir);
-      if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
-    }
-    return undefined;
-  } finally {
+    return { ok: true, dir };
+  } catch (error) {
     await deps.removeRebaseWorktree?.(dir);
+    throw error;
   }
 }
 
@@ -566,6 +638,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     return { ok: false, reason: "land-failed", locked: input.locked };
   }
 
+  let postMergeValidation: LandingPostMergeValidation | undefined;
   try {
     // Integrate origin/<base> into the detached worktree HEAD (not the primary).
     const integrated = await integrateOrigin(deps.mergeExec, {
@@ -581,10 +654,24 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // already-integrated worktree (worker branch merged with current
     // origin/<base>) before pushing anything to the remote. A failure aborts
     // here so a stale-main-broken result is never merged.
-    if (deps.postMergeGate) {
+    if (!deps.postMergeGate && deps.requirePostMergeValidation) {
+      return {
+        ok: false,
+        reason: "infra",
+        locked: input.locked,
+        infraReason: "Post-merge validation fallback is not configured for a direct landing that bypassed PR CI.",
+      };
+    }
+    if (!deps.postMergeGate) {
+      postMergeValidation = undefined;
+    } else {
       await deps.landingPhase?.("gate");
       const gateResult = await deps.postMergeGate(landDir);
       if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
+      postMergeValidation = {
+        path: "local-rerun",
+        reason: "Direct landing bypassed PR CI; local post-merge validation fallback ran.",
+      };
     }
 
     const branchTip = input.validatedBranchTip ?? (await resolveRemoteBranchTip(deps.mergeExec, {
@@ -633,7 +720,12 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       }
       const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
       await promoteFleetTrunkMirror(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
-      return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
+      return {
+        ok: true,
+        locked: input.locked,
+        mergeSha: mergeSha || undefined,
+        ...(postMergeValidation ? { postMergeValidation } : {}),
+      };
     }
 
     await deps.landingPhase?.("merge");
@@ -686,7 +778,12 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // primary HEAD did not advance, so carry the landed sha back for the close.
     const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
     await promoteFleetTrunkMirror(deps.mergeExec, { gitRepo: input.repoDir, remote: input.remote, target: input.base });
-    return { ok: true, locked: input.locked, mergeSha: mergeSha || undefined };
+    return {
+      ok: true,
+      locked: input.locked,
+      mergeSha: mergeSha || undefined,
+      ...(postMergeValidation ? { postMergeValidation } : {}),
+    };
   } finally {
     await deps.removeLandingWorktree?.(landDir);
   }
