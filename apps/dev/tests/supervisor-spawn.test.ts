@@ -94,4 +94,19 @@ describe("spawnSupervisor", () => {
 
     expect(existsSync(paths.supervisorStopPath)).toBe(false);
   });
+
+  it("propagates the fleet profile base as the worker Trunk override", async () => {
+    const cwd = await root();
+
+    await spawnSupervisor({
+      root: cwd,
+      target: 1,
+      runner: "codex",
+      base: " develop ",
+      probeDeadlineMs: 0,
+    });
+
+    const options = spawn.mock.calls.at(-1)?.[2] as SpawnOptions | undefined;
+    expect(options?.env?.RED_AFK_TRUNK).toBe("develop");
+  });
 });

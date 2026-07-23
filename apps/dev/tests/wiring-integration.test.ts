@@ -84,6 +84,37 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("prefers the fleet Trunk override over the repository default", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-fleet-trunk-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    trunk: main\n",
+    );
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+    const previous = process.env.RED_AFK_TRUNK;
+    process.env.RED_AFK_TRUNK = "develop";
+    try {
+      const deps = buildProcessDeps(
+        ctx,
+        "claude-opus-4-8",
+        "none",
+        feedback,
+        current,
+        false,
+        "claude",
+        exec,
+      );
+      expect(deps.lookups.base.configTrunk).toBe("develop");
+    } finally {
+      if (previous === undefined) delete process.env.RED_AFK_TRUNK;
+      else process.env.RED_AFK_TRUNK = previous;
+    }
+  });
+
   it("wires landing.wait=none through rsp's shared wait with per-wait fallback", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-wiring-landing-tail-"));
     mkdirSync(join(root, ".red"), { recursive: true });

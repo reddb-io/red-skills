@@ -955,6 +955,7 @@ async function createFleet(root: string, input: FleetCreateInput) {
     root,
     target: input.target,
     runner: profile.runner,
+    base: profile.base,
     fleet: profile.name,
     passthrough: profile.selector
       ? ["--selector", JSON.stringify(profile.selector)]
