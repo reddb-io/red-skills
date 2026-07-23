@@ -1,6 +1,21 @@
-# Auto-applies the `needs-triage` label to any newly opened or reopened issue
-# that has no labels yet. Keeps fresh issues from slipping past `/triage` and
-# `/afk` (which only consumes `ready-for-agent`).
+# Auto-labeling for freshly opened/reopened issues AND pull requests.
+#
+# Two mechanical marks (issue #2603):
+#   1. `needs-triage` — applied to any newly opened/reopened ISSUE that has no
+#      labels yet, so fresh issues never slip past `/triage` and `/afk` (which
+#      only consumes `ready-for-agent`). Unchanged pre-#2603 behavior.
+#   2. `origin:external` — applied to any newly opened/reopened issue OR PR whose
+#      author LACKS repository write access, so the AFK claim path can HOLD
+#      unapproved external-origin work for human review. Fail-safe: if the
+#      author's permission cannot be determined, the item is labeled external.
+#      The label is auto-created when missing.
+#
+# Fork posture (see CONTRIBUTING.md): this runs on the fork-reachable `issues`
+# and `pull_request` events with an explicit least-privilege permissions block
+# and NEVER checks out PR head code — it only reads metadata and writes labels.
+# It is NOT `pull_request_target`. On a fork `pull_request` event GitHub hands
+# the workflow a read-only token and withholds secrets, so PR labeling here is
+# best-effort for forks (the fail-safe still marks external on any uncertainty).
 #
 # Installed by `/red-setup`. Filename prefix `red-` marks it as belonging
 # to the RedSkills ecosystem.
@@ -10,9 +25,12 @@ name: red-issues-needs-triage
 on:
   issues:
     types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
 
 permissions:
   issues: write
+  pull-requests: write
 
 jobs:
   label:
@@ -21,16 +39,77 @@ jobs:
       - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
-            const issue = context.payload.issue;
-            const labels = (issue.labels || []).map(l => l.name);
-            if (labels.length > 0) {
-              core.info(`Issue #${issue.number} already labelled (${labels.join(', ')}). Skipping.`);
+            const isPr = !!context.payload.pull_request;
+            const entity = context.payload.pull_request || context.payload.issue;
+            const number = entity.number;
+            const author = entity.user && entity.user.login;
+            const kind = isPr ? 'PR' : 'issue';
+
+            // 1) needs-triage: issues only, and only when they arrive unlabeled.
+            if (!isPr) {
+              const labels = (entity.labels || []).map(l => l.name);
+              if (labels.length === 0) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  issue_number: number,
+                  labels: ['needs-triage'],
+                });
+                core.info(`Applied 'needs-triage' to issue #${number}.`);
+              } else {
+                core.info(`Issue #${number} already labelled (${labels.join(', ')}). Skipping needs-triage.`);
+              }
+            }
+
+            // 2) origin:external: resolve author write access; fail-safe to external.
+            const WRITE = new Set(['admin', 'maintain', 'write']);
+            let external = true; // fail-safe default: cannot prove trust → external
+            if (author) {
+              try {
+                const perm = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  username: author,
+                });
+                external = !WRITE.has(perm.data.permission);
+                core.info(`${kind} #${number} author @${author} permission='${perm.data.permission}' → external=${external}.`);
+              } catch (err) {
+                core.info(`${kind} #${number} author @${author} permission undeterminable (${err.status || err.message}) → fail-safe external.`);
+              }
+            } else {
+              core.info(`${kind} #${number} has no resolvable author → fail-safe external.`);
+            }
+
+            if (!external) {
+              core.info(`${kind} #${number} author has write access — not marking origin:external.`);
               return;
+            }
+
+            // Auto-create the label when missing (idempotent), then apply it.
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                name: 'origin:external',
+              });
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  name: 'origin:external',
+                  color: 'b60205',
+                  description: 'Author lacks repository write access — held for maintainer /approve-external',
+                });
+                core.info(`Created label 'origin:external'.`);
+              } else {
+                throw err;
+              }
             }
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo:  context.repo.repo,
-              issue_number: issue.number,
-              labels: ['needs-triage']
+              issue_number: number, // issues.addLabels also targets PRs by number
+              labels: ['origin:external'],
             });
-            core.info(`Applied 'needs-triage' to #${issue.number}.`);
+            core.info(`Applied 'origin:external' to ${kind} #${number}.`);
