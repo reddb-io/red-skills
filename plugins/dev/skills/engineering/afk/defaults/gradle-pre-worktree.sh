@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # gradle-pre-worktree.sh — built-in pre_worktree default for Gradle projects.
 #
 # Contract (PRD #207, issue #211):
@@ -15,20 +15,23 @@
 #
 # Disable with `afk.hooks.defaults.gradle: false` in `.red/config.yaml`.
 
-set -uo pipefail
+set -u
 
 project_root="${PROJECT_ROOT:-$(pwd)}"
 ctx="$(timeout "${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}" cat 2>/dev/null || true)"
-[[ -z "$ctx" ]] && ctx='{}'
+[ -n "$ctx" ] || ctx='{}'
 
-shopt -s nullglob
-matches=("$project_root"/build.gradle*)
-shopt -u nullglob
-if [[ "${#matches[@]}" -eq 0 ]]; then
+has_gradle_build=false
+for candidate in "$project_root"/build.gradle*; do
+  [ -f "$candidate" ] || continue
+  has_gradle_build=true
+  break
+done
+if [ "$has_gradle_build" = false ]; then
   exit 0
 fi
 
-if [[ -z "${RED_AFK_GRADLE_USER_HOME_BASE:-}" ]]; then
+if [ -z "${RED_AFK_GRADLE_USER_HOME_BASE:-}" ]; then
   exit 0
 fi
 
