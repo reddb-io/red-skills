@@ -95,17 +95,12 @@ describe("doLanding — serialized landing (#1337)", () => {
     expect(fs.files.size).toBe(0);
   });
 
-  it("land-lock wait timeout → infra failure, nothing pushed to the remote base", async () => {
+  it("land-lock wait timeout → land-lock-timeout result, nothing pushed to the remote base", async () => {
     const h = harness({ locked: true, openPr: false, landLock: timedOutLock });
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({
-      ok: false,
-      reason: "infra",
-      infraReason: "another worker held the AFK land-lock past the wait timeout",
-      locked: true,
-    });
+    expect(r).toEqual({ ok: false, reason: "land-lock-timeout", locked: true });
     // Refusing to serialize means refusing to land — never an unserialized push.
     expect(joined(h.mergeCalls).some((c) => c.includes("push origin HEAD:refs/heads/main"))).toBe(false);
     // No landing worktree was even provisioned.
