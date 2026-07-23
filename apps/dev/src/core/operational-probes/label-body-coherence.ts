@@ -108,6 +108,16 @@ export function buildLabelBodyCoherenceQuarantineComment(action: LabelBodyCohere
   ].join("\n");
 }
 
+/** Append the issue-local ADR 0122 diagnosis without rewriting the operator's
+ * existing body. The marker makes retries idempotent even when a prior label
+ * mutation failed after the body write. */
+export function appendLabelBodyCoherenceQuarantineDiagnosis(action: LabelBodyCoherenceAction): string {
+  const marker = `<!-- afk:quarantine v1 issue=#${action.issue} -->`;
+  if (action.body.includes(marker)) return action.body;
+  const body = action.body.replace(/\s+$/, "");
+  return `${body}\n\n## Quarantine diagnosis\n\n${buildLabelBodyCoherenceQuarantineComment(action)}\n`;
+}
+
 function archiveBody(action: LabelBodyCoherenceAction): string {
   return clearCurrentBlocker(action.body, {
     summary: action.blocker.summary,
