@@ -426,6 +426,12 @@ describe("statusline — AFK block", () => {
     expect(renderAfkBlock(baseAfk())).toBe("wrk=1 rdy=11 hmn=3 blk=2 loc=+12 -3 #17");
   });
 
+  it("surfaces the cached quarantine count beside the queue state", () => {
+    expect(renderAfkBlock(baseAfk({ quarantine: 4 }))).toBe(
+      "wrk=1 rdy=11 hmn=3 qtn=4 blk=2 loc=+12 -3 #17",
+    );
+  });
+
   it("sums diffstats and lists both issues for two workers", () => {
     // case 4: wk2, ad42 rm10, bk5, both #17 and #20.
     const out = renderAfkBlock(
