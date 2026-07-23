@@ -166,6 +166,18 @@ export interface RunDispatchIdentity {
   lane?: string;
 }
 
+/**
+ * Shared fleet hygiene must never delay an explicit target. A supervisor has
+ * already run the sweeps for its workers; a targeted solo dispatch defers them
+ * to the next fleet/untargeted boot so its first issue operation is the claim.
+ */
+export function shouldSkipBootSweeps(
+  filter: SelectionFilter,
+  supervisorSweepsDone: boolean,
+): boolean {
+  return supervisorSweepsDone || filter.kind === "issues";
+}
+
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
 export class RunFlagError extends Error {
   constructor(message: string) {
