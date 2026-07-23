@@ -26,7 +26,7 @@ import {
   type RunOptions,
   type RunResult,
 } from "./run.js";
-import { claudeCode, cursor, opencode } from "./AgentProvider.js";
+import { claudeCode, opencode } from "./AgentProvider.js";
 import { Output, StructuredOutputError } from "./Output.js";
 import { claudeHostSessionPath } from "./SessionStore.js";
 import type { InteractiveOptions } from "./interactive.js";
@@ -1178,24 +1178,6 @@ describe("output.maxRetries entry-time validation", () => {
     consoleSpy.mockRestore();
   });
 
-  it("throws when maxRetries > 0 and the agent provider lacks session resumption (cursor)", async () => {
-    await expect(
-      run({
-        agent: cursor("cursor-medium"),
-        sandbox: testSandbox,
-        prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
-        output: Output.object({
-          tag: "result",
-          schema: mockSchema(),
-          maxRetries: 2,
-        }),
-      }),
-    ).rejects.toThrow(
-      /output\.maxRetries requires an agent provider that supports session resumption/,
-    );
-  });
-
   it("throws when maxRetries > 0 and the agent provider lacks session resumption (opencode)", async () => {
     await expect(
       run({
@@ -1213,7 +1195,7 @@ describe("output.maxRetries entry-time validation", () => {
   it("names the non-resumable provider in the error message", async () => {
     await expect(
       run({
-        agent: cursor("cursor-medium"),
+        agent: opencode("opencode-m"),
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
         branchStrategy: { type: "head" },
@@ -1223,7 +1205,7 @@ describe("output.maxRetries entry-time validation", () => {
           maxRetries: 1,
         }),
       }),
-    ).rejects.toThrow(/"cursor"/);
+    ).rejects.toThrow(/"opencode"/);
   });
 
   it("allows maxRetries = 0 with a non-resumable provider", async () => {
@@ -1231,7 +1213,7 @@ describe("output.maxRetries entry-time validation", () => {
     // <result> tag), not the maxRetries validation.
     await expect(
       run({
-        agent: cursor("cursor-medium"),
+        agent: opencode("opencode-m"),
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
         branchStrategy: { type: "head" },
