@@ -62,9 +62,9 @@ import {
 } from "./spec-subissue-reconciler.js";
 import {
   applyClaimHygieneFix,
+  appendLabelBodyCoherenceQuarantineDiagnosis,
   autoHealableClaimHygiene,
   BASE_FRESHNESS_PROBE_ID,
-  buildLabelBodyCoherenceQuarantineComment,
   CLAIM_HYGIENE_PROBE_ID,
   formatOperationalProbeFinding,
   LABEL_BODY_COHERENCE_PROBE_ID,
@@ -77,7 +77,7 @@ import {
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
-import { LABEL_HUMAN, LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -233,6 +233,8 @@ export interface BootGh {
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   /** gh issue comment --body … */
   comment(issue: number, body: string): Promise<void>;
+  /** gh issue edit --body …; optional for legacy/minimal test adapters. */
+  editBody?(issue: number, body: string): Promise<void>;
   /** gh issue view --json labels → flat name list. */
   viewLabels(issue: number): Promise<string[]>;
   /** Create a native GitHub sub-issue edge from parent Spec to child Ticket. */
@@ -412,44 +414,41 @@ async function tryBootAutoApplyClaimHygiene(
  * Quarantine every incoherent issue found by the label/body coherence probe. An
  * issue is incoherent when it carries `ready-for-agent` while the body still has an
  * active `Current blocker`. Quarantine moves each such issue out of the executable
- * pool (ready-for-agent → needs-triage) and posts ONE comment naming the exact
- * incoherence and the fix recipe, then continues boot. This prevents a single dirty
- * issue from halting every worker boot (#2386).
- *
- * Returns `true` when ALL incoherent issues were successfully quarantined (the
- * finding is removed from `redFindings` and boot continues). Returns `false` when
- * ANY label-edit mutation fails (the finding stays in `redFindings` and boot halts
- * with the existing diagnostic). Comment failure is best-effort: the label edit
- * already moved the issue out of the pool, so a failed comment is non-fatal.
+ * pool (ready-for-agent → quarantine) and appends the exact diagnosis to its body.
+ * Every per-issue write is best-effort: a poisoned issue is returned in the local
+ * exclusion set even when GitHub rejects one mutation, so the current drain skips
+ * it while healthy siblings continue. A later curator sweep retries durable state.
  */
 async function tryBootAutoApplyLabelBodyCoherence(
   deps: BootDeps,
   finding: OperationalProbeReport["findings"][number],
-): Promise<boolean> {
-  if (finding.id !== LABEL_BODY_COHERENCE_PROBE_ID) return false;
+): Promise<{ handled: boolean; issues: number[] }> {
+  if (finding.id !== LABEL_BODY_COHERENCE_PROBE_ID) return { handled: false, issues: [] };
   const data = finding.data as Partial<LabelBodyCoherenceProbeData> | undefined;
-  if (!Array.isArray(data?.actions) || data.actions.length === 0) return false;
+  if (!Array.isArray(data?.actions) || data.actions.length === 0) return { handled: false, issues: [] };
 
-  let allHealed = true;
+  const issues: number[] = [];
   for (const action of data.actions as readonly LabelBodyCoherenceAction[]) {
+    issues.push(action.issue);
     try {
-      await deps.gh.editLabels(action.issue, [LABEL_READY], [LABEL_NEEDS_TRIAGE]);
-      try {
-        await deps.gh.comment(action.issue, buildLabelBodyCoherenceQuarantineComment(action));
-      } catch {
-        // Comment failure is non-fatal: the label edit already moved the issue out of
-        // the executable pool, which is the safety-critical mutation.
-      }
-      deps.log?.(
-        `boot coherence probe quarantined #${action.issue}: ready-for-agent→needs-triage; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
+      await deps.gh.editBody?.(
+        action.issue,
+        appendLabelBodyCoherenceQuarantineDiagnosis(action),
       );
-    } catch {
-      // Label edit failed: cannot make the pool coherent for this issue.
-      allHealed = false;
+    } catch (error) {
+      deps.log?.(`boot coherence probe body diagnosis failed for #${action.issue}: ${String(error)}`);
+    }
+    try {
+      await deps.gh.editLabels(action.issue, [LABEL_READY], [LABEL_QUARANTINE]);
+      deps.log?.(
+        `boot coherence probe quarantined #${action.issue}: ready-for-agent→quarantine; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
+      );
+    } catch (error) {
+      deps.log?.(`boot coherence probe label quarantine failed for #${action.issue}: ${String(error)}`);
     }
   }
 
-  return allHealed;
+  return { handled: true, issues };
 }
 
 /** True when this base-freshness finding is safe to downgrade for worker boot.
@@ -649,6 +648,9 @@ export interface TmpJanitorSweepResult {
 export interface BootResult {
   precheck: PrecheckResult;
   operationalProbes?: OperationalProbeReport;
+  /** Issue-local boot exclusions. The worker drain must skip these even when a
+   * best-effort GitHub quarantine write failed during this boot. */
+  quarantinedIssues?: readonly number[];
   bootstrap?: { ok: true };
   orphanCleanup?: OrphanCleanupResult;
   attemptCap?: AttemptCapResult;
@@ -718,9 +720,14 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // one stranded claim throw BootHaltError and kill every supervisor boot
   // (#2321). Foreign / unknown-pid markers survive the filter and still halt.
   const redFindings: OperationalProbeReport["findings"][number][] = [];
+  const quarantinedIssues: number[] = [];
   for (const finding of operationalProbes.findings) {
     if (await tryBootAutoApplyClaimHygiene(deps, finding)) continue;
-    if (await tryBootAutoApplyLabelBodyCoherence(deps, finding)) continue;
+    const quarantine = await tryBootAutoApplyLabelBodyCoherence(deps, finding);
+    if (quarantine.handled) {
+      quarantinedIssues.push(...quarantine.issues);
+      continue;
+    }
     redFindings.push(finding);
   }
   const redProbe = redFindings[0];
@@ -754,7 +761,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // branch cleanup, unblock sweep, reconcile sweep, or straggler check). This is
   // what makes a respawn cheap and keeps peers from racing over boot state.
   if (options.skipSweeps) {
-    return { precheck: pre, operationalProbes, bootstrap: { ok: true } };
+    return { precheck: pre, operationalProbes, quarantinedIssues, bootstrap: { ok: true } };
   }
 
   // ---- 3. orphan cleanup ----
@@ -793,6 +800,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   return {
     precheck: pre,
     operationalProbes,
+    quarantinedIssues,
     bootstrap: { ok: true },
     orphanCleanup,
     attemptCap,
