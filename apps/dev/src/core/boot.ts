@@ -12,7 +12,7 @@
 // or fs call lives here — the deciders perform no IO, and `runBoot` performs IO
 // only through the injected `deps`.
 
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   DEFAULT_ATTEMPT_KEEP,
   DEFAULT_ATTEMPT_TTL_S,
@@ -225,6 +225,18 @@ export interface BootFs {
   ): Promise<"owner-live" | "owner-dead" | "no-live-workers">;
   /** Best-effort cleanup of dead empty worker.pid shells after orphan cleanup. */
   reapDeadEmptyWorkerShells?(tmpDir: string): Promise<unknown>;
+  /** TERM -> grace -> KILL one orphan process group and confirm it is gone. */
+  reapProcessGroup?(pgid: number): Promise<boolean>;
+}
+
+export interface OrphanTestRunnerSweepEntry {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  sid: number;
+  ageS: number;
+  cwd: string;
+  command: string;
 }
 
 /** gh side effects: label edits and audit/recovery comments. Best-effort. */
@@ -557,6 +569,7 @@ export interface BootOptions {
   tmpJanitor?: {
     plan: TmpJanitorPlan;
     staleWorkers: WorkerDirJanitorPlan;
+    orphanTestRunners?: readonly OrphanTestRunnerSweepEntry[];
   };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
@@ -638,6 +651,7 @@ export interface TmpJanitorSweepResult {
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
   protectedLiveFeedback: string[];
+  orphanTestRunners: Array<{ pid: number; pgid: number }>;
   removals: Array<{
     path: string;
     livenessVerdict: "not-worker-workspace" | "worker-dead" | "owner-dead" | "no-live-workers";
@@ -819,6 +833,7 @@ async function runTmpJanitorSweep(
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
+    orphanTestRunners: [],
     removals: [],
   };
   if (!sweep) return result;
@@ -865,6 +880,20 @@ async function runTmpJanitorSweep(
     await deps.fs.removeDir(path);
     result.removals.push({ path, livenessVerdict: "not-worker-workspace" });
     result.unknownTmpRoots.push(path);
+  }
+
+  const reapedGroups = new Set<number>();
+  for (const orphan of sweep.orphanTestRunners ?? []) {
+    let reaped = reapedGroups.has(orphan.pgid);
+    if (!reaped) {
+      reaped = await deps.fs.reapProcessGroup?.(orphan.pgid).catch(() => false) ?? false;
+      if (reaped) reapedGroups.add(orphan.pgid);
+    }
+    if (!reaped) continue;
+    result.orphanTestRunners.push({ pid: orphan.pid, pgid: orphan.pgid });
+    deps.log?.(
+      `tmp-janitor reaped orphan test runner pid=${orphan.pid} pgid=${orphan.pgid} cwd=${relative(options.bootstrap.tmpDir, orphan.cwd)} command=${orphan.command}`,
+    );
   }
 
   return result;
