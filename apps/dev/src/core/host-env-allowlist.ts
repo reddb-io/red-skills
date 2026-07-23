@@ -51,12 +51,29 @@ export const AFK_HOST_ENV_ALLOWLIST: readonly string[] = [
 ];
 
 /**
- * Resolve the effective allowlist. Codex drops the default `CLAUDE*` entry so
- * Claude Code shell-snapshot pointers cannot leak into its child shell.
- * `RED_AFK_HOST_ENV_ALLOW` extends the runner default with comma-separated
- * extra entries; the single literal `*` is the escape hatch that disables
- * minimization entirely (returns undefined → red-castle inherits the full host
- * env, the pre-#1368 behavior).
+ * Entries always stripped from the codex allowlist, regardless of what the
+ * base list or operator extensions admit. These are the known-poison variables
+ * that Claude Code injects on the host and that must never reach a codex
+ * worker's process environment (#2627):
+ *
+ * - `CLAUDE*` — Claude Code session state, snapshot pointers, entrypoint flags.
+ * - `BASH_ENV` — sourced by every non-interactive bash shell; a Claude Code
+ *   `BASH_ENV` value would inject Claude Code setup into the codex worker's
+ *   child shells.
+ * - `ENV` — the POSIX sh equivalent of `BASH_ENV`; same risk under sh.
+ *
+ * Operator passthrough via `RED_AFK_HOST_ENV_ALLOW` still re-admits these
+ * for the rare case where an operator explicitly needs them.
+ */
+const CODEX_ENV_STRIP = new Set(["CLAUDE*", "BASH_ENV", "ENV"]);
+
+/**
+ * Resolve the effective allowlist. Codex strips `CLAUDE*`, `BASH_ENV`, and
+ * `ENV` so Claude Code shell-snapshot pointers and shell-init file pointers
+ * cannot leak into its child shells (#2627). `RED_AFK_HOST_ENV_ALLOW` extends
+ * the runner default with comma-separated extra entries; the single literal `*`
+ * is the escape hatch that disables minimization entirely (returns undefined →
+ * red-castle inherits the full host env, the pre-#1368 behavior).
  */
 export function resolveHostEnvAllowlist(
   env: NodeJS.ProcessEnv = process.env,
@@ -70,7 +87,7 @@ export function resolveHostEnvAllowlist(
   if (extra.includes("*")) return undefined;
   const defaults =
     runner === "codex"
-      ? AFK_HOST_ENV_ALLOWLIST.filter((entry) => entry !== "CLAUDE*")
+      ? AFK_HOST_ENV_ALLOWLIST.filter((entry) => !CODEX_ENV_STRIP.has(entry))
       : AFK_HOST_ENV_ALLOWLIST;
   return extra.length > 0 ? [...defaults, ...extra] : defaults;
 }
