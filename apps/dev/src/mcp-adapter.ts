@@ -1046,6 +1046,8 @@ async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
           retries: 0,
           phase: "blocked",
           iteration: "",
+          model: "",
+          effort: "",
           activity: "session-error",
           loc_added: 0,
           loc_removed: 0,

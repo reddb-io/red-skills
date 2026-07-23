@@ -118,7 +118,7 @@ describe("castle MCP host adapter", () => {
       stderr.mockRestore();
     }
 
-    const deps = createDevAfkMcpDependencies(cwd);
+    const deps = createCastleMcpDependencies(cwd);
     await expect(deps.logs({ lane: "worker", id: workerId })).resolves.toEqual([
       expect.objectContaining({
         kind: "worker.session-error",
