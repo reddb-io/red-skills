@@ -112,7 +112,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
-import { editLabelsTagged, routeRecovery } from "./recovery.js";
+import { editIssueLifecycleLabels, editLabelsTagged, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
   attemptDir: string,
@@ -917,6 +917,25 @@ export async function abortAfterClaim(
     branch,
     base,
     hooksFired,
+  });
+}
+/** Land-lock wait timeout (#2596): back off to ready-for-agent instead of
+ * parking to ready-for-human + blocked:infra. The branch name is carried in the
+ * comment so the next attempt can adopt it without re-running the full agent. */
+export async function landLockBackoff(c: StageCommon): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  await editIssueLifecycleLabels(deps, input.issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: land-lock wait timeout — backed off to \`ready-for-agent\` (branch: \`${c.branch}\`). The next attempt can adopt this branch.`,
+  );
+  await releaseOwnedClaim(deps, input);
+  return preservedTerminal({
+    outcome: "infra",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
   });
 }
 async function exhausted(

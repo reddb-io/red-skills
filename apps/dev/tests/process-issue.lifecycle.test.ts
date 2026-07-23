@@ -1509,3 +1509,35 @@ describe("processIssue — trunk-mirror boot failure (#2436)", () => {
     expect(envelope).not.toMatch(/live branch:/);
   });
 });
+
+describe("processIssue — land-lock timeout self-requeue (#2596)", () => {
+  it("land-lock wait timeout → self-requeue to ready-for-agent, not ready-for-human + blocked:infra", async () => {
+    // Regression: a sibling worker held the land-lock past the wait timeout. The
+    // second worker MUST back off to ready-for-agent (self-requeue), not park the
+    // issue to ready-for-human + blocked:infra. The timeout is a serialization
+    // backoff, not an infra failure — no human decision is needed to recover.
+    const timedOutLock = { acquire: async () => null };
+    const { deps, input, trace } = harness({ landLock: timedOutLock });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("infra");
+    // Must NOT park to ready-for-human.
+    const allAdded = trace.labelEdits.flatMap((e) => e.add);
+    expect(allAdded).not.toContain("ready-for-human");
+    // Must NOT add a blocked:infra label.
+    expect(allAdded).not.toContain("blocked:infra");
+    expect(trace.ensuredLabels).not.toContain("blocked:infra");
+    // Must requeue: the last label edit adds ready-for-agent.
+    const lastEdit = trace.labelEdits.at(-1);
+    expect(lastEdit?.add).toContain("ready-for-agent");
+    // Comment must name the branch so the next attempt can adopt it.
+    const requeueComment = trace.comments.find(
+      (c) => c.body.includes("land-lock") && c.body.includes("ready-for-agent"),
+    );
+    expect(requeueComment).toBeDefined();
+    expect(requeueComment?.body).toContain(result.branch ?? "afk/");
+    // No failure envelope was posted — this is a clean backoff, not a failure.
+    expect(trace.postedEnvelopes).toEqual([]);
+  });
+});
