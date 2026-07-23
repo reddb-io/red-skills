@@ -823,7 +823,7 @@ export function isTransientRunnerError(error: unknown): boolean {
 }
 
 const runnerTransientPattern =
-  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i;
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|could not lock config file/i;
 
 type HostConfigFailure = "missing-interpreter" | "missing-cwd";
 

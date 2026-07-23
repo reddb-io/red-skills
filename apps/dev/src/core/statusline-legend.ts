@@ -17,6 +17,7 @@ export const STATUSLINE_LEGEND_ROWS: readonly TokenLegendRow[] = [
   { token: "wrk", name: "workers", gloss: "Live AFK worker count in the aggregate statusline block." },
   { token: "rdy", name: "ready_for_agent", gloss: "Cached ready-for-agent queue count." },
   { token: "hmn", name: "ready_for_human", gloss: "Cached ready-for-human queue count." },
+  { token: "qtn", name: "quarantine", gloss: "Cached ADR 0122 issue quarantine count." },
   { token: "blk", name: "blocked", gloss: "Blocked issue or worker count, depending on surface." },
   { token: "wai", name: "waiting_count", gloss: "Heartbeat windows with no new stream events." },
   { token: "wait", name: "waiting_count", gloss: "Monitor per-worker waiting counter." },

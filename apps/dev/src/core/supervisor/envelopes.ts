@@ -4,6 +4,8 @@ import { renderLogTailToon } from "../envelope-emit.js";
 import { dispose } from "../disposition.js";
 import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
+import { isRefused, planTransition, type StateTransition } from "../state-transition.js";
+import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
 export function buildDiscardEnvelope(
@@ -107,7 +109,7 @@ export async function reconcileDeadWorkerClaim(
   if (info === null || info.issue === null) return null;
   if (!deps.gh.crashedClaimState) return null;
 
-  let claim: { ghOk: boolean; stillRunning: boolean; envelopePosted: boolean };
+  let claim: { ghOk: boolean; stillRunning: boolean; envelopePosted: boolean; labels?: string[] };
   try {
     claim = await deps.gh.crashedClaimState(info.issue);
   } catch {
@@ -127,6 +129,32 @@ export async function reconcileDeadWorkerClaim(
     renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
   );
 
+  // 1b. ADR 0122 heal ledger (#2526): a death-sweep IS a heal of this issue.
+  // The 3rd heal inside the window stops re-queueing and quarantines instead —
+  // an issue that keeps killing workers is a signal, not a retry candidate.
+  // Best-effort: a ledger failure falls through to the normal disposition.
+  if (deps.healLedger) {
+    try {
+      const decision = await recordIssueHeal(deps.healLedger, info.issue);
+      if (decision.action === "quarantine") {
+        await deps.gh.ensureLabel("quarantine");
+        const applied = await applyDeathTransition(deps, info.issue, claim.labels, {
+          kind: "quarantine",
+          diagnosis: "",
+        });
+        if (applied) {
+          await deps.gh.comment(
+            info.issue,
+            `🤖 /afk death-sweep quarantined this issue: ${decision.history.length} worker-death heals inside the ledger window — it keeps killing workers and needs human judgment before another attempt (ADR 0122 heal budget).`,
+          );
+          return info.issue;
+        }
+      }
+    } catch {
+      // best-effort: fall through to the bounded recovery below.
+    }
+  }
+
   // 2. Bounded blocked:crashed recovery via the disposition composer (#402,
   // #822), mirroring the stall-reaper path below. The death-without-envelope
   // outcome is "no-sentinel" → recovery reason `crashed` + label `blocked:crashed`;
@@ -136,18 +164,49 @@ export async function reconcileDeadWorkerClaim(
   // was converted, breaking the apps/dev typecheck.)
   const disp = dispose("no-sentinel", info.attempt, deps.recoveryEnv ?? {});
   if (disp.decision === "retry") {
-    // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
-    await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+    // CLEAN re-queue through the transition API when labels are known — the
+    // atomic plan strips every park remnant in one edit and proves the
+    // one-state-role invariant (#2526). Legacy dispose sets remain the
+    // fallback for impls that do not report labels.
+    const applied = await applyDeathTransition(deps, info.issue, claim.labels, { kind: "queue" });
+    if (!applied) await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
   } else {
     if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
+    const applied = await applyDeathTransition(
+      deps,
+      info.issue,
+      claim.labels,
+      disp.typedLabel !== null
+        ? { kind: "park", reason: disp.typedLabel }
+        : { kind: "human" },
+    );
     // Escalation also sheds any stale ready-for-agent — the crashed slot was
     // `running`, never re-queue it (matches the reaper path).
-    await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
+    if (!applied) await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
     if (disp.escalationComment !== null) {
       await deps.gh.comment(info.issue, disp.escalationComment);
     }
   }
   return info.issue;
+}
+
+/**
+ * Apply one ADR 0122 state transition for the death-sweep as a single label
+ * edit. Returns false when labels are unknown or the planner refuses (the
+ * caller then falls back to the legacy dispose label sets), so the sweep is
+ * never weaker than the pre-#2526 behavior.
+ */
+async function applyDeathTransition(
+  deps: SupervisorDeps,
+  issue: number,
+  labels: string[] | undefined,
+  transition: StateTransition,
+): Promise<boolean> {
+  if (!labels) return false;
+  const plan = planTransition(labels, transition);
+  if (isRefused(plan)) return false;
+  await deps.gh.editLabels(issue, [...plan.add], [...plan.remove]);
+  return true;
 }
 
 // ---------- actions (compose deciders, apply via injected IO) ----------

@@ -79,6 +79,7 @@ export interface CastleHookDispatchResult {
 export interface ResolveCastleHooksOptions {
   readonly libraryHooksDir?: string;
   readonly projectHooksDir?: string;
+  readonly projectRoot?: string;
   readonly defaultCommand?: CastleHookDefaultResolver;
   readonly listFiles?: (dir: string) => string[];
   readonly exists?: (path: string) => boolean;
@@ -243,13 +244,37 @@ function flatPointBody(
 export function castleHookDefaultResolver(
   libraryHooksDir: string,
   projectHooksDir?: string,
+  projectRoot?: string,
   exists: (path: string) => boolean = existsSync,
+  listFiles: (dir: string) => string[] = readdirSync,
+  isFile: (path: string) => boolean = (path) => statSync(path).isFile(),
 ): CastleHookDefaultResolver {
   const scripts: Record<CastleHookDefaultName, string> = {
     cargo: "red-cargo",
     gradle: "red-gradle",
   };
   return (name) => {
+    if (
+      name === "cargo" &&
+      projectRoot !== undefined &&
+      (!exists(join(projectRoot, "Cargo.toml")) ||
+        !isFile(join(projectRoot, "Cargo.toml")))
+    ) {
+      return undefined;
+    }
+    if (name === "gradle" && projectRoot !== undefined) {
+      let hasGradleBuild = false;
+      try {
+        hasGradleBuild = listFiles(projectRoot).some(
+          (file) =>
+            file.startsWith("build.gradle") && isFile(join(projectRoot, file)),
+        );
+      } catch {
+        hasGradleBuild = false;
+      }
+      if (!hasGradleBuild) return undefined;
+    }
+
     const filename = scripts[name];
     if (projectHooksDir !== undefined) {
       const project = join(projectHooksDir, filename);
@@ -324,7 +349,10 @@ export function resolveCastleHooks(
       : castleHookDefaultResolver(
           options.libraryHooksDir,
           options.projectHooksDir,
+          options.projectRoot,
           exists,
+          listFiles,
+          isFile,
         ));
   const inline = collectInlineHookCommands(config);
 
@@ -338,6 +366,7 @@ export function resolveCastleHooks(
 
     if (defaults) {
       for (const defaultName of defaults) {
+        if (config[`afk.hooks.defaults.${defaultName}`] === "false") continue;
         const command = defaultCommand(defaultName);
         if (command !== undefined) commands.push(command);
       }
