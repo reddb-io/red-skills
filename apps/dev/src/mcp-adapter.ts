@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
-import { decode as decodeToon } from "@reddb-io/toon";
+import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import {
   aggregateFederatedFleetView,
   armPr,
@@ -977,17 +977,25 @@ async function createFleet(root: string, rawInput: FleetCreateInput) {
       supervisorLogStart = 0;
     }
   }
-  const pid = await spawnSupervisor({
-    root,
-    target: input.target,
-    runner: profile.runner,
-    base: profile.base,
-    fleet: profile.name,
-    passthrough: profile.selector
-      ? ["--selector", JSON.stringify(profile.selector)]
-      : [],
-    adoptSlotPids: priorFleetState?.slotPids ?? [],
-  });
+  type ErrnoError = Error & { code?: string; syscall?: string };
+  let spawnErr: ErrnoError | undefined;
+  let pid: number | null;
+  try {
+    pid = await spawnSupervisor({
+      root,
+      target: input.target,
+      runner: profile.runner,
+      base: profile.base,
+      fleet: profile.name,
+      passthrough: profile.selector
+        ? ["--selector", JSON.stringify(profile.selector)]
+        : [],
+      adoptSlotPids: priorFleetState?.slotPids ?? [],
+    });
+  } catch (err) {
+    spawnErr = err instanceof Error ? (err as ErrnoError) : new Error(String(err));
+    pid = null;
+  }
   if (pid === null) {
     let rollbackConfirmed = false;
     try {
@@ -998,7 +1006,7 @@ async function createFleet(root: string, rawInput: FleetCreateInput) {
       // The failure below must not claim that registry rollback succeeded.
     }
     let tail = "";
-    if (supervisorLogStart !== undefined) {
+    if (supervisorLogStart !== undefined && !spawnErr) {
       try {
         const bytes = await readFile(paths.supervisorLogPath);
         const launchBytes =
@@ -1015,10 +1023,39 @@ async function createFleet(root: string, rawInput: FleetCreateInput) {
         // from a caller-visible but unexplained registry rollback.
       }
     }
-    const evidence = tail || "(no supervisor log output was captured)";
+    // Best-effort diagnostic artifact: always leave a spawn-failure.toon when
+    // spawn itself throws so the caller has a pinned artifact to inspect even
+    // when no supervisor log was written.
+    if (spawnErr) {
+      try {
+        await mkdir(paths.supervisorRuntimeDir, { recursive: true });
+        const doc: ToonValue = {
+          kind: "spawn-failed",
+          fleet: profile.name,
+          runner: profile.runner,
+          error: spawnErr.message,
+          ...(spawnErr.code ? { code: spawnErr.code } : {}),
+          ...(spawnErr.syscall ? { syscall: spawnErr.syscall } : {}),
+        };
+        await writeFile(
+          join(paths.supervisorRuntimeDir, "spawn-failure.toon"),
+          encodeToon(doc),
+          "utf8",
+        );
+      } catch {
+        // Diagnostic write must not shadow the real spawn error.
+      }
+    }
     const rollback = rollbackConfirmed
       ? "profile rolled back."
       : "profile rollback was attempted but could not be confirmed.";
+    if (spawnErr) {
+      throw new Error(
+        `fleet ${JSON.stringify(profile.name)} failed to start: spawn failed: ${spawnErr.message}; ` +
+          `${rollback} diagnostic: .red/tmp/supervisors/${paths.fleet}/spawn-failure.toon`,
+      );
+    }
+    const evidence = tail || "(no supervisor log output was captured)";
     throw new Error(
       `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
         `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
