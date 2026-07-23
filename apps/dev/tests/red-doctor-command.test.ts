@@ -54,6 +54,25 @@ vi.mock("../src/core/operational-probes.js", () => ({
   terminateSupervisorPid: vi.fn(async () => undefined),
 }));
 
+const deadendReport = {
+  generatedAtMs: 1_700_000_000_000,
+  total: 1,
+  classes: [
+    {
+      deadendClass: "dangling_claim",
+      cure: "claim_release",
+      count: 1,
+      findings: [
+        { deadendClass: "dangling_claim", cure: "claim_release", subject: "#100", detail: "claim held by dead worker wDEAD" },
+      ],
+    },
+  ],
+};
+
+vi.mock("../src/runtime/deadend-audit-report.js", () => ({
+  collectDeadendAuditReport: vi.fn(async () => deadendReport),
+}));
+
 vi.mock("../src/core/castle-state-doctor.js", () => ({
   auditCastleStateLane: vi.fn(async () => ({
     status: "ok",
@@ -92,6 +111,43 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     expect(output).toContain("red-doctor executable acceptance criteria");
     expect(output).toContain("warn #2403: acceptance criteria item is not machine-checkable");
     expect(output).toContain("fix: refresh ## Acceptance criteria");
+    stdout.mockRestore();
+  });
+
+  it("renders the same read-only deadend audit with each class cure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-deadend-"));
+    roots.push(root);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    expect(human).toContain("red-doctor deadend audit");
+    expect(human).toContain("deadends: 1");
+    expect(human).toContain("dangling_claim #100 → cure: claim_release");
+    stdout.mockRestore();
+  });
+
+  it("renders the deadend audit in the --json (TOON) form", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-deadend-json-"));
+    roots.push(root);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, "--json"], root)).resolves.toBe(0);
+
+    const toon = writes.join("");
+    expect(toon).toContain("deadendAudit");
+    expect(toon).toContain("claim_release");
     stdout.mockRestore();
   });
 });

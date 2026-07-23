@@ -2,8 +2,10 @@
 
 ## Status
 
-Accepted. Records the locked migration strategy from wayfinder map #1875 and
-source Ticket #1883.
+Superseded by ADR 0124. The expand-first waves produced an unconsumed engine;
+the successor absorbs the proven dev implementation and deletes the twin.
+
+superseded-by: 0124
 
 ## Context
 
