@@ -354,6 +354,16 @@ describe("sole-claimant verification (#2385)", () => {
     expect(gh.conceded).toHaveLength(0);
   });
 
+  it("keeps the verified fresh claim alive when pre-boot liveness rejects its marker", async () => {
+    const gh = fakeGh([]);
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      isStale: (record) => record.worker === "h:me",
+    });
+
+    expect(d).toMatchObject({ verdict: "won", winner: "h:me" });
+    expect(gh.conceded).toHaveLength(0);
+  });
+
   it("fails loudly — never 'lost' — when the read-back never shows our claim", async () => {
     const gh = fakeGh([]);
     gh.listClaims = async () => []; // e.g. every `gh api` list call failed
