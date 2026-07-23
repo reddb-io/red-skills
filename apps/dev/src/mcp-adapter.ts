@@ -37,10 +37,12 @@ import type {
   FleetEditInput,
   FleetNameInput,
   FleetRegisterInput,
+  FleetStatusOutput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
   QueueStatusInput,
+  QueueStatusOutput,
   RequeueToolInput,
   RespondToolInput,
   RetakeToolInput,
@@ -52,6 +54,8 @@ import type {
   WorkerRequestInput,
   WorkerSteerInput,
   WorkerStopInput,
+  WorkerVitalsOutput,
+  WorkerVitalsProjectedOutput,
   WorktreeRemoveInput,
 } from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
@@ -62,6 +66,8 @@ import {
   classifySupervisor,
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
+import type { HitlCandidate } from "./core/hitl-selection.js";
+import type { IssueCandidate } from "./core/session.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
 import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
@@ -821,7 +827,10 @@ function profileForCreate(input: FleetCreateInput): FleetProfile {
   };
 }
 
-async function fleetStatus(root: string, input: FleetNameInput) {
+async function fleetStatus(
+  root: string,
+  input: FleetNameInput,
+): Promise<FleetStatusOutput> {
   const paths = afkPaths(root, input.name);
   const [fleet, monitor, discovered] = await Promise.all([
     readFleetState(paths.fleetStatePath),
@@ -1068,7 +1077,10 @@ async function laneLogs(root: string, input: LogsInput) {
   return filtered.length <= limit ? filtered : filtered.slice(-limit);
 }
 
-async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
+async function workerVitals(
+  root: string,
+  opts: { live_only?: boolean } = {},
+): Promise<WorkerVitalsOutput> {
   const paths = createEnginePaths(join(root, ".red"));
   const [records, workerDirs] = await Promise.all([
     readAllWorkerStates(afkPaths(root).tmpDir),
@@ -1198,6 +1210,30 @@ function projectFields(
     }
     return out;
   });
+}
+
+/**
+ * The `queue_status` payload, built from the two candidate lists. Pure and
+ * exported so the declared output contract is round-trippable over fixture
+ * candidates — the GitHub reads stay in the dependency wiring above.
+ *
+ * The ready-for-agent bodies are dropped: the queue answer is "which issues",
+ * and a full body per candidate would dwarf the rest of the payload.
+ */
+export function buildQueueStatus(
+  readyForAgent: readonly IssueCandidate[],
+  readyForHuman: readonly HitlCandidate[],
+): QueueStatusOutput {
+  return {
+    ready_for_agent: readyForAgent.map(
+      ({ body: _body, ...candidate }) => candidate,
+    ),
+    ready_for_human: [...readyForHuman],
+    counts: {
+      ready_for_agent: readyForAgent.length,
+      ready_for_human: readyForHuman.length,
+    },
+  };
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
@@ -1536,7 +1572,13 @@ export function createCastleMcpDependencies(
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {
       const records = await workerVitals(root, { live_only: input.live_only });
-      return projectFields(records as Array<Record<string, unknown>>, input.fields);
+      if (!input.fields?.length) return records;
+      // A `fields` projection deliberately narrows the declared shape; the
+      // contract validates those calls against its relaxed projection schema.
+      return projectFields(
+        records as unknown as Array<Record<string, unknown>>,
+        input.fields,
+      ) as WorkerVitalsProjectedOutput;
     },
     dashboard: ({ periodDays }) => collectDashboardReport(periodDays, root),
     monitor: () => collectMonitorInputs(root),
@@ -1562,16 +1604,7 @@ export function createCastleMcpDependencies(
         );
         readyForAgent = readyForAgent.filter((c) => matchesSelector(c, selector ?? {}));
       }
-      return {
-        ready_for_agent: readyForAgent.map(
-          ({ body: _body, ...candidate }) => candidate,
-        ),
-        ready_for_human: readyForHuman,
-        counts: {
-          ready_for_agent: readyForAgent.length,
-          ready_for_human: readyForHuman.length,
-        },
-      };
+      return buildQueueStatus(readyForAgent, readyForHuman);
     },
     workerDispatch: (input) => {
       if (input.issue !== undefined) {
