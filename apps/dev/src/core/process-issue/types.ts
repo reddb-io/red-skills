@@ -52,7 +52,11 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding } from "../landing.js";
+import {
+  doLanding,
+  type DeferredLandingTail,
+  type LandingResult,
+} from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
@@ -285,6 +289,16 @@ export interface ProcessIssueDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   waitForReview?: WaitForReviewInput;
   ciAwait?: CiAwaitInput;
+  /** Slot-release boundary across the PR landing tail (#2427). */
+  landingWait?: "merge" | "ci" | "none";
+  /**
+   * Shared tail observer. The call starts observation and returns the eventual
+   * landing verdict; processIssue deliberately does not await it so the worker
+   * slot is reusable while CI/merge/close finish.
+   */
+  landingTailObserver?: (
+    task: DeferredLandingTail & { issue: number },
+  ) => Promise<LandingResult>;
   reviewGate?: ReviewGateConfig;
   reviewGateLabel?: string;
   adversarialReview?: AdversarialReviewConfig;

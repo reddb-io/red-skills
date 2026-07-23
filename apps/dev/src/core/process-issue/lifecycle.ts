@@ -1047,7 +1047,7 @@ export async function processIssue(
     }
   };
   markLandingPhase("gate");
-  const landing = await doLanding(
+  let landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
       remoteGit: deps.remoteGit,
@@ -1058,6 +1058,7 @@ export async function processIssue(
       maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      landingWait: deps.landingWait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -1129,6 +1130,128 @@ export async function processIssue(
         }),
     },
   );
+  const finishSuccessfulLanding = async (
+    completed: Extract<typeof landing, { ok: true }>,
+    releaseAtEnd: boolean,
+  ): Promise<ProcessIssueResult> => {
+    const mergeSha = completed.mergeSha ?? (await deps.git.headShortSha());
+    const durationS = deps.nowEpoch() - startedEpoch;
+    if (completed.postMergeValidation) {
+      validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(completed.postMergeValidation)];
+      deps.recordWorkerEvent?.("worker.post_merge_validation", {
+        path: completed.postMergeValidation.path,
+        reason: completed.postMergeValidation.reason,
+        pr_number: completed.postMergeValidation.prNumber,
+        check_count: completed.postMergeValidation.path === "satisfied-by-ci"
+          ? completed.postMergeValidation.checkCount
+          : undefined,
+      });
+    }
+    markLandingPhase("cascade");
+    deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
+    await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
+    const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
+    await recordAttemptBestEffort(common, "done", {
+      durationS,
+      mergeSha,
+      validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
+    });
+    await deps.gh.close(issue);
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
+    await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
+    let cleanupError: string | undefined;
+    try {
+      const cleanup = await deps.git.deleteLocalBranch(workerBranch);
+      if (cleanup && !cleanup.ok) cleanupError = cleanup.error;
+    } catch (error) {
+      cleanupError = error instanceof Error ? error.message : String(error);
+    }
+    if (cleanupError) {
+      deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
+    }
+    await deps.fs.completionSweep(issue);
+    if (releaseAtEnd) await deps.claimLock.release(issue);
+    markTerminalState(deps, "done");
+    await runCloseCascade(deps, issue);
+    if (completed.mergeSha) {
+      await runCascadeRebase(deps, input, issue, completed.mergeSha, labels);
+    }
+    return {
+      outcome: "done",
+      issue,
+      branch: workerBranch,
+      base,
+      locked,
+      mergeSha,
+      ...(cleanupError ? { cleanupError } : {}),
+      hooksFired,
+      envelopePosted: posted,
+      preserved: true,
+      swept: true,
+    };
+  };
+  if (landing.ok && landing.deferred) {
+    const deferred = landing.deferred;
+    if (!deps.landingTailObserver) {
+      landing = await deferred.run();
+    } else {
+      const completion = deps.landingTailObserver({ ...deferred, issue });
+      void completion
+        .then(async (completed) => {
+          if (completed.ok) {
+            await finishSuccessfulLanding(completed, false);
+            return;
+          }
+          if (completed.reason === "ci-failed" || completed.reason === "ci-pending") {
+            await ciBlocked(common, completed.reason, completed.prNumber);
+            return;
+          }
+          if (completed.reason === "pr-conflict") {
+            await prLandingBlocked(
+              common,
+              "merge-conflict",
+              completed.prNumber,
+              completed.message ?? "the observer found merge conflicts while finishing the open PR",
+            );
+            return;
+          }
+          await prLandingBlocked(
+            common,
+            "ci-failed",
+            completed.prNumber,
+            completed.reason === "pr-merge-failed"
+              ? "the observer's merge was rejected by GitHub"
+              : `the observer could not finish the landing tail (${completed.reason})`,
+          );
+        })
+        .catch((error) => {
+          deps.appendIterLog(
+            `🤖 /afk landing-tail observer for #${issue} stopped before close: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          deps.recordWorkerEvent?.("worker.blocked", {
+            outcome: "ci-pending",
+            reason: "landing-tail-observer-stopped",
+            issue,
+          });
+        });
+      await releaseClaim();
+      deps.recordWorkerEvent?.("worker.landing_handed_off", {
+        issue,
+        pr_number: deferred.prNumber,
+        wait: deps.landingWait ?? "merge",
+      });
+      return {
+        outcome: "done",
+        issue,
+        branch: workerBranch,
+        base,
+        locked,
+        hooksFired,
+        preserved: true,
+        swept: false,
+      };
+    }
+  }
   if (!landing.ok) {
     if (landing.reason === "adversarial-correction") {
       const park = pendingAdversarialPark;
@@ -1231,59 +1354,7 @@ export async function processIssue(
     }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
-  const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
-  const durationS = deps.nowEpoch() - startedEpoch;
-  if (landing.postMergeValidation) {
-    validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(landing.postMergeValidation)];
-    deps.recordWorkerEvent?.("worker.post_merge_validation", {
-      path: landing.postMergeValidation.path,
-      reason: landing.postMergeValidation.reason,
-      pr_number: landing.postMergeValidation.prNumber,
-      check_count: landing.postMergeValidation.path === "satisfied-by-ci" ? landing.postMergeValidation.checkCount : undefined,
-    });
-  }
-  markLandingPhase("cascade");
-  deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
-  await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
-  const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
-  await recordAttemptBestEffort(common, "done", {
-    durationS,
-    mergeSha,
-    validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
-  });
-  await deps.gh.close(issue);
-  await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
-  await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
-  let cleanupError: string | undefined;
-  try {
-    const cleanup = await deps.git.deleteLocalBranch(workerBranch);
-    if (cleanup && !cleanup.ok) cleanupError = cleanup.error;
-  } catch (error) {
-    cleanupError = error instanceof Error ? error.message : String(error);
-  }
-  if (cleanupError) {
-    deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
-  }
-  await deps.fs.completionSweep(issue);
-  await deps.claimLock.release(issue);
-  markTerminalState(deps, "done");
-  await runCloseCascade(deps, issue);
-  if (landing.mergeSha) {
-    await runCascadeRebase(deps, input, issue, landing.mergeSha, labels);
-  }
-  return {
-    outcome: "done",
-    issue,
-    branch: workerBranch,
-    base,
-    locked,
-    mergeSha,
-    ...(cleanupError ? { cleanupError } : {}),
-    hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: true,
-  };
+  return await finishSuccessfulLanding(landing, true);
   }
 }
 

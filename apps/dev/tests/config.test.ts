@@ -926,6 +926,24 @@ describe("config — afk.merge.ci_aware (#812)", () => {
   });
 });
 
+describe("config — afk.landing.wait (#2427)", () => {
+  it("defaults to merge so existing landing semantics do not move", () => {
+    const values = loadConfig("/missing/config.yaml", { read: () => undefined });
+    expect(getConfig(values, "afk.landing.wait")).toBe("merge");
+  });
+
+  it.each(["merge", "ci", "none"])(
+    "reads the namespaced landing wait value %s",
+    (wait) => {
+      const text =
+        "plugins:\n  dev:\n    enabled: true\n    afk:\n      landing:\n" +
+        `        wait: ${wait}\n`;
+      const values = loadConfig("/repo/.red/config.yaml", { read: () => text });
+      expect(getConfig(values, "afk.landing.wait")).toBe(wait);
+    },
+  );
+});
+
 describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)", () => {
   it("defaults to true (admin-PR landing) when unset", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });

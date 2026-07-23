@@ -54,7 +54,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
   interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
-  `plugins/dev/skills/engineering/afk/MCP.md`.
+  `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
+  throughput through `/afk` config: `afk.landing.wait` chooses release after
+  merge, green CI, or PR-open; route that choice to the AFK config reference.
 - **Carrying one effort end to end** -> `/manager`. It is the liaison over the
   lanes above, not a replacement for them: `$dev:manager <intent>` starts or
   continues an effort and `manager status` renders its brief. Routing and
@@ -104,7 +106,9 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 
 Capability references registered by owner:
 `castle` MCP (the canonical castle interface) ->
-`plugins/dev/skills/engineering/afk/MCP.md`.
+`plugins/dev/skills/engineering/afk/MCP.md`;
+`/afk` landing-tail throughput (`afk.landing.wait`) ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`.
 
 Troubleshooting references registered by owner:
 `/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
