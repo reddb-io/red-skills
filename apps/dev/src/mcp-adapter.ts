@@ -927,7 +927,15 @@ async function createFleet(root: string, input: FleetCreateInput) {
     if (existing) {
       throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
     }
-    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is already running`);
+    // A live supervisor with NO registered profile is the create/edit desync
+    // trap (#2545): create says "already running", edit says "does not exist",
+    // and there is no MCP-only way out. Register the orphan profile so
+    // fleet_edit/fleet_status work, then refuse the duplicate launch.
+    await upsertFleetProfile(path, profileForCreate(input));
+    throw new Error(
+      `fleet ${JSON.stringify(paths.fleet)} is already running; its missing registry profile ` +
+        `was registered from this request — use fleet_edit/fleet_status to operate it`,
+    );
   }
 
   const profile =

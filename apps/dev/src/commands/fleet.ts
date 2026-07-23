@@ -9,6 +9,7 @@ import {
   readCastleLaneRecords,
   readFleetProfile,
   readHostCapabilityProfile,
+  runnerFromExplicitEnv,
   resolveHostCapabilities,
   upsertFleetProfile,
   type CastleLaneRecord,
@@ -164,6 +165,21 @@ function parseFleetArgs(args: readonly string[]): {
     force,
     passthrough,
   };
+}
+
+/**
+ * Launch runner cascade (#2545): explicit --runner flag > the operator's
+ * RED_AFK_RUNNER env AT THIS LAUNCH > the registered profile. The profile must
+ * never shadow the env the operator just set — that is exactly the "fresh
+ * relaunch keeps the stale runner" trap: kill fleet, relaunch with
+ * RED_AFK_RUNNER=claude, supervisor resumes codex from fleets.toonl.
+ */
+export function resolveLaunchRunnerPin(
+  flag: string | undefined,
+  env: NodeJS.ProcessEnv,
+  profileRunner: string | undefined,
+): string | undefined {
+  return flag ?? runnerFromExplicitEnv(env.RED_AFK_RUNNER) ?? profileRunner;
 }
 
 export async function writeResizeRequest(
@@ -687,7 +703,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   const detection = detectRunner({
-    flag: parsed.runnerFlag ?? parseRunnerFlag(args) ?? profile?.runner,
+    flag: resolveLaunchRunnerPin(parsed.runnerFlag ?? parseRunnerFlag(args), process.env, profile?.runner),
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });

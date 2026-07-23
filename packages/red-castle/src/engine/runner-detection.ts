@@ -15,7 +15,7 @@ function envHasAny(env: NodeJS.ProcessEnv, keys: string[]): string | undefined {
   return keys.find((key) => env[key] !== undefined && env[key] !== "");
 }
 
-function runnerFromExplicitEnv(value: string | undefined): Runner | undefined {
+export function runnerFromExplicitEnv(value: string | undefined): Runner | undefined {
   if (value === undefined || value === "") return undefined;
   if (!isRunner(value)) throw new Error(`unsupported runner: ${value}`);
   return value;
