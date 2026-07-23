@@ -23,7 +23,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   readFile,
 }));
 
-import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
+import { spawnSupervisor, resolveDevScriptPath } from "../src/runtime/supervisor-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 const roots: string[] = [];
@@ -108,5 +108,81 @@ describe("spawnSupervisor", () => {
 
     const options = spawn.mock.calls.at(-1)?.[2] as SpawnOptions | undefined;
     expect(options?.env?.RED_AFK_TRUNK).toBe("develop");
+  });
+
+  it("resolves the sibling dev bundle when argv[1] is the castle-mcp bundle (MCP context)", async () => {
+    const cwd = await root();
+    const saved = process.argv[1];
+    process.argv[1] = join("dist", "castle-mcp.bundle.min.mjs");
+    try {
+      await spawnSupervisor({
+        root: cwd,
+        target: 1,
+        runner: "claude",
+        probeDeadlineMs: 0,
+      });
+      const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
+      expect(args?.[0]).toBe(join("dist", "dev.bundle.min.mjs"));
+    } finally {
+      process.argv[1] = saved;
+    }
+  });
+
+  it("resolves the sibling dev bundle when argv[1] is a versioned castle-mcp bundle (MCP context)", async () => {
+    const cwd = await root();
+    const saved = process.argv[1];
+    process.argv[1] = join("/npx-cache", "castle-mcp-2.76.1.bundle.min.mjs");
+    try {
+      await spawnSupervisor({
+        root: cwd,
+        target: 1,
+        runner: "claude",
+        probeDeadlineMs: 0,
+      });
+      const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
+      expect(args?.[0]).toBe(join("/npx-cache", "dev-2.76.1.bundle.min.mjs"));
+    } finally {
+      process.argv[1] = saved;
+    }
+  });
+
+  it("passes argv[1] through unchanged when already the dev bundle (CLI context)", async () => {
+    const cwd = await root();
+    const saved = process.argv[1];
+    process.argv[1] = join("/npx-cache", "dev-2.76.1.bundle.min.mjs");
+    try {
+      await spawnSupervisor({
+        root: cwd,
+        target: 1,
+        runner: "claude",
+        probeDeadlineMs: 0,
+      });
+      const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
+      expect(args?.[0]).toBe(join("/npx-cache", "dev-2.76.1.bundle.min.mjs"));
+    } finally {
+      process.argv[1] = saved;
+    }
+  });
+});
+
+describe("resolveDevScriptPath", () => {
+  it("returns the sibling dev bundle for the generic castle-mcp bundle name", () => {
+    expect(resolveDevScriptPath(join("dist", "castle-mcp.bundle.min.mjs")))
+      .toBe(join("dist", "dev.bundle.min.mjs"));
+  });
+
+  it("returns the sibling dev bundle for a versioned castle-mcp bundle name", () => {
+    expect(resolveDevScriptPath(join("cache", "castle-mcp-2.76.1.bundle.min.mjs")))
+      .toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
+  });
+
+  it("passes through a dev bundle path unchanged", () => {
+    const devBundle = join("dist", "dev.bundle.min.mjs");
+    expect(resolveDevScriptPath(devBundle)).toBe(devBundle);
+  });
+
+  it("passes through an arbitrary CLI shim path unchanged (no PATH-dependent shim lookup)", () => {
+    const shim = "/usr/local/bin/red-skills-dev";
+    expect(resolveDevScriptPath(shim)).toBe(shim);
   });
 });
