@@ -67,7 +67,7 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
+import { createEnginePaths, createFileHealLedgerStore, runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -1026,6 +1026,9 @@ export function buildProcessDeps(
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
     recoveryEnv: process.env,
+    // ADR 0122 heal ledger (#2576): merge-retry accounting shared with the
+    // death-sweep and boot healer — one per-issue budget across all belts.
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     // ADR 0017: best-effort AFK→Memory "reasoning attempt" recording. Serialise
     // the payload to a temp JSON file under the attempt dir, then exec the memory
     // CLI DIRECTLY (`<memoryCli> attempt record --root <root>` with the payload on

@@ -1380,7 +1380,11 @@ export async function processIssue(
         { validationSummary: validation },
       );
     }
-    return await mergeFailed(common, landing.reason, landing.locked);
+    return await mergeFailed(
+      common,
+      [landing.reason, landing.message].filter(Boolean).join(" — "),
+      landing.locked,
+    );
   }
   return await finishSuccessfulLanding(landing, true);
   }
