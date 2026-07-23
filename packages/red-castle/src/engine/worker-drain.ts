@@ -24,7 +24,10 @@ export type CastleSelectionFilter =
   | { kind: "selector"; selector: FleetSelector };
 
 /** True when a candidate falls inside a named fleet's work scope. Every facet
- * the selector declares must hold; an empty selector matches everything. */
+ * the selector declares must hold; an empty selector matches everything.
+ * Keep in sync with `matchesSelector` in the consuming `apps/dev`
+ * `core/session.ts` — this copy drives the live drain; the dev copy backs the
+ * dev-side previews. */
 export function matchesFleetSelector(
   candidate: CastleIssueCandidate,
   selector: FleetSelector,

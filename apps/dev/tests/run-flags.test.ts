@@ -272,6 +272,44 @@ describe("parseRunFlags", () => {
     expect(f.runMode).toBe("scout");
   });
 
+  it("folds --tags/--user into a selector filter (territory scoping)", () => {
+    expect(parseRunFlags(["--tags", "backend,infra"]).filter).toEqual({
+      kind: "selector",
+      selector: { tags: ["backend", "infra"] },
+    });
+    expect(parseRunFlags(["--user", "octocat"]).filter).toEqual({
+      kind: "selector",
+      selector: { user: "octocat" },
+    });
+    // --user keeps the literal @me — resolution happens at dispatch time.
+    expect(parseRunFlags(["--user", "@me"]).filter).toEqual({
+      kind: "selector",
+      selector: { user: "@me" },
+    });
+  });
+
+  it("merges --tags/--user with --spec and with --selector JSON (explicit flag wins)", () => {
+    expect(parseRunFlags(["--spec", "42", "--tags", "backend"]).filter).toEqual({
+      kind: "selector",
+      selector: { spec: 42, tags: ["backend"] },
+    });
+    expect(
+      parseRunFlags(["--selector", '{"tags":["frontend"],"lane":"go"}', "--tags", "backend"]).filter,
+    ).toEqual({
+      kind: "selector",
+      selector: { lane: "go", tags: ["backend"] },
+    });
+  });
+
+  it("throws RunFlagError on contradictory or malformed territory flags", () => {
+    expect(() => parseRunFlags(["--issues", "1,2", "--tags", "backend"])).toThrow(RunFlagError);
+    expect(() => parseRunFlags(["--tags", ","])).toThrow(/at least one tag value/);
+    // Bare values only: the "tag:" prefix is composed at match time.
+    expect(() => parseRunFlags(["--tags", "tag:backend"])).toThrow(RunFlagError);
+    // Empty --user is rejected by the shared value-flag parser before folding.
+    expect(() => parseRunFlags(["--user", ""])).toThrow(/--user/);
+  });
+
   it("parses --issues into an ordered number list", () => {
     expect(parseRunFlags(["--issues", "3,1,2"]).filter).toEqual({ kind: "issues", numbers: [3, 1, 2] });
     expect(parseRunFlags(["--issues=10, 20"]).filter).toEqual({ kind: "issues", numbers: [10, 20] });

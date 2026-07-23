@@ -16,6 +16,7 @@ interface RspIssueListItem {
   title: string;
   body: string;
   labels: string[];
+  author: string;
 }
 
 async function listIssuesViaRsp(ctx: GhContext, label: string, limit: string): Promise<RspIssueListItem[] | null> {
@@ -40,6 +41,7 @@ async function listIssuesViaRsp(ctx: GhContext, label: string, limit: string): P
       labels: Array.isArray(row.labels)
         ? row.labels.map((item: unknown) => isRecord(item) ? String(item.name ?? "") : "").filter(Boolean)
         : [],
+      author: isRecord(row.user) ? String(row.user.login ?? "") : "",
     }));
   } catch {
     return null;
@@ -76,6 +78,7 @@ export async function listCandidates(
     title: item.title,
     body: item.body,
     labels: item.labels,
+    author: item.author || undefined,
   }));
   const r = await runGh(ctx,
     [
@@ -89,7 +92,7 @@ export async function listCandidates(
       "--limit",
       "200",
       "--json",
-      "number,title,labels,body",
+      "number,title,labels,body,author",
     ],
   );
   if (r.code !== 0) {
@@ -108,12 +111,20 @@ export async function listCandidates(
     return [];
   }
   return raw.map((row): IssueCandidate => {
-    const item = row as { number?: number; title?: string; body?: string; labels?: Array<{ name?: string }> };
+    const item = row as {
+      number?: number;
+      title?: string;
+      body?: string;
+      labels?: Array<{ name?: string }>;
+      author?: { login?: string } | null;
+    };
+    const author = item.author?.login ? String(item.author.login) : undefined;
     return {
       number: Number(item.number ?? 0),
       title: String(item.title ?? ""),
       body: String(item.body ?? ""),
       labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
+      author,
     };
   });
 }
