@@ -1,6 +1,8 @@
 import { encode as encodeToon } from "@reddb-io/toon";
+import { renderClaimComment } from "../claim.js";
 import { decideReaperSignal, deriveSnapshot } from "../reaper-signal.js";
 import { dispose } from "../disposition.js";
+import { workerIdentity } from "../host-identity.js";
 import { validateIssueLifecycleTransition } from "../issue-lifecycle.js";
 import {
   LABEL_CONTESTED,
@@ -125,6 +127,10 @@ export async function reapStalledSlot(
   // exactly like the per-issue routeRecovery escalation.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
+    await deps.gh.comment(
+      info.issue,
+      renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
+    );
     // The composer owns the bounded re-claim decision + label sets + the
     // budget-exhausted page comment (core/disposition, total map → `stalled` is
     // recoverable, #402). gh.editLabels here is the (issue, add, remove) shape,
