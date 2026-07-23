@@ -548,6 +548,44 @@ describe("tracker dual lease", () => {
     }
   });
 
+  it("blocks a DIFFERENT owner from the same pid — the owner token is the identity authority", async () => {
+    // One process hosts many workers (the supervisor claims in-process on
+    // behalf of each), so a matching pid with a different owner token is a
+    // peer's live lease, never an idempotent re-acquire.
+    const root = await tempLeaseRoot();
+    try {
+      const local = createFsIssueLeaseStore(root);
+      const store = memoryStore();
+
+      const first = await acquireIssueLease({
+        issue: 1907,
+        identity: { worker: "host:wA" },
+        local,
+        remote: store,
+        liveness: () => "alive",
+      });
+      const collision = await acquireIssueLease({
+        issue: 1907,
+        identity: { worker: "host:wB" },
+        local,
+        remote: store,
+        liveness: () => "alive",
+      });
+
+      expect(first).toMatchObject({ verdict: "won", winner: "host:wA" });
+      expect(collision).toMatchObject({
+        verdict: "lost",
+        winner: "host:wA",
+        reason: "local lease owner is alive",
+      });
+      await expect(readFile(join(root, "1907", "owner"), "utf8")).resolves.toBe(
+        "host:wA\n",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("recovers an older remote claim only from an injected dead liveness verdict", async () => {
     const oldClaim = {
       id: 1,

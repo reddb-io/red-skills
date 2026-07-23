@@ -736,8 +736,14 @@ async function acquireFsIssueLease(
   const holderOwner = await readLeaseOwner(leaseDir);
   const holderPid = await readLeasePid(leaseDir);
 
-  // Idempotent re-acquire: the dir is already ours by owner token or by pid.
-  if ((holderOwner !== undefined && holderOwner === owner) || holderPid === pid) {
+  // Idempotent re-acquire: ours by owner token; the pid fallback applies ONLY
+  // to a legacy dev-format dir with no owner file — a readable owner token that
+  // differs is a DIFFERENT worker even from the same pid (one supervisor
+  // process claims on behalf of many workers).
+  if (
+    holderOwner === owner ||
+    (holderOwner === undefined && holderPid !== undefined && holderPid === pid)
+  ) {
     await refreshLeaseFiles(leaseDir, owner, pid, holderOwner, holderPid);
     return { acquired: true };
   }
