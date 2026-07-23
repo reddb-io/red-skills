@@ -72,6 +72,9 @@ export function makeImplementerRunAgent(
     return inner({
       ...input,
       steerFile: steerFilePath,
+      onSteerConsumed: (iteration) => {
+        void options.castleBridge.record("worker.steer_consumed", { iteration });
+      },
       implementer: environment.runtime,
       onAgentEvent: (event) => {
         if (!startupRecorded) {
