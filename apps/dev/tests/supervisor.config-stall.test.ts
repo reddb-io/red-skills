@@ -868,11 +868,14 @@ describe("pollStallDetector reaper gating", () => {
 
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(4242);
-    expect(io.comment).toHaveBeenCalledOnce();
-    const [issue, body] = io.comment.mock.calls[0]!;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const [issue, body] = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="no-sentinel"'),
+    )!;
     expect(issue).toBe(190);
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("stalled tool call");
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     // #1197: the retry first opens a bounded contest window. The issue is not
     // ready-for-agent yet, so a second worker cannot double-run it while the
     // original branch may still report late commits.
