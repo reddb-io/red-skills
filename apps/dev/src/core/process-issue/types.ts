@@ -76,7 +76,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
-import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
+import { PREV_FAILURE_REASON_MARKER } from "../prev-failure.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
@@ -175,7 +175,7 @@ export interface ProcessLookups {
   isLocked(): Promise<boolean>;
   comments(issue: number): Promise<HandoffComment[]>;
   issueUrl(issue: number): Promise<string>;
-  priorAttemptContext(issue: number): Promise<string | undefined>;
+  prevFailureContext(issue: number): Promise<string | undefined>;
   /** Best-effort owning-glossary and path-local exemplar supplement (#2402). */
   handoffEnrichment?(input: HandoffEnrichmentInput & { issue: number }): Promise<string | undefined>;
   changedFiles(branch: string, base: string): Promise<string[]>;
@@ -221,11 +221,11 @@ export function formatBaseResolution(resolution: WorkerBaseResolution): string {
     .filter((line): line is string => Boolean(line))
     .join("\n");
 }
-export function isMergeConflictRetry(priorAttemptContext: string | undefined): boolean {
-  if (!priorAttemptContext) return false;
-  const marker = "prev-failure-reason:";
-  const idx = priorAttemptContext.indexOf(marker);
-  const failureReason = idx === -1 ? priorAttemptContext : priorAttemptContext.slice(idx + marker.length);
+export function isMergeConflictRetry(prevFailureContext: string | undefined): boolean {
+  if (!prevFailureContext) return false;
+  const idx = prevFailureContext.indexOf(PREV_FAILURE_REASON_MARKER);
+  const failureReason =
+    idx === -1 ? prevFailureContext : prevFailureContext.slice(idx + PREV_FAILURE_REASON_MARKER.length);
   return /\bmerge-conflict\b/.test(failureReason);
 }
 export interface ProcessHooks {
@@ -335,7 +335,6 @@ export interface ProcessIssueDeps {
    * merge-retry cap survives worker replacement. Optional; absent in tests
    * that predate it (worker-local ordinal then applies alone). */
   healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
-  recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   cascadeRebase?: CascadeRebasePort;
 }

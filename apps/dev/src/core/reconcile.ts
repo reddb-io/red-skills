@@ -47,7 +47,6 @@ import { type LandLock } from "./land-lock.js";
 import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
-import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { type RecoveryEnv } from "./recovery.js";
 import { dispose } from "./disposition.js";
 import type { AttemptStatus } from "./envelope.js";
@@ -221,8 +220,6 @@ export interface ReconcileDeps {
    * never fails the reconcile.
    */
   markStage?(stage: "validating" | "landing"): Promise<void>;
-  /** AFK→Memory reasoning-attempt recording (best-effort; optional). */
-  recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -522,7 +519,6 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
   const posted = await emitDone(deps, input, mergeSha, durationS, feedback.sidecar);
-  await recordAttemptBestEffort(deps, input, "done", { durationS, mergeSha, validationSummary: feedback.sidecar.join("\n") });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, landDropLabels(labels), []);
   await deleteRemote(deps.remoteGit, input.repoDir, branch);
@@ -606,11 +602,6 @@ async function park(
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     validation: validationSummary,
   });
-  await recordAttemptBestEffort(deps, input, "feedback-failed", {
-    durationS: deps.nowEpoch() - startedEpoch,
-    notes: "Reconcile re-validated a parked branch; the scoped gate failed, so it was not landed.",
-    validationSummary,
-  });
   deps.appendIterLog(
     `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation — parked to ready-for-human with the failing checks.`,
   );
@@ -657,11 +648,6 @@ async function parkInfraRetry(
     const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
       validation: feedback.sidecar.join("\n"),
     });
-    await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
-      durationS: deps.nowEpoch() - startedEpoch,
-      notes: `Reconcile feedback gate failed INFRA (attempt ${input.attempt}/${cap}); auto-retry.`,
-      validationSummary: feedback.sidecar.join("\n"),
-    });
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason (attempt ${input.attempt}/${cap}) — re-queued to ready-for-agent.`,
     );
@@ -678,11 +664,6 @@ async function parkInfraRetry(
   );
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     validation: feedback.sidecar.join("\n"),
-  });
-  await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
-    durationS: deps.nowEpoch() - startedEpoch,
-    notes: `Reconcile feedback gate INFRA retry budget exhausted (attempt ${input.attempt}/${cap}); escalating.`,
-    validationSummary: feedback.sidecar.join("\n"),
   });
   deps.appendIterLog(
     `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason and the retry budget is exhausted (attempt ${input.attempt}/${cap}) — escalating.`,
@@ -705,10 +686,6 @@ async function parkInfraLanding(
   await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land infra failure: ${reason}`,
-  });
-  await recordAttemptBestEffort(deps, input, "infra", {
-    durationS: deps.nowEpoch() - startedEpoch,
-    notes: `Reconcile validated the branch green but landing infrastructure failed (${reason}).`,
   });
   deps.appendIterLog(
     `🤖 /afk reconcile #${issue}: \`${input.branch}\` passed validation but landing infrastructure failed (${reason}) — escalating.`,
@@ -735,10 +712,6 @@ async function parkMergeConflict(
   await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land failed: ${reason}`,
-  });
-  await recordAttemptBestEffort(deps, input, "merge-conflict", {
-    durationS: deps.nowEpoch() - startedEpoch,
-    notes: `Reconcile validated the branch green but the land failed (${reason}).`,
   });
   deps.appendIterLog(
     `🤖 /afk reconcile #${issue}: \`${input.branch}\` validated green but the land failed (${reason}) — parked to ready-for-human.`,
@@ -814,40 +787,6 @@ async function emitFailure(
     historyFields: { runner: input.runner },
   });
   return result.posted;
-}
-
-// ---------- AFK→Memory reasoning-attempt recording (best-effort) ----------
-
-async function recordAttemptBestEffort(
-  deps: ReconcileDeps,
-  input: ReconcileInput,
-  outcome: string,
-  fields: { durationS?: number; mergeSha?: string; notes?: string; validationSummary?: string },
-): Promise<void> {
-  if (!deps.recordAttempt) return;
-  try {
-    await deps.recordAttempt(
-      buildAttemptRecordPayload({
-        repo: input.repo,
-        issue: input.issue,
-        attempt: input.attempt,
-        outcome,
-        labels: input.labels,
-        title: input.title,
-        body: input.body,
-        workerId: input.workerId,
-        branch: input.branch,
-        durationS: fields.durationS,
-        mergeSha: fields.mergeSha,
-        notes: fields.notes,
-        validationSummary: fields.validationSummary,
-      }),
-    );
-  } catch (err) {
-    deps.appendIterLog(
-      `🤖 /afk reconcile memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
-    );
-  }
 }
 
 // ---------- validation sidecar ----------

@@ -33,7 +33,8 @@ import {
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { Output, createFsIssueLeaseStore } from "@reddb-io/red-castle";
+import { makeClaimLock } from "./claim-lease.js";
+import { Output } from "@reddb-io/red-castle";
 import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
@@ -67,10 +68,13 @@ import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import { createEnginePaths, createFileHealLedgerStore, runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
-import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
+import { lookupPrevFailureContext } from "../../core/prev-failure.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import { spawn } from "node:child_process";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
@@ -86,7 +90,7 @@ import {
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
 import { join } from "node:path";
-import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
+import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
@@ -103,7 +107,6 @@ import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import { runLinkedSubagent } from "./linked-subagent.js";
-import { makeRecordAttempt, makeRecordOutcomeEvent } from "./recording.js";
 import {
   castleWorktreeUnder,
   decodeLocMemoSnapshot,
@@ -365,24 +368,7 @@ export function buildProcessDeps(
     // gate (a cross-host predecessor's log isn't on this filesystem).
     recoveredWorkerDeathCause: (recoveredWorker) =>
       deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
-    // Local per-host issue lease — the ONE lease implementation, in castle
-    // (#2578). Its leaf `<claims>/<issue>/` dir is the atomic POSIX mkdir lock
-    // (#434); a dead holder is reclaimed through the #568 atomic-rename steal.
-    // `pidAlive` injects this host's `kill -0` verdict (castle stays liveness-IO
-    // free); the owner token is the ADR 0066 worker identity, so a release only
-    // removes the lease we actually hold. The owner-token liveness is `unknown`
-    // here because the pid signal alone arbitrates same-host steals on this path.
-    claimLock: (() => {
-      const store = createFsIssueLeaseStore(join(paths.tmpDir, "claims"), {
-        pid: process.pid,
-        pidAlive: (p) => (fsx.pidAlive(String(p)) ? "alive" : "dead"),
-      });
-      const owner = workerIdentity(workerId);
-      return {
-        acquire: async (issue) => (await store.acquire(issue, owner, () => "unknown")).acquired,
-        release: (issue) => store.release(issue, owner),
-      };
-    })(),
+    claimLock: makeClaimLock(paths.tmpDir, workerId),
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
@@ -620,16 +606,9 @@ export function buildProcessDeps(
           resolveActorTrust(trustPolicy, actor, (login) => ghx.actorTrustSignals(ghCtx, login)),
         ),
       issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
-      // Restart-informed retry block (#255): read the prior attempt's markers
-      // (failure.reason / snapshot-branch.ref) via the attempt-ledger.
-      priorAttemptContext: async (issue) => {
-        try {
-          const context = await attemptLedgerContext(paths.tmpDir, issue);
-          return context ? formatAttemptContext(context) : undefined;
-        } catch {
-          return undefined;
-        }
-      },
+      // The ONE ADR 0103 carry-forward: on an automatic re-queue, surface the
+      // previous failure reason + its Envelope reference in the next prompt.
+      prevFailureContext: (issue) => lookupPrevFailureContext(paths.tmpDir, issue),
       handoffEnrichment: ({ issue: _issue, ...metadata }) =>
         buildHandoffEnrichment(metadata, {
           readText: (path) => readFile(join(ctx.root, path), "utf8"),
@@ -1047,7 +1026,6 @@ export function buildProcessDeps(
     // no-op when memory is absent / not opted-in — replacing the old shell-bridge
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
-    recordAttempt: makeRecordAttempt(ctx.root, current, exec),
     recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
     // Spec cascade rebase (issue #1007): after a successful DONE landing, rebase
     // every open sibling branch (same spec:N, not held by a live worker) onto the
@@ -1158,6 +1136,59 @@ function makeIssueClassifier(
       return result.code === 0 ? result.stdout.trim() : undefined;
     });
   };
+}
+
+function makeRecordOutcomeEvent(
+  gitRoot: string,
+  current: CurrentAttempt,
+  exec?: ExecFn,
+): (event: OutcomeEvent) => Promise<void> {
+  return async (event: OutcomeEvent): Promise<void> => {
+    try {
+      const configPath = configFile(gitRoot);
+      const configText = readFileSync(configPath, "utf8");
+      if (!pluginEnabledInConfig(configText, "brain")) return;
+      const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
+      const brainCli = resolveBrainCli(gitRoot, env);
+      if (!brainCli) return;
+      const dir = current.attemptDir || gitRoot;
+      await fsx.ensureDir(dir);
+      const json = JSON.stringify(event);
+      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}.json`), json, "utf8");
+      const run = exec ?? (await import("../../runtime/exec.js")).execTool;
+      const [cmd, ...head] = brainCli;
+      await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env,
+        input: json,
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] brain outcome-event skipped (best-effort): ${String(err)}\n`);
+    }
+  };
+}
+
+function resolveBrainCli(gitRoot: string, env: NodeJS.ProcessEnv): string[] | undefined {
+  const override = env.RED_BRAIN_CLI;
+  if (override) return existsSync(override) ? ["node", override] : undefined;
+  const pathHit = findOnPath("brain", env.PATH);
+  if (pathHit) return ["brain"];
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT ?? env.CODEX_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const sibling = join(pluginRoot, "..", "brain", "dist", "cli.js");
+    if (existsSync(sibling)) return ["node", sibling];
+  }
+  const inRepo = join(gitRoot, "plugins", "brain", "dist", "cli.js");
+  if (existsSync(inRepo)) return ["node", inRepo];
+  return undefined;
+}
+
+function findOnPath(bin: string, pathValue: string | undefined): string | undefined {
+  for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
+    const candidate = join(dir, bin);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /** Per-issue mutable context the session-scoped process deps close over — the

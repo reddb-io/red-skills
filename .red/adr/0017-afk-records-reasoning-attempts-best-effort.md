@@ -2,7 +2,29 @@
 
 ## Status
 
-accepted.
+**superseded by ADR 0103.** The attempt-recording decided here is removed, and
+that removal is deliberate rather than incidental: ADR 0103 deletes the Attempt
+itself, so there is no attempt boundary left to record and no `attempt` node to
+anchor. `apps/dev/src/core/attempt-record.ts` — the AFK→Memory seam, its
+`AttemptRecordPayload` → `ReasoningAttemptPayload` mapping, and the memory-CLI
+resolver that existed only to reach it — is deleted with the model it described.
+
+What survives, and where:
+
+- The **operational history** this ADR wanted lives in the terminal Envelope on
+  the Ticket and in the `.red/state/castle/history.toonl` ledger, which now also
+  supplies the bounded-retry ordinal (`core/history.ts`, `requeueOrdinal`).
+- The **routing-policy signal** lives in the brain `OutcomeEvent` seam, whose
+  vocabulary moved to `apps/dev/src/core/outcome-record.ts`. That seam predates
+  and outlives this ADR; it is not attempt-shaped.
+- The **one carry-forward with demonstrated value** — the previous failure reason
+  injected into the next prompt — lives in `apps/dev/src/core/prev-failure.ts`.
+
+The `dev` soft-uses-`memory` boundary of ADR 0009 is unchanged in principle; AFK
+simply no longer has an attempt to hand it. A future Memory integration must be
+designed on a surviving RedSkills noun, not on the Attempt.
+
+Historical status: accepted.
 
 RedSkills already has two partially overlapping audit surfaces:
 

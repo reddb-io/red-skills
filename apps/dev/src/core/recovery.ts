@@ -16,12 +16,13 @@
 // via a RED_AFK_RETRY_* env knob (a missing / non-numeric / non-positive value
 // falls back to the default). Non-recoverable reasons always escalate.
 //
-// `attemptN` is the caller's `input.attempt` (1-based, sourced from the
-// attempt-ledger), so the cap counts REAL attempts, not retries-within-an-attempt.
+// `attemptN` is the caller's re-queue ordinal (1-based, counted off the history
+// ledger by `requeueOrdinal`), so a cap bounds how many times ONE Ticket is
+// automatically re-queued — not retries within a single run (ADR 0103).
 //
 // The supervisor stall-reaper (core/supervisor.ts) is ALSO bounded by this same
-// policy now (#402): it sources the real attempt number from the reaped iter-dir
-// path and asks `recoveryDecision("stalled", …)`, so a worker that keeps stalling
+// policy now (#402): it sources the same re-queue ordinal for the reaped Ticket
+// and asks `recoveryDecision("stalled", …)`, so a worker that keeps stalling
 // can no longer be re-claimed forever — once the `stalled` cap is exhausted it
 // escalates to ready-for-human like every other terminal class. Time-based
 // backoff (vs the immediate re-queue) is still future work — the cap is what

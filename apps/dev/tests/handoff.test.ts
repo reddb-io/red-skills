@@ -476,18 +476,16 @@ describe("buildHandoff", () => {
   });
 });
 
-// ---------- restart-informed retry (mirrors restart-informed-retry.test.sh) ----------
+// ---------- the ADR 0103 prev-failure carry-forward ----------
 
-describe("buildHandoff prior-attempt-context", () => {
+describe("buildHandoff prev-failure-context", () => {
   const priorBlock = [
-    "prev-attempt: 1",
-    "prev-snapshot-branch: afk-attempts/wTEST/255-foo",
+    "prev-envelope: https://github.com/reddb-io/red-skills/issues/255",
     "prev-failure-reason:",
     "blocked: tests failed",
-    "prev-fetched-ref: refs/afk/prior-attempt",
   ].join("\n");
 
-  it("retry: emits <prior-attempt-context> with prior branch + reason", () => {
+  it("re-queue: emits <prev-failure-context> with the envelope ref + reason", () => {
     const out = buildHandoff({
       issue: 255,
       title: "Title",
@@ -497,15 +495,15 @@ describe("buildHandoff prior-attempt-context", () => {
       attempt: 2,
       url: "url",
       comments: [],
-      priorAttemptContext: priorBlock,
+      prevFailureContext: priorBlock,
     });
-    expect(out).toContain("<prior-attempt-context>");
-    expect(out).toContain("</prior-attempt-context>");
-    expect(out).toContain("afk-attempts/wTEST/255-foo");
+    expect(out).toContain("<prev-failure-context>");
+    expect(out).toContain("</prev-failure-context>");
+    expect(out).toContain("https://github.com/reddb-io/red-skills/issues/255");
     expect(out).toContain("blocked: tests failed");
   });
 
-  it("first attempt: empty context → element omitted entirely", () => {
+  it("first run: empty context → element omitted entirely", () => {
     const out = buildHandoff({
       issue: 255,
       title: "Title",
@@ -515,16 +513,16 @@ describe("buildHandoff prior-attempt-context", () => {
       attempt: 1,
       url: "url",
       comments: [],
-      priorAttemptContext: "",
+      prevFailureContext: "",
     });
-    expect(out).not.toContain("<prior-attempt-context>");
+    expect(out).not.toContain("<prev-failure-context>");
   });
 
   it("undefined context (legacy call) → element omitted", () => {
-    expect(base({})).not.toContain("<prior-attempt-context>");
+    expect(base({})).not.toContain("<prev-failure-context>");
   });
 
-  it("prior-attempt-context sits after human-guidance-thread, before thread-discussion", () => {
+  it("prev-failure-context sits after human-guidance-thread, before thread-discussion", () => {
     const out = buildHandoff({
       issue: 255,
       title: "Order",
@@ -537,10 +535,10 @@ describe("buildHandoff prior-attempt-context", () => {
         { author: "alice", body: directiveMarker("do the thing") },
         { author: "bob", body: "some advisory chatter" },
       ],
-      priorAttemptContext: priorBlock,
+      prevFailureContext: priorBlock,
     });
-    expect(out.indexOf("<human-guidance-thread>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
-    expect(out.indexOf("<prior-attempt-context>")).toBeLessThan(out.indexOf("<thread-discussion"));
+    expect(out.indexOf("<human-guidance-thread>")).toBeLessThan(out.indexOf("<prev-failure-context>"));
+    expect(out.indexOf("<prev-failure-context>")).toBeLessThan(out.indexOf("<thread-discussion"));
   });
 
   it("untrusted directive lands in the untrusted discussion block, never guidance (#1100)", () => {
@@ -574,12 +572,12 @@ describe("buildHandoff repair-instructions (#940)", () => {
     expect(base({ repairInstruction: "" }).includes("<repair-instructions>")).toBe(false);
   });
 
-  it("repair-instructions sits before prior-attempt-context", () => {
+  it("repair-instructions sits before prev-failure-context", () => {
     const out = base({
       repairInstruction: "REPAIR: rerun the gate.",
-      priorAttemptContext: "prev-attempt: 1",
+      prevFailureContext: "prev-failure-reason:\nboom",
     });
-    expect(out.indexOf("<repair-instructions>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
+    expect(out.indexOf("<repair-instructions>")).toBeLessThan(out.indexOf("<prev-failure-context>"));
   });
 });
 

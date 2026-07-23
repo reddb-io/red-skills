@@ -395,7 +395,7 @@ async function setup(opts: {
       async issueUrl() {
         return "https://github.com/o/r/issues/9";
       },
-      async priorAttemptContext() {
+      async prevFailureContext() {
         return undefined;
       },
       async changedFiles(branch, base) {

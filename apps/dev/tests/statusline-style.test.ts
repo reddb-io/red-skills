@@ -25,6 +25,9 @@ const DIM = "\x1b[38;2;201;150;158m";
 const GREEN = "\x1b[38;2;96;214;128m";
 const RED = "\x1b[38;2;255;95;95m";
 const YELLOW = "\x1b[38;2;240;200;120m";
+const BAR_DONE = "\x1b[38;2;240;110;120m";
+const BAR_CURRENT = "\x1b[38;2;255;214;214m";
+const BAR_AHEAD = "\x1b[38;2;146;84;94m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
@@ -220,7 +223,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(stripAnsi(renderWorkerLine(w, NOW)).match(/[█▶░]{5}/)?.[0]).toBe("▶░░░░");
   });
 
-  it("colors completed, current, and future lifecycle cells green, yellow, and dim", () => {
+  it("colors completed, current, and future lifecycle cells along the wine ramp", () => {
     const validating = worker({
       state: {
         ...worker().state,
@@ -234,8 +237,8 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
 
-    expect(renderWorkerLine(validating, NOW)).toContain(`${GREEN}██${YELLOW}▶${DIM}░░${SOFT}`);
-    expect(renderWorkerLine(done, NOW)).toContain(`${GREEN}█████${SOFT}`);
+    expect(renderWorkerLine(validating, NOW)).toContain(`${BAR_DONE}██${BAR_CURRENT}▶${BAR_AHEAD}░░${SOFT}`);
+    expect(renderWorkerLine(done, NOW)).toContain(`${BAR_DONE}█████${SOFT}`);
   });
 
   it.each([
@@ -250,7 +253,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
 
-    expect(renderWorkerLine(w, NOW)).toContain(`${GREEN}██${RED}▶${DIM}░░${SOFT}`);
+    expect(renderWorkerLine(w, NOW)).toContain(`${BAR_DONE}██${RED}▶${BAR_AHEAD}░░${SOFT}`);
   });
 
   it("renders the terse colored k=v line: bold-red wID, k=v tokens, iss=number, bare stage, elapsed, loc, tks, individual vitals", () => {

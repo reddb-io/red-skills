@@ -3,6 +3,7 @@ import {
   buildDiffSection,
   buildEnvelopeSummary,
   buildFailureMarkers,
+  envelopeReference,
   buildSections,
   emitEnvelope,
   fmtDuration,
@@ -124,14 +125,27 @@ describe("buildDiffSection", () => {
 });
 
 describe("buildFailureMarkers", () => {
-  it("writes only the failure reason with a trailing newline", () => {
-    expect(buildFailureMarkers("afk-attempts/wTEST/9-foo", "the reason")).toEqual({
+  it("writes the failure reason and the envelope ref, each with a trailing newline", () => {
+    expect(buildFailureMarkers("the reason", "https://github.com/o/r/issues/9")).toEqual({
       failureReason: "the reason\n",
+      envelopeRef: "https://github.com/o/r/issues/9\n",
     });
   });
 
-  it("does not write a snapshot ref marker", () => {
-    expect(buildFailureMarkers("", "r")).toEqual({ failureReason: "r\n" });
+  it("omits the envelope ref when the caller has none", () => {
+    expect(buildFailureMarkers("r")).toEqual({ failureReason: "r\n" });
+  });
+});
+
+describe("envelopeReference", () => {
+  it("points at the issue thread the terminal envelope is posted into", () => {
+    expect(envelopeReference("reddb-io/red-skills", 2174)).toBe(
+      "https://github.com/reddb-io/red-skills/issues/2174",
+    );
+  });
+
+  it("is empty when the repo is unknown", () => {
+    expect(envelopeReference(undefined, 2174)).toBe("");
   });
 });
 
@@ -410,7 +424,7 @@ describe("emitEnvelope — done", () => {
 // ===========================================================================
 
 describe("emitEnvelope — failure markers/posted flow", () => {
-  it("does not push an afk-attempts branch and writes only the failure reason", async () => {
+  it("does not push a snapshot branch and writes the failure reason + envelope ref", async () => {
     const { deps, git, markers, posted } = makeDeps({ gitCode: 0, posterOk: true });
     const res = await emitEnvelope(deps, {
       status: "blocked",
@@ -433,6 +447,7 @@ describe("emitEnvelope — failure markers/posted flow", () => {
     expect(markers.written).toHaveLength(1);
     expect(markers.written[0]).toEqual({
       failureReason: `${res.summary}\n`,
+      envelopeRef: "https://github.com/reddb-io/red-skills/issues/11\n",
     });
     expect(res.posted).toBe(true);
     expect(posted.writes).toEqual([true]);
@@ -462,7 +477,7 @@ describe("emitEnvelope — failure markers/posted flow", () => {
     expect(res.remoteBranch).toBe("");
     expect(res.body).toContain("live branch:");
     expect(res.body).not.toContain("compare/main...");
-    expect(markers.written[0]?.snapshotBranchRef).toBeUndefined();
+    expect(markers.written[0]?.envelopeRef).toBe("https://github.com/reddb-io/red-skills/issues/13\n");
     expect(res.warnings).toEqual([]);
   });
 

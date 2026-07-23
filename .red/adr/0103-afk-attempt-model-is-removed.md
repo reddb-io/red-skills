@@ -22,6 +22,15 @@ The attempt model is removed. `{issue}-a{N}` directories, attempt ledgers,
 attempt-record payloads, salvage-uncommitted handling, ExitReceipt, and
 `afk-attempts/*` snapshot branches are deleted from the target engine.
 
+This **supersedes ADR 0017** (AFK records Reasoning attempts into Memory Graph
+best-effort), deliberately and not by name-collision: 0017's subject is the
+Attempt as an audit object, and once the Attempt does not exist there is nothing
+for that seam to record. The removal of `attempt-record.ts` is therefore a
+documented reversal of 0017, not a mechanical side effect of deleting the
+similarly-named attempt ledger. The two RedSkills nouns that keep 0017's value —
+the terminal Envelope plus the history ledger for operational forensics, and the
+brain `OutcomeEvent` for routing policy — survive untouched.
+
 Worktrees are keyed by `workerId-issueId`; there is no attempt level.
 
 Bounded retry caps survive as re-queue policy. Per-failure-class caps such as

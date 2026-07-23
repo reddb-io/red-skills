@@ -49,13 +49,12 @@ exemplars[1]{pr,title,shows}:
 </previous-attempt>
 </previous-attempts>
 
-<prior-attempt-context>                                <!-- omitted on a first attempt -->
-prev-attempt: 1
-prev-snapshot-branch: (none)
+<prev-failure-context>                                 <!-- omitted on a first run -->
+prev-envelope: https://github.com/{owner}/{repo}/issues/{N}
 prev-failure-reason:
-{verbatim failure.reason from the previous attempt — the envelope summary}
+{verbatim failure.reason from the previous run — the envelope summary}
 {branch fresh off the base — do NOT fix-forward on prior history}
-</prior-attempt-context>
+</prev-failure-context>
 
 <human-guidance-thread>                                <!-- omitted when empty -->
 <human-guidance author="@alice" at="{iso8601}">
