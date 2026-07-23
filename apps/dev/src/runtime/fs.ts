@@ -9,11 +9,9 @@ import { constants } from "node:fs";
 import {
   access,
   appendFile,
-  link,
   mkdir,
   readdir,
   readFile,
-  rename,
   rm,
   rmdir,
   stat,
@@ -56,80 +54,6 @@ export async function ensureGitignoreLine(gitignorePath: string, line: string): 
 export async function writeWorkerPid(pidFile: string, pid: number): Promise<void> {
   await mkdir(dirname(pidFile), { recursive: true });
   await writeFile(pidFile, String(pid), "utf8");
-}
-
-/** Monotonic per-process counter for unique claim candidates and stale paths. */
-let claimReclaimSeq = 0;
-
-/**
- * Atomically claim `dir` by publishing a fully-written `pid` file with link(2).
- * Creating the directory and then writing its pid left a visibility gap: a
- * concurrent caller could see the empty directory, classify it as stale, and
- * return a second successful claim. A hard link is exclusive (`EEXIST` for every
- * loser) and publishes the already-written pid contents in one filesystem
- * operation. The boot-time stale-claim sweep keeps reading `<dir>/pid`.
- */
-export async function tryAcquireClaimDir(dir: string, pid: number): Promise<boolean> {
-  await mkdir(dirname(dir), { recursive: true });
-  const candidate = `${dir}.candidate-${pid}-${claimReclaimSeq++}`;
-  await writeFile(candidate, String(pid), { encoding: "utf8", flag: "wx" });
-
-  const ensureClaimDir = async (): Promise<boolean> => {
-    try {
-      await mkdir(dir);
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      try {
-        if ((await stat(dir)).isDirectory()) return true;
-      } catch {
-        return ensureClaimDir();
-      }
-      const poisoned = `${dir}.stale-${pid}-${claimReclaimSeq++}`;
-      try {
-        await rename(dir, poisoned);
-      } catch {
-        return false;
-      }
-      await rm(poisoned, { recursive: true, force: true });
-      return ensureClaimDir();
-    }
-  };
-
-  const publishCandidate = async (): Promise<"acquired" | "held" | "missing"> => {
-    try {
-      await link(candidate, join(dir, "pid"));
-      return "acquired";
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EEXIST") return "held";
-      if (code === "ENOENT" || code === "ENOTDIR") return "missing";
-      throw err;
-    }
-  };
-
-  try {
-    if (!(await ensureClaimDir())) return false;
-    const initial = await publishCandidate();
-    if (initial === "acquired") return true;
-    if (initial === "missing" || await claimPathHeldByLivePid(dir)) return false;
-
-    // Dead holder → reclaim ATOMICALLY. The prior `rm` + re-`mkdir` was a TOCTOU:
-    // two boots that both observed the dead pid would both rm the dir and both
-    // mkdir it, each believing it held the lock — the #434 duplicate-claim race
-    // reappeared on the recovery path that fires after any worker crash (#568).
-    const stealing = `${dir}.stale-${pid}-${claimReclaimSeq++}`;
-    try {
-      await rename(dir, stealing);
-    } catch {
-      return false;
-    }
-    await rm(stealing, { recursive: true, force: true });
-    if (!(await ensureClaimDir())) return false;
-    return (await publishCandidate()) === "acquired";
-  } finally {
-    await rm(candidate, { force: true });
-  }
 }
 
 /** True when `dir` is a claim-lock dir whose recorded `pid` file names a live
@@ -492,8 +416,10 @@ async function reapDeadEmptyWorkerShellsInRoot(workersRoot: string): Promise<Dea
 }
 
 /** Liveness probe (kill -0) for a recorded pid string. A blank/non-numeric pid
- * counts as dead, matching the bash `[[ -z "$cp" ]] || ! kill -0` guard. */
-function pidAlive(raw: string | null): boolean {
+ * counts as dead, matching the bash `[[ -z "$cp" ]] || ! kill -0` guard.
+ * Exported so the castle FS issue-lease store (the single lease implementation)
+ * can inject this host's pid-liveness verdict without importing packages/shared. */
+export function pidAlive(raw: string | null): boolean {
   if (raw === null) return false;
   const trimmed = raw.trim();
   if (!/^[1-9][0-9]*$/.test(trimmed)) return false;

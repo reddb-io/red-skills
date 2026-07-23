@@ -12,6 +12,7 @@
 //   2. the incoherent issue is quarantined with its diagnosis (#2521 posture),
 //   3. the issue with 2 prior heals is quarantined on its 3rd heal (#2526),
 //   4. the healthy sibling is claimed and processed in the same run.
+//   5. a running-labeled dead-pid ghost is conceded before worker spawn (#2566).
 //
 // The per-mechanism tests below are mutation checks: removing any one healing
 // mechanism (auto-concede, quarantine, heal ledger) makes the incident class
@@ -24,6 +25,7 @@ import { NOW, makeDeps, options, runBoot } from "./boot.helpers.js";
 
 const GHOST_CLAIM = "<!-- afk:claim v1 worker=local:wGhost kind=claim runner=codex -->";
 const KILLER_CLAIM = "<!-- afk:claim v1 worker=local:wKiller kind=claim runner=codex -->";
+const RUNNING_GHOST_CLAIM = "<!-- afk:claim v1 worker=local:wRunningGhost kind=claim runner=codex -->";
 
 const BLOCKER_BODY = [
   "## Current blocker",
@@ -50,6 +52,7 @@ function incidentIssues(): {
   incoherent: MutableIssue;
   killer: MutableIssue;
   healthy: MutableIssue;
+  runningGhost: MutableIssue;
   all: MutableIssue[];
 } {
   const ghost: MutableIssue = {
@@ -76,7 +79,20 @@ function incidentIssues(): {
     labels: ["ready-for-agent", "priority:normal"],
     body: "## Agent brief\n\nShip the healthy slice.",
   };
-  return { ghost, incoherent, killer, healthy, all: [ghost, incoherent, killer, healthy] };
+  const runningGhost: MutableIssue = {
+    number: 3005,
+    title: "Running issue held by a dead worker's un-conceded claim",
+    labels: ["running"],
+    body: "## Agent brief\n\nResume the stranded running slice.",
+  };
+  return {
+    ghost,
+    incoherent,
+    killer,
+    healthy,
+    runningGhost,
+    all: [ghost, incoherent, killer, healthy, runningGhost],
+  };
 }
 
 function seededLedger(killerIssue: number, priorHeals: number): HealLedgerStore & { value: HealLedgerState } {
@@ -98,7 +114,12 @@ function seededLedger(killerIssue: number, priorHeals: number): HealLedgerStore 
   };
 }
 
-function incidentOptions(issues: MutableIssue[], ghost: MutableIssue, killer: MutableIssue) {
+function incidentOptions(
+  issues: MutableIssue[],
+  ghost: MutableIssue,
+  killer: MutableIssue,
+  runningGhost: MutableIssue,
+) {
   return options({
     operationalProbes: {
       remoteUrls: [],
@@ -107,6 +128,10 @@ function incidentOptions(issues: MutableIssue[], ghost: MutableIssue, killer: Mu
         listOpenQueueIssues: async () => [
           { number: ghost.number, comments: [{ id: 1, body: GHOST_CLAIM, createdAt: "2026-07-22T10:00:00Z" }] },
           { number: killer.number, comments: [{ id: 2, body: KILLER_CLAIM, createdAt: "2026-07-22T10:00:00Z" }] },
+          {
+            number: runningGhost.number,
+            comments: [{ id: 3, body: RUNNING_GHOST_CLAIM, createdAt: "2026-07-23T11:00:00Z" }],
+          },
         ],
         workerPidState: () => "dead",
       },
@@ -182,20 +207,27 @@ async function drainAfterBoot(
 
 describe("2026-07-22 poison-chain regression fixture (#2529)", () => {
   it("heals the whole incident class in one run while the fleet keeps draining", async () => {
-    const { ghost, incoherent, killer, healthy, all } = incidentIssues();
+    const { ghost, incoherent, killer, healthy, runningGhost, all } = incidentIssues();
     const { deps } = makeDeps();
     const ledger = seededLedger(killer.number, 2);
     const { concedeClaim, editBody } = wireDeps(deps, all, { ledger });
 
-    const { processed, result } = await drainAfterBoot(deps, all, incidentOptions(all, ghost, killer));
+    const { processed, result } = await drainAfterBoot(
+      deps,
+      all,
+      incidentOptions(all, ghost, killer, runningGhost),
+    );
 
     // Boot survived the full poison chain — no red halt, the fleet drains.
     expect(result.boot.bootstrap).toEqual({ ok: true });
 
-    // (1) Ghost claim conceded — exactly one concede, on the ghost issue only
-    // (the killer's dead claim routes to quarantine instead, see (3)).
-    expect(concedeClaim).toHaveBeenCalledTimes(1);
-    expect(concedeClaim.mock.calls[0]?.[0]).toBe(ghost.number);
+    // (1, 5) Both queue and running-labeled ghosts are conceded before worker
+    // spawn. The killer's dead claim routes to quarantine instead, see (3).
+    expect(concedeClaim).toHaveBeenCalledTimes(2);
+    expect(concedeClaim.mock.calls.map(([issue]) => issue)).toEqual([
+      ghost.number,
+      runningGhost.number,
+    ]);
 
     // (2) Incoherent issue quarantined with its diagnosis appended.
     expect(incoherent.labels).toContain("quarantine");
@@ -216,12 +248,14 @@ describe("2026-07-22 poison-chain regression fixture (#2529)", () => {
   });
 
   it("mutation check — without auto-concede, the ghost claim red-halts the boot again", async () => {
-    const { ghost, killer, all } = incidentIssues();
+    const { ghost, killer, runningGhost, all } = incidentIssues();
     const { deps } = makeDeps();
     wireDeps(deps, all, { ledger: seededLedger(killer.number, 2) });
     deps.concedeClaim = undefined;
 
-    await expect(runBoot(deps, incidentOptions(all, ghost, killer))).rejects.toBeInstanceOf(BootHaltError);
+    await expect(
+      runBoot(deps, incidentOptions(all, ghost, killer, runningGhost)),
+    ).rejects.toBeInstanceOf(BootHaltError);
   });
 
   it("mutation check — without the quarantine write, the poison stays on the tracker (local exclusion only)", async () => {
@@ -229,11 +263,15 @@ describe("2026-07-22 poison-chain regression fixture (#2529)", () => {
     // write excludes the issue from THIS drain but leaves the tracker poisoned
     // for the curator belt to retry. Without the quarantine mechanism, the
     // contradictory shape survives on the tracker — the incident class is back.
-    const { ghost, incoherent, killer, all } = incidentIssues();
+    const { ghost, incoherent, killer, runningGhost, all } = incidentIssues();
     const { deps } = makeDeps();
     wireDeps(deps, all, { ledger: seededLedger(killer.number, 2), failLabelsFor: incoherent.number });
 
-    const { processed } = await drainAfterBoot(deps, all, incidentOptions(all, ghost, killer));
+    const { processed } = await drainAfterBoot(
+      deps,
+      all,
+      incidentOptions(all, ghost, killer, runningGhost),
+    );
 
     expect(incoherent.labels).toContain("ready-for-agent");
     expect(incoherent.labels).toContain("ready-for-human");
@@ -242,14 +280,14 @@ describe("2026-07-22 poison-chain regression fixture (#2529)", () => {
   });
 
   it("mutation check — without the heal ledger, the killer issue is conceded forever instead of quarantined", async () => {
-    const { ghost, killer, all } = incidentIssues();
+    const { ghost, killer, runningGhost, all } = incidentIssues();
     const { deps } = makeDeps();
     const { concedeClaim } = wireDeps(deps, all, { ledger: undefined });
 
-    const result = await runBoot(deps, incidentOptions(all, ghost, killer));
+    const result = await runBoot(deps, incidentOptions(all, ghost, killer, runningGhost));
 
-    // Both dead claims conceded — the killer keeps burning workers.
-    expect(concedeClaim).toHaveBeenCalledTimes(2);
+    // All three dead claims conceded — the killer keeps burning workers.
+    expect(concedeClaim).toHaveBeenCalledTimes(3);
     expect(killer.labels).not.toContain("quarantine");
     expect(result.quarantinedIssues ?? []).not.toContain(killer.number);
   });

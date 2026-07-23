@@ -184,6 +184,11 @@ export interface FeedbackWorktreeIO {
    * in-process, which is all a single-process fixture needs.
    */
   lock?(dest: string): Promise<(() => Promise<void>) | null>;
+  /**
+   * Host-wide capacity-one semaphore for validation commands. Every live worker
+   * and no-agent reconcile manager binds the same `.red/state` lock.
+   */
+  gateLock?(root: string): Promise<(() => Promise<void>) | null>;
 }
 
 /**
@@ -196,6 +201,8 @@ export interface FeedbackWorktreeIO {
 const WORKTREE_LOCK_WAIT_MS = 10 * 60_000;
 /** A holder that has not finished a materialise in this long has crashed. */
 const WORKTREE_LOCK_STALE_MS = 20 * 60_000;
+const GATE_LOCK_WAIT_MS = 60 * 60_000;
+const GATE_LOCK_STALE_MS = 24 * 60 * 60_000;
 /**
  * Consecutive failed setups before a branch is latched as permanently broken.
  * Above 1 so a transient contention loss is retried; low enough that a genuine
@@ -242,6 +249,19 @@ const defaultIO: FeedbackWorktreeIO = {
       staleAfterMs: WORKTREE_LOCK_STALE_MS,
       pollMs: 500,
     }).acquire();
+  },
+  gateLock: async (root) => {
+    const stateDir = join(root, ".red", "state");
+    await mkdir(stateDir, { recursive: true });
+    return createPathLock(
+      join(stateDir, "validation-gate.lock"),
+      `validation-gate:${process.pid}`,
+      {
+        waitTimeoutMs: GATE_LOCK_WAIT_MS,
+        staleAfterMs: GATE_LOCK_STALE_MS,
+        pollMs: 500,
+      },
+    ).acquire();
   },
 };
 
@@ -331,6 +351,25 @@ export function makeFeedbackWorktree(
   // worktree looks exactly like a hard failure at the first attempt, and
   // latching it made one collision fail every remaining check of the cycle.
   const setupFailures = new Map<string, number>();
+
+  async function runValidationCommand(
+    run: () => Promise<ExecOutput>,
+  ): Promise<ExecOutput> {
+    if (!io.gateLock) return run();
+    const release = await io.gateLock(root);
+    if (release === null) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "host-wide validation gate lock timed out; validation blocked",
+      };
+    }
+    try {
+      return await run();
+    } finally {
+      await release();
+    }
+  }
 
   /**
    * Record a failed materialise. The branch is only latched as permanently
@@ -538,11 +577,13 @@ export function makeFeedbackWorktree(
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env });
+      const r = await runValidationCommand(
+        () => io.pnpm(["-C", rewritten, ...rest], { cwd: root, env }),
+      );
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await io.pnpm(head, { cwd: root, env });
+    const r = await runValidationCommand(() => io.pnpm(head, { cwd: root, env }));
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -560,7 +601,9 @@ export function makeFeedbackWorktree(
       return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; validation blocked` };
     }
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
-    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env });
+    const r = await runValidationCommand(
+      () => io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env }),
+    );
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 

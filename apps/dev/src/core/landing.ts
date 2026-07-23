@@ -119,6 +119,11 @@ export interface LandingDeps {
    */
   ciAwait?: CiAwaitInput;
   /**
+   * Slot-release point for PR landings (#2427). Absent/`merge` preserves the
+   * synchronous landing. `ci` and `none` return a deferred tail to the caller.
+   */
+  landingWait?: "merge" | "ci" | "none";
+  /**
    * Non-blocking observability hook (issue #1279): invoked by the PR landing path
    * the moment the PR number is RESOLVED (open-or-reused, before the merge), so
    * the caller can attach the aggregated backpressure evidence review to the PR.
@@ -293,8 +298,20 @@ export interface LandingHookContexts {
  * `reason` to the merge-conflict terminal-failure path. `locked` echoes the
  * session's lock state (input.locked) for the caller's result shape — it is
  * observational and no longer implies the landing mode (#842). */
+export interface DeferredLandingTail {
+  readonly prNumber: number;
+  readonly waitForCi: boolean;
+  run(ciAlreadyGreen?: boolean): Promise<LandingResult>;
+}
+
 export type LandingResult =
-  | { ok: true; locked: boolean; mergeSha?: string; postMergeValidation?: LandingPostMergeValidation }
+  | {
+      ok: true;
+      locked: boolean;
+      mergeSha?: string;
+      postMergeValidation?: LandingPostMergeValidation;
+      deferred?: DeferredLandingTail;
+    }
   | {
       ok: false;
       // `ci-failed` / `ci-pending` (#812) are UNLOCKED-only: a completed,
@@ -393,7 +410,14 @@ export async function doLanding(
   await deps.landingPhase?.("gate");
   const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
   if (!pushed.ok) {
-    return { ok: false, reason: "land-failed", locked };
+    // Carry the REAL failure into the terminal record (#2576): a generic
+    // land-failed with no diagnostic was being misread as a merge conflict.
+    return {
+      ok: false,
+      reason: "land-failed",
+      locked,
+      message: `worker branch push failed${"warn" in pushed && pushed.warn ? `: ${pushed.warn}` : ""} — nothing was merged; the true cause is the push, not a merge conflict`,
+    };
   }
 
   // 2. pre_merge hook.
@@ -440,6 +464,39 @@ export async function doLanding(
     await release?.();
   }
   if (!landed.ok) return landed;
+  if (landed.deferred) {
+    const deferred = landed.deferred;
+    return {
+      ...landed,
+      deferred: {
+        ...deferred,
+        run: async (ciAlreadyGreen?: boolean) => {
+          let tailRelease: (() => Promise<void>) | null = null;
+          if (serialization === "land-lock") {
+            tailRelease = (await deps.landLock?.acquire()) ?? null;
+            if (!tailRelease) {
+              return {
+                ok: false,
+                reason: "infra",
+                infraReason: "another worker held the AFK land-lock past the wait timeout",
+                locked,
+              };
+            }
+          }
+          let completed: LandingResult;
+          try {
+            completed = await deferred.run(ciAlreadyGreen);
+          } finally {
+            await tailRelease?.();
+          }
+          if (!completed.ok) return completed;
+          await deps.landingPhase?.("cascade");
+          await deps.fireHook("post_merge", hooks.postMerge(completed.mergeSha));
+          return completed;
+        },
+      },
+    };
+  }
 
   // post_merge hook (best-effort; an abort here does not unwind the landing,
   // matching the prior behaviour which never branched on its result).
@@ -471,6 +528,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
 
   let postMergeValidation: LandingPostMergeValidation | undefined;
   let missingPostMergeFallback = false;
+  let cleanupDeferred = false;
   try {
     await deps.landingPhase?.("push-pr");
     const r = await landPr(deps.mergeExec, {
@@ -484,6 +542,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       mergeTitle: landingMergeTitle(input),
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      releaseAt: deps.landingWait === "ci" || deps.landingWait === "none"
+        ? deps.landingWait
+        : undefined,
       // Non-blocking backpressure evidence review (#1279): threaded through so
       // landPr can attach the ledger the moment it resolves the PR number.
       onPrResolved: deps.onPrResolved,
@@ -513,44 +574,73 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
         return gateResult.ok ? { ok: true } : { ok: false };
       },
     });
-    if (r.ok) {
+    const mapResult = (result: typeof r): LandingResult => {
+      if (result.ok) {
+        return {
+          ok: true,
+          locked: input.locked,
+          ...(result.mergeSha ? { mergeSha: result.mergeSha } : {}),
+          ...(postMergeValidation ? { postMergeValidation } : {}),
+        };
+      }
+      if (result.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: result.prNumber };
+      if (result.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: result.prNumber };
+      if (result.reason === "pr-resolved-abort") {
+        return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: result.prNumber };
+      }
+      if (result.reason === "before-merge-failed") {
+        if (missingPostMergeFallback) {
+          return {
+            ok: false,
+            reason: "infra",
+            locked: input.locked,
+            prNumber: result.prNumber,
+            infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
+          };
+        }
+        return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: result.prNumber };
+      }
+      if (result.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: result.prNumber };
+      if (result.reason === "merge-failed" && result.prNumber !== undefined) {
+        return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: result.prNumber };
+      }
+      return {
+        ok: false,
+        reason: "land-failed",
+        locked: input.locked,
+        prNumber: result.prNumber,
+        message: `landing failed at the merge step (underlying reason: ${String((result as { reason?: string }).reason ?? "unmapped")})`,
+      };
+    };
+    if (r.deferred) {
+      cleanupDeferred = true;
+      const deferred = r.deferred;
       return {
         ok: true,
         locked: input.locked,
-        ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}),
-        ...(postMergeValidation ? { postMergeValidation } : {}),
+        deferred: {
+          prNumber: deferred.prNumber,
+          waitForCi: deferred.waitForCi,
+          run: async (ciAlreadyGreen?: boolean) => {
+            try {
+              return mapResult(await deferred.run(ciAlreadyGreen));
+            } finally {
+              await deps.removeRebaseWorktree?.(prepared.dir);
+            }
+          },
+        },
       };
     }
+    if (r.ok) return mapResult(r);
     // Route the CI-aware failure modes (#812) distinctly. A failed required check
     // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
     // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything
     // else (real conflict / push / no-PR / admin-merge rejection) stays land-failed.
     // `locked` echoes the session's lock state (#842): the admin-PR path is no
     // longer unlocked-only — lock=X + openPr=true also lands through here.
-    if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: r.prNumber };
-    if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: r.prNumber };
-    if (r.reason === "pr-resolved-abort") {
-      return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: r.prNumber };
-    }
-    if (r.reason === "before-merge-failed") {
-      if (missingPostMergeFallback) {
-        return {
-          ok: false,
-          reason: "infra",
-          locked: input.locked,
-          prNumber: r.prNumber,
-          infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
-        };
-      }
-      return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: r.prNumber };
-    }
-    if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
-    if (r.reason === "merge-failed" && r.prNumber !== undefined) {
-      return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
-    }
-    return { ok: false, reason: "land-failed", locked: input.locked, prNumber: r.prNumber };
+    return mapResult(r);
   } finally {
-    await deps.removeRebaseWorktree?.(prepared.dir);
+    if (!cleanupDeferred) await deps.removeRebaseWorktree?.(prepared.dir);
   }
 }
 

@@ -46,6 +46,8 @@ export interface SpawnSupervisorOptions {
   root: string;
   target: number;
   runner: string;
+  /** Fleet-profile Trunk override propagated to every worker. */
+  base?: string;
   /** Filter/policy argv (--spec/--issues/--alternate/--fallback-runner) threaded
    * into each slot's `run --once`. */
   passthrough?: readonly string[];
@@ -89,6 +91,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     [FLEET_NAME_ENV]: paths.fleet,
   };
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
+  if (opts.base?.trim()) env.RED_AFK_TRUNK = opts.base.trim();
   if (opts.drainBudgetUsd !== undefined) env.RED_AFK_DRAIN_MAX_COST_USD = String(opts.drainBudgetUsd);
   if (opts.shrinkMode !== undefined) env.RED_AFK_SHRINK_MODE = opts.shrinkMode;
   if (opts.adoptSlotPids && opts.adoptSlotPids.length > 0) {

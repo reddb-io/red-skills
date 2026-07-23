@@ -9,6 +9,7 @@
 // `/dev review` (delegate to the #746 advisory review path). It never pushes
 // code and the workflow requests no `contents: write`.
 
+import { Writable } from "node:stream";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { Output } from "@reddb-io/red-castle";
 import { execTool } from "../runtime/exec.js";
@@ -42,36 +43,45 @@ async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
   return r.code === 0 ? r.stdout.trim() : "";
 }
 
+/** The parsed comment event the MCP `respond` op and the CLI command both feed to the value core. */
+export interface RespondExecInput {
+  body: string;
+  number: number;
+  author?: string;
+  isPr?: boolean;
+  runner?: string;
+  repo?: string;
+  root?: string;
+}
+
+/** Discards `/dev review` delegation output — the MCP path has no stdout to render to. */
+const discardStream = new Writable({ write(_chunk, _enc, cb) { cb(); } });
+
 /**
- * `respond --body <text> --author <login> --number N [--is-pr] [--runner R] [--repo owner/repo]`
- * — react to one comment event. Resolves the provider (flag → `afk.default_runner`)
- * and its `complex` model tier, wires the gh-backed reply + trust resolver +
- * sandcastle explainer, and dispatches the advisory route. A comment with no
- * `/dev` summon exits 0 as a no-op.
+ * Value-returning responder core: resolve the provider (flag → `afk.default_runner`)
+ * and its `complex` model tier, wire the gh-backed reply + trust resolver + sandcastle
+ * explainer, and dispatch the advisory route, returning the {@link RespondResult}. The
+ * CLI command prints its prose line; the MCP `respond` op returns the result verbatim
+ * (TOON-encoded at the transport boundary). `number` must already be a valid positive
+ * integer. `/dev review` delegation renders to `opts.reviewStdout` (default: discard).
  */
-export async function respondCommand(
-  args: readonly string[],
-  cwd = process.cwd(),
-  stdout: NodeJS.WritableStream = process.stdout,
-): Promise<number> {
-  const { values } = parseFlags(args, RESPOND_FLAG_SCHEMA);
-  const number = Number(values.number);
-  if (!Number.isInteger(number) || number <= 0) {
-    process.stderr.write("[afk] respond requires --number <issue-or-pr-number>\n");
-    return 2;
-  }
-  const body = (values.body as string | undefined) ?? "";
-  const author = (values.author as string | undefined)?.trim() || undefined;
-  const isPr = values["is-pr"] === true;
-  const root = (values.root as string | undefined)?.trim() || cwd;
+export async function executeRespond(
+  input: RespondExecInput,
+  opts: { cwd?: string; reviewStdout?: NodeJS.WritableStream } = {},
+): Promise<RespondResult> {
+  const root = input.root?.trim() || opts.cwd || process.cwd();
+  const reviewStdout = opts.reviewStdout ?? discardStream;
+  const number = input.number;
+  const body = input.body ?? "";
+  const author = input.author?.trim() || undefined;
+  const isPr = input.isPr === true;
 
   const config = loadConfig(resolveConfigPath(root), { warn: () => undefined });
-  const flagRunner = values.runner as string | undefined;
   const configRunner = getConfig(config, "afk.default_runner") || "claude";
-  const runnerCandidate = flagRunner ?? configRunner;
+  const runnerCandidate = input.runner ?? configRunner;
   const runner: AgentRunner = isRunner(runnerCandidate) ? runnerCandidate : "claude";
 
-  const repo = await resolveRepo(root, values.repo as string | undefined);
+  const repo = await resolveRepo(root, input.repo);
   const ghCtx: GhContext = { cwd: root, repo };
 
   const policy = parseTrustPolicy(config);
@@ -98,22 +108,54 @@ export async function respondCommand(
 
   const event: CommentEvent = { body, author, number, isPr, runner };
 
+  return runRespond(
+    {
+      gh,
+      resolveTrust: (actor) => resolveActorTrust(policy, actor, (login) => actorTrustSignals(ghCtx, login)),
+      explain,
+      review: async () => {
+        const reviewArgs = ["--pr", String(number), "--runner", runner];
+        if (repo) reviewArgs.push("--repo", repo);
+        if (root) reviewArgs.push("--root", root);
+        await reviewCommand(reviewArgs, root, reviewStdout);
+      },
+      log: (m) => process.stderr.write(`${m}\n`),
+    },
+    event,
+  );
+}
+
+/**
+ * `respond --body <text> --author <login> --number N [--is-pr] [--runner R] [--repo owner/repo]`
+ * — react to one comment event. Delegates to {@link executeRespond} and prints the
+ * terminal action. A comment with no `/dev` summon exits 0 as a no-op.
+ */
+export async function respondCommand(
+  args: readonly string[],
+  cwd = process.cwd(),
+  stdout: NodeJS.WritableStream = process.stdout,
+): Promise<number> {
+  const { values } = parseFlags(args, RESPOND_FLAG_SCHEMA);
+  const number = Number(values.number);
+  if (!Number.isInteger(number) || number <= 0) {
+    process.stderr.write("[afk] respond requires --number <issue-or-pr-number>\n");
+    return 2;
+  }
+  const root = (values.root as string | undefined)?.trim() || cwd;
+
   let result: RespondResult;
   try {
-    result = await runRespond(
+    result = await executeRespond(
       {
-        gh,
-        resolveTrust: (actor) => resolveActorTrust(policy, actor, (login) => actorTrustSignals(ghCtx, login)),
-        explain,
-        review: async () => {
-          const reviewArgs = ["--pr", String(number), "--runner", runner];
-          if (repo) reviewArgs.push("--repo", repo);
-          if (root) reviewArgs.push("--root", root);
-          await reviewCommand(reviewArgs, root, stdout);
-        },
-        log: (m) => process.stderr.write(`${m}\n`),
+        body: (values.body as string | undefined) ?? "",
+        number,
+        author: values.author as string | undefined,
+        isPr: values["is-pr"] === true,
+        runner: values.runner as string | undefined,
+        repo: values.repo as string | undefined,
+        root,
       },
-      event,
+      { cwd, reviewStdout: stdout },
     );
   } catch (error) {
     process.stderr.write(`[afk] respond failed: ${error instanceof Error ? error.message : String(error)}\n`);

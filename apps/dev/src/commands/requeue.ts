@@ -25,6 +25,11 @@ import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
+import {
+  applyTransition,
+  isRefused,
+  planTransition,
+} from "../core/state-transition.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
@@ -82,7 +87,7 @@ export interface RequeueExecutionInput {
 }
 
 export type RequeueExecutionOutcome =
-  | "applied"
+  | "requeued"
   | "no-op"
   | "dry-run"
   | "closed"
@@ -513,9 +518,10 @@ async function runAdoptLanding(
  * — apply the one-shot requeue transition. A non-parked issue is a no-op (exit
  * 0). `--dry-run` prints the plan without mutating. The `gh` dependency is
  * injectable for tests; production wires the gh CLI. When `--adopt-branch` is
- * given, the branch is adopted via the no-agent landing lane (ADR 0055
- * reconcile) after the requeue transition; `adoptRunnerOverride` is injectable
- * for tests.
+ * given for a non-parked issue, the branch is adopted via the no-agent landing
+ * lane (ADR 0055 reconcile); `adoptRunnerOverride` is injectable for tests. A
+ * requeueable parked issue applies its queue transition directly so the
+ * no-agent landing result cannot overwrite the requested requeue.
  */
 export async function executeRequeue(
   input: RequeueExecutionInput,
@@ -607,7 +613,6 @@ export async function executeRequeue(
     };
   }
 
-  const withholdReady = adoptBranch !== undefined;
   let readyWithheld = false;
   let removeLabels: string[] | undefined;
   let addLabels: string[] | undefined;
@@ -615,16 +620,36 @@ export async function executeRequeue(
     await sweepRequeueClaims(gh, input.issue);
     if (plan.bodyChanged) await gh.editBody(input.issue, plan.body);
     await gh.comment(input.issue, directiveComment(plan, guidance));
-    addLabels = withholdReady
-      ? plan.addLabels.filter((label) => label !== LABEL_READY)
-      : [...plan.addLabels];
-    removeLabels =
-      withholdReady && issueState.labels.includes(LABEL_READY)
-        ? [...plan.removeLabels, LABEL_READY]
-        : [...plan.removeLabels];
-    await gh.editLabels(input.issue, removeLabels, addLabels);
-    if (withholdReady) readyWithheld = true;
-  } else if (adoptBranch && issueState.labels.includes(LABEL_READY)) {
+    const lifecyclePlan = planTransition(issueState.labels, { kind: "queue" });
+    if (isRefused(lifecyclePlan)) {
+      throw new Error(`requeue transition refused: ${lifecyclePlan.reason}`);
+    }
+    removeLabels = [...plan.removeLabels];
+    addLabels = [...plan.addLabels];
+    await applyTransition(
+      {
+        editIssue: async (issue, edit) => {
+          await gh.editLabels(issue, [...edit.remove], [...edit.add]);
+          return true;
+        },
+        readBody: async () => plan.body,
+      },
+      input.issue,
+      { remove: removeLabels, add: addLabels },
+    );
+    return {
+      issue: input.issue,
+      plan,
+      applied: true,
+      removeLabels,
+      addLabels,
+      outcome: "requeued",
+      exitCode: 0,
+      ...(adoptBranch ? { adoptBranch } : {}),
+    };
+  }
+
+  if (adoptBranch && issueState.labels.includes(LABEL_READY)) {
     await gh.editLabels(input.issue, [LABEL_READY], []);
     readyWithheld = true;
   }
@@ -636,21 +661,15 @@ export async function executeRequeue(
     ...(removeLabels ? { removeLabels } : {}),
     ...(addLabels ? { addLabels } : {}),
   };
-  if (!adoptBranch) {
-    return { ...baseResult, outcome: "applied", exitCode: 0 };
-  }
+  if (!adoptBranch) return { ...baseResult, outcome: "no-op", exitCode: 0 };
 
   const restoreQueueLabel = async (): Promise<void> => {
     if (readyWithheld) await gh.editLabels(input.issue, [], [LABEL_READY]);
   };
-  const postLabels = plan.requeueable
-    ? issueState.labels.filter(
-        (label) => !plan.removeLabels.includes(label) && label !== LABEL_READY,
-      )
-    : issueState.labels.filter((label) => label !== LABEL_READY);
+  const postLabels = issueState.labels.filter((label) => label !== LABEL_READY);
   const adoptData: RequeueAdoptData = {
     title: "",
-    body: plan.requeueable ? plan.body : issueState.body,
+    body: issueState.body,
     labels: postLabels,
   };
 
@@ -709,7 +728,7 @@ function renderRequeueResult(
         `add=[${result.plan?.addLabels.join(",") ?? ""}]` +
         `${result.adoptBranch ? ` adopt-branch=${result.adoptBranch}` : ""}\n`,
     );
-  } else if (result.outcome === "applied") {
+  } else if (result.outcome === "requeued") {
     stdout.write(
       `Requeue #${issue}: cleared blocker=${result.plan?.bodyChanged ?? false}, ` +
         `removed [${result.removeLabels?.join(",") ?? ""}], ` +
@@ -753,11 +772,6 @@ export async function requeueCommand(
   }
   const adoptBranch =
     (values["adopt-branch"] as string | undefined)?.trim() || undefined;
-  if (adoptBranch) {
-    stdout.write(
-      `Requeue #${issue}: adopting branch \`${adoptBranch}\` through the no-agent landing lane (ADR 0055)…\n`,
-    );
-  }
   const result = await executeRequeue(
     {
       issue,

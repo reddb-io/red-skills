@@ -12,7 +12,7 @@ import {
   acquireIssueLease,
   createFsIssueLeaseStore,
   retireIssueLease as retireClaimLease,
-  type TrackerClaimComment,
+  type RawClaimComment,
   type TrackerClaimStore,
 } from "../claim.js";
 
@@ -246,13 +246,13 @@ async function listIssueComments(
   gh: GhExec,
   withRepo: (args: string[]) => string[],
   issue: number,
-): Promise<TrackerClaimComment[]> {
+): Promise<RawClaimComment[]> {
   const stdout = await gh(
     withRepo(["issue", "view", String(issue), "--json", "comments"]),
   );
   const row = parseJson<GhIssueViewRow>(stdout);
   if (!Array.isArray(row.comments)) return [];
-  const comments: TrackerClaimComment[] = [];
+  const comments: RawClaimComment[] = [];
   for (const item of row.comments) {
     if (!item || typeof item !== "object") continue;
     const rec = item as {

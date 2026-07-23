@@ -9,7 +9,12 @@ describe("dev:afk MCP entrypoint routing", () => {
     const startMergeDriver = vi.fn(async () => undefined);
 
     await expect(
-      main(["__supervise", "--fleet", "codex"], { supervise, connect, startCurator, startMergeDriver }),
+      main(["__supervise", "--fleet", "codex"], {
+        supervise,
+        connect,
+        startCurator,
+        startMergeDriver,
+      }),
     ).resolves.toBe(0);
 
     expect(supervise).toHaveBeenCalledWith(["--fleet", "codex"]);
@@ -54,19 +59,26 @@ describe("dev:afk MCP entrypoint routing", () => {
       server: protocol,
       connect: vi.fn(async () => undefined),
     };
+    const janitor = {
+      start: vi.fn(async () => ({ acquired: true, reaped: false, lease: {} })),
+      stop: vi.fn(async () => undefined),
+    };
     let finished = false;
     const running = connectResidentMcp({
       server: server as never,
       transport: {} as never,
       resident: resident as never,
+      janitor: janitor as never,
     }).then(() => {
       finished = true;
     });
     await vi.waitFor(() => expect(server.connect).toHaveBeenCalledTimes(1));
+    expect(janitor.start).toHaveBeenCalledTimes(1);
 
     protocol.onclose?.();
 
     await vi.waitFor(() => expect(resident.stop).toHaveBeenCalledTimes(1));
+    expect(janitor.stop).toHaveBeenCalledTimes(1);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(finished).toBe(false);
     finishStop();

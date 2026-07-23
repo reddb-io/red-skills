@@ -104,7 +104,7 @@ describe("GitHub tracker adapter", () => {
         "<!-- afk:claim v1 worker=host:w1 kind=claim runner=codex -->",
       ),
       expect.stringContaining(
-        "<!-- afk:claim v1 worker=host:w1 kind=concede runner=codex -->",
+        "<!-- afk:claim v1 worker=host:w1 kind=concede reason=released runner=codex -->",
       ),
     ]);
 
@@ -166,7 +166,7 @@ describe("GitHub tracker adapter", () => {
         "repos/owner/repo/issues/12/comments",
         "-f",
         expect.stringContaining(
-          "body=<!-- afk:claim v1 worker=host:w1 kind=concede runner=codex -->",
+          "body=<!-- afk:claim v1 worker=host:w1 kind=concede reason=released runner=codex -->",
         ),
         "--jq",
         ".id",

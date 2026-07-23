@@ -52,7 +52,11 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding } from "../landing.js";
+import {
+  doLanding,
+  type DeferredLandingTail,
+  type LandingResult,
+} from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
@@ -142,6 +146,7 @@ export interface ProcessClaimLock {
 export interface ProcessFs {
   ensureAttemptDir(dir: string): Promise<void>;
   writeHandoff(path: string, content: string): Promise<void>;
+  readText?(path: string): Promise<string | null>;
   writeValidationSidecar?(path: string, lines: string[]): Promise<void>;
   completionSweep(issue: number): Promise<string[]>;
 }
@@ -285,6 +290,16 @@ export interface ProcessIssueDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   waitForReview?: WaitForReviewInput;
   ciAwait?: CiAwaitInput;
+  /** Slot-release boundary across the PR landing tail (#2427). */
+  landingWait?: "merge" | "ci" | "none";
+  /**
+   * Shared tail observer. The call starts observation and returns the eventual
+   * landing verdict; processIssue deliberately does not await it so the worker
+   * slot is reusable while CI/merge/close finish.
+   */
+  landingTailObserver?: (
+    task: DeferredLandingTail & { issue: number },
+  ) => Promise<LandingResult>;
   reviewGate?: ReviewGateConfig;
   reviewGateLabel?: string;
   adversarialReview?: AdversarialReviewConfig;
@@ -316,6 +331,10 @@ export interface ProcessIssueDeps {
   historyPath?: string;
   historyClock?: HistoryClock;
   recoveryEnv?: RecoveryEnv;
+  /** ADR 0122 heal ledger (#2576): durable per-issue retry accounting so the
+   * merge-retry cap survives worker replacement. Optional; absent in tests
+   * that predate it (worker-local ordinal then applies alone). */
+  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   cascadeRebase?: CascadeRebasePort;

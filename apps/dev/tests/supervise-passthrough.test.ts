@@ -15,6 +15,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
       PATH: "/usr/bin",
       RED_AFK_SKIP_PERF: "1",
       RED_AFK_SKIP_COMPETITIVE_BASELINE: "1",
+      RED_AFK_TRUNK: "develop",
       RED_AFK_TARGET: "4",
       RED_AFK_POLL_S: "15",
       RED_AFK_CIRCUIT_K: "5",
@@ -24,6 +25,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
     // operator vars survive
     expect(env.RED_AFK_SKIP_PERF).toBe("1");
     expect(env.RED_AFK_SKIP_COMPETITIVE_BASELINE).toBe("1");
+    expect(env.RED_AFK_TRUNK).toBe("develop");
     expect(env.PATH).toBe("/usr/bin");
     // every internal knob is stripped
     for (const denied of PASSTHROUGH_DENYLIST) {

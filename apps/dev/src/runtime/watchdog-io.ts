@@ -26,7 +26,9 @@ import { appendRecordToonl } from "../core/jsonl-log.js";
 import {
   castleStateSnapshotPath,
   createEnginePaths,
+  fleetRegistryPath,
   readCastleStateSnapshot,
+  readFleetProfile,
 } from "@reddb-io/red-castle/engine";
 // The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
 // with the fleet reaper and `fleet stop` (#580). It matters for recovery
@@ -222,10 +224,15 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
+      const profile = await readFleetProfile(
+        fleetRegistryPath(enginePaths),
+        paths.fleet,
+      ).catch(() => undefined);
       const spawnedPid = await spawnSupervisor({
         root,
         target: lastTarget,
         runner,
+        base: profile?.base,
         adoptSlotPids: lastSlotPids,
         fleet: paths.fleet,
       });

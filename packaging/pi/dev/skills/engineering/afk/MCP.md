@@ -110,8 +110,9 @@ never tracks the base branch as red (#2380).
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `claim_status` | read | Parsed claim markers for one issue and the worker holding it. |
-| `claim_release` | mutating | Concede every un-conceded claim so the issue is claimable again. |
+| `claim_status` | read | Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
+| `claim_release` | mutating | Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
+| `hitl_resolve` | mutating | One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
 
 `claim_release` is the cure for a ghost claim — an issue that instantly reports
 `1/1 100%` with no attempt. Release it through the tool, never by flipping

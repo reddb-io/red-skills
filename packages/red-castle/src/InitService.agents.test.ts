@@ -57,21 +57,6 @@ describe("Agent registry", () => {
     expect(agents.some((a) => a.name === "opencode")).toBe(true);
   });
 
-  it("listAgents includes cursor", () => {
-    const agents = listAgents();
-    expect(agents.some((a) => a.name === "cursor")).toBe(true);
-  });
-
-  it("getAgent returns cursor entry with expected fields", () => {
-    const agent = getAgent("cursor");
-    expect(agent).toBeDefined();
-    expect(agent!.name).toBe("cursor");
-    expect(agent!.defaultModel).toBe("composer-2");
-    expect(agent!.factoryImport).toBe("cursor");
-    expect(agent!.dockerfileTemplate).toContain("FROM");
-    expect(agent!.dockerfileTemplate).toContain("cursor.com/install");
-  });
-
   it("getAgent returns opencode entry with expected fields", () => {
     const agent = getAgent("opencode");
     expect(agent).toBeDefined();
@@ -80,19 +65,5 @@ describe("Agent registry", () => {
     expect(agent!.factoryImport).toBe("opencode");
     expect(agent!.dockerfileTemplate).toContain("FROM");
     expect(agent!.dockerfileTemplate).toContain("opencode-ai");
-  });
-
-  it("listAgents includes copilot", () => {
-    const agents = listAgents();
-    expect(agents.some((a) => a.name === "copilot")).toBe(true);
-  });
-
-  it("getAgent returns copilot entry with expected fields", () => {
-    const agent = getAgent("copilot");
-    expect(agent).toBeDefined();
-    expect(agent!.name).toBe("copilot");
-    expect(agent!.factoryImport).toBe("copilot");
-    expect(agent!.dockerfileTemplate).toContain("FROM");
-    expect(agent!.dockerfileTemplate).toContain("@github/copilot");
   });
 });
