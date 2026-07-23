@@ -67,6 +67,14 @@ export async function sweepParkedSlot(
           work.supervisorLogPath,
         );
         await deps.gh.comment(pair.issue, body);
+        await deps.gh.comment(
+          pair.issue,
+          renderClaimComment(
+            { worker: workerIdentity(worker.workerId), runner: config.runner },
+            "concede",
+            "released",
+          ),
+        );
         await deps.gh.editLabels(
           pair.issue,
           [LABEL_READY, LABEL_RUNNER_ERROR],
