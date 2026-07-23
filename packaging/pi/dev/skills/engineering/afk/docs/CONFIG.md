@@ -118,7 +118,7 @@ afk:
     threshold: complex       # cheapest tier counted as non-mechanical (validate|simple|complex|think)
 ```
 
-`RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `statusline_cache_ttl` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and the fixed no-commit-progress attempt guard — are detailed under *Attempt Completion & Termination Bounds*.
+`RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `statusline_cache_ttl` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and the fixed no-commit-progress worker guard — are detailed under *Attempt Completion & Termination Bounds*.
 
 ### Backpressure gate
 

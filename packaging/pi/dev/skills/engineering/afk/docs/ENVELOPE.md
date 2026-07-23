@@ -174,4 +174,4 @@ Path: `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` — one snapshot per (work
 (Linux `/proc/<pid>/stat` field 22). It is empty on legacy or unsupported
 platforms; readers then fall back to pid-only liveness.
 
-Atomic write: write to `afk.state.json.tmp` inside the attempt directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
+Atomic write: write to `afk.state.json.tmp` inside the worker directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".

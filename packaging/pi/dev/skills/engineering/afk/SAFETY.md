@@ -86,7 +86,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 - `SIGTERM`: same as `SIGINT`.
 - Never trap `SIGKILL` — let the OS do its thing.
 
-There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim, preserving the active attempt directory, and removing the per-worker `worker.pid` (and the empty worker dir) on the EXIT trap.
+There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim, preserving the active worker directory, and removing the per-worker `worker.pid` (and the empty worker dir) on the EXIT trap.
 
 ## What "Blocker" Means
 
