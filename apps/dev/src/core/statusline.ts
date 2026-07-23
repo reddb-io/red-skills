@@ -184,6 +184,10 @@ export interface FleetInput {
   churnDeaths?: number;
   churnRespawns?: number;
   churnWindowS?: number;
+  /** Crashloop circuit breaker (#2527): present only while the breaker is OPEN
+   * — N consecutive identical boot deaths suppressed the respawn loop. Rendered
+   * as a loud token so the halted fleet is unmissable at a glance. */
+  breaker?: { count: number };
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   /** Stable pointer version the shim would serve from the local cache. */
@@ -502,6 +506,9 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
+  if (fleet.breaker) {
+    parts.push(`⛔brk=${Math.max(1, Math.floor(fleet.breaker.count))}×`);
+  }
   if (fleet.bundleVersion) {
     const versions = [fleet.bundleVersion, fleet.pointerVersion, fleet.latestBundleVersion]
       .filter((v): v is string => Boolean(v));
