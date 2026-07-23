@@ -1,13 +1,12 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
-  runModeForCandidate,
+  genWorkerId, runModeForCandidate,
   type SessionContext,
   type SessionIssueTemplate,
   type SelectionFilter,
   type IssueCandidate,
 } from "../../core/session.js";
-import { genWorkerId } from "../../core/session.js";
 import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput, type ReconcileBootRunner } from "../../core/boot.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../../core/reconcile.js";
 import { resolveBase } from "../../core/base-resolver.js";
