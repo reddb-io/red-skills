@@ -539,7 +539,7 @@ export function createDefaultDevAfkMcpOperations(
     async landBranch(input) {
       const context = await resolveRepoContext(root);
       const paths = afkPaths(root);
-      const gitCtx: gitx.GitContext = { cwd: root };
+      const gitCtx: gitx.GitContext = { cwd: root, ghProbeTimeoutMs: 60_000 };
       const base = resolveConfiguredBase(root, input.base);
       const changedFiles = await gitx.changedFiles(gitCtx, input.branch, base);
       const slug = (value: string) =>
