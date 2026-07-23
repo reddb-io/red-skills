@@ -68,8 +68,42 @@ export type CliCommand =
   | "__watchdog";
 
 export interface ParsedCli {
-  command: CliCommand;
+  command: CliCommand | "help";
   args: string[];
+}
+
+/** Commands surfaced by `--help`. Hidden (`__`-prefixed) commands are omitted;
+ * `version` is appended because the router handles it like any command while
+ * `--version`/`-v` are special-cased in `parseCli`. */
+export function renderUsage(): string {
+  const visible = Object.keys(CLI_ROUTER.commands).filter((name) => !name.startsWith("__"));
+  return [
+    "red-skills-dev — RedSkills dev runtime (AFK engine host CLI; the castle MCP is the canonical interface)",
+    "",
+    "Usage:",
+    "  red-skills-dev <command> [args]",
+    "  red-skills-dev --version | -v",
+    "  red-skills-dev --help | -h",
+    "",
+    "Commands:",
+    ...visible.map((name) => `  ${name}`),
+    "",
+    "A bare flag-led invocation (e.g. `--issues 42`, `--runner codex --once`) is the",
+    "legacy default-/afk interface and forwards to `run`. `--help` never does (#2581).",
+    "",
+  ].join("\n");
+}
+
+/** True when this argv asks for help. A leading `help`/`--help`/`-h` always is;
+ * a `--help`/`-h` anywhere in a flag-led (default-`run`) invocation also is,
+ * because the run surface has no help of its own and must never boot a worker
+ * drain for a usage request (#2581). Explicit subcommands keep owning their own
+ * `--help` handling (fleet, manager). */
+function isHelpInvocation(argv: readonly string[]): boolean {
+  const first = argv[0];
+  if (first === "help" || first === "--help" || first === "-h") return true;
+  const flagLed = first === undefined || first.startsWith("-") || first === "run";
+  return flagLed && argv.some((a) => a === "--help" || a === "-h");
 }
 
 /**
@@ -124,6 +158,9 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
 
 export function parseCli(argv: readonly string[]): ParsedCli {
   if (argv[0] === "--version" || argv[0] === "-v") return { command: "version", args: argv.slice(1) };
+  // Help short-circuits BEFORE routing: the flag-led fallthrough to the `run`
+  // default must never swallow a usage request into a live worker drain (#2581).
+  if (isHelpInvocation(argv)) return { command: "help", args: [] };
   return routeCommand(argv, CLI_ROUTER);
 }
 
@@ -137,6 +174,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 2;
     }
     throw error;
+  }
+  if (parsed.command === "help") {
+    process.stdout.write(renderUsage());
+    return 0;
   }
   if (parsed.command === "version") {
     const info = readBuildInfo("dev");

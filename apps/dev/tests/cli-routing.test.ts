@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCli } from "../src/cli.js";
+import { parseCli, renderUsage } from "../src/cli.js";
 import { UnknownCommandError } from "@reddb-io/shared/args.js";
 
 describe("cli routing — native commands", () => {
@@ -95,5 +95,26 @@ describe("cli routing — native commands", () => {
   it("still routes flag-led and bare invocations to run (legacy /afk interface)", () => {
     expect(parseCli(["--runner", "codex", "--once"])).toEqual({ command: "run", args: ["--runner", "codex", "--once"] });
     expect(parseCli([])).toEqual({ command: "run", args: [] });
+  });
+
+  it("short-circuits help before the run fallthrough — a usage request never boots a drain (#2581)", () => {
+    expect(parseCli(["--help"])).toEqual({ command: "help", args: [] });
+    expect(parseCli(["-h"])).toEqual({ command: "help", args: [] });
+    expect(parseCli(["help"])).toEqual({ command: "help", args: [] });
+    // --help anywhere inside a flag-led (default-run) invocation is still help…
+    expect(parseCli(["--runner", "codex", "--help"])).toEqual({ command: "help", args: [] });
+    expect(parseCli(["run", "--help"])).toEqual({ command: "help", args: [] });
+    // …but explicit subcommands keep owning their own --help handling.
+    expect(parseCli(["fleet", "--help"])).toEqual({ command: "fleet", args: ["--help"] });
+    expect(parseCli(["manager", "--help"])).toEqual({ command: "manager", args: ["--help"] });
+  });
+
+  it("renders a usage listing every visible command and no hidden ones", () => {
+    const usage = renderUsage();
+    for (const name of ["run", "fleet", "monitor", "requeue", "retake", "triage", "version"]) {
+      expect(usage).toContain(`  ${name}`);
+    }
+    expect(usage).not.toContain("__supervise");
+    expect(usage).not.toContain("__watchdog");
   });
 });
