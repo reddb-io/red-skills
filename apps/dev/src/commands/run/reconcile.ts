@@ -91,7 +91,11 @@ import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-s
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
-import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
+import {
+  createCastleWorkerLaneBridge,
+  type CastleWorkerLaneBridge,
+} from "../../core/castle-worker-lane-bridge.js";
+import { runLinkedSubagent } from "./linked-subagent.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
@@ -152,6 +156,8 @@ export function makeAgentConflictResolver(input: {
   config: ReturnType<typeof loadConfig>;
   runner: Runner;
   paths: AfkPaths;
+  bridge: CastleWorkerLaneBridge;
+  exec?: ExecFn;
 }): (repo: string) => Promise<boolean> {
   return async (repo: string): Promise<boolean> => {
     const git = gitx.gitExec({ cwd: repo });
@@ -187,7 +193,14 @@ export function makeAgentConflictResolver(input: {
               effort: tier.effort,
             })
           : claudeSpawnArgs({ prompt, worktree: repo });
-      await execTool(invocation.command, invocation.args, { cwd: repo });
+      await runLinkedSubagent({
+        runner: input.runner,
+        phase: "rebase-resolver",
+        invocation,
+        cwd: repo,
+        bridge: input.bridge,
+        exec: input.exec ?? execTool,
+      });
     } catch {
       return false;
     }
