@@ -14,6 +14,10 @@
 
 import { join } from "node:path";
 import {
+  recordIssueHeal,
+  type HealLedgerStore,
+} from "@reddb-io/red-castle/engine";
+import {
   DEFAULT_ATTEMPT_KEEP,
   DEFAULT_ATTEMPT_TTL_S,
   decideOrphanFate,
@@ -235,6 +239,8 @@ export interface BootGh {
   comment(issue: number, body: string): Promise<void>;
   /** gh issue edit --body …; optional for legacy/minimal test adapters. */
   editBody?(issue: number, body: string): Promise<void>;
+  /** gh issue view --json body; optional for legacy/minimal test adapters. */
+  viewBody?(issue: number): Promise<string | undefined>;
   /** gh issue view --json labels → flat name list. */
   viewLabels(issue: number): Promise<string[]>;
   /** Create a native GitHub sub-issue edge from parent Spec to child Ticket. */
@@ -343,6 +349,8 @@ export interface BootDeps {
   /** Posts an `afk:claim` concede comment. Wired so the boot sweep can
    * auto-heal dead own-machine dangling claims instead of halting (#2321). */
   concedeClaim?: (issue: number, body: string) => Promise<void>;
+  /** Durable castle-owned per-issue heal budget (ADR 0122 rule 6). */
+  healLedger?: HealLedgerStore;
   /** Current epoch seconds (date +%s), injected so the run is deterministic. */
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
@@ -396,18 +404,60 @@ async function tryBootAutoApplyBaseFreshness(
 async function tryBootAutoApplyClaimHygiene(
   deps: BootDeps,
   finding: OperationalProbeReport["findings"][number],
-): Promise<boolean> {
-  if (finding.id !== CLAIM_HYGIENE_PROBE_ID) return false;
-  if (!autoHealableClaimHygiene(finding)) return false;
+): Promise<{ handled: boolean; quarantined: number[] }> {
+  if (finding.id !== CLAIM_HYGIENE_PROBE_ID) return { handled: false, quarantined: [] };
+  const data = autoHealableClaimHygiene(finding);
+  if (!data) return { handled: false, quarantined: [] };
   const concedeClaim = deps.concedeClaim;
-  if (!concedeClaim) return false;
-  const result = await applyClaimHygieneFix(finding, {
-    confirm: async () => true,
-    concedeClaim,
-  });
-  if (result.status !== "applied") return false;
-  deps.log?.(`boot operational probe auto-fix applied: ${finding.id}; ${result.evidence}`);
-  return true;
+  if (!concedeClaim) return { handled: false, quarantined: [] };
+
+  const actions = data.actions as readonly Array<{ issue: number }>;
+  const issueNumbers = [...new Set(actions.map((action) => action.issue))];
+  const quarantined: number[] = [];
+  if (deps.healLedger) {
+    for (const issue of issueNumbers) {
+      const decision = await recordIssueHeal(deps.healLedger, issue, deps.nowS * 1000);
+      if (decision.action !== "quarantine") continue;
+      quarantined.push(issue);
+      const marker = `<!-- afk:quarantine v1 issue=#${issue} -->`;
+      const history = decision.history.map((timestamp) => new Date(timestamp).toISOString()).join(", ");
+      const diagnosis = `${marker}\n🤖 Claim healer quarantined this issue after 3 heals within 24h.\n\n**Heal history:** ${history}\n`;
+      try {
+        const body = await deps.gh.viewBody?.(issue);
+        if (body !== undefined && !body.includes(marker)) {
+          await deps.gh.editBody?.(issue, `${body.replace(/\s+$/, "")}\n\n## Quarantine diagnosis\n\n${diagnosis}`);
+        }
+      } catch (error) {
+        deps.log?.(`boot claim-heal diagnosis failed for #${issue}: ${String(error)}`);
+      }
+      try {
+        await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_QUARANTINE]);
+      } catch (error) {
+        deps.log?.(`boot claim-heal quarantine label failed for #${issue}: ${String(error)}`);
+      }
+    }
+  }
+
+  const quarantinedSet = new Set(quarantined);
+  const healActions = data.actions.filter((action) => !quarantinedSet.has(action.issue));
+  if (healActions.length > 0) {
+    const scopedFinding = {
+      ...finding,
+      data: { ...data, actions: healActions },
+    };
+    try {
+      const result = await applyClaimHygieneFix(scopedFinding, {
+        confirm: async () => true,
+        concedeClaim,
+      });
+      if (result.status === "applied") {
+        deps.log?.(`boot operational probe auto-fix applied: ${finding.id}; ${result.evidence}`);
+      }
+    } catch (error) {
+      deps.log?.(`boot claim-hygiene heal failed: ${String(error)}`);
+    }
+  }
+  return { handled: true, quarantined };
 }
 
 /**
@@ -722,7 +772,11 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const redFindings: OperationalProbeReport["findings"][number][] = [];
   const quarantinedIssues: number[] = [];
   for (const finding of operationalProbes.findings) {
-    if (await tryBootAutoApplyClaimHygiene(deps, finding)) continue;
+    const claimHygiene = await tryBootAutoApplyClaimHygiene(deps, finding);
+    if (claimHygiene.handled) {
+      quarantinedIssues.push(...claimHygiene.quarantined);
+      continue;
+    }
     const quarantine = await tryBootAutoApplyLabelBodyCoherence(deps, finding);
     if (quarantine.handled) {
       quarantinedIssues.push(...quarantine.issues);
