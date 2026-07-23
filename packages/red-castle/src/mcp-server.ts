@@ -2,8 +2,10 @@
 import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
+import { applyOutputContracts } from "./mcp/contracts.js";
 import { createFleetTools, type FleetDependencies } from "./mcp/fleet.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
+import { createDeadendTools, type DeadendDependencies } from "./mcp/deadend.js";
 import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
 import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
 import {
@@ -31,6 +33,22 @@ import {
 
 export type { CastleMcpTool } from "./mcp/tool.js";
 export type { DangerPosture } from "./mcp/posture.js";
+export {
+  CASTLE_MCP_CONTRACT_VERSION,
+  fleetStatusOutputSchema,
+  monitorOutputSchema,
+  queueStatusOutputSchema,
+  workerVitalsOutputSchema,
+  workerVitalsProjectedOutputSchema,
+} from "./mcp/contracts.js";
+export type {
+  CastleMcpOutputContract,
+  FleetStatusOutput,
+  MonitorOutput,
+  QueueStatusOutput,
+  WorkerVitalsOutput,
+  WorkerVitalsProjectedOutput,
+} from "./mcp/contracts.js";
 export type {
   FleetSelectorInput,
   FleetCreateInput,
@@ -39,6 +57,7 @@ export type {
   FleetRegisterInput,
 } from "./mcp/fleet.js";
 export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { DeadendDependencies } from "./mcp/deadend.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
@@ -73,6 +92,7 @@ export interface CastleMcpDependencies
   extends
     FleetDependencies,
     ObservabilityDependencies,
+    DeadendDependencies,
     WorkerDependencies,
     RunnerDependencies,
     HygieneDependencies,
@@ -95,6 +115,9 @@ export interface CastleMcpDependencies
  *   - `"allow"` (default) — unchanged behavior.
  *   - `"confirm"` — dangerous tools require `confirmation: true` in the input.
  *   - `"deny"` — dangerous tools always return a structured refusal.
+ *
+ * Output contracts wrap BEFORE the posture gate, so a posture refusal — which
+ * is deliberately not the tool's declared payload — never trips validation.
  */
 export function createCastleMcpTools(
   deps: CastleMcpDependencies,
@@ -103,6 +126,7 @@ export function createCastleMcpTools(
   const tools = [
     ...createFleetTools(deps),
     ...createObservabilityTools(deps),
+    ...createDeadendTools(deps),
     ...createWorkerTools(deps),
     ...createRunnerTools(deps),
     ...createHygieneTools(deps),
@@ -116,5 +140,5 @@ export function createCastleMcpTools(
     ...createReviewTools(deps),
     ...createStatuslineTools(deps),
   ];
-  return applyDangerPosture(tools, posture);
+  return applyDangerPosture(applyOutputContracts(tools), posture);
 }
