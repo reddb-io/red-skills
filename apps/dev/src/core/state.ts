@@ -177,6 +177,15 @@ function restoreStampedDotted(
   setDotted(target, key, prev);
 }
 
+function dottedValue(target: Record<string, unknown>, key: string): unknown {
+  let value: unknown = target;
+  for (const part of key.split(".").filter(Boolean)) {
+    if (!isRecord(value)) return undefined;
+    value = value[part];
+  }
+  return value;
+}
+
 const IMMUTABLE_STATE_FIELDS = [
   "worker_id",
   "pid_start_time",
@@ -187,9 +196,9 @@ const IMMUTABLE_STATE_FIELDS = [
   "current.number",
   "current.started_at",
   "current.runner",
-  "current.model",
-  "current.effort",
 ] as const;
+
+const STICKY_NONEMPTY_STATE_FIELDS = ["current.model_tier", "current.model", "current.effort"] as const;
 
 export interface UpdateStateOptions {
   /** Only true at real attempt teardown, when the worker is no longer live. */
@@ -205,6 +214,9 @@ function preserveStampedIdentity(
 ): void {
   const prev = previous as unknown as Record<string, unknown>;
   for (const key of IMMUTABLE_STATE_FIELDS) restoreStampedDotted(next, prev, key);
+  for (const key of STICKY_NONEMPTY_STATE_FIELDS) {
+    if (!isStampedIdentityValue(dottedValue(next, key))) restoreStampedDotted(next, prev, key);
+  }
   if (previous.pid > 0 && !options.allowPidReset) {
     next.pid = previous.pid;
   } else if (previous.pid > 0 && next.pid !== 0) {

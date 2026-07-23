@@ -286,6 +286,58 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls[0]?.model).toBe("claude-complex-model");
     expect(trace.runAgentCalls[0]?.effort).toBe("medium");
   });
+
+  it("falls back to the standard simple tier when classification is unavailable", async () => {
+    const tiers: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => {
+        throw new Error("classifier unavailable");
+      },
+      resolveTier: (_runner, taskClass) => {
+        tiers.push(taskClass ?? "missing");
+        return { model: `claude-${taskClass}-model`, effort: "high" };
+      },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(tiers).toEqual(["simple"]);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
+  });
+
+  it("records the resolved routing decision in the worker lane before spawn", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => "complex",
+      resolveTier: () => ({ model: "claude-complex-model", effort: "medium" }),
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.iterLogs).toContain(
+      "🤖 /afk route #9: tier=complex runner=claude model=claude-complex-model effort=medium.",
+    );
+    expect(trace.statePatches).toContainEqual({
+      "current.runner": "claude",
+      "current.model_tier": "complex",
+      "current.model": "claude-complex-model",
+      "current.effort": "medium",
+    });
+    expect(trace.workerEvents).toContainEqual({
+      kind: "worker.routed",
+      payload: {
+        runner: "claude",
+        model_tier: "complex",
+        model: "claude-complex-model",
+        effort: "medium",
+      },
+    });
+  });
 });
 
 

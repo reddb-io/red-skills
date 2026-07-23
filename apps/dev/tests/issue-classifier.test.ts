@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildIssueClassificationMetadata,
   classifierPrompt,
@@ -11,6 +11,30 @@ import {
 } from "../src/core/issue-classifier.js";
 
 describe("issue classifier", () => {
+  it.each([
+    {
+      name: "mechanical docs",
+      labels: ["type:docs"],
+      body: "Update README.md copy only.",
+      expected: "validate",
+    },
+    {
+      name: "standard bug",
+      labels: ["type:bug"],
+      body: "Fix src/parser.ts and keep its focused test green.",
+      expected: "simple",
+    },
+    {
+      name: "complex cross-scope feature",
+      labels: ["type:feature"],
+      body: "Change apps/api/src/route.ts, apps/web/src/client.ts, and packages/shared/src/types.ts.",
+      expected: "complex",
+    },
+  ])("routes the $name label/body fixture to $expected", async ({ labels, body, expected }) => {
+    const metadata = buildIssueClassificationMetadata({ issue: 1, title: "Fixture", body, labels });
+    await expect(classifyIssue(metadata)).resolves.toBe(expected);
+  });
+
   it("extracts cheap metadata from deterministic issue text", () => {
     const metadata = buildIssueClassificationMetadata({
       issue: 42,
@@ -40,6 +64,19 @@ describe("issue classifier", () => {
     await expect(classifyIssue(metadata, async () => ({ tier: "simple" }))).resolves.toBe("simple");
   });
 
+  it("lets an explicit tier label override every inferred signal without calling the classifier model", async () => {
+    const metadata = buildIssueClassificationMetadata({
+      issue: 12,
+      title: "Choose architecture for an auth migration",
+      body: "Change the database schema across apps/api/src/auth.ts and apps/web/src/session.ts.",
+      labels: ["tier:simple", "spec:99"],
+    });
+    const modelCall = vi.fn(async () => ({ tier: "think" }));
+
+    await expect(classifyIssue(metadata, modelCall)).resolves.toBe("simple");
+    expect(modelCall).not.toHaveBeenCalled();
+  });
+
   it("risk keywords push the final tier to complex even when the model under-calls it", async () => {
     const metadata = buildIssueClassificationMetadata({
       issue: 8,
@@ -58,6 +95,17 @@ describe("issue classifier", () => {
     });
 
     await expect(classifyIssue(metadata, async () => '{"tier":"complex"}')).resolves.toBe("think");
+  });
+
+  it("treats a Spec-family implementation slice as complex by default", async () => {
+    const metadata = buildIssueClassificationMetadata({
+      issue: 13,
+      title: "Wire the next implementation slice",
+      body: "Touch apps/dev/src/core/router.ts and keep its focused tests green.",
+      labels: ["type:feature", "spec:88"],
+    });
+
+    await expect(classifyIssue(metadata)).resolves.toBe("complex");
   });
 
   it("trivial docs and validation work stays in validate/simple despite a noisy model response", async () => {
