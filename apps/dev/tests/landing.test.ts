@@ -193,7 +193,8 @@ describe("doLanding — abort / failure short-circuits", () => {
     // Simulate the continuous-push hook having failed: the initial push also fails.
     h.deps.remoteGit = async () => ({ code: 1, stdout: "", stderr: "fatal: authentication failed" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: false });
+    expect((r as { message?: string }).message).toContain("push failed");
     // No hooks should fire — the push is the first mandatory step.
     expect(h.firedHooks).toEqual([]);
   });
@@ -242,7 +243,7 @@ describe("doLanding — abort / failure short-circuits", () => {
   it("land failure (locked, no resolver) → { ok:false, land-failed, locked:true }", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     // post_merge never fires on a failed land.
     expect(h.firedHooks).toEqual(["pre_merge"]);
   });
@@ -252,7 +253,7 @@ describe("doLanding — abort / failure short-circuits", () => {
     // on the locked path, wrongly closing the issue as done. Guard must catch this.
     const h = harness({ locked: true, commitCount: 0 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     // No merge --no-ff must have been attempted.
     expect(joined(h.mergeCalls).some((c) => c.includes("merge --no-ff"))).toBe(false);
     // post_merge must not fire.
@@ -277,7 +278,7 @@ describe("doLanding — locked conflict self-resolve", () => {
   it("resolver fails → aborts the merge in the worktree, { ok:false, land-failed }", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1, conflictResolve: "fail" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     const j = joined(h.mergeCalls);
     expect(j).toContain(`git -C ${WT} merge --abort`);
     expect(h.firedHooks).toEqual(["pre_merge"]);
@@ -286,7 +287,7 @@ describe("doLanding — locked conflict self-resolve", () => {
   it("resolved but the locked push is rejected → resets the worktree to preMergeSha, land-failed", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1, conflictResolve: "resolve", resolvePushCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     const j = joined(h.mergeCalls);
     // The rollback rewinds the throwaway worktree, NOT the primary checkout (#572).
     expect(j).toContain(`git -C ${WT} reset --hard abc1234`);
@@ -304,7 +305,8 @@ describe("doLanding — locked conflict self-resolve", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: false });
+    expect((r as { message?: string }).message).toContain("merge step");
   });
 });
 
@@ -344,7 +346,7 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
       };
     })();
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     const j = joined(h.mergeCalls);
     expect(j).toContain(`git -C ${WT} reset --hard abc1234`);
     assertPrimaryUntouched(h);
@@ -368,7 +370,7 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     // (parks to ready-for-human) so the primary checkout is never at risk.
     const h = harness({ locked: true, noWorktree: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: true });
     // Nothing merged/reset anywhere — no worktree, no land.
     expect(h.mergeCalls.some((c) => c.includes("merge --no-ff"))).toBe(false);
     assertPrimaryUntouched(h);
