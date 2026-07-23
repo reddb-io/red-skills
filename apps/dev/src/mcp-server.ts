@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
+import {
+  createResidentWebhook,
+  type ResidentWebhook,
+} from "./resident-webhook.js";
 
 const buildInfo = readBuildInfo("castle");
 
@@ -48,8 +52,51 @@ export function createCastleMcpServer(): McpServer {
   return server;
 }
 
+export interface ResidentMcpConnection {
+  readonly server: { onclose?: () => void };
+  connect(transport: StdioServerTransport): Promise<void>;
+}
+
+export interface ConnectResidentMcpOptions {
+  readonly server: ResidentMcpConnection;
+  readonly transport: StdioServerTransport;
+  readonly resident: ResidentWebhook;
+}
+
+export async function connectResidentMcp(
+  options: ConnectResidentMcpOptions,
+): Promise<void> {
+  await options.resident.start();
+  let notifyClosed!: () => void;
+  const closed = new Promise<void>((resolveClosed) => {
+    notifyClosed = resolveClosed;
+  });
+  options.server.server.onclose = notifyClosed;
+  try {
+    await options.server.connect(options.transport);
+    await closed;
+  } finally {
+    await options.resident.stop();
+  }
+}
+
 async function run(): Promise<void> {
-  await createCastleMcpServer().connect(new StdioServerTransport());
+  const server = createCastleMcpServer();
+  const close = () => {
+    void server.close();
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+  try {
+    await connectResidentMcp({
+      server,
+      transport: new StdioServerTransport(),
+      resident: createResidentWebhook({ root: process.cwd() }),
+    });
+  } finally {
+    process.removeListener("SIGINT", close);
+    process.removeListener("SIGTERM", close);
+  }
 }
 
 export interface McpEntrypointDependencies {

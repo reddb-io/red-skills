@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { main } from "../src/mcp-server.js";
+import { connectResidentMcp, main } from "../src/mcp-server.js";
 
 describe("dev:afk MCP entrypoint routing", () => {
   it("delegates __supervise to the native supervisor command", async () => {
@@ -12,5 +12,41 @@ describe("dev:afk MCP entrypoint routing", () => {
 
     expect(supervise).toHaveBeenCalledWith(["--fleet", "codex"]);
     expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("awaits resident cleanup after the MCP transport closes", async () => {
+    let finishStop!: () => void;
+    const resident = {
+      start: vi.fn(async () => ({ acquired: true, reaped: false, lease: {} })),
+      stop: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishStop = resolve;
+          }),
+      ),
+    };
+    const protocol: { onclose?: () => void } = {};
+    const server = {
+      server: protocol,
+      connect: vi.fn(async () => undefined),
+    };
+    let finished = false;
+    const running = connectResidentMcp({
+      server: server as never,
+      transport: {} as never,
+      resident: resident as never,
+    }).then(() => {
+      finished = true;
+    });
+    await vi.waitFor(() => expect(server.connect).toHaveBeenCalledTimes(1));
+
+    protocol.onclose?.();
+
+    await vi.waitFor(() => expect(resident.stop).toHaveBeenCalledTimes(1));
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(finished).toBe(false);
+    finishStop();
+    await running;
+    expect(finished).toBe(true);
   });
 });
